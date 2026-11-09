@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "cua"
 path = "src/main.rs"
 
+[build-dependencies]
+# The Windows version resource of cua.exe (build.rs).
+embed-resource = "2"
+
 [features]
 default = []
 byoc = ["cua-sdk/byoc", "cua-daemon/byoc", "dep:cua-byoc"]
@@ -42,7 +46,11 @@ cua-image.workspace = true
 # `cua cache`: disk accounting, cleanup and the orphan reaper.
 cua-disk.workspace = true
 cua-vmm = { path = "../cua-vmm" }
+# `cua ci`: GitHub Actions jobs on Cua Spaces (an experiment).
+cua-ci.workspace = true
+tracing.workspace = true
 cua-sandbox-core.workspace = true
+cua-repo-cache.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 pbjson-types.workspace = true
 humantime.workspace = true
@@ -103,6 +111,7 @@ cua-sandbox-core = { workspace = true, features = ["testing"] }
 # (built only with `byoc`, which brings the AWS provider itself, so plain
 # `cargo test -p cua-cli` does not compile the AWS SDK).
 cua-byoc = { workspace = true, features = ["testing"] }
+cua-ci = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 # The default log filter test emits events.
 tracing.workspace = true

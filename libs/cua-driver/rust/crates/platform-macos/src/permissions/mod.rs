@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS TCC permission checks + first-launch CLI gate.
 //!
 //! Two layers:
 //! - [`status`] — low-level booleans for Accessibility / Screen Recording.
 //! - [`gate`]   — startup-time interactive flow that walks the user through
 //!   granting the missing permissions before `serve` binds.
+//! - [`guide`]  — the step-by-step guide's logic (which step shows, request
+//!   order, resuming after macOS's "Quit & Reopen"), free of AppKit.
 //!
 //! The gate is a Rust port of Swift's `PermissionsGate` (SwiftUI panel).
 //! Two presentation surfaces:
@@ -17,6 +22,7 @@
 //! - `PermissionsGate.swift`  → `permissions::gate` + `permissions::panel`
 
 pub mod gate;
+pub mod guide;
 pub mod status;
 
 #[cfg(target_os = "macos")]

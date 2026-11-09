@@ -8,17 +8,19 @@ import Foundation
 import SwiftUI
 import Testing
 
-/// An in-memory daemon for Settings → Connectors: `agent_keys.*` as the daemon
+/// An in-memory daemon for Settings → Connections: `agent_keys.*` as the daemon
 /// answers them (never a value).
 final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [(String, [String: Any])] = []
     var keys: [[String: Any]] = [["provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "added_ms": 1_790_000_000_000]]
     var available = true
+    /// A Local development build keeping keys in an unencrypted file: the daemon's warning.
+    var insecure: String?
 
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
         calls.append((tool, args))
         switch tool {
-        case "agent_keys.list": break
+        case "agent_keys.list", "agent_keys.check": break
         case "agent_keys.set":
             let provider = args["provider"] as? String ?? ""
             let env = provider == "anthropic" ? "ANTHROPIC_API_KEY" : provider == "openai" ? "OPENAI_API_KEY" : args["env"] as? String ?? ""
@@ -26,7 +28,12 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
             keys.removeAll { $0["env"] as? String == env }
             keys.append(["provider": provider, "env": env, "last4": String(value.suffix(4)), "added_ms": 1_790_000_100_000])
         case "agent_keys.remove":
-            keys.removeAll { $0["env"] as? String == args["env"] as? String }
+            if let slot = args["slot"] as? String {
+                keys.removeAll { $0["env"] as? String == args["env"] as? String && $0["slot"] as? String == slot }
+            } else {
+                keys.removeAll { $0["env"] as? String == args["env"] as? String }
+            }
+        case "agent_keys.use", "agent_keys.rename": break
         // Your login shell has an Anthropic key: names only, and a copy saved on request.
         case "agent_keys.shell": return ["names": ["ANTHROPIC_API_KEY"]]
         case "agent_keys.from_shell":
@@ -38,12 +45,13 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
         }
         var report: [String: Any] = ["keys": keys, "providers": [], "available": available]
         if !available { report["unavailable"] = "this build keeps credentials in a file" }
+        if let insecure { report["insecure"] = insecure }
         return report
     }
 }
 
 @MainActor
-@Suite("Settings → Connectors")
+@Suite("Settings → Connections")
 struct AgentKeysTests {
     init() { _ = NSApplication.shared }
 
@@ -86,7 +94,22 @@ struct AgentKeysTests {
         #expect(!m.view.canEdit)
         #expect(m.view.notice?.contains("keeps credentials in a file") == true)
         let none = AgentKeysModel(tools: nil)
-        #expect(none.view.notice?.contains("need the cua daemon") == true)
+        #expect(none.view.notice?.contains("background service") == true)
+    }
+
+    @Test func aDevelopmentBuildWarnsThatKeysAreUnencryptedAndKeepsTheButtonsOn() async {
+        let tools = FakeAgentKeysTools()
+        tools.insecure = "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets"
+        let m = AgentKeysModel(tools: tools)
+        await m.load()
+        #expect(m.view.canEdit)
+        #expect(m.view.notice?.hasPrefix("Keychain not available in this development build") == true)
+        #expect(m.view.notice?.contains("unencrypted") == true)
+        // A refusal still wins over the warning.
+        tools.available = false
+        await m.load()
+        #expect(!m.view.canEdit)
+        #expect(m.view.notice?.hasPrefix("Keys can't be saved here") == true)
     }
 
     @Test func aKeyFromYourShellIsSavedAndTheNamesNeverReplaceTheList() async throws {
@@ -102,8 +125,17 @@ struct AgentKeysTests {
     }
 
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
-        for m in ["agentKeys.list", "agentKeys.set", "agentKeys.remove", "agentKeys.shell", "agentKeys.fromShell"] {
+        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell"] {
             #expect(WebUIBridge.methods.contains(m))
         }
+    }
+
+    @Test func aKeyBesideTheFirstIsNotARowOfItsOwn() async throws {
+        let tools = FakeAgentKeysTools()
+        tools.keys.append(["provider": "openai", "env": "OPENAI_API_KEY", "slot": "k1", "label": "Work key", "last4": "7777", "added_ms": 1_790_000_300_000])
+        let m = AgentKeysModel(tools: tools)
+        await m.load()
+        // The native rows are the first key for each variable; the web page lists the others.
+        #expect(m.view.rows.map(\.status) == ["Not set", "\u{2022}\u{2022}\u{2022}\u{2022} 3f9a"])
     }
 }

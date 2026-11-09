@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Non-Linux stubs — return a helpful "not implemented" message.
 //! Schemas match the macOS platform-macos implementations (cross-platform interface).
 

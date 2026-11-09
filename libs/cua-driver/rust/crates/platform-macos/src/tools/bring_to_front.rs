@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `bring_to_front`.
 //!
 //! This is the explicit persistent-foreground escape hatch for focus-proxy
@@ -12,7 +15,7 @@ use async_trait::async_trait;
 use core_graphics::display::CGDisplay;
 use cua_driver_core::{
     protocol::ToolResult,
-    tool::{Tool, ToolDef},
+    tool::{DesktopLease, Tool, ToolDef},
 };
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
@@ -202,7 +205,8 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
-        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid)
+            .map(|window| window.own),
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
@@ -333,8 +337,7 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        crate::window_change_detector::end_tail();
-        crate::window_change_detector::note_intentional_activation();
+        crate::focus_arbiter::note_intentional();
         let pid = match args.get("pid").and_then(Value::as_i64) {
             Some(p) => match libc::pid_t::try_from(p) {
                 Ok(pid) => pid,
@@ -367,6 +370,23 @@ impl Tool for BringToFrontTool {
             None => None,
         };
 
+        // Activation, the own-process main-queue raise and the verification
+        // poll all block; keep them off the async worker. The worker keeps the
+        // desktop lease, so a cancelled call cannot hand the lane on early.
+        let lease = DesktopLease::current();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            Self::activate_blocking(pid, window_id)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            ToolResult::error(format!("bring_to_front: activation worker failed: {error}"))
+        })
+    }
+}
+
+impl BringToFrontTool {
+    fn activate_blocking(pid: i32, window_id: Option<u32>) -> ToolResult {
         let Some(app) =
             (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
         else {
@@ -576,6 +596,101 @@ mod tests {
             on_current_space: Some(true),
             space_ids: None,
         }
+    }
+
+    const OWN_PROCESS_CHILD: &str = "CUA_TEST_BRING_TO_FRONT_OWN_PROCESS_CHILD";
+
+    /// Runs in a child process: registering this process with AppKit would
+    /// send every other test's input-source call to a main queue the test
+    /// harness never drains.
+    #[test]
+    fn own_process_activation_does_not_block_the_async_worker() {
+        if !crate::session::has_graphic_access() {
+            eprintln!("skipped: no window server session");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tools::bring_to_front::tests::own_process_activation_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(OWN_PROCESS_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    #[test]
+    #[ignore = "child of own_process_activation_does_not_block_the_async_worker"]
+    fn own_process_activation_child() {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        assert!(
+            std::env::var_os(OWN_PROCESS_CHILD).is_some(),
+            "run through own_process_activation_does_not_block_the_async_worker"
+        );
+        // A Prohibited app never activates, so the process check polls for
+        // the whole VERIFY_TIMEOUT.
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: bool = msg_send![app, setActivationPolicy: 2i64];
+        }
+        let pid = std::process::id() as i32;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let ticks = Arc::new(AtomicU32::new(0));
+        let (result, elapsed, ticks_during) = runtime.block_on(async {
+            let counter = Arc::clone(&ticks);
+            let ticker = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+            let started = Instant::now();
+            let result = BringToFrontTool.invoke(json!({ "pid": pid })).await;
+            let elapsed = started.elapsed();
+            let ticks_during = ticks.load(Ordering::Relaxed);
+            ticker.abort();
+            (result, elapsed, ticks_during)
+        });
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["code"], "bring_to_front_process_unverified");
+        assert!(elapsed >= VERIFY_TIMEOUT, "poll ended early: {elapsed:?}");
+        // One worker thread: a blocked invoke lets the ticker run zero times.
+        assert!(
+            ticks_during >= 20,
+            "async worker stalled: {ticks_during} ticks in {elapsed:?}"
+        );
+        // A call cancelled mid-activation keeps the desktop lane until its
+        // worker stops.
+        let lane_wait = runtime.block_on(async {
+            let call = cua_driver_core::tool::DesktopCall::acquire().await.unwrap();
+            let invoke = call.scope(BringToFrontTool.invoke(json!({ "pid": pid })));
+            assert!(tokio::time::timeout(Duration::from_millis(100), invoke)
+                .await
+                .is_err());
+            drop(call);
+            let started = Instant::now();
+            let next = cua_driver_core::tool::DesktopCall::acquire().await;
+            assert!(next.is_ok(), "the lane refused instead of waiting");
+            started.elapsed()
+        });
+        assert!(
+            lane_wait >= VERIFY_TIMEOUT / 2,
+            "lane handed on while the worker still ran: {lane_wait:?}"
+        );
     }
 
     #[test]

@@ -17,10 +17,22 @@ s3 = ["cua-volume/s3"]
 # FUSE on Linux. (A Space's guest mount needs neither: NFS for macOS guests
 # is always built.)
 mount = ["cua-volume/nfs", "cua-volume/fuse"]
+# Developer builds only (tests): lets pushes go to a local folder of
+# bare repositories and a fake GitHub API, set by `CUA_GITHUB_REMOTE_BASE`,
+# `CUA_GITHUB_SSH_BASE` and `CUA_GITHUB_API_BASE` or passed in
+# (`host_tools::Endpoints::custom`). A release build leaves it off and refuses
+# those variables: nothing in the environment decides where an approved
+# token is sent.
+dev-remotes = []
 
 [dependencies]
 cua-spaces = { path = "../cua-spaces" }
 cua-spaces-contract = { path = "../cua-spaces-contract" }
+# The coding agents' own recent chats on this computer (`agent_threads`).
+cua-agent-threads = { path = "../cua-agent-threads" }
+# The account's machines and the way to reach them (the replicated Volume).
+cua-mesh.workspace = true
+cua-cluster.workspace = true
 cua-spacesd-client.workspace = true
 cua-volume = { workspace = true, features = ["nfs"] }
 cua-keyvault.workspace = true
@@ -28,6 +40,8 @@ cua-keyvault.workspace = true
 cua-telemetry.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
 cua-auth.workspace = true
+# Tells the relay, which pushes to the person's phone, that something happened.
+cua-push = { path = "../cua-push" }
 # The owner's teams (team admins count as admins for agent rights).
 cua-host.workspace = true
 cua-teleport.workspace = true
@@ -59,9 +73,11 @@ tempfile.workspace = true
 tokio = { workspace = true }
 tokio-tungstenite.workspace = true
 tracing.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 
 [dev-dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+# The tests of this crate use the developer-only remotes (and only they do).
+cua-spaces-ext = { path = ".", features = ["dev-remotes"] }
 png = "0.18"
 cua-host = { workspace = true, features = ["testing"] }
 tracing-subscriber.workspace = true

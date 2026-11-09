@@ -24,7 +24,8 @@ describe("hardware video decode", () => {
   });
 
   it("decodes in software on every platform when asked", () => {
-    for (const p of ["darwin", "win32", "linux"] as const) expect(videoDecodeSwitches(p, { CUA_SPACES_VIDEO_DECODE: "software" }, "")).toEqual([["disable-accelerated-video-decode"]]);
+    for (const p of ["darwin", "win32", "linux"] as const)
+      expect(videoDecodeSwitches(p, { CUA_SPACES_VIDEO_DECODE: "software" }, "")).toEqual([["disable-accelerated-video-decode"]]);
   });
 
   it("appends them to Electron's command line", () => {
@@ -37,7 +38,12 @@ describe("hardware video decode", () => {
 describe("the video bench's environment", () => {
   it("reads the Swift app's hook names, with the report's window", () => {
     expect(videoBenchEnv({})).toEqual({ bench: null, stats: null, report: null, warmupSeconds: 12, seconds: 30 });
-    const b = videoBenchEnv({ CUA_SPACES_VIDEO_BENCH: "local:a", CUA_SPACES_VIDEO_REPORT: "/r.json", CUA_SPACES_VIDEO_SECONDS: "20", CUA_SPACES_VIDEO_WARMUP: "x" });
+    const b = videoBenchEnv({
+      CUA_SPACES_VIDEO_BENCH: "local:a",
+      CUA_SPACES_VIDEO_REPORT: "/r.json",
+      CUA_SPACES_VIDEO_SECONDS: "20",
+      CUA_SPACES_VIDEO_WARMUP: "x",
+    });
     expect(b).toEqual({ bench: "local:a", stats: null, report: "/r.json", warmupSeconds: 12, seconds: 20 });
     expect(countsVideo(b)).toBe(true);
     expect(countsVideo(videoBenchEnv({ CUA_SPACES_VIDEO_BENCH: "local:a" }))).toBe(false);
@@ -54,7 +60,18 @@ describe("the video bench's report", () => {
 
   it("counts fps as frames presented per second over the window, and drops as arrived but never painted", () => {
     const before = { spaceId: "local:a", tier: "full", decoded: 100, presented: 100, received: 102, painted: 98, latencyMs: [50, 50], decodeMs: [5] };
-    const after = { spaceId: "local:a", tier: "full", decoded: 700, presented: 700, received: 712, painted: 688, latencyMs: [50, 50, 20, 22, 24, 30], decodeMs: [5, 4, 6], size: "1920x1080", failure: null };
+    const after = {
+      spaceId: "local:a",
+      tier: "full",
+      decoded: 700,
+      presented: 700,
+      received: 712,
+      painted: 688,
+      latencyMs: [50, 50, 20, 22, 24, 30],
+      decodeMs: [5, 4, 6],
+      size: "1920x1080",
+      failure: null,
+    };
     const r = streamReport(before, after, 10);
     expect(r).toMatchObject({ fps: 60, decoded: 600, presented: 600, received: 610, painted: 590, dropped: 20, droppedPercent: 3.3, size: "1920x1080" });
     // Only the window's samples (the newest `painted`), as many as are kept.
@@ -74,7 +91,21 @@ describe("the video bench's report", () => {
     const r = videoReport("swift", before, after, { cpu: [12, 14, 16], memoryMB: [270, 272] });
     expect(r).toMatchObject({ app: "swift", seconds: 30, cpuPercent: 14, cpuMax: 16, memoryMB: 271 });
     expect(r.tiles).toEqual([
-      { spaceId: "local:a", tier: "tile", fps: 10, decoded: 300, presented: 300, received: null, painted: null, dropped: null, droppedPercent: null, latencyMs: null, decodeMs: null, size: "960x600", failure: null },
+      {
+        spaceId: "local:a",
+        tier: "tile",
+        fps: 10,
+        decoded: 300,
+        presented: 300,
+        received: null,
+        painted: null,
+        dropped: null,
+        droppedPercent: null,
+        latencyMs: null,
+        decodeMs: null,
+        size: "960x600",
+        failure: null,
+      },
     ]);
     expect(r.full[0]).toMatchObject({ spaceId: "local:b", fps: 59.7, presented: 1790 });
   });

@@ -137,19 +137,12 @@ export const USAGE_REFRESH_MS = 10_000;
 
 /** The selected Space's detail (`spaces::sidebar::detail_live`). */
 /** `hostArch`: this Mac's CPU architecture; a local Space of another one
- * warns on its Architecture (emulated). With `experiments`, what Settings,
- * Experiments hides is left out (Share while Sharing is off). */
-export function spaceDetail(
-  space: Space,
-  usage?: SpaceUsage | null,
-  hostArch?: string | null,
-  experiments?: import("./experiments").Experiments | null,
-): SpaceDetailView {
+ * warns on its Architecture (emulated). */
+export function spaceDetail(space: Space, usage?: SpaceUsage | null, hostArch?: string | null): SpaceDetailView {
   return core("sidebar.detail", {
     space,
     usage: usage ?? null,
     hostArch: hostArch ?? null,
-    experiments: experiments ?? null,
   });
 }
 
@@ -166,9 +159,7 @@ export interface StreamSectionInput {
   query?: string;
 }
 
-export type StreamRowIcon =
-  | { kind: "os"; id: string }
-  | { kind: "app"; appName: string; appId: string; pid: number };
+export type StreamRowIcon = { kind: "os"; id: string } | { kind: "app"; appName: string; appId: string; pid: number };
 
 export interface StreamRow {
   /** "desktop" or the window's handle. */
@@ -243,8 +234,7 @@ export const deleteFailedText = (name: string, error: string): string =>
   core("sidebar.deleteFailedText", { name, error });
 
 /** The power button of a Space, when it turns off and on. */
-export const powerButton = (space: Space): PowerButton | null =>
-  core("sidebar.powerButton", { space });
+export const powerButton = (space: Space): PowerButton | null => core("sidebar.powerButton", { space });
 
 export interface MainChrome {
   title: string;

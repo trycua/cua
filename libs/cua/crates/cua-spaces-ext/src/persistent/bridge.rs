@@ -40,7 +40,21 @@ use cua_spaces::{Error, Result, Spaces};
 const MAX_LINE: usize = 16 * 1024 * 1024;
 
 /// Server instructions the agent sees.
-pub const INSTRUCTIONS: &str = "Cua: tools for a persistent agent. Your Space has a thread where people and other agents talk: thread_read reads it, thread_post posts (an @name of another agent gives it a task), thread_inbox lists the tasks addressed to you, thread_claim takes one and thread_reply answers it and marks it done. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
+const BASE_INSTRUCTIONS: &str = "Cua: tools for a persistent agent. Your Space has a thread where people and other agents talk: thread_read reads it, thread_post posts (an @name of another agent gives it a task), thread_inbox lists the tasks addressed to you, thread_claim takes one and thread_reply answers it and marks it done. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
+
+/// What the agent's MCP server tells it at `initialize`: its tools, then how
+/// to do long work and how to share a Space with other agents (the texts the
+/// join result and the bundled skill carry too).
+pub fn instructions() -> &'static str {
+    static TEXT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "{BASE_INSTRUCTIONS} {} {}",
+            cua_spaces_contract::LONG_WORK_STEPS,
+            cua_spaces_contract::COORDINATION_STEPS
+        )
+    });
+    TEXT.as_str()
+}
 
 /// Per-run pipe state kept by the supervisor.
 #[derive(Default)]
@@ -61,7 +75,7 @@ pub fn server(
     McpServer::new(spaces.clone())
         .with_filter(Arc::new(|_| false))
         .with_name("cua-agent")
-        .with_instructions(INSTRUCTIONS)
+        .with_instructions(instructions())
         .with_extension(Arc::new(AgentTools {
             persistent,
             agent: rec.name.clone(),
@@ -220,6 +234,25 @@ fn tool(name: &str, description: &str, input: Value, read_only: bool) -> Value {
                            "idempotentHint": read_only, "openWorldHint": true}})
 }
 
+/// `space_job` as this agent sees it: the contract's tool for its own Space
+/// (no `space` argument).
+fn space_job_tool() -> Value {
+    let contract = cua_spaces_contract::tool("space_job").expect("space_job is a contract tool");
+    let mut input = contract.input_schema.clone();
+    if let Some(p) = input.get_mut("properties").and_then(Value::as_object_mut) {
+        p.remove("space");
+    }
+    if let Some(r) = input.get_mut("required").and_then(Value::as_array_mut) {
+        r.retain(|x| x != "space");
+    }
+    tool(
+        "space_job",
+        &format!("{} {}", contract.description, contract.instructions),
+        input,
+        false,
+    )
+}
+
 fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str> {
     a.get(k)
         .and_then(Value::as_str)
@@ -229,6 +262,7 @@ fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str> {
 impl AgentTools {
     async fn call(&self, tool: &str, a: Value) -> Result<ToolOutcome> {
         match tool {
+            "repo_push" => self.repo_push(&a).await,
             "notify_user" => {
                 let title = str_arg(&a, "title")?;
                 let body = a.get("body").and_then(Value::as_str).unwrap_or("");
@@ -247,7 +281,11 @@ impl AgentTools {
                 crate::drive_tools::drive_tool_synced(
                     &self.persistent.drive,
                     feed.as_deref(),
-                    cua_volume::Context::agent(&self.agent, Some(&self.space)),
+                    crate::drive_runtime::agent_context(
+                        &self.persistent.spaces,
+                        &self.agent,
+                        Some(&self.space),
+                    ),
                     tool,
                     a,
                 )
@@ -256,7 +294,11 @@ impl AgentTools {
             "volume_sync_status" => Ok(ToolOutcome::json(
                 &crate::drive_tools::sync_status_for(
                     &self.persistent.spaces,
-                    &cua_volume::Context::agent(&self.agent, Some(&self.space)),
+                    &crate::drive_runtime::agent_context(
+                        &self.persistent.spaces,
+                        &self.agent,
+                        Some(&self.space),
+                    ),
                 )
                 .await?,
             )),
@@ -274,7 +316,11 @@ impl AgentTools {
                 let write = a.get("mode").and_then(Value::as_str) == Some("rw");
                 let out = crate::drive_tools::drive_tool(
                     &self.persistent.drive,
-                    cua_volume::Context::agent(&self.agent, Some(&self.space)),
+                    crate::drive_runtime::agent_context(
+                        &self.persistent.spaces,
+                        &self.agent,
+                        Some(&self.space),
+                    ),
                     tool,
                     a,
                 )
@@ -380,8 +426,38 @@ impl AgentTools {
             "thread_read" | "thread_post" | "thread_inbox" | "thread_claim" | "thread_reply" => {
                 self.thread_tool(tool, a).await
             }
+            "space_job" => self.space_job(a).await,
             other => Err(Error::NotFound(format!("tool {other}"))),
         }
+    }
+
+    /// `space_job` in this agent's own Space (whatever `space` says). With
+    /// `notify` the job's end is a task for this agent in the Space's thread.
+    async fn space_job(&self, mut a: Value) -> Result<ToolOutcome> {
+        if let Some(o) = a.as_object_mut() {
+            o.insert("space".into(), json!(self.space));
+        }
+        let args: cua_spaces_contract::inputs::SpaceJob = serde_json::from_value(a)
+            .map_err(|e| Error::invalid(format!("space_job: {e} (see the tool's inputSchema)")))?;
+        let space = self.persistent.spaces.space(&self.space).await?;
+        let mut out = space.job(&args).await?;
+        if args.action == "start" && args.notify.unwrap_or(false) {
+            let caller = Caller::Agent {
+                name: self.agent.clone(),
+                space: self.space.clone(),
+            };
+            out["notify"] = match self.persistent.watch_job(
+                &caller,
+                &self.space,
+                out["job"].as_str().unwrap_or_default(),
+                out["name"].as_str().unwrap_or_default(),
+                args.wake.as_deref(),
+            ) {
+                Ok(_) => json!({"registered": true}),
+                Err(e) => json!({"registered": false, "reason": e.to_string()}),
+            };
+        }
+        Ok(ToolOutcome::json(&out))
     }
 
     /// The thread tools, as this agent in its own Space (the author and
@@ -446,6 +522,7 @@ impl AgentTools {
                         ))
                     }),
                     answer: None,
+                    client_id: None,
                 })
                 .await?}))),
             "thread_inbox" => Ok(ToolOutcome::json(&json!({"tasks": t.inbox(None)?}))),
@@ -471,6 +548,194 @@ impl AgentTools {
     }
 }
 
+impl AgentTools {
+    fn host_audit(&self) -> cua_volume::audit::AuditLog {
+        cua_volume::audit::AuditLog::new(self.persistent.dir.join("host-tools-audit.jsonl"))
+    }
+
+    fn audit(&self, action: &str, what: &str, detail: &str) {
+        if let Err(e) =
+            self.host_audit()
+                .append(&format!("agent:{}", self.agent), action, what, detail)
+        {
+            tracing::warn!("host tools audit: {e}");
+        }
+    }
+
+    /// `repo_push`: the host pushes a repository of a Space to GitHub once
+    /// the owner says yes. The Space never holds the connection.
+    async fn repo_push(&self, a: &Value) -> Result<ToolOutcome> {
+        use crate::persistent::host_tools as ht;
+        let repo = str_arg(a, "repo")?;
+        let branch = str_arg(a, "branch")?;
+        let path = str_arg(a, "path")?;
+        if !ht::valid_repo(repo) {
+            return Err(Error::invalid("`repo` must look like owner/name"));
+        }
+        if !ht::valid_branch(branch) {
+            return Err(Error::invalid("`branch` is not a valid branch name"));
+        }
+        if path.contains('\n') || path.contains('\0') {
+            return Err(Error::invalid("`path` is not a valid path"));
+        }
+        let host = a
+            .get("host")
+            .and_then(Value::as_str)
+            .unwrap_or(cua_spaces::agents::github_auth::DEFAULT_HOST);
+        if !cua_spaces::agents::github_auth::valid_host(host) {
+            return Err(Error::invalid("`host` is not a valid GitHub host name"));
+        }
+        let mut req = ht::PushRequest {
+            repo: repo.into(),
+            host: host.into(),
+            ssh_remote: false,
+            branch: branch.into(),
+            title: a
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or(branch)
+                .into(),
+            body: a.get("body").and_then(Value::as_str).unwrap_or("").into(),
+            open_pr: a.get("open_pr").and_then(Value::as_bool).unwrap_or(true),
+            base: a.get("base").and_then(Value::as_str).map(String::from),
+        };
+        let conn = {
+            let h = host.to_string();
+            // Asking `gh` who is signed in runs a program: off the async threads.
+            tokio::task::spawn_blocking(move || ht::GithubConnection::from_host(&h))
+                .await
+                .map_err(|e| Error::invalid(e.to_string()))?
+        };
+        // A developer override of where pushes go, in a build that does not
+        // allow one: nothing is measured or asked.
+        if let Some(e) = conn.blocked() {
+            self.audit(
+                "denied",
+                ht::REPO_PUSH,
+                "pushes are redirected by the environment",
+            );
+            return Err(e);
+        }
+        // Switched off by the person: nothing is measured or asked.
+        if conn.is_off() {
+            self.audit(
+                "denied",
+                ht::REPO_PUSH,
+                "GitHub is switched off for this host",
+            );
+            return Err(conn.refusal());
+        }
+        let from = a
+            .get("from_space")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.space);
+        let space = self.persistent.spaces.space(from).await?;
+        let bundle = format!("/tmp/cua-push-{}.bundle", self.run_id);
+        let m = ht::measure_in_space(&space, path, &bundle).await?;
+        req.ssh_remote = m.ssh_remote;
+        // What the card is about, bound to the content: the full commit and
+        // the numbers git can recompute from it. After the answer the host
+        // checks the bundle against exactly this before pushing.
+        let binding = ht::Binding::from(&m);
+        let limits = ht::PushLimits::from_env();
+        if !conn.ready(m.ssh_remote) {
+            let _ = space
+                .bash(
+                    &format!("rm -f {}", ht::sh_quote(&bundle)),
+                    std::time::Duration::from_secs(20),
+                )
+                .await;
+            self.audit("denied", ht::REPO_PUSH, "no GitHub sign-in");
+            return Err(conn.refusal());
+        }
+        let account = conn.account(m.ssh_remote);
+        let (text, details) = ht::card(
+            &self.agent,
+            &req,
+            &m,
+            from,
+            &account,
+            conn.can_open_pr(m.ssh_remote),
+        );
+        let store = self.persistent.thread_store(&self.space);
+        self.audit("ask", &format!("{repo}#{branch}"), &details);
+        // What the apps draw: the diffstat per file, the commits, the branches.
+        let opens = req.open_pr && conn.can_open_pr(m.ssh_remote);
+        let card = crate::persistent::push_card::for_push(
+            &space,
+            path,
+            &self.agent,
+            repo,
+            branch,
+            req.base.as_deref(),
+            &m.head,
+            &m.base,
+            opens.then_some((req.title.as_str(), req.body.as_str())),
+            req.open_pr && !opens,
+            Some(account.as_str()),
+            from,
+        )
+        .await;
+        let (seq, decision) = match ht::ask_owner_card(
+            &store,
+            ht::REPO_PUSH,
+            &text,
+            &details,
+            card,
+            ht::ASK_TIMEOUT,
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                self.audit("timeout", &format!("{repo}#{branch}"), "no answer");
+                return Err(e);
+            }
+        };
+        let fetch = || ht::fetch_bundle(&space, &bundle, &limits);
+        match ht::release(decision, &conn, &req, &binding, &limits, fetch).await {
+            Ok(ht::Released::Declined(note)) => {
+                self.audit("declined", &format!("{repo}#{branch}"), &note);
+                Ok(ToolOutcome::json(&json!({
+                    "pushed": false, "approval": seq,
+                    "reason": "the owner said not now", "note": note})))
+            }
+            Ok(ht::Released::Stopped { card, detail }) => {
+                // The owner said yes to code that is not what is there now
+                // (or it could not be read): nothing was pushed, and the
+                // thread says so under the card.
+                self.audit("stopped", &format!("{repo}#{branch}"), &detail);
+                let mut note = crate::thread::Draft::note("host", None, ht::sentence(&card));
+                note.reply_to = Some(seq);
+                if let Err(e) = store.append(note) {
+                    tracing::warn!("push stopped note: {e}");
+                }
+                Err(Error::invalid(if card == detail {
+                    card
+                } else {
+                    format!("{card} ({detail})")
+                }))
+            }
+            Ok(ht::Released::Pushed(done)) => {
+                self.audit(
+                    "pushed",
+                    &format!("{repo}#{branch}"),
+                    &format!("{} as {account}", done.commit),
+                );
+                Ok(ToolOutcome::json(&json!({
+                    "pushed": true, "approval": seq, "repo": repo,
+                    "branch": branch, "commit": done.commit, "account": account,
+                    "pull_request": done.pull_request,
+                    "open_pull_request_at": done.compare_url})))
+            }
+            Err(e) => {
+                self.audit("failed", &format!("{repo}#{branch}"), &e.to_string());
+                Err(e)
+            }
+        }
+    }
+}
+
 const NAMES: &[&str] = &[
     "notify_user",
     "volume_ls",
@@ -487,12 +752,31 @@ const NAMES: &[&str] = &[
     "thread_inbox",
     "thread_claim",
     "thread_reply",
+    "space_job",
+    "repo_push",
 ];
 
 #[async_trait::async_trait]
 impl ToolExtension for AgentTools {
     fn tools(&self) -> Vec<Value> {
-        vec![
+        let tools = vec![
+            tool(
+                "repo_push",
+                "Push a committed repository from a Space to GitHub and open a pull request. The host does it after the user approves a card showing what changes; you hold no GitHub access and the user can say no. Commit your work first. Returns the pull request URL.",
+                schema(
+                    json!({"path": {"type": "string", "description": "The repository folder in the Space."},
+                           "repo": {"type": "string", "description": "owner/name on GitHub."},
+                           "branch": {"type": "string", "description": "The branch to create."},
+                           "title": {"type": "string", "description": "Pull request title."},
+                           "body": {"type": "string", "description": "Pull request description."},
+                           "open_pr": {"type": "boolean", "description": "Open a pull request (default true)."},
+                           "base": {"type": "string", "description": "Target branch (default: the repository's)."},
+                           "host": {"type": "string", "description": "The GitHub host (default github.com; a GitHub Enterprise host name otherwise)."},
+                           "from_space": {"type": "string", "description": "The Space holding the repository (default: yours)."}}),
+                    &["path", "repo", "branch"],
+                ),
+                false,
+            ),
             tool(
                 "notify_user",
                 "Tell your user something in the Cua app, as a notification (for example \"Your research is ready\"). Use it for results they asked for or when you need them; not for progress chatter.",
@@ -590,7 +874,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "thread_post",
-                "Post to your Space's thread, as yourself. @name of another agent member gives it a task. Never post secrets.",
+                "Post to your Space's thread, as yourself. An explicit @name of another agent member gives it a task, within limits: a chain stops after 3 agent to agent hops from a person's message and a Space allows 20 such wakes a minute. Never post secrets.",
                 schema(
                     json!({"text": {"type": "string"},
                               "reply_to": {"type": "integer", "description": "The seq this answers."},
@@ -601,6 +885,7 @@ impl ToolExtension for AgentTools {
                 ),
                 false,
             ),
+            space_job_tool(),
             tool(
                 "thread_inbox",
                 "The open tasks addressed to you, oldest first.",
@@ -624,7 +909,8 @@ impl ToolExtension for AgentTools {
                 ),
                 false,
             ),
-        ]
+        ];
+        tools
     }
 
     async fn call(&self, tool: &str, arguments: Value) -> Option<ToolOutcome> {

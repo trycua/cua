@@ -8,7 +8,18 @@
  * names the composer's `@` picker offers.
  */
 
-import { DEFAULT_AGENT_RIGHTS, type AgentMember, type AgentRight, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadAuthor, type ThreadEntry, type ThreadRole } from "@/bridge";
+import {
+  DEFAULT_AGENT_RIGHTS,
+  type ThreadFailure,
+  type AgentMember,
+  type AgentRight,
+  type AgentRights,
+  type MemberIdentity,
+  type ShareEntry,
+  type ThreadAuthor,
+  type ThreadEntry,
+  type ThreadRole,
+} from "@/bridge";
 import type { MentionCandidate } from "@/lib/mentions";
 
 export interface RosterAgent {
@@ -34,6 +45,8 @@ export interface RosterAgent {
   collides: boolean;
   /** What the Space calls it (`@claude`); `name` is its key on this machine (`claude-2` in a second Space). */
   handle: string;
+  /** Why it failed, typed, with the complete text (the member list says one word; Show details has the rest). */
+  failure: ThreadFailure | null;
 }
 
 /** How an author shows in the thread. */
@@ -106,7 +119,8 @@ const LOOP_QUIET_MS = 2 * 60_000;
 
 /** The line under an idle agent's name: a connected one that is not watching the thread (a CLI session that runs only when prompted) says it waits for you; others say where they post from. */
 export function idleCaption(identity: MemberIdentity, nowMs = Date.now()): string {
-  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS)) return "Waits for you to message it";
+  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS))
+    return "Waits for you to message it";
   return postsFrom(identity);
 }
 
@@ -128,6 +142,8 @@ export function buildRoster(input: {
   harnessName: (harness: string) => string;
   /** Your role in the Space (null: a daemon that doesn't say, the owner's). */
   role?: ThreadRole | null;
+  /** Whose Space it is, when it was shared with you: only the owner sees the share list, so a guest learns the owner from here. */
+  owner?: { name: string; email?: string | null } | null;
 }): Roster {
   const agents: RosterAgent[] = input.members.map((m) => ({
     kind: "agent",
@@ -145,6 +161,7 @@ export function buildRoster(input: {
     rights: m.rights ?? DEFAULT_AGENT_RIGHTS,
     youCan: m.youCan ?? { task: true, control: true, approve: true },
     identity: m.identity,
+    failure: m.status === "failed" ? (m.failure ?? null) : null,
     collides: false,
   }));
   const colliding = collidingNames(agents);
@@ -165,6 +182,12 @@ export function buildRoster(input: {
   const mine = input.me ? posted.get(input.me) : undefined;
   const myLabel = mine?.name || (input.identity ? personLabel(input.identity) : "You");
   add({ kind: "person", id: input.me ?? "me", label: myLabel, me: true }, input.me ?? "me", myLabel.toLowerCase());
+  if (input.owner) {
+    const label = input.owner.name || personLabel(input.owner.email ?? "");
+    const key = `share:${input.owner.email ?? label}`;
+    const author = [...posted.values()].find((a) => a.name.toLowerCase() === label.toLowerCase());
+    add({ kind: "person", id: author?.id ?? key, label, me: false }, author?.id ?? key, label.toLowerCase());
+  }
   for (const s of input.shares) {
     const label = personLabel(s.who);
     const author = [...posted.values()].find((a) => a.name.toLowerCase() === label.toLowerCase());

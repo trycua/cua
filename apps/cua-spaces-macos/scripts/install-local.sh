@@ -62,8 +62,8 @@
 # macOS asks for the renamed app's permissions once; the old id's permission rows
 # stay in macOS's list (macOS cannot clear them for an app that is gone), unused.
 #
-# Signing: the stable local certificate shared with Cua Driver's local install
-# (libs/cua-driver/scripts/_local-signing.sh), so the Screen Recording and
+# Signing: a stable local certificate (the one Cua Driver's local install
+# makes, libs/cua-driver/scripts/_local-signing.sh), so the Screen Recording and
 # Accessibility grants of Cua Spaces Local survive a rebuild. Without it the
 # bundle is signed ad hoc and the grants reset on every rebuild (reported).
 # On a fresh Keychain the certificate is created, but codesign cannot use it
@@ -76,6 +76,15 @@
 # terminal, no screen) it prints the exact commands instead. It never trusts
 # anything without that, never changes which certificate is used, and a
 # certificate-backed signature is still what it checks for.
+# The certificate lives in a Keychain this script owns,
+# ~/Library/Keychains/cua-spaces-local-signing.keychain-db (empty password, so
+# nothing is asked to unlock it and a locked login Keychain does not matter).
+# It writes nothing to your login Keychain; it reuses a certificate already
+# there, or the Keychain Cua Driver's local install made, as before.
+# By default it signs ad hoc (no certificate, no Keychain prompt at all);
+# CUA_LOCAL_SIGN=stable, --setup-signing or --require-stable-signing use the
+# stable certificate. CUA_LOCAL_SIGN=adhoc forces ad hoc. CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 turns the own Keychain off. When nothing works the app is
+# signed ad hoc and the script says why in one line.
 #
 # Uninstall: scripts/uninstall-local.sh.
 set -euo pipefail
@@ -123,6 +132,17 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+# Ad hoc signing is the default: no certificate, no Keychain, no prompt. The
+# stable certificate (permissions that survive rebuilds) is opt-in with
+# --setup-signing, --require-stable-signing or CUA_LOCAL_SIGN=stable.
+if [ -z "${CUA_LOCAL_SIGN:-}" ]; then
+    if [ "$SETUP_SIGNING" = 1 ] || [ "$REQUIRE_STABLE_SIGNING" = 1 ]; then
+        CUA_LOCAL_SIGN=stable
+    else
+        CUA_LOCAL_SIGN=adhoc
+    fi
+fi
 
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
     die "do not run this script with sudo or as root."
@@ -189,7 +209,18 @@ case "${CARGO_TARGET_DIR:-/}" in
     /*) ;;
     *) die "CARGO_TARGET_DIR must be an absolute path (got: $CARGO_TARGET_DIR)." ;;
 esac
-SPACESD_BIN="${CARGO_TARGET_DIR:-$SPACESD_DIR/target}/release/cua-spacesd"
+# libs/cua and libs/cua-spacesd are separate Cargo workspaces (libs/cua pins its
+# toolchain in rust-toolchain.toml), so they must not share a target directory:
+# artifacts from one toolchain break the other (E0463 "can't find crate for
+# zeroize_derive"). A set CARGO_TARGET_DIR is used as a parent, one subdirectory
+# per workspace.
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    SPACESD_TARGET_DIR="$CARGO_TARGET_DIR/cua-spacesd"
+    export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/cua"
+else
+    SPACESD_TARGET_DIR="$SPACESD_DIR/target"
+fi
+SPACESD_BIN="$SPACESD_TARGET_DIR/release/cua-spacesd"
 
 [ -x "$BUILD_SCRIPT" ] || die "missing $BUILD_SCRIPT"
 [ -f "$SIGNING_LIB" ] || die "missing $SIGNING_LIB (the stable local signing shared with Cua Driver)"
@@ -306,21 +337,38 @@ echo ""
 
 # --- Build -----------------------------------------------------------------------
 
-# The web UI first (as the release build does: pnpm install --frozen-lockfile,
-# pnpm build, which builds the app core's WebAssembly and then the pages): it
-# is the quick one to fail. CI=true keeps pnpm from asking questions.
+# The web UI (as the release build does: pnpm install --frozen-lockfile,
+# pnpm build, which builds the app core's WebAssembly and then the pages).
+# CI=true keeps pnpm from asking questions. Its build shares no target directory with the Rust build below, so
+# the two run side by side (a cold wasm build is minutes). Its output goes to a
+# log that is shown when it fails.
+WEB_PID=""
+WEB_BUILD_LOG=""
 if [ "$BUILD_WEB" = 1 ]; then
-    log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build)"
-    if ! (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build); then
+    log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build) in the background"
+    WEB_BUILD_LOG="$(mktemp -t cua-local-webui)"
+    (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build) >"$WEB_BUILD_LOG" 2>&1 &
+    WEB_PID=$!
+fi
+wait_for_web_ui() {
+    [ -n "$WEB_PID" ] || return 0
+    if wait "$WEB_PID"; then
+        ok "the web UI is built"
+        rm -f "$WEB_BUILD_LOG"
+    else
+        cat "$WEB_BUILD_LOG" >&2
+        rm -f "$WEB_BUILD_LOG"
         die "the web UI build failed (see above). Nothing was installed."
     fi
-fi
-if [ ! -f "$WEBUI_DIST/index.html" ]; then
-    web_ui_missing
-    exit 1
-fi
-
+    WEB_PID=""
+}
 if [ "$SKIP_RUST_BUILD" = 0 ]; then
+    # sccache, when installed, shares compiled crates between checkouts and
+    # survives a cargo clean. A set $RUSTC_WRAPPER (even empty) overrides this.
+    if [ -z "${RUSTC_WRAPPER+x}" ] && command -v sccache >/dev/null 2>&1; then
+        export RUSTC_WRAPPER=sccache
+        log "using sccache for the Rust builds"
+    fi
     if ! command -v cargo >/dev/null 2>&1 && [ -f "$HOME/.cargo/env" ]; then
         # shellcheck disable=SC1091
         . "$HOME/.cargo/env"
@@ -332,7 +380,27 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
     (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli)
     "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
     log "building cua-spacesd from this checkout (cargo, release)"
-    (cd "$SPACESD_DIR" && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
+    (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
+fi
+# The network gateway (cua-netgw, Go): VM Spaces behind the secure default network, and every
+# child Space of a VM tree, need it next to `cua`. Without it a child Space an agent makes
+# inside a Space is refused ("cua-netgw is not installed"). Built when Go is installed.
+if [ -z "${CUA_NETGW_BIN:-}" ]; then
+    if command -v go >/dev/null 2>&1; then
+        log "building the network gateway (cua-netgw)"
+        if "$REPO_ROOT/libs/cua/netgw/build.sh" "$BUILD_OUT/.netgw" >/dev/null; then
+            export CUA_NETGW_BIN="$BUILD_OUT/.netgw/cua-netgw"
+        else
+            err "the network gateway did not build: VM Spaces and child Spaces will be refused in this build."
+        fi
+    else
+        err "Go is not installed, so cua-netgw is not bundled: VM Spaces and child Spaces will be refused in this build (brew install go)."
+    fi
+fi
+wait_for_web_ui
+if [ ! -f "$WEBUI_DIST/index.html" ]; then
+    web_ui_missing
+    exit 1
 fi
 [ -x "$SPACESD_BIN" ] || die "cargo did not produce $SPACESD_BIN"
 
@@ -481,6 +549,81 @@ signing_probe_locked() {
     return 1
 }
 
+# The Keychain this script owns for the stable local certificate. Its password
+# is empty on purpose: the certificate only signs development builds of Cua
+# Spaces Local on this Mac, and an empty password lets the script unlock it
+# anywhere (SSH, a VM) without asking. It is never the login Keychain.
+OWNED_SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-spaces-local-signing.keychain-db"
+OWNED_SIGNING=0
+OWNED_SIGNING_ERROR=""
+
+# Whether the login Keychain is locked and cannot be asked to unlock (an SSH
+# session): only looked at there, so nothing ever opens an unlock window.
+login_keychain_locked() {
+    local login="$HOME/Library/Keychains/login.keychain-db" rc=0
+    [ -n "${SSH_CONNECTION:-}" ] && [ -f "$login" ] || return 1
+    security_bounded 5 find-generic-password -s cua-local-lock-probe "$login" >/dev/null 2>&1 || rc=$?
+    [ "$rc" != 0 ] && [ "$rc" != 44 ]
+}
+security_bounded() {
+    local seconds="$1"
+    shift
+    perl -e 'alarm shift; exec @ARGV' "$seconds" security "$@"
+}
+
+# Picks the Keychain the stable local certificate is made in, unless something
+# already decides it: CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN or _IDENTITY (your
+# choice), the dedicated Keychain of Cua Driver's local install, or a stable
+# local certificate already in the login Keychain (it keeps signing as before,
+# so permissions granted to it survive). Otherwise it creates and unlocks its
+# own Keychain and points the shared helpers at it. Never writes to the login
+# Keychain and never changes the Keychain search list.
+choose_signing_keychain() {
+    local login="$HOME/Library/Keychains/login.keychain-db"
+    [ "$OS" = Darwin ] && command -v security >/dev/null 2>&1 || return 0
+    [ "${CUA_LOCAL_SIGNING_OWN_KEYCHAIN:-1}" != 0 ] || return 0
+    [ -z "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ] || return 0
+    [ -z "${CUA_DRIVER_LOCAL_SIGNING_IDENTITY:-}" ] || return 0
+    [ ! -f "$HOME/Library/Keychains/cua-driver-signing.keychain-db" ] || return 0
+    if [ -f "$login" ] && security find-certificate -c "$CUA_LOCAL_SIGN_CN" "$login" >/dev/null 2>&1; then
+        return 0
+    fi
+    OWNED_SIGNING=1
+    # Whatever happens next, the shared helpers must not fall back to the login Keychain.
+    export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$OWNED_SIGNING_KEYCHAIN"
+    if [ ! -f "$OWNED_SIGNING_KEYCHAIN" ]; then
+        mkdir -p "$(dirname "$OWNED_SIGNING_KEYCHAIN")" 2>/dev/null || true
+        if ! OWNED_SIGNING_ERROR="$(security create-keychain -p "" "$OWNED_SIGNING_KEYCHAIN" 2>&1)"; then
+            return 0
+        fi
+        # create-keychain may add the new one to the search list on some
+        # macOS versions; this script leaves the list as it found it.
+    fi
+    # No auto-lock timeout, then unlock it (a no-op when it is open).
+    security set-keychain-settings "$OWNED_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+    if ! OWNED_SIGNING_ERROR="$(security unlock-keychain -p "" "$OWNED_SIGNING_KEYCHAIN" 2>&1)"; then
+        return 0
+    fi
+    OWNED_SIGNING_ERROR=""
+}
+
+# The one line that says why the app is signed ad hoc, and what to run.
+ad_hoc_reason() {
+    local kc
+    kc="$(local_signing_keychain)"
+    if [ "$OWNED_SIGNING" = 1 ] && [ -n "$OWNED_SIGNING_ERROR" ]; then
+        printf 'the script could not set up its signing Keychain (%s): %s' "$OWNED_SIGNING_KEYCHAIN" "$(printf '%s' "$OWNED_SIGNING_ERROR" | head -n 1)"
+    elif login_keychain_locked; then
+        printf 'the login Keychain is locked in this SSH session: run  security unlock-keychain "%s/Library/Keychains/login.keychain-db"  and build again' "$HOME"
+    elif [ "$SIGNING_PROBLEM" = locked ] || [ "$SIGNING_PROBLEM" = no-certificate ]; then
+        printf 'the Keychain %s is locked: run  security unlock-keychain "%s"  and build again' "$kc" "$kc"
+    elif [ -n "${CUA_DRIVER_LOCAL_SIGNING_IDENTITY:-}" ]; then
+        printf 'codesign cannot use the identity you chose (CUA_DRIVER_LOCAL_SIGNING_IDENTITY)'
+    else
+        printf 'macOS does not trust the local signing certificate yet: run  scripts/install-local.sh --setup-signing  once (one password prompt)'
+    fi
+}
+
 # Whether the Keychain exists but holds no stable local certificate although the
 # script just tried to create one (the shared helper swallows why it could not).
 signing_certificate_missing() {
@@ -532,9 +675,14 @@ print_signing_bootstrap() {
     if ! keychain_listed "$kc"; then
         echo "  security list-keychains -d user -s \"$kc\" \"$HOME/Library/Keychains/login.keychain-db\"" >&2
     fi
-    echo "  read -r -s -p 'Keychain password: ' KCPW; echo" >&2
-    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\$KCPW\" \"$kc\" >/dev/null; unset KCPW" >&2
-    echo "      (-l limits it to that certificate's key; do not drop it: without it every signing key in the Keychain is changed)" >&2
+    if [ "$OWNED_SIGNING" = 1 ]; then
+        # The script's own Keychain has an empty password and the script opens the key itself.
+        echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\" \"$kc\" >/dev/null" >&2
+    else
+        echo "  read -r -s -p 'Keychain password: ' KCPW; echo" >&2
+        echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\$KCPW\" \"$kc\" >/dev/null; unset KCPW" >&2
+        echo "      (-l limits it to that certificate's key; do not drop it: without it every signing key in the Keychain is changed)" >&2
+    fi
     echo "then run this script again, or run it with --setup-signing and it does this for you." >&2
 }
 
@@ -661,7 +809,11 @@ make_signing_identity_usable() {
         return 0
     fi
     # 3. codesign may use the key without a prompt. Needs the Keychain's
-    # password: asked here, used once, not stored.
+    # password: asked here, used once, not stored (ours has none).
+    if [ "$OWNED_SIGNING" = 1 ] && open_key_to_codesign "$kc" "" && signing_probe "$identity" "$macho"; then
+        ok "codesign can use the stable local certificate"
+        return 0
+    fi
     if [ -t 0 ]; then
         printf 'Password of the Keychain %s (used once, not stored): ' "$kc"
         read -r -s pw || pw=""
@@ -688,10 +840,20 @@ make_signing_identity_usable() {
 # has the certificate (never swap a working signature for an ad hoc one).
 sign_staged_app() {
     local app_stage="$1" app_dest="$2" sign_id requirement
-    sign_id="$(ensure_local_signing_identity)"
+    # CUA_LOCAL_SIGN=adhoc: sign ad hoc and never look for, create or use a
+    # certificate, so codesign never asks for a Keychain key ("codesign wants to
+    # access key id"). The grants then reset on each rebuild.
+    if [ "${CUA_LOCAL_SIGN:-}" = adhoc ]; then
+        sign_id="-"
+    else
+        choose_signing_keychain
+        sign_id="$(ensure_local_signing_identity)"
+    fi
     if [ "$sign_id" != "-" ]; then
+        # Our own Keychain has an empty password: codesign may use the key now.
+        if [ "$OWNED_SIGNING" = 1 ]; then open_key_to_codesign "$OWNED_SIGNING_KEYCHAIN" "" || true; fi
         make_signing_identity_usable "$sign_id" "$app_stage" || true
-    elif signing_certificate_missing; then
+    elif [ "${CUA_LOCAL_SIGN:-}" != adhoc ] && signing_certificate_missing; then
         SIGNING_PROBLEM=no-certificate
         warn "could not create the stable local certificate in $(local_signing_keychain): the Keychain is probably locked."
     fi
@@ -737,7 +899,7 @@ sign_staged_app() {
         err "could not verify the staged app's ad hoc requirement; the installed app was not changed."
         return 1
     fi
-    warn "$LOCAL_APP_DIR_NAME is signed ad hoc: its Screen Recording and Accessibility grants reset on the next rebuild."
+    warn "$LOCAL_APP_DIR_NAME is signed ad hoc because $(ad_hoc_reason). Its Screen Recording and Accessibility grants reset on the next rebuild."
     print_signing_bootstrap
 }
 

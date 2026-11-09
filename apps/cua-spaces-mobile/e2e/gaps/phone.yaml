@@ -1,0 +1,122 @@
+# Real screenshots of the new screens on an iPhone Simulator (sample data). Run by scripts/screenshots-gaps.sh with
+# -e NAME=<iphone-light>. The sample build is EXPO_PUBLIC_CUA_SAMPLE=1: made up data, every screen says so.
+appId: ai.cua.spaces.mobile
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Sample data. Not your account."
+- extendedWaitUntil:
+    visible: ".*Needs you.*"
+    timeout: 10000
+- takeScreenshot: home-new-${NAME}
+
+# --- Start a task ---
+- tapOn: "Start a task"
+- assertVisible: "What do you want to do?"
+- takeScreenshot: task-empty-${NAME}
+- tapOn:
+    id: "task-input"
+- inputText: "Fix the flaky websocket reconnect test"
+- tapOn:
+    id: "task-repo"
+- tapOn:
+    id: "task-repo-input"
+- inputText: "acme/checkout-api"
+- takeScreenshot: task-repo-${NAME}
+- tapOn:
+    id: "task-where"
+- assertVisible: "Let Cua decide"
+- takeScreenshot: task-where-${NAME}
+- tapOn:
+    text: "Let Cua decide"
+- tapOn:
+    id: "task-agent"
+- takeScreenshot: task-agent-${NAME}
+- tapOn:
+    text: "Claude Code"
+    index: 0
+- tapOn:
+    id: "task-start"
+- assertVisible: "Starting your task"
+- takeScreenshot: task-starting-${NAME}
+
+# --- The new task's thread: live tool rows while the agent works, then Queue ---
+- extendedWaitUntil:
+    visible: "Sample data"
+    timeout: 15000
+- extendedWaitUntil:
+    visible:
+      id: "tool-group"
+    timeout: 15000
+- tapOn:
+    id: "tool-group"
+- takeScreenshot: toolrows-running-${NAME}
+- tapOn:
+    id: "composer-input"
+- inputText: "and then open a pull request"
+- takeScreenshot: composer-queue-${NAME}
+- tapOn:
+    id: "composer-send"
+- takeScreenshot: composer-queued-${NAME}
+- tapOn: "Back to Spaces"
+
+# --- Approvals: n of m and scopes ---
+- tapOn: "Search Spaces, apps or agents"
+- inputText: "checkout-api"
+- tapOn:
+    text: "Claude Code.*"
+    index: 0
+- assertVisible: ".*1 of 2.*"
+- takeScreenshot: approvals-nofm-${NAME}
+
+# --- Diff review from the push card ---
+- tapOn:
+    id: "card-expander"
+- tapOn:
+    id: "card-open-diff"
+- assertVisible: ".*5 files.*"
+- takeScreenshot: diff-files-${NAME}
+- tapOn:
+    id: "diff-file-ws_reconnect.py"
+- assertVisible: ".*@@ -18,10.*"
+- takeScreenshot: diff-unified-${NAME}
+- tapOn:
+    id: "mode-words"
+- takeScreenshot: diff-words-${NAME}
+- tapOn:
+    id: "diff-back"
+- tapOn:
+    id: "diff-file-status.png"
+- assertVisible:
+    id: "preview-image"
+- takeScreenshot: diff-preview-${NAME}
+- tapOn:
+    id: "diff-back"
+- tapOn:
+    id: "diff-back"
+- tapOn: "Back to Spaces"
+
+# --- Offline: the states are honest ---
+- tapOn: "Account and settings"
+- assertVisible: "Pretend this phone is offline"
+- takeScreenshot: settings-${NAME}
+- tapOn:
+    id: "switch-offline"
+- tapOn: "Done"
+- extendedWaitUntil:
+    visible: ".*You're offline.*"
+    timeout: 20000
+- takeScreenshot: home-offline-${NAME}
+- tapOn: "Search Spaces, apps or agents"
+- eraseText: 40
+- inputText: "design-review"
+- tapOn:
+    text: "Reviewer.*"
+    index: 0
+- tapOn:
+    id: "composer-input"
+- inputText: "@reviewer check PR 413 as well"
+- tapOn:
+    id: "composer-send"
+- assertVisible: ".*Waiting for a connection.*"
+- takeScreenshot: thread-offline-queued-${NAME}

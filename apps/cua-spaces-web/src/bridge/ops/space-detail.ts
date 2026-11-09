@@ -260,7 +260,6 @@ export interface SpaceDetailOps {
   "spaces.sendFiles": { args: { spaceId: string; paths: string[] }; result: SentFileInfo[] };
 }
 
-
 /* ---- Hosts ------------------------------------------------------------------------- */
 
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -335,5 +334,6 @@ export const DETAIL_ARGS = {
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" as const },
+  "host.limits": { maxSpaces: 6 },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
 };

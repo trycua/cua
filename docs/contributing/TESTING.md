@@ -19,7 +19,7 @@ truth.
 | Cua Spaces app               | Vitest, Tauri Rust tests                                   | **CI: Cua Spaces**                                                                |
 | Installers                   | `scripts/install/tests`                                    | **CI: Installers** smoke jobs on Linux, macOS, and Windows                        |
 | Public docs                  | Generator drift, hygiene, links, and production build      | Rendered Fumadocs site                                                            |
-| Images and sandboxes         | Component build and schema tests; **CI: Check Image Refs** (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, image smoke tests  |
+| Images and sandboxes         | Component build and schema tests; the image-refs check in `bin/ci --quick` (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, image smoke tests  |
 
 Path-filtered CI avoids running unrelated operating systems, so a green job for
 one component does not validate another component.
@@ -89,7 +89,7 @@ Run from `libs/cua-spacesd`:
 
 ```bash
 cargo test --workspace --locked
-scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams
+scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams (shards: core, hosted, teleport)
 scripts/ci/relay-e2e.sh          # driver with no published ports behind cua-relay
 ```
 
@@ -140,6 +140,7 @@ Canonical entry points:
 ```text
 Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
 Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux niri:        CUA_E2E_WAYLAND_SESSION=niri scripts/ci/linux/run-rust-e2e-wayland.sh
 Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
 Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
 Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
@@ -147,7 +148,15 @@ Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:             scripts/ci/macos/run-rust-e2e.sh
 ```
 
-The hosted Sway and nested-compositor runners create controlled sessions.
+The hosted Sway, nested niri, and nested-compositor runners create controlled
+sessions. The niri lane covers floating-window and desktop-scope input only;
+tiled windows, overlapping floating windows, an open overview and more than one
+output are refused (see `libs/cua-driver/rust/Skills/cua-driver/LINUX.md`).
+Unit tests for bounded input workers and late-send refusal live in
+`platform-linux/src/input/action.rs` and `input/mod.rs`; niri pointer admission
+goes through `wayland::niri::prepare_target`. Window-coordinate niri input
+carries the window rectangle its point was translated against
+(`wayland::AimedPoint`) from the tool body to that gate.
 GNOME, KDE, real Xorg, Windows, and macOS use an existing graphical login. The
 suites are often maintainer-triggered and retain typed case/results,
 screenshots, accessibility state, trajectories, logs, and video where the lane

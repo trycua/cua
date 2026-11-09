@@ -348,7 +348,7 @@ export type SandboxImageList = {
 
 export const IMAGE_LIST_PATH = 'libs/images/sandbox-images.json';
 
-const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu'];
+const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu', 'derived_from'];
 
 /** The tag suffix each tier puts before `-disk`: `<os-version>[-<tier>][-disk]`. */
 const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode', docker: '-docker' };

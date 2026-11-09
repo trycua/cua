@@ -168,7 +168,7 @@ pub enum AgentCmd {
   cua --json agent harnesses")]
     Harnesses,
     /// The provider keys agents get, kept in the Keychain by the Cua daemon
-    /// (Cua Spaces → Settings → Connectors). Values are read from stdin and never
+    /// (Cua Spaces → Settings → Connections). Values are read from stdin and never
     /// printed.
     #[command(after_help = "Examples:
   cua agent keys
@@ -295,6 +295,15 @@ pub struct AddArgs {
     /// machine's name; default: this machine).
     #[arg(long, value_name = "MACHINE", requires = "durable")]
     pub(crate) on: Option<String>,
+    /// With --durable: drives allowed in total before the session fails
+    /// (default 5).
+    #[arg(long, value_name = "N", requires = "durable")]
+    pub(crate) max_attempts: Option<u32>,
+    /// With --durable: seconds the driver may write no output before it
+    /// counts as wedged, is cancelled and started again (default 120; 0:
+    /// never). Drivers print a heartbeat every quarter of it.
+    #[arg(long, value_name = "SECS", requires = "durable")]
+    pub(crate) stall_secs: Option<u32>,
     /// Schedule PROMPT every N minutes.
     #[arg(long, value_name = "MINUTES", requires = "prompt", conflicts_with_all = ["daily", "weekly"])]
     pub(crate) every: Option<i64>,
@@ -343,8 +352,8 @@ pub(crate) fn desugar(cmd: AgentCmd) -> Result<Vec<AgentCmd>, CuaError> {
                 follow: false,
                 durable,
                 on: a.on.clone(),
-                max_attempts: None,
-                stall_secs: None,
+                max_attempts: a.max_attempts,
+                stall_secs: a.stall_secs,
                 name: durable.then(|| a.name.clone()),
                 driver_cmd: None,
                 driver_bundle: None,
@@ -448,15 +457,26 @@ async fn follow(
     out: &mut dyn Write,
 ) -> Result<u64, CuaError> {
     // Bounded: at most 24 h of polling at 500 ms.
+    let mut last_event = std::time::Instant::now();
+    let mut warned = false;
     for _ in 0..172_800 {
         let page = run.events(cursor, Some(500)).await?;
         cursor = page.cursor;
         let mut done = false;
+        if !page.events.is_empty() {
+            last_event = std::time::Instant::now();
+            warned = false;
+        }
         for e in &page.events {
             if json || raw {
                 line(out, &e.json);
             } else if let Some(l) = &e.line {
                 line(out, l);
+            }
+            if e.kind == "error"
+                && let Some(h) = auth_hint(e.line.as_deref().unwrap_or(&e.json))
+            {
+                eprintln!("{}", crate::util::hint(h));
             }
             if matches!(e.kind.as_str(), "turn_ended" | "exited") {
                 done = true;
@@ -470,6 +490,25 @@ async fn follow(
             if s.status != "running" && !done {
                 break;
             }
+            match silence(last_event.elapsed(), warned) {
+                Silence::Fine => {}
+                Silence::Warn => {
+                    warned = true;
+                    eprintln!(
+                        "{}",
+                        crate::util::hint(&format!(
+                            "No output for {}s and the run still says \"working\". {SILENCE_NEXT_STEP}",
+                            SILENCE_WARN.as_secs()
+                        ))
+                    );
+                }
+                Silence::Fail => {
+                    return Err(CuaError::Env(format!(
+                        "The agent has said nothing for {}s, so it is probably stuck (a model key it could not use is the usual cause). {SILENCE_NEXT_STEP}",
+                        SILENCE_FAIL.as_secs()
+                    )));
+                }
+            }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
@@ -478,7 +517,7 @@ async fn follow(
 
 /// The harnesses with the readiness the Spaces server reports
 /// (`agent_capabilities`, which counts the keys saved in Cua Spaces →
-/// Settings → Connectors and the server's environment), so `cua agent
+/// Settings → Connections and the server's environment), so `cua agent
 /// harnesses`, MCP and the app agree. Without a server: the static list.
 async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
     let caps = cua
@@ -539,8 +578,64 @@ fn split_env_from_host(
     Ok((env, server))
 }
 
+/// `--wire` only describes `--base-url`; alone it would be ignored without a
+/// word, so refuse it.
+fn check_endpoint_flags(a: &RunArgs) -> Result<(), CuaError> {
+    if a.wire.is_some() && a.base_url.is_none() {
+        return Err(CuaError::InvalidArgument(
+            "--wire describes a custom endpoint, so it needs --base-url too (it would be ignored on its own)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// How long a followed run may say nothing before the CLI speaks up, and
+/// before it stops waiting. Claude Code retries a rejected key for about
+/// three minutes without a word; a run that is working prints within seconds.
+const SILENCE_WARN: Duration = Duration::from_secs(60);
+const SILENCE_FAIL: Duration = Duration::from_secs(240);
+
+#[derive(Debug, PartialEq, Eq)]
+enum Silence {
+    Fine,
+    Warn,
+    Fail,
+}
+
+/// What to do about `silent` time without an event; warns only once.
+fn silence(silent: Duration, warned: bool) -> Silence {
+    if silent >= SILENCE_FAIL {
+        Silence::Fail
+    } else if silent >= SILENCE_WARN && !warned {
+        Silence::Warn
+    } else {
+        Silence::Fine
+    }
+}
+
+const SILENCE_NEXT_STEP: &str = "If the provider key was not accepted, check it with `cua agent keys` \
+(replace it with `cua agent keys set anthropic`, or pass a valid one with --env-from-host), and check \
+--base-url/--wire if you set them. See what the agent did with `cua agent logs <space> <run> --raw`; \
+stop it with `cua agent stop <space> <run>`.";
+
+/// A plain-language next step for an authentication failure in `line`.
+fn auth_hint(line: &str) -> Option<&'static str> {
+    let l = line.to_ascii_lowercase();
+    let auth = l.contains("authenticat")
+        || l.contains("invalid x-api-key")
+        || l.contains("invalid api key")
+        || l.contains("incorrect api key")
+        || l.contains("api error: 401")
+        || l.contains("unauthorized");
+    auth.then_some(
+        "Your model key was not accepted. Run `cua agent keys set anthropic` (or openai, gemini) to save a valid one, or pass it with --env-from-host. If you use --base-url, the key must be one that endpoint accepts.",
+    )
+}
+
 /// The `agent_start` arguments for `cua agent run`.
 fn start_args(a: &RunArgs, space: &str) -> Result<serde_json::Value, CuaError> {
+    check_endpoint_flags(a)?;
     let (env, env_from_host) = split_env_from_host(&a.env_from_host, |n| std::env::var(n).ok())?;
     let mut files = vec![];
     for p in &a.files {
@@ -639,6 +734,12 @@ async fn start(
             if let Some(n) = n.as_str() {
                 eprintln!("note: {n}");
             }
+        }
+        if let Some(b) = &a.base_url {
+            eprintln!(
+                "note: using the model endpoint {b} (wire: {})",
+                a.wire.as_deref().unwrap_or("the harness's default")
+            );
         }
         eprintln!(
             "{}",
@@ -800,7 +901,7 @@ async fn run_one(
     }
     if let AgentCmd::Run(a) = cmd {
         if a.durable {
-            return crate::agent_session_cmd::start(*a, json, out).await;
+            return crate::agent_session_cmd::start(cua, *a, json, out).await;
         }
         return start(cua, *a, json, out).await;
     }
@@ -993,6 +1094,47 @@ mod tests {
     fn runs(argv: &[&str]) -> String {
         let cmd = parse(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
         format!("{:?}", desugar(cmd).unwrap())
+    }
+
+    /// `agent add --durable` takes the same `--max-attempts` and
+    /// `--stall-secs` as `agent run --durable`, and they reach the session.
+    #[test]
+    fn add_durable_passes_max_attempts_and_stall_secs() {
+        let argv = [
+            "add",
+            "nightly",
+            "fix the tests",
+            "--harness",
+            "claude-code",
+            "--durable",
+            "--on",
+            "auto",
+            "--max-attempts",
+            "8",
+            "--stall-secs",
+            "45",
+        ];
+        let steps = desugar(parse(&argv).unwrap()).unwrap();
+        let [AgentCmd::Run(r)] = steps.as_slice() else {
+            panic!("one run: {steps:?}")
+        };
+        assert!(r.durable);
+        assert_eq!((r.max_attempts, r.stall_secs), (Some(8), Some(45)));
+        // Left out, they stay unset (the coordinator's defaults apply).
+        let steps =
+            desugar(parse(&["add", "n", "x", "--harness", "claude-code", "--durable"]).unwrap())
+                .unwrap();
+        let [AgentCmd::Run(r)] = steps.as_slice() else {
+            panic!("one run: {steps:?}")
+        };
+        assert_eq!((r.max_attempts, r.stall_secs), (None, None));
+        // Without --durable they mean nothing, so they are refused.
+        for flag in ["--max-attempts", "--stall-secs"] {
+            assert!(
+                parse(&["add", "n", "x", "--harness", "h", "--once", flag, "3"]).is_err(),
+                "{flag} needs --durable"
+            );
+        }
     }
 
     /// Alias equivalence: each new spelling runs exactly what the old
@@ -1377,6 +1519,8 @@ mod tests {
             "--exit-when-idle",
             "--label",
             "e2e",
+            "--base-url",
+            "http://127.0.0.1:9",
             "--wire",
             "anthropic",
         ]);
@@ -1401,5 +1545,44 @@ mod tests {
         assert_eq!(parsed.exit_when_idle, Some(true));
         let missing = run_args(&["local:dev", "claude-code", "x", "--file", "/no/such/file"]);
         assert!(start_args(&missing, "local:dev").is_err());
+    }
+
+    #[test]
+    fn base_url_and_wire_reach_agent_start_and_wire_alone_is_refused() {
+        let a = run_args(&[
+            "local:dev",
+            "claude-code",
+            "hi",
+            "--base-url",
+            "http://gw:4000",
+            "--wire",
+            "anthropic",
+            "--model",
+            "m",
+        ]);
+        let v = start_args(&a, "local:dev").unwrap();
+        let parsed: cua_spaces::contract::inputs::AgentStart = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed.base_url.as_deref(), Some("http://gw:4000"));
+        assert_eq!(parsed.wire.as_deref(), Some("anthropic"));
+        let alone = run_args(&["local:dev", "claude-code", "hi", "--wire", "anthropic"]);
+        let e = start_args(&alone, "local:dev").unwrap_err().to_string();
+        assert!(e.contains("--base-url"), "{e}");
+    }
+
+    #[test]
+    fn a_silent_run_is_called_out_then_given_up_on() {
+        let s = Duration::from_secs;
+        assert_eq!(silence(s(5), false), Silence::Fine);
+        assert_eq!(silence(SILENCE_WARN, false), Silence::Warn);
+        assert_eq!(silence(SILENCE_WARN, true), Silence::Fine);
+        assert_eq!(silence(SILENCE_FAIL, true), Silence::Fail);
+    }
+
+    #[test]
+    fn an_auth_error_gets_a_plain_next_step() {
+        let h = auth_hint("Failed to authenticate. Anthropic API Error: 401 invalid x-api-key")
+            .unwrap();
+        assert!(h.contains("cua agent keys set"));
+        assert!(auth_hint("Rate limited, retry in 5s").is_none());
     }
 }

@@ -106,6 +106,10 @@ pub enum VirtGap {
     KvmMissing,
     /// Linux: `/dev/kvm` exists but this user may not open it.
     KvmPermission,
+    /// macOS: this Mac cannot run virtual machines at all (it is itself a
+    /// virtual machine, or an Intel Mac without hardware virtualization).
+    /// Linux containers need it too, for the built-in Linux runtime.
+    MacUnsupported,
 }
 
 /// What the host found, `None` / `NotChecked` for what it did not check.
@@ -181,6 +185,7 @@ impl IssueKind {
         } else if has(DENIED_MARK) || has("find devices on your network") {
             Some(Self::LocalNetwork)
         } else if has("hypervisor platform")
+            || has(MAC_UNSUPPORTED_MARK)
             || has("virtualization is turned off")
             || has("isn't allowed to use this computer's virtualization")
         {
@@ -194,6 +199,19 @@ impl IssueKind {
 /// What [`IssueKind::of_text`] finds in [`local_network_denied`]'s sentence
 /// (lowercase).
 const DENIED_MARK: &str = "privacy & security \u{203a} local network";
+/// What [`IssueKind::of_text`] finds in [`MAC_UNSUPPORTED`] (lowercase).
+const MAC_UNSUPPORTED_MARK: &str = "this mac can't run spaces itself";
+
+/// The sentence for a Mac that cannot run virtual machines
+/// ([`VirtGap::MacUnsupported`]): what is wrong, and what to do instead.
+pub const MAC_UNSUPPORTED: &str = "This Mac can't run Spaces itself, because it can't run \
+     virtual computers. That happens when the Mac is itself a virtual machine, or is an older \
+     Intel Mac. Add another computer to your account, or link your own cloud, and create the \
+     Space there.";
+
+/// The page that shows how to add another computer.
+pub const ADD_A_COMPUTER_URL: &str = "https://cua.ai/docs/spaces/guides/add-a-computer";
+
 /// What [`IssueKind::of_text`] finds in [`LOCAL_NETWORK_VPN`] (lowercase).
 const VPN_MARK: &str = "a vpn or firewall is blocking this mac's own network";
 
@@ -209,7 +227,9 @@ pub fn local_network_denied(app: &str) -> String {
 /// The sentence for a Mac whose VPN or firewall blocks its own VM network
 /// while Local Network access is on.
 pub const LOCAL_NETWORK_VPN: &str = "A VPN or firewall is blocking this Mac's own network, so \
-     Cua Spaces can't connect to macOS Spaces. Turn off the VPN and try again.";
+     Cua Spaces can't connect to macOS Spaces. Turn off the VPN and try again. If you can't turn \
+     it off, ask whoever manages it (often your IT team) to let 192.168.64.0/24, the network \
+     macOS Spaces use on this Mac, skip the VPN.";
 
 /// A System Settings page or Windows dialog a fix opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,10 +394,20 @@ pub fn evaluate(req: &Request, facts: &Facts) -> Vec<Issue> {
         }
     }
 
-    if req.runs == Runs::Vm
-        && let Some(gap) = facts.virtualization
+    // A Mac's gap stops a Linux container too (the built-in runtime is a
+    // VM); the host only reports it when that runtime would be used.
+    if let Some(gap) = facts.virtualization
+        && (req.runs == Runs::Vm || gap == VirtGap::MacUnsupported)
     {
         match (gap, req.host, req.guest) {
+            (VirtGap::MacUnsupported, Host::Macos, _) => out.push(Issue::new(
+                IssueKind::VirtualizationUnavailable,
+                MAC_UNSUPPORTED,
+                fix(
+                    "Add a computer",
+                    FixAction::OpenUrl(ADD_A_COMPUTER_URL.into()),
+                ),
+            )),
             (VirtGap::HypervisorPlatformOff, Host::Windows, _) => out.push(Issue::new(
                 IssueKind::VirtualizationUnavailable,
                 "Turn on the Windows Hypervisor Platform feature so this PC can run virtual \
@@ -554,6 +584,8 @@ mod tests {
         let i = first(&req(Host::Macos, Guest::Macos, Runs::Vm), &facts);
         assert_eq!(i.kind, IssueKind::LocalNetworkVpn);
         assert!(i.message.contains("Turn off the VPN"), "{}", i.message);
+        // A work VPN often can't be turned off: say what to ask for instead.
+        assert!(i.message.contains("192.168.64.0/24"), "{}", i.message);
         assert!(i.fix.is_none());
         assert_eq!(i.kind.error_kind(), "local_network");
         assert_eq!(i.kind.error_subclass(), Some("local_network_vpn"));
@@ -598,6 +630,34 @@ mod tests {
         // Containers do not need it.
         let c = req(Host::Windows, Guest::Linux, Runs::Container);
         assert!(evaluate(&c, &gap(VirtGap::HypervisorPlatformOff)).is_empty());
+    }
+
+    #[test]
+    fn a_mac_that_cannot_run_vms_is_told_before_any_create() {
+        let facts = Facts {
+            virtualization: Some(VirtGap::MacUnsupported),
+            ..Default::default()
+        };
+        for (guest, runs) in [
+            (Guest::Linux, Runs::Container),
+            (Guest::Linux, Runs::Vm),
+            (Guest::Macos, Runs::Vm),
+        ] {
+            let i = first(&req(Host::Macos, guest, runs), &facts);
+            assert_eq!(i.kind, IssueKind::VirtualizationUnavailable);
+            assert_eq!(i.message, MAC_UNSUPPORTED);
+            assert_eq!(
+                i.fix.unwrap().action,
+                FixAction::OpenUrl(ADD_A_COMPUTER_URL.into())
+            );
+        }
+        assert_eq!(
+            IssueKind::of_text(MAC_UNSUPPORTED),
+            Some(IssueKind::VirtualizationUnavailable)
+        );
+        // Plain words: no jargon, no em dash.
+        let l = MAC_UNSUPPORTED.to_lowercase();
+        assert!(!l.contains('\u{2014}') && !l.contains("runtime") && !l.contains("hypervisor"));
     }
 
     #[test]
@@ -667,6 +727,13 @@ mod tests {
                 Runs::Vm,
                 Engine::Ready,
                 Some(VirtGap::KvmPermission),
+            ),
+            (
+                Host::Macos,
+                Guest::Linux,
+                Runs::Container,
+                Engine::NotChecked,
+                Some(VirtGap::MacUnsupported),
             ),
         ] {
             let facts = Facts {

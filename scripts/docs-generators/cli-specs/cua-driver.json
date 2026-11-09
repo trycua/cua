@@ -200,7 +200,7 @@
    "flags": [
     {
      "default_value": false,
-     "help": "Select the Claude Code computer-use compatibility surface (forwarded by `mcp` when it launches the daemon).",
+     "help": "Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.",
      "name": "claude-code-computer-use-compat",
      "short_name": null
     },
@@ -232,6 +232,12 @@
      "default_value": false,
      "help": "Skip the macOS first-launch permissions gate.",
      "name": "no-permissions-gate",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Refuse scripting actions without granted macOS Automation consent.",
+     "name": "no-automation-prompts",
      "short_name": null
     },
     {
@@ -744,7 +750,7 @@
    "options": [],
    "subcommands": [
     {
-     "abstract": "Report Accessibility and Screen Recording status through a running daemon (read-only, no prompt). The default subcommand.",
+     "abstract": "Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. The default subcommand.",
      "arguments": [],
      "discussion": "",
      "examples": [
@@ -766,7 +772,7 @@
      "subcommands": []
     },
     {
-     "abstract": "Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app.",
+     "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.",
      "arguments": [],
      "discussion": "",
      "examples": [
@@ -781,6 +787,51 @@
      "subcommands": []
     }
    ]
+  },
+  {
+   "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
+   "arguments": [],
+   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+   "examples": [
+    {
+     "command": "cua-driver connect",
+     "description": "Connect every agent found on this computer"
+    },
+    {
+     "command": "cua-driver connect --client claude --dry-run",
+     "description": "Show what would change for Claude Code"
+    },
+    {
+     "command": "cua-driver connect --json",
+     "description": "Print the result for each agent as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Show what would be connected without changing anything.",
+     "name": "dry-run",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Emit machine-readable output.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "connect",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Connect only this agent (claude, codex, cursor or droid). Repeat for several.",
+     "is_optional": true,
+     "name": "client",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
   },
   {
    "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
@@ -1020,7 +1071,7 @@
        "type": "String"
       }
      ],
-     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default.",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (on, off, default). Use default for a key to clear it, or cursor.motion default to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default. cursor.badges (minimal, verbose, off) sets the agent cursor badge for every cursor at once; minimal is the default. cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on, off or default and on by default; cursor.marks (action marks) is on, off or default and off by default; cursor.rotate is heading (default), lean, off or default. All apply to every cursor at once.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",
@@ -1346,6 +1397,32 @@
    "subcommands": []
   },
   {
+   "abstract": "Check that Cua Driver works on this computer.",
+   "arguments": [],
+   "discussion": "Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
+   "examples": [
+    {
+     "command": "cua-driver test",
+     "description": "Check that Cua Driver works on this computer"
+    },
+    {
+     "command": "cua-driver test --json",
+     "description": "Emit the result as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit the result as JSON.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "test",
+   "options": [],
+   "subcommands": []
+  },
+  {
    "abstract": "Print a pasteable install-layout and permission-attribution report.",
    "arguments": [],
    "discussion": "",
@@ -1431,6 +1508,75 @@
      ],
      "flags": [],
      "name": "kick",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Turn exact KWin window capture and activation on or off (Linux).",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on waits up to about five seconds for KWin to grant it on KWin 6.7 and older, then prints the status line either way. Only this command changes it; set_config cannot.",
+   "examples": [
+    {
+     "command": "cua-driver kwin-capture",
+     "description": "Show whether exact KWin window capture is on"
+    }
+   ],
+   "flags": [],
+   "name": "kwin-capture",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Show the setting and the desktop entry. The default subcommand.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver kwin-capture status",
+       "description": "Show the setting and the desktop entry"
+      }
+     ],
+     "flags": [],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks.",
+     "arguments": [],
+     "discussion": "A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given.",
+     "examples": [
+      {
+       "command": "cua-driver kwin-capture on",
+       "description": "Turn exact KWin window capture on"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Ignore a screenshot Deny saved in the desktop portal.",
+       "name": "override-portal-deny",
+       "short_name": null
+      }
+     ],
+     "name": "on",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Turn it off and remove the desktop entry.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver kwin-capture off",
+       "description": "Turn exact KWin window capture off"
+      }
+     ],
+     "flags": [],
+     "name": "off",
      "options": [],
      "subcommands": []
     }
@@ -2293,5 +2439,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.38.0"
+ "version": "0.45.3"
 }

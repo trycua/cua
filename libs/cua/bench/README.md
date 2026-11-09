@@ -18,6 +18,7 @@ cua bench check ./mf/result.json --baseline microvm-fork/baseline.json
 | `microvm-fork` | `microvm-fork/` | macOS on Apple silicon |
 | `fork-fanout` | `fork-fanout/` | macOS (HVF) or Linux with KVM, a source checkout |
 | `fork-batch` | `fork-batch/` | macOS (HVF) or Linux with KVM, the Python SDK |
+| `repo-clone` | `repo-clone/` | macOS or Linux with git and the network (`MODE=space`: a Linux container runtime) |
 | `channel` | `channel/` | macOS (HVF) or Linux with KVM |
 | `rollouts` | `rollouts/` | macOS or Linux with gVisor |
 | `pool-sessions` | `pool-sessions/` | your signed-in machines and a test site |

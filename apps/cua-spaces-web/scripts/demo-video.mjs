@@ -126,9 +126,6 @@ try {
   // turning it on later. Client-side navigation keeps that state.
   await page.goto(`${base}/settings/experiments`, { waitUntil: "networkidle" });
   if ((await volumeSwitch.getAttribute("aria-checked")) === "true") await volumeSwitch.click();
-  // Share shows only with Settings, Experiments, Sharing on (as in the apps).
-  const sharingSwitch = page.locator('[data-setting-row="experiment:sharing"] [data-slot="switch"]');
-  if ((await sharingSwitch.getAttribute("aria-checked")) !== "true") await sharingSwitch.click();
   await page.locator("aside, nav").getByRole("link", { name: "Spaces", exact: false }).first().click();
   await page.locator("[data-space-id]").first().waitFor();
   await page.mouse.move(mouse.x, mouse.y);
@@ -195,9 +192,11 @@ try {
   // Agents opens, without reloading the page.
   await page.evaluate(() => window.__demoRewind());
 
-  // Machines: This machine.
+  // Computers, then This Mac's page.
   await nav("Computers");
   await pause(2200);
+  await page.locator('[data-tree-kind="computer"] [data-tree-name]').first().click();
+  await pause(1200);
   await scrollTo(page.locator("[data-host-action]").first());
   await pause(2600);
 

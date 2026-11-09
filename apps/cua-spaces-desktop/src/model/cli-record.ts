@@ -4,6 +4,8 @@
 import { execFile } from "node:child_process";
 import * as path from "node:path";
 
+import { channel } from "../channel";
+
 /**
  * Windows: the key the uninstaller reads (packaging/installer.nsh) to remove
  * the `cua` this app put on PATH with the app, and nothing it did not: the
@@ -11,7 +13,7 @@ import * as path from "node:path";
  * Elsewhere the CLI stays, like the user's ~/.cua: the .deb's is a link into
  * the app that goes with it, as the SwiftUI app's into its bundle.
  */
-export const WINDOWS_APP_KEY = "HKCU\\Software\\ai.cua.spaces.desktop";
+export const WINDOWS_APP_KEY = `HKCU\\${channel.registryKey}`;
 
 /** The `reg add` calls that record an installed CLI. */
 export function cliRecordArgs(target: string, addedToPath: boolean): string[][] {

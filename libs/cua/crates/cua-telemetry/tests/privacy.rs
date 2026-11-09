@@ -140,7 +140,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::stream_summary(s, s, Some(true), 900, 1080, Some(40.0), d).unwrap(),
         events::app_active(),
         // Unknown experiment ids are dropped (`none`); known ones kept.
-        events::app_active_with(&[s, "sharing", s], s),
+        events::app_active_with(&[s, "mobile", s], s),
         events::space_create(
             &events::SpaceCreate {
                 on: s,
@@ -198,11 +198,21 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::first_run_step("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
+        events::durable_agent(&DurableAgent {
+            phase: s,
+            session: "0123456789abcdef",
+            ..Default::default()
+        }),
+        events::durable_agent(&DurableAgent {
+            phase: "started",
+            session: s,
+            ..Default::default()
+        }),
         events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
         events::cloud_link(s, "aws", "oidc", "connected", Outcome::Ok),
-        events::experiment(s, "sharing"),
+        events::experiment(s, "mobile"),
         events::experiment("experiment_on", s),
     ] {
         assert!(opt.is_none(), "PII accepted as a vocabulary value: {s}");
@@ -225,8 +235,37 @@ fn all_builders(s: &str) -> Vec<Event> {
     ] {
         v.push(events::first_run_step("create_space", action, s).unwrap());
     }
+    for action in [
+        "step_viewed",
+        "step_completed",
+        "step_command_copied",
+        "step_chat_picked_up",
+    ] {
+        v.push(events::first_run_step("ready", action, "codex").unwrap());
+        v.push(events::first_run_step("ready", action, s).unwrap());
+    }
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
+    for phase in schema::DURABLE_PHASES {
+        v.push(
+            events::durable_agent(&DurableAgent {
+                phase,
+                harness: s,
+                on: s,
+                attempt: u32::MAX,
+                max_attempts: u32::MAX,
+                reason: s,
+                end: s,
+                failure: s,
+                failover: true,
+                machines: u32::MAX,
+                recovery_time_ms: u64::MAX,
+                interrupted_calls: u32::MAX,
+                session: "0123456789abcdef",
+            })
+            .unwrap(),
+        );
+    }
     v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
     v.push(events::share("share", "viewer", Outcome::Error, s, s).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
@@ -244,7 +283,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         )
         .unwrap(),
     );
-    v.push(events::experiment("experiment_off", "your_cloud").unwrap());
+    v.push(events::experiment("experiment_off", "warm_pools").unwrap());
     v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
     v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
     v.push(
@@ -254,8 +293,83 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::plan_limit_shown("app_create", "sessions", "team"));
     v.push(events::upgrade_link_opened(s, s, s));
     v.push(events::upgrade_link_opened("cli_limit", "", "pro"));
-    v.push(events::agent_signin_imported("codex"));
-    v.push(events::agent_signin_imported(s));
+    v.push(
+        events::agent_join_phase(
+            "session_ready",
+            "claude-code",
+            "linux_container",
+            true,
+            4200,
+            "0123456789abcdef",
+            "none",
+            "none",
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "install_done",
+            s,
+            s,
+            false,
+            99_999_999,
+            "0123456789abcdef",
+            s,
+            s,
+        )
+        .unwrap(),
+    );
+    v.push(
+        events::agent_join_phase(
+            "failed",
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "auth",
+        )
+        .unwrap(),
+    );
+    assert!(
+        events::agent_join_phase(
+            s,
+            "hermes",
+            "macos_vm",
+            true,
+            10,
+            "0123456789abcdef",
+            "none",
+            "none"
+        )
+        .is_none()
+    );
+    v.push(events::agent_signin_imported("codex", Some("device-code")));
+    v.push(events::agent_signin_imported(
+        "claude-code",
+        Some("claude-login-keychain"),
+    ));
+    v.push(events::agent_signin_imported(s, Some(s)));
+    v.push(events::agent_signin_refused("claude-code", "not_signed_in"));
+    v.push(events::agent_signin_refused(s, s));
+    v.push(events::repo_cache("hit", "local", 80_000_000, 4, "none").unwrap());
+    v.push(events::repo_cache("fallback", "network", 0, 0, "verify_failed").unwrap());
+    v.push(
+        events::repo_cache(
+            "miss",
+            "https://github.com/o/r",
+            1 << 60,
+            1 << 60,
+            "/Users/me/x",
+        )
+        .unwrap(),
+    );
+    assert!(events::repo_cache("https://github.com/o/r", "local", 0, 0, "none").is_none());
+    v.push(events::connection_changed(
+        "deepseek", "api_key", "connect", "ok",
+    ));
+    v.push(events::connection_changed(s, s, s, s));
     v.push(events::agent_used_space("space_bash").unwrap());
     v.push(events::agent_used_space("computer_click").unwrap());
     assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
@@ -937,8 +1051,186 @@ fn a_switch_flipped_elsewhere_applies_after_refresh_and_clears_the_spool() {
     assert_eq!(t.spooled(), 0);
 }
 
+/// A failed sign-in's `failed_step` comes from its fixed kind only, is
+/// always a word of the schema, and is `none` on every other step.
+#[test]
+fn sign_in_failed_step_keeps_its_vocabulary() {
+    for (kind, want) in [
+        ("transport", "reach_service"),
+        ("http", "reach_service"),
+        ("timeout", "confirm_in_browser"),
+        ("permission_denied", "confirm_in_browser"),
+        ("unauthenticated", "exchange_code"),
+        ("internal", "save_session"),
+        ("cancelled", "cancelled"),
+        ("other", "unknown"),
+        ("ellie@example.com", "unknown"),
+    ] {
+        let e = events::sign_in_failed(kind);
+        let step = e.props["failed_step"].as_str().unwrap().to_string();
+        assert_eq!(step, want, "{kind}");
+        assert!(schema::SIGN_IN_STEPS.contains(&step.as_str()));
+        assert!(!serde_json::to_string(&e.props).unwrap().contains("ellie"));
+    }
+    let ok = events::onboarding_step("signed_in", Outcome::Ok).unwrap();
+    assert_eq!(ok.props["failed_step"], "none");
+    assert_eq!(
+        events::app_launched(Some(true)).props["failed_step"],
+        "none"
+    );
+}
+
 /// The "Telemetry and privacy" pages list every event and every property
 /// the schema declares, so nothing is sent that the docs do not name.
+/// `failed_step` is derived from the failure's fixed words, never text; it
+/// is always a word of the schema, and `none` unless the create failed.
+#[test]
+fn space_create_failed_step_keeps_its_vocabulary() {
+    let create = |outcome, phase, variant, error_subclass, guest_os, kind| {
+        events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os,
+                kind,
+                last_phase: phase,
+                stalled: false,
+                gpu: false,
+                error_variant: variant,
+                retry_attempt: 0,
+                error_subclass,
+            },
+            outcome,
+            Duration::from_secs(30),
+        )
+    };
+    let step = |e: &events::Event| e.props["failed_step"].clone();
+    let err = Outcome::Error;
+    // A cause names its step, whatever the phase.
+    assert_eq!(
+        step(&create(
+            err,
+            "preparing",
+            "runtime",
+            "runtime_not_signed",
+            "macos",
+            "vm"
+        )),
+        "start_runtime"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "preparing",
+            "virtualization_unavailable",
+            "",
+            "macos",
+            "vm"
+        )),
+        "check_host"
+    );
+    assert_eq!(
+        step(&create(err, "preparing", "Env", "", "linux", "vm")),
+        "connect_services"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "booting",
+            "runtime",
+            "vm_never_started",
+            "macos",
+            "vm"
+        )),
+        "start_vm"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "pulling",
+            "runtime",
+            "runtime_api_error",
+            "macos",
+            "vm"
+        )),
+        "start_runtime"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "pulling",
+            "ImagePullNetwork",
+            "runtime_api_error",
+            "macos",
+            "vm"
+        )),
+        "pull_image"
+    );
+    // Else the phase; `unknown` when it was `preparing` and no word helps.
+    assert_eq!(
+        step(&create(err, "creating", "runtime", "", "macos", "vm")),
+        "clone_disk"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "creating",
+            "runtime",
+            "",
+            "linux",
+            "container"
+        )),
+        "create_container"
+    );
+    assert_eq!(
+        step(&create(
+            err,
+            "waiting_for_services",
+            "runtime",
+            "",
+            "linux",
+            "vm"
+        )),
+        "connect_services"
+    );
+    assert_eq!(
+        step(&create(err, "preparing", "runtime", "", "macos", "vm")),
+        "unknown"
+    );
+    // Not a failure: none. Never free text.
+    assert_eq!(
+        step(&create(Outcome::Ok, "preparing", "", "", "macos", "vm")),
+        "none"
+    );
+    assert_eq!(
+        step(&create(
+            Outcome::Cancelled,
+            "booting",
+            "",
+            "",
+            "macos",
+            "vm"
+        )),
+        "none"
+    );
+    // Every step and subclass word the schema allows is sent as itself.
+    for w in cua_telemetry::schema::ERROR_SUBCLASSES {
+        let e = create(err, "preparing", "runtime", w, "macos", "vm");
+        assert_eq!(e.props["error_subclass"], *w);
+        assert!(cua_telemetry::schema::FAILED_STEPS.contains(&step(&e).as_str().unwrap()));
+    }
+    let e = create(
+        err,
+        "preparing",
+        "runtime",
+        "/Users/maya/.lume",
+        "macos",
+        "vm",
+    );
+    assert_eq!(step(&e), "unknown");
+    let home = tempfile::tempdir().unwrap();
+    preview_all(home.path(), &e);
+}
+
 #[test]
 fn space_create_retry_fields_keep_their_vocabulary() {
     let create = |outcome, retry_attempt, error_subclass| {
@@ -1313,6 +1605,44 @@ fn first_run_funnel_events_carry_step_index_version_and_a_fixed_reason() {
     assert!(events::first_run_step("welcome", "shown", "none").is_none());
 }
 
+/// The Ready screen: viewed, Done, Copy and Continue in Cua each have an
+/// event that names only the agent, and nothing else gets through.
+#[test]
+fn ready_screen_events_name_only_a_known_agent() {
+    for (action, name) in [
+        ("step_viewed", "cua_onboarding_step_viewed"),
+        ("step_completed", "cua_onboarding_step_completed"),
+        ("step_command_copied", "cua_onboarding_command_copied"),
+        ("step_chat_picked_up", "cua_onboarding_chat_picked_up"),
+    ] {
+        let e = events::first_run_step("ready", action, "claude_code").unwrap();
+        assert_eq!(e.name, name);
+        assert_eq!(e.props["step"], "ready");
+        assert_eq!(e.props["step_index"], 7);
+        assert_eq!(e.props["agent"], "claude_code");
+        // Caller text (a command, a chat title, a path) becomes `other`.
+        let e = events::first_run_step("ready", action, "claude \"fix /Users/alice/app\"").unwrap();
+        assert_eq!(e.props["agent"], "other");
+        assert_eq!(e.props.len(), 4, "{:?}", e.props);
+    }
+    // Copy and chat pickup exist only on Ready; other screens carry no agent.
+    assert!(events::first_run_step("welcome", "step_command_copied", "codex").is_none());
+    assert!(events::first_run_step("sign_in", "step_chat_picked_up", "codex").is_none());
+    assert_eq!(
+        events::first_run_step("sign_in", "step_viewed", "codex")
+            .unwrap()
+            .props["agent"],
+        "none"
+    );
+    // Failed and skipped events carry no agent.
+    assert!(
+        !events::first_run_step("ready", "step_failed", "codex")
+            .unwrap()
+            .props
+            .contains_key("agent")
+    );
+}
+
 /// Retention: one `cua_app_active` per install per UTC day, none while
 /// off, and a new one the next day.
 #[test]
@@ -1348,33 +1678,33 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     let k = Kind::Set(schema::EXPERIMENTS);
     for ok in [
         "none",
-        "sharing",
-        "cua_volume+sharing",
-        "cua_volume+your_cloud+sharing",
+        "mobile",
+        "cua_volume+mobile",
+        "cua_volume+mobile+warm_pools",
     ] {
         assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
     }
     for bad in [
         "",
-        "sharing+cua_volume",
-        "sharing+sharing",
+        "mobile+cua_volume",
+        "mobile+mobile",
         "cua_volume+",
-        "+sharing",
-        "none+sharing",
+        "+mobile",
+        "none+mobile",
         "/Users/alice",
     ] {
         assert!(!schema::value_ok(k, &Value::from(bad)), "{bad}");
     }
     assert_eq!(
-        events::experiments_set(&["sharing", "nope", "cua_volume", "sharing"]),
-        "cua_volume+sharing"
+        events::experiments_set(&["mobile", "nope", "cua_volume", "mobile"]),
+        "cua_volume+mobile"
     );
     assert_eq!(events::experiments_set(&[]), "none");
 
     let h = tempfile::tempdir().unwrap();
     let (t, sink) = ready(h.path(), &[]);
     assert_eq!(t.capture_active_on(20_000), Captured::Queued);
-    t.set_experiments_on(&["your_cloud", "alice@example.com"]);
+    t.set_experiments_on(&["warm_pools", "alice@example.com"]);
     // The next day, another process of the same install.
     let (t2, sink2) = ready(h.path(), &[]);
     assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
@@ -1393,10 +1723,10 @@ fn the_active_day_carries_the_experiments_that_are_on() {
             .collect()
     };
     assert_eq!(sets(&sink), ["none"], "the first day had none");
-    assert_eq!(sets(&sink2), ["your_cloud"]);
+    assert_eq!(sets(&sink2), ["warm_pools"]);
     let h2 = tempfile::tempdir().unwrap();
     let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
-    off.set_experiments_on(&["sharing"]);
+    off.set_experiments_on(&["mobile"]);
     assert!(!h2.path().join("telemetry/experiments_on").exists());
 }
 
@@ -1908,4 +2238,41 @@ fn plan_limit_events_keep_their_vocabulary() {
             "{s}"
         );
     }
+}
+
+/// The fixed provider words are the registry's ids, and a connection event carries nothing else.
+#[test]
+fn connection_events_use_the_registrys_words_only() {
+    let mut registry: Vec<&str> = cua_connections::PROVIDERS.iter().map(|p| p.id).collect();
+    registry.push("other");
+    registry.sort_unstable();
+    let mut ours: Vec<&str> = schema::CONNECTION_PROVIDERS.to_vec();
+    ours.sort_unstable();
+    assert_eq!(
+        ours, registry,
+        "regenerate schema::CONNECTION_PROVIDERS from providers/*.toml"
+    );
+    let mut kinds: Vec<&str> = cua_connections::MethodKind::ALL
+        .iter()
+        .map(|k| k.word())
+        .collect();
+    kinds.push("other");
+    assert_eq!(schema::CONNECTION_METHODS, kinds.as_slice());
+    // A provider, method or action that is not a fixed word is sent as the fallback, never as typed.
+    let e = events::connection_changed(
+        "http://127.0.0.1:1234/v1",
+        "sk-ant-secret",
+        "ada@example.com",
+        "401 from api.example",
+    );
+    let text = format!("{e:?}");
+    for leak in ["127.0.0.1", "sk-ant", "ada@", "401", "example"] {
+        assert!(!text.contains(leak), "{text}");
+    }
+    let e = events::connection_changed("openrouter", "api_key", "connect", "ok");
+    let text = format!("{e:?}");
+    assert!(
+        text.contains("openrouter") && text.contains("api_key") && text.contains("connect"),
+        "{text}"
+    );
 }

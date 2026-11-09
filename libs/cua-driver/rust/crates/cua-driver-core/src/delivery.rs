@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-call input delivery mode and the shared `background_unavailable`
 //! refusal envelope.
 //!

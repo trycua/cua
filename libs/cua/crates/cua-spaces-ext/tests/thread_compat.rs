@@ -192,10 +192,15 @@ async fn member_with_idle_run(fx: &Fx) -> (Persistent, cua_spacesd_client::Proce
         ],
     );
     let proc = alive(fx).await;
-    // The supervisor has seen turn 1 already.
+    // The supervisor has seen turn 1 already: its bookmark is past those events, as a real one is.
+    let seen = fx
+        .srv
+        .state
+        .file(&format!("{RUNS}/{RUN}/events.jsonl"))
+        .map_or(0, |b| b.len());
     edit_record(fx, "ada", |r| {
         r["saved_turn"] = json!(1);
-        r["cursor"] = json!(3);
+        r["cursor"] = json!(seen);
     });
     (p, proc)
 }
@@ -361,7 +366,15 @@ async fn the_run_tools_take_a_member_name() {
     .unwrap();
     assert_eq!(
         keys(&m),
-        ["delivered", "phase", "reason", "run_id", "status"]
+        [
+            "delivered",
+            "entry_seq",
+            "mode",
+            "phase",
+            "reason",
+            "run_id",
+            "status"
+        ]
     );
     assert_eq!(inbox(&fx), ["and the tests"]);
     // Both, or neither, is refused.
@@ -584,10 +597,12 @@ async fn an_agent_cannot_write_its_spaces_thread_through_the_volume() {
         .unwrap()
         .drive()
         .clone();
-    let folder = cua_volume::path::space_folder(&fx.space);
+    // The Volume names a Space `<id>--<uid>` (Secure Spaces is the default).
+    let vid = fx.spaces.volume_space_id(&fx.space).unwrap();
+    let folder = cua_volume::path::space_folder(&vid);
     for ctx in [
-        cua_volume::Context::agent("ada", Some(&fx.space)),
-        cua_volume::Context::space(&fx.space),
+        cua_volume::Context::agent("ada", Some(&vid)),
+        cua_volume::Context::space(&vid),
     ] {
         let e = drive
             .session(ctx)
@@ -603,7 +618,7 @@ async fn an_agent_cannot_write_its_spaces_thread_through_the_volume() {
     }
     // The rest of its folder is still its own.
     drive
-        .session(cua_volume::Context::agent("ada", Some(&fx.space)))
+        .session(cua_volume::Context::agent("ada", Some(&vid)))
         .write(
             &format!("{folder}notes.md"),
             b"ok".to_vec(),
@@ -819,10 +834,12 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
     .unwrap();
     let task = posted["entry"]["seq"].as_u64().unwrap();
     // Right away, before the dispatcher's next pass.
-    assert_eq!(
-        live(&fx).await["agents"],
-        json!([{"agent": "ada", "stage": "thinking"}])
-    );
+    let first = live(&fx).await;
+    assert_eq!(first["agents"][0]["agent"], "ada");
+    assert_eq!(first["agents"][0]["stage"], "thinking");
+    // When the task was given, for the working row's clock; nothing said yet.
+    assert!(first["agents"][0]["since_ms"].as_u64().unwrap() > 0);
+    assert!(first["agents"][0]["text"].is_null());
     Box::pin(p.tick()).await;
     run_state(&fx, json!({"status": "running", "turn": 2}));
     let mut seen = vec![];
@@ -852,12 +869,10 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
         raw_events(&fx, &evs);
         Box::pin(p.tick()).await;
         let l = live(&fx).await;
-        assert_eq!(
-            l["agents"],
-            json!([{"agent": "ada", "stage": want}]),
-            "{want}"
-        );
-        assert_eq!(l["key"], format!("ada={want}"));
+        assert_eq!(l["agents"].as_array().unwrap().len(), 1, "{want}");
+        assert_eq!(l["agents"][0]["agent"], "ada", "{want}");
+        assert_eq!(l["agents"][0]["stage"], want, "{want}");
+        assert_eq!(l["key"], format!("ada={want}#0"));
         seen.push(want);
     }
     assert_eq!(
@@ -902,11 +917,17 @@ async fn a_live_row_follows_the_stage_and_clears_on_the_reply() {
         t0.elapsed()
     );
     let followed = followed.unwrap();
-    assert_eq!(
-        followed["live"]["agents"],
-        json!([{"agent": "ada", "stage": "replying"}])
-    );
+    // What it has said so far streams as one live entry, replaced whole by the next snapshot.
+    assert_eq!(followed["live"]["agents"][0]["text"], "2 failures");
     assert_eq!(followed["entries"], json!([]));
+    events(&fx, &[("message", 2, Some(": a, b"))]);
+    Box::pin(p.tick()).await;
+    let l = live(&fx).await;
+    assert_eq!(
+        l["agents"][0]["text"], "2 failures: a, b",
+        "the whole text so far, not a chunk"
+    );
+    assert_eq!(l["agents"][0]["stage"], "replying");
     // The turn ends: the reply is the answer and nobody is at work.
     events(&fx, &[("turn_ended", 2, None)]);
     run_state(&fx, json!({"status": "idle", "turn": 2}));
@@ -948,10 +969,9 @@ async fn a_cold_start_shows_starting_and_a_failure_clears_the_row() {
     )
     .await
     .unwrap();
-    assert_eq!(
-        live(&fx).await["agents"],
-        json!([{"agent": "ada", "stage": "starting"}])
-    );
+    let cold = live(&fx).await;
+    assert_eq!(cold["agents"][0]["agent"], "ada");
+    assert_eq!(cold["agents"][0]["stage"], "starting");
     // The mock guest can't start a run: the delivery fails.
     Box::pin(p.tick()).await;
     let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
@@ -999,8 +1019,13 @@ async fn an_agent_that_replies_itself_is_not_answered_twice() {
         .into_iter()
         .filter(|e| e["reply_to"] == task && e["kind"] == "message")
         .collect();
-    assert_eq!(replies.len(), 1);
-    assert_eq!(replies[0]["text"], "summary: fine");
+    // What the agent posted itself and what it said in its turn are both messages of the thread,
+    // in order; neither replaces the other, and nothing is posted twice.
+    let said: Vec<&str> = replies
+        .iter()
+        .map(|r| r["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(said, ["summary: fine", "ignored"]);
     assert!(p.get("ada").unwrap().task.is_none());
 }
 
@@ -1176,7 +1201,7 @@ async fn the_mirror_is_create_only_and_rebuilds_a_lost_thread() {
         .drive()
         .clone();
     let user = drive.session(cua_volume::Context::user());
-    let folder = cua_volume::path::space_folder(&fx.space);
+    let folder = cua_volume::path::space_folder(&fx.spaces.volume_space_id(&fx.space).unwrap());
     // An object already at entry 1's key is never overwritten.
     let first = format!("{folder}thread/entries/000000000001.json");
     for t in ["one", "two", "three"] {
@@ -1317,6 +1342,34 @@ async fn a_changed_credential_ends_the_idle_run_instead_of_reusing_it() {
     assert!(!run_alive(&fx).await, "the old run was ended");
 }
 
+/// CUA-2830: an idle run whose working folder is on the mounted Cua Volume
+/// can only take a message while the Volume shows the agent's view. A Space
+/// without the Volume to hold (it attached again, or has none) ends that run
+/// and starts a new one instead of waking a runner in a folder that is gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_run_on_a_volume_that_is_gone_is_not_woken() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| {
+        r["env"] = json!({"ANTHROPIC_API_KEY": "sk-one"})
+    });
+    let meta = json!({"run_id": RUN, "harness": "claude-code", "prompt": "hi",
+                      "cwd": "/volume/agents/ada/work", "created_at": 0.0,
+                      "cred_hash": forwarded_hash("sk-one")});
+    fx.srv.state.put_file(
+        &format!("{RUNS}/{RUN}/meta.json"),
+        meta.to_string().into_bytes(),
+    );
+    // The mock runs no shell, so the fresh start itself can't finish here.
+    let _ = p.send("ada", "again").await;
+    assert!(
+        inbox(&fx).iter().all(|t| t.is_empty()),
+        "the old run was not woken: {:?}",
+        inbox(&fx)
+    );
+    assert!(!run_alive(&fx).await, "the old run was ended");
+}
+
 /// A run whose last turn failed to authenticate is not reused either, even
 /// with the same credentials (the provider rejected them).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1431,6 +1484,58 @@ async fn two_spaces_each_get_their_own_claude() {
     assert_eq!(first["entry"]["task"]["to"], "claude");
 }
 
+/// The name `cua agent ls` shows (`claude-2`, the member's key on this
+/// machine) is an alias of the Space's `@claude`: an @mention or an add
+/// by that name reaches the same member instead of waking nobody (or
+/// adding a second one). Only inside the member's own Space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_hosts_key_for_a_member_answers_as_an_alias_in_its_own_space() {
+    let fx = setup().await;
+    let (_srv2, two) = second_space(&fx).await;
+    add_claude(&fx, &fx.space).await.unwrap();
+    add_claude(&fx, &two).await.unwrap();
+    // `@claude-2` in the second Space is its member `claude` (key claude-2).
+    let by_key = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": two, "text": "@claude-2 hi"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(by_key["entry"]["task"]["to"], "claude-2");
+    assert_eq!(by_key["entry"]["mentions"], json!(["claude-2"]));
+    // The handle and the key together are one member, one task.
+    let both = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": two, "text": "@claude @claude-2 hi"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(both["entry"]["mentions"], json!(["claude-2"]));
+    // Adding by the key is the same member, not a third.
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": two, "name": "claude-2", "harness": "claude-code"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        member_names(&fx, &two).await,
+        [("claude-2".to_string(), "claude".to_string())]
+    );
+    // Another Space's key is nobody's here.
+    let other = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@claude-2 hi"}),
+    )
+    .await
+    .unwrap();
+    assert!(other["entry"]["task"].is_null());
+}
+
 /// Deleting a Space frees its members' names.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_deleted_spaces_name_is_free_for_a_new_space() {
@@ -1533,6 +1638,105 @@ async fn a_failed_turn_fails_its_task_and_the_notification_points_at_it() {
         .expect("an error notification");
     assert_eq!(n.entry_seq, reply["seq"].as_u64());
     assert!(p.get("ada").unwrap().task.is_none());
+}
+
+/// Hermes answers a refused key as an ordinary turn, with its own advice. The thread reads it as the
+/// failed turn it is: the person's message fails (never "Done"), the reply is the standard Connect
+/// card in plain words without Hermes' advice, and the complete text stays under Show details.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_key_answered_as_text_is_a_failed_turn() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["harness"] = json!("hermes"));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada hello"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    let said = "Anthropic rejected your API key, so the model can't be reached. Update it in Settings -> Providers, or run `hermes setup` in a terminal. Provider said: HTTP 401: OAuth access token is invalid.";
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            ("message", 2, Some(said)),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let e = entries(&t);
+    let reply = e
+        .iter()
+        .find(|x| x["reply_to"] == task && x["kind"] == "message")
+        .expect("a reply");
+    assert_eq!(
+        reply["text"],
+        "Anthropic rejected the key Hermes used. Update it, then try again."
+    );
+    assert!(!reply["text"].as_str().unwrap().contains("hermes setup"));
+    assert_eq!(reply["failure"]["class"], "needs_connect");
+    assert_eq!(reply["failure"]["provider"], "anthropic");
+    assert_eq!(reply["failure"]["message"], said);
+    let update = e.iter().rev().find(|x| x["kind"] == "task_update").unwrap();
+    assert_eq!(update["update"]["state"], "failed");
+    // One notification, the failure's (not "Finished").
+    let notes = p.feed().list(false, None).unwrap();
+    assert!(notes.iter().any(|n| n.kind == "error" && n.body == said));
+    assert!(!notes.iter().any(|n| n.kind == "turn_ended"));
+}
+
+/// An ordinary answer that merely talks about authentication stays an answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answer_that_mentions_a_401_is_still_an_answer() {
+    let fx = setup().await;
+    let (p, _proc) = member_with_idle_run(&fx).await;
+    edit_record(&fx, "ada", |r| r["harness"] = json!("hermes"));
+    let posted = call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "@ada why does login fail"}),
+    )
+    .await
+    .unwrap();
+    let task = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    events(
+        &fx,
+        &[
+            ("turn_started", 2, None),
+            (
+                "message",
+                2,
+                Some(
+                    "The endpoint answers 401 Unauthorized when the token is missing, so I added the header.",
+                ),
+            ),
+            ("turn_ended", 2, None),
+        ],
+    );
+    run_state(&fx, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    let t = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let reply = entries(&t)
+        .into_iter()
+        .find(|x| x["reply_to"] == task && x["kind"] == "message")
+        .expect("a reply");
+    assert!(reply["failure"].is_null());
+    assert!(
+        reply["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("The endpoint answers 401")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

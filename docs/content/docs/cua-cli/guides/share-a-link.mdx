@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 A `localhost` link only works on the machine that printed it. `cua share` gives
-you a Cua link that opens on any of your signed-in devices, your phone
+you a Cua link that opens on any of your signed-in machines, your phone
 included. Coding agents use it when they start a preview, a dashboard or write a
 report: they hand you the link, not a port number.
 
@@ -26,7 +26,7 @@ prints the share instead: `id`, `url`, `access`, `target`, `owner`,
 
 | Flag | Who | Ends |
 | --- | --- | --- |
-| none (private) | Only your cua.ai account, on any of your devices | Until you stop it |
+| none (private) | Only your cua.ai account, on any of your machines | Until you stop it |
 | `--team` | Members of your team, signed in | Until you stop it |
 | `--public --ttl 1h` | Anyone with the link | After the TTL (60 s to 24 h, default 1 h) |
 

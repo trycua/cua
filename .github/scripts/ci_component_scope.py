@@ -22,6 +22,10 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_graph  # noqa: E402
 
 DRIVER = "libs/cua-driver/rust/"
 LINUX, MACOS, WINDOWS = "linux", "macos", "windows"
@@ -30,7 +34,7 @@ ALL_OS = (LINUX, MACOS, WINDOWS)
 # Files that can affect every lane and every OS.
 SHARED = (
     r"\.github/(workflows|actions)/",
-    r"\.github/scripts/ci_component_scope",
+    r"\.github/scripts/ci_(component_scope|graph)",
     r"scripts/ci/",
     r"(^|.*/)(Cargo\.lock|rust-toolchain\.toml|flake\.lock|package-lock\.json|uv\.lock)$",
     # Workspace roots; a member's own Cargo.toml is covered by its crate path.
@@ -124,9 +128,60 @@ def decide(lane: str, files: list[str], event: str, head_ref: str = "") -> tuple
     return True, [cfg["labels"][o] for o in ALL_OS if o in oses], why
 
 
+# The Docker lanes of ci-cua-spacesd.yml (`relay e2e (docker)`) build and test these packages. The
+# lane needs to start only when a changed file is inside their dependency closure on Linux. The
+# closure comes from the manifests (ci_graph.py), so a new dependency edge widens it by itself.
+RELAY_E2E_ROOTS = (
+    "cua-spacesd", "cua-relay", "cua-spacesd-server", "cua-spacesd-socks", "cua-spacesd-teleport",
+)
+RELAY_E2E_EXTRA_ROOT_DIRS = ("libs/cua-spacesd/tests/teleport-e2e",)
+# Linux-only lane: crates that only compile on another OS cannot change it.
+NOT_ON_LINUX = (DRIVER + "crates/platform-macos", DRIVER + "crates/platform-windows")
+
+
+def relay_e2e_closure(graph: "ci_graph.Graph") -> set[str]:
+    roots = {d for n in RELAY_E2E_ROOTS for d in graph.by_name(n)} | {
+        d for d in RELAY_E2E_EXTRA_ROOT_DIRS if d in graph.packages
+    }
+    return {d for d in graph.closure(roots) if d not in NOT_ON_LINUX}
+
+
+def decide_relay_e2e(files: list[str], event: str, head_ref: str, graph: "ci_graph.Graph") -> tuple[bool, str]:
+    if event != "pull_request":
+        return True, f"{event} runs the lane"
+    if head_ref.startswith("release-please--"):
+        return True, "release PR runs the lane"
+    if not files:
+        return True, "no changed files listed, failing closed"
+    closure = relay_e2e_closure(graph)
+    for f in files:
+        if _any(SHARED, f):
+            return True, f"shared input {f}"
+        if _any(INERT, f):
+            continue
+        if any(f.startswith(p + "/") for p in NOT_ON_LINUX):
+            continue
+        owner = graph.owner(f)
+        if owner in closure:
+            return True, f"{f} is in the dependency closure ({owner})"
+        if owner is None and f.startswith("libs/cua-spacesd/"):
+            return True, f"{f} is a spacesd file outside any crate (scripts, image, config)"
+    return False, "no changed path is in the relay e2e dependency closure"
+
+
 def main() -> None:
     lane = sys.argv[1]
     files = [l.strip() for l in sys.stdin if l.strip()]
+    if lane == "relay-e2e":
+        run_, why = decide_relay_e2e(
+            files, os.environ.get("EVENT", "pull_request"), os.environ.get("HEAD_REF", ""), ci_graph.load()
+        )
+        print(f"run={str(run_).lower()}\nreason={why}")
+        path = os.environ.get("GITHUB_OUTPUT")
+        if path:
+            with open(path, "a") as fh:
+                fh.write(f"run={str(run_).lower()}\nreason={why}\n")
+        return
     run, labels, why = decide(lane, files, os.environ.get("EVENT", "pull_request"), os.environ.get("HEAD_REF", ""))
     out = {"run": str(run).lower(), "matrix": json.dumps(labels), "reason": why}
     for k, v in out.items():

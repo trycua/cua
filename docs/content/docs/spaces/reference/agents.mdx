@@ -24,12 +24,14 @@ Run coding agents inside a Space.
 | [`agent_stop`](#agent_stop) | Stop an agent run. |
 | [`agent_list`](#agent_list) | List agent runs in the Space. |
 | [`agent_capabilities`](#agent_capabilities) | Report what the agent harnesses support. |
+| [`agent_threads`](#agent_threads) | List the recent Claude Code, Codex and Hermes chats on this computer. For a person only. |
+| [`agent_thread_read`](#agent_thread_read) | Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only. |
 
 ### agent_start
 
 Start a coding agent in the Space.
 
-Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Connectors) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.
+Installs the harness if needed (pinned, checksum-verified), gives it the Space's own MCP tools plus any mcp_servers, and runs it over the Agent Client Protocol as a detached spacesd process with auto-approved permissions (the Space is the sandbox). The run survives this server restarting or the connection dropping. Returns a run_id immediately: follow it with agent_events (cursor) or agent_status, continue it with agent_message, cancel a turn with agent_interrupt. Keys: provider keys saved in Cua Spaces (Settings → Connections) reach the runs whose harness reads them; env_from_host names provider key variables from this server's environment; host credential files are never copied.
 
 | | |
 | --- | --- |
@@ -49,7 +51,7 @@ Installs the harness if needed (pinned, checksum-verified), gives it the Space's
 | `branch` | `string` | none | Branch or tag for `repo`. |
 | `cwd` | `string` | none | Working directory in the Space. Default: the run's own. |
 | `env` | `map of string` | `{}` | More environment for the agent, for example `{"HERMES_HOME": "/home/cua/bot"}`. Stored 0600 in the run and redacted from its output; name provider keys in `env_from_host` instead, so their values never pass through the conversation. |
-| `env_from_host` | `string[]` | `[]` | Provider key variables to forward from this server's environment (or from the keys saved in Cua Spaces, Settings → Connectors), for example ["ANTHROPIC_API_KEY"]. Names only; values never pass through the conversation. Saved keys the harness reads are added without being named. |
+| `env_from_host` | `string[]` | `[]` | Provider key variables to forward from this server's environment (or from the keys saved in Cua Spaces, Settings → Connections), for example ["ANTHROPIC_API_KEY"]. Names only; values never pass through the conversation. Saved keys the harness reads are added without being named. |
 | `exit_when_idle` | `boolean` | `false` | Stop (resumably) once the prompt is answered. Default false. |
 | `files` | `string[]` | `[]` | Host files attached to the first prompt (absolute paths on this server's computer, at most 8 MiB each). |
 | `home` | `string` | none | Run as this persistent agent: its home in the Cua Volume (`agents/<home>/`) is restored into the Space first and saved after every turn, the harness keeps its memory there, and the agent gets the `cua` bridge (notify_user, the drive). Creates the persistent agent (this harness, this Space) when it does not exist yet. Default: a one-off run whose state lives only in the Space. |
@@ -62,6 +64,8 @@ Installs the harness if needed (pinned, checksum-verified), gives it the Space's
 | `model` | `string` | none | Model id. |
 | `prompt` | `string` | required | The task. |
 | `repo` | `string` | none | Git URL cloned into the working directory first. |
+| `resume_context` | `string` | none | With `resume_session`: the earlier conversation as text, given to the agent before the prompt only when the harness cannot reload the session (up to 32 KiB). |
+| `resume_session` | `string` | none | Continue this session of the harness's own (an id from `agent_threads`) instead of starting a new one: the harness reloads it from its own store on this computer. Give `cwd` as the chat's folder. Not with `home`. |
 | `sandbox_mcp` | `boolean` | `true` | Give the agent the Space's own MCP tools. Default true. |
 | `show` | `boolean` | `false` | Open a terminal on the Space's desktop following the run. Default false. |
 | `skills` | `boolean` | `true` | Copy the cua skills into the harness. Default true. |
@@ -99,6 +103,7 @@ Continues the same session. While a turn runs the message is queued (or, with fo
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| `client_id` | `string` | none | A key of the caller's for this message: sending it again (after a lost connection) returns the first answer and delivers nothing twice. |
 | `force` | `boolean` | `false` | Interrupt a running turn first instead of queueing. Default false. |
 | `name` | `string` | none | Or an agent member of the Space by name (its current run). Give exactly one of `run_id` and `name`. |
 | `run_id` | `string` | `""` | `run_id` from `agent_start`. |
@@ -291,11 +296,72 @@ No parameters.
 
 #### Result
 
-JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Connectors) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.
+JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `ready` (supported and not `auth: missing`), `supported`, `auth` (`ok`: a key saved in Cua Spaces (Settings → Connections) or one this server can forward with env_from_host; `missing`: none, so a run needs a sign-in inside its Space; `unknown`: the harness may be set up through its own config), `auth_hint`, `installs`, `keys`, `endpoint_wires`, `sandbox_mcp`, `interactive_cli`, `notes`), `forwardable_env` and `runner`.
 
 #### Errors
 
 [`invalid_argument`](/spaces/reference#invalid_argument)
+
+### agent_threads
+
+List the recent Claude Code, Codex and Hermes chats on this computer. For a person only.
+
+Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user (never a relay caller or a Space's agent). Reads the coding agents' own stores on this computer read-only (Claude Code's projects folder, Codex's sessions, Hermes's state.db) and returns only each chat's title, folder and time; nothing is kept or sent anywhere. A store that is missing or unreadable adds nothing.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | none: for a person only, never served over MCP; read-only, idempotent |
+| Swift SDK | `spaces.callTool("agent_threads")` |
+| Rust | `cua_agent_threads::recent` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `agents` | `string[]` | `[]` | Harness ids to look at: `claude-code`, `openai-codex`, `hermes`. Default: all three. |
+| `limit` | `integer` | `4` | How many chats, newest first (1-50). Default 4. At least 0. |
+
+#### Result
+
+JSON: `threads`, newest first, each `agent` (harness id), `id`, `title` (the chat's name, or its first prompt cut to 80 characters), `cwd` (its folder, or null), `last_active_ms` and `resume` (the agent's own command that continues it in a terminal, as argv).
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`permission_denied`](/spaces/reference#permission_denied)
+
+### agent_thread_read
+
+Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only.
+
+Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user. Reads one chat from the agent's own store, read-only: what the person typed and the agent's replies, without tool calls, tool output, thinking or the agent's own injected instructions. Call it once the person picked the chat; continue it with agent_start's `resume_session`.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | none: for a person only, never served over MCP; read-only, idempotent |
+| Swift SDK | `spaces.callTool("agent_thread_read")` |
+| Rust | `cua_agent_threads::history` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `agent` | `string` | required | Its harness id (`claude-code`, `openai-codex`, `hermes`). |
+| `id` | `string` | required | Its id, from `agent_threads`. |
+| `limit` | `integer` | `200` | The newest messages to return (1-5000). Default 200. At least 0. |
+
+#### Result
+
+JSON: `thread` (as in `agent_threads`), `messages` (oldest first, each `key`, `role` (`person` or `agent`), `text` (cut to 8 KiB), `ts_ms`, and `cut` when cut) and `earlier_omitted` (older messages left out).
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`permission_denied`](/spaces/reference#permission_denied), [`not_found`](/spaces/reference#not_found)
 
 ## Persistent agents
 
@@ -342,6 +408,7 @@ A persistent agent is an agent member of the Space it works in, with its memory 
 | --- | --- | --- | --- |
 | `agent` | `"claude-code" \| "gemini-cli" \| "google-antigravity" \| "goose" \| "hermes" \| "openai-codex" \| "openclaw" \| "opencode" \| "pi"` | required | Harness id. `agent_capabilities` lists what each needs. |
 | `base_url` | `string` | none | A custom model endpoint base URL. |
+| `brief` | `string` | none | Standing instructions: the first message each run takes carries them in front of its text (the thread shows only the message). |
 | `daily_at` | `string` | none | A schedule: every day at `HH:MM` local time (with `prompt`). |
 | `durable` | `boolean` | `false` | Re-drive the agent's runs after a crash. Default false. |
 | `env` | `map of string` | `{}` | More environment for every run (not secrets; see `env_from_host`). |
@@ -358,6 +425,7 @@ A persistent agent is an agent member of the Space it works in, with its memory 
 | `rights.task` | `string \| string[] \| ` | `members` | Who can @mention it to give it a task (also `agent_send` and `agent_message`). Default `members`. |
 | `sessions` | `integer` | `1` | Parallel sessions. Default 1. At least 0. |
 | `space` | `string` | required | The Space it works in (id or name). |
+| `standby` | `boolean` | `false` | Keep a run open with its session ready, so a message starts its turn at once (the agent is started in the background, and again if it ends). Default false. |
 | `title` | `string` | none | The schedule's title. Default: the first words of `prompt`. |
 | `weekly_on` | `string` | none | A schedule: every week at `<weekday> HH:MM` local time (with `prompt`). |
 

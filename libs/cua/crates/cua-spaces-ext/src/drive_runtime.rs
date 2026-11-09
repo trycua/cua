@@ -5,8 +5,9 @@
 //! services (change feed, block cache, this machine's mount, storage
 //! switching) and the volume mounted in each Space's guest.
 //!
-//! A Space's guest mounts its own view (`public/` read-only, its
-//! `spaces/<this>/` read-write), served from this host by
+//! A Space's guest mounts its own view (its `spaces/<name>--<id>/`
+//! read-write and the named volumes it asked for; `public/` only once it is
+//! granted), served from this host by
 //! [`cua_volume::guest::GuestServers`] over the Space's `/volume` socket
 //! ([`cua_spaces::volume`]); the access rules, versioning, audit and secret
 //! scan stay here, and the guest never holds storage keys. The view is
@@ -22,6 +23,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use cua_spaces::registry::VolumeSetting;
 use cua_spaces::volume::{VOLUME_FEATURE, VolumeAttachment};
 use cua_spaces::{Error, Result, Spaces};
 use cua_volume::guest::GuestServers;
@@ -41,6 +43,9 @@ pub(crate) struct Mounted {
     holder: Option<String>,
     /// The named volumes the Space mounted (its view grants them).
     access: Vec<cua_volume::MountAccess>,
+    /// Whether the view has the Space's own folder (the Space's Volume
+    /// setting is not "off").
+    own: bool,
     /// The mounts they came from.
     named: Vec<cua_spaces::named_volumes::VolumeMount>,
 }
@@ -96,6 +101,9 @@ pub(crate) struct DriveRuntime {
     /// restarts (see [`spawn_attach`]).
     watchers: std::sync::Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
     pub(crate) volume_auto: bool,
+    /// The Volume across this account's machines, once the daemon started
+    /// it (it runs only with another machine signed in).
+    pub(crate) replica: tokio::sync::OnceCell<Arc<crate::replica_runtime::ReplicaRuntime>>,
 }
 
 impl Default for DriveRuntime {
@@ -107,6 +115,7 @@ impl Default for DriveRuntime {
             unavailable: std::sync::Mutex::new(BTreeMap::new()),
             watchers: std::sync::Mutex::new(BTreeMap::new()),
             volume_auto: true,
+            replica: tokio::sync::OnceCell::new(),
         }
     }
 }
@@ -132,6 +141,58 @@ impl DriveRuntime {
 
     pub(crate) fn set_keys(&mut self, keys: Arc<dyn cua_volume::service::KeyStore>) {
         self.keys = keys;
+    }
+}
+
+/// `ctx` under Secure Spaces: a Space reads `public/` only through a grant.
+/// Without the experiment a Space reads it as it always could.
+fn isolated_if_secure(ctx: cua_volume::Context) -> cua_volume::Context {
+    if cua_spaces::network::Mode::from_env() == cua_spaces::network::Mode::Secure {
+        ctx.isolated()
+    } else {
+        ctx
+    }
+}
+
+/// The root of the tree `id` is in, as the Volume names Spaces. Every Space
+/// is its own tree until Spaces have parents.
+fn tree_root(spaces: &Spaces, id: &str) -> String {
+    spaces
+        .volume_space_id(id)
+        .unwrap_or_else(|_| id.to_string())
+}
+
+/// The access context of the Space `id` (a shell in it): its own folder
+/// (unless its Volume is off), its tree, and no agent.
+pub fn space_context(spaces: &Spaces, id: &str) -> cua_volume::Context {
+    let vid = spaces
+        .volume_space_id(id)
+        .unwrap_or_else(|_| id.to_string());
+    let ctx =
+        isolated_if_secure(cua_volume::Context::space(&vid).with_tree(&tree_root(spaces, id)));
+    if spaces.volume_setting(id) == cua_spaces::registry::VolumeSetting::Off {
+        ctx.without_own_folder()
+    } else {
+        ctx
+    }
+}
+
+/// The access context of persistent agent `agent`, acting in `space` when
+/// it is in one: its home, and what `space_context` gives the Space.
+pub fn agent_context(spaces: &Spaces, agent: &str, space: Option<&str>) -> cua_volume::Context {
+    let Some(space) = space else {
+        return cua_volume::Context::agent(agent, None);
+    };
+    let vid = spaces
+        .volume_space_id(space)
+        .unwrap_or_else(|_| space.to_string());
+    let ctx = isolated_if_secure(
+        cua_volume::Context::agent(agent, Some(&vid)).with_tree(&tree_root(spaces, space)),
+    );
+    if spaces.volume_setting(space) == cua_spaces::registry::VolumeSetting::Off {
+        ctx.without_own_folder()
+    } else {
+        ctx
     }
 }
 
@@ -254,6 +315,9 @@ impl SpacesDrive for Spaces {
             return;
         };
         ext.runtime.stop_watchers();
+        if let Some(r) = ext.runtime.replica.get() {
+            Box::pin(r.shutdown()).await;
+        }
         // This machine's mount first: it is quick, and a daemon that is
         // ended before the Spaces' volumes are done (a stop that waits
         // 30 s, then signals) must not leave it behind with no server, the
@@ -279,16 +343,33 @@ impl SpacesDrive for Spaces {
         if let Some(m) = volumes.get(&id) {
             // Live, and with the mounts the Space has now (a Space that
             // connected first and got its mounts after is mounted again).
-            if m.attachment.is_live() && m.named == self.volume_mounts(&id)? {
+            let own = self.volume_setting(&id) != VolumeSetting::Off;
+            if m.attachment.is_live() && m.named == self.volume_mounts(&id)? && m.own == own {
                 return Ok(Some(m.info(&id)));
             }
             if let Some(stale) = volumes.remove(&id) {
                 stale.detach().await;
             }
         }
-        let s = self.space(&id).await?;
         let named = self.volume_mounts(&id)?;
+        let own = self.volume_setting(&id) != VolumeSetting::Off;
+        if !own && named.is_empty() {
+            // "Volume: Off" and no named volumes: nothing to mount.
+            ext.runtime
+                .note_unavailable(&id, Some("the Volume is off for this Space".into()));
+            return Ok(None);
+        }
+        let s = self.space(&id).await?;
         let access = mount_access(&named);
+        for m in named.iter().filter(|m| !m.read_only) {
+            tracing::warn!(
+                space = %id,
+                volume = %m.name,
+                "volume {} is mounted read-write; mounts are read-only unless asked for :rw \
+                 (a mount saved before that keeps the mode it was saved with)",
+                m.name
+            );
+        }
         let Some(backend) = s.volume_backend() else {
             let answered_before = self
                 .registry()
@@ -332,14 +413,19 @@ impl SpacesDrive for Spaces {
             return Ok(None);
         };
         let drive = ext.drive();
+        // A Space from before its folder carried its id: move the folder,
+        // once, and keep what it could read (`public/`).
+        migrate_legacy_folder(self, drive, &id).await?;
         let svc = self.drive_service().await.ok();
         let state = drive
             .state_dir()
             .join("volumes")
-            .join(cua_volume::path::space_folder_name(&id));
+            .join(cua_volume::path::space_folder_name(
+                &self.volume_space_id(&id).unwrap_or_else(|_| id.clone()),
+            ));
         let vfs = Vfs::new(
             drive,
-            cua_volume::Context::space(&id).with_mounts(access.clone()),
+            space_context(self, &id).with_mounts(access.clone()),
             svc.as_ref().map(|s| s.cache().clone()),
             svc.as_ref().map(|s| s.feed().clone()),
             &state,
@@ -372,6 +458,7 @@ impl SpacesDrive for Spaces {
             servers,
             holder: None,
             access,
+            own,
             named,
         };
         let info = m.info(&id);
@@ -491,6 +578,51 @@ impl DriveRuntime {
     }
 }
 
+/// Moves the folder of a Space that got its id after it was created (its
+/// folder is still `spaces/<name>/`) to `spaces/<name>--<id>/`, and gives the
+/// Space a read-only grant on `public/`, which it could read before that
+/// became a grant. Done once: the Space's record says so.
+async fn migrate_legacy_folder(spaces: &Spaces, drive: &cua_volume::Drive, id: &str) -> Result<()> {
+    let Some(meta) = spaces.registry().meta(id).filter(|m| m.volume_legacy) else {
+        return Ok(());
+    };
+    let vid = meta.volume_id(id);
+    let moved = drive.migrate_space_folder(id, &vid).await.drive()?;
+    drive
+        .grant_migrated(
+            &cua_volume::Principal::Space(vid).id(),
+            cua_volume::path::PUBLIC,
+            cua_volume::Mode::Read,
+            "kept from before public/ became a grant; revoke it to close public/ to this Space",
+        )
+        .drive()?;
+    spaces
+        .registry()
+        .update_meta(id, |m| m.volume_legacy = false)?;
+    tracing::info!(space = %id, moved, "Space folder renamed to carry the Space's id");
+    Ok(())
+}
+
+/// Applies the Space's Volume setting (own folder / off) now: a mounted
+/// volume is shown again with the new view, or unmounted when nothing is
+/// left to show; an unmounted one of a running Space mounts in the
+/// background. Returns whether the Space has a volume afterwards (a mount
+/// that is still coming up counts as not yet).
+pub(crate) async fn apply_setting(spaces: &Spaces, space: &str) -> Result<bool> {
+    let id = spaces.resolve(space)?.to_string();
+    if spaces.volume(&id).await.is_some() {
+        if spaces.volume_attach(&id).await?.is_none() {
+            spaces.volume_detach(&id).await?;
+            return Ok(false);
+        }
+        return Ok(true);
+    }
+    if !stopped_on_its_own(spaces, &id).await {
+        spawn_attach(spaces, &id);
+    }
+    Ok(false)
+}
+
 /// Mounts the volume of a Space that just connected, in the background (a
 /// guest without the backend is left alone). Local and cloud Spaces only:
 /// a machine added by address, or a host Space, is someone's own computer.
@@ -509,6 +641,12 @@ pub(crate) fn spawn_attach(spaces: &Spaces, id: &str) {
     // named volumes: then this machine, which holds the Cua Volume, serves
     // them over the Space's own connection (a Space on a pool host).
     if !attaches_on_connect(id, spaces.volume_mounts(id).is_ok_and(|m| !m.is_empty())) {
+        return;
+    }
+    // "Volume: Off" and no named volumes: nothing to mount.
+    if spaces.volume_setting(id) == VolumeSetting::Off
+        && spaces.volume_mounts(id).is_ok_and(|m| m.is_empty())
+    {
         return;
     }
     // A cluster job's Space runs one command for someone else's queue: it

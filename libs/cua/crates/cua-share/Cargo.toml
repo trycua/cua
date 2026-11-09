@@ -32,6 +32,8 @@ url.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
+# Public TCP shares: the gateway speaks WebSocket to the relay and splices it to the port.
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["CuaCoreModule"] },
+  "android": { "modules": ["expo.modules.cuacore.CuaCoreModule"] }
+}

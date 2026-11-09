@@ -20,7 +20,9 @@ import type { ParityCheckpoint } from "../src/bridge/parity";
 const texts = (l: Locator) => l.evaluateAll((els) => els.map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim()));
 const attrs = (l: Locator, name: string) => l.evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
 
-const LINKS = new Set(["connect-cloud", "connect-by-address"]);
+/** Fields the page does not draw as a row: "Add your cloud account" is the last entry of Run on. */
+const LINKS = new Set(["connect-cloud"]);
+const ADD_CLOUD = { id: "add:cloud", label: "Add your cloud account\u2026" };
 
 async function expectCheckbox(box: Locator, on: boolean, enabled = true): Promise<void> {
   await expect(box).toHaveAttribute("aria-checked", String(on));
@@ -52,11 +54,16 @@ async function expectTiles(root: Locator, id: string, tiles: WizardView["osTiles
 async function expectRunOnMenu(page: Page, v: WizardView): Promise<void> {
   await page.locator("[data-run-on]").click();
   const items = page.locator("[data-run-on-option]:visible");
-  await expect(items).toHaveCount(v.placements.length);
-  expect(await attrs(items, "data-value")).toEqual(v.placements.map((o) => o.id));
-  expect(await items.evaluateAll((els) => els.map((el) => el.hasAttribute("data-disabled")))).toEqual(v.placements.map((o) => !o.enabled));
+  // Only with the Your cloud experiment (the core's `connect-cloud` field), last, after a rule.
+  const entries = [
+    ...v.placements.map((o) => ({ id: o.id, label: o.label, enabled: o.enabled })),
+    ...(v.fields.some((f) => f.id === "connect-cloud") ? [{ ...ADD_CLOUD, enabled: true }] : []),
+  ];
+  await expect(items).toHaveCount(entries.length);
+  expect(await attrs(items, "data-value")).toEqual(entries.map((o) => o.id));
+  expect(await items.evaluateAll((els) => els.map((el) => el.hasAttribute("data-disabled")))).toEqual(entries.map((o) => !o.enabled));
   const labels = await items.evaluateAll((els) => els.map((el) => el.querySelector("[data-item-label]")?.textContent ?? ""));
-  expect(labels).toEqual(v.placements.map((o) => o.label));
+  expect(labels).toEqual(entries.map((o) => o.label));
   await page.keyboard.press("Escape");
   await expect(items).toHaveCount(0);
 }
@@ -97,7 +104,12 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
   const field = (id: string) => shown.find((f) => f.id === id);
 
   if (v.step === 0) {
-    expect((await attrs(root.locator("[data-field]"), "data-field")).sort()).toEqual(shown.map((f) => f.id).sort());
+    expect((await attrs(root.locator("[data-field]"), "data-field")).sort()).toEqual(
+      shown
+        .filter((f) => !LINKS.has(f.id))
+        .map((f) => f.id)
+        .sort(),
+    );
     const errors: Record<string, string> = {};
     for (const f of shown) {
       if (f.id === "image") {
@@ -197,8 +209,7 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     const plain = v.summary.filter((f) => !technical.has(f.label));
     const tech = v.summary.filter((f) => technical.has(f.label));
     await expect(root.locator("[data-advanced-toggle]")).toHaveCount(tech.length ? 1 : 0);
-    const rowsOf = () =>
-      root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
+    const rowsOf = () => root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
     expect(await rowsOf()).toEqual((v.advanced ? [...plain, ...tech] : plain).map((f) => [f.label, f.value]));
   }
 }
@@ -213,6 +224,11 @@ export async function checkNewSpace(page: Page, checkpoints: ParityCheckpoint[])
       if (seen.has(key)) continue;
       seen.add(key);
       await page.evaluate(([state, env]) => window.__cuaParity!.showWizard(state, env), [cp.state, cp.env] as [WizardState, WizardEnv]);
+      // When a typed value's field closes, the dialog (Base UI's
+      // restoreFocus: "popup") takes focus back again on the next frame. Let
+      // that frame pass, or on a slow one it takes focus from the next
+      // state's field, whose blur commits the value.
+      await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const menu = JSON.stringify(cp.view.placements);
       // The open image suggestions cover the menu; it is checked on a later state.
       const menuChanged = cp.view.mode === "create" && cp.view.step === 0 && !cp.view.imageField.open && menu !== lastMenu;

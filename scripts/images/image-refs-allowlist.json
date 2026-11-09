@@ -1,7 +1,6 @@
 {
   "_doc": "Image refs that are not in libs/images/sandbox-images.json (or a bench lock), each with a reason. Checked by scripts/images/check-image-refs.py; an entry or path that matches nothing fails the gate, so this list only shrinks.",
   "exclude": [
-    "libs/fleet/**",
     "blog/**",
     "docs/changelog/**",
     "CHANGELOG*",
@@ -485,6 +484,7 @@
     "docker.io/trycua/xfce": "tag-safety guard list of repos never to re-tag",
     "ghcr.io/trycua/bench-demo": "synthetic bench image in the bench publisher tests",
     "ghcr.io/trycua/cua": "tag-safety guard list of repos never to re-tag",
+    "ghcr.io/trycua/cua-relay": "the relay image a public TCP share edge runs in the user's own cloud (a service, not a sandbox image)",
     "ghcr.io/trycua/cua-desktop-linux": "legacy name of ghcr.io/trycua/linux (frozen, read-only; see legacy)",
     "ghcr.io/trycua/localhost": "resolver test message (a host:port prefix is not a repo)",
     "ghcr.io/trycua/macos-sequoia-vanilla": "tag-safety guard list of repos never to re-tag",

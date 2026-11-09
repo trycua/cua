@@ -7,7 +7,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { demoRelayUsage } from "@/bridge/adapters/demo/relay-usage";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
-import { BridgeProvider, flagOn, resetUpsellMemory, setFlagOverride, setRemoteFlags, type CoreClient, type DataAdapter, type RelayUsage, type UpsellCardReason } from "@/bridge";
+import { BridgeProvider, resetUpsellMemory, type CoreClient, type DataAdapter, type RelayUsage, type UpsellCardReason } from "@/bridge";
 
 import { RelayAllowanceNotice } from "./shell/relay-allowance-notice";
 import { UpgradeCard } from "./upgrade-card";
@@ -15,7 +15,6 @@ import { UpgradeCard } from "./upgrade-card";
 afterEach(() => {
   cleanup();
   localStorage.clear();
-  setRemoteFlags({});
   resetUpsellMemory();
 });
 
@@ -48,28 +47,8 @@ function host(usage: RelayUsage | null) {
   return { opened, features, view };
 }
 
-describe("the upsell_cards flag", () => {
-  it("is off by default, and a device override or a remote value turns it on", () => {
-    expect(flagOn("upsell_cards")).toBe(false);
-    setRemoteFlags({ upsell_cards: true });
-    expect(flagOn("upsell_cards")).toBe(true);
-    setFlagOverride("upsell_cards", false);
-    expect(flagOn("upsell_cards")).toBe(false);
-    setFlagOverride("upsell_cards", null);
-    expect(flagOn("upsell_cards")).toBe(true);
-  });
-});
-
 describe.skipIf(!wasmBuilt)("<UpgradeCard>", () => {
-  it("draws nothing while the flag is off", async () => {
-    const { view } = host(reached);
-    view("hours");
-    await act(() => new Promise((r) => setTimeout(r, 20)));
-    expect(document.querySelector("[data-upgrade-card]")).toBeNull();
-  });
-
-  it("flag on: says what happened, what Pro gives and the price; Upgrade opens the Pro checkout and is counted", async () => {
-    setFlagOverride("upsell_cards", true);
+  it("says what happened, what Pro gives and the price; Upgrade opens the Pro checkout and is counted", async () => {
     const { view, opened, features } = host(reached);
     view("hours");
     const card = await waitFor(() => {
@@ -79,7 +58,7 @@ describe.skipIf(!wasmBuilt)("<UpgradeCard>", () => {
     });
     expect(card.getAttribute("data-upgrade-card")).toBe("hours");
     expect(card.textContent).toContain("You've used this month's remote hours");
-    expect(card.textContent).toContain("Pro gives you 200 hours and 5 live sessions");
+    expect(card.textContent).toContain("Pro gives you 200 hours and 5 computers in use at once");
     expect(card.textContent).toContain("$18 a month");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade to Pro" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_card_hours"]));
@@ -87,7 +66,6 @@ describe.skipIf(!wasmBuilt)("<UpgradeCard>", () => {
   });
 
   it("Not now closes it and is counted", async () => {
-    setFlagOverride("upsell_cards", true);
     const { view, features } = host(reached);
     view("invite");
     fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
@@ -96,7 +74,6 @@ describe.skipIf(!wasmBuilt)("<UpgradeCard>", () => {
   });
 
   it("a team plan has nothing to buy for an invite", async () => {
-    setFlagOverride("upsell_cards", true);
     const { view } = host({ ...reached, plan: "team" });
     view("invite");
     await act(() => new Promise((r) => setTimeout(r, 20)));
@@ -106,7 +83,6 @@ describe.skipIf(!wasmBuilt)("<UpgradeCard>", () => {
 
 describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
   it("a used allowance is a card, and its Not now keeps it closed for the month", async () => {
-    setFlagOverride("upsell_cards", true);
     const { view } = host(reached);
     view();
     const card = await waitFor(() => {
@@ -120,9 +96,17 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
     await waitFor(() => expect(document.querySelector("[data-upgrade-card]")).toBeNull());
   });
 
-  it("a Pro account at 5 of 5 live sessions with empty reasons gets the sessions card", async () => {
-    setFlagOverride("upsell_cards", true);
-    const { view } = host({ ...reached, plan: "pro", hoursUsed: 10, hoursLimit: 200, liveSessions: 5, liveSessionsLimit: 5, reasons: [], softLimitReached: false });
+  it("a Pro account at 5 of 5 computers in use at once with empty reasons gets the sessions card", async () => {
+    const { view } = host({
+      ...reached,
+      plan: "pro",
+      hoursUsed: 10,
+      hoursLimit: 200,
+      liveSessions: 5,
+      liveSessionsLimit: 5,
+      reasons: [],
+      softLimitReached: false,
+    });
     view();
     const card = await waitFor(() => {
       const el = document.querySelector("[data-upgrade-card]");
@@ -130,19 +114,11 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
       return el as HTMLElement;
     });
     expect(card.getAttribute("data-upgrade-card")).toBe("sessions");
-    expect(card.textContent).toContain("You're using 5 of 5 live sessions");
+    expect(card.textContent).toContain("You have 5 of 5 computers in use at once");
   });
 
   it("a plan with no card keeps the notice and its Upgrade link", async () => {
-    setFlagOverride("upsell_cards", true);
     const { view } = host({ ...reached, plan: "enterprise" });
-    view();
-    await screen.findByRole("status");
-    expect(document.querySelector("[data-upgrade-card]")).toBeNull();
-  });
-
-  it("with the flag off the thin line is unchanged", async () => {
-    const { view } = host(reached);
     view();
     await screen.findByRole("status");
     expect(document.querySelector("[data-upgrade-card]")).toBeNull();

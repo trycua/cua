@@ -192,6 +192,7 @@ impl Node {
                 name: name.clone(),
                 auth_time: None,
                 mfa: false,
+                azp: None,
                 orgs: Vec::new(),
             }),
             _ => None,

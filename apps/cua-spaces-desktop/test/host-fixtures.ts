@@ -5,7 +5,7 @@
 // SwiftUI app's FixtureHost, ScriptedHost, FakeAccountTokens,
 // FixtureDevices, FixturePresence and FixtureLoginItem). In memory: no
 // service, launchd, network, notification, login item or keychain.
-import type { DeviceEnrollment, DevicesLike, DevicesSnapshot, HostLike, HostSettingsChange, HostSetupOptions, HostStatus, PairingCode, RelayDevice } from "../src/native/generated/index";
+import type { DefaultSpace, DeviceEnrollment, DevicesLike, DevicesSnapshot, HostLike, HostSettingsChange, HostSetupOptions, HostStatus, PairingCode, RelayDevice, SpacesSettings } from "../src/native/generated/index";
 import type { SystemNote, SystemServices } from "../src/bridge/system";
 import type { HostModel } from "../src/model/host";
 import { FixtureLoginItem } from "../src/model/login-item";
@@ -58,7 +58,7 @@ export class FixtureHost {
       relayUrl: relay ? (o.relayUrl ?? "https://relay.cua.ai") : undefined,
       directUrl: relay ? undefined : `http://${o.direct ?? ""}`,
       machineId: "0123abcd4567",
-      name: o.name ?? "This machine",
+      name: o.name ?? "This computer",
       sharing: true,
       serviceInstalled: true,
       serviceRunning: true,
@@ -289,6 +289,40 @@ export class FixtureDevices {
     this.calls.push(`revoke-pairing-code:${id}`);
     this.pairing = this.pairing.map((p) => (p.id === id ? { ...p, state: "revoked" } : p));
   }
+
+  /** The account's default Space as the relay keeps it (unset unless set). */
+  spaces: SpacesSettings = { defaultSpace: undefined, fallback: [], fallbackOn: true, updatedAt: 0n };
+
+  async spacesSettings(): Promise<SpacesSettings> {
+    this.calls.push("spaces-settings");
+    return this.spaces;
+  }
+
+  async setSpacesSettings(settings: SpacesSettings): Promise<SpacesSettings> {
+    this.calls.push(`set-spaces-settings:${settings.defaultSpace ?? ""}`);
+    this.spaces = { ...settings, updatedAt: BigInt(Math.floor(Date.now() / 1000)) };
+    return this.spaces;
+  }
+
+  /** The relay's answer over the fixture account's machines: the default, every other machine, then this one. */
+  async resolveDefaultSpace(): Promise<DefaultSpace> {
+    this.calls.push("resolve-default-space");
+    const machines = this.current.machines.map((m) => ({ space: `relay:${m.id}`, name: m.name, online: m.online }));
+    const def = machines.find((m) => m.space === this.spaces.defaultSpace);
+    const order = [
+      ...(def ? [{ ...def, role: "default" }] : []),
+      ...(this.spaces.fallbackOn ? machines.filter((m) => m !== def).map((m) => ({ ...m, role: "fallback" })) : []),
+      { space: "relay:self-id", name: "This Mac", online: true, role: "here" },
+    ];
+    const first = order.find((o) => o.online && o.role !== "here");
+    return {
+      space: first?.space,
+      reason: first ? (first.role === "default" ? "default" : this.spaces.defaultSpace ? "fallback" : "unset") : "here",
+      defaultSpace: this.spaces.defaultSpace,
+      defaultOnline: def ? def.online : undefined,
+      order,
+    };
+  }
 }
 
 /** The system in memory: what was opened, shown, posted and asked. */
@@ -336,8 +370,8 @@ export const HOST_METHODS = [
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.choose", "settings.update",
-  "onboarding.get", "onboarding.complete",
+  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.choose", "settings.update",
+  "onboarding.get", "onboarding.complete", "onboarding.reset",
 ];
 
 /** The page's operations over them (the shared adapter test leaves them to it too). */
@@ -348,5 +382,5 @@ export const HOST_OPS = [
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename", "devices.revoke", "devices.confirmMachine",
   "devices.createPairingCode", "devices.pairingCodes", "devices.revokePairingCode", "teams.list",
   "storage.get", "storage.run", "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding",
+  "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings", "settings.get", "settings.set", "settings.choose", "experiments.set", "session.completeOnboarding", "session.resetOnboarding",
 ];

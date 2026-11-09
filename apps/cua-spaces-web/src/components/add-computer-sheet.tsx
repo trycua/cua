@@ -3,16 +3,14 @@
 
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, LoaderCircleIcon, MoreHorizontalIcon } from "lucide-react";
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { Trans } from "react-i18next";
 import { encode } from "uqr";
 
 import {
   displayPairingCode,
-  expiresInText,
-  FINISHING_SETUP,
   normalizePairingCode,
   pairingLinkRelay,
   teamName,
-  useFlag,
   useJoinWithCode,
   useMachines,
   usePairingCode,
@@ -32,7 +30,9 @@ import { Menu } from "@/components/ui/menu";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { UpgradeCard } from "@/components/upgrade-card";
+import { t as tr, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { THIS_MACHINE } from "@/bridge/host-os";
 
 /** Where Cua Spaces is downloaded; the page picks the download for the computer that opens it. */
 export const INSTALL_URL = "https://cua.ai/install";
@@ -47,29 +47,37 @@ export const SETTLE_MS = 10_000;
 export type AddView = "pick" | "signin" | "link" | "qr" | "command" | "code" | "enter";
 
 type Shell = "sh" | "powershell";
-const SHELLS = [
-  { value: "sh", label: "macOS / Linux" },
-  { value: "powershell", label: "Windows (preview)" },
-] as const satisfies readonly { value: Shell; label: string }[];
-
-/** The methods, in order; the first is the default. `code`: it needs a one-time code. */
-export const METHODS: readonly { view: Exclude<AddView, "pick" | "enter">; label: string; code: boolean }[] = [
-  { view: "signin", label: "Sign in there", code: false },
-  { view: "link", label: "Open a link", code: true },
-  { view: "qr", label: "Scan a QR code", code: true },
-  { view: "command", label: "Run a command", code: true },
-  { view: "code", label: "Enter a code", code: true },
+const shells = (t: typeof tr): readonly { value: Shell; label: string }[] => [
+  { value: "sh", label: t("computers.add.shell_sh") },
+  { value: "powershell", label: t("computers.add.shell_powershell") },
 ];
 
-const TITLES: Record<AddView, string> = {
-  pick: "Add a machine",
-  signin: "Sign in there",
-  link: "Open a link",
-  qr: "Scan a QR code",
-  command: "Run a command",
-  code: "Enter a code",
-  enter: "Enter a code",
-};
+/** The methods, in order; the first is the default. `code`: it needs a one-time code. */
+export const METHODS: readonly { view: Exclude<AddView, "pick" | "enter">; code: boolean }[] = [
+  { view: "signin", code: false },
+  { view: "link", code: true },
+  { view: "qr", code: true },
+  { view: "command", code: true },
+  { view: "code", code: true },
+];
+
+/** The page titles; the methods' names are the same words. */
+const titles = (t: typeof tr): Record<AddView, string> => ({
+  pick: t("computers.add.title"),
+  signin: t("computers.add.method_signin"),
+  link: t("computers.add.method_link"),
+  qr: t("computers.add.method_qr"),
+  command: t("computers.add.method_command"),
+  code: t("computers.add.method_code"),
+  enter: t("computers.add.method_code"),
+});
+
+/** "Expires in 29 min" (rounded up), "Expires in 40 s" in the last minute. */
+function expiresText(t: typeof tr, expiresAtSecs: number, nowMs: number): string {
+  const left = Math.max(0, expiresAtSecs * 1000 - nowMs);
+  if (left < 60_000) return t("computers.add.expires_seconds", { count: Math.ceil(left / 1000) });
+  return t("computers.add.expires_minutes", { count: Math.ceil(left / 60_000) });
+}
 
 /**
  * The prompt for an agent on the other computer: one line, one link. The
@@ -78,7 +86,7 @@ const TITLES: Record<AddView, string> = {
  * add link for the code.
  */
 export function agentPrompt(code: string, url: string | null = null): string {
-  return `Add this machine to my Cua Spaces: ${url ?? `https://cua.ai/add/${code}`}`;
+  return tr("computers.add.agent_prompt", { url: url ?? `https://cua.ai/add/${code}` });
 }
 
 /**
@@ -120,6 +128,7 @@ export function AddComputerSheet({
   /** The team (organization id) chosen at first; default: the current team, when it can take computers. */
   team?: string | null;
 }) {
+  const t = useT();
   const { data: session, signIn } = useSession();
   const { data: listed, refresh } = useMachines();
   const machines = listed ?? [];
@@ -138,7 +147,7 @@ export function AddComputerSheet({
     if (!open) setPicked(undefined);
   }, [open]);
   const chosen = picked !== undefined ? picked : (team ?? choices.current);
-  const chosenTeam = chosen ? choices.all.find((t) => t.id === chosen) : undefined;
+  const chosenTeam = chosen ? choices.all.find((c) => c.id === chosen) : undefined;
 
   const canCode = signedIn && listed !== undefined && !notice;
   const pairing = usePairingCode({ open, enabled: canCode, pollMs, team: chosen, onUsed: () => void refresh().catch(() => {}) });
@@ -181,7 +190,7 @@ export function AddComputerSheet({
     // The hook's functions are new on every render.
   }, [waiting, newComputerPollMs]);
 
-  const added = pairing.phase === "used" ? (usedName ?? arrived?.name ?? "the machine") : (arrived?.name ?? null);
+  const added = pairing.phase === "used" ? (usedName ?? arrived?.name ?? t("computers.add.the_computer")) : (arrived?.name ?? null);
   const forTeam = chosenTeam && pairing.phase === "used" ? teamName(chosenTeam) : null;
 
   const close = () => onOpenChange(false);
@@ -197,11 +206,11 @@ export function AddComputerSheet({
             <div className="max-h-[80vh] overflow-y-auto px-6 pt-5 pb-5">
               <DialogTitle className="flex items-center gap-1 text-[15px] font-semibold">
                 {back ? (
-                  <Button size="icon-sm" variant="ghost" aria-label="Back" className="-ml-2" onClick={back} data-add-back="">
+                  <Button size="icon-sm" variant="ghost" aria-label={t("computers.add.back")} className="-ml-2" onClick={back} data-add-back="">
                     <ChevronLeftIcon />
                   </Button>
                 ) : null}
-                {TITLES[view]}
+                {titles(t)[view]}
               </DialogTitle>
               {view === "pick" ? (
                 <Pick
@@ -222,7 +231,7 @@ export function AddComputerSheet({
               noCode={noCode}
               added={added}
               forTeam={forTeam}
-              thisName={thisComputerName(machines)}
+              thisName={thisComputerName(t, machines)}
               notice={notice?.text ?? null}
               onSignIn={() => void signIn().catch(() => {})}
               onEnter={() => setView("enter")}
@@ -231,10 +240,10 @@ export function AddComputerSheet({
               teamPicker={
                 choices.teams.length > 0 && view === "pick" && !added ? (
                   <Select
-                    aria-label="Add it for"
+                    aria-label={t("computers.add.add_it_for")}
                     className="h-7 min-w-0 border-transparent bg-transparent text-xs text-muted-foreground shadow-none"
                     value={chosen ?? "me"}
-                    options={[{ value: "me", label: "For Just me" }, ...choices.teams.map((t) => ({ value: t.id, label: `For ${teamName(t)}` }))]}
+                    options={[{ value: "me", label: t("computers.add.for_just_me") }, ...choices.teams.map((c) => ({ value: c.id, label: t("computers.add.for_team", { team: teamName(c) }) }))]}
                     onValueChange={(v) => setPicked(v === "me" ? null : v)}
                   />
                 ) : null
@@ -252,19 +261,22 @@ function computerIds(list: readonly Machine[]): Set<string> {
   return new Set(list.filter((m) => !m.device).map((m) => m.id));
 }
 
-/** "This Mac" on a Mac, else "This computer". */
-function thisComputerName(list: readonly Machine[]): string {
-  return list.find((m) => m.current)?.os === "macos" ? "This Mac" : "This machine";
+/** What this computer is called, in the words of its own system ("This Mac", "This PC", "This machine"). */
+function thisComputerName(t: typeof tr, list: readonly Machine[]): string {
+  const os = list.find((m) => m.current)?.os;
+  return os === "macos" || os === "windows" || os === "linux" ? THIS_MACHINE[os] : t("computers.add.this_machine");
 }
 
 /* ---- The first page: the methods -------------------------------------------------- */
 
 function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boolean; onPick: (v: AddView) => void }) {
+  const t = useT();
+  const names = titles(t);
   const code = pairing.code?.code ?? null;
   return (
     <>
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Any Mac, Linux or Windows machine you own can run Spaces for you.</DialogDescription>
-      <nav aria-label="Ways to add a machine" className="mt-3" data-add-methods="">
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.lede")}</DialogDescription>
+      <nav aria-label={t("computers.add.methods_label")} className="mt-3" data-add-methods="">
         <GroupedSection>
           {METHODS.map((m) => {
             const off = m.code && noCode;
@@ -277,7 +289,7 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
                 onClick={() => onPick(m.view)}
                 className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent disabled:opacity-45"
               >
-                <span className="flex-1">{m.label}</span>
+                <span className="flex-1">{names[m.view]}</span>
                 <ChevronRightIcon className="size-3.5 text-muted-foreground/70" aria-hidden />
               </button>
             );
@@ -286,10 +298,10 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
       </nav>
       {pairing.phase === "error" && pairing.error ? (
         <p className="mt-3 text-xs text-muted-foreground" data-add-code-error="">
-          {pairing.error.unsupported ? "Your Cua relay can't make codes yet, so only Sign in there works." : `${pairing.error.message} `}
+          {pairing.error.unsupported ? t("computers.add.codes_unsupported") : `${pairing.error.message} `}
           {pairing.error.unsupported ? null : (
             <button type="button" className="text-brand outline-none hover:underline" onClick={pairing.renew} data-add-retry="">
-              Try again
+              {t("computers.add.try_again")}
             </button>
           )}
         </p>
@@ -298,15 +310,15 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
         <div className="mt-5" data-add-prompt="">
           <div className="flex items-center justify-between">
             <label htmlFor="add-agent-prompt" className="text-[13px] font-medium">
-              Or paste this into an agent on that machine
+              {t("computers.add.paste_into_agent")}
             </label>
-            <CopyButton text={code ? agentPrompt(code, pairing.code?.url ?? null) : ""} label="Copy prompt" disabled={!code || pairing.phase !== "ready"} />
+            <CopyButton text={code ? agentPrompt(code, pairing.code?.url ?? null) : ""} label={t("computers.add.copy_prompt")} disabled={!code || pairing.phase !== "ready"} />
           </div>
           <textarea
             id="add-agent-prompt"
             readOnly
             rows={2}
-            value={code ? agentPrompt(code, pairing.code?.url ?? null) : "Making a code…"}
+            value={code ? agentPrompt(code, pairing.code?.url ?? null) : t("computers.add.making_code")}
             style={{ fieldSizing: "content" } as CSSProperties}
             className="mt-1.5 block w-full resize-none rounded-lg bg-muted px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none"
           />
@@ -319,12 +331,13 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
 /* ---- Sign in there ---------------------------------------------------------------- */
 
 function SignInThere({ identity, done }: { identity: string | null; done: boolean }) {
+  const t = useT();
   return (
     <div data-add-signin="">
       <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-        On the other machine, open this link, install Cua Spaces and sign in{identity ? ` as ${identity}` : " with this account"}. It shows up here.
+        {identity ? t("computers.add.signin_as", { identity }) : t("computers.add.signin_this_account")}
       </DialogDescription>
-      <CopyLine text={INSTALL_URL} label="Copy link" dim={done} />
+      <CopyLine text={INSTALL_URL} label={t("computers.add.copy_link")} dim={done} />
     </div>
   );
 }
@@ -332,6 +345,7 @@ function SignInThere({ identity, done }: { identity: string | null; done: boolea
 /* ---- The methods that use the one-time code --------------------------------------- */
 
 function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: PairingHook; noCode: boolean; done: boolean }) {
+  const t = useT();
   const [shell, setShell] = useState<Shell>("sh");
   const code = pairing.code;
   const dim = done || pairing.phase !== "ready";
@@ -340,17 +354,17 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
     return (
       <p className="mt-1 text-[13px] text-muted-foreground" data-add-no-code="">
         {pairing.error?.unsupported
-          ? "Your Cua relay can't make codes yet. Use Sign in there instead."
+          ? t("computers.add.codes_unsupported")
           : pairing.error
-            ? `${pairing.error.message} Use Sign in there instead.`
-            : "This machine can't make a code. Use Sign in there instead."}
+            ? t("computers.add.code_error_use_signin", { message: pairing.error.message })
+            : t("computers.add.cannot_make_code")}
       </p>
     );
   }
   if (!code || pairing.phase === "minting" || pairing.phase === "idle") {
     return (
       <p className="mt-3 flex items-center gap-2 text-[13px] text-muted-foreground" data-pairing-minting="">
-        <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden /> Making a code…
+        <LoaderCircleIcon className="size-3.5 animate-spin" aria-hidden /> {t("computers.add.making_code")}
       </p>
     );
   }
@@ -358,15 +372,15 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
   if (view === "link") {
     return (
       <div data-add-link="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Open this link on the other machine. It shows the command that installs Cua Spaces and adds the machine here.</DialogDescription>
-        {code.url ? <CopyLine text={code.url} label="Copy link" dim={dim} /> : null}
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.link_help")}</DialogDescription>
+        {code.url ? <CopyLine text={code.url} label={t("computers.add.copy_link")} dim={dim} /> : null}
       </div>
     );
   }
   if (view === "qr") {
     return (
       <div data-add-qr="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Scan it with the other machine's camera to open the same one-time link.</DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.qr_help")}</DialogDescription>
         {code.url ? (
           <div className={cn("mt-4 flex justify-center", dim && "opacity-45")}>
             <QrCode text={code.url} size={208} />
@@ -379,23 +393,23 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
     const command = shell === "sh" ? code.installSh : code.installPowershell;
     return (
       <div data-add-command="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Run this on the other machine. It installs Cua Spaces and adds the machine here.</DialogDescription>
-        <Segmented className="mt-3" aria-label="The other machine's system" value={shell} options={SHELLS} onValueChange={setShell} disabled={done} />
-        {command ? <CopyLine text={command} label="Copy command" mono dim={dim} /> : null}
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.command_help")}</DialogDescription>
+        <Segmented className="mt-3" aria-label={t("computers.add.other_system")} value={shell} options={shells(t)} onValueChange={setShell} disabled={done} />
+        {command ? <CopyLine text={command} label={t("computers.add.copy_command")} mono dim={dim} /> : null}
       </div>
     );
   }
   // Enter a code: for a computer that already has Cua Spaces.
   return (
     <div data-add-code="">
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">On the machine that has Cua Spaces, choose Add a machine, then Have a code? Enter it, and type:</DialogDescription>
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.code_help")}</DialogDescription>
       <div className={cn("mt-4 flex items-center justify-between gap-4", dim && "opacity-45")} data-pairing-code="">
         <code className="font-mono text-[28px] font-medium tracking-[0.08em] tabular-nums">{code.code}</code>
-        <CopyButton text={code.code ?? ""} label="Copy code" disabled={dim} />
+        <CopyButton text={code.code ?? ""} label={t("computers.add.copy_code")} disabled={dim} />
       </div>
       {pairing.phase === "ready" ? (
         <p className="mt-2 text-xs text-muted-foreground tabular-nums" data-pairing-expires="">
-          Works once. {expiresInText(code.expiresAt, pairing.now)}.
+          {t("computers.add.works_once", { expires: expiresText(t, code.expiresAt, pairing.now) })}
         </p>
       ) : null}
     </div>
@@ -434,14 +448,14 @@ function Footer({
   onByHand: () => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const plans = usePlanLimitTelemetry();
   const plan = useRelayUsage()?.plan ?? null;
   const { openExternal } = useSession();
   const team = pairing.team;
   const limit = team?.phase === "failed" && team.upgradeUrl ? (team.kind ?? "other") : null;
-  // Behind `upsell_cards`: a team owner out of seats or computers gets the
-  // limit card (only an owner gets the checkout link) instead of Upgrade.
-  const cards = useFlag("upsell_cards");
+  // A team owner out of seats or computers gets the limit card (only an owner
+  // gets the checkout link) instead of Upgrade.
   const failedText = team?.phase === "failed" ? (team.error ?? "") : "";
   const cardReason: "seats" | "machines" | null = !limit
     ? null
@@ -450,7 +464,7 @@ function Footer({
       : limit === "machines" || /as many machines as it has seats/.test(failedText)
         ? "machines"
         : null;
-  const asCard = cards && cardReason !== null;
+  const asCard = cardReason !== null;
   const shownLimit = useRef<string | null>(null);
   useEffect(() => {
     if (!limit) shownLimit.current = null;
@@ -462,7 +476,7 @@ function Footer({
 
   const done = (
     <Button data-add-done="" variant={added ? "default" : "secondary"} onClick={onClose}>
-      Done
+      {t("computers.add.done")}
     </Button>
   );
 
@@ -471,7 +485,7 @@ function Footer({
       return (
         <FooterBar>
           <Status kind="wait" data={{ "data-pairing-team": "adding" }}>
-            {FINISHING_SETUP}
+            {t("computers.add.finishing_setup")}
           </Status>
           {done}
         </FooterBar>
@@ -482,7 +496,11 @@ function Footer({
       {asCard ? <UpgradeCard reason={cardReason} className="mx-4 mb-3" /> : null}
       <FooterBar>
         <Status kind={team?.phase === "failed" ? "ended" : "ok"} data={{ "data-pairing-added": "", "data-pairing-team": team?.phase ?? "" }}>
-          {team?.phase === "failed" ? `Added: ${added}. It isn't on ${forTeam ?? "your team"} yet. ${team.error ?? ""}`.trim() : forTeam ? `Added: ${added}, for ${forTeam}` : `Added: ${added}`}
+          {team?.phase === "failed"
+            ? t("computers.add.added_not_on_team", { name: added, team: forTeam ?? t("computers.add.your_team"), error: team.error ?? "" }).trim()
+            : forTeam
+              ? t("computers.add.added_for_team", { name: added, team: forTeam })
+              : t("computers.add.added", { name: added })}
         </Status>
         {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
           <Button
@@ -495,7 +513,7 @@ function Footer({
               void openExternal(plans.link(team.upgradeUrl!, "app_team")).catch(() => {});
             }}
           >
-            Upgrade
+            {t("computers.add.upgrade")}
           </Button>
         ) : null}
         {done}
@@ -508,27 +526,29 @@ function Footer({
     return (
       <FooterBar>
         <Button variant="secondary" onClick={onClose} data-add-cancel="">
-          Cancel
+          {t("computers.add.cancel")}
         </Button>
         <span className="flex-1" />
         {teamPicker}
         {!signedIn ? (
           <span className="text-xs text-muted-foreground" data-add-signed-out="">
-            <button type="button" className="text-brand outline-none hover:underline" onClick={onSignIn}>
-              Sign in
-            </button>{" "}
-            to make a code.
+            <Trans
+              i18nKey="computers.add.sign_in_to_make_code"
+              ns="computers"
+              components={{ action: <button type="button" className="text-brand outline-none hover:underline" onClick={onSignIn} /> }}
+            />
           </span>
         ) : noCode && pairing.phase !== "error" ? (
           <span className="text-xs text-muted-foreground" data-add-no-code-note="" title={notice ?? undefined}>
-            {thisName} can't make codes yet.
+            {t("computers.add.cannot_make_codes_yet", { name: thisName })}
           </span>
         ) : null}
         <span className="text-xs text-muted-foreground">
-          Have a code?{" "}
-          <button type="button" className="text-brand outline-none hover:underline" onClick={onEnter} data-add-enter="">
-            Enter it
-          </button>
+          <Trans
+            i18nKey="computers.add.have_code"
+            ns="computers"
+            components={{ action: <button type="button" className="text-brand outline-none hover:underline" onClick={onEnter} data-add-enter="" /> }}
+          />
         </span>
       </FooterBar>
     );
@@ -540,28 +560,28 @@ function Footer({
     <FooterBar>
       {ended ? (
         <Status kind="ended" data={{ "data-pairing-ended": ended }}>
-          {ended === "revoked" ? "You revoked this code." : "This code expired."}
+          {ended === "revoked" ? t("computers.add.code_revoked") : t("computers.add.code_expired")}
           <Button size="sm" variant="ghost" className="-ml-1 text-brand" onClick={pairing.renew} data-pairing-renew="">
-            New code
+            {t("computers.add.new_code")}
           </Button>
         </Status>
       ) : (
         <Status kind="wait" data={{ "data-pairing-waiting": "" }}>
-          {view === "signin" ? "Waiting for a new machine…" : "Waiting for the machine…"}
+          {view === "signin" ? t("computers.add.waiting_new") : t("computers.add.waiting")}
         </Status>
       )}
       {usesCode && pairing.code && pairing.phase === "ready" ? (
         <Menu
-          label={<span data-pairing-menu-expires="">Works once. {expiresInText(pairing.code.expiresAt, pairing.now)}.</span>}
+          label={<span data-pairing-menu-expires="">{t("computers.add.works_once", { expires: expiresText(t, pairing.code.expiresAt, pairing.now) })}</span>}
           trigger={
-            <Button size="icon-sm" variant="ghost" aria-label="More" data-add-more="">
+            <Button size="icon-sm" variant="ghost" aria-label={t("computers.add.more")} data-add-more="">
               <MoreHorizontalIcon />
             </Button>
           }
           items={[
-            { label: "New code", onSelect: pairing.renew },
-            { label: "Revoke", onSelect: () => void pairing.revoke().catch(() => {}) },
-            { label: "Set it up by hand", onSelect: onByHand },
+            { label: t("computers.add.new_code"), onSelect: pairing.renew },
+            { label: t("computers.add.revoke"), onSelect: () => void pairing.revoke().catch(() => {}) },
+            { label: t("computers.add.set_up_by_hand"), onSelect: onByHand },
           ]}
         />
       ) : null}
@@ -599,6 +619,7 @@ function EnterCode({
   initialCode: string;
   initialRelay: string | null;
 }) {
+  const t = useT();
   const { refresh } = useMachines();
   const joining = useJoinWithCode({ onJoined: () => void refresh().catch(() => {}) });
   const [text, setText] = useState(initialCode);
@@ -623,23 +644,23 @@ function EnterCode({
     <form onSubmit={submit} data-join-with-code={joining.phase}>
       <div className="px-6 pt-5 pb-5">
         <DialogTitle className="flex items-center gap-1 text-[15px] font-semibold">
-          <Button size="icon-sm" variant="ghost" aria-label="Back" className="-ml-2" onClick={onBack} disabled={busy} data-add-back="">
+          <Button size="icon-sm" variant="ghost" aria-label={t("computers.add.back")} className="-ml-2" onClick={onBack} disabled={busy} data-add-back="">
             <ChevronLeftIcon />
           </Button>
-          Enter a code
+          {t("computers.add.method_code")}
         </DialogTitle>
         <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-          From Add a machine on your other device. This machine joins that account. Only use a code you made or got from someone you trust.
+          {t("computers.add.enter_trust")}
         </DialogDescription>
         {relay ? (
           <p className="mt-2 text-xs text-muted-foreground" data-join-relay="">
-            This code uses its own relay: <span className="text-foreground">{relay}</span>
+            <Trans i18nKey="computers.add.own_relay" ns="computers" values={{ relay }} components={{ host: <span className="text-foreground" /> }} />
           </p>
         ) : null}
         <Input
           autoFocus
-          aria-label="Code"
-          placeholder="XXXX-XXXX-XXXX"
+          aria-label={t("computers.add.code_label")}
+          placeholder={t("computers.add.code_placeholder")}
           className="mt-4 font-mono tracking-wider"
           value={text}
           disabled={busy || joined}
@@ -658,29 +679,29 @@ function EnterCode({
         {joined ? (
           <>
             <Status kind="ok" data={{ "data-join-joined": "" }}>
-              Added this machine
+              {t("computers.add.joined")}
             </Status>
             <Button type="button" onClick={onDone}>
-              Done
+              {t("computers.add.done")}
             </Button>
           </>
         ) : busy ? (
           <>
             <Status kind="wait" data={{ "data-join-busy": "" }}>
-              Setting this machine up…
+              {t("computers.add.joining")}
             </Status>
             <Button type="button" variant="secondary" disabled>
-              Cancel
+              {t("computers.add.cancel")}
             </Button>
           </>
         ) : (
           <>
             <Button type="button" variant="secondary" onClick={onDone}>
-              Cancel
+              {t("computers.add.cancel")}
             </Button>
             <span className="flex-1" />
             <Button type="submit" disabled={!ready} data-join-submit="">
-              Add this machine
+              {t("computers.add.add_this_computer")}
             </Button>
           </>
         )}
@@ -721,6 +742,7 @@ function Words({ text }: { text: string }) {
 
 /** The link as a QR code, drawn here (nothing leaves the page). */
 export function QrCode({ text, size = 148 }: { text: string; size?: number }) {
+  const t = useT();
   const qr = encode(text, { ecc: "M", border: 2 });
   let d = "";
   qr.data.forEach((row, y) =>
@@ -729,7 +751,7 @@ export function QrCode({ text, size = 148 }: { text: string; size?: number }) {
     }),
   );
   return (
-    <svg role="img" aria-label="QR code of the link" data-pairing-qr="" width={size} height={size} viewBox={`0 0 ${qr.size} ${qr.size}`} shapeRendering="crispEdges" className="rounded-lg bg-white">
+    <svg role="img" aria-label={t("computers.add.qr_alt")} data-pairing-qr="" width={size} height={size} viewBox={`0 0 ${qr.size} ${qr.size}`} shapeRendering="crispEdges" className="rounded-lg bg-white">
       <path d={d} fill="#000" />
     </svg>
   );

@@ -243,7 +243,10 @@ mod tests {
             canonical_image_tier("windows".into(), None, Some("xcode".into())),
             Err(CuaError::InvalidArgument(_))
         ));
-        let published = |r: &str| cua_image::catalog::find(r).is_none_or(|e| e.published);
+        // Derived on the user's Mac (the developer tools image) counts as available.
+        let published = |r: &str| {
+            cua_image::catalog::find(r).is_none_or(|e| e.published || e.derived_from.is_some())
+        };
         for (got, want) in [
             (
                 canonical_image_tier("linux".into(), None, Some("slim".into())),

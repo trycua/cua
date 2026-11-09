@@ -114,8 +114,7 @@ public enum AppEnvironment {
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
-                             startup: startup,
-                             appVersion: fixtures ? nil : info.version)
+                             startup: startup)
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
             // Local Network access is asked for before the first macOS
@@ -409,7 +408,7 @@ public enum AppEnvironment {
     /// The Settings page a `settings-*` start view names.
     static func settingsRoute(_ view: String) -> MainUIRoute {
         switch view {
-        case "settings-devices": return .path("/settings/devices")
+        case "settings-devices": return .thisMac
         case "settings-about": return .path("/settings/about")
         case "settings-experiments": return .path("/settings/experiments")
         default: return .settings
@@ -471,9 +470,7 @@ public enum AppEnvironment {
                 WebUIWindowController.show(model: model)
                 WebUIWindowController.startVideoHarness(model: model)
             case "new-space", "new-space-picker", "new-space-resources":
-                // The web wizard (`CUA_SPACES_WIZARD_ON=yours`: Your cloud's
-                // experiment on for this run, and "Run on" there).
-                if env["CUA_SPACES_WIZARD_ON"] == "yours" { model.settings.experiments.yourCloud = true }
+                // The web wizard (`CUA_SPACES_WIZARD_ON=yours`: "Run on" there).
                 WebUIWindowController.showNewSpace(model: model, on: env["CUA_SPACES_WIZARD_ON"])
             case "keyvault", "keyvault-waiting":
                 web(.keyvault)
@@ -492,16 +489,20 @@ public enum AppEnvironment {
                 // only; the settings file is not written).
                 if env["CUA_SPACES_START_VIEW"] == "settings-storage" { model.settings.experiments.cuaVolume = true }
                 MainUIRouter(model: model).openSettings(Self.settingsRoute(env["CUA_SPACES_START_VIEW"] ?? "settings"))
-            case "device-approval", "device-enroll", "device-enroll-code":
-                // The web Devices page has the enroll and approval sheets.
+            case "device-approval":
+                // Computers lists the ones waiting to be added at the top.
                 await model.devices.refresh()
-                web(.path("/settings/devices"))
+                web(.home)
+            case "device-enroll", "device-enroll-code":
+                // This Mac's page has the enroll sheet.
+                await model.devices.refresh()
+                web(.thisMac)
             case "space":
                 model.select("local:aurora")
                 web(.space("local:aurora"))
             case "this-machine", "host-setup", "host-configured":
                 model.select("this-mac")
-                web(.machines)
+                web(.thisMac)
             case "notch", "notch-open":
                 // Closed first, then open once after 1.5 s, so a capture
                 // sees the spring.

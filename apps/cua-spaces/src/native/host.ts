@@ -176,8 +176,7 @@ export function createFallbackHostBridge(): HostBridge {
 
 export function createTauriHostBridge(): HostBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     status: () => invoke<HostStatus>("host_status"),
@@ -219,19 +218,21 @@ export function createFakeHostBridge(
     state,
     status: async () => state.status,
     setup: async (request) => {
-      calls.push(`setup:${request.mode}:${request.mode === "direct" ? request.direct : request.relayUrl ?? DEFAULT_RELAY_URL}`);
+      calls.push(
+        `setup:${request.mode}:${request.mode === "direct" ? request.direct : (request.relayUrl ?? DEFAULT_RELAY_URL)}`,
+      );
       if (options.failSetup) throw new Error(options.failSetup);
       const spare = request.profile === "spare";
       state.status = {
         shareDesktop: request.shareDesktop ?? !spare,
-        provideSpaces: request.provideSpaces ?? (request.mode !== "direct"),
+        provideSpaces: request.provideSpaces ?? request.mode !== "direct",
         maxSpaces: 4,
         maxMacosVms: options.platform === "macos" ? 2 : 0,
         providedSpaces: [],
         spacesAudit: [],
         configured: true,
         mode: request.mode,
-        relayUrl: request.mode === "relay" ? request.relayUrl ?? DEFAULT_RELAY_URL : null,
+        relayUrl: request.mode === "relay" ? (request.relayUrl ?? DEFAULT_RELAY_URL) : null,
         directUrl: request.mode === "direct" ? `http://${request.direct}` : null,
         machineId: "0123abcd4567",
         name: request.name ?? "This computer",

@@ -67,8 +67,18 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return out.map { appAgentSetupOutcome(outcome: $0) }
     }
 
+    /// With the Cua Driver this app carries ([`EmbeddedDriver`]), the
+    /// agents' `cua-driver` entry runs its embedded proxy, so the driver
+    /// uses Cua Spaces' permissions and no separate Cua Driver app is
+    /// installed. A bare build sets up the installed Cua Driver instead.
     public func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
-        try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
+        if let driver = EmbeddedDriver.current() {
+            var out = try await inner.installSkills(agents: agents, skills: ["cua-driver"], force: false)
+            let server = AgentMcpServer(name: driver.serverName, command: driver.binary, args: driver.mcpArguments, env: [:])
+            out += try await inner.configureMcp(agents: agents, server: server)
+            return out.map { appAgentSetupOutcome(outcome: $0) }
+        }
+        return try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
             .map { appAgentSetupOutcome(outcome: $0) }
     }
 
@@ -219,7 +229,7 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
 
     public func deviceSignInWaitJson(id: String) async throws -> String {
         calls.append("device-wait:\(id)")
-        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"Codex · ChatGPT sign-in","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"ChatGPT sign-in for Codex","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
@@ -434,8 +444,9 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     public func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
 
     public func beginSignIn(code: Bool) async throws -> SignInAttempt {
-        // The browser's sign-in page says where to go back to (the SDK reads it).
-        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
+        // The browser's sign-in page says where to go back to: the SDK reads
+        // CUA_AUTH_RETURN_TO, which `TargetEnvironment.pin()` sets once at launch
+        // (changing the environment from here races other threads reading it).
         var attempt = try await auth.beginLogin(flow: code ? "device" : nil)
         var opened = await Self.open(attempt.url())
         // No browser opened: the loopback redirect would never come back,

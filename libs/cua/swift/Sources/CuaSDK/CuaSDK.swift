@@ -988,8 +988,9 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
     func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool) async throws  -> String
 
@@ -1172,8 +1173,9 @@ open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -
     /**
      * Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
      * (`server`, default this channel's cua), and with `sign_in` the
-     * agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-     * for its one browser approval). JSON: one result per agent.
+     * agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+     * sign-in it already has, read from where Claude Code keeps it). JSON:
+     * one result per agent.
      */
 open func connectJson(agents: [String], server: AgentMcpServer?, skills: Bool, mcp: Bool, signIn: Bool)async throws  -> String  {
     return
@@ -2668,10 +2670,33 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func spacesd(url: String, token: String?) async throws  -> SpacesdClient
 
     /**
+     * Lets a waiting share go live (an agent's public share, or the first
+     * through a share edge). `always`: its Space may share without asking
+     * from now on.
+     */
+    func approveShare(id: String, always: Bool) async throws  -> Share
+
+    /**
      * Opens a share's link once, as its owner, so a link is known to work
      * before it is handed to anyone. `path` is below the link.
      */
     func checkShare(id: String, path: String?) async throws  -> ShareCheck
+
+    /**
+     * Turns down a waiting share.
+     */
+    func denyShare(id: String) async throws
+
+    /**
+     * Removes the share edge from your cloud now. Returns the ids of the
+     * shares that ended with it.
+     */
+    func removeShareEdge() async throws  -> [String]
+
+    /**
+     * Saves the share settings (the read-only fields are ignored).
+     */
+    func setShareSettings(settings: ShareSettings) async throws  -> ShareSettings
 
     /**
      * Shares `target` and returns a link that opens on the owner's other
@@ -2683,6 +2708,32 @@ public protocol CuaProtocol: AnyObject, Sendable {
      * share, so it keeps working after this process exits.
      */
     func share(target: String, access: ShareAccess?, ttlSeconds: UInt32?, name: String?) async throws  -> Share
+
+    /**
+     * The share settings, with today's data and the share edge.
+     */
+    func shareSettings() async throws  -> ShareSettings
+
+    /**
+     * Shares a raw TCP service in a Space (a game server, for example) at a
+     * public address anyone can connect to, and returns it
+     * (`tcp_connect_with`). `target` is a port in a Space
+     * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+     * own. `service` (`"minecraft"`) adds a name people can type instead of
+     * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+     * less. It reaches only that one port of that Space; admin and
+     * remote-access ports are refused. An experiment (Public TCP shares),
+     * off unless turned on.
+     *
+     * `route` is `auto` (default: the Space's own host in your cloud,
+     * else a share edge in your linked cloud, else Cua's relay), `host`,
+     * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+     * `check_host` (Minecraft) drops connections that did not dial this
+     * address. `consent` agrees to a share edge's cost now; without it the
+     * first share through a new edge comes back `waiting` until
+     * `approve_share`.
+     */
+    func shareTcp(target: String, service: String?, ttlSeconds: UInt32?, name: String?, route: String?, allow: [String]?, checkHost: Bool, consent: Bool) async throws  -> Share
 
     /**
      * The active shares, newest first.
@@ -2945,6 +2996,28 @@ open func spacesd(url: String, token: String?)async throws  -> SpacesdClient  {
 }
 
     /**
+     * Lets a waiting share go live (an agent's public share, or the first
+     * through a share edge). `always`: its Space may share without asking
+     * from now on.
+     */
+open func approveShare(id: String, always: Bool = false)async throws  -> Share  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_approve_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id),FfiConverterBool.lower(always)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShare_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Opens a share's link once, as its owner, so a link is known to work
      * before it is handed to anyone. `path` is below the link.
      */
@@ -2966,6 +3039,67 @@ open func checkShare(id: String, path: String? = nil)async throws  -> ShareCheck
 }
 
     /**
+     * Turns down a waiting share.
+     */
+open func denyShare(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_deny_share(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Removes the share edge from your cloud now. Returns the ids of the
+     * shares that ended with it.
+     */
+open func removeShareEdge()async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_remove_share_edge(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Saves the share settings (the read-only fields are ignored).
+     */
+open func setShareSettings(settings: ShareSettings)async throws  -> ShareSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_set_share_settings(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeShareSettings_lower(settings)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShareSettings_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Shares `target` and returns a link that opens on the owner's other
      * signed-in devices, never a localhost link: a port (`"3000"`), a port in
      * a Space (`"space:dev:3000"`), or a file or folder (`"./report.html"`,
@@ -2981,6 +3115,62 @@ open func share(target: String, access: ShareAccess? = nil, ttlSeconds: UInt32? 
                 uniffi_cua_sdk_fn_method_cua_share(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(target),FfiConverterOptionTypeShareAccess.lower(access),FfiConverterOptionUInt32.lower(ttlSeconds),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShare_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The share settings, with today's data and the share edge.
+     */
+open func shareSettings()async throws  -> ShareSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_share_settings(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeShareSettings_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Shares a raw TCP service in a Space (a game server, for example) at a
+     * public address anyone can connect to, and returns it
+     * (`tcp_connect_with`). `target` is a port in a Space
+     * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+     * own. `service` (`"minecraft"`) adds a name people can type instead of
+     * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+     * less. It reaches only that one port of that Space; admin and
+     * remote-access ports are refused. An experiment (Public TCP shares),
+     * off unless turned on.
+     *
+     * `route` is `auto` (default: the Space's own host in your cloud,
+     * else a share edge in your linked cloud, else Cua's relay), `host`,
+     * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+     * `check_host` (Minecraft) drops connections that did not dial this
+     * address. `consent` agrees to a share edge's cost now; without it the
+     * first share through a new edge comes back `waiting` until
+     * `approve_share`.
+     */
+open func shareTcp(target: String, service: String? = nil, ttlSeconds: UInt32? = nil, name: String? = nil, route: String? = nil, allow: [String]? = nil, checkHost: Bool = false, consent: Bool = false)async throws  -> Share  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_cua_share_tcp(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(target),FfiConverterOptionString.lower(service),FfiConverterOptionUInt32.lower(ttlSeconds),FfiConverterOptionString.lower(name),FfiConverterOptionString.lower(route),FfiConverterOptionSequenceString.lower(allow),FfiConverterBool.lower(checkHost),FfiConverterBool.lower(consent)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
@@ -3173,6 +3363,13 @@ public protocol DevicesProtocol: AnyObject, Sendable {
     func renameMachine(machineId: String, name: String) async throws  -> RelayMachine
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+    func resolveDefaultSpace() async throws  -> DefaultSpace
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -3184,11 +3381,23 @@ public protocol DevicesProtocol: AnyObject, Sendable {
     func revokePairingCode(id: String) async throws
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+    func setSpacesSettings(settings: SpacesSettings) async throws  -> SpacesSettings
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
      */
     func snapshot(auditLimit: UInt32) async throws  -> DevicesSnapshot
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+    func spacesSettings() async throws  -> SpacesSettings
 
 }
 /**
@@ -3446,6 +3655,28 @@ open func renameMachine(machineId: String, name: String)async throws  -> RelayMa
 }
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+open func resolveDefaultSpace()async throws  -> DefaultSpace  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_resolve_default_space(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDefaultSpace_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -3487,6 +3718,27 @@ open func revokePairingCode(id: String)async throws   {
 }
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+open func setSpacesSettings(settings: SpacesSettings)async throws  -> SpacesSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_set_spaces_settings(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeSpacesSettings_lower(settings)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacesSettings_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
@@ -3504,6 +3756,27 @@ open func snapshot(auditLimit: UInt32)async throws  -> DevicesSnapshot  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeDevicesSnapshot_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+open func spacesSettings()async throws  -> SpacesSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_spaces_settings(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacesSettings_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -9014,6 +9287,11 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func closeStream(mediaSessionId: String) async throws
 
     /**
+     * Stops a service and forgets it (its logs go too).
+     */
+    func deleteService(name: String) async throws
+
+    /**
      * The Space's displays, primary first, with their resolution in
      * physical pixels.
      */
@@ -9077,6 +9355,11 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
 
     /**
+     * This Space's services.
+     */
+    func keptServices() async throws  -> [SpaceServiceInfo]
+
+    /**
      * Tools of the Space's MCP service (`driver`, the default).
      */
     func listTools(service: String?) async throws  -> [SpaceToolInfo]
@@ -9088,6 +9371,13 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func openStream(options: SpaceStreamOptions) async throws  -> SpaceStreamTicket
 
     /**
+     * Keeps a command running in this Space (replacing a service of that
+     * name): restarted by its policy when it ends or fails its health
+     * check, started when the Space boots, its output kept in a log file.
+     */
+    func putService(def: SpaceServiceDef) async throws  -> SpaceServiceInfo
+
+    /**
      * Signs in to a site in this Space's browser with a password the user
      * saved in the Cua Keyvault. The first call files a request
      * (`status == "pending"` with a `request_id`); the user approves it in
@@ -9096,6 +9386,11 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      * declined request is an error. The password never reaches the caller.
      */
     func requestSiteLogin(url: String, options: SiteLoginOptions?) async throws  -> SiteLoginReport
+
+    /**
+     * Restarts a service.
+     */
+    func restartService(name: String) async throws  -> SpaceServiceInfo
 
     /**
      * Which way this Space's calls go now (see [`super::spacesd::SpacesdClient::route`]):
@@ -9118,6 +9413,11 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      * (TeleportService.ReceiveFiles, per-file SHA-256).
      */
     func sendFile(localPath: String, options: SpaceSendFileOptions) async throws  -> SpaceSendFileReport
+
+    /**
+     * The end of a service's log (`tail_bytes` `None`: 64 KiB).
+     */
+    func serviceLogs(name: String, tailBytes: UInt64?) async throws  -> String
 
     /**
      * The MCP services this Space exposes: `driver` when its spacesd has
@@ -9159,9 +9459,19 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func startHotspot(setSystemProxy: Bool?, bypass: [String]?) async throws  -> SpaceHotspotStatus
 
     /**
+     * Starts a stopped service.
+     */
+    func startService(name: String) async throws  -> SpaceServiceInfo
+
+    /**
      * Stops this Space's hotspot. Returns the stopped Space ids.
      */
     func stopHotspot() async throws  -> [String]
+
+    /**
+     * Stops a service and keeps it stopped (also across a reboot).
+     */
+    func stopService(name: String) async throws  -> SpaceServiceInfo
 
     /**
      * Opens a media session and delivers keyframe-gated encoded frames
@@ -9630,6 +9940,26 @@ open func closeStream(mediaSessionId: String)async throws   {
 }
 
     /**
+     * Stops a service and forgets it (its logs go too).
+     */
+open func deleteService(name: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_delete_service(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * The Space's displays, primary first, with their resolution in
      * physical pixels.
      */
@@ -9810,6 +10140,26 @@ open func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?)async thro
 }
 
     /**
+     * This Space's services.
+     */
+open func keptServices()async throws  -> [SpaceServiceInfo]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_kept_services(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeSpaceServiceInfo.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Tools of the Space's MCP service (`driver`, the default).
      */
 open func listTools(service: String?)async throws  -> [SpaceToolInfo]  {
@@ -9851,6 +10201,28 @@ open func openStream(options: SpaceStreamOptions)async throws  -> SpaceStreamTic
 }
 
     /**
+     * Keeps a command running in this Space (replacing a service of that
+     * name): restarted by its policy when it ends or fails its health
+     * check, started when the Space boots, its output kept in a log file.
+     */
+open func putService(def: SpaceServiceDef)async throws  -> SpaceServiceInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_put_service(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeSpaceServiceDef_lower(def)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceServiceInfo_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Signs in to a site in this Space's browser with a password the user
      * saved in the Cua Keyvault. The first call files a request
      * (`status == "pending"` with a `request_id`); the user approves it in
@@ -9871,6 +10243,26 @@ open func requestSiteLogin(url: String, options: SiteLoginOptions?)async throws 
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSiteLoginReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Restarts a service.
+     */
+open func restartService(name: String)async throws  -> SpaceServiceInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_restart_service(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceServiceInfo_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -9938,6 +10330,26 @@ open func sendFile(localPath: String, options: SpaceSendFileOptions)async throws
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSpaceSendFileReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The end of a service's log (`tail_bytes` `None`: 64 KiB).
+     */
+open func serviceLogs(name: String, tailBytes: UInt64?)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_service_logs(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name),FfiConverterOptionUInt64.lower(tailBytes)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -10054,6 +10466,26 @@ open func startHotspot(setSystemProxy: Bool?, bypass: [String]?)async throws  ->
 }
 
     /**
+     * Starts a stopped service.
+     */
+open func startService(name: String)async throws  -> SpaceServiceInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_start_service(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceServiceInfo_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Stops this Space's hotspot. Returns the stopped Space ids.
      */
 open func stopHotspot()async throws  -> [String]  {
@@ -10069,6 +10501,26 @@ open func stopHotspot()async throws  -> [String]  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Stops a service and keeps it stopped (also across a reboot).
+     */
+open func stopService(name: String)async throws  -> SpaceServiceInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_stop_service(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceServiceInfo_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -11327,6 +11779,12 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func routines(agent: String?) async throws  -> [RoutineInfo]
 
     /**
+     * Marks the one-time notice about the new network defaults as shown
+     * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+     */
+    func ackNetworkNotice(space: String) async throws
+
+    /**
      * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
      * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
      * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -11391,7 +11849,8 @@ public protocol SpacesProtocol: AnyObject, Sendable {
 
     /**
      * Deletes a Space's sandbox and forgets it (a Space added by address
-     * is only forgotten). Returns what happened.
+     * is only forgotten). Its child Spaces are deleted first. Returns what
+     * happened.
      */
     func delete(space: String) async throws  -> String
 
@@ -11401,6 +11860,12 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * order; one failure never stops the rest.
      */
     func deleteMany(ids: [String]) async throws  -> [BulkResult]
+
+    /**
+     * [`Spaces::delete`], with `keep_children`: its child Spaces become
+     * top-level Spaces and keep running instead of being deleted first.
+     */
+    func deleteTree(space: String, keepChildren: Bool) async throws  -> String
 
     /**
      * Deletes the named volume `name` and its files (their history stays
@@ -11477,6 +11942,25 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func machineHealth(machine: String?) async throws  -> MachineHealth
 
     /**
+     * A Space's network: its settings, what they open, where they are
+     * enforced (or why its network is cut), and what is always blocked.
+     */
+    func network(space: String) async throws  -> SpaceNetworkInfo
+
+    /**
+     * What a Space on the daemon's computer tried to reach and its network
+     * refused, most recent first (`cua network log`).
+     */
+    func networkLog(space: String) async throws  -> [NetworkEvent]
+
+    /**
+     * Child Spaces whose parent is gone or out of reach. The cua daemon
+     * ends a child only on proof its parent is gone (after a grace period);
+     * the rest are listed here and never ended by it.
+     */
+    func orphans() async throws  -> [SpaceOrphan]
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -11490,6 +11974,17 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * Returns false when it was not on the relay.
      */
     func relayUnregister(space: String) async throws  -> Bool
+
+    /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+    func relayUnregisterComputer(space: String, deleteSpaces: Bool) async throws  -> Bool
 
     /**
      * Unregisters a Space (the sandbox is not touched).
@@ -11536,6 +12031,19 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func resources(visible: Bool) async throws  -> ResourcesSnapshot
 
     /**
+     * Lets a Space make child Spaces of its own, or stops it. While on,
+     * `cua`, the SDKs and the agent's tools in that Space create, list and
+     * delete Spaces that belong to it (on the same computer, never wider
+     * than it, ending no later than it), through a channel only it can
+     * reach. Off ends its capability at once; children it made keep running
+     * until deleted or their lifetime ends. Only for a Space the machine of
+     * this runtime runs itself.
+     */
+    func setChildren(space: String, enabled: Bool) async throws
+
+    func setClipboard(space: String, clipboard: String) async throws
+
+    /**
      * Replaces a Space's egress policy; an empty one removes it (see
      * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
      * `InvalidArgument`, a Space that cannot take one `Unsupported`.
@@ -11551,6 +12059,34 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * Embedded: recorded; the cua daemon on this machine enforces it.
      */
     func setLifetime(space: String, seconds: UInt64, onExpire: String?) async throws  -> Int64
+
+    /**
+     * Replaces a Space's network settings (see [`NetworkSettings`]). A
+     * child stays within its parent's unless `widen`; `tree` gives its
+     * children the same settings. They hold at once where the runtime can
+     * change a running guest's network, else from its next start
+     * (`applied`). A Space another computer runs is `Unsupported`.
+     */
+    func setNetwork(space: String, settings: NetworkSettings, widen: Bool, tree: Bool) async throws  -> SetNetworkResult
+
+    /**
+     * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+     * memory its children may hold at once, and what they may cost. A child
+     * that does not fit is refused with what is left. All `None` removes it.
+     */
+    func setTreeBudget(space: String, limits: TreeBudgetLimits) async throws  -> TreeBudget
+
+    /**
+     * Sets when a Space's viewers may move the clipboard between this
+     * computer and the Space: `viewing` (only while you're viewing, the
+     * default), `ask` or `off`. It applies to viewers opened afterwards.
+     * The agent tools `computer_clipboard_*` act inside the Space and are
+     * not affected. Another word is `InvalidArgument`.
+     * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+     * `off`. Applies now: `off` unmounts the Volume (named volumes it
+     * mounted stay).
+     */
+    func setVolume(space: String, volume: String) async throws
 
     /**
      * A connected handle to a registered Space.
@@ -11581,6 +12117,12 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * then. [`Spaces::stop`] stops it instead and frees its memory.
      */
     func suspend(space: String) async throws  -> SpacePowerReport
+
+    /**
+     * The budget of `space`'s tree (any Space of it) and what its
+     * children use now. Kept by the cua daemon.
+     */
+    func treeBudget(space: String) async throws  -> TreeBudget
 
     /**
      * `volume_approve`: the request becomes a grant (with presence).
@@ -12540,6 +13082,27 @@ open func routines(agent: String?)async throws  -> [RoutineInfo]  {
 }
 
     /**
+     * Marks the one-time notice about the new network defaults as shown
+     * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+     */
+open func ackNetworkNotice(space: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_ack_network_notice(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
      * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
      * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -12724,7 +13287,8 @@ open func createWithProgress(options: SpaceCreateOptions, listener: SpaceCreateL
 
     /**
      * Deletes a Space's sandbox and forgets it (a Space added by address
-     * is only forgotten). Returns what happened.
+     * is only forgotten). Its child Spaces are deleted first. Returns what
+     * happened.
      */
 open func delete(space: String)async throws  -> String  {
     return
@@ -12761,6 +13325,27 @@ open func deleteMany(ids: [String])async throws  -> [BulkResult]  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeBulkResult.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * [`Spaces::delete`], with `keep_children`: its child Spaces become
+     * top-level Spaces and keep running instead of being deleted first.
+     */
+open func deleteTree(space: String, keepChildren: Bool)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_delete_tree(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterBool.lower(keepChildren)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -12975,6 +13560,70 @@ open func machineHealth(machine: String?)async throws  -> MachineHealth  {
 }
 
     /**
+     * A Space's network: its settings, what they open, where they are
+     * enforced (or why its network is cut), and what is always blocked.
+     */
+open func network(space: String)async throws  -> SpaceNetworkInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_network(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceNetworkInfo_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * What a Space on the daemon's computer tried to reach and its network
+     * refused, most recent first (`cua network log`).
+     */
+open func networkLog(space: String)async throws  -> [NetworkEvent]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_network_log(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeNetworkEvent.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Child Spaces whose parent is gone or out of reach. The cua daemon
+     * ends a child only on proof its parent is gone (after a grace period);
+     * the rest are listed here and never ended by it.
+     */
+open func orphans()async throws  -> [SpaceOrphan]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_orphans(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeSpaceOrphan.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -13009,6 +13658,32 @@ open func relayUnregister(space: String)async throws  -> Bool  {
                 uniffi_cua_sdk_fn_method_spaces_relay_unregister(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_i8,
+            completeFunc: ffi_cua_sdk_rust_future_complete_i8,
+            freeFunc: ffi_cua_sdk_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+open func relayUnregisterComputer(space: String, deleteSpaces: Bool)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterBool.lower(deleteSpaces)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_i8,
@@ -13139,6 +13814,49 @@ open func resources(visible: Bool)async throws  -> ResourcesSnapshot  {
 }
 
     /**
+     * Lets a Space make child Spaces of its own, or stops it. While on,
+     * `cua`, the SDKs and the agent's tools in that Space create, list and
+     * delete Spaces that belong to it (on the same computer, never wider
+     * than it, ending no later than it), through a channel only it can
+     * reach. Off ends its capability at once; children it made keep running
+     * until deleted or their lifetime ends. Only for a Space the machine of
+     * this runtime runs itself.
+     */
+open func setChildren(space: String, enabled: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_children(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterBool.lower(enabled)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+open func setClipboard(space: String, clipboard: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_clipboard(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterString.lower(clipboard)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Replaces a Space's egress policy; an empty one removes it (see
      * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
      * `InvalidArgument`, a Space that cannot take one `Unsupported`.
@@ -13181,6 +13899,79 @@ open func setLifetime(space: String, seconds: UInt64, onExpire: String?)async th
             completeFunc: ffi_cua_sdk_rust_future_complete_i64,
             freeFunc: ffi_cua_sdk_rust_future_free_i64,
             liftFunc: FfiConverterInt64.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Replaces a Space's network settings (see [`NetworkSettings`]). A
+     * child stays within its parent's unless `widen`; `tree` gives its
+     * children the same settings. They hold at once where the runtime can
+     * change a running guest's network, else from its next start
+     * (`applied`). A Space another computer runs is `Unsupported`.
+     */
+open func setNetwork(space: String, settings: NetworkSettings, widen: Bool, tree: Bool)async throws  -> SetNetworkResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_network(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterTypeNetworkSettings_lower(settings),FfiConverterBool.lower(widen),FfiConverterBool.lower(tree)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSetNetworkResult_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+     * memory its children may hold at once, and what they may cost. A child
+     * that does not fit is refused with what is left. All `None` removes it.
+     */
+open func setTreeBudget(space: String, limits: TreeBudgetLimits)async throws  -> TreeBudget  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_tree_budget(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterTypeTreeBudgetLimits_lower(limits)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTreeBudget_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Sets when a Space's viewers may move the clipboard between this
+     * computer and the Space: `viewing` (only while you're viewing, the
+     * default), `ask` or `off`. It applies to viewers opened afterwards.
+     * The agent tools `computer_clipboard_*` act inside the Space and are
+     * not affected. Another word is `InvalidArgument`.
+     * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+     * `off`. Applies now: `off` unmounts the Volume (named volumes it
+     * mounted stay).
+     */
+open func setVolume(space: String, volume: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_volume(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterString.lower(volume)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -13271,6 +14062,27 @@ open func suspend(space: String)async throws  -> SpacePowerReport  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSpacePowerReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The budget of `space`'s tree (any Space of it) and what its
+     * children use now. Kept by the cua daemon.
+     */
+open func treeBudget(space: String)async throws  -> TreeBudget  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_tree_budget(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeTreeBudget_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -23172,6 +23984,196 @@ public func FfiConverterTypeCursorArt_lower(_ value: CursorArt) -> RustBuffer {
 
 
 /**
+ * Where the default Space resolves now.
+ */
+public struct DefaultSpace: Equatable, Hashable {
+    /**
+     * The first online entry; none when this device is the answer
+     * (`reason` `here`).
+     */
+    public var space: String?
+    /**
+     * `default`, `fallback`, `here` or `unset`.
+     */
+    public var reason: String
+    /**
+     * The chosen default, online or not.
+     */
+    public var defaultSpace: String?
+    /**
+     * Whether the default is online; none when unset.
+     */
+    public var defaultOnline: Bool?
+    /**
+     * The order the relay tried.
+     */
+    public var order: [DefaultSpaceStep]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The first online entry; none when this device is the answer
+         * (`reason` `here`).
+         */space: String?,
+        /**
+         * `default`, `fallback`, `here` or `unset`.
+         */reason: String,
+        /**
+         * The chosen default, online or not.
+         */defaultSpace: String?,
+        /**
+         * Whether the default is online; none when unset.
+         */defaultOnline: Bool?,
+        /**
+         * The order the relay tried.
+         */order: [DefaultSpaceStep]) {
+        self.space = space
+        self.reason = reason
+        self.defaultSpace = defaultSpace
+        self.defaultOnline = defaultOnline
+        self.order = order
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DefaultSpace: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDefaultSpace: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DefaultSpace {
+        return
+            try DefaultSpace(
+                space: FfiConverterOptionString.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf),
+                defaultSpace: FfiConverterOptionString.read(from: &buf),
+                defaultOnline: FfiConverterOptionBool.read(from: &buf),
+                order: FfiConverterSequenceTypeDefaultSpaceStep.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DefaultSpace, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.space, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.defaultSpace, into: &buf)
+        FfiConverterOptionBool.write(value.defaultOnline, into: &buf)
+        FfiConverterSequenceTypeDefaultSpaceStep.write(value.order, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpace_lift(_ buf: RustBuffer) throws -> DefaultSpace {
+    return try FfiConverterTypeDefaultSpace.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpace_lower(_ value: DefaultSpace) -> RustBuffer {
+    return FfiConverterTypeDefaultSpace.lower(value)
+}
+
+
+/**
+ * One entry of the order [`Devices::resolve_default_space`] tried.
+ */
+public struct DefaultSpaceStep: Equatable, Hashable {
+    /**
+     * The Space id.
+     */
+    public var space: String
+    /**
+     * Its display name.
+     */
+    public var name: String
+    /**
+     * Connected and sharing now.
+     */
+    public var online: Bool
+    /**
+     * `default`, `fallback` or `here`.
+     */
+    public var role: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space id.
+         */space: String,
+        /**
+         * Its display name.
+         */name: String,
+        /**
+         * Connected and sharing now.
+         */online: Bool,
+        /**
+         * `default`, `fallback` or `here`.
+         */role: String) {
+        self.space = space
+        self.name = name
+        self.online = online
+        self.role = role
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DefaultSpaceStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDefaultSpaceStep: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DefaultSpaceStep {
+        return
+            try DefaultSpaceStep(
+                space: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                online: FfiConverterBool.read(from: &buf),
+                role: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DefaultSpaceStep, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.online, into: &buf)
+        FfiConverterString.write(value.role, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpaceStep_lift(_ buf: RustBuffer) throws -> DefaultSpaceStep {
+    return try FfiConverterTypeDefaultSpaceStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpaceStep_lower(_ value: DefaultSpaceStep) -> RustBuffer {
+    return FfiConverterTypeDefaultSpaceStep.lower(value)
+}
+
+
+/**
  * `Devices.enroll`'s result.
  */
 public struct DeviceEnrollment: Equatable, Hashable {
@@ -28558,6 +29560,18 @@ public struct HostSettingsChange: Equatable, Hashable {
      * macOS VMs at once (0 to 2, Apple's license).
      */
     public var maxMacosVms: UInt32?
+    /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32?
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32?
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28573,11 +29587,23 @@ public struct HostSettingsChange: Equatable, Hashable {
          */maxSpaces: UInt32? = nil,
         /**
          * macOS VMs at once (0 to 2, Apple's license).
-         */maxMacosVms: UInt32? = nil) {
+         */maxMacosVms: UInt32? = nil,
+        /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32? = nil,
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32? = nil,
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32? = nil) {
         self.shareDesktop = shareDesktop
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
     }
 
 
@@ -28599,7 +29625,10 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
                 shareDesktop: FfiConverterOptionBool.read(from: &buf),
                 provideSpaces: FfiConverterOptionBool.read(from: &buf),
                 maxSpaces: FfiConverterOptionUInt32.read(from: &buf),
-                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf)
+                maxMacosVms: FfiConverterOptionUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterOptionUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -28608,6 +29637,9 @@ public struct FfiConverterTypeHostSettingsChange: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.provideSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterOptionUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxRunMinutes, into: &buf)
     }
 }
 
@@ -28978,6 +30010,28 @@ public struct HostStatus: Equatable, Hashable {
      */
     public var maxMacosVms: UInt32
     /**
+     * Memory the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxMemoryGb: UInt32
+    /**
+     * Disk the provided Spaces may use in total, in GB (0: no limit).
+     */
+    public var maxDiskGb: UInt32
+    /**
+     * How long a provided Space may run, in minutes (0: no limit).
+     */
+    public var maxRunMinutes: UInt32
+    /**
+     * What the provided Spaces were given now, in GB.
+     */
+    public var usedMemoryGb: UInt32
+    public var usedDiskGb: UInt32
+    /**
+     * This machine's own memory and disk, in GB (0: not known).
+     */
+    public var totalMemoryGb: UInt32
+    public var totalDiskGb: UInt32
+    /**
      * The Spaces this machine provides now.
      */
     public var providedSpaces: [HostProvidedSpace]
@@ -29083,6 +30137,21 @@ public struct HostStatus: Equatable, Hashable {
          * macOS VMs at once (at most two).
          */maxMacosVms: UInt32 = UInt32(0),
         /**
+         * Memory the provided Spaces may use in total, in GB (0: no limit).
+         */maxMemoryGb: UInt32 = UInt32(0),
+        /**
+         * Disk the provided Spaces may use in total, in GB (0: no limit).
+         */maxDiskGb: UInt32 = UInt32(0),
+        /**
+         * How long a provided Space may run, in minutes (0: no limit).
+         */maxRunMinutes: UInt32 = UInt32(0),
+        /**
+         * What the provided Spaces were given now, in GB.
+         */usedMemoryGb: UInt32 = UInt32(0), usedDiskGb: UInt32 = UInt32(0),
+        /**
+         * This machine's own memory and disk, in GB (0: not known).
+         */totalMemoryGb: UInt32 = UInt32(0), totalDiskGb: UInt32 = UInt32(0),
+        /**
          * The Spaces this machine provides now.
          */providedSpaces: [HostProvidedSpace] = [],
         /**
@@ -29130,6 +30199,13 @@ public struct HostStatus: Equatable, Hashable {
         self.provideSpaces = provideSpaces
         self.maxSpaces = maxSpaces
         self.maxMacosVms = maxMacosVms
+        self.maxMemoryGb = maxMemoryGb
+        self.maxDiskGb = maxDiskGb
+        self.maxRunMinutes = maxRunMinutes
+        self.usedMemoryGb = usedMemoryGb
+        self.usedDiskGb = usedDiskGb
+        self.totalMemoryGb = totalMemoryGb
+        self.totalDiskGb = totalDiskGb
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
@@ -29178,6 +30254,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 provideSpaces: FfiConverterBool.read(from: &buf),
                 maxSpaces: FfiConverterUInt32.read(from: &buf),
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
+                maxMemoryGb: FfiConverterUInt32.read(from: &buf),
+                maxDiskGb: FfiConverterUInt32.read(from: &buf),
+                maxRunMinutes: FfiConverterUInt32.read(from: &buf),
+                usedMemoryGb: FfiConverterUInt32.read(from: &buf),
+                usedDiskGb: FfiConverterUInt32.read(from: &buf),
+                totalMemoryGb: FfiConverterUInt32.read(from: &buf),
+                totalDiskGb: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from: &buf),
                 spacesAuditError: FfiConverterOptionString.read(from: &buf),
@@ -29212,6 +30295,13 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.provideSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxSpaces, into: &buf)
         FfiConverterUInt32.write(value.maxMacosVms, into: &buf)
+        FfiConverterUInt32.write(value.maxMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.maxDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.maxRunMinutes, into: &buf)
+        FfiConverterUInt32.write(value.usedMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.usedDiskGb, into: &buf)
+        FfiConverterUInt32.write(value.totalMemoryGb, into: &buf)
+        FfiConverterUInt32.write(value.totalDiskGb, into: &buf)
         FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)
@@ -30625,6 +31715,269 @@ public func FfiConverterTypeNamedVolume_lift(_ buf: RustBuffer) throws -> NamedV
 #endif
 public func FfiConverterTypeNamedVolume_lower(_ value: NamedVolume) -> RustBuffer {
     return FfiConverterTypeNamedVolume.lower(value)
+}
+
+
+/**
+ * One kind of connection a Space tried and its network refused
+ * ([`Spaces::network_log`]).
+ */
+public struct NetworkEvent: Equatable, Hashable {
+    /**
+     * Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+     * `user:deny`, `default:none`, ...
+     */
+    public var reason: String
+    /**
+     * Where to (`169.254.169.254:80`, or the rule's network where only the
+     * host's firewall counted it).
+     */
+    public var dst: String
+    /**
+     * `tcp` or `udp` when known.
+     */
+    public var proto: String?
+    /**
+     * How many times.
+     */
+    public var count: UInt64
+    /**
+     * When the last one was refused (Unix seconds), when known.
+     */
+    public var lastUnix: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+         * `user:deny`, `default:none`, ...
+         */reason: String,
+        /**
+         * Where to (`169.254.169.254:80`, or the rule's network where only the
+         * host's firewall counted it).
+         */dst: String,
+        /**
+         * `tcp` or `udp` when known.
+         */proto: String?,
+        /**
+         * How many times.
+         */count: UInt64,
+        /**
+         * When the last one was refused (Unix seconds), when known.
+         */lastUnix: UInt64?) {
+        self.reason = reason
+        self.dst = dst
+        self.proto = proto
+        self.count = count
+        self.lastUnix = lastUnix
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NetworkEvent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNetworkEvent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkEvent {
+        return
+            try NetworkEvent(
+                reason: FfiConverterString.read(from: &buf),
+                dst: FfiConverterString.read(from: &buf),
+                proto: FfiConverterOptionString.read(from: &buf),
+                count: FfiConverterUInt64.read(from: &buf),
+                lastUnix: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NetworkEvent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterString.write(value.dst, into: &buf)
+        FfiConverterOptionString.write(value.proto, into: &buf)
+        FfiConverterUInt64.write(value.count, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastUnix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkEvent_lift(_ buf: RustBuffer) throws -> NetworkEvent {
+    return try FfiConverterTypeNetworkEvent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkEvent_lower(_ value: NetworkEvent) -> RustBuffer {
+    return FfiConverterTypeNetworkEvent.lower(value)
+}
+
+
+/**
+ * A Space's network settings: a preset and the user's own lists. The host
+ * the Space runs on compiles them to rules it enforces outside the guest.
+ *
+ * - `internet` (the default): the public internet and the Space's own
+ * tree; this computer, your local network, cloud metadata, other trees
+ * and the cua daemon are blocked;
+ * - `none`: no network;
+ * - `localhost`: `internet`, plus this computer's localhost on
+ * `localhost_ports` (every port only with `all_localhost_ports`);
+ * - `lan`: `internet`, plus your local network (not this computer);
+ * - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+ * `lan` are independent extras; this is the one preset with both);
+ * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
+ * - `unprotected`: everything but cloud metadata, other trees and the
+ * daemon.
+ *
+ * A runtime that can't protect a Space yet starts it without network and
+ * says so (`SpaceInfo.network_note`); it never starts it open unless the
+ * preset is `unprotected`.
+ */
+public struct NetworkSettings: Equatable, Hashable {
+    /**
+     * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+     * `unprotected`; empty is `internet`.
+     */
+    public var preset: String
+    /**
+     * `localhost` and `localhost+lan`: the ports of this computer's
+     * localhost the Space may reach.
+     */
+    public var localhostPorts: [UInt16]
+    /**
+     * `localhost` and `localhost+lan`: every port (the daemon's stay
+     * blocked).
+     */
+    public var allLocalhostPorts: Bool
+    /**
+     * Destinations that stay reachable (addresses or CIDRs).
+     */
+    public var allow: [String]
+    /**
+     * Destinations that are blocked (addresses, CIDRs or `all`).
+     */
+    public var deny: [String]
+    /**
+     * `custom`: what it starts from, `internet` (empty) or `none`.
+     */
+    public var customBase: String
+    /**
+     * Set when the Space was allowed more than its parent: who and when.
+     */
+    public var widenedBy: String?
+    /**
+     * Where its internet traffic leaves ("Exit through"): `None` or
+     * `internet` for its own network, `this-computer` (the hotspot),
+     * `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+     * child keeps its parent's.
+     */
+    public var via: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+         * `unprotected`; empty is `internet`.
+         */preset: String = "",
+        /**
+         * `localhost` and `localhost+lan`: the ports of this computer's
+         * localhost the Space may reach.
+         */localhostPorts: [UInt16] = [],
+        /**
+         * `localhost` and `localhost+lan`: every port (the daemon's stay
+         * blocked).
+         */allLocalhostPorts: Bool = false,
+        /**
+         * Destinations that stay reachable (addresses or CIDRs).
+         */allow: [String] = [],
+        /**
+         * Destinations that are blocked (addresses, CIDRs or `all`).
+         */deny: [String] = [],
+        /**
+         * `custom`: what it starts from, `internet` (empty) or `none`.
+         */customBase: String = "",
+        /**
+         * Set when the Space was allowed more than its parent: who and when.
+         */widenedBy: String? = nil,
+        /**
+         * Where its internet traffic leaves ("Exit through"): `None` or
+         * `internet` for its own network, `this-computer` (the hotspot),
+         * `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+         * child keeps its parent's.
+         */via: String? = nil) {
+        self.preset = preset
+        self.localhostPorts = localhostPorts
+        self.allLocalhostPorts = allLocalhostPorts
+        self.allow = allow
+        self.deny = deny
+        self.customBase = customBase
+        self.widenedBy = widenedBy
+        self.via = via
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NetworkSettings: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNetworkSettings: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkSettings {
+        return
+            try NetworkSettings(
+                preset: FfiConverterString.read(from: &buf),
+                localhostPorts: FfiConverterSequenceUInt16.read(from: &buf),
+                allLocalhostPorts: FfiConverterBool.read(from: &buf),
+                allow: FfiConverterSequenceString.read(from: &buf),
+                deny: FfiConverterSequenceString.read(from: &buf),
+                customBase: FfiConverterString.read(from: &buf),
+                widenedBy: FfiConverterOptionString.read(from: &buf),
+                via: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NetworkSettings, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.preset, into: &buf)
+        FfiConverterSequenceUInt16.write(value.localhostPorts, into: &buf)
+        FfiConverterBool.write(value.allLocalhostPorts, into: &buf)
+        FfiConverterSequenceString.write(value.allow, into: &buf)
+        FfiConverterSequenceString.write(value.deny, into: &buf)
+        FfiConverterString.write(value.customBase, into: &buf)
+        FfiConverterOptionString.write(value.widenedBy, into: &buf)
+        FfiConverterOptionString.write(value.via, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkSettings_lift(_ buf: RustBuffer) throws -> NetworkSettings {
+    return try FfiConverterTypeNetworkSettings.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkSettings_lower(_ value: NetworkSettings) -> RustBuffer {
+    return FfiConverterTypeNetworkSettings.lower(value)
 }
 
 
@@ -33668,6 +35021,157 @@ public func FfiConverterTypeRelayMachine_lower(_ value: RelayMachine) -> RustBuf
 
 
 /**
+ * What the repo cache holds and what it saved, in plain words for
+ * Settings (`cache.repos` and `cache.repos_size_gb` are its settings,
+ * changed with [`config_set`]).
+ */
+public struct RepoCacheStatus: Equatable, Hashable {
+    /**
+     * The cache is on (`cache.repos`).
+     */
+    public var enabled: Bool
+    /**
+     * Repositories held.
+     */
+    public var repos: UInt32
+    /**
+     * What they take on disk.
+     */
+    public var bytes: UInt64
+    /**
+     * The size cap in force.
+     */
+    public var capBytes: UInt64
+    /**
+     * The size setting: `auto`, or the number of GB.
+     */
+    public var sizeSetting: String
+    /**
+     * `Repos: 3, 1.2 GB of 5 GB`.
+     */
+    public var summary: String
+    /**
+     * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+     */
+    public var week: String
+    /**
+     * Clones served from the cache in the last week.
+     */
+    public var hits: UInt32
+    /**
+     * Clones that downloaded in the last week.
+     */
+    public var misses: UInt32
+    /**
+     * Seconds the hits saved.
+     */
+    public var secondsSaved: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The cache is on (`cache.repos`).
+         */enabled: Bool,
+        /**
+         * Repositories held.
+         */repos: UInt32,
+        /**
+         * What they take on disk.
+         */bytes: UInt64,
+        /**
+         * The size cap in force.
+         */capBytes: UInt64,
+        /**
+         * The size setting: `auto`, or the number of GB.
+         */sizeSetting: String,
+        /**
+         * `Repos: 3, 1.2 GB of 5 GB`.
+         */summary: String,
+        /**
+         * `Last week: 80% of clones came from the cache, about 2 minutes saved`.
+         */week: String,
+        /**
+         * Clones served from the cache in the last week.
+         */hits: UInt32,
+        /**
+         * Clones that downloaded in the last week.
+         */misses: UInt32,
+        /**
+         * Seconds the hits saved.
+         */secondsSaved: UInt64) {
+        self.enabled = enabled
+        self.repos = repos
+        self.bytes = bytes
+        self.capBytes = capBytes
+        self.sizeSetting = sizeSetting
+        self.summary = summary
+        self.week = week
+        self.hits = hits
+        self.misses = misses
+        self.secondsSaved = secondsSaved
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RepoCacheStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRepoCacheStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RepoCacheStatus {
+        return
+            try RepoCacheStatus(
+                enabled: FfiConverterBool.read(from: &buf),
+                repos: FfiConverterUInt32.read(from: &buf),
+                bytes: FfiConverterUInt64.read(from: &buf),
+                capBytes: FfiConverterUInt64.read(from: &buf),
+                sizeSetting: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                week: FfiConverterString.read(from: &buf),
+                hits: FfiConverterUInt32.read(from: &buf),
+                misses: FfiConverterUInt32.read(from: &buf),
+                secondsSaved: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RepoCacheStatus, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterUInt32.write(value.repos, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.capBytes, into: &buf)
+        FfiConverterString.write(value.sizeSetting, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.week, into: &buf)
+        FfiConverterUInt32.write(value.hits, into: &buf)
+        FfiConverterUInt32.write(value.misses, into: &buf)
+        FfiConverterUInt64.write(value.secondsSaved, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lift(_ buf: RustBuffer) throws -> RepoCacheStatus {
+    return try FfiConverterTypeRepoCacheStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRepoCacheStatus_lower(_ value: RepoCacheStatus) -> RustBuffer {
+    return FfiConverterTypeRepoCacheStatus.lower(value)
+}
+
+
+/**
  * A reference resolved for a backend.
  */
 public struct ResolvedImage: Equatable, Hashable {
@@ -35789,6 +37293,75 @@ public func FfiConverterTypeServiceEndpoint_lower(_ value: ServiceEndpoint) -> R
 
 
 /**
+ * What [`Spaces::set_network`] did.
+ */
+public struct SetNetworkResult: Equatable, Hashable {
+    /**
+     * `now` (the running guest is under them) or `next_start`.
+     */
+    public var applied: String
+    /**
+     * The Space's network after the change.
+     */
+    public var network: SpaceNetworkInfo
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `now` (the running guest is under them) or `next_start`.
+         */applied: String,
+        /**
+         * The Space's network after the change.
+         */network: SpaceNetworkInfo) {
+        self.applied = applied
+        self.network = network
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SetNetworkResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSetNetworkResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SetNetworkResult {
+        return
+            try SetNetworkResult(
+                applied: FfiConverterString.read(from: &buf),
+                network: FfiConverterTypeSpaceNetworkInfo.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SetNetworkResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.applied, into: &buf)
+        FfiConverterTypeSpaceNetworkInfo.write(value.network, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSetNetworkResult_lift(_ buf: RustBuffer) throws -> SetNetworkResult {
+    return try FfiConverterTypeSetNetworkResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSetNetworkResult_lower(_ value: SetNetworkResult) -> RustBuffer {
+    return FfiConverterTypeSetNetworkResult.lower(value)
+}
+
+
+/**
  * One setup step.
  */
 public struct SetupStep: Equatable, Hashable {
@@ -35912,6 +37485,37 @@ public struct Share: Equatable, Hashable {
      * browsers cannot open it yet).
      */
     public var notices: [String]
+    /**
+     * A public TCP share: what people connect to (a name they can type,
+     * or `host:port`). `None`: an HTTP link.
+     */
+    public var tcpConnectWith: String?
+    /**
+     * A public TCP share: its `host:port`.
+     */
+    public var tcpAddress: String?
+    /**
+     * A public TCP share: how people reach it, `host` (the Space's own
+     * host in your cloud), `edge` (a share edge in your cloud) or
+     * `relay` (Cua).
+     */
+    public var route: String?
+    /**
+     * The plain line for that route ("Through your AWS account").
+     */
+    public var routeLine: String?
+    /**
+     * Who may connect (CIDRs); empty: anyone.
+     */
+    public var allow: [String]
+    /**
+     * Set while the share waits for its owner: `approval` or `consent`.
+     */
+    public var waiting: String?
+    /**
+     * What to show the owner while it waits.
+     */
+    public var waitingText: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35946,7 +37550,31 @@ public struct Share: Equatable, Hashable {
         /**
          * Limits of this link worth showing next to it (for example that
          * browsers cannot open it yet).
-         */notices: [String]) {
+         */notices: [String],
+        /**
+         * A public TCP share: what people connect to (a name they can type,
+         * or `host:port`). `None`: an HTTP link.
+         */tcpConnectWith: String?,
+        /**
+         * A public TCP share: its `host:port`.
+         */tcpAddress: String?,
+        /**
+         * A public TCP share: how people reach it, `host` (the Space's own
+         * host in your cloud), `edge` (a share edge in your cloud) or
+         * `relay` (Cua).
+         */route: String?,
+        /**
+         * The plain line for that route ("Through your AWS account").
+         */routeLine: String?,
+        /**
+         * Who may connect (CIDRs); empty: anyone.
+         */allow: [String],
+        /**
+         * Set while the share waits for its owner: `approval` or `consent`.
+         */waiting: String?,
+        /**
+         * What to show the owner while it waits.
+         */waitingText: String?) {
         self.id = id
         self.url = url
         self.name = name
@@ -35957,6 +37585,13 @@ public struct Share: Equatable, Hashable {
         self.createdAtUnix = createdAtUnix
         self.expiresAtUnix = expiresAtUnix
         self.notices = notices
+        self.tcpConnectWith = tcpConnectWith
+        self.tcpAddress = tcpAddress
+        self.route = route
+        self.routeLine = routeLine
+        self.allow = allow
+        self.waiting = waiting
+        self.waitingText = waitingText
     }
 
 
@@ -35984,7 +37619,14 @@ public struct FfiConverterTypeShare: FfiConverterRustBuffer {
                 owner: FfiConverterString.read(from: &buf),
                 createdAtUnix: FfiConverterOptionInt64.read(from: &buf),
                 expiresAtUnix: FfiConverterOptionInt64.read(from: &buf),
-                notices: FfiConverterSequenceString.read(from: &buf)
+                notices: FfiConverterSequenceString.read(from: &buf),
+                tcpConnectWith: FfiConverterOptionString.read(from: &buf),
+                tcpAddress: FfiConverterOptionString.read(from: &buf),
+                route: FfiConverterOptionString.read(from: &buf),
+                routeLine: FfiConverterOptionString.read(from: &buf),
+                allow: FfiConverterSequenceString.read(from: &buf),
+                waiting: FfiConverterOptionString.read(from: &buf),
+                waitingText: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -35999,6 +37641,13 @@ public struct FfiConverterTypeShare: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.createdAtUnix, into: &buf)
         FfiConverterOptionInt64.write(value.expiresAtUnix, into: &buf)
         FfiConverterSequenceString.write(value.notices, into: &buf)
+        FfiConverterOptionString.write(value.tcpConnectWith, into: &buf)
+        FfiConverterOptionString.write(value.tcpAddress, into: &buf)
+        FfiConverterOptionString.write(value.route, into: &buf)
+        FfiConverterOptionString.write(value.routeLine, into: &buf)
+        FfiConverterSequenceString.write(value.allow, into: &buf)
+        FfiConverterOptionString.write(value.waiting, into: &buf)
+        FfiConverterOptionString.write(value.waitingText, into: &buf)
     }
 }
 
@@ -36104,6 +37753,165 @@ public func FfiConverterTypeShareCheck_lift(_ buf: RustBuffer) throws -> ShareCh
 #endif
 public func FfiConverterTypeShareCheck_lower(_ value: ShareCheck) -> RustBuffer {
     return FfiConverterTypeShareCheck.lower(value)
+}
+
+
+/**
+ * The share settings.
+ */
+public struct ShareSettings: Equatable, Hashable {
+    /**
+     * Where public TCP shares land.
+     */
+    public var landing: ShareLanding
+    /**
+     * Whether Cua's relay may carry public TCP shares at all.
+     */
+    public var relayFallback: Bool
+    /**
+     * The most data public TCP shares move in a day, in MiB (0: no cap).
+     */
+    public var dailyCapMib: UInt64
+    /**
+     * The allowlist new shares start with (CIDRs; empty: anyone).
+     */
+    public var defaultAllow: [String]
+    /**
+     * Ask before an agent's share goes public.
+     */
+    public var approveAgentShares: Bool
+    /**
+     * Spaces whose agents may share without asking.
+     */
+    public var alwaysAllowSpaces: [String]
+    /**
+     * Clouds you agreed may hold a share edge.
+     */
+    public var edgeConsent: [String]
+    /**
+     * Bytes public TCP shares moved today (read only).
+     */
+    public var usedToday: UInt64
+    /**
+     * The share edge's cloud and host, when there is one (read only).
+     */
+    public var edgeCloud: String?
+    /**
+     * The share edge's address (read only).
+     */
+    public var edgeHost: String?
+    /**
+     * About what the edge costs a month, in US dollars (read only).
+     */
+    public var edgeMonthlyUsd: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Where public TCP shares land.
+         */landing: ShareLanding,
+        /**
+         * Whether Cua's relay may carry public TCP shares at all.
+         */relayFallback: Bool,
+        /**
+         * The most data public TCP shares move in a day, in MiB (0: no cap).
+         */dailyCapMib: UInt64,
+        /**
+         * The allowlist new shares start with (CIDRs; empty: anyone).
+         */defaultAllow: [String],
+        /**
+         * Ask before an agent's share goes public.
+         */approveAgentShares: Bool,
+        /**
+         * Spaces whose agents may share without asking.
+         */alwaysAllowSpaces: [String],
+        /**
+         * Clouds you agreed may hold a share edge.
+         */edgeConsent: [String],
+        /**
+         * Bytes public TCP shares moved today (read only).
+         */usedToday: UInt64,
+        /**
+         * The share edge's cloud and host, when there is one (read only).
+         */edgeCloud: String?,
+        /**
+         * The share edge's address (read only).
+         */edgeHost: String?,
+        /**
+         * About what the edge costs a month, in US dollars (read only).
+         */edgeMonthlyUsd: Double?) {
+        self.landing = landing
+        self.relayFallback = relayFallback
+        self.dailyCapMib = dailyCapMib
+        self.defaultAllow = defaultAllow
+        self.approveAgentShares = approveAgentShares
+        self.alwaysAllowSpaces = alwaysAllowSpaces
+        self.edgeConsent = edgeConsent
+        self.usedToday = usedToday
+        self.edgeCloud = edgeCloud
+        self.edgeHost = edgeHost
+        self.edgeMonthlyUsd = edgeMonthlyUsd
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShareSettings: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShareSettings: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShareSettings {
+        return
+            try ShareSettings(
+                landing: FfiConverterTypeShareLanding.read(from: &buf),
+                relayFallback: FfiConverterBool.read(from: &buf),
+                dailyCapMib: FfiConverterUInt64.read(from: &buf),
+                defaultAllow: FfiConverterSequenceString.read(from: &buf),
+                approveAgentShares: FfiConverterBool.read(from: &buf),
+                alwaysAllowSpaces: FfiConverterSequenceString.read(from: &buf),
+                edgeConsent: FfiConverterSequenceString.read(from: &buf),
+                usedToday: FfiConverterUInt64.read(from: &buf),
+                edgeCloud: FfiConverterOptionString.read(from: &buf),
+                edgeHost: FfiConverterOptionString.read(from: &buf),
+                edgeMonthlyUsd: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ShareSettings, into buf: inout [UInt8]) {
+        FfiConverterTypeShareLanding.write(value.landing, into: &buf)
+        FfiConverterBool.write(value.relayFallback, into: &buf)
+        FfiConverterUInt64.write(value.dailyCapMib, into: &buf)
+        FfiConverterSequenceString.write(value.defaultAllow, into: &buf)
+        FfiConverterBool.write(value.approveAgentShares, into: &buf)
+        FfiConverterSequenceString.write(value.alwaysAllowSpaces, into: &buf)
+        FfiConverterSequenceString.write(value.edgeConsent, into: &buf)
+        FfiConverterUInt64.write(value.usedToday, into: &buf)
+        FfiConverterOptionString.write(value.edgeCloud, into: &buf)
+        FfiConverterOptionString.write(value.edgeHost, into: &buf)
+        FfiConverterOptionDouble.write(value.edgeMonthlyUsd, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareSettings_lift(_ buf: RustBuffer) throws -> ShareSettings {
+    return try FfiConverterTypeShareSettings.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareSettings_lower(_ value: ShareSettings) -> RustBuffer {
+    return FfiConverterTypeShareSettings.lower(value)
 }
 
 
@@ -37339,6 +39147,22 @@ public struct SpaceCreateOptions: Equatable, Hashable {
      */
     public var egress: EgressPolicy?
     /**
+     * Network settings (see [`NetworkSettings`]). `None`: what `network`
+     * and `egress` say (`internet` when neither says anything). A daemon
+     * too old to keep them makes the create fail.
+     */
+    public var networkSettings: NetworkSettings?
+    /**
+     * Create it as a child of this Space (id or name): its network is no
+     * more open than its parent's, and it joins the parent's tree.
+     */
+    public var parent: String?
+    /**
+     * With `parent`: let its network be more open than its parent's
+     * (recorded on the Space).
+     */
+    public var widen: Bool?
+    /**
      * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
      * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
      * pool's solve. `None`: the pool picks the cheapest that fits.
@@ -37348,6 +39172,11 @@ public struct SpaceCreateOptions: Equatable, Hashable {
      * With `on` a linked cloud: the region its host must be in.
      */
     public var region: String?
+    /**
+     * Lets the Space make child Spaces of its own ([`Spaces::set_children`]).
+     * `None`: off. Only a Space the machine of the runtime runs itself.
+     */
+    public var children: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -37479,13 +39308,30 @@ public struct SpaceCreateOptions: Equatable, Hashable {
          * to enforce it makes the create fail.
          */egress: EgressPolicy? = nil,
         /**
+         * Network settings (see [`NetworkSettings`]). `None`: what `network`
+         * and `egress` say (`internet` when neither says anything). A daemon
+         * too old to keep them makes the create fail.
+         */networkSettings: NetworkSettings? = nil,
+        /**
+         * Create it as a child of this Space (id or name): its network is no
+         * more open than its parent's, and it joins the parent's tree.
+         */parent: String? = nil,
+        /**
+         * With `parent`: let its network be more open than its parent's
+         * (recorded on the Space).
+         */widen: Bool? = nil,
+        /**
          * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
          * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
          * pool's solve. `None`: the pool picks the cheapest that fits.
          */instanceType: String? = nil,
         /**
          * With `on` a linked cloud: the region its host must be in.
-         */region: String? = nil) {
+         */region: String? = nil,
+        /**
+         * Lets the Space make child Spaces of its own ([`Spaces::set_children`]).
+         * `None`: off. Only a Space the machine of the runtime runs itself.
+         */children: Bool? = nil) {
         self.image = image
         self.on = on
         self.kind = kind
@@ -37512,8 +39358,12 @@ public struct SpaceCreateOptions: Equatable, Hashable {
         self.network = network
         self.labels = labels
         self.egress = egress
+        self.networkSettings = networkSettings
+        self.parent = parent
+        self.widen = widen
         self.instanceType = instanceType
         self.region = region
+        self.children = children
     }
 
 
@@ -37558,8 +39408,12 @@ public struct FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer {
                 network: FfiConverterOptionString.read(from: &buf),
                 labels: FfiConverterDictionaryStringString.read(from: &buf),
                 egress: FfiConverterOptionTypeEgressPolicy.read(from: &buf),
+                networkSettings: FfiConverterOptionTypeNetworkSettings.read(from: &buf),
+                parent: FfiConverterOptionString.read(from: &buf),
+                widen: FfiConverterOptionBool.read(from: &buf),
                 instanceType: FfiConverterOptionString.read(from: &buf),
-                region: FfiConverterOptionString.read(from: &buf)
+                region: FfiConverterOptionString.read(from: &buf),
+                children: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -37590,8 +39444,12 @@ public struct FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.network, into: &buf)
         FfiConverterDictionaryStringString.write(value.labels, into: &buf)
         FfiConverterOptionTypeEgressPolicy.write(value.egress, into: &buf)
+        FfiConverterOptionTypeNetworkSettings.write(value.networkSettings, into: &buf)
+        FfiConverterOptionString.write(value.parent, into: &buf)
+        FfiConverterOptionBool.write(value.widen, into: &buf)
         FfiConverterOptionString.write(value.instanceType, into: &buf)
         FfiConverterOptionString.write(value.region, into: &buf)
+        FfiConverterOptionBool.write(value.children, into: &buf)
     }
 }
 
@@ -38326,6 +40184,56 @@ public struct SpaceInfo: Equatable, Hashable {
      */
     public var egressEnforced: EgressEnforcement?
     /**
+     * Its network settings; `None` for a Space this computer keeps no
+     * record of, or one created before they existed (it gets them on its
+     * next start).
+     */
+    public var network: NetworkSettings?
+    /**
+     * Why its network is not what was asked, in plain words (a runtime
+     * that can't protect it yet started it without network); `None`
+     * otherwise.
+     */
+    public var networkNote: String?
+    /**
+     * An update changed its network settings (an old Space moved to the
+     * new defaults): say so once.
+     */
+    public var networkNoticePending: Bool
+    /**
+     * The Space it was created from, by id; `None` for a top-level Space.
+     */
+    public var parent: String?
+    /**
+     * The top-level Space of its tree, by id; `None` for a top-level
+     * Space.
+     */
+    public var root: String?
+    /**
+     * How far below its tree's top-level Space it is (0: top-level).
+     */
+    public var depth: UInt32
+    /**
+     * It may make child Spaces of its own ([`Spaces::set_children`]).
+     */
+    public var children: Bool
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` otherwise.
+     */
+    public var treeAddress: String?
+    /**
+     * When viewers may move the clipboard between this computer and the
+     * Space: `viewing` (only while you're viewing, the default), `ask` or
+     * `off`. See [`Spaces::set_clipboard`].
+     */
+    public var clipboard: String
+    /**
+     * What it sees of the Cua Volume: `own` (its own folder, the default)
+     * or `off`. See [`Spaces::set_volume`].
+     */
+    public var volume: String
+    /**
      * Named volumes mounted in the Space (see
      * [`SpaceCreateOptions::volumes`]).
      */
@@ -38457,6 +40365,46 @@ public struct SpaceInfo: Equatable, Hashable {
          * Where `egress` is enforced; `None` without one.
          */egressEnforced: EgressEnforcement?,
         /**
+         * Its network settings; `None` for a Space this computer keeps no
+         * record of, or one created before they existed (it gets them on its
+         * next start).
+         */network: NetworkSettings?,
+        /**
+         * Why its network is not what was asked, in plain words (a runtime
+         * that can't protect it yet started it without network); `None`
+         * otherwise.
+         */networkNote: String?,
+        /**
+         * An update changed its network settings (an old Space moved to the
+         * new defaults): say so once.
+         */networkNoticePending: Bool,
+        /**
+         * The Space it was created from, by id; `None` for a top-level Space.
+         */parent: String?,
+        /**
+         * The top-level Space of its tree, by id; `None` for a top-level
+         * Space.
+         */root: String?,
+        /**
+         * How far below its tree's top-level Space it is (0: top-level).
+         */depth: UInt32,
+        /**
+         * It may make child Spaces of its own ([`Spaces::set_children`]).
+         */children: Bool = false,
+        /**
+         * A VM's address in its tree (`198.19.0.0/16`), where the other
+         * members of its tree reach it; `None` otherwise.
+         */treeAddress: String? = nil,
+        /**
+         * When viewers may move the clipboard between this computer and the
+         * Space: `viewing` (only while you're viewing, the default), `ask` or
+         * `off`. See [`Spaces::set_clipboard`].
+         */clipboard: String,
+        /**
+         * What it sees of the Cua Volume: `own` (its own folder, the default)
+         * or `off`. See [`Spaces::set_volume`].
+         */volume: String,
+        /**
          * Named volumes mounted in the Space (see
          * [`SpaceCreateOptions::volumes`]).
          */volumes: [VolumeMount],
@@ -38494,6 +40442,16 @@ public struct SpaceInfo: Equatable, Hashable {
         self.createdAtUnix = createdAtUnix
         self.egress = egress
         self.egressEnforced = egressEnforced
+        self.network = network
+        self.networkNote = networkNote
+        self.networkNoticePending = networkNoticePending
+        self.parent = parent
+        self.root = root
+        self.depth = depth
+        self.children = children
+        self.treeAddress = treeAddress
+        self.clipboard = clipboard
+        self.volume = volume
         self.volumes = volumes
         self.sharing = sharing
     }
@@ -38544,6 +40502,16 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
                 createdAtUnix: FfiConverterInt64.read(from: &buf),
                 egress: FfiConverterTypeEgressPolicy.read(from: &buf),
                 egressEnforced: FfiConverterOptionTypeEgressEnforcement.read(from: &buf),
+                network: FfiConverterOptionTypeNetworkSettings.read(from: &buf),
+                networkNote: FfiConverterOptionString.read(from: &buf),
+                networkNoticePending: FfiConverterBool.read(from: &buf),
+                parent: FfiConverterOptionString.read(from: &buf),
+                root: FfiConverterOptionString.read(from: &buf),
+                depth: FfiConverterUInt32.read(from: &buf),
+                children: FfiConverterBool.read(from: &buf),
+                treeAddress: FfiConverterOptionString.read(from: &buf),
+                clipboard: FfiConverterString.read(from: &buf),
+                volume: FfiConverterString.read(from: &buf),
                 volumes: FfiConverterSequenceTypeVolumeMount.read(from: &buf),
                 sharing: FfiConverterOptionTypeSpaceSharing.read(from: &buf)
         )
@@ -38580,6 +40548,16 @@ public struct FfiConverterTypeSpaceInfo: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.createdAtUnix, into: &buf)
         FfiConverterTypeEgressPolicy.write(value.egress, into: &buf)
         FfiConverterOptionTypeEgressEnforcement.write(value.egressEnforced, into: &buf)
+        FfiConverterOptionTypeNetworkSettings.write(value.network, into: &buf)
+        FfiConverterOptionString.write(value.networkNote, into: &buf)
+        FfiConverterBool.write(value.networkNoticePending, into: &buf)
+        FfiConverterOptionString.write(value.parent, into: &buf)
+        FfiConverterOptionString.write(value.root, into: &buf)
+        FfiConverterUInt32.write(value.depth, into: &buf)
+        FfiConverterBool.write(value.children, into: &buf)
+        FfiConverterOptionString.write(value.treeAddress, into: &buf)
+        FfiConverterString.write(value.clipboard, into: &buf)
+        FfiConverterString.write(value.volume, into: &buf)
         FfiConverterSequenceTypeVolumeMount.write(value.volumes, into: &buf)
         FfiConverterOptionTypeSpaceSharing.write(value.sharing, into: &buf)
     }
@@ -38717,6 +40695,288 @@ public func FfiConverterTypeSpaceList_lift(_ buf: RustBuffer) throws -> SpaceLis
 #endif
 public func FfiConverterTypeSpaceList_lower(_ value: SpaceList) -> RustBuffer {
     return FfiConverterTypeSpaceList.lower(value)
+}
+
+
+/**
+ * A Space's network as `cua network show` says it ([`Spaces::network`]).
+ */
+public struct SpaceNetworkInfo: Equatable, Hashable {
+    /**
+     * Its settings.
+     */
+    public var settings: NetworkSettings
+    /**
+     * One plain line ("Internet only").
+     */
+    public var summary: String
+    /**
+     * What the settings open beyond `internet`, one plain line each.
+     */
+    public var widenings: [String]
+    /**
+     * `enforced` (rules on the host, outside the guest), `no_network`
+     * (its runtime can't protect it yet), `open` (No protection) or
+     * `refused`; empty when unknown (a Space another computer runs).
+     */
+    public var enforcement: String
+    /**
+     * Where the rules are enforced, or why its network is cut.
+     */
+    public var point: String
+    /**
+     * Why its network is not what was asked; `None` otherwise.
+     */
+    public var note: String?
+    /**
+     * Its parent and its tree's top-level Space; `None` for a top-level
+     * Space.
+     */
+    public var parent: String?
+    public var root: String?
+    /**
+     * What no setting opens, in plain words.
+     */
+    public var alwaysBlocked: [String]
+    /**
+     * An update changed its settings: say so once.
+     */
+    public var noticePending: Bool
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` for a container or a Space
+     * another computer runs.
+     */
+    public var treeAddress: String?
+    /**
+     * Its topology as JSON text (`cua network show --json`'s `topology`):
+     * its name and address, its tree's members, the host and the ports it
+     * may reach there, its policy, its exit and the exit's state, and the
+     * path to the other computers of its tree. Empty from an older daemon.
+     */
+    public var topologyJson: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Its settings.
+         */settings: NetworkSettings,
+        /**
+         * One plain line ("Internet only").
+         */summary: String,
+        /**
+         * What the settings open beyond `internet`, one plain line each.
+         */widenings: [String],
+        /**
+         * `enforced` (rules on the host, outside the guest), `no_network`
+         * (its runtime can't protect it yet), `open` (No protection) or
+         * `refused`; empty when unknown (a Space another computer runs).
+         */enforcement: String,
+        /**
+         * Where the rules are enforced, or why its network is cut.
+         */point: String,
+        /**
+         * Why its network is not what was asked; `None` otherwise.
+         */note: String?,
+        /**
+         * Its parent and its tree's top-level Space; `None` for a top-level
+         * Space.
+         */parent: String?, root: String?,
+        /**
+         * What no setting opens, in plain words.
+         */alwaysBlocked: [String],
+        /**
+         * An update changed its settings: say so once.
+         */noticePending: Bool,
+        /**
+         * A VM's address in its tree (`198.19.0.0/16`), where the other
+         * members of its tree reach it; `None` for a container or a Space
+         * another computer runs.
+         */treeAddress: String? = nil,
+        /**
+         * Its topology as JSON text (`cua network show --json`'s `topology`):
+         * its name and address, its tree's members, the host and the ports it
+         * may reach there, its policy, its exit and the exit's state, and the
+         * path to the other computers of its tree. Empty from an older daemon.
+         */topologyJson: String = "") {
+        self.settings = settings
+        self.summary = summary
+        self.widenings = widenings
+        self.enforcement = enforcement
+        self.point = point
+        self.note = note
+        self.parent = parent
+        self.root = root
+        self.alwaysBlocked = alwaysBlocked
+        self.noticePending = noticePending
+        self.treeAddress = treeAddress
+        self.topologyJson = topologyJson
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceNetworkInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceNetworkInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceNetworkInfo {
+        return
+            try SpaceNetworkInfo(
+                settings: FfiConverterTypeNetworkSettings.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                widenings: FfiConverterSequenceString.read(from: &buf),
+                enforcement: FfiConverterString.read(from: &buf),
+                point: FfiConverterString.read(from: &buf),
+                note: FfiConverterOptionString.read(from: &buf),
+                parent: FfiConverterOptionString.read(from: &buf),
+                root: FfiConverterOptionString.read(from: &buf),
+                alwaysBlocked: FfiConverterSequenceString.read(from: &buf),
+                noticePending: FfiConverterBool.read(from: &buf),
+                treeAddress: FfiConverterOptionString.read(from: &buf),
+                topologyJson: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceNetworkInfo, into buf: inout [UInt8]) {
+        FfiConverterTypeNetworkSettings.write(value.settings, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterSequenceString.write(value.widenings, into: &buf)
+        FfiConverterString.write(value.enforcement, into: &buf)
+        FfiConverterString.write(value.point, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
+        FfiConverterOptionString.write(value.parent, into: &buf)
+        FfiConverterOptionString.write(value.root, into: &buf)
+        FfiConverterSequenceString.write(value.alwaysBlocked, into: &buf)
+        FfiConverterBool.write(value.noticePending, into: &buf)
+        FfiConverterOptionString.write(value.treeAddress, into: &buf)
+        FfiConverterString.write(value.topologyJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceNetworkInfo_lift(_ buf: RustBuffer) throws -> SpaceNetworkInfo {
+    return try FfiConverterTypeSpaceNetworkInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceNetworkInfo_lower(_ value: SpaceNetworkInfo) -> RustBuffer {
+    return FfiConverterTypeSpaceNetworkInfo.lower(value)
+}
+
+
+/**
+ * A child Space whose parent is gone or out of reach ([`Spaces::orphans`]).
+ */
+public struct SpaceOrphan: Equatable, Hashable {
+    /**
+     * The child.
+     */
+    public var space: String
+    /**
+     * Its parent's id.
+     */
+    public var parent: String
+    /**
+     * `ending` (its parent is provably gone: it ends after the grace) or
+     * `listed` (not this computer's to judge: it stays until deleted or its
+     * own lifetime ends).
+     */
+    public var state: String
+    /**
+     * Why.
+     */
+    public var why: String
+    /**
+     * Seconds until it ends (`ending` only).
+     */
+    public var endsInSecs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The child.
+         */space: String,
+        /**
+         * Its parent's id.
+         */parent: String,
+        /**
+         * `ending` (its parent is provably gone: it ends after the grace) or
+         * `listed` (not this computer's to judge: it stays until deleted or its
+         * own lifetime ends).
+         */state: String,
+        /**
+         * Why.
+         */why: String,
+        /**
+         * Seconds until it ends (`ending` only).
+         */endsInSecs: Int64) {
+        self.space = space
+        self.parent = parent
+        self.state = state
+        self.why = why
+        self.endsInSecs = endsInSecs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceOrphan: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceOrphan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceOrphan {
+        return
+            try SpaceOrphan(
+                space: FfiConverterString.read(from: &buf),
+                parent: FfiConverterString.read(from: &buf),
+                state: FfiConverterString.read(from: &buf),
+                why: FfiConverterString.read(from: &buf),
+                endsInSecs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceOrphan, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.parent, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterString.write(value.why, into: &buf)
+        FfiConverterInt64.write(value.endsInSecs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceOrphan_lift(_ buf: RustBuffer) throws -> SpaceOrphan {
+    return try FfiConverterTypeSpaceOrphan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceOrphan_lower(_ value: SpaceOrphan) -> RustBuffer {
+    return FfiConverterTypeSpaceOrphan.lower(value)
 }
 
 
@@ -39442,6 +41702,377 @@ public func FfiConverterTypeSpaceSentFile_lift(_ buf: RustBuffer) throws -> Spac
 #endif
 public func FfiConverterTypeSpaceSentFile_lower(_ value: SpaceSentFile) -> RustBuffer {
     return FfiConverterTypeSpaceSentFile.lower(value)
+}
+
+
+/**
+ * A command a Space keeps running ([`Space::put_service`]).
+ */
+public struct SpaceServiceDef: Equatable, Hashable {
+    /**
+     * Name: lowercase letters, digits, `-`, `_`, `.` (1 to 63).
+     */
+    public var name: String
+    /**
+     * The shell command line it runs.
+     */
+    public var command: String
+    /**
+     * Extra environment.
+     */
+    public var env: [String: String]
+    /**
+     * Working directory.
+     */
+    public var cwd: String?
+    /**
+     * When it is started again: `always` (default), `on-failure` or
+     * `never`.
+     */
+    public var restart: String?
+    /**
+     * A health check; failing it restarts the service.
+     */
+    public var probe: SpaceServiceProbe?
+    /**
+     * Start it when the Space boots. `None`: yes.
+     */
+    public var startOnBoot: Bool?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Name: lowercase letters, digits, `-`, `_`, `.` (1 to 63).
+         */name: String,
+        /**
+         * The shell command line it runs.
+         */command: String,
+        /**
+         * Extra environment.
+         */env: [String: String] = [:],
+        /**
+         * Working directory.
+         */cwd: String? = nil,
+        /**
+         * When it is started again: `always` (default), `on-failure` or
+         * `never`.
+         */restart: String? = nil,
+        /**
+         * A health check; failing it restarts the service.
+         */probe: SpaceServiceProbe? = nil,
+        /**
+         * Start it when the Space boots. `None`: yes.
+         */startOnBoot: Bool? = nil) {
+        self.name = name
+        self.command = command
+        self.env = env
+        self.cwd = cwd
+        self.restart = restart
+        self.probe = probe
+        self.startOnBoot = startOnBoot
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceServiceDef: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceServiceDef: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceServiceDef {
+        return
+            try SpaceServiceDef(
+                name: FfiConverterString.read(from: &buf),
+                command: FfiConverterString.read(from: &buf),
+                env: FfiConverterDictionaryStringString.read(from: &buf),
+                cwd: FfiConverterOptionString.read(from: &buf),
+                restart: FfiConverterOptionString.read(from: &buf),
+                probe: FfiConverterOptionTypeSpaceServiceProbe.read(from: &buf),
+                startOnBoot: FfiConverterOptionBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceServiceDef, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterDictionaryStringString.write(value.env, into: &buf)
+        FfiConverterOptionString.write(value.cwd, into: &buf)
+        FfiConverterOptionString.write(value.restart, into: &buf)
+        FfiConverterOptionTypeSpaceServiceProbe.write(value.probe, into: &buf)
+        FfiConverterOptionBool.write(value.startOnBoot, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceServiceDef_lift(_ buf: RustBuffer) throws -> SpaceServiceDef {
+    return try FfiConverterTypeSpaceServiceDef.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceServiceDef_lower(_ value: SpaceServiceDef) -> RustBuffer {
+    return FfiConverterTypeSpaceServiceDef.lower(value)
+}
+
+
+/**
+ * A service and how it is doing ([`Space::services`]).
+ */
+public struct SpaceServiceInfo: Equatable, Hashable {
+    /**
+     * Name.
+     */
+    public var name: String
+    /**
+     * The command line.
+     */
+    public var command: String
+    /**
+     * `starting`, `running`, `unhealthy`, `backoff`, `stopped`, `exited`
+     * or `failed`.
+     */
+    public var state: String
+    /**
+     * Its process, while it runs.
+     */
+    public var pid: UInt32
+    /**
+     * Starts after the first.
+     */
+    public var restarts: UInt32
+    /**
+     * How the last process ended, if one did.
+     */
+    public var lastEnd: String
+    /**
+     * The last failed health check, if the last one failed.
+     */
+    public var probeError: String
+    /**
+     * `always`, `on-failure` or `never`.
+     */
+    public var restart: String
+    /**
+     * Starts when the Space boots.
+     */
+    public var startOnBoot: Bool
+    /**
+     * Its log file in the Space.
+     */
+    public var logPath: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Name.
+         */name: String,
+        /**
+         * The command line.
+         */command: String,
+        /**
+         * `starting`, `running`, `unhealthy`, `backoff`, `stopped`, `exited`
+         * or `failed`.
+         */state: String,
+        /**
+         * Its process, while it runs.
+         */pid: UInt32,
+        /**
+         * Starts after the first.
+         */restarts: UInt32,
+        /**
+         * How the last process ended, if one did.
+         */lastEnd: String,
+        /**
+         * The last failed health check, if the last one failed.
+         */probeError: String,
+        /**
+         * `always`, `on-failure` or `never`.
+         */restart: String,
+        /**
+         * Starts when the Space boots.
+         */startOnBoot: Bool,
+        /**
+         * Its log file in the Space.
+         */logPath: String) {
+        self.name = name
+        self.command = command
+        self.state = state
+        self.pid = pid
+        self.restarts = restarts
+        self.lastEnd = lastEnd
+        self.probeError = probeError
+        self.restart = restart
+        self.startOnBoot = startOnBoot
+        self.logPath = logPath
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceServiceInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceServiceInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceServiceInfo {
+        return
+            try SpaceServiceInfo(
+                name: FfiConverterString.read(from: &buf),
+                command: FfiConverterString.read(from: &buf),
+                state: FfiConverterString.read(from: &buf),
+                pid: FfiConverterUInt32.read(from: &buf),
+                restarts: FfiConverterUInt32.read(from: &buf),
+                lastEnd: FfiConverterString.read(from: &buf),
+                probeError: FfiConverterString.read(from: &buf),
+                restart: FfiConverterString.read(from: &buf),
+                startOnBoot: FfiConverterBool.read(from: &buf),
+                logPath: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceServiceInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterUInt32.write(value.pid, into: &buf)
+        FfiConverterUInt32.write(value.restarts, into: &buf)
+        FfiConverterString.write(value.lastEnd, into: &buf)
+        FfiConverterString.write(value.probeError, into: &buf)
+        FfiConverterString.write(value.restart, into: &buf)
+        FfiConverterBool.write(value.startOnBoot, into: &buf)
+        FfiConverterString.write(value.logPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceServiceInfo_lift(_ buf: RustBuffer) throws -> SpaceServiceInfo {
+    return try FfiConverterTypeSpaceServiceInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceServiceInfo_lower(_ value: SpaceServiceInfo) -> RustBuffer {
+    return FfiConverterTypeSpaceServiceInfo.lower(value)
+}
+
+
+/**
+ * A health check: exactly one of `http`, `tcp`, `command`.
+ */
+public struct SpaceServiceProbe: Equatable, Hashable {
+    /**
+     * A URL that answers 2xx or 3xx.
+     */
+    public var http: String?
+    /**
+     * `host:port` that accepts a TCP connection.
+     */
+    public var tcp: String?
+    /**
+     * A shell command that exits 0 when healthy.
+     */
+    public var command: String?
+    /**
+     * Seconds between checks (default 10).
+     */
+    public var intervalSecs: UInt64?
+    /**
+     * Failed checks in a row that restart it (default 3).
+     */
+    public var failures: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * A URL that answers 2xx or 3xx.
+         */http: String? = nil,
+        /**
+         * `host:port` that accepts a TCP connection.
+         */tcp: String? = nil,
+        /**
+         * A shell command that exits 0 when healthy.
+         */command: String? = nil,
+        /**
+         * Seconds between checks (default 10).
+         */intervalSecs: UInt64? = nil,
+        /**
+         * Failed checks in a row that restart it (default 3).
+         */failures: UInt32? = nil) {
+        self.http = http
+        self.tcp = tcp
+        self.command = command
+        self.intervalSecs = intervalSecs
+        self.failures = failures
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceServiceProbe: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceServiceProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceServiceProbe {
+        return
+            try SpaceServiceProbe(
+                http: FfiConverterOptionString.read(from: &buf),
+                tcp: FfiConverterOptionString.read(from: &buf),
+                command: FfiConverterOptionString.read(from: &buf),
+                intervalSecs: FfiConverterOptionUInt64.read(from: &buf),
+                failures: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceServiceProbe, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.http, into: &buf)
+        FfiConverterOptionString.write(value.tcp, into: &buf)
+        FfiConverterOptionString.write(value.command, into: &buf)
+        FfiConverterOptionUInt64.write(value.intervalSecs, into: &buf)
+        FfiConverterOptionUInt32.write(value.failures, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceServiceProbe_lift(_ buf: RustBuffer) throws -> SpaceServiceProbe {
+    return try FfiConverterTypeSpaceServiceProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceServiceProbe_lower(_ value: SpaceServiceProbe) -> RustBuffer {
+    return FfiConverterTypeSpaceServiceProbe.lower(value)
 }
 
 
@@ -41503,6 +44134,97 @@ public func FfiConverterTypeSpacesHostLoad_lower(_ value: SpacesHostLoad) -> Rus
 
 
 /**
+ * The account's default Space and the order to try when it is offline.
+ */
+public struct SpacesSettings: Equatable, Hashable {
+    /**
+     * `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+     */
+    public var defaultSpace: String?
+    /**
+     * The order to try when the default is offline; empty means every
+     * online computer you can use, oldest first.
+     */
+    public var fallback: [String]
+    /**
+     * false: only the default, then this device.
+     */
+    public var fallbackOn: Bool
+    /**
+     * Unix seconds the relay saved it (ignored when writing).
+     */
+    public var updatedAt: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+         */defaultSpace: String?,
+        /**
+         * The order to try when the default is offline; empty means every
+         * online computer you can use, oldest first.
+         */fallback: [String],
+        /**
+         * false: only the default, then this device.
+         */fallbackOn: Bool,
+        /**
+         * Unix seconds the relay saved it (ignored when writing).
+         */updatedAt: UInt64) {
+        self.defaultSpace = defaultSpace
+        self.fallback = fallback
+        self.fallbackOn = fallbackOn
+        self.updatedAt = updatedAt
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpacesSettings: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesSettings: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesSettings {
+        return
+            try SpacesSettings(
+                defaultSpace: FfiConverterOptionString.read(from: &buf),
+                fallback: FfiConverterSequenceString.read(from: &buf),
+                fallbackOn: FfiConverterBool.read(from: &buf),
+                updatedAt: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpacesSettings, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.defaultSpace, into: &buf)
+        FfiConverterSequenceString.write(value.fallback, into: &buf)
+        FfiConverterBool.write(value.fallbackOn, into: &buf)
+        FfiConverterUInt64.write(value.updatedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesSettings_lift(_ buf: RustBuffer) throws -> SpacesSettings {
+    return try FfiConverterTypeSpacesSettings.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesSettings_lower(_ value: SpacesSettings) -> RustBuffer {
+    return FfiConverterTypeSpacesSettings.lower(value)
+}
+
+
+/**
  * One row of [`SPACES_TOOL_METHODS`].
  */
 public struct SpacesToolMethod: Equatable, Hashable {
@@ -43340,6 +46062,275 @@ public func FfiConverterTypeTransferResult_lift(_ buf: RustBuffer) throws -> Tra
 #endif
 public func FfiConverterTypeTransferResult_lower(_ value: TransferResult) -> RustBuffer {
     return FfiConverterTypeTransferResult.lower(value)
+}
+
+
+/**
+ * A tree's budget and what its children use ([`Spaces::tree_budget`]).
+ */
+public struct TreeBudget: Equatable, Hashable {
+    /**
+     * The tree's top-level Space.
+     */
+    public var root: String
+    /**
+     * What the owner set.
+     */
+    public var set: TreeBudgetLimits
+    /**
+     * Child Spaces it may hold at once.
+     */
+    public var maxSpaces: UInt32
+    /**
+     * vCPUs it may hold at once.
+     */
+    public var maxVcpus: UInt32
+    /**
+     * Memory it may hold at once (MiB).
+     */
+    public var maxMemoryMb: UInt64
+    /**
+     * Cost per hour it may run at.
+     */
+    public var usdPerHour: Double
+    /**
+     * Cost in total it may reach, when capped.
+     */
+    public var usdTotal: Double?
+    /**
+     * Child Spaces now.
+     */
+    public var spaces: UInt32
+    /**
+     * vCPUs they hold.
+     */
+    public var vcpus: UInt32
+    /**
+     * Memory they hold (MiB).
+     */
+    public var memoryMb: UInt64
+    /**
+     * Cost per hour they run at.
+     */
+    public var usdPerHourUsed: Double
+    /**
+     * What they have cost so far.
+     */
+    public var usdSpent: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The tree's top-level Space.
+         */root: String,
+        /**
+         * What the owner set.
+         */set: TreeBudgetLimits,
+        /**
+         * Child Spaces it may hold at once.
+         */maxSpaces: UInt32,
+        /**
+         * vCPUs it may hold at once.
+         */maxVcpus: UInt32,
+        /**
+         * Memory it may hold at once (MiB).
+         */maxMemoryMb: UInt64,
+        /**
+         * Cost per hour it may run at.
+         */usdPerHour: Double,
+        /**
+         * Cost in total it may reach, when capped.
+         */usdTotal: Double?,
+        /**
+         * Child Spaces now.
+         */spaces: UInt32,
+        /**
+         * vCPUs they hold.
+         */vcpus: UInt32,
+        /**
+         * Memory they hold (MiB).
+         */memoryMb: UInt64,
+        /**
+         * Cost per hour they run at.
+         */usdPerHourUsed: Double,
+        /**
+         * What they have cost so far.
+         */usdSpent: Double) {
+        self.root = root
+        self.set = set
+        self.maxSpaces = maxSpaces
+        self.maxVcpus = maxVcpus
+        self.maxMemoryMb = maxMemoryMb
+        self.usdPerHour = usdPerHour
+        self.usdTotal = usdTotal
+        self.spaces = spaces
+        self.vcpus = vcpus
+        self.memoryMb = memoryMb
+        self.usdPerHourUsed = usdPerHourUsed
+        self.usdSpent = usdSpent
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TreeBudget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTreeBudget: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TreeBudget {
+        return
+            try TreeBudget(
+                root: FfiConverterString.read(from: &buf),
+                set: FfiConverterTypeTreeBudgetLimits.read(from: &buf),
+                maxSpaces: FfiConverterUInt32.read(from: &buf),
+                maxVcpus: FfiConverterUInt32.read(from: &buf),
+                maxMemoryMb: FfiConverterUInt64.read(from: &buf),
+                usdPerHour: FfiConverterDouble.read(from: &buf),
+                usdTotal: FfiConverterOptionDouble.read(from: &buf),
+                spaces: FfiConverterUInt32.read(from: &buf),
+                vcpus: FfiConverterUInt32.read(from: &buf),
+                memoryMb: FfiConverterUInt64.read(from: &buf),
+                usdPerHourUsed: FfiConverterDouble.read(from: &buf),
+                usdSpent: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TreeBudget, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.root, into: &buf)
+        FfiConverterTypeTreeBudgetLimits.write(value.set, into: &buf)
+        FfiConverterUInt32.write(value.maxSpaces, into: &buf)
+        FfiConverterUInt32.write(value.maxVcpus, into: &buf)
+        FfiConverterUInt64.write(value.maxMemoryMb, into: &buf)
+        FfiConverterDouble.write(value.usdPerHour, into: &buf)
+        FfiConverterOptionDouble.write(value.usdTotal, into: &buf)
+        FfiConverterUInt32.write(value.spaces, into: &buf)
+        FfiConverterUInt32.write(value.vcpus, into: &buf)
+        FfiConverterUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterDouble.write(value.usdPerHourUsed, into: &buf)
+        FfiConverterDouble.write(value.usdSpent, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTreeBudget_lift(_ buf: RustBuffer) throws -> TreeBudget {
+    return try FfiConverterTypeTreeBudget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTreeBudget_lower(_ value: TreeBudget) -> RustBuffer {
+    return FfiConverterTypeTreeBudget.lower(value)
+}
+
+
+/**
+ * What a tree's children may hold and cost ([`Spaces::set_tree_budget`]).
+ * `None`: the default.
+ */
+public struct TreeBudgetLimits: Equatable, Hashable {
+    /**
+     * Child Spaces at once (default 16).
+     */
+    public var maxSpaces: UInt32?
+    /**
+     * vCPUs at once (default 16).
+     */
+    public var maxVcpus: UInt32?
+    /**
+     * Memory at once, MiB (default 32768).
+     */
+    public var maxMemoryMb: UInt64?
+    /**
+     * Cost per hour, in linked clouds (default 2.0).
+     */
+    public var usdPerHour: Double?
+    /**
+     * Cost in total (default: none).
+     */
+    public var usdTotal: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Child Spaces at once (default 16).
+         */maxSpaces: UInt32? = nil,
+        /**
+         * vCPUs at once (default 16).
+         */maxVcpus: UInt32? = nil,
+        /**
+         * Memory at once, MiB (default 32768).
+         */maxMemoryMb: UInt64? = nil,
+        /**
+         * Cost per hour, in linked clouds (default 2.0).
+         */usdPerHour: Double? = nil,
+        /**
+         * Cost in total (default: none).
+         */usdTotal: Double? = nil) {
+        self.maxSpaces = maxSpaces
+        self.maxVcpus = maxVcpus
+        self.maxMemoryMb = maxMemoryMb
+        self.usdPerHour = usdPerHour
+        self.usdTotal = usdTotal
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TreeBudgetLimits: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTreeBudgetLimits: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TreeBudgetLimits {
+        return
+            try TreeBudgetLimits(
+                maxSpaces: FfiConverterOptionUInt32.read(from: &buf),
+                maxVcpus: FfiConverterOptionUInt32.read(from: &buf),
+                maxMemoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                usdPerHour: FfiConverterOptionDouble.read(from: &buf),
+                usdTotal: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TreeBudgetLimits, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.maxSpaces, into: &buf)
+        FfiConverterOptionUInt32.write(value.maxVcpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.maxMemoryMb, into: &buf)
+        FfiConverterOptionDouble.write(value.usdPerHour, into: &buf)
+        FfiConverterOptionDouble.write(value.usdTotal, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTreeBudgetLimits_lift(_ buf: RustBuffer) throws -> TreeBudgetLimits {
+    return try FfiConverterTypeTreeBudgetLimits.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTreeBudgetLimits_lower(_ value: TreeBudgetLimits) -> RustBuffer {
+    return FfiConverterTypeTreeBudgetLimits.lower(value)
 }
 
 
@@ -46287,6 +49278,92 @@ public func FfiConverterTypeShareAccess_lower(_ value: ShareAccess) -> RustBuffe
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Where public TCP shares land.
+ */
+
+public enum ShareLanding: Equatable, Hashable {
+
+    /**
+     * The Space's own cloud host, else a share edge, else Cua's relay.
+     */
+    case auto
+    /**
+     * Only through your own clouds.
+     */
+    case onlyMyCloud
+    /**
+     * Cua's relay unless the Space runs on its own cloud host.
+     */
+    case allowRelay
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ShareLanding: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeShareLanding: FfiConverterRustBuffer {
+    typealias SwiftType = ShareLanding
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ShareLanding {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .auto
+
+        case 2: return .onlyMyCloud
+
+        case 3: return .allowRelay
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ShareLanding, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .auto:
+            writeInt(&buf, Int32(1))
+
+
+        case .onlyMyCloud:
+            writeInt(&buf, Int32(2))
+
+
+        case .allowRelay:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareLanding_lift(_ buf: RustBuffer) throws -> ShareLanding {
+    return try FfiConverterTypeShareLanding.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeShareLanding_lower(_ value: ShareLanding) -> RustBuffer {
+    return FfiConverterTypeShareLanding.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -47010,6 +50087,30 @@ fileprivate struct FfiConverterOptionTypeImageInfo: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeNetworkSettings: FfiConverterRustBuffer {
+    typealias SwiftType = NetworkSettings?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNetworkSettings.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNetworkSettings.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypePersistentAgentOptions: FfiConverterRustBuffer {
     typealias SwiftType = PersistentAgentOptions?
 
@@ -47362,6 +50463,30 @@ fileprivate struct FfiConverterOptionTypeSpaceInfo: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSpaceInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSpaceServiceProbe: FfiConverterRustBuffer {
+    typealias SwiftType = SpaceServiceProbe?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpaceServiceProbe.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpaceServiceProbe.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -48504,6 +51629,31 @@ fileprivate struct FfiConverterSequenceTypeCursorArt: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDefaultSpaceStep: FfiConverterRustBuffer {
+    typealias SwiftType = [DefaultSpaceStep]
+
+    public static func write(_ value: [DefaultSpaceStep], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDefaultSpaceStep.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DefaultSpaceStep] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DefaultSpaceStep]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDefaultSpaceStep.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeDriveAccessRequest: FfiConverterRustBuffer {
     typealias SwiftType = [DriveAccessRequest]
 
@@ -49204,6 +52354,31 @@ fileprivate struct FfiConverterSequenceTypeNamedVolume: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeNetworkEvent: FfiConverterRustBuffer {
+    typealias SwiftType = [NetworkEvent]
+
+    public static func write(_ value: [NetworkEvent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNetworkEvent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NetworkEvent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NetworkEvent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNetworkEvent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeNotificationInfo: FfiConverterRustBuffer {
     typealias SwiftType = [NotificationInfo]
 
@@ -49879,6 +53054,31 @@ fileprivate struct FfiConverterSequenceTypeSpaceInfo: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSpaceOrphan: FfiConverterRustBuffer {
+    typealias SwiftType = [SpaceOrphan]
+
+    public static func write(_ value: [SpaceOrphan], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpaceOrphan.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpaceOrphan] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpaceOrphan]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpaceOrphan.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSpaceResources: FfiConverterRustBuffer {
     typealias SwiftType = [SpaceResources]
 
@@ -49921,6 +53121,31 @@ fileprivate struct FfiConverterSequenceTypeSpaceSentFile: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSpaceSentFile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSpaceServiceInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [SpaceServiceInfo]
+
+    public static func write(_ value: [SpaceServiceInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSpaceServiceInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SpaceServiceInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SpaceServiceInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSpaceServiceInfo.read(from: &buf))
         }
         return seq
     }
@@ -50571,6 +53796,26 @@ public func locations() -> [LocationInfo]  {
 })
 }
 /**
+ * Deletes every repository the repo cache holds (they are copied again the
+ * next time a Space clones them). Returns the cache after.
+ */
+public func repoCacheClear()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_clear($0
+    )
+})
+}
+/**
+ * The repo cache now: on or off, how much it holds of its cap, and what
+ * the last week saved.
+ */
+public func repoCacheStatus()throws  -> RepoCacheStatus  {
+    return try  FfiConverterTypeRepoCacheStatus_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_func_repo_cache_status($0
+    )
+})
+}
+/**
  * The canonical image for `os` (`linux`, `windows`, `macos`) and
  * `version` (`None` = default: `ghcr.io/trycua/linux:24.04`,
  * `ghcr.io/trycua/windows:2022`, `ghcr.io/trycua/macos:26`; macOS accepts
@@ -51116,6 +54361,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_locations() != 62174) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_clear() != 39088) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_repo_cache_status() != 20147) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -51242,7 +54493,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 32481) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_connect_json() != 21138) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_connection_status_json() != 47692) {
@@ -51416,10 +54667,28 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_cua_approve_share() != 32419) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_cua_check_share() != 37820) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_cua_deny_share() != 53987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_remove_share_edge() != 8456) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_set_share_settings() != 40470) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_cua_share() != 50100) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_share_settings() != 39281) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_cua_share_tcp() != 49424) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_shares() != 39646) {
@@ -51461,13 +54730,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_devices_resolve_default_space() != 5493) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_devices_revoke() != 27802) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_devices_set_spaces_settings() != 38780) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_devices_spaces_settings() != 1866) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_host_configure() != 36828) {
@@ -51908,6 +55186,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_close_stream() != 64912) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_space_delete_service() != 14460) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_space_displays() != 30039) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -51935,13 +55216,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_join_presence() != 56636) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_space_kept_services() != 50248) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_space_list_tools() != 19376) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_open_stream() != 19577) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_space_put_service() != 55111) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_restart_service() != 63778) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_route() != 9790) {
@@ -51951,6 +55241,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_send_file() != 29056) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_service_logs() != 48773) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_services() != 32496) {
@@ -51971,7 +55264,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_space_start_service() != 13576) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_space_stop_hotspot() != 18254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_stop_service() != 14671) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_stream_session() != 61326) {
@@ -52160,6 +55459,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_routines() != 22768) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_ack_network_notice() != 32926) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_add() != 56308) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -52184,10 +55486,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_create_with_progress() != 28676) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spaces_delete() != 39986) {
+    if (uniffi_cua_sdk_checksum_method_spaces_delete() != 4316) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_delete_many() != 9087) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_delete_tree() != 29454) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_delete_volume() != 11412) {
@@ -52217,10 +55522,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_network() != 41208) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_network_log() != 25916) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_orphans() != 23539) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_relay_register() != 31691) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_relay_unregister() != 53366) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer() != 32336) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_remove() != 23086) {
@@ -52238,10 +55555,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_resources() != 12146) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_children() != 63927) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_clipboard() != 38931) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_volume() != 17976) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_space() != 26355) {
@@ -52254,6 +55586,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_tree_budget() != 58333) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640) {

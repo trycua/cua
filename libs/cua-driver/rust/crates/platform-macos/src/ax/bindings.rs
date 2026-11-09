@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Raw FFI bindings to the macOS Accessibility API (AXUIElement).
 //!
 //! We call the C-level AX API directly rather than using a crate wrapper,
@@ -306,7 +309,7 @@ pub struct StringishAttrValue {
 }
 
 /// Convert a borrowed CF value without taking ownership of it.
-unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
+pub(crate) unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
     let type_id = core_foundation::base::CFGetTypeID(value);
@@ -531,12 +534,14 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     Some(value as AXUIElementRef)
 }
 
-/// Return the CGWindowID of the application's focused AX window.
+/// The application's focused AX window, as the ids it answers to: a focused
+/// sheet (Finder's Go to Folder, a Save sheet) is both itself and the window
+/// it is attached to, because keys addressed to that window go to the sheet.
 ///
 /// This is a narrow read-only proof used before global keyboard delivery: an
 /// already focused exact window must not be re-activated, because doing so can
 /// make a focus-proxy renderer drop its current key target.
-pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+pub fn focused_window_id_of_pid(pid: i32) -> Option<super::exact_target::AxWindowId> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -545,7 +550,7 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
         let window = copy_element_attr(app, "AXFocusedWindow");
         CFRelease(app as CFTypeRef);
         let window = window?;
-        let window_id = ax_get_window_id(window);
+        let window_id = super::exact_target::owning_window_id(window);
         CFRelease(window as CFTypeRef);
         window_id
     }
@@ -560,7 +565,20 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
 /// the alternative, is only a request under cooperative activation; Chromium
 /// keeps its window above it, and when it is honoured the user's app gets a
 /// fresh `didBecomeActive`.
+///
+/// When `pid` is this process, the raise runs on the AppKit main queue.
 pub fn raise_focused_window_of_pid(pid: i32) -> bool {
+    super::main_thread::run_ax_mutation(pid, OWN_WINDOW_RAISE_TIMEOUT, move || {
+        raise_focused_window_of_pid_here(pid)
+    })
+    .unwrap_or(false)
+}
+
+/// Bound on waiting for the main queue to raise one of this process's own
+/// windows; a stalled main thread must not hang the calling worker.
+const OWN_WINDOW_RAISE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn raise_focused_window_of_pid_here(pid: i32) -> bool {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -586,7 +604,16 @@ pub fn raise_focused_window_of_pid(pid: i32) -> bool {
 /// is what moves the key window between siblings; a front-process change on
 /// its own leaves AppKit's key window where it was. No other window of the
 /// process is addressed.
+///
+/// When `pid` is this process, the raise runs on the AppKit main queue.
 pub fn raise_exact_window_of_pid(pid: i32, window_id: u32) -> bool {
+    super::main_thread::run_ax_mutation(pid, OWN_WINDOW_RAISE_TIMEOUT, move || {
+        raise_exact_window_of_pid_here(pid, window_id)
+    })
+    .unwrap_or(false)
+}
+
+fn raise_exact_window_of_pid_here(pid: i32, window_id: u32) -> bool {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {

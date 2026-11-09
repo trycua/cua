@@ -109,7 +109,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
     public static func yieldNotice(executable: String, version: String?) -> String {
         let app = executable.range(of: ".app/Contents/").map { String(executable[..<$0.lowerBound]) + ".app" } ?? executable
         let which = version.map { "\(app), cua \($0)" } ?? app
-        return "Another Cua Spaces app (\(which)) is running and keeps starting its own daemon, so this app uses that one. "
+        return "Another Cua Spaces app (\(which)) is running and keeps starting its own background service, so this app uses that one. "
             + "Quit the other app, then reopen Cua Spaces to use all of this one's features."
     }
 
@@ -289,7 +289,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
                 NSLog("Cua Spaces: the cua daemon is not answering (try %d): %@", failures, error ?? "no answer")
                 if failures >= 3 && !reported {
                     reported = true
-                    await report("The Cua daemon stopped and could not be started again: \(error ?? "it does not answer"). "
+                    await report("Cua\u{2019}s background service stopped and could not be started again: \(error ?? "it does not answer"). "
                                  + "The Keyvault, agents and Cua Volume need it; Cua Spaces keeps trying.")
                 }
             }

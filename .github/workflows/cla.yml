@@ -51,7 +51,28 @@ jobs:
           gh api "repos/$REPO/git/refs" -f ref=refs/heads/cla-signatures -f "sha=$commit" --silent
           echo "Created cla-signatures at $commit"
 
+      # The action comments "All contributors have signed the CLA" on every pull
+      # request. Org members and bots get a silent pass instead (the job still
+      # succeeds, so the `cla` check stays green); only community authors reach
+      # the action, which keeps the real "please sign" message for them.
+      - name: Classify the pull request author
+        id: who
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          read -r assoc type < <(gh api "repos/$REPO/pulls/$NUMBER" --jq '[.author_association, .user.type] | @tsv')
+          if [ "$assoc" = MEMBER ] || [ "$assoc" = OWNER ] || [ "$type" = Bot ]; then
+            echo "community=false" >> "$GITHUB_OUTPUT"
+            echo "Author is an org member or a bot ($assoc/$type): silent pass, no comment."
+          else
+            echo "community=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check CLA signatures
+        if: steps.who.outputs.community == 'true'
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

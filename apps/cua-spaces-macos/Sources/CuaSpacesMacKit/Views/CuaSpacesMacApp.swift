@@ -48,6 +48,11 @@ public struct CuaSpacesMacApp: App {
                 Button(model.chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
                     .keyboardShortcut("n")
             }
+            // "Check for Updates…" under About (the macOS convention); the same
+            // entry as the menu bar menu's, from the one `UpdatesModel`.
+            CommandGroup(after: .appInfo) {
+                UpdateMenuButton(updates: model.updates)
+            }
             // The app menu's "Settings…" (⌘,): the page's Settings, the one
             // Settings there is (no `Settings` scene).
             CommandGroup(replacing: .appSettings) {
@@ -82,7 +87,7 @@ struct MenuBarLabel: View {
 
     var body: some View {
         Group {
-            if let icon = MenuBarIcon.image {
+            if let icon = MenuBarIcon.image(badged: model.updates.menuItem?.badge ?? false) {
                 Image(nsImage: icon)
             } else {
                 Text("Cua")
@@ -143,7 +148,15 @@ struct MenuBarContent: View {
             }
             Divider()
         }
-        ForEach(Array(model.menuBar.enumerated()), id: \.offset) { _, item in
+        let items = Array(model.menuBar.enumerated())
+        // The update entry goes last before Quit's separator.
+        let updateAt = items.firstIndex { $0.element.id == .quit }.map {
+            $0 > 0 && items[$0 - 1].element.id == .separator ? $0 - 1 : $0
+        }
+        ForEach(items, id: \.offset) { index, item in
+            if index == updateAt {
+                UpdateMenuButton(updates: model.updates)
+            }
             switch item.id {
             case .status: Text(item.label)
             case .separator: Divider()
@@ -178,6 +191,23 @@ struct MenuBarContent: View {
     }
 }
 
+/// "Check for Updates…", or the found update ("Version X available" over
+/// "Click to install" or "Restart to update"): the entry of the app menu and
+/// the menu bar menu. Nothing in a build with no updater.
+struct UpdateMenuButton: View {
+    let updates: UpdatesModel
+
+    var body: some View {
+        if let item = updates.menuItem {
+            // A menu item has one line: the second line is the grey line
+            // under it (as the Spaces status line above is).
+            Button(item.title) { updates.perform(item.action) }
+                .disabled(!item.enabled)
+            if let detail = item.detail { Text(detail) }
+        }
+    }
+}
+
 /// The Cua key at menu item size, for the low-disk warning.
 enum MenuBarKey {
     static let image: NSImage? = {
@@ -190,13 +220,46 @@ enum MenuBarKey {
 /// The Cua mark as a template image (from apps/cua-spaces/src-tauri/icons,
 /// copied into the bundle by scripts/build-app.sh).
 enum MenuBarIcon {
-    static let image: NSImage? = {
+    static let plain: NSImage? = {
         guard let url = Bundle.main.url(forResource: "tray-template", withExtension: "png"),
               let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = true
         image.size = NSSize(width: 18, height: 18)
         return image
     }()
+
+    /// The icon with a small up-arrow in its lower right corner (an update
+    /// was found), still a template so the menu bar tints it.
+    static let badged: NSImage? = plain.map(badge(_:))
+
+    static func image(badged on: Bool) -> NSImage? { on ? badged : plain }
+
+    static func badge(_ icon: NSImage) -> NSImage {
+        let size = icon.size
+        let image = NSImage(size: size, flipped: false) { rect in
+            icon.draw(in: rect)
+            // Cut a clear disc out of the mark, then draw the arrow in it.
+            let disc = NSRect(x: size.width - 9.5, y: 0, width: 9.5, height: 9.5)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: disc.insetBy(dx: -1, dy: -1)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSColor.black.setFill()
+            let c = NSPoint(x: disc.midX, y: disc.midY)
+            let arrow = NSBezierPath()
+            arrow.move(to: NSPoint(x: c.x, y: c.y + 3.6))
+            arrow.line(to: NSPoint(x: c.x + 3.4, y: c.y - 0.2))
+            arrow.line(to: NSPoint(x: c.x + 1.2, y: c.y - 0.2))
+            arrow.line(to: NSPoint(x: c.x + 1.2, y: c.y - 3.6))
+            arrow.line(to: NSPoint(x: c.x - 1.2, y: c.y - 3.6))
+            arrow.line(to: NSPoint(x: c.x - 1.2, y: c.y - 0.2))
+            arrow.line(to: NSPoint(x: c.x - 3.4, y: c.y - 0.2))
+            arrow.close()
+            arrow.fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
 }
 
 /// Starts the notch and wires it to the model.
@@ -217,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// session with the main window closed).
     static let model = AppEnvironment.makeModel()
     private var notch: NotchController?
+    private var control: SpacesControlServer?
     private var started = false
 
     /// The system opened the app at login (read as the launch begins): no
@@ -238,7 +302,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The host service still running from before an update: onto this build (CUA-2457).
         HelperService.restartIfStale()
+        // Cua Driver for this Mac's coding agents: its own login item,
+        // registered and started here whatever this Mac shares (CUA-3638).
+        if DriverService.isBundled(), EmbeddedDriver.current() != nil {
+            DispatchQueue.global(qos: .utility).async {
+                if let why = DriverService.start(restart: false) { NSLog("cua-spaces: %@", why) }
+            }
+        }
         start(Self.model)
+        // Back from "Quit & Reopen" in System Settings: the permission guide
+        // picks up where it was.
+        PermissionGuide.resumeAfterRelaunch()
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()
     }
@@ -259,6 +333,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let route = urls.lazy.compactMap(JoinWithCode.route(for:)).first else { return }
         NSApp.activate()
         WebUIWindowController.show(model: Self.model, at: .path(route))
+    }
+
+    /// The loopback control server agents reach this app through (the MCP
+    /// `open_space_viewer`): `<cua home>/spaces-control.json` says where it
+    /// listens. Not started in an offscreen run, which shows no windows.
+    private func startControlServer(_ model: AppModel, router: MainUIRouter) {
+        guard !OffscreenRun.isOn else { return }
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+        guard let file = SpacesControlServer.controlFile(
+            info: Bundle.main.infoDictionary, environment: ProcessInfo.processInfo.environment, home: home) else { return }
+        let server = SpacesControlServer(file: file, actions: .init(
+            resolve: { requested in
+                let spaces = model.spaces
+                return (spaces.first { $0.id == requested }
+                    ?? spaces.first { $0.id.split(separator: ":", maxSplits: 1).last.map(String.init) == requested }
+                    ?? spaces.first { $0.name == requested })?.id
+            },
+            openViewer: { id in
+                NSApp.activate()
+                model.select(id)
+                router.open(.space(id))
+            }))
+        server.start()
+        control = server
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        control?.stop()
     }
 
     func start(_ model: AppModel) {
@@ -297,6 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.select(spaceId)
             router.open(.space(spaceId, dropped: urls))
         }
+        startControlServer(model, router: router)
         // "Spaces tab in the notch": applied now and on every change (an
         // offscreen run never puts the notch up).
         if !OffscreenRun.isOn { Self.followNotchSetting(model, controller) }
@@ -327,7 +430,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for a start view (`applyStartView` opens its own page). The page
         // draws the launch (`startup.get`) until the live services are in.
         if !Self.launchedAtLogin {
-            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed) {
+            if let route = MainUIRouter.launchRoute(onboarded: model.onboarding.completed,
+                                                    firstLaunch: model.onboarding.firstLaunch) {
+                model.onboarding.markSeen()
                 WebUIWindowController.show(model: model, at: route)
             } else if DevHooks.value("CUA_SPACES_START_VIEW") == nil {
                 WebUIWindowController.show(model: model)
@@ -338,6 +443,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // fresh from here rather than from the window.
         // Bounded, and it reconnects to the daemon when the list goes stale.
         _ = model.startListPoll()
+        // Spaces exiting through this machine keep the notch's hotspot
+        // indicator on.
+        _ = model.startExitsPoll()
         // ... and the daemon says when it changed, so a Space starting or
         // stopping on another computer shows within a second or two.
         Task { @MainActor in await model.startListWatch() }

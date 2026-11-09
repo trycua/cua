@@ -176,6 +176,21 @@ BENCHES: List[Bench] = [
         host_class={"darwin": "macos-hvf-m2max", "linux": "linux-kvm-gh"},
     ),
     Bench(
+        name="repo-clone",
+        measures="A fresh agent in a fresh Space runs git clone as its first bash call: Space create, first bash call and clone timed apart, with the repo cache off, empty (miss), holding a mirror (hit) and holding one verified a moment ago (hit_lease), for a small, a medium and a large repository",
+        host="macOS or Linux with git and the network; real Spaces (MODE=space) need a Linux container runtime",
+        slug="repo-clone",
+        kind="container",
+        method="Each trial makes a Space (MODE=sim: a directory with the git config, helper and mirrors a container Space sees; MODE=space: `cua spaces create` and `cua sb exec`), runs a no-op, then `git clone` of the repository. REPOS (small, medium, large or URLs) and CASES (off, miss, hit, hit_lease) pick what runs. A trial whose clone is not the remote's HEAD, fails `git fsck`, keeps an alternate or a credential, or does not come from the cache in a hit case is counted as failed and not measured; the canary check shows an object written in one clone is not in another or in the mirror. The value is the clone p50 of the first repository in the first hit case (hit if it runs).",
+        files=["repo-clone/bench.py", "repo-clone/README.md"],
+        n_help="trials per repository and case (N, default 5)",
+        default_n=5,
+        caveats=[
+            "MODE=sim runs the clone as a container Space does (the same git config, helper and mirror files) on this machine, without a Space: it measures the clone, not the Space.",
+            "agent_ready_ms is empty unless AGENT_CMD names a command that returns when the agent is ready: this bench starts no model.",
+        ],
+    ),
+    Bench(
         name="channel",
         measures="The coordinator-to-Space channel through the SDK: a no-op call, exec round trips, file upload and download, streamed stdout",
         host="macOS (HVF) or Linux with KVM",
@@ -546,6 +561,35 @@ def execute(b: Bench, n: Optional[int], raw: str, env: dict, args) -> int:
                 raw,
                 log,
             )
+    if b.name == "repo-clone":
+        mode = os.environ.get("MODE", "sim")
+        if mode not in ("sim", "space"):
+            raise Usage("MODE is sim or space")
+        cmd = [
+            sys.executable,
+            os.path.join(HERE, "repo-clone", "bench.py"),
+            "--mode",
+            mode,
+            "--repos",
+            os.environ.get("REPOS", "small,medium"),
+            "--cases",
+            os.environ.get("CASES", "off,miss,hit,hit_lease"),
+            "--n",
+            str(n or b.default_n),
+            "--cua",
+            cua,
+            "--home",
+            env["CUA_HOME"],
+            "--canary",
+            "--out",
+            os.path.join(raw, "repo-clone.json"),
+        ]
+        if os.environ.get("AGENT_CMD"):
+            cmd += ["--agent-cmd", os.environ["AGENT_CMD"]]
+        if mode == "space":
+            with Daemon(cua, env, os.path.join(raw, "daemon.log")):
+                return run_script(cmd, env, raw, log)
+        return run_script(cmd, env, raw, log)
     if b.name == "channel":
         bench = need_env("CHANNEL_BENCH", "channel_bench")
         label = "macos-m2max-qemu" if IS_MAC else "ci-ubuntu-24.04-kvm-lane"

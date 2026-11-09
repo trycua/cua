@@ -1,6 +1,7 @@
 #![cfg(windows)]
 
-use cua_host::service::{ServiceManager, WindowsTask};
+use cua_home::channel::CuaChannel;
+use cua_host::service::{ServiceManager, ServiceNames, WindowsTask};
 use std::path::PathBuf;
 
 #[test]
@@ -22,10 +23,14 @@ fn existing_host_task_matches_task_scheduler() {
         .trim()
         .parse()
         .unwrap();
-    let task = WindowsTask {
-        xml_path: PathBuf::new(),
-        user: String::new(),
-    };
+    // Probe only the production home's existing task, without modifying it.
+    let user_home = PathBuf::from(r"C:\Users\cua-state-probe");
+    let names = ServiceNames::for_home(
+        CuaChannel::Stable,
+        &user_home.join(".cua"),
+        &user_home,
+    );
+    let task = WindowsTask::for_current_user(&PathBuf::new(), names);
     let actual = task.state();
     assert!(actual.installed, "{actual:?}");
     assert_eq!(actual.running, expected == 4, "{actual:?}");

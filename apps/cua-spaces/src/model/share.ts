@@ -7,11 +7,11 @@
  * the same the SwiftUI app binds); this module only types it.
  */
 
-import { core } from '../core';
+import { core } from "../core";
 
 export interface ShareEntryInput {
   who: string;
-  role: 'viewer' | 'editor' | string;
+  role: "viewer" | "editor" | string;
   connected?: boolean;
 }
 
@@ -25,8 +25,8 @@ export interface ShareInput {
 }
 
 export type ShareRequest =
-  | { kind: 'share'; space: string; who: string; role: string }
-  | { kind: 'unshare'; space: string; who: string };
+  | { kind: "share"; space: string; who: string; role: string }
+  | { kind: "unshare"; space: string; who: string };
 
 export interface ShareSheetState {
   who: string;
@@ -37,13 +37,13 @@ export interface ShareSheetState {
 }
 
 export type ShareSheetAction =
-  | { type: 'set-who'; who: string }
-  | { type: 'set-role'; role: string }
-  | { type: 'submit' }
-  | { type: 'change-role'; who: string; role: string }
-  | { type: 'remove'; who: string }
-  | { type: 'done' }
-  | { type: 'failed'; error: string };
+  | { type: "set-who"; who: string }
+  | { type: "set-role"; role: string }
+  | { type: "submit" }
+  | { type: "change-role"; who: string; role: string }
+  | { type: "remove"; who: string }
+  | { type: "done" }
+  | { type: "failed"; error: string };
 
 export interface RoleOption {
   id: string;
@@ -76,19 +76,15 @@ export interface ShareSheetView {
 }
 
 export function shareInitial(): ShareSheetState {
-  return core('share.initial');
+  return core("share.initial");
 }
 
-export function reduceShare(
-  input: ShareInput,
-  state: ShareSheetState,
-  action: ShareSheetAction
-): ShareSheetState {
-  return core('share.reduce', { input, state, action });
+export function reduceShare(input: ShareInput, state: ShareSheetState, action: ShareSheetAction): ShareSheetState {
+  return core("share.reduce", { input, state, action });
 }
 
 export function shareView(input: ShareInput, state: ShareSheetState): ShareSheetView {
-  return core('share.view', { input, state });
+  return core("share.view", { input, state });
 }
 
 /** Why the sheet cannot share and where to go (`share.gate`). */
@@ -104,12 +100,12 @@ export interface ShareGate {
  * the control plane and the relay refuse an outside share either way.
  */
 export function shareGate(hasTeam: boolean | null): ShareGate | null {
-  return core('share.gate', { hasTeam });
+  return core("share.gate", { hasTeam });
 }
 
 /** A refused share in plain words (`share_outside_team`, `sharing_needs_team`); null for any other error. */
 export function shareErrorWords(error: string, who: string): string | null {
-  return core('share.errorWords', { error, who });
+  return core("share.errorWords", { error, who });
 }
 
 /** Someone removed from a shared computer (`sharing.removals`). */
@@ -126,5 +122,5 @@ export interface ShareRemovalNote {
 }
 
 export function shareRemovalNote(removals: ShareRemoval[]): ShareRemovalNote | null {
-  return core('share.removalNote', { removals });
+  return core("share.removalNote", { removals });
 }

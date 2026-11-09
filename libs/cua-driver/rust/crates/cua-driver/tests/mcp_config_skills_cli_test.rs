@@ -1,13 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver mcp-config --client <agent>` installs the skill pack for that
 //! agent by default, prints one line about it on stderr, and leaves the agent
 //! alone with `--no-skills`. Every run uses a throwaway home.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
 
+#[cfg(unix)]
 const SKILL: &str = include_str!("../../../Skills/cua-driver/SKILL.md");
 
 struct Sandbox {
@@ -50,6 +56,7 @@ impl Sandbox {
             .expect("run cua-driver mcp-config")
     }
 
+    #[cfg(unix)]
     fn stage(&self) -> PathBuf {
         self.driver_home.join("skills").join("cua-driver")
     }

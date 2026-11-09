@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-facing adapter over the public Cua Driver SDK contract.
 //!
 //! The daemon, MCP transports, and finite CLI inspection commands all consume
@@ -149,6 +152,10 @@ impl SdkAdapter {
 
     pub fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
         self.driver.local_history_manager()
+    }
+
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        self.driver.permissions_pending_result()
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {

@@ -54,6 +54,16 @@ if launchArgs.first == "--service-helper" {
     if launchArgs.dropFirst().first == "run" { ServiceLauncher.serve() }
     exit(HelperService.run(Array(launchArgs.dropFirst())))
 }
+// Cua Driver's own login item (DriverLauncher.swift, CUA-3638):
+//  * `--driver-helper run`: keeps Contents/Helpers/cua-driver running for the
+//    coding agents on this Mac, whatever this Mac shares;
+//  * `--driver-helper register|unregister|status`: the login item
+//    (Contents/Library/LaunchAgents/<label>.plist, by default
+//    com.trycua.spaces.driver.plist).
+if launchArgs.first == "--driver-helper" {
+    if launchArgs.dropFirst().first == "run" { DriverLauncher.serve() }
+    exit(DriverService.run(Array(launchArgs.dropFirst())))
+}
 if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
 }
@@ -67,6 +77,10 @@ if launchArgs.first == "preflight-permissions" {
 // `CUA_ENV=staging`: this process and the daemon use the staging home (a
 // Local build already settled its three variables above).
 TargetEnvironment.pin()
+// Where the browser's sign-in page says to go back to (the SDK reads it). Set
+// here, once, before any other thread runs: changing the environment later
+// races the threads that read it (CUA-2705).
+setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
 
 // Teleport, the Cua Volume, persistent agents and the Keyvault for every
 // runtime the SDK builds in this process (the Cua Spaces extensions).

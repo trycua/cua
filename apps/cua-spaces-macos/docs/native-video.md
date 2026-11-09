@@ -31,6 +31,7 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 { type: "surfaces", update: [{ surfaceId, spaceId, tier: "tile" | "full", interactive,
                                rect, clip, radius, occluded, holes, visible }], remove: [surfaceId] }
 { type: "focus", surfaceId | null }
+{ type: "prewarm", spaceId }
 ```
 
 - **`rect`** is the video area inside the slot's border, in CSS px from the web view's top left.
@@ -41,7 +42,7 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 
   The sample points sit inside the rounded corners. Transparent click catchers (`[data-base-ui-inert]`, which Base UI puts under an open menu or popover) paint nothing and are looked through, and floating UI that gets a hole doesn't count.
 
-  **The Space viewer is never occluded by page UI** (CUA-2641): menus, popovers, the profile card, tooltips, toasts and dialogs are holes over it, and a dialog's dimmed backdrop (`[data-window-dim]`) is looked through. While a modal dialog is open the page reports the viewer `interactive: false`: the video keeps playing, gives the keyboard back to the page and takes no clicks, so the dialog's own backdrop and Escape work.
+  **The Space viewer is not occluded by floating page UI** (CUA-2641): menus, popovers, the profile card, tooltips and toasts are holes over it. **A modal dialog hides it.** Every modal (our Dialog and AlertDialog, the ones that draw the dimmed layer `[data-window-dim]`: Connect, Share, Teleport, Keyvault approvals, the command palette) reports every slot, the viewer too, `occluded: true`, `interactive: false` and no holes, and the page hands the keyboard back (`{ type: "focus", surfaceId: null }`, once per dialog). The native video layer sits above the web view, so it can neither sit under the page's dimmed layer nor under the dialog: left drawn it showed over the dialog's edge and kept the pointer. Hidden, it draws nothing there and catches no pointer or keys, so the local cursor stays visible everywhere over the dialog. The stream keeps running. When the dialog starts to close (`data-ending-style`) the next measurement reports the viewer drawn and interactive again, with no state left over. In the Electron shell, where the page draws the video itself, the canvas takes no pointer events and gives up the keyboard while a modal is open, and takes both again when it closes.
 - **`holes`** are the rects of floating UI over the slot, cut to `clip`: `[role=menu|listbox|tooltip]`, `[data-video-occluder]` (toasts, popovers) and `[data-video-hole]` (the viewer's own key bar, inside the slot). The host masks the video out there, so the menu shows and the rest of the desktop keeps playing, and clicks there go to the page. Hiding the whole video for a menu turned it black while the menu was open.
 - **`visible`** is false when the page is hidden or the slot is clipped away entirely.
 
@@ -82,7 +83,15 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 
 **Pausing.** While the window is fully hidden (minimized, covered, or on another Space), every session stops but the one the desktop's picture-in-picture panel shows. They open again when the window shows.
 
-**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session for `slotGrace` (1.5 s): the Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and the new slot binds to the same live session, with no reconnect.
+**Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session warm for `slotGrace` (45 s). The Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and a person leaves a Space for the Spaces page and comes back: the new slot binds to the same live session and shows its current frame at once, with no reconnect (it was 1.5 s, so every real visit away reopened the stream). A warm session is bounded: at most `maxWarm` (3) Spaces stay warm, the oldest going first; one whose transport drops (the Space stopped, the machine went away) is released at once rather than reconnected for nobody; a hidden window, a closed window and a page load release every one; and one that was already reconnecting or failed when its slot left is not kept.
+
+Opening a stream no longer lists every Space on every machine first (`SpacesConnection.attachForStream`): that list waited for the relay directory, so a slow or unreachable relay delayed or failed the desktop of a Space on this Mac.
+
+**Opening fast.** Connecting to a desktop must feel instant (budget: a Space already running opens in 1 s or less, a first open in 2 s or less), so the connect is taken off the click:
+
+- *Intent.* The page tells the host `{ type: "prewarm", spaceId }` when the pointer rests on a link to a Space for 120 ms, or presses one (`lib/stream-intent.ts`, unless the person turned off connecting by itself). The host opens that Space's viewer stream at once (`WebUIVideoSurfaces.prewarm`), counts it as a warm stream (so `maxWarm` bounds it) and lets it go after `prewarmGrace` (15 s) when no slot takes it. The slot that follows binds to a stream that is connected or already connecting. A prewarm that failed is no verdict on the slot: it opens again.
+- *Poster.* When a slot connects, the Space's last picture (kept when its stream is let go, at most 8, 30 minutes) draws dimmed in its place and takes no input; the page's "Connecting…" shows through it, and the live picture replaces it.
+- *Timing.* Every open writes a `stream.open` span in the unified log (subsystem `ai.cua.spaces`, category `stream.timing`, debug): `slot`, `resolved`, `begun`, `presence`, `opened`, `decoded`, `painted` as ms from the first stamp, and `stream.slot ... first_frame_ms` per slot (click to first painted frame). The daemon and the streaming client log the rest (`cua::stream::timing`, debug: `connect_space`, `ticket`, `attached`, `connection_established`, `session_opened`, `first_frame`, `first_keyframe`). Times only, never frame content. The page marks `stream.open:<space>` in `performance`. `cargo test -p cua-spaces-ext --test e2e_docker_stream_timing` (see its header) fails when a cold open takes over 2 s or the warm p95 over 1 s.
 
 ### Input and keyboard focus
 

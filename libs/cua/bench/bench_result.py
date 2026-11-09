@@ -385,6 +385,43 @@ def convert_pool_sessions(jobs: List[dict]) -> Tuple[Core, Samples]:
     return core("space_start_ms", "ms", "p50", pct(starts, 50), len(starts), percentiles(starts), extra), indexed(rows)
 
 
+# --------------------------------------------------------- repo-clone
+
+
+def convert_repo_clone(run: dict) -> Tuple[Core, Samples]:
+    """repo-clone's JSON: per repository and case, the measured trials
+    (a trial that failed a check is counted, not measured). The value is the
+    clone p50 of the first repository in the first hit case (`hit`, else
+    `hit_lease`, else the first case that ran); every case's p50s go to
+    `extra`."""
+    repos = run.get("repos") or {}
+    rows: Samples = []
+    extra: Dict[str, Any] = {"failed": 0}
+    headline = None
+    for name, r in repos.items():
+        for case, c in (r.get("cases") or {}).items():
+            extra["failed"] += c.get("failed", 0)
+            for i, s in enumerate(c.get("samples") or []):
+                rows.append({"repo": name, "case": case, "trial": i + 1, "ok": bool(s.get("ok")), **{k: s.get(k, "") for k in ("space_create_ms", "agent_ready_ms", "first_bash_ms", "clone_ms", "total_ms")}})
+            st = (c.get("stats") or {}).get("clone_ms") or {}
+            if _num(st.get("p50")):
+                extra[f"{name}_{case}_clone_p50_ms"] = st["p50"]
+                tot = ((c.get("stats") or {}).get("total_ms") or {}).get("p50")
+                if _num(tot):
+                    extra[f"{name}_{case}_total_p50_ms"] = tot
+                good = [s["clone_ms"] for s in c.get("samples", []) if s.get("ok") and _num(s.get("clone_ms"))]
+                rank = {"hit": 0, "hit_lease": 1}.get(case, 2)
+                if headline is None or rank < headline[0]:
+                    headline = (rank, good, name, case)
+        can = r.get("canary") or {}
+        if can.get("ran"):
+            extra[f"{name}_canary_ok"] = 1 if can.get("ok") else 0
+    if headline is None or not headline[1]:
+        raise NoResult("no measured clone")
+    good = headline[1]
+    return core("clone_ms", "ms", "p50", pct(good, 50), len(good), percentiles(good), extra), indexed(rows)
+
+
 # ------------------------------------------------------------ dispatch
 
 
@@ -422,6 +459,7 @@ CONVERTERS: Dict[str, Callable[[str], Tuple[Core, Samples]]] = {
         read_jsonl(os.path.join(raw, "raw.jsonl")) if os.path.exists(os.path.join(raw, "raw.jsonl")) else [],
     ),
     "pool-sessions": lambda raw: convert_pool_sessions(_json(_one(raw, "jobs.json"))),
+    "repo-clone": lambda raw: convert_repo_clone(_json(_one(raw, "repo-clone.json"))),
 }
 
 

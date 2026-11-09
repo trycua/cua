@@ -31,12 +31,15 @@ export function useAgentAttempts(): ChatAttempt[] {
       if (t.inSpace === undefined && !t.pendingId) continue;
       const harness = HARNESS[t.agent] ?? t.agent;
       const base = { harness, label: agentName(t.agent), job: taskTitle(t.prompt), atMs: t.createdMs, note: null, connectLabel: null, app: null };
-      if (t.pendingId && !t.spaceId && !t.error) out.push({ ...base, id: `task:${t.id}`, spaceId: t.pendingId, spaceName: nameOf(t.pendingId) || "a new Space", state: "creating" });
-      else if (t.error && t.inSpace !== true) out.push({ ...base, id: `task:${t.id}`, spaceId: t.spaceId ?? "", spaceName: nameOf(t.spaceId), state: "failed" });
+      if (t.pendingId && !t.spaceId && !t.error)
+        out.push({ ...base, id: `task:${t.id}`, spaceId: t.pendingId, spaceName: nameOf(t.pendingId) || "a new Space", state: "creating" });
+      else if (t.error && t.inSpace !== true)
+        out.push({ ...base, id: `task:${t.id}`, spaceId: t.spaceId ?? "", spaceName: nameOf(t.spaceId), state: "failed" });
     }
     for (const [spaceId, list] of Object.entries(notes)) {
       for (const n of list ?? []) {
-        if (n.state === "retried") continue;
+        // An @ of nobody here is a note under its message only: it is no agent's run.
+        if (n.state === "retried" || n.cant.reason === "no-such-member") continue;
         out.push({
           id: `note:${spaceId}:${n.id}`,
           spaceId,

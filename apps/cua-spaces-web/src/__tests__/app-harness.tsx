@@ -7,7 +7,7 @@
 // and lists that machine's half-created Space as a record of its own.
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
 import type { MachinesView } from "@/bridge/contracts/host";
@@ -28,7 +28,16 @@ export const GHOST_ID = "relay:mac-mini/space-46e0d8654707222d";
 /** jsdom has no matchMedia (the theme reads it) or ResizeObserver (the tiles' video slots). */
 export function stubBrowserApis(): void {
   beforeEach(() => {
-    window.matchMedia ??= ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as unknown as typeof window.matchMedia;
+    window.matchMedia ??= ((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+      onchange: null,
+    })) as unknown as typeof window.matchMedia;
     globalThis.ResizeObserver ??= class {
       observe() {}
       unobserve() {}
@@ -92,6 +101,7 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {
     mode: demo.mode,
+    ...(demo.children ? { children: demo.children } : {}),
     ...(host.machinesView ? { machinesView: host.machinesView } : {}),
     ...(host.listStatus ? { listStatus: host.listStatus } : {}),
     ...(host.creatingElsewhere ? { creatingElsewhere: host.creatingElsewhere } : {}),
@@ -112,7 +122,17 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
       if (own !== undefined) return own;
       const out = host.answer ? host.answer(op, await demo.call(op as never, args)) : await demo.call(op as never, args);
       if (op !== "spaces.list" || !host.listsGhost) return out;
-      const ghost = { id: GHOST_ID, name: NAME, provider: "relay", spacesdVersion: "", features: [], reachable: false, host: "mac-mini", hostName: "Mac mini", addedAt: new Date(Date.now() + 9_000).toISOString() };
+      const ghost = {
+        id: GHOST_ID,
+        name: NAME,
+        provider: "relay",
+        spacesdVersion: "",
+        features: [],
+        reachable: false,
+        host: "mac-mini",
+        hostName: "Mac mini",
+        addedAt: new Date(Date.now() + 9_000).toISOString(),
+      };
       return [...(out as unknown[]), ghost];
     }) as DataAdapter["call"],
   };
@@ -148,4 +168,32 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   );
   const emit = (event: HostEvent) => listeners.forEach((l) => l(event));
   return { router, hooks, host, demo, emit };
+}
+
+/**
+ * Home's box starts on This Mac once it's in the account (5 Nov 2026). A test about a job that makes
+ * a new Space picks that first, as a person would.
+ */
+/** The where picker's new Linux Space row (its title is just "Linux", under "New Space on this Mac"). */
+export async function newLinuxRow(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const row = screen.getAllByRole("menuitem").find((e) => e.textContent?.startsWith("LinuxGood for code"));
+    if (!row) throw new Error("no new Linux row yet");
+    return row;
+  });
+}
+
+export async function pickNewLinux(): Promise<void> {
+  const trigger = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-picker="where"]');
+    if (!el) throw new Error("no where picker yet");
+    return el;
+  });
+  await act(async () => {
+    fireEvent.click(trigger);
+  });
+  const item = await newLinuxRow();
+  await act(async () => {
+    fireEvent.click(item);
+  });
 }

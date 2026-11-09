@@ -50,6 +50,14 @@ pub struct HostSpacesSettings {
     /// At most this many macOS VMs on this Mac (never above
     /// [`MACOS_VM_LICENSE_LIMIT`]).
     pub max_macos_vms: u32,
+    /// The provided Spaces may use at most this much memory in total, in GB
+    /// (0: no limit).
+    pub max_memory_gb: u32,
+    /// The provided Spaces may use at most this much disk in total, in GB
+    /// (0: no limit).
+    pub max_disk_gb: u32,
+    /// A provided Space may run at most this many minutes (0: no limit).
+    pub max_run_minutes: u32,
 }
 
 impl Default for HostSpacesSettings {
@@ -59,6 +67,9 @@ impl Default for HostSpacesSettings {
             provide_spaces: false,
             max_spaces: DEFAULT_MAX_SPACES,
             max_macos_vms: MACOS_VM_LICENSE_LIMIT,
+            max_memory_gb: 0,
+            max_disk_gb: 0,
+            max_run_minutes: 0,
         }
     }
 }
@@ -148,10 +159,52 @@ pub struct ProvidedSpace {
     /// Memory (MiB) the Space was admitted with (0: not recorded).
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub memory_mb: u64,
+    /// Disk (GiB) the Space was admitted with (0: not recorded).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub disk_gb: u32,
     /// Reached through this host's own channel (its forward listens on
     /// loopback), not on the host's direct address.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub routed: bool,
+}
+
+/// What a Space is counted at when its record does not say: the default
+/// Space (4 GiB of memory, 16 GiB of disk).
+pub const DEFAULT_SPACE_MEMORY_MB: u64 = 4096;
+/// See [`DEFAULT_SPACE_MEMORY_MB`].
+pub const DEFAULT_SPACE_DISK_GB: u64 = 16;
+
+/// Memory (MiB) a create asking for `asked` (0: the default) is counted at.
+pub fn admitted_memory_mb(asked: u64) -> u64 {
+    if asked == 0 {
+        DEFAULT_SPACE_MEMORY_MB
+    } else {
+        asked
+    }
+}
+
+/// Disk (GiB) a create asking for `asked` (0: the default) is counted at.
+pub fn admitted_disk_gb(asked: u32) -> u64 {
+    if asked == 0 {
+        DEFAULT_SPACE_DISK_GB
+    } else {
+        u64::from(asked)
+    }
+}
+
+/// The memory (MiB) the Spaces were admitted with.
+pub fn used_memory_mb(spaces: &[ProvidedSpace]) -> u64 {
+    spaces.iter().map(|s| admitted_memory_mb(s.memory_mb)).sum()
+}
+
+/// The disk (GiB) the Spaces were admitted with.
+pub fn used_disk_gb(spaces: &[ProvidedSpace]) -> u64 {
+    spaces.iter().map(|s| admitted_disk_gb(s.disk_gb)).sum()
+}
+
+/// MiB as whole GB, rounded up (what a limit shown in GB counts).
+pub fn gb_up(mb: u64) -> u32 {
+    mb.div_ceil(1024).min(u64::from(u32::MAX)) as u32
 }
 
 fn is_zero_u32(n: &u32) -> bool {

@@ -16,8 +16,9 @@
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, Loader2Icon, PlayIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { threadOpAvailable, useBridge, type ThreadRole } from "@/bridge";
-import { HarnessMark, HARNESSES } from "@/components/space-thread/harness-marks";
+import { setupCard, threadOpAvailable, useBridge, type ThreadRole } from "@/bridge";
+import { TASK_AGENTS } from "@/components/ask-first/task-agents";
+import { HarnessMark, HARNESSES, harnessInfo } from "@/components/space-thread/harness-marks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -25,6 +26,7 @@ import { PromptBox } from "@/components/ui/prompt-box";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
 
 import { useJoinCode, type JoinSettings } from "./use-join-code";
@@ -37,11 +39,16 @@ export interface AddAgentSpace {
 type Stage = "pick" | "start" | "connect";
 export type AddAgentStage = Stage;
 
-/** Start an agent here lists these, in this order. */
-export const START_HARNESSES = ["hermes", "claude-code", "codex", "cursor", "openclaw"] as const;
-const START_NAMES: Record<string, string> = { hermes: "Hermes Agent", "claude-code": "Claude Code", codex: "Codex CLI", cursor: "Cursor CLI", openclaw: "OpenClaw" };
-const SHORT: Record<string, string> = { hermes: "Hermes", "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor", openclaw: "OpenClaw" };
-const HANDLE: Record<string, string> = { hermes: "hermes", "claude-code": "claude", codex: "codex", cursor: "cursor", openclaw: "openclaw" };
+/**
+ * Start an agent here lists these, in this order. Each is a harness id of the
+ * Rust registry (`cua_agents::harness`), the id `agent_add` takes verbatim;
+ * a drift guard test keeps the two in step. Cursor and T3 Code are not
+ * harnesses a Space can start, so they are not offered here.
+ */
+export const START_HARNESSES = ["hermes", "claude-code", "openai-codex", "openclaw"] as const;
+const START_NAMES: Record<string, string> = { hermes: "Hermes Agent", "claude-code": "Claude Code", "openai-codex": "Codex CLI", openclaw: "OpenClaw" };
+const SHORT: Record<string, string> = { hermes: "Hermes", "claude-code": "Claude Code", "openai-codex": "Codex", openclaw: "OpenClaw" };
+const HANDLE: Record<string, string> = { hermes: "hermes", "claude-code": "claude", "openai-codex": "codex", openclaw: "openclaw" };
 
 /** A free handle for a new member: `hermes`, else `hermes-2`, ... */
 export function freeHandle(base: string, taken: readonly string[]): string {
@@ -135,23 +142,30 @@ export function AddAgentSheet({
               </DialogTitle>
               <DialogDescription className="mt-1 text-[13px] text-muted-foreground">It joins the thread, reads @mentions and takes tasks.</DialogDescription>
               <div className="mt-3">
-                <Row
-                  data="start"
-                  icon={<PlayIcon className="size-3.5" />}
-                  title="Start an agent here"
-                  detail={canStart ? "Runs inside this Space" : "Comes with the next Cua update"}
-                  disabled={!canStart || !space}
-                  onClick={() => setStage("start")}
-                />
-                <Row
-                  data="connect"
-                  icon={<LinkIcon className="size-3.5" />}
-                  title="Connect your own agent"
-                  detail={canConnect ? "From your computer, with a prompt" : "Comes with the next Cua update"}
-                  disabled={!canConnect || !space}
-                  onClick={() => setStage("connect")}
-                />
-                {onShare ? <Row data="share" icon={<UserPlusIcon className="size-3.5" />} title="Share with a person" detail="Or with your team" onClick={onShare} /> : null}
+                {/* Only what this build can do: an option that hasn't shipped isn't shown at all. */}
+                {canStart ? (
+                  <Row
+                    data="start"
+                    icon={<PlayIcon className="size-3.5" />}
+                    title="Start an agent here"
+                    detail="Runs inside this Space"
+                    disabled={!space}
+                    onClick={() => setStage("start")}
+                  />
+                ) : null}
+                {canConnect ? (
+                  <Row
+                    data="connect"
+                    icon={<LinkIcon className="size-3.5" />}
+                    title="Connect your own agent"
+                    detail="From your computer, with a prompt"
+                    disabled={!space}
+                    onClick={() => setStage("connect")}
+                  />
+                ) : null}
+                {onShare ? (
+                  <Row data="share" icon={<UserPlusIcon className="size-3.5" />} title="Share with a person" detail="Or with your team" onClick={onShare} />
+                ) : null}
               </div>
               <div className="mt-4 flex items-center justify-between gap-4">
                 <span className="flex items-center gap-1" data-add-agent-marks="">
@@ -175,7 +189,21 @@ export function AddAgentSheet({
   );
 }
 
-function Row({ icon, title, detail, onClick, disabled, data }: { icon: ReactNode; title: string; detail: string; onClick: () => void; disabled?: boolean; data: string }) {
+function Row({
+  icon,
+  title,
+  detail,
+  onClick,
+  disabled,
+  data,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onClick: () => void;
+  disabled?: boolean;
+  data: string;
+}) {
   return (
     <button
       type="button"
@@ -207,7 +235,8 @@ const PICK = "h-7 min-w-0 border-0 bg-muted px-2.5 text-[12.5px] shadow-none dar
 
 /** Start an agent here: today's agent_add, in the Space on your keys. */
 function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; taken: readonly string[]; title: ReactNode; onDone: () => void }) {
-  const { data } = useBridge();
+  const { core, data } = useBridge();
+  const connectors = useConnectors();
   const [harness, setHarness] = useState<string>(START_HARNESSES[0]);
   const [name, setName] = useState(() => freeHandle(HANDLE[START_HARNESSES[0]]!, taken));
   const [edited, setEdited] = useState(false);
@@ -218,6 +247,11 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
     setError(null);
     if (!edited) setName(freeHandle(HANDLE[h]!, taken));
   };
+  // Before Start, not after the first task: no connected provider works with this agent (keys read).
+  const setupId = TASK_AGENTS.find((a) => a.id === harness)?.setupId ?? harness;
+  const providers = connectors.view?.providers ?? [];
+  const hasProvider = providers.some((p) => p.state === "connected" && p.worksWith.some((w) => w.agent === setupId));
+  const needsKey = connectors.keysReady && !hasProvider ? (setupCard(core, connectors.input, setupId, START_NAMES[harness] ?? harness)?.body ?? null) : null;
   const start = () => {
     if (!data || !name.trim()) return;
     setBusy(true);
@@ -237,7 +271,9 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
   return (
     <>
       {title}
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">It runs inside {space.name} on your keys, and sleeps until someone @mentions it.</DialogDescription>
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
+        It runs inside {space.name} on your keys, and sleeps until someone @mentions it.
+      </DialogDescription>
       <div className="mt-3" role="radiogroup" aria-label="Agent">
         {START_HARNESSES.map((h) => (
           <button
@@ -247,13 +283,16 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
             aria-checked={harness === h}
             data-start-harness={h}
             onClick={() => pick(h)}
-            className={cn("-mx-2 flex h-11 w-[calc(100%+1rem)] cursor-default items-center gap-3 rounded-lg px-2 text-left outline-none hover:bg-accent focus-visible:bg-accent", harness === h && "bg-accent")}
+            className={cn(
+              "-mx-2 flex h-11 w-[calc(100%+1rem)] cursor-default items-center gap-3 rounded-lg px-2 text-left outline-none hover:bg-accent focus-visible:bg-accent",
+              harness === h && "bg-accent",
+            )}
           >
             <span className="block overflow-hidden rounded-lg">
               <HarnessMark harness={h} px={24} />
             </span>
             <span className="text-[13px]">{START_NAMES[h]}</span>
-            <span className="flex-1 text-xs text-muted-foreground">{HARNESSES.find((x) => x.id === h)?.maker}</span>
+            <span className="flex-1 text-xs text-muted-foreground">{harnessInfo(h)?.maker}</span>
             {harness === h ? <CheckIcon className="size-4 text-brand" /> : null}
           </button>
         ))}
@@ -272,6 +311,11 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
           className="h-7 w-40 border-0 bg-muted text-[12.5px] shadow-none dark:bg-muted"
         />
       </Setting>
+      {needsKey ? (
+        <p data-start-needs-key="" className="mt-1 text-xs text-muted-foreground">
+          {needsKey}
+        </p>
+      ) : null}
       {error ? (
         <p data-start-error="" className="mt-1 text-xs text-destructive">
           {error}
@@ -290,7 +334,19 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
 }
 
 /** Connect your own agent: the one line with Copy, its settings, and the wait for the agent. */
-function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpace; role: ThreadRole | null; open: boolean; title: ReactNode; onDone: () => void }) {
+function ConnectAgent({
+  space,
+  role,
+  open,
+  title,
+  onDone,
+}: {
+  space: AddAgentSpace;
+  role: ThreadRole | null;
+  open: boolean;
+  title: ReactNode;
+  onDone: () => void;
+}) {
   const { data } = useBridge();
   const own = role === null || role === "owner";
   // Your own agent in your own Space joins without asking; in someone else's, the owner lets it in.
@@ -313,9 +369,7 @@ function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpa
   return (
     <>
       {title}
-      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-        Paste this line into Hermes, Claude Code, Codex, Cursor or any other agent. The link tells it what to do.
-      </DialogDescription>
+      <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Paste this into your agent.</DialogDescription>
       <PromptBox
         className="mt-4"
         aria-label="Line to paste into your agent"
@@ -343,7 +397,13 @@ function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpa
           <Select<number> aria-label="Code expires" value={settings.ttlS} options={EXPIRES} onValueChange={(v) => set({ ttlS: v })} className={PICK} />
         </Setting>
         <Setting label="It can take tasks from">
-          <Select<JoinSettings["canTask"]> aria-label="It can take tasks from" value={settings.canTask} options={TASKS} onValueChange={(v) => set({ canTask: v })} className={PICK} />
+          <Select<JoinSettings["canTask"]>
+            aria-label="It can take tasks from"
+            value={settings.canTask}
+            options={TASKS}
+            onValueChange={(v) => set({ canTask: v })}
+            className={PICK}
+          />
         </Setting>
         <Setting label="Ask me before it joins" htmlFor="add-agent-ask">
           <Switch id="add-agent-ask" data-join-ask="" checked={settings.askBeforeJoin} onCheckedChange={(v) => set({ askBeforeJoin: v })} />

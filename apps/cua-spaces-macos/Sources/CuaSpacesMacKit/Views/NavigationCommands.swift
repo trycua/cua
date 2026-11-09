@@ -35,7 +35,7 @@ enum SharedShortcuts {
     }
 }
 
-/// A page ⌘1–4 go to (the shared keybindings' `nav.*` commands).
+/// A page ⌘1–3 go to (the shared keybindings' `nav.*` commands).
 struct NavTarget: Identifiable {
     let command: String
     let label: String
@@ -43,8 +43,7 @@ struct NavTarget: Identifiable {
     var id: String { command }
 
     @MainActor static func all(_ model: AppModel) -> [NavTarget] {
-        [NavTarget(command: "nav.spaces", label: "Spaces", symbol: "square.grid.2x2"),
-         NavTarget(command: "nav.machines", label: "Machines", symbol: "server.rack"),
+        [NavTarget(command: "nav.spaces", label: "Computers", symbol: "desktopcomputer"),
          NavTarget(command: "nav.agents", label: "Agents", symbol: "person.2"),
          NavTarget(command: "nav.keyvault", label: model.chrome.keyvaultTitle, symbol: "key")]
     }
@@ -55,7 +54,6 @@ extension AppModel {
     public func go(_ command: String) {
         switch command {
         case "nav.spaces": selection = sidebar.selectedId.map { .space($0) }
-        case "nav.machines": selection = .machines
         case "nav.agents": selection = .agents
         case "nav.keyvault":
             if let first = keyvault.sidebar.categories.first {
@@ -66,7 +64,7 @@ extension AppModel {
     }
 }
 
-/// View: Command Palette and ⌘1–4, with the shared keys. The web UI
+/// View: Command Palette and ⌘1–3, with the shared keys. The web UI
 /// window handles these keys itself while it is in front; from anywhere
 /// else (a Space's window) they open it at the page.
 struct NavigationCommands: View {

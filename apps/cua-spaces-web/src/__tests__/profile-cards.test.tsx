@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The cards people and agents open to on the redesigned Space page: a
+// The cards people and agents open to on the Space page: a
 // person's (email, access, Active now; Change access and Remove for the
 // owner), your own, and an agent of yours with no sign-in (Not
-// connected, with Connect). Mentions open the same cards. With the redesign
-// off, the page as it was has none.
+// connected, with Connect). Mentions open the same cards.
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,7 +40,7 @@ const click = (el: Element) =>
     await new Promise((r) => setTimeout(r, 10));
   });
 
-describe.skipIf(!wasmBuilt)("profile cards (redesign)", () => {
+describe.skipIf(!wasmBuilt)("profile cards", () => {
   it("the owner opens an editor's card: email, Can edit, Active now, Change access, Remove; no Copy email", async () => {
     const calls: { op: string; args: unknown }[] = [];
     await mountApp(path, { failsCreates: false, listsGhost: false, intercept: (op, args) => (calls.push({ op, args }), undefined) });
@@ -104,7 +103,11 @@ describe.skipIf(!wasmBuilt)("profile cards (redesign)", () => {
   it("default permissions are one line with an Edit link; Edit shows the three selects, each saved at once", async () => {
     const calls: { op: string; args: unknown }[] = [];
     // Ada's Hermes in release-checks has the default rights.
-    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/release-checks")}`, { failsCreates: false, listsGhost: false, intercept: (op, args) => (calls.push({ op, args }), undefined) });
+    await mountApp(`/spaces/${encodeURIComponent("relay:mac-mini/release-checks")}`, {
+      failsCreates: false,
+      listsGhost: false,
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
     await ready();
     await click(await found("[data-profile-trigger='hermes']"));
     const card = await found("[data-profile-card='agent'][data-profile='hermes']");
@@ -121,7 +124,8 @@ describe.skipIf(!wasmBuilt)("profile cards (redesign)", () => {
     expect(options.some((o) => o?.startsWith("Only "))).toBe(true);
     const owner = [...document.querySelectorAll("[role=option]")].find((o) => o.textContent === "Owner")!;
     await act(async () => {
-      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) fireEvent(owner, new MouseEvent(type, { bubbles: true, cancelable: true }));
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
+        fireEvent(owner, new MouseEvent(type, { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 20));
     });
     await waitFor(() => expect(calls.some((c) => c.op === "thread.setRights" && (c.args as { name: string; task: string }).task === "owner")).toBe(true));
@@ -147,12 +151,5 @@ describe.skipIf(!wasmBuilt)("profile cards (redesign)", () => {
     const chip = await found("[data-profile-trigger] [data-mention='hermes']");
     await click(chip.closest("[data-profile-trigger]")!);
     await found("[data-profile-card='agent'][data-profile='hermes']");
-  });
-
-  it("redesign off: the page as it was, no cards", async () => {
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_REDESIGN", "0");
-    await mountApp(path, { failsCreates: false, listsGhost: false });
-    await waitFor(() => expect(document.body.textContent).toContain("ubuntu-build"));
-    expect(q("[data-profile-trigger]")).toBeNull();
   });
 });

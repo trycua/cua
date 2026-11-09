@@ -84,6 +84,7 @@ describe("tauri adapter", () => {
     await a.call("session.signIn", {});
     await a.call("session.signOut", {});
     await a.call("session.completeOnboarding", { mode: "client" });
+    await a.call("session.resetOnboarding", {});
     expect(calls).toEqual([
       ["list_spaces", undefined],
       ["create_space", { config: { image: "ubuntu" }, pendingId: "pending:1" }],
@@ -101,6 +102,7 @@ describe("tauri adapter", () => {
       ["begin_sign_in", undefined],
       ["sign_out", undefined],
       ["complete_onboarding", { mode: "client" }],
+      ["reset_onboarding", undefined],
     ]);
   });
 
@@ -311,6 +313,8 @@ describe("electron adapter", () => {
     expect(sent.at(-1)).toEqual(["onboarding.complete", { mode: "host", launchAtLogin: false }]);
     await a.call("session.completeOnboarding", { mode: "client" });
     expect(sent.at(-1)).toEqual(["onboarding.complete", { mode: "client" }]);
+    await a.call("session.resetOnboarding", {});
+    expect(sent.at(-1)).toEqual(["onboarding.reset", {}]);
   });
 
   it("names this machine for the shell's platform", async () => {
@@ -545,7 +549,8 @@ describe("webkit adapter", () => {
   it("reads launch at login and the update channel when the host sends them, and sets them by row", async () => {
     const { win, sent } = webkitHost(() => ok(settingsWithLogin));
     const a = createWebkitAdapter(win);
-    expect((await a.call("settings.get", {})).values).toMatchObject({ launchAtLogin: true, updateChannel: "beta" });
+    // A host from before Nightly says `beta`: that is Nightly now.
+    expect((await a.call("settings.get", {})).values).toMatchObject({ launchAtLogin: true, updateChannel: "nightly" });
     await a.call("settings.set", { key: "launchAtLogin", value: false });
     await a.call("settings.set", { key: "updateChannel", value: "stable" });
     expect(sent.filter((r) => r.method === "settings.choose").map((r) => r.args)).toEqual([
@@ -659,6 +664,8 @@ describe("webkit adapter", () => {
     const a = createWebkitAdapter(win);
     expect(await a.call("spaces.cancelCreate", { pendingId: "pending:1" })).toEqual({ id: "pending:1", state: "cancelled", message: "" });
     const host = await a.call("host.status", {});
+    // The permissions page asks for Local Network with these args; the Mac app lists the row only when it gets them.
+    await a.call("host.status", { localNetwork: true, localNetworkCheck: false });
     expect(host).toMatchObject({ configured: true, mode: "relay", machineId: "m1", service: { installed: true, running: true, kind: "launchd" } });
     expect(host.permissions[0]).toMatchObject({ id: "accessibility", label: "Accessibility", granted: false });
     expect(await a.call("keyvault.approve", { requestId: "req-1", items: ["i1"] })).toMatchObject({ id: "g1", request_id: "req-1", not_after_ms: 2 });
@@ -667,6 +674,7 @@ describe("webkit adapter", () => {
     expect(sent.map((r) => [r.method, r.args])).toEqual([
       ["spaces.cancelCreate", { pendingId: "pending:1" }],
       ["host.status", {}],
+      ["host.status", { localNetwork: true, localNetworkCheck: false }],
       ["keyvault.approve", { requestId: "req-1", items: ["i1"] }],
       ["keyvault.deny", { requestId: "req-2" }],
       ["keyvault.revokeGrant", { id: "g1" }],
@@ -944,8 +952,40 @@ describe("webkit adapter", () => {
       ["teleport.catalog", { spaceId: "s1" }],
       ["teleport.plan", { spaceId: "s1", entry: { id: "com.apple.Safari" }, move: "app_with_state", files: [], sensitiveGroups: ["sign_ins"] }],
       ["teleport.run", { spaceId: "s1", plan: { json: "plan-1" }, consent: { approved: true, acknowledgeSensitive: true }, runId: "r1" }],
-      ["teleport.sites", { providerId: "safari" }],
+      ["teleport.sites", { providerId: "safari", profile: null }],
     ]);
+  });
+
+  it("maps the teleport readiness check onto the core's words", async () => {
+    const { win, sent } = webkitHost((req) =>
+      req.method === "teleport.readiness"
+        ? ok({
+            providerId: "chrome",
+            appDisplay: "Google Chrome",
+            keyvaultInitialized: true,
+            keyvaultUnlocked: false,
+            profile: "Profile 1",
+            defaultProfile: "Default",
+            profiles: [
+              { dir: "Default", name: "Personal", lastUsed: false },
+              { dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true },
+            ],
+            files: { state: "denied", say: "Turn on Full Disk Access." },
+            tabs: { state: "unknown", say: "" },
+            profileEmpty: false,
+          })
+        : ok(null),
+    );
+    const got = await createWebkitAdapter(win).call("teleport.readiness", { providerId: "chrome" });
+    expect(got).toMatchObject({
+      provider_id: "chrome",
+      keyvault_initialized: true,
+      default_profile: "Default",
+      profiles: [{ dir: "Default", last_used: false }, { dir: "Profile 1", account: "ada@work.example", last_used: true }],
+      files: { state: "denied" },
+      profile_empty: false,
+    });
+    expect(sent.map((r) => [r.method, r.args])).toEqual([["teleport.readiness", { providerId: "chrome", profile: null }]]);
   });
 
   it("sends only clean usage events, and opens only System Settings panes", async () => {

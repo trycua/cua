@@ -190,12 +190,11 @@ speaks it as is:
   the sheet's create (`AppModel.runCreate`; the notch shows it too), with
   `spaces.createProgress` events until it answers with the Space (or
   `cancelled`). The app's own New Space items (⌘N, the menu bar, a machine's
-  "New Space on…") send `spaces.newRequested {on}`, which opens the wizard;
-  the native sheet is the fallback while New UI is off. The app's
-  Settings items (⌘,, the menu bar item, the notch; New UI on or off) send
+  "New Space on…") send `spaces.newRequested {on}`, which opens the wizard.
+  The app's Settings items (⌘,, the menu bar item, the notch) send
   `settings.openRequested` while the window is open, or open it at
   `/settings`, and the page goes to Settings (also with no focus in its web
-  view). The Mac app has no native Settings window. While New UI is on, the notch and the menu bar item send
+  view). The Mac app has no native Settings window. The notch and the menu bar item send
   `route.openRequested {path}` (a Space's tile `/spaces/<id>`, with
   `?dropped=[names]` for a drop on it; the list `/spaces`; Settings
   `/settings`), and the page goes there.
@@ -212,13 +211,21 @@ speaks it as is:
   (`app_account_app_url`: `CUA_ENV`, `CUA_ACCOUNT_APP_URL`). The page's wasm
   core has no environment, so the relay notice's Upgrade falls back to that
   app's billing page (`relayUsage.view {usage, accountApp}`).
+- `settings.get` also carries `target: {channel, env, authHost}`, the
+  channel and environment the app runs as (`app_target`, from cua-home's
+  `CuaChannel` and `CuaEnv`). The title bar draws the core's
+  `environment.tag {target, updateChannel}` beside the page title: "Local ·
+  Staging" or "Local · Prod", and nothing for the released app on
+  production. `?demo=local-staging`, `local-prod` and `stable-staging` show
+  it on the demo host.
 - Touch ID and the unlock prompt stay native.
 - Launch at login is the core's `launch-at-login` row. The adapter reads it
   from the page and sets it with `settings.choose {row: "launch-at-login"}`,
   which `AppModel.choose` already handles. While the row is missing or
   disabled (login item not read yet, or not found) the value is `null`.
 - The update channel: `settings.get` sends `updateChannel` (`stable` or
-  `beta`, `UpdatesModel.channel`; null when the build has no updater, and
+  `nightly`, `UpdatesModel.channel`; the adapter reads an older host's `beta`
+  as `nightly`; null when the build has no updater, and
   the row stays hidden), and `settings.choose {row: "update-channel",
   option}` goes to `model.updates.choose(channel:)`.
 - `machines.list` carries `host` (the same record as `host.status`), which
@@ -361,6 +368,11 @@ current `menuBar` setting and Done leaves out its "Shows in" fact.
 - The usage switch writes `settings.set {telemetry}` at once, and shows only
   once the host has reported the setting (`settings.get`'s `telemetry`).
 - `finish()` calls `session.completeOnboarding {mode}` and forgets progress.
+- Settings, About, "Reset & Show" (after a confirmation) goes back to the first page:
+  `session.resetOnboarding` (host method `onboarding.reset`, Tauri `reset_onboarding`) removes the
+  host's `onboarding.json`, then `forgetWelcome` (`onboarding-reset.ts`) clears the page's keys.
+  Both follow the core's list (`onboarding.resetPlan`, golden `contracts/onboarding-reset.json`);
+  nothing else (Spaces, computers, Keyvault, sign-in, settings) is touched.
 - No new operations: hosts answer `host.status` (permissions, `configured`),
   `settings.set`, `session.*`, as before.
   Swift host (`WebBridge`): onboarding stays native, and the shell never opens

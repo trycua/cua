@@ -22,6 +22,7 @@
 //! the Cua Volume's secret scanner before anything is written.
 
 pub mod claims;
+pub mod grants;
 pub mod mirror;
 pub mod policy;
 
@@ -451,15 +452,31 @@ pub struct Approval {
     pub details: String,
     /// `open` when posted (the answer is a later entry).
     pub state: String,
+    /// What the host measured for the card (a push's diffstat, commits and
+    /// branches), as data for the apps to draw; absent for any approval
+    /// that is plain text. Additive: clients that do not know it show
+    /// `details`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<serde_json::Value>,
 }
 
 /// An answer to an approval.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Answer {
     pub approval: u64,
     pub approve: bool,
     #[serde(default)]
     pub note: String,
+    /// `once` or `space` when the answerer chose (a phone does): `space`
+    /// is a grant for this kind of request from this agent in this Space
+    /// ([`grants`]). Absent: an answer given before scopes, or from an
+    /// app that does not choose, which is `once`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// The answerer's key for this answer: the same answer sent again
+    /// (a retry after a lost connection) is the first one, not a second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// A task's new state.
@@ -556,9 +573,27 @@ pub struct ThreadEntry {
     /// the complete text. `text` says it in plain words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<cua_agents::failure::Failure>,
+    /// On a task an agent gave another agent: how many agent-to-agent hops
+    /// it is from the person who started the chain (a person's own tasks
+    /// carry none). The daemon stops a chain at [`crate::persistent::wake::MAX_HOPS`].
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hops: u32,
+    /// On the copy of a message that tasks one more agent when it names
+    /// several (`@a @b`, `@everyone`): the entry it copies. Clients draw
+    /// the original only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fanout_of: Option<u64>,
+    /// The key the poster sent with it (`thread_post`'s `client_id`): a
+    /// retry with the same key is this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
     /// Fields of a newer format, kept as they are.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// An entry before the store numbers it.
@@ -585,6 +620,14 @@ pub struct Draft {
     pub join_request: Option<JoinRequest>,
     pub view: Option<ViewContext>,
     pub failure: Option<cua_agents::failure::Failure>,
+    pub hops: u32,
+    pub fanout_of: Option<u64>,
+    pub client_id: Option<String>,
+    /// An answer written in the same batch as the approval it answers: its
+    /// `approval` and `reply_to` are the entry just before it in the batch
+    /// (their numbers are known only once the store numbers them). Nobody
+    /// can see the approval open in between.
+    pub answers_prev: bool,
 }
 
 impl Draft {
@@ -609,6 +652,10 @@ impl Draft {
             join_request: None,
             view: None,
             failure: None,
+            hops: 0,
+            fanout_of: None,
+            client_id: None,
+            answers_prev: false,
         }
     }
 
@@ -772,11 +819,41 @@ pub struct Cursor {
 pub struct ThreadStore {
     dir: PathBuf,
     space: String,
+    /// The Space as the Volume names it (id and uid), when known.
+    volume_id: Option<String>,
+}
+
+/// Called with a Space's id and the entries just written to its thread
+/// (the lock held: it must return at once). One per process; the daemon
+/// uses it to tell the person's phone that an approval waits
+/// ([`crate::push_client`]).
+pub type AppendHook = Box<dyn Fn(&str, &[ThreadEntry]) + Send + Sync>;
+
+static APPEND_HOOK: OnceLock<AppendHook> = OnceLock::new();
+
+/// Sets the process's append hook. Only the first call counts.
+pub fn set_append_hook(hook: AppendHook) -> bool {
+    APPEND_HOOK.set(hook).is_ok()
 }
 
 fn notifiers() -> &'static Mutex<HashMap<PathBuf, Arc<tokio::sync::Notify>>> {
     static N: OnceLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Notify>>>> = OnceLock::new();
     N.get_or_init(Default::default)
+}
+
+/// Wakes the agent supervisor of this process: a task was posted, so its
+/// member is served now instead of at the next poll.
+pub fn supervisor_wake() -> Arc<tokio::sync::Notify> {
+    static W: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+    W.get_or_init(Default::default).clone()
+}
+
+/// Wakes the dispatcher of this process alone (it runs apart from the
+/// supervisor's pass, so a pass held up by a slow Space never delays a
+/// new message reaching its agent).
+pub fn dispatch_wake() -> Arc<tokio::sync::Notify> {
+    static W: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+    W.get_or_init(Default::default).clone()
 }
 
 fn fold_cache() -> &'static Mutex<HashMap<PathBuf, Fold>> {
@@ -799,7 +876,16 @@ impl ThreadStore {
         ThreadStore {
             dir: cua_home.join(DIR).join(folder),
             space: space.to_string(),
+            volume_id: None,
         }
+    }
+
+    /// This thread with the Volume's name for its Space (see
+    /// [`cua_volume::path::space_volume_id`]): its mirror goes to that
+    /// Space's folder.
+    pub fn with_volume_id(mut self, volume_id: String) -> ThreadStore {
+        self.volume_id = Some(volume_id);
+        self
     }
 
     /// The thread in `dir` (as [`ThreadStore::list`] finds it).
@@ -807,7 +893,11 @@ impl ThreadStore {
         let raw = std::fs::read(dir.join("space.json")).ok()?;
         let v: Value = serde_json::from_slice(&raw).ok()?;
         let space = v.get("space")?.as_str()?.to_string();
-        Some(ThreadStore { dir, space })
+        Some(ThreadStore {
+            dir,
+            space,
+            volume_id: None,
+        })
     }
 
     /// Every thread under `cua_home`.
@@ -834,7 +924,7 @@ impl ThreadStore {
 
     /// The Space's folder on the Volume (`spaces/<folder>/`).
     pub fn volume_folder(&self) -> String {
-        cua_volume::path::space_folder(&self.space)
+        cua_volume::path::space_folder(self.volume_id.as_deref().unwrap_or(&self.space))
     }
 
     /// Whether any entry was ever written here.
@@ -952,7 +1042,15 @@ impl ThreadStore {
         }
         let mut head = self.recovered_head()?;
         let mut out = vec![];
-        for d in drafts {
+        let wakes = drafts.iter().any(|d| d.task.is_some());
+        for mut d in drafts {
+            if d.answers_prev
+                && let Some(prev) = out.last().map(|p: &ThreadEntry| p.seq)
+                && let Some(a) = d.answer.as_mut()
+            {
+                a.approval = prev;
+                d.reply_to = Some(prev);
+            }
             let e = ThreadEntry {
                 v: VERSION,
                 seq: head.next_seq,
@@ -976,6 +1074,9 @@ impl ThreadStore {
                 join_request: d.join_request,
                 view: d.view,
                 failure: d.failure,
+                hops: d.hops,
+                fanout_of: d.fanout_of,
+                client_id: d.client_id,
                 extra: Map::new(),
             };
             self.write_entry(&mut head, &e)?;
@@ -983,6 +1084,13 @@ impl ThreadStore {
         }
         self.write_head(&head)?;
         self.notifier().notify_waiters();
+        if wakes {
+            supervisor_wake().notify_one();
+            dispatch_wake().notify_one();
+        }
+        if let Some(hook) = APPEND_HOOK.get() {
+            hook(self.space(), &out);
+        }
         Ok(out)
     }
 
@@ -1406,6 +1514,9 @@ pub struct TaskInfo {
     /// What the person who gave it was looking at ([`ViewContext`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view: Option<ViewContext>,
+    /// Agent-to-agent hops from the person who started the chain (0: a person gave it).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub hops: u32,
 }
 
 /// What the entries add up to.
@@ -1425,6 +1536,9 @@ pub struct Fold {
     /// Who asked each approval, and the entry it answers to (an agent's
     /// approval under its task makes that task's session wait).
     pub approval_asked: BTreeMap<u64, (Author, Option<u64>)>,
+    /// The first answer entry of each answered approval (approval seq to
+    /// answer seq).
+    pub answer_of: BTreeMap<u64, u64>,
 }
 
 fn clip(s: &str, n: usize) -> String {
@@ -1460,6 +1574,7 @@ impl Fold {
                     replied: false,
                     holder: None,
                     view: e.view.clone(),
+                    hops: e.hops,
                 },
             );
         }
@@ -1475,6 +1590,7 @@ impl Fold {
             && let Some(answered) = self.approvals.get_mut(&a.approval)
         {
             *answered = true;
+            self.answer_of.entry(a.approval).or_insert(e.seq);
             if let Some(j) = self.join_requests.get_mut(&a.approval) {
                 *j = Some(a.approve);
             }
@@ -1750,6 +1866,7 @@ mod tests {
             action: "Push to main".into(),
             details: String::new(),
             state: "open".into(),
+            card: None,
         });
         s.append(appr).unwrap(); // 7
         s.append(Draft::event(

@@ -88,7 +88,11 @@ describe("presence", () => {
     expect(info).toMatchObject({ handle: "p1", me: ADA, delayMs: 66, datagrams: true });
     expect(joins.map((j) => j.spaceId)).toEqual(["local:a"]);
 
-    const moved: PresenceEvent = { kind: "cursor_moved", participantId: "p2", cursor: { displayId: "", x: 0.1, y: 0.2, visible: true, pressed: false, shape: "arrow", shapeSource: "probe", atMs: 1, receivedMs: 2 } };
+    const moved: PresenceEvent = {
+      kind: "cursor_moved",
+      participantId: "p2",
+      cursor: { displayId: "", x: 0.1, y: 0.2, visible: true, pressed: false, shape: "arrow", shapeSource: "probe", atMs: 1, receivedMs: 2 },
+    };
     fake.push(moved);
     await tick();
     expect(sent).toEqual([{ event: "presence.event", payload: { handle: "p1", event: moved }, to: win }]);

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Connectors (redesign) and summoning agents in a Space: the
+ * Settings → Connections and summoning agents in a Space: the
  * app core's `connectors.*` and `summon.*` (`connectors.rs`, `summon.rs`)
  * over what the host already answers (`agents.setup`, `agentKeys.list`).
  * Every word, state and rule is the core's; this file only shapes inputs
@@ -10,13 +10,14 @@
  */
 
 import type { CoreClient } from "./core";
+import type { AgentMenuPrefs } from "./protocol";
 import type { AgentSetupRow } from "./contracts/agents";
 import { hostOs, type HostOs } from "./host-os";
 import type { AgentKeysInput, AgentKeyRowView } from "./agent-keys";
 
 type Json = Record<string, unknown>;
 
-/* ---- Connectors ---------------------------------------------------------------- */
+/* ---- Connections --------------------------------------------------------------- */
 
 export interface ConnectorAppInput {
   agent: string;
@@ -30,12 +31,21 @@ export interface ConnectorAppInput {
 
 export interface ConnectorsInput {
   apps: ConnectorAppInput[];
-  keys: AgentKeysInput;
+  /** The first key saved for each variable. */
+  keys: Omit<AgentKeysInput, "extras" | "uses">;
+  /** Keys saved beside the first for the same variable. */
+  keyExtras?: NonNullable<AgentKeysInput["extras"]>;
+  /** Which credential each app that takes any provider uses, by app. */
+  uses?: NonNullable<AgentKeysInput["uses"]>;
   shellKeys: string[];
   auto: boolean;
   off: string[];
   busy: { id: string; step: "connecting" | "signing-in" | "signing-out" }[];
   failures: { id: string; line: string }[];
+  /** What is typed in the search of More providers. */
+  query?: string;
+  /** More providers is open (a search opens it too). */
+  moreOpen?: boolean;
 }
 
 export interface ConnectorButton {
@@ -54,12 +64,26 @@ export interface ConnectorAppRow {
   openLabel: string;
 }
 
+/** An app a connection works with: a chip that opens the app's page. */
+export interface WorkChip {
+  /** The app's setup id (`claude-code`, `codex`, `hermes`). */
+  agent: string;
+  name: string;
+}
+
 export interface ConnectorProviderRow {
   id: string;
   label: string;
+  /** The icon's key (the page draws a mark of the initial when it has none). */
+  icon: string;
+  tier: "top" | "more";
   state: "connected" | "not-connected" | "connecting" | "failed";
+  /** "Connected", "Needs reconnect", "Not connected", what is happening, or why it failed. */
   status: string;
-  detail: string;
+  /** What is saved, when connected ("API key •••• 3f9a"). */
+  credential: string | null;
+  worksWith: WorkChip[];
+  worksWithLabel: string;
   button: ConnectorButton;
   addedMs: number | null;
   signOutEnvs: string[];
@@ -76,7 +100,14 @@ export interface ConnectorsView {
   auto: boolean;
   providersTitle: string;
   providersFooter: string;
+  /** Up front, then any other that is connected or needs reconnecting. */
   providers: ConnectorProviderRow[];
+  moreTitle: string;
+  moreSearchLabel: string;
+  /** The searchable list (empty while More providers is closed). */
+  moreProviders: ConnectorProviderRow[];
+  moreCount: number;
+  moreEmpty: string | null;
   others: AgentKeyRowView[];
   addOtherLabel: string;
   otherHelp: string;
@@ -85,38 +116,102 @@ export interface ConnectorsView {
   addedLabel: string;
 }
 
+/** The words around importing Claude Code's sign-in (`connectors.importSheet`). */
+export interface ImportSheetView {
+  title: string;
+  lede: string;
+  /** What is read, what is kept, where it goes. */
+  points: string[];
+  confirmLabel: string;
+  cancelLabel: string;
+  readingLabel: string;
+  notFoundTitle: string;
+  notFoundLede: string;
+  /** In order: sign in with Claude Code, paste a token, use an API key. */
+  options: { id: "login" | "token" | "key"; label: string; help: string; command: string | null; button: string }[];
+}
+
 export interface ConnectPlan {
   tools: boolean;
   appToken: boolean;
   device: boolean;
+  /** Open this provider's sheet: the first the app can use, with "Other providers" in it. */
   provider: string | null;
   tokenProvider: string | null;
 }
 
+export interface FieldOption {
+  id: string;
+  label: string;
+}
+
+/** One field a way asks for besides the key: `region` is the plan or region, the others are `fields`. */
+export interface WayField {
+  id: string;
+  label: string;
+  kind: "text" | "url" | "choice";
+  placeholder: string;
+  required: boolean;
+  options: FieldOption[];
+  value: string;
+}
+
 export interface ProviderWay {
-  id: "app-token" | "app-device" | "key" | "shell";
+  id: "app-token" | "app-device" | "token" | "key" | "endpoint" | "shell";
+  /** The method kind from the provider file. */
+  kind: string;
+  method: string;
   label: string;
   help: string;
   button: string;
   app: string | null;
   env: string | null;
+  /** `required` (a key or token is pasted), `optional` or `none`. */
+  secret: "required" | "optional" | "none";
+  fields: WayField[];
 }
 
 export interface ProviderSheetView {
   provider: string;
+  icon: string;
   title: string;
+  /** "Works with Claude Code, Hermes and OpenCode." */
   lede: string;
+  worksWith: WorkChip[];
   ways: ProviderWay[];
   cancelLabel: string;
   keyLabel: string;
   keyPlaceholder: string;
   keyHelp: string;
+  tokenLabel: string;
+  tokenPlaceholder: string;
   saveLabel: string;
-  keyProvider: "anthropic" | "openai" | "other";
-  keyEnv: string | null;
-  /** "Or choose another provider", when opened for an app that signs in with more than one. */
-  othersLabel: string | null;
-  others: { provider: string; label: string }[];
+  /** Read before saving (a server on this machine). */
+  note: string | null;
+  /** "Other providers": opens the provider choice. */
+  switchLabel: string;
+  /** Why only a key is offered, when this app can't use the provider's sign-in. */
+  onlyKeyNote: string | null;
+}
+
+export interface ProviderChoice {
+  provider: string;
+  label: string;
+  icon: string;
+  tier: "top" | "more";
+  state: "connected" | "not-connected" | "connecting" | "failed";
+  status: string;
+}
+
+export interface ProviderPickerView {
+  title: string;
+  lede: string;
+  searchLabel: string;
+  items: ProviderChoice[];
+  moreLabel: string | null;
+  moreCount: number;
+  empty: string | null;
+  cancelLabel: string;
 }
 
 export interface ConnectorToggle {
@@ -124,6 +219,32 @@ export interface ConnectorToggle {
   label: string;
   help: string;
   on: boolean;
+  enabled: boolean;
+}
+
+/** One credential an app can use (a row of the Uses menu). */
+export interface UseOption {
+  provider: string;
+  providerName: string;
+  icon: string;
+  env: string;
+  slot: string | null;
+  /** "API key ending 4f2a", or the key's own name. */
+  line: string;
+  model: string | null;
+  selected: boolean;
+}
+
+/** An app's Uses row: which saved credential it runs with, and the others it could. */
+export interface AppUses {
+  title: string;
+  state: "connected" | "not-connected" | "gone";
+  status: string;
+  current: UseOption | null;
+  options: UseOption[];
+  chosen: boolean;
+  connectLabel: string;
+  note: string;
   enabled: boolean;
 }
 
@@ -137,6 +258,8 @@ export interface AppDetailView {
   toolsTitle: string;
   toggles: ConnectorToggle[];
   signInTitle: string;
+  /** Which credential the app uses (an app that takes any provider); it replaces `signIn`. */
+  uses: AppUses | null;
   signIn: { title: string; status: string; connected: boolean; way: string; provider: string; button: ConnectorButton } | null;
   signInNote: string | null;
   settingsFileLabel: string;
@@ -171,12 +294,16 @@ export function connectorsInputOf(
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
     })),
-    keys,
+    keys: { keys: keys.keys, unavailable: keys.unavailable, ...(keys.warning ? { warning: keys.warning } : {}), error: keys.error },
+    ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
+    ...(keys.uses && Object.keys(keys.uses).length ? { uses: keys.uses } : {}),
     shellKeys: extra.shellKeys ?? [],
     auto: extra.auto ?? false,
     off: extra.off ?? [],
     busy: extra.busy ?? [],
     failures: extra.failures ?? [],
+    query: extra.query ?? "",
+    moreOpen: extra.moreOpen ?? false,
   };
 }
 
@@ -186,19 +313,167 @@ export const connectorsView = (core: CoreClient, input: ConnectorsInput, os: Hos
 export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: string): ConnectPlan | null =>
   core.tryCall<ConnectPlan>("connectors.connectPlan", { input: input as unknown as Json, agent }) ?? null;
 
-export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
+export const providerSheet = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  provider: string,
+  os: HostOs = hostOs(),
+  forApp: string | null = null,
+): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
+
+export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
+  core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
+
+export const providerPicker = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  forApp: string | null = null,
+  query = "",
+  expanded = false,
+): ProviderPickerView | null =>
+  core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
+
+/** One model row of the prompt box's model menu. */
+export interface ModelChoice {
+  id: string;
+  label: string;
+  /** A quick, cheap model (tagged "Fast"). */
+  fast: boolean;
+  /** The provider's own default. */
+  default: boolean;
+  /** An older id kept so a saved choice still works: accepted, but not shown in the menu. */
+  legacy?: boolean;
+}
+
+export interface ModelGroup {
+  provider: string;
+  label: string;
+  icon: string;
+  state: "connected" | "needs-reconnect";
+  /** The coding app that must run these models (only its own sign-in is saved); null: the general agent. */
+  harness: string | null;
+  models: ModelChoice[];
+}
+
+/** The models of the connected providers (`connectors.models`). */
+export interface ModelsView {
+  groups: ModelGroup[];
+  /** What a new prompt starts with. */
+  default: { provider: string; model: string } | null;
+  connectLabel: string;
+  empty: string | null;
+}
+
+export const modelsView = (core: CoreClient, input: ConnectorsInput): ModelsView | null =>
+  core.tryCall<ModelsView>("connectors.models", { input: input as unknown as Json }) ?? null;
+
+/* ---- The agent menu of the prompt box ------------------------------------------------ */
+
+/** One sign-in or key a coding app can run with. */
+export interface AgentAccount {
+  provider: string;
+  providerLabel: string;
+  icon: string;
+  env: string;
+  slot: string | null;
+  /** What the person sees: the sign-in's own name, "Signed in with ChatGPT", a key's name or "API key ending 4f2a". */
+  line: string;
+  via: "sign-in" | "key";
+  /** The account runs use now. */
+  selected: boolean;
+  models: ModelChoice[];
+  defaultModel: string | null;
+}
+
+/** One coding app of the menu and the accounts the person has for it. */
+export interface AgentGroup {
+  /** The harness id a run uses (`openai-codex`). */
+  harness: string;
+  /** The app's Connections id (`codex`), where its sign-ins are managed. */
+  app: string;
+  label: string;
+  state: "connected" | "needs-reconnect" | "not-connected";
+  accounts: AgentAccount[];
+  signInLabel: string;
+}
+
+/** A coding app, an account and a model picked together. */
+export interface AgentRef {
+  harness: string;
+  provider: string;
+  env: string;
+  slot: string | null;
+  model: string;
+}
+
+/** The agent menu (`connectors.agents`). */
+export interface AgentsView {
+  groups: AgentGroup[];
+  default: AgentRef | null;
+  empty: string | null;
+}
+
+export const agentsView = (core: CoreClient, input: ConnectorsInput, menu?: AgentMenuPrefs): AgentsView | null =>
+  core.tryCall<AgentsView>("connectors.agents", { input: input as unknown as Json, ...(menu ? { menu: menu as unknown as Json } : {}) }) ?? null;
+
+/** One coding app in Settings, Connections, Agent menu (`agentMenu.view`). */
+export interface AgentMenuRow {
+  app: string;
+  label: string;
+  /** The app is in the agent menu. */
+  shown: boolean;
+  /** "Signed in", "Sign in again" or "Not signed in". */
+  status: string;
+  /** The last app shown: its switch cannot be turned off. */
+  locked: boolean;
+}
+
+export interface AgentMenuSettings {
+  title: string;
+  switchLabel: string;
+  help: string;
+  rows: AgentMenuRow[];
+  /** Said while one app is left: why it stays. */
+  lastNote: string | null;
+}
+
+export interface AgentMenuChange {
+  prefs: AgentMenuPrefs;
+  /** Said when the switch was refused (the last app cannot be hidden). */
+  refused: string | null;
+}
+
+const menuArgs = (input: ConnectorsInput, menu: AgentMenuPrefs) => ({ input: input as unknown as Json, menu: menu as unknown as Json });
+
+/** The rows of the agent menu switches (`agentMenu.view`). */
+export const agentMenuView = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs): AgentMenuSettings | null =>
+  core.tryCall<AgentMenuSettings>("agentMenu.view", menuArgs(input, menu)) ?? null;
+
+/** The choice after switching `app` on or off (`agentMenu.choose`). */
+export const agentMenuChoose = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs, app: string, on: boolean): AgentMenuChange | null =>
+  core.tryCall<AgentMenuChange>("agentMenu.choose", { ...menuArgs(input, menu), app, on }) ?? null;
+
+/** The choice after the accounts changed: an app that gained an account is shown again (`agentMenu.sync`). */
+export const agentMenuSync = (core: CoreClient, input: ConnectorsInput, menu: AgentMenuPrefs): AgentMenuPrefs | null =>
+  core.tryCall<AgentMenuPrefs>("agentMenu.sync", menuArgs(input, menu)) ?? null;
 
 export const appDetail = (core: CoreClient, input: ConnectorsInput, agent: string): AppDetailView | null =>
   core.tryCall<AppDetailView | null>("connectors.appDetail", { input: input as unknown as Json, agent }) ?? null;
 
-export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: string, name: string): SetupCardView | null =>
-  core.tryCall<SetupCardView>("connectors.setupCard", { input: input as unknown as Json, agent, name }) ?? null;
+/** The card for an app that isn't connected; `provider` is the one a run said refused it, when it did. */
+export const setupCard = (core: CoreClient, input: ConnectorsInput, agent: string, name: string, provider: string | null = null): SetupCardView | null =>
+  core.tryCall<SetupCardView>("connectors.setupCard", { input: input as unknown as Json, agent, name, provider }) ?? null;
 
 /* ---- Summoning agents in a Space ---------------------------------------------------- */
 
 export interface SummonMember {
+  /** What the Space calls it (`claude`): the handle the thread matches. */
   handle: string;
+  /** The host's name for it (`claude-8`), an alias only. */
+  key?: string;
+  /** Runs on this device's own sign-ins (a Home's agent): waking it checks them. */
+  mine?: boolean;
   harness: string;
   label: string;
 }
@@ -207,6 +482,8 @@ export interface SummonInput {
   members: SummonMember[];
   people: string[];
   canAdd: boolean;
+  /** Report an @mention of nobody in the Space (the thread's composer; not Ask first's job). */
+  reportUnknown?: boolean;
   connectors: ConnectorsInput;
 }
 
@@ -219,7 +496,7 @@ export interface SummonCandidate {
 }
 
 export interface CantWake {
-  reason: "not-connected" | "cant-add" | "failed";
+  reason: "not-connected" | "cant-add" | "failed" | "no-such-member";
   handle: string;
   harness: string;
   name: string;
@@ -250,7 +527,7 @@ export const queuedNote = (core: CoreClient, creating: boolean): LocalNote | nul
 export interface SummonStep {
   handle: string;
   harness: string;
-  action: "wake" | "add" | "blocked";
+  action: "wake" | "add" | "blocked" | "unknown";
   cantWake: CantWake | null;
 }
 

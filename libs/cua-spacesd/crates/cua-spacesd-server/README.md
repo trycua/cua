@@ -12,6 +12,7 @@ The gRPC, gRPC-Web and HTTP server core of `cua-spacesd`. One TCP port
 | `POST /mcp` | root token (either header) | streamable-HTTP MCP over the cua-driver registry (`cua_driver_core::server` dispatch) |
 | `GET /tunnel` (WebSocket) | `tunnel` ticket | from `TunnelService.Forward` |
 | `GET /hotspot` (WebSocket) | `hotspot` ticket | from `TunnelService.StartHotspot` |
+| `GET /spawn` (WebSocket) | `spawn` ticket | from `TunnelService.StartSpawn` (the host that runs the Space only) |
 | `/media` | provider | 501 until a desktop provider serves it |
 
 Services implemented here: System, Process, Filesystem, Driver, Teleport,

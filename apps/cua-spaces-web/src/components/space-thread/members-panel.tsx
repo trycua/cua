@@ -12,6 +12,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 import { MemberAvatar } from "./avatar";
+import { FailureDetails } from "./failure-note";
 import { AiTag, OwnerSuffix } from "./identity";
 import { ProfileTrigger } from "./profile-card";
 import { RAIL_WINDOWS, railStreams } from "./rail";
@@ -31,6 +32,7 @@ export function MembersPanel({
   roster,
   presence,
   facts,
+  extra,
   onMore,
   windows,
   desktop,
@@ -49,6 +51,8 @@ export function MembersPanel({
   presence?: MemberPresence;
   /** The first few of the core's facts; More opens the rest. */
   facts: SpaceFact[];
+  /** Rows after the facts, before More. */
+  extra?: ReactNode;
   onMore: () => void;
   /** The Space's windows (the core's Stream rows without the desktop); the first few show here. */
   windows: StreamRow[];
@@ -81,7 +85,16 @@ export function MembersPanel({
         {roster.agents.map((a) => (
           <Tooltip key={a.id} content={a.caption ? `${a.label}: ${a.caption}` : a.label} side="left">
             <span>
-              <MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />
+              <MemberAvatar
+                kind="agent"
+                name={a.name}
+                harness={a.harness}
+                identity={a.identity}
+                surface="chrome"
+                size={24}
+                dim={a.dim}
+                presence={presence?.[a.id] ?? null}
+              />
             </span>
           </Tooltip>
         ))}
@@ -112,26 +125,42 @@ export function MembersPanel({
       <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
         {roster.people.map((p) => (
           <ProfileRow key={p.id} person={p}>
-            <Row member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
+            <Row
+              member={p.id}
+              mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />}
+              label={p.label}
+              caption={p.me ? "You" : null}
+            />
           </ProfileRow>
         ))}
         {roster.agents.map((a) => (
-          <ProfileRow key={a.id} agent={a}>
-          <Row
-            member={a.id}
-            mark={<MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />}
-            label={
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate">{a.label}</span>
-                <AiTag />
-                {a.collides && a.identity ? <OwnerSuffix identity={a.identity} /> : null}
-              </span>
-            }
-            caption={a.caption}
-            dim={a.dim}
-            status={a.status}
-            chevron
-          />
+          <ProfileRow key={a.id} agent={a} below={a.failure ? <FailureDetails message={a.failure.message} /> : undefined}>
+            <Row
+              member={a.id}
+              mark={
+                <MemberAvatar
+                  kind="agent"
+                  name={a.name}
+                  harness={a.harness}
+                  identity={a.identity}
+                  surface="chrome"
+                  size={24}
+                  dim={a.dim}
+                  presence={presence?.[a.id] ?? null}
+                />
+              }
+              label={
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{a.label}</span>
+                  <AiTag />
+                  {a.collides && a.identity ? <OwnerSuffix identity={a.identity} /> : null}
+                </span>
+              }
+              caption={a.caption}
+              dim={a.dim}
+              status={a.status}
+              chevron
+            />
           </ProfileRow>
         ))}
       </ul>
@@ -163,7 +192,9 @@ export function MembersPanel({
                     <WindowMark row={w} />
                     <span className="min-w-0 flex-1 truncate">
                       <span>{name}</span>
-                      {!isDesktop && appOf(w) && w.label && w.label !== appOf(w) ? <span className="ml-1.5 font-normal text-muted-foreground">{w.label}</span> : null}
+                      {!isDesktop && appOf(w) && w.label && w.label !== appOf(w) ? (
+                        <span className="ml-1.5 font-normal text-muted-foreground">{w.label}</span>
+                      ) : null}
                     </span>
                   </button>
                   {pip ? (
@@ -209,6 +240,7 @@ export function MembersPanel({
             </span>
           </div>
         ))}
+        {extra}
         <button
           type="button"
           data-call-more=""
@@ -233,7 +265,11 @@ export const osOfIcon = (id: string): "macos" | "windows" | "linux" => (/mac/i.t
 function WindowMark({ row }: { row: StreamRow }) {
   return (
     <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-[5px] bg-muted text-[10px] font-semibold text-muted-foreground">
-      {row.icon.kind === "app" ? (row.icon.appName || row.icon.appId).trim().charAt(0).toUpperCase() || "?" : <OsIcon os={osOfIcon(row.icon.id)} className="size-3" />}
+      {row.icon.kind === "app" ? (
+        (row.icon.appName || row.icon.appId).trim().charAt(0).toUpperCase() || "?"
+      ) : (
+        <OsIcon os={osOfIcon(row.icon.id)} className="size-3" />
+      )}
     </span>
   );
 }
@@ -268,9 +304,9 @@ function Row({
       {mark}
       <span className="min-w-0 flex-1">
         <span className={dim ? "block truncate text-[13px] text-muted-foreground" : "block truncate text-[13px]"}>{label}</span>
-        {/* A failed agent's reason is shown whole (wrapped, selectable), never cut with an ellipsis. */}
+        {/* A failed agent says one word here ("Stopped", "Not connected"); its error is under Show details. */}
         {caption ? (
-          <span data-member-caption="" className={cn("block text-[11px] text-muted-foreground", status === "failed" ? "break-words select-text" : "truncate")}>
+          <span data-member-caption="" className="block truncate text-[11px] text-muted-foreground">
             {caption}
           </span>
         ) : null}
@@ -303,12 +339,27 @@ function Row({
 }
 
 /** A row in "In this space" that opens its person's or agent's card. */
-function ProfileRow({ person, agent, children }: { person?: RosterPerson; agent?: RosterAgent; children: ReactNode }) {
+function ProfileRow({
+  person,
+  agent,
+  children,
+  below,
+}: {
+  person?: RosterPerson;
+  agent?: RosterAgent;
+  children: ReactNode;
+  /** Under the row, outside its card trigger (a failed agent's Show details). */ below?: ReactNode;
+}) {
   return (
     <li>
       <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg data-[selected]:bg-accent" rowKey={person?.id}>
         {children}
       </ProfileTrigger>
+      {below ? (
+        <div data-member-details="" className="flex flex-wrap items-center gap-1 pb-1 pl-[44px]">
+          {below}
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -397,7 +448,10 @@ function AgentRightsRows({
                     () => setBusy(false),
                     (e: unknown) => {
                       setBusy(false);
-                      toast(`Couldn't change who ${label.toLowerCase()} ${agent.label}`, { description: e instanceof Error ? e.message : String(e), type: "error" });
+                      toast(`Couldn't change who ${label.toLowerCase()} ${agent.label}`, {
+                        description: e instanceof Error ? e.message : String(e),
+                        type: "error",
+                      });
                     },
                   );
                 }}

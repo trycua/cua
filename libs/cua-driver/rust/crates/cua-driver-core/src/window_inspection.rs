@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform window-snapshot coverage signals.
 //!
 //! A browser permission bubble is browser chrome, not page content. Chromium

@@ -7,7 +7,8 @@ name: "CI: Cua Spaces for macOS (SwiftUI)"
 # (libs/spaces-app-swift: drift gate and tests), the notch package shared
 # with the Electron app's notch helper (libs/spaces-notch-swift), the Swift package's unit,
 # parity and snapshot tests, the app bundle (with Sparkle, and a launch
-# check), and the XCUITests. Unsigned; the only secret is the optional
+# check), and the XCUITests (the bundle and the XCUITests run on a pull request
+# only when it changes a packaging path, see `changes`; always on main). Unsigned; the only secret is the optional
 # Sparkle key, for the appcast dry run. The Keyvault's live paths need a daemon and are not
 # exercised here (the view models run against a fake broker).
 #
@@ -22,6 +23,7 @@ name: "CI: Cua Spaces for macOS (SwiftUI)"
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "apps/cua-spaces-macos/**"
       - "libs/cua/crates/cua-spaces-app-core/**"
@@ -46,6 +48,7 @@ on:
       - ".github/actions/spaces-rust-slice/**"
       - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/workflows/ci-cua-spaces-macos.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -87,8 +90,55 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
+  # What the app bundle job (bundle, launch check, XCUITest; about an hour on a
+  # cold runner) must prove is packaging: the build scripts, the bundle's
+  # resources and plists, the XcodeGen project and the UI tests, the Swift
+  # package manifests and the pinned driver. A pull request runs that job only
+  # when it changes one of those paths. Every push to main and every manual run
+  # runs it, so any other change is checked after it merges, and a failure there
+  # alerts and opens an issue (ci-postmerge-issue.yml).
+  changes:
+    name: changes
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.quick.outputs.skip != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        working-directory: /tmp
+    outputs:
+      packaging: ${{ steps.scope.outputs.packaging }}
+    steps:
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          packaging=true
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+            if grep -Eq '^(apps/cua-spaces-macos/(scripts/|Support/|UITests/|project\.yml$|Package\.swift$|Package\.resolved$|cua-driver\.release\.json$|BUNDLED_CUA_VERSION$|VERSION$)|libs/spaces-app-swift/scripts/|\.github/workflows/ci-cua-spaces-macos\.yml$)' <<<"$files"; then
+              packaging=true
+            else
+              packaging=false
+            fi
+          fi
+          echo "packaging=$packaging" | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
   core:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: app core (Rust) + FFI mirror gate
     runs-on: ubuntu-24.04
     defaults:
@@ -127,45 +177,38 @@ jobs:
   # each compiling it (the checks that need the Rust toolchain compile only
   # the small bindgen tools).
   ffi:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: Cua Spaces app library (built once)
-    runs-on: macos-26-xlarge
+    runs-on: macos-26
+    # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
+    # cancelled steady progress on PRs that miss main's cached library, and 90
+    # cancelled a PR that changes Cargo.lock (it builds every dependency).
+    timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).
       CUA_RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
-      # Restore only: main compiled this exact Rust input tree when it merged
-      # (ci-cua-spaces-rust-slice.yml) unless the pull request changes it.
-      - name: Restore main's compiled library for these Rust inputs
+      # One definition of the build, shared with the producer on main
+      # (ci-cua-spaces-rust-slice.yml). Exact key hit (the pull request leaves
+      # the Rust inputs as they are on main): main's compiled library, seconds.
+      # Miss: the action builds with the same `--target` command and the same
+      # Swatinem cache family main saves, so a pull request compiles only the
+      # workspace crates it changed (minutes) and not the whole dependency tree
+      # (73 minutes cold). The old miss path built `cargo build --release`
+      # without `--target`, into a different target directory and an sccache
+      # family warmed by debug test builds, so it never reused main's work.
+      - name: Restore main's compiled library, or build on top of main's dependency cache
         id: slice
         uses: ./.github/actions/spaces-rust-slice
         with:
           triple: aarch64-apple-darwin
-          build: "false"
-      - name: Use the restored library
-        if: steps.slice.outputs.cache-hit == 'true'
+      - name: Stage the library where the Swift jobs expect it
         run: |
           mkdir -p libs/cua/target/release
           cp libs/cua/target/aarch64-apple-darwin/release/libcua_spaces_ffi.dylib libs/cua/target/release/
-      - name: Install Rust (toolchain from rust-toolchain.toml)
-        if: steps.slice.outputs.cache-hit != 'true'
-        working-directory: libs/cua
-        run: rustup show active-toolchain || rustup toolchain install
-      - name: Install protoc
-        if: steps.slice.outputs.cache-hit != 'true'
-        uses: ./.github/actions/setup-protoc
-      - uses: ./.github/actions/rust-cache
-        if: steps.slice.outputs.cache-hit != 'true'
-        with:
-          workspaces: libs/cua
-      # The Cua Spaces app export (libcua_spaces_ffi, which carries the cua
-      # SDK too); each Swift job stages it as libs/cua/swift/lib/libcua_sdk.dylib.
-      - name: Build the Cua Spaces app library
-        if: steps.slice.outputs.cache-hit != 'true'
-        working-directory: libs/cua
-        run: cargo build --locked --release -p cua-spaces-ffi
       - name: Upload the library for the Swift jobs
         uses: actions/upload-artifact@v4
         with:
@@ -175,9 +218,11 @@ jobs:
           retention-days: 1
 
   swift-tests:
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI app (swift tests, bridge contract)
-    needs: ffi
-    runs-on: macos-26-xlarge
+    needs: [quick, ffi]
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library
@@ -201,6 +246,12 @@ jobs:
         working-directory: apps/cua-spaces-macos
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-swift-mac --format log --rerun-failed -- scripts/test.sh
+      # The bundled Cua Driver is checked against the size and SHA-256
+      # committed in cua-driver.release.json and the Cua team's signature;
+      # a mismatched, incomplete or unsigned download is refused.
+      - name: fetch-cua-driver.sh refuses a download that isn't the pinned release
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/fetch-cua-driver-test.sh
       # install-local.sh and uninstall-local.sh against a fake HOME and a fake
       # build: a Stable install stays byte-identical, a wrong bundle id is
       # refused. Needs no build, certificate or network.
@@ -241,9 +292,11 @@ jobs:
   # shell's TypeScript) still match the library. These run the bindgen tools
   # with cargo, so this job has the Rust toolchain; the other Swift jobs do not.
   bindings:
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI and Electron bindings are up to date
-    needs: ffi
+    needs: [quick, ffi]
     runs-on: macos-26
+    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: 4
     steps:
@@ -253,7 +306,7 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
-      # Restore only: `ffi` is the job that saves this family on main.
+      # Restore only (main's other macOS jobs save this family).
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
@@ -283,9 +336,13 @@ jobs:
           pnpm native -- --skip-build --check-bindings
 
   app-bundle:
+    # On a pull request only when it changes a packaging path (see `changes`);
+    # always on main and on a manual run.
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true')) && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI app (bundle, launch check, XCUITest)
-    needs: ffi
-    runs-on: macos-26-xlarge
+    needs: [quick, ffi, changes]
+    runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library

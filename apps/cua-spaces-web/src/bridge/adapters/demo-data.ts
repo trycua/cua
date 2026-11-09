@@ -24,7 +24,10 @@ export const DEMO_MACHINES: MachineRow[] = [
     online: true,
     os: "macos",
     model: "Mac mini",
-    limits: [{ resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." }],
+    limits: [
+      { resource: "spaces", used: 1, limit: 4, reason: "This machine's limit." },
+      { resource: "macos-vms", used: 1, limit: 2, reason: "macOS runs at most two VMs per Mac." },
+    ],
   },
   { id: "linux-box", name: "Linux box", via: "relay", online: true, os: "linux", model: "ThinkCentre M90q", limits: [] },
   {
@@ -59,6 +62,40 @@ const STREAMS = ["desktop_stream", "window_stream", "audio.desktop", "relay_atta
 
 /** `minutesAgo` → RFC 3339, relative to `now`. */
 const at = (now: number, minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+
+/** The Mac mini and the Linux box sharing their own desktops over the relay (`?demo=desktops`): rows of their own, no
+ * host above them. Without these the demo's computers have nowhere to run a task, so Home can't start on one made the
+ * default. */
+export function demoDesktopRows(now: number): SpaceRow[] {
+  return [
+    {
+      id: "relay:mac-mini",
+      name: "Mac mini",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS, "host_spaces"],
+      addedAt: at(now, 900),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Tahoe 26.0",
+      arch: "arm64",
+      reachable: true,
+    },
+    {
+      id: "relay:linux-box",
+      name: "Linux box",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS, "host_spaces"],
+      addedAt: at(now, 600),
+      os: "linux",
+      osName: "Ubuntu",
+      osPrettyName: "Ubuntu 24.04.3 LTS",
+      arch: "amd64",
+      reachable: true,
+    },
+  ];
+}
 
 export function demoSpaceRows(now: number): SpaceRow[] {
   return [
@@ -287,6 +324,17 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
     provideSpaces: true,
     maxSpaces: 4,
     maxMacosVms: 2,
+    maxMemoryGb: 0,
+    maxDiskGb: 0,
+    maxRunMinutes: 0,
+    usedMemoryGb: 8,
+    usedDiskGb: 32,
+    totalMemoryGb: 32,
+    totalDiskGb: 994,
+    providedSpaces: [
+      { relayMachine: "space-build-1", localSpace: "local:build-1", name: "build-1", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Mac mini", createdAtMs: now - 40 * 60_000 },
+      { relayMachine: "space-build-2", localSpace: "local:build-2", name: "build-2", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Linux box", createdAtMs: now - 12 * 60_000 },
+    ],
     recentAccess: [
       { atMs: now - 4 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "DesktopService" },
       { atMs: now - 52 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "MCP" },
@@ -300,7 +348,7 @@ export function demoTelemetry(enabled: boolean): TelemetryView {
     source: "config ~/.cua/config.toml",
     sourceKind: "config",
     noticeShown: true,
-    noticeText: "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen.",
+    noticeText: "Features you use and errors, linked to your account. Never your files, typing or screen.",
     docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
   };
 }

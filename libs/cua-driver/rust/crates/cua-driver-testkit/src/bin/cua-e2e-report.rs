@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::path::PathBuf;
 
 use cua_driver_testkit::e2e::{
@@ -110,7 +113,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let markdown = summary.markdown_with_declarations_source_and_environment(
+    let markdown = summary.markdown(
         &declarations,
         &results,
         source_sha.as_deref(),

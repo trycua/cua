@@ -8,9 +8,13 @@ import { useEffect, useState } from "react";
 import { useAgents, type AgentSetupRow } from "@/bridge";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { Button } from "@/components/ui/button";
+import { thisComputerText } from "@/lib/host-labels";
 
 const MAIN_PROMPT = "Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.";
-const MORE_PROMPTS = ["Run our tests on Ubuntu and macOS at the same time and tell me which ones fail.", "Check that the installer works on a clean Windows machine."];
+const MORE_PROMPTS = [
+  "Run our tests on Ubuntu and macOS at the same time and tell me which ones fail.",
+  "Check that the installer works on a clean Windows computer.",
+];
 
 /** "Claude Code, Codex and Cursor". */
 export function nameList(names: string[]): string {
@@ -21,7 +25,7 @@ export function nameList(names: string[]): string {
 /**
  * The Agents page before any run. It says what to do next, by what is true
  * on this computer: coding apps found but Cua not in them yet (their marks
- * and a button to Settings, Connectors, where each has its switch); Cua already in them (the first prompts to
+ * and a button to Settings, Connections, where each has its switch); Cua already in them (the first prompts to
  * try); or no coding app found.
  */
 export function AgentsEmpty() {
@@ -47,8 +51,8 @@ export function AgentsEmpty() {
   const todo = installed.filter((r) => !r.configured);
   const state = installed.length === 0 ? "none" : ready.length === 0 ? "setup" : "ready";
 
-  // Connecting is its switch in Settings, Connectors: open it at the first app waiting for Cua.
-  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connectors", search: { app: agent } });
+  // Connecting is its switch in Settings, Connections: open it at the first app waiting for Cua.
+  const openConnectors = (agent?: string) => void navigate({ to: "/settings/connections", search: { app: agent } });
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col items-center pt-8 text-center" data-agents-empty={state}>
@@ -60,7 +64,7 @@ export function AgentsEmpty() {
         {state === "ready"
           ? "Open Claude Code, Codex or Cursor and ask it for something that needs a clean computer. It makes the Space, works in it and shows you the result here."
           : state === "setup"
-            ? `${nameList(todo.map((r) => r.name))} ${todo.length === 1 ? "is" : "are"} on this Mac. Let ${todo.length === 1 ? "it" : "them"} use Cua, then ask one to work in a Space.`
+            ? `${nameList(todo.map((r) => r.name))} ${todo.length === 1 ? "is" : "are"} on ${thisComputerText()}. Let ${todo.length === 1 ? "it" : "them"} use Cua, then ask one to work in a Space.`
             : "Install Claude Code, Codex or Cursor and Cua will notice. Spaces work without one."}
       </p>
       {state === "setup" ? (

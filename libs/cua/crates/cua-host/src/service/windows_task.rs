@@ -1,6 +1,6 @@
 //! Read the host task's numeric state, not schtasks' localized display text.
 
-use super::{ServiceState, WINDOWS_TASK_NAME};
+use super::ServiceState;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -8,8 +8,8 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::TaskScheduler::{ITaskService, TASK_STATE_RUNNING, TaskScheduler};
 use windows::core::{BSTR, HRESULT, VARIANT};
 
-pub(super) fn state() -> ServiceState {
-    service_state(query())
+pub(super) fn state(task_name: &str) -> ServiceState {
+    service_state(query(task_name), task_name)
 }
 
 struct QueryError {
@@ -29,18 +29,18 @@ impl QueryError {
     }
 }
 
-fn service_state(result: Result<Option<i32>, QueryError>) -> ServiceState {
+fn service_state(result: Result<Option<i32>, QueryError>, task_name: &str) -> ServiceState {
     let (installed, running, detail) = match result {
         Ok(Some(state)) => (
             true,
             state == TASK_STATE_RUNNING.0,
-            format!("{WINDOWS_TASK_NAME}; state={state}"),
+            format!("{task_name}; state={state}"),
         ),
-        Ok(None) => (false, false, format!("{WINDOWS_TASK_NAME}; task not found")),
+        Ok(None) => (false, false, format!("{task_name}; task not found")),
         Err(error) => (
             error.task_found,
             false,
-            format!("{WINDOWS_TASK_NAME}; query unavailable: {}", error.detail),
+            format!("{task_name}; query unavailable: {}", error.detail),
         ),
     };
     ServiceState {
@@ -76,7 +76,7 @@ impl Drop for Apartment {
     }
 }
 
-fn query() -> Result<Option<i32>, QueryError> {
+fn query(task_name: &str) -> Result<Option<i32>, QueryError> {
     let _apartment = Apartment::initialize()
         .map_err(|error| QueryError::new("COM initialization", error, false))?;
     // Keep every interface within this call and apartment. This is a local,
@@ -91,7 +91,7 @@ fn query() -> Result<Option<i32>, QueryError> {
         let folder = scheduler
             .GetFolder(&BSTR::from("\\"))
             .map_err(|error| QueryError::new("root folder", error, false))?;
-        let task = match folder.GetTask(&BSTR::from(WINDOWS_TASK_NAME)) {
+        let task = match folder.GetTask(&BSTR::from(task_name)) {
             Ok(task) => task,
             Err(error) if task_missing(error.code()) => return Ok(None),
             Err(error) => return Err(QueryError::new("task lookup", error, false)),
@@ -117,7 +117,7 @@ mod tests {
         // Enabled controls future launches, not whether an instance is running.
         // Do not add it as a second condition for TASK_STATE_RUNNING.
         for state in 0..=4 {
-            let actual = service_state(Ok(Some(state)));
+            let actual = service_state(Ok(Some(state)), r"Cua\SpacesdHost-staging");
             assert!(actual.installed);
             assert_eq!(actual.running, state == 4, "state={state}");
             assert_eq!(actual.kind, "windows-task");
@@ -175,7 +175,7 @@ mod tests {
         for code in [0x80070005_u32, 0x80041315, 0x80040154, 0x80010106] {
             assert!(!task_missing(HRESULT(code as i32)));
         }
-        let missing = service_state(Ok(None));
+        let missing = service_state(Ok(None), r"Cua\SpacesdHost-staging");
         assert!(!missing.installed);
         assert!(!missing.running);
         assert!(missing.detail.ends_with("task not found"));
@@ -192,7 +192,7 @@ mod tests {
             ("state", true),
         ] {
             let error = windows::core::Error::from_hresult(HRESULT::from_win32(5));
-            let actual = service_state(Err(QueryError::new(operation, error, task_found)));
+            let actual = service_state(Err(QueryError::new(operation, error, task_found)), r"Cua\SpacesdHost-staging");
             assert_eq!(actual.installed, task_found);
             assert!(!actual.running);
             assert!(actual.detail.contains("query unavailable"));

@@ -99,6 +99,12 @@ int main(int argc, char **argv) {
         const char *status = getenv("STUB_HELPER_STATUS");
         printf("{\"status\":\"%s\"}\n", status ? status : "enabled");
     }
+    // `--driver-helper status`: STUB_DRIVER_STATUS, or nothing at all (an
+    // app that could not run) when it is "unreadable".
+    if (argc >= 3 && strcmp(argv[1], "--driver-helper") == 0 && strcmp(argv[2], "status") == 0) {
+        const char *status = getenv("STUB_DRIVER_STATUS");
+        if (!(status && strcmp(status, "unreadable") == 0)) printf("{\"status\":\"%s\"}\n", status ? status : "enabled");
+    }
     FILE *f = log ? fopen(log, "a") : NULL;
     if (f) {
         const char *channel = getenv("CUA_CHANNEL");
@@ -195,6 +201,11 @@ if [ "${FAKE_BUILD_ASSOCIATED_SCALAR:-0}" = 1 ]; then
   assoc_xml="<key>AssociatedBundleIdentifiers</key><string>$associated</string>"
 else
   assoc_xml="<key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>"
+fi
+# Cua Driver's login item, as build-app.sh adds it (an app from before it has
+# none: FAKE_BUILD_NO_DRIVER=1).
+if [ "${FAKE_BUILD_NO_DRIVER:-0}" != 1 ]; then
+  echo '<plist/>' > "$app/Contents/Library/LaunchAgents/${helper%.helper}.driver.plist"
 fi
 cat > "$app/Contents/Library/LaunchAgents/$helper.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -378,6 +389,12 @@ run() {
         export HOME="$FAKE_HOME" PATH="$SHIMS:$PATH" CUA_LSREGISTER="$SHIMS/lsregister" \
             SHIM_LOG SHIM_STATE STUB_LOG FAKE_BUILD_LOG="$BUILD_LOG" FAKE_STUB="$STUB_BIN" \
             FAKE_DYLIB="$STUB_DYLIB" LUME_LOG CARGO_LOG WEB_LOG FAKE_CHECKOUT_DAEMON="$DAEMON_CHECKOUT" FAKE_PINNED_DAEMON="$DAEMON_PINNED"
+        # The own signing Keychain of the script is off unless a test turns it on:
+        # these tests shim the login Keychain.
+        export CUA_LOCAL_SIGNING_OWN_KEYCHAIN="${TEST_OWN_KEYCHAIN:-0}"
+        # The shipped default is ad hoc (no Keychain); the older tests cover the
+        # stable certificate path, so they opt into it unless a test sets TEST_SIGN.
+        export CUA_LOCAL_SIGN="${TEST_SIGN:-stable}"
         # CI is set on a CI runner and not on a Mac. The web UI check expects
         # CI=true only where install-local.sh sets it (pnpm install), so drop it.
         unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV \
@@ -593,6 +610,17 @@ check "an ad hoc cdhash change resets the Local TCC rows, and only those" \
     'grep >/dev/null "^tccutil reset ScreenCapture com.trycua.spaces.macos.local\$" "$SHIM_LOG" && ! grep "^tccutil" "$SHIM_LOG" | grep -v "com.trycua.spaces.macos.local"'
 check "Stable files are byte-identical after a rebuild" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "nothing but the Local app changed" '[ "$(snap_all | grep -v "Cua Spaces Local.app")" = "$(printf "%s\n" "$ALL_BEFORE" | grep -v "Cua Spaces Local.app")" ]'
+
+echo "== default signing is ad hoc: no Keychain is asked for anything =="
+reset_fixture
+: > "$SHIM_LOG"
+run env -u CUA_LOCAL_SIGN "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a plain install-local.sh run succeeds (status $RC)" '[ "$RC" = 0 ]'
+check "a plain run makes no security(1) call that reads or writes a Keychain item (only the read-only list-keychains)" \
+    '! grep "^security " "$SHIM_LOG" | grep -v "^security list-keychains " | grep >/dev/null .'
+check "a plain run says it signed ad hoc" 'printf "%s" "$OUT" | grep -i >/dev/null "ad hoc"'
+check "the ad hoc signature verifies" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
+reset_fixture
 
 # --- 3. Launch and --prefix ----------------------------------------------------------------
 
@@ -827,7 +855,7 @@ WEB_DIST="$FAKE_REPO/apps/cua-spaces-web/dist"
 check "the web UI is built as the release build does: pnpm install --ignore-workspace --frozen-lockfile, then pnpm build, in apps/cua-spaces-web" \
     '[ "$(cat "$WEB_LOG")" = "pnpm install --ignore-workspace --frozen-lockfile [in cua-spaces-web] CI=true
 pnpm build [in cua-spaces-web] CI=" ]'
-check "it is built before the Rust build (the quick one fails first)" '[ -s "$WEB_LOG" ] && [ -s "$CARGO_LOG" ]'
+check "it is built alongside the Rust build" '[ -s "$WEB_LOG" ] && [ -s "$CARGO_LOG" ]'
 check "the build is told where the web UI is, and the installed app has it" \
     'grep >/dev/null "^webui=$WEB_DIST\$" "$BUILD_LOG" && [ -f "$LOCAL_APP/Contents/Resources/WebUI/index.html" ]'
 check "the signature covers the web UI (it verifies, deep and strict)" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
@@ -856,8 +884,8 @@ check "a CUA_WEBUI_DIST without an index.html stops with the same message" \
 reset_fixture
 ALL_BEFORE="$(snap_all)"
 run env SHIM_PNPM_BUILD_FAILS=1 "$FAKE_SCRIPTS/install-local.sh" --no-launch
-check "a failing web UI build stops the install, and nothing is built after it or installed" \
-    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "the web UI build failed" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+check "a failing web UI build stops the install: the app is not built or installed (cargo runs alongside it)" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "the web UI build failed" && [ ! -s "$BUILD_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
 
 reset_fixture
 install
@@ -1222,6 +1250,33 @@ check "a certificate codesign can already use: no warning and no setup" \
     '! printf "%s" "$OUT" | grep -F >/dev/null "codesign cannot use" && ! security_calls | grep >/dev/null -e "add-trusted-cert" -e "set-key-partition-list"'
 check "the Stable files are untouched by all of this" '[ "$(snap_stable)" = "$(snap_stable)" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
 
+# The script's own signing Keychain, on the real `security` and `codesign` but
+# under the fake HOME: it makes ~/Library/Keychains/cua-spaces-local-signing.keychain-db
+# there, never a login Keychain, and signs ad hoc with one line saying why when
+# macOS does not trust the new certificate yet (a unit test must not change trust).
+echo "== the script's own signing Keychain =="
+if command -v openssl >/dev/null 2>&1; then
+    OWN_KC="$FAKE_HOME/Library/Keychains/cua-spaces-local-signing.keychain-db"
+    own_install() { TEST_OWN_KEYCHAIN=1 run env SHIM_SECURITY_PASSTHROUGH=1 "$FAKE_SCRIPTS/install-local.sh" --no-launch "$@"; }
+    reset_fixture
+    STABLE_BEFORE="$(snap_stable)"
+    own_install
+    check "it makes its own Keychain (status $RC)" '[ "$RC" = 0 ] && [ -f "$OWN_KC" ]'
+    check "it never creates or writes the login Keychain" '[ ! -e "$FAKE_HOME/Library/Keychains/login.keychain-db" ] && [ ! -e "$FAKE_HOME/Library/Keychains/login.keychain" ]'
+    check "the certificate is in its Keychain" '/usr/bin/security find-certificate -c "CuaDriver Local Signing (cua-driver-rs)" "$OWN_KC" >/dev/null 2>&1'
+    check "untrusted, it signs ad hoc and says why in one line, with what to run" \
+        'printf "%s" "$OUT" | grep -F >/dev/null "is signed ad hoc because macOS does not trust the local signing certificate yet: run  scripts/install-local.sh --setup-signing  once" && [ -d "$LOCAL_APP" ]'
+    check "the Stable files are untouched" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+    reset_fixture
+    own_install --require-stable-signing
+    check "--require-stable-signing with an untrusted certificate stops and installs nothing" '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ]'
+    reset_fixture
+    run env CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 SHIM_SECURITY_PASSTHROUGH=0 "$FAKE_SCRIPTS/install-local.sh" --no-launch
+    check "CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 makes no Keychain of its own" '[ ! -e "$OWN_KC" ]'
+else
+    note "SKIP: no openssl for the own-Keychain checks"
+fi
+
 # The stable local certificate itself (shared with Cua Driver's local install)
 # needs a code-signing identity that codesign can use without a prompt, from a
 # keychain in the real search list (which a fake HOME hides). Only a Mac set up
@@ -1364,8 +1419,9 @@ check "and it was the Local CLI only: the released app's cua was never run, so i
     '! grep >/dev/null "^$FAKE_HOME/.local/bin/cua " "$STUB_LOG" && ! grep >/dev/null -e "cua-driver" -e "agents setup" "$LOCAL_CUA_LOG"'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
-check "launchctl was asked about the two Local labels only" \
-    'grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ]'
+check "and so was Cua Driver's login item (it re-created ~/.cua-local when left), with no status asked once that worked" 'grep >/dev/null -- "--driver-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && ! grep >/dev/null -- "--driver-helper status" "$STUB_LOG"'
+check "launchctl was asked about the three Local labels only" \
+    'grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.driver$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 3 ]'
 check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
@@ -1392,6 +1448,29 @@ install
 run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=enabled "$FAKE_SCRIPTS/uninstall-local.sh" --yes
 check "a login item that is still enabled after the retry is reported, and the uninstall goes on" \
     '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
+# An app from before Cua Driver's login item is never asked about it (it has no
+# --driver-helper and would open its window).
+reset_fixture
+FAKE_BUILD_NO_DRIVER=1 install
+: > "$STUB_LOG"
+uninstall --yes
+check "an app without the driver login item is not asked to remove it (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && ! grep >/dev/null -- "--driver-helper" "$STUB_LOG"'
+# Cua Driver's login item: an unregister that fails is reported unless the
+# app says the item is gone; a status it can't read counts as still there.
+for case in "not-registered:no" "not-found:no" "enabled:yes" "unreadable:yes"; do
+    reset_fixture
+    install
+    : > "$STUB_LOG"
+    run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=not-registered STUB_DRIVER_STATUS="${case%%:*}" "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+    if [ "${case##*:}" = yes ]; then
+        check "a driver item that is ${case%%:*} after a failed unregister is reported, and the uninstall goes on" \
+            '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister Cua Driver"'
+    else
+        check "a driver item that is ${case%%:*} after a failed unregister raises no warning" \
+            '[ "$RC" = 0 ] && ! printf "%s" "$OUT" | grep >/dev/null "could not unregister Cua Driver"'
+    fi
+done
 
 echo "== uninstall and the old Local id =="
 reset_fixture
@@ -1400,8 +1479,8 @@ STABLE_BEFORE="$(snap_stable)"
 : > "$SHIM_LOG"; : > "$STUB_LOG"
 uninstall --yes
 check "uninstall removes an old-id app at the Local path (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "found the old"'
-check "the old app unregistered its login item, and launchd was asked about the two Local labels only" \
-    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG"'
+check "the old app unregistered its login items, and launchd was asked about the three Local labels only" \
+    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 3 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.driver$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG"'
 check "its settings, preferences, caches, web view data, cookies and window state are gone" 'legacy_data_gone'
 check "the Local home is gone, Cua Volume Local is kept" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ "$(cat "$FAKE_HOME/Cua Volume Local/note.txt")" = "my local files" ]'
 check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'

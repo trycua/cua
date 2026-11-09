@@ -19,15 +19,7 @@ on:
       - "cua-sdk-v*"
       - "cua-spacesd-v*"
       - "sandbox-v*"
-      - "agent-v*"
-      - "core-v*"
       - "bench-v*"
-      - "bench-ui-v*"
-      - "som-v*"
-      - "sandbox-apps-v*"
-      - "npm-core-v*"
-      - "npm-playground-v*"
-      - "cuabot-v*"
   workflow_dispatch:
     inputs:
       tag:

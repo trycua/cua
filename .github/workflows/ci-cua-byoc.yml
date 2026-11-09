@@ -41,6 +41,10 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_BUILD_JOBS: "4"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rust:
     name: providers against their API mocks

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.WinUI3 .NET 8 app.
 //!
 //! Pair-companion to harness_wpf_test.rs but exercises WinUI3 + DComp
@@ -564,7 +567,7 @@ fn harness_winui3_radio_select() {
 
 /// Documents cua-driver gap: WinUI3 Slider implements
 /// `RangeValuePattern`, not `ValuePattern`. cua-driver's `set_value` tool
-/// queries `ValuePatternId` specifically (impl_.rs:2640), so it silently
+/// queries `ValuePatternId` specifically (tools/set_value.rs), so it silently
 /// fails on RangeValuePattern-only elements. Real fix: cua-driver should
 /// try RangeValuePattern.SetValue (coercing the string to a double) when
 /// ValuePattern isn't found.

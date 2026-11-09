@@ -28,7 +28,11 @@ struct FakeRuntime {
     port: u16,
     started: Mutex<Vec<LocalStartSpec>>,
     deleted: Mutex<Vec<String>>,
+    /// Deletes that fail before one works (a runtime that does not answer yet).
+    fail_deletes: Mutex<u32>,
     running: Mutex<BTreeMap<String, bool>>,
+    /// Instances their engine says stopped on their own (a killed container).
+    exits: Mutex<BTreeMap<String, cua_sandbox_core::StopReason>>,
 }
 
 #[async_trait]
@@ -73,9 +77,26 @@ impl LocalRuntime for FakeRuntime {
         }
     }
     async fn delete(&self, name: &str) -> Result<(), RuntimeError> {
+        {
+            let mut n = self.fail_deletes.lock().unwrap();
+            if *n > 0 {
+                *n -= 1;
+                return Err(RuntimeError::Unsupported {
+                    backend: "fake".into(),
+                    op: format!("delete {name}: runtime not ready"),
+                });
+            }
+        }
         self.deleted.lock().unwrap().push(name.into());
         self.running.lock().unwrap().remove(name);
         Ok(())
+    }
+    async fn stop_reason(
+        &self,
+        name: &str,
+        _runtime_type: &str,
+    ) -> Result<Option<cua_sandbox_core::StopReason>, RuntimeError> {
+        Ok(self.exits.lock().unwrap().get(name).copied())
     }
     async fn endpoints(&self, _name: &str) -> Result<LocalEndpoints, RuntimeError> {
         Ok(LocalEndpoints {
@@ -91,6 +112,7 @@ struct Fixture {
     home: std::path::PathBuf,
     _env: MockServer,
     rt: Arc<FakeRuntime>,
+    spaces: Spaces,
     server: Arc<HostSpacesServer>,
 }
 
@@ -112,7 +134,9 @@ async fn fixture() -> Fixture {
         port: env.addr.port(),
         started: Mutex::default(),
         deleted: Mutex::default(),
+        fail_deletes: Mutex::default(),
         running: Mutex::default(),
+        exits: Mutex::default(),
     });
     let spaces = Spaces::builder()
         .home(&home)
@@ -124,7 +148,8 @@ async fn fixture() -> Fixture {
         )
         .build();
     Fixture {
-        server: HostSpacesServer::new(spaces),
+        server: HostSpacesServer::new(spaces.clone()),
+        spaces,
         _dir: dir,
         home,
         _env: env,
@@ -245,6 +270,110 @@ async fn a_job_runs_once_in_a_fresh_space_that_is_deleted() {
     assert_eq!(f.rt.started.lock().unwrap().len(), 2);
     // The ledger is on disk under the host directory.
     assert!(f.home.join("host/jobs/ledger.jsonl").is_file());
+}
+
+/// A job's Space that is killed while its command runs ends the job at once,
+/// with the reason, instead of the host waiting for a Space that is gone
+/// (CUA-2967: a durable agent's driver whose container was killed was only
+/// noticed by the 120 s stall watch).
+#[tokio::test]
+async fn a_job_whose_space_is_killed_ends_at_once_with_the_reason() {
+    let f = fixture().await;
+    seed_uv(&f.home);
+    let jobs = f.server.jobs_for(&HostCaller::local()).await.unwrap();
+    let mut long = spec("k1-1", &["sleep", "120000"]);
+    long.timeout_secs = 300;
+    let acks = jobs.run_batch(vec![long], "test").await;
+    assert_eq!(acks[0].outcome, "accepted", "{acks:?}");
+    // Wait until its Space runs, then have the engine report it killed
+    // (the command's own stream is still open: the mock spacesd stays up).
+    let mut name = String::new();
+    for _ in 0..400 {
+        if let Some(s) = f.rt.started.lock().unwrap().first() {
+            name = s.name.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(!name.is_empty(), "the job's Space never started");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let killed = std::time::Instant::now();
+    f.rt.exits.lock().unwrap().insert(
+        name.clone(),
+        cua_sandbox_core::StopReason {
+            exit_code: 137,
+            out_of_memory: false,
+        },
+    );
+    let end = tokio::time::timeout(Duration::from_secs(20), ended(&jobs, "k1-1"))
+        .await
+        .expect("the job did not end after its Space was killed");
+    assert!(
+        killed.elapsed() < Duration::from_secs(15),
+        "took {:?}",
+        killed.elapsed()
+    );
+    assert_eq!(end.state, "error", "{end:?}");
+    assert!(
+        end.error.contains("Space stopped") && end.error.contains("killed"),
+        "{}",
+        end.error
+    );
+    // Its Space is removed like any job's.
+    assert!(f.rt.deleted.lock().unwrap().contains(&name));
+}
+
+/// A daemon that restarts leaves the Space of the job it was running (CUA-2984:
+/// the job runner removes it once at start, when the runtime may not answer
+/// yet, and a durable agent's driver Space then stayed up for ever). The
+/// orphan sweep removes a job Space nothing in this process runs in, retries
+/// when the delete failed, and leaves every other Space alone.
+#[tokio::test]
+async fn a_job_space_nothing_runs_in_is_removed_by_the_sweep() {
+    use cua_spaces::host_jobs::SpacesExecutor;
+    let f = fixture().await;
+    seed_uv(&f.home);
+    let jobs = f.server.jobs_for(&HostCaller::local()).await.unwrap();
+    let mut long = spec("o1-1", &["sleep", "120000"]);
+    long.timeout_secs = 300;
+    let acks = jobs.run_batch(vec![long], "test").await;
+    assert_eq!(acks[0].outcome, "accepted", "{acks:?}");
+    let mut name = String::new();
+    for _ in 0..400 {
+        if let Some(s) = f.rt.started.lock().unwrap().first() {
+            name = s.name.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(!name.is_empty(), "the job's Space never started");
+    let id = format!("local:{name}");
+    let listed = |f: &Fixture| f.spaces.list().unwrap().iter().any(|i| i.id == id);
+    for _ in 0..200 {
+        if listed(&f) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(listed(&f), "the job's Space is registered while it runs");
+    // The runner that runs it (this process) never sweeps its own: nothing
+    // to do for a sweep through the executor the server opened. A new
+    // executor stands for the daemon after a restart: it knows of no job.
+    let after_restart = SpacesExecutor::local(f.spaces.clone()).await;
+    // The first delete fails (the runtime does not answer yet): the Space is
+    // still there and counted as not removed.
+    *f.rt.fail_deletes.lock().unwrap() = 2;
+    assert_eq!(after_restart.sweep_orphans().await, 0);
+    assert!(
+        listed(&f),
+        "a failed delete leaves the Space for the next sweep"
+    );
+    // The next sweep removes it.
+    assert_eq!(after_restart.sweep_orphans().await, 1);
+    assert!(!listed(&f));
+    assert!(f.rt.deleted.lock().unwrap().contains(&name));
+    // Nothing left to do.
+    assert_eq!(after_restart.sweep_orphans().await, 0);
 }
 
 /// What a scheduler reads: `GetHostSpaces` carries the node status.

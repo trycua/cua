@@ -49,6 +49,9 @@ pub struct InitState {
     /// Environment set by the hotspot (`set_system_proxy`), layered below
     /// `env`.
     pub proxy_env: BTreeMap<String, String>,
+    /// Environment the spawn channel adds to every new process
+    /// (`CUA_SPACE`, `CUA_SPAWN`, `CUA_SPAWN_TOKEN_FILE`); `Init` keeps it.
+    pub spawn_env: BTreeMap<String, String>,
 }
 
 struct Inner {
@@ -302,6 +305,23 @@ impl ServerContext {
         self.inner
             .auth
             .mint_ticket_issued(scope, resource, principal_id, issued, ttl)
+    }
+
+    /// [`Self::mint_ticket_issued`] bound to the enrolled `device` whose call
+    /// minted it.
+    pub fn mint_ticket_for(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal: Option<&Principal>,
+        issued: Option<u64>,
+        device: Option<&str>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
+        let principal_id = principal.map(|p| p.id.as_str()).unwrap_or("");
+        self.inner
+            .auth
+            .mint_ticket_for(scope, resource, principal_id, issued, device, ttl)
     }
 
     /// Validates a ticket string for `scope`.
@@ -612,6 +632,11 @@ impl ServerContext {
         );
         // A machine attached at run time is a Space: it runs no gangs.
         mesh.gang_home = None;
+        // ... on the default network, which refuses the local network: its
+        // node does not probe the computers' local addresses (the network would
+        // refuse each probe and count it as something the Space tried). A
+        // network that opens the local network says so with `CUA_MESH_LAN=1`.
+        mesh.lan = std::env::var("CUA_MESH_LAN").is_ok_and(|v| v == "1");
         tokio::spawn(crate::mesh_host::run(mesh, stop.clone()));
         tokio::spawn(cua_relay::client::run(join, stop));
         Ok(())
@@ -662,6 +687,7 @@ impl ServerContext {
             recheck: crate::mesh_host::GATE_RECHECK,
             gang_home: home,
             gang_wait: crate::mesh_host::GANG_WAIT,
+            lan: true,
         }
     }
 

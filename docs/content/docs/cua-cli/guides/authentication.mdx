@@ -35,7 +35,7 @@ refresh automatically and are never printed.
 looks like a new app to the Keychain every time you rebuild it, so it uses the
 file and never asks for Keychain access.
 
-Older versions kept the session, the device key and the other secrets under the
+Older versions kept the session, this machine's key and the other secrets under the
 service `run.cua.ai` (`staging.run.cua.ai` for staging). The first `cua` that
 reads them after you update moves each item to `ai.cua.session`, checks the new
 item and then deletes the old one, so you stay signed in. A `cua` signed by Cua

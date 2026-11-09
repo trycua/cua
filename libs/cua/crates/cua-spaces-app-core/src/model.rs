@@ -67,22 +67,22 @@ impl SpaceOs {
     }
 
     /// What the app calls the computer it runs on, when that runs this
-    /// system: "This Mac", "This PC", "This machine".
+    /// system: "This Mac", "This PC", "This computer".
     pub fn this_machine(self) -> &'static str {
         match self {
             SpaceOs::Macos => "This Mac",
             SpaceOs::Windows => "This PC",
-            SpaceOs::Linux | SpaceOs::Unknown => "This machine",
+            SpaceOs::Linux | SpaceOs::Unknown => "This computer",
         }
     }
 
     /// [`Self::this_machine`] mid-sentence: "this Mac", "this PC",
-    /// "this machine".
+    /// "this computer".
     pub fn this_machine_lower(self) -> &'static str {
         match self {
             SpaceOs::Macos => "this Mac",
             SpaceOs::Windows => "this PC",
-            SpaceOs::Linux | SpaceOs::Unknown => "this machine",
+            SpaceOs::Linux | SpaceOs::Unknown => "this computer",
         }
     }
 }
@@ -277,6 +277,13 @@ pub struct Space {
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<SpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 /// Whose a Space is, as the Spaces page groups it.
@@ -553,6 +560,10 @@ pub struct SpaceRow {
     /// `aarch64`, `amd64`, `x86_64`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    #[serde(default)]
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.

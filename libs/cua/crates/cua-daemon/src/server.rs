@@ -81,6 +81,10 @@ pub(crate) struct Shared {
     /// cua-spacesd).
     #[cfg(feature = "spaces")]
     pub host_spaces: Arc<cua_spaces::host_spaces::HostSpacesServer>,
+    /// Child Spaces (the spawn capabilities this host mints); `None` when
+    /// the home has no room for them.
+    #[cfg(feature = "spaces")]
+    pub children: Option<Arc<crate::children::Children>>,
 }
 
 /// Counts a request as in flight until dropped.
@@ -123,6 +127,21 @@ fn unix_now() -> u64 {
 /// How often the daemon checks whether the built-in Linux runtime VM runs
 /// with no Linux Space in it.
 const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
+/// How often exits and published host ports are checked against each
+/// Space's settings.
+#[cfg(feature = "spaces")]
+const NETWORK_RECONCILE: Duration = Duration::from_secs(15);
+
+/// How often the Spaces listed on the account are looked at again without
+/// being woken.
+#[cfg(feature = "spaces")]
+const PUBLISH_TO_RELAY: Duration = Duration::from_secs(15);
+/// The next pass when the last one left Spaces waiting.
+#[cfg(feature = "spaces")]
+const PUBLISH_MORE: Duration = Duration::from_secs(4);
+/// Changes this close together are one pass.
+#[cfg(feature = "spaces")]
+const PUBLISH_COALESCE: Duration = Duration::from_secs(2);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
 /// How often the daemon checks that its home is still there.
@@ -213,6 +232,30 @@ const MAINTENANCE_EVERY: Duration = Duration::from_secs(3600);
 /// once a minute after start, then hourly while no request is in flight
 /// and none arrived for five minutes. `CUA_DAEMON_MAINTENANCE=0` turns it
 /// off.
+/// How often the repo cache is tidied and its mirrors refreshed, and how
+/// old a mirror used in the last week may get before it is.
+const REPO_CACHE_EVERY: Duration = Duration::from_secs(15 * 60);
+const REPO_CACHE_REFRESH_AFTER: Duration = Duration::from_secs(60 * 60);
+
+/// Keeps the repo cache within its cap and its mirrors up to date, in the
+/// background and one repository at a time (`cua-repo-cache`). Nothing
+/// happens while the cache is off.
+async fn repo_cache_loop(mut shutdown: watch::Receiver<bool>) {
+    let mut next = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = tokio::time::sleep_until(next) => {}
+        }
+        let cache = cua_sandbox_core::repo_cache::current();
+        tokio::select! {
+            _ = shutdown.changed() => return,
+            () = cache.maintain(REPO_CACHE_REFRESH_AFTER) => {}
+        }
+        next = tokio::time::Instant::now() + REPO_CACHE_EVERY;
+    }
+}
+
 async fn maintenance_loop(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) {
     use std::sync::atomic::Ordering::SeqCst;
     let Ok(vmm) = shared.runtime.vmm().cloned() else {
@@ -492,6 +535,21 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             }
         });
     }
+    // A macOS Space whose network gateway ended under a running VM (the
+    // gateway was stopped by something that stopped the whole app bundle)
+    // has no network and no agent: restarted behind a new gateway, and the
+    // connections to it dropped.
+    {
+        let rt = runtime.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                rt.mend_local().await;
+            }
+        });
+    }
     // The elastic pool's scale-in: idle cloud hosts this home added go at
     // their billing boundary, the least-used one is cordoned when the
     // others have room (`CUA_ELASTIC_RECONCILE_SECS`, default 30; 0: off).
@@ -542,9 +600,19 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     let own = std::env::current_exe()
         .ok()
         .and_then(|e| crate::identity::of(&e));
+    #[cfg(feature = "spaces")]
+    let children = match crate::children::Children::open(runtime.spaces().home_dir()) {
+        Ok(c) => Some(Arc::new(c)),
+        Err(e) => {
+            tracing::warn!(error = %e, "child Spaces are unavailable in this daemon");
+            None
+        }
+    };
     let shared = Arc::new(Shared {
         #[cfg(feature = "spaces")]
         host_spaces,
+        #[cfg(feature = "spaces")]
+        children,
         runtime,
         token: config.token.clone(),
         info: Mutex::new(pb::GetInfoResponse {
@@ -652,6 +720,18 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             shared.shutdown.subscribe(),
         )));
     }
+    // VMs and containers failed Space creates left, holding this
+    // machine's memory and vCPUs against every later create.
+    #[cfg(feature = "spaces")]
+    if std::env::var(crate::space_orphans::ENV_SWEEP).as_deref() != Ok("0")
+        && let Ok(vmm) = shared.runtime.vmm().cloned()
+    {
+        tasks.push(tokio::spawn(crate::space_orphans::sweep_loop(
+            crate::cua_home(),
+            vmm,
+            shared.shutdown.subscribe(),
+        )));
+    }
     // The built-in Linux runtime VM holds the memory its Spaces used until
     // it stops: stop it once idle, also when this daemon started after the
     // last Space was gone.
@@ -667,11 +747,122 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             }
         }));
     }
+    // The open-file guard: warns and heals before "Too many open files"
+    // takes the Keyvault, agents and Space calls down together.
+    if let Some(every) = crate::fd_guard::interval() {
+        #[cfg(feature = "spaces")]
+        let shed: crate::fd_guard::Shed = {
+            let runtime = shared.runtime.clone();
+            std::sync::Arc::new(move || {
+                let runtime = runtime.clone();
+                Box::pin(async move { runtime.spaces().shed_mesh_forwards().await })
+            })
+        };
+        #[cfg(not(feature = "spaces"))]
+        let shed: crate::fd_guard::Shed = std::sync::Arc::new(|| Box::pin(async { 0 }));
+        tasks.push(tokio::spawn(crate::fd_guard::run(
+            every,
+            shed,
+            shared.shutdown.subscribe(),
+        )));
+    }
     if std::env::var(crate::maintenance::ENV_DAEMON_MAINTENANCE).as_deref() != Ok("0") {
         tasks.push(tokio::spawn(maintenance_loop(
             shared.clone(),
             shared.shutdown.subscribe(),
         )));
+        tasks.push(tokio::spawn(repo_cache_loop(shared.shutdown.subscribe())));
+    }
+    // Child Spaces: the spawn channel of each running Space with children
+    // on, and no capability left for a Space that is gone.
+    #[cfg(feature = "spaces")]
+    tasks.push(crate::children::bridge::spawn(
+        shared.clone(),
+        shared.shutdown.subscribe(),
+    ));
+    // Exits ("Exit through") and the host's ports at `localhost`: kept in
+    // line with each Space's settings, re-attached after a Space or its
+    // exit restarts. Part of Secure Spaces; a Space whose exit isn't
+    // running stays closed (it fails closed).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            loop {
+                if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+                    // A shutdown never waits for a pass that is still working.
+                    tokio::select! {
+                        _ = rx.changed() => return,
+                        _ = rt.spaces().reconcile_network() => {}
+                    }
+                }
+                tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(NETWORK_RECONCILE) => {}
+                }
+            }
+        }));
+    }
+    // Spaces running on this computer are listed on the signed-in account
+    // (the phone and the owner's other computers open them): a Space made
+    // by any path, one that was already here, and one that stopped or was
+    // deleted are kept in line with the relay (`relay.spaces`).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            // The first look comes after the daemon settled, at a different
+            // moment on every computer.
+            let mut wait = cua_spaces::share::jitter(Duration::from_secs(5));
+            let spaces = rt.spaces().clone();
+            loop {
+                let changed = tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(wait) => false,
+                    _ = cua_spaces::share::PUBLISH_CHANGED.notified() => true,
+                };
+                if changed {
+                    // A burst of changes is one pass.
+                    tokio::select! {
+                        _ = rx.changed() => return,
+                        _ = tokio::time::sleep(cua_spaces::share::jitter(PUBLISH_COALESCE)) => {}
+                    }
+                }
+                // A shutdown never waits for a pass that is still working.
+                let pass = tokio::spawn({
+                    let spaces = spaces.clone();
+                    async move { spaces.publish_to_relay().await }
+                });
+                let more = tokio::select! {
+                    _ = rx.changed() => {
+                        return;
+                    }
+                    r = pass => match r {
+                        Ok(Ok(r)) => {
+                            if !r.published.is_empty() || !r.unpublished.is_empty() {
+                                tracing::info!(
+                                    listed = r.published.len(),
+                                    taken_off = r.unpublished.len(),
+                                    "Spaces on the account updated"
+                                );
+                            }
+                            r.more
+                        }
+                        Ok(Err(e)) => {
+                            tracing::debug!(error = %e, "Spaces on the account not updated");
+                            false
+                        }
+                        Err(_) => false,
+                    },
+                };
+                // A pass with nothing to do asks the relay for nothing, so
+                // the interval is cheap; more waiting is picked up sooner.
+                wait =
+                    cua_spaces::share::jitter(if more { PUBLISH_MORE } else { PUBLISH_TO_RELAY });
+            }
+        }));
     }
     // The automatic cloud sweep (`CUA_CLOUD_SWEEP_SECS`, 0: off).
     #[cfg(feature = "byoc")]
@@ -1013,7 +1204,7 @@ fn unauthorized(req: &Request<AxumBody>) -> Response<AxumBody> {
 // ------------------------------------------------------------------ services
 
 #[derive(Clone)]
-pub(crate) struct Svc(pub(crate) Arc<Shared>);
+pub struct Svc(pub(crate) Arc<Shared>);
 
 impl Svc {
     pub(crate) fn rt(&self) -> &Runtime {
@@ -1819,5 +2010,30 @@ impl Shared {
             .get(ticket)
             .filter(|b| b.expires > SystemTime::now())
             .cloned()
+    }
+}
+
+#[cfg(all(test, feature = "spaces"))]
+impl Shared {
+    /// A daemon's shared state without its listeners, for tests of what
+    /// its services answer.
+    pub(crate) fn for_tests(runtime: Runtime) -> Arc<Self> {
+        let host_spaces = cua_spaces::host_spaces::HostSpacesServer::new(runtime.spaces().clone());
+        let children = crate::children::Children::open(runtime.spaces().home_dir())
+            .ok()
+            .map(Arc::new);
+        let (tx, _) = watch::channel(false);
+        Arc::new(Shared {
+            host_spaces,
+            children,
+            runtime,
+            token: "owner-token".into(),
+            info: Mutex::new(pb::GetInfoResponse::default()),
+            bridges: Mutex::new(HashMap::new()),
+            bridge_ttl: Duration::from_secs(60),
+            shutdown: tx,
+            inflight: Default::default(),
+            last_activity: std::sync::atomic::AtomicU64::new(0),
+        })
     }
 }

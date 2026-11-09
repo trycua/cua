@@ -267,6 +267,17 @@ pub struct StartSpec {
     /// forks apply it again, and [`crate::Runtime::set_egress`] replaces it.
     #[serde(default, skip_serializing_if = "crate::egress::EgressPolicy::is_empty")]
     pub egress: crate::egress::EgressPolicy,
+    /// The Space's network settings ([`crate::network`]): its preset and
+    /// lists, compiled by the runtime with what only it knows (resolver,
+    /// host aliases, tree). `None`: a caller from before network settings;
+    /// the runtime keeps to `restrict_network` and `egress`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::NetworkSettings>,
+    /// The tree the sandbox belongs to (its top-level Space's id): members
+    /// of one tree share a network and reach each other; other trees are
+    /// blocked. `None`: a tree of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
     /// Backend-specific extra arguments (appended to the qemu command line).
@@ -351,10 +362,25 @@ pub struct Mount {
 
 /// Checks `mounts` for any backend: absolute paths, existing host
 /// directories, no guest path twice.
+/// Where the built-in Linux runtime on Windows mounts cua's job directories
+/// inside its distribution (`drvfs`): a mount's host side that starts here is a
+/// path in the engine's own filesystem, not a Windows path.
+pub const ENGINE_MOUNT_ROOT: &str = "/mnt/cua-host/";
+
+/// Whether `host` is a path in the engine's own filesystem
+/// ([`ENGINE_MOUNT_ROOT`]), which only a Windows host has no way to check.
+pub fn is_engine_path(host: &std::path::Path) -> bool {
+    cfg!(windows)
+        && host
+            .to_string_lossy()
+            .replace('\\', "/")
+            .starts_with(ENGINE_MOUNT_ROOT)
+}
+
 pub fn check_mounts(backend: BackendKind, mounts: &[Mount]) -> crate::Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for m in mounts {
-        if !m.host.is_absolute() || !m.host.is_dir() {
+        if !is_engine_path(&m.host) && (!m.host.is_absolute() || !m.host.is_dir()) {
             return Err(crate::VmmError::invalid(format!(
                 "{}: a mount's host side must be an existing directory given by its absolute path ({})",
                 backend.as_str(),
@@ -474,6 +500,14 @@ pub fn reject_sidecars(backend: BackendKind, spec: &StartSpec) -> crate::Result<
 /// ports refuse [`StartSpec::restrict_network`] instead of ignoring it.
 pub fn reject_restricted_network(backend: BackendKind, spec: &StartSpec) -> crate::Result<()> {
     if !spec.restrict_network {
+        return Ok(());
+    }
+    // Under the secure default a container's network is cut by its rules
+    // on the engine host (`none` drops everything), its published ports
+    // still answering.
+    if matches!(backend, BackendKind::Container | BackendKind::Managed)
+        && crate::network::Mode::from_env() == crate::network::Mode::Secure
+    {
         return Ok(());
     }
     Err(crate::VmmError::Unsupported {
@@ -614,6 +648,8 @@ impl StartSpec {
             cloud_init_user_data: None,
             restrict_network: false,
             egress: Default::default(),
+            network: None,
+            tree: None,
             labels: BTreeMap::new(),
             extra_args: Vec::new(),
             sidecars: Vec::new(),
@@ -893,6 +929,24 @@ mod duration_secs {
 mod tests {
     use super::*;
 
+    /// On Windows a mount under the engine's own `/mnt/cua-host/` (the job
+    /// directories mounted into its distribution) is not a Windows folder.
+    #[cfg(windows)]
+    #[test]
+    fn engine_paths_are_mounts_without_a_windows_folder() {
+        let m = |host: &str| Mount {
+            host: std::path::PathBuf::from(host),
+            guest: "/cua/job".into(),
+            read_only: false,
+        };
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/cua-host/jobs/a/job")]).is_ok());
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/elsewhere")]).is_err());
+        assert!(is_engine_path(std::path::Path::new(
+            "/mnt/cua-host/job-cache"
+        )));
+        assert!(!is_engine_path(std::path::Path::new(r"C:\x")));
+    }
+
     #[test]
     fn egress_is_on_by_default_and_only_qemu_can_cut_it() {
         let mut spec = StartSpec::new("x", ImageSource::Existing);
@@ -904,9 +958,14 @@ mod tests {
             assert!(reject_restricted_network(b, &spec).is_ok());
         }
         spec.restrict_network = true;
-        for b in [BackendKind::Container, BackendKind::Lume] {
-            let e = reject_restricted_network(b, &spec).unwrap_err().to_string();
-            assert!(e.contains("network=\"none\""), "{e}");
+        let e = reject_restricted_network(BackendKind::Lume, &spec)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("network=\"none\""), "{e}");
+        // A container cuts it with its engine-host rules under the secure
+        // default (the test process runs with it unless told otherwise).
+        if crate::network::Mode::from_env() == crate::network::Mode::Secure {
+            assert!(reject_restricted_network(BackendKind::Container, &spec).is_ok());
         }
     }
 

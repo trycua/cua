@@ -13,6 +13,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 
 import type { SpaceThread, ThreadEntry, ThreadItem } from "@/bridge";
+import { usePreparedQueue } from "@/lib/prepare/store";
 
 interface Queued {
   id: string;
@@ -24,6 +25,21 @@ const useQueue = create<{ byPending: Record<string, Queued[]>; resolved: Record<
 
 let n = 0;
 
+/**
+ * Where messages for the home being prepared go instead of the in-memory
+ * queue: the preparing driver keeps them (so a quit loses none) and sends
+ * each exactly once. Set by `PrepareRoot`.
+ */
+export interface PrepareSink {
+  /** The row (or Space) is the home being prepared. */
+  owns(spaceId: string): boolean;
+  send(text: string): void;
+}
+let prepareSink: PrepareSink | null = null;
+export function setPrepareSink(sink: PrepareSink | null): void {
+  prepareSink = sink;
+}
+
 /** Queues `text` for the Space being made under `pendingId`. */
 export function enqueue(pendingId: string, text: string): void {
   const q: Queued = { id: `q${++n}`, text: text.trim(), tsMs: Date.now() };
@@ -34,6 +50,17 @@ export function enqueue(pendingId: string, text: string): void {
 /** The create finished: `pendingId` is `spaceId` now (its queue shows there until sent). */
 export function resolveQueue(pendingId: string, spaceId: string): void {
   useQueue.setState((s) => ({ resolved: { ...s.resolved, [pendingId]: spaceId } }));
+}
+
+/**
+ * Drops what `pendingId` shows without sending it: the message was posted by another path (a home's briefed
+ * first message), so it is in the thread for real now.
+ */
+export function dropQueue(pendingId: string): void {
+  useQueue.setState((s) => {
+    const { [pendingId]: _gone, ...rest } = s.byPending;
+    return { byPending: rest };
+  });
 }
 
 /** Sends the queue of `pendingId` in order; each message leaves it once posted. Safe to call twice. */
@@ -77,12 +104,20 @@ function entryOf(q: Queued, i: number, me: string, name = ""): ThreadEntry {
 /** The queued messages that belong to `spaceId` (its own pending id, or a pending id that became it). */
 export function useQueued(spaceId: string): Queued[] {
   const { byPending, resolved } = useQueue();
-  return useMemo(() => Object.entries(byPending).flatMap(([pending, qs]) => (pending === spaceId || resolved[pending] === spaceId ? qs : [])), [byPending, resolved, spaceId]);
+  const prepared = usePreparedQueue(spaceId);
+  return useMemo(
+    () => [
+      ...Object.entries(byPending).flatMap(([pending, qs]) => (pending === spaceId || resolved[pending] === spaceId ? qs : [])),
+      // The home's messages kept by the preparing driver, until each is in the thread.
+      ...prepared.map((m): Queued => ({ id: m.id, text: m.text, tsMs: m.sentMs })),
+    ],
+    [byPending, resolved, spaceId, prepared],
+  );
 }
 
 /** Queued messages as thread items. */
 export const queuedItems = (qs: readonly Queued[], me: string, name: string): ThreadItem[] =>
-  qs.map((q, i) => ({ type: "message" as const, key: `queued:${q.id}`, entry: entryOf(q, i, me, name) }));
+  qs.map((q, i) => ({ type: "message" as const, key: `queued:${q.id}`, entry: entryOf(q, i, me, name), quote: null, taskText: null }));
 
 /**
  * The thread of a Space still being made: empty (its queued messages are
@@ -102,7 +137,11 @@ export function creatingThread(pendingId: string): SpaceThread {
     error: null,
     hasMoreBefore: false,
     loadEarlier: async () => {},
-    post: async (text) => (enqueue(pendingId, text), null),
+    post: async (text) => {
+      if (prepareSink?.owns(pendingId)) prepareSink.send(text.trim());
+      else enqueue(pendingId, text);
+      return null;
+    },
     answer: async () => {},
     setRights: async () => {},
     removeAgent: null,

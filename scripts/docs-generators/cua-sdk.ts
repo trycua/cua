@@ -492,12 +492,54 @@ export const PAGES: PageSpec[] = [
     items: ['RuntimeKindState', 'RuntimeDetected', 'RuntimePathProbe'],
   },
   {
+    slug: 'repo-cache',
+    title: 'Repo cache',
+    description: 'What the repo cache holds and what it saved, and clearing it.',
+    intro:
+      'The daemon keeps verified copies of public git repositories so a repeat `git clone` in a Space is fast. `repo_cache_status` reads what it holds and what the last week saved in plain words; `repo_cache_clear` deletes every copy. It is on by default and is turned off, or given a size, with `config_set` on `cache.repos` and `cache.repos_size_gb`.',
+    items: ['RepoCacheStatus', 'repo_cache_status', 'repo_cache_clear'],
+  },
+  {
     slug: 'spaces',
     title: 'Spaces',
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
-    items: ['Spaces', 'SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+    items: ['Spaces'],
+  },
+  {
+    slug: 'spaces/info',
+    title: 'Space records',
+    description: 'What a Space listing returns, and the Spaces tools `cua mcp` serves with the typed method that covers each.',
+    intro: '`SpaceInfo` is one row of a Spaces listing. `spaces_tool_methods` lists every Spaces tool with the method of `Spaces` or `Space` that covers it.',
+    items: ['SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/network',
+    title: 'Network settings',
+    description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
+    intro:
+      '`Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+    items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
+    members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
+  },
+  {
+    slug: 'spaces/children',
+    title: 'Child Spaces (experiment)',
+    description: 'Let a Space make Spaces of its own, set the budget of its tree and list orphans.',
+    intro:
+      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) and are refused while it is off. `set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
+    items: ['TreeBudget', 'TreeBudgetLimits', 'SpaceOrphan'],
+    members: [{ object: 'Spaces', title: 'Children', methods: ['set_children', 'tree_budget', 'set_tree_budget', 'orphans'] }],
+  },
+  {
+    slug: 'spaces/services',
+    title: 'Kept commands (experiment)',
+    description: 'Keep a command running in a Space: restarts, health checks, start on boot and logs.',
+    intro:
+      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) for adding a service; listing, stopping and removing work either way. See [Keep a command running](/spaces/guides/keep-a-command-running).',
+    items: ['SpaceServiceDef', 'SpaceServiceProbe', 'SpaceServiceInfo'],
+    members: [{ object: 'Space', title: 'Services', methods: ['put_service', 'kept_services', 'start_service', 'stop_service', 'restart_service', 'delete_service', 'service_logs'] }],
   },
   {
     slug: 'spaces/resize',
@@ -563,9 +605,9 @@ export const PAGES: PageSpec[] = [
     title: 'Relay registration',
     description: 'Register a Space with the relay so other devices reach it, and unregister it.',
     intro:
-      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that. `Spaces.relay_unregister_computer` takes one of your computers off the relay: its Spaces stay on it, detached, unless `delete_spaces` deletes them first.',
     items: ['SpaceRelayRegistration'],
-    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister', 'relay_unregister_computer'] }],
   },
   {
     slug: 'spaces/elastic',
@@ -875,6 +917,15 @@ export const PAGES: PageSpec[] = [
     items: ['Devices', 'DevicesSnapshot', 'RelayDevice', 'RelayAuditEvent', 'DeviceEnrollment'],
   },
   {
+    slug: 'spaces/default-space',
+    title: 'Default Space',
+    description: "The account's default Space, the order to try when it is offline, and where a new task runs now.",
+    intro:
+      'The relay keeps one default Space per account: where a new task runs unless you pick another. `Devices.spaces_settings` reads it, `set_spaces_settings` replaces it, and `resolve_default_space` says where a task goes now: the default when it is online, else the next online computer in `fallback` (while `fallback_on`), else this computer. A new computer is never made. `cua spaces default` is the same from the CLI.',
+    members: [{ object: 'Devices', title: 'Default Space', methods: ['spaces_settings', 'set_spaces_settings', 'resolve_default_space'] }],
+    items: ['SpacesSettings', 'DefaultSpace', 'DefaultSpaceStep'],
+  },
+  {
     slug: 'spaces/machine-health',
     title: 'Computer health',
     description: "A computer's health as its own cua daemon checks it: Local Network access, disk, virtualization, memory and permissions.",
@@ -895,8 +946,15 @@ export const PAGES: PageSpec[] = [
     slug: 'share',
     title: 'Shares',
     description: 'Links to a port, a file or a folder that open on your other signed-in devices.',
-    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
-    items: ['Share', 'ShareAccess', 'ShareCheck'],
+    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. `share_tcp` makes a public TCP address for a port in a Space (the `tcp-shares` experiment); `approve_share`, `deny_share`, `share_settings`, `set_share_settings` and `remove_share_edge` manage it. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
+    members: [
+      {
+        object: 'Cua',
+        title: 'Share methods',
+        methods: ['share', 'shares', 'stop_share', 'stop_all_shares', 'check_share', 'share_tcp', 'approve_share', 'deny_share', 'share_settings', 'set_share_settings', 'remove_share_edge'],
+      },
+    ],
+    items: ['Share', 'ShareAccess', 'ShareCheck', 'ShareLanding', 'ShareSettings'],
     modules: ['share'],
   },
   {
@@ -1000,7 +1058,7 @@ const TELEMETRY_CONCEPTS = ['../concepts/telemetry', '../concepts/telemetry-even
 
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
-  ['Sandboxes', ['cua', 'runtime-kinds', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
+  ['Sandboxes', ['cua', 'runtime-kinds', 'repo-cache', 'sandbox', 'share', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
   ['Inside a sandbox', ['spacesd', 'agents', 'agent-setup']],
   ['Spaces', ['spaces']],
   ['Account', ['auth']],

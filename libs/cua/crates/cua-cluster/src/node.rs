@@ -314,6 +314,8 @@ struct Inner {
     contact: HashMap<String, Instant>,
     used_millicpus: u64,
     used_memory_mb: u64,
+    /// Video memory the accepted jobs asked for (MiB).
+    used_vram_mb: u64,
     running: u32,
     running_by_kind: BTreeMap<String, u32>,
     draining: bool,
@@ -795,7 +797,7 @@ impl NodeJobs {
             dedicated: offers.kinds.iter().any(|k| k == crate::model::KIND_MACHINE),
             job_services: true,
             kinds: offers.kinds,
-            accelerators: crate::sysinfo::accelerators(),
+            accelerators: crate::sysinfo::accelerators_free(g.used_vram_mb),
             addresses: crate::sysinfo::addresses(),
             usd_per_hour: crate::sysinfo::usd_per_hour(),
             self_fence_after_ms: {
@@ -936,6 +938,19 @@ impl NodeJobs {
                 ));
             }
         }
+        // Video memory: refused here, whatever the scheduler thought, when the
+        // jobs already accepted (and what else uses the GPU) leave too little.
+        let vram = crate::model::vram_request_mb(&spec.accelerator);
+        if vram > 0 {
+            let words = crate::sysinfo::accelerators_free(g.used_vram_mb);
+            if !crate::model::accelerator_fits(&spec.accelerator, &words) {
+                return Some(format!(
+                    "not enough video memory free ({}; the job asks for {})",
+                    words.join(", "),
+                    spec.accelerator
+                ));
+            }
+        }
         let mem = g.used_memory_mb + ext.memory_mb + want_mem;
         if mem > self.cfg.memory_total_mb {
             return Some(format!(
@@ -1061,6 +1076,7 @@ impl NodeJobs {
                 let (cpu, mem) = reservation(spec);
                 g.used_millicpus += cpu;
                 g.used_memory_mb += mem;
+                g.used_vram_mb += crate::model::vram_request_mb(&spec.accelerator);
                 if spec.kind == "vm"
                     && let Some(v) = crate::sysinfo::vm_capacity()
                 {
@@ -1482,6 +1498,9 @@ fn release(g: &mut Inner, spec: &JobSpec, kind: &str) {
     let (cpu, mem) = reservation(spec);
     g.used_millicpus = g.used_millicpus.saturating_sub(cpu);
     g.used_memory_mb = g.used_memory_mb.saturating_sub(mem);
+    g.used_vram_mb = g
+        .used_vram_mb
+        .saturating_sub(crate::model::vram_request_mb(&spec.accelerator));
     g.running = g.running.saturating_sub(1);
     if let Some(n) = g.running_by_kind.get_mut(kind) {
         *n = n.saturating_sub(1);
@@ -1496,11 +1515,23 @@ fn release(g: &mut Inner, spec: &JobSpec, kind: &str) {
 /// it never got to write.
 pub(crate) fn exit_reason(code: i32, stdout: &[u8], stderr: &[u8]) -> String {
     let last = [stderr, stdout].iter().find_map(|b| {
-        String::from_utf8_lossy(b)
+        let text = String::from_utf8_lossy(b);
+        let lines: Vec<&str> = text
             .lines()
             .map(str::trim)
-            .rfind(|l| !l.is_empty())
-            .map(|l| l.chars().take(240).collect::<String>())
+            .filter(|l| !l.is_empty())
+            .collect();
+        let last = lines.last()?;
+        // Node ends an uncaught error with a bare `Node.js v24.1.0` line, and
+        // the cause (`code: 'ENOSPC'`, a full disk) sits a few lines above
+        // it: keep those with it.
+        if last.starts_with("Node.js v") && lines.len() > 1 {
+            let from = lines.len().saturating_sub(7);
+            let joined = lines[from..].join(" ");
+            let skip = joined.chars().count().saturating_sub(240);
+            return Some(joined.chars().skip(skip).collect::<String>());
+        }
+        Some(last.chars().take(240).collect::<String>())
     });
     match last {
         Some(l) => format!("exited with code {code}: {l}"),
@@ -1535,6 +1566,25 @@ mod exit_reason_tests {
         assert_eq!(
             super::exit_reason(3, b"out\n", b"err\n"),
             "exited with code 3: err"
+        );
+    }
+
+    /// A Node crash ends with `Node.js v24.1.0`; the reason keeps the lines
+    /// above it, where a full disk says `ENOSPC` (CUA-3000).
+    #[test]
+    fn a_node_crash_keeps_the_lines_above_its_version_footer() {
+        let err = b"node:fs:2397\n  throw err;\nError: ENOSPC: no space left on device, write\n    at writeSync (node:fs:2397:20) {\n  errno: -28,\n  code: 'ENOSPC',\n  syscall: 'write'\n}\n\nNode.js v24.21.0\n";
+        let r = super::exit_reason(1, b"", err);
+        assert!(r.starts_with("exited with code 1: "), "{r}");
+        assert!(
+            r.contains("ENOSPC") && r.contains("Node.js v24.21.0"),
+            "{r}"
+        );
+        assert!(!r.contains('\n'), "{r}");
+        // A lone footer is still just the footer.
+        assert_eq!(
+            super::exit_reason(1, b"", b"Node.js v24.21.0\n"),
+            "exited with code 1: Node.js v24.21.0"
         );
     }
 }

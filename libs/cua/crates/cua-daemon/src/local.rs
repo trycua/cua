@@ -38,7 +38,7 @@ use cua_vmm::{
     VmmError,
     auto::{self, DoctorReport},
     container::{ContainerConfig, ContainerRuntime},
-    containerization::ContainerizationRuntime,
+    containerization::{ContainerizationConfig, ContainerizationRuntime},
     lume::LumeRuntime,
     managed::{self, LinuxSource},
     microvm::{MicroVmConfig, MicroVmRuntime},
@@ -497,6 +497,33 @@ async fn resolve_placement_inner(
     })
 }
 
+/// Set once an engine refused a start because of the repo cache's mount:
+/// the daemon offers it no more (until it restarts).
+static REPO_CACHE_MOUNT_REFUSED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether `e` (a refused start of `s`) is about the repo cache's mount.
+fn is_repo_cache_mount_error(s: &StartSpec, e: &VmmError) -> bool {
+    if !s
+        .mounts
+        .iter()
+        .any(|m| m.guest == cua_sandbox_core::repo_cache::GUEST_ROOT)
+    {
+        return false;
+    }
+    let text = e.to_string().to_ascii_lowercase();
+    [
+        "mount",
+        "bind",
+        "not shared",
+        "file sharing",
+        "denied",
+        "no such file",
+    ]
+    .iter()
+    .any(|w| text.contains(w))
+}
+
 fn os_of(s: &str) -> GuestOs {
     match s.to_ascii_lowercase().as_str() {
         "macos" | "darwin" => GuestOs::Macos,
@@ -552,6 +579,9 @@ pub struct VmmLocal {
     /// host and refreshed in the background, so a create never waits on a
     /// registry for a tag it resolved before.
     resolved: Arc<std::sync::Mutex<HashMap<ResolveKey, (std::time::Instant, Resolved)>>>,
+    /// A newer image of a kept-warm request than the one creates are served
+    /// ([`hold_refresh`]), until a warm member of it is ready.
+    pending: Arc<std::sync::Mutex<HashMap<ResolveKey, Resolved>>>,
 }
 
 /// What an image placement is resolved for: image, OS, kind, runtime.
@@ -560,6 +590,29 @@ type ResolveKey = (String, String, String, String);
 /// How old a cached placement may be before a create refreshes it (in the
 /// background; the create uses the cached one).
 const RESOLVE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a refreshed placement does to the one creates are served.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Refresh {
+    /// Creates are served this one from now on.
+    Serve(Resolved),
+    /// Creates keep the current one; `next` is made ready first.
+    Hold { next: Resolved },
+}
+
+/// A request whose shape is kept warm must not move to a newer image
+/// (another digest) until a warm member of it is ready: a create would
+/// otherwise miss the pool and pull the image itself.
+pub(crate) fn hold_refresh(current: &Resolved, fresh: Resolved, kept_warm: bool) -> Refresh {
+    if kept_warm && fresh.placement.image != current.placement.image {
+        Refresh::Hold { next: fresh }
+    } else {
+        Refresh::Serve(fresh)
+    }
+}
+
+/// The source of the pool entry that makes the next image ready.
+const NEXT_SOURCE: &str = "warm-pools-next";
 
 /// The container engine [`VmmLocal`] uses.
 #[derive(Clone)]
@@ -594,10 +647,17 @@ impl VmmLocal {
                 resolver: Some(cua_image::RootfsLayerResolver::shared()),
                 ..MicroVmConfig::default()
             })),
-            apple: Arc::new(ContainerizationRuntime::with_defaults()),
+            // Images come through the shared puller (the host's registry
+            // credentials, mirrors and layer cache), then load into
+            // Apple's store.
+            apple: Arc::new(ContainerizationRuntime::new(ContainerizationConfig {
+                resolver: Some(cua_image::RootfsLayerResolver::shared()),
+                ..ContainerizationConfig::default()
+            })),
             pool: std::sync::OnceLock::new(),
             named_state: Default::default(),
             resolved: Default::default(),
+            pending: Default::default(),
         }
     }
 
@@ -738,6 +798,17 @@ impl VmmLocal {
                 Err(e) => tracing::warn!(%image, "pool.warm: {e}"),
             }
         }
+        if cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools) {
+            match self.keep_warm_space(pool).await {
+                Ok(()) => {
+                    sources.insert(crate::pool::WARM_SOURCE.to_string());
+                    if !self.pending.lock().unwrap().is_empty() {
+                        sources.insert(NEXT_SOURCE.to_string());
+                    }
+                }
+                Err(e) => tracing::warn!("warm-pools: {e}"),
+            }
+        }
         for np in pool.named_pools() {
             let source = format!("pool:{}", np.name);
             let outcome = async {
@@ -761,8 +832,128 @@ impl VmmLocal {
                 .insert(np.name.clone(), state);
         }
         pool.retain_explicit(|src| {
-            !(src.starts_with("warm:") || src.starts_with("pool:")) || sources.contains(src)
+            !(src.starts_with("warm:")
+                || src.starts_with("pool:")
+                || src == crate::pool::WARM_SOURCE
+                || src == NEXT_SOURCE)
+                || sources.contains(src)
         });
+    }
+
+    /// The `warm-pools` experiment: keeps one Linux Space ready, the Space
+    /// the Spaces app's Home makes for a new agent, with the coding apps of
+    /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
+    /// create of [`warm_pools_image`] (the size a create without one gets),
+    /// so the create that Home makes claims it. It is kept ready after each
+    /// claim at once, and drains after [`WARM_POOLS_IDLE`] without a create.
+    async fn keep_warm_space(
+        &self,
+        pool: &crate::pool::WarmPool,
+    ) -> std::result::Result<(), String> {
+        use cua_sandbox_core::{CreateOptions, ProviderKind, Sandboxes, placement::On};
+        let image = warm_pools_image();
+        let mut o = CreateOptions::new(ProviderKind::Local, image.clone());
+        if let Ok(r) = cua_sandbox_core::settings::Settings::load()
+            .and_then(|s| s.resolve(Some(On::Local), None, None))
+        {
+            o.kind = r.kind;
+            o.runtime = r.runtime;
+        }
+        o.apply_placement()
+            .map_err(|e| format!("cannot run {image} here: {e}"))?;
+        let spec = Sandboxes::local_start_spec(&o, "warm", Some("warm"));
+        let p = self.prepare(&spec).await.map_err(|e| e.to_string())?;
+        if p.injected {
+            return Err("the image has no cua-spacesd".to_string());
+        }
+        let spacesd = p.image.as_ref().and_then(|i| i.spacesd) == Some(true);
+        let (harnesses, first) = warm_pools_ordered();
+        let key = pool
+            .set_explicit_prepared(
+                crate::pool::WARM_SOURCE,
+                &p.spec,
+                p.backend,
+                spacesd,
+                p.rt,
+                1,
+                Some(1),
+                None,
+                Some(WARM_POOLS_IDLE),
+                Some(harnesses),
+            )
+            .ok_or_else(|| "this shape does not pool".to_string())?;
+        pool.set_prepare_first(&key, first);
+        pool.note_request(&p.spec, p.backend, spacesd, requested_words(&spec));
+        tracing::debug!(shape = %key, "warm-pools: keeping one Linux Space ready");
+        self.make_next_ready(pool, &spec, &image).await;
+        Ok(())
+    }
+
+    /// The image of the kept-warm request moved: pulls it and prepares a
+    /// member of it in the background, beside the one creates are served,
+    /// and serves creates the new image once that member is ready. The old
+    /// member stays claimable meanwhile, so no create pulls an image.
+    async fn make_next_ready(
+        &self,
+        pool: &crate::pool::WarmPool,
+        spec: &LocalStartSpec,
+        image: &str,
+    ) {
+        let keys: Vec<ResolveKey> = self
+            .pending
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|k| k.0 == image.trim())
+            .cloned()
+            .collect();
+        for key in keys {
+            let Some(next) = self.pending.lock().unwrap().get(&key).cloned() else {
+                continue;
+            };
+            let outcome = async {
+                let p = self
+                    .prepare_with(spec, Some(next.clone()))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let spacesd = p.image.as_ref().and_then(|i| i.spacesd) == Some(true);
+                let (harnesses, first) = warm_pools_ordered();
+                let k = pool
+                    .set_explicit_prepared(
+                        NEXT_SOURCE,
+                        &p.spec,
+                        p.backend,
+                        spacesd,
+                        p.rt,
+                        1,
+                        Some(1),
+                        None,
+                        Some(WARM_POOLS_IDLE),
+                        Some(harnesses),
+                    )
+                    .ok_or_else(|| "this shape does not pool".to_string())?;
+                pool.set_prepare_first(&k, first);
+                Ok::<String, String>(k)
+            }
+            .await;
+            match outcome {
+                Ok(k) if pool.shape_status(&k).is_some_and(|(ready, _, _)| ready > 0) => {
+                    tracing::info!(shape = %k, "warm-pools: the new image has a warm Space; creates use it");
+                    self.resolved
+                        .lock()
+                        .unwrap()
+                        .insert(key.clone(), (std::time::Instant::now(), next));
+                    self.pending.lock().unwrap().remove(&key);
+                }
+                Ok(k) => {
+                    tracing::debug!(shape = %k, "warm-pools: the new image is being made ready")
+                }
+                Err(e) => {
+                    tracing::warn!("warm-pools: cannot prepare the new image: {e}");
+                    self.pending.lock().unwrap().remove(&key);
+                }
+            }
+        }
     }
 
     /// Keeps `min` (at most `max`) members of `spec`'s shape for explicit
@@ -834,15 +1025,30 @@ impl VmmLocal {
         if let Some((at, r)) = cached {
             if at.elapsed() >= RESOLVE_REFRESH {
                 let cache = self.resolved.clone();
+                let pending = self.pending.clone();
                 let (image, os, runtime) = (image.to_string(), os.to_string(), runtime.clone());
+                let served = r.clone();
                 tokio::spawn(async move {
-                    if let Ok(r) = resolve_placement_for(&image, &os, kind, &runtime, None).await
-                        && r.image.is_some()
+                    if let Ok(fresh) =
+                        resolve_placement_for(&image, &os, kind, &runtime, None).await
+                        && fresh.image.is_some()
                     {
+                        // The image of a kept-warm request moved: creates keep
+                        // the one they were served until a warm member of the
+                        // new one is ready, so none waits on its pull.
+                        let kept = key.0 == warm_pools_image()
+                            && cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools);
+                        let next = match hold_refresh(&served, fresh, kept) {
+                            Refresh::Serve(r) => r,
+                            Refresh::Hold { next } => {
+                                pending.lock().unwrap().insert(key.clone(), next);
+                                served
+                            }
+                        };
                         cache
                             .lock()
                             .unwrap()
-                            .insert(key, (std::time::Instant::now(), r));
+                            .insert(key, (std::time::Instant::now(), next));
                     }
                 });
             }
@@ -868,6 +1074,27 @@ impl VmmLocal {
     /// The engine local Linux Spaces use ([`managed::choose`]): this Mac's
     /// own, or the built-in runtime. Chosen on first use, without booting
     /// anything.
+    /// The repo cache as a read-only mount of a Linux container Space (see
+    /// `cua-repo-cache`): only where the engine can bind this machine's
+    /// directory, and only while the cache is on.
+    async fn repo_cache_mount(&self, backend: BackendKind, os: &str) -> Option<cua_vmm::Mount> {
+        if backend != BackendKind::Container
+            || os_of(os) != GuestOs::Linux
+            || REPO_CACHE_MOUNT_REFUSED.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return None;
+        }
+        let root = cua_sandbox_core::repo_cache::current().mount_source()?;
+        // The built-in runtime's VM shares only cua's job directories (the
+        // cache lives in one), and not before it booted sharing them.
+        if let Ok(Engine::Builtin(_)) = self.engine().await
+            && !(managed::is_shared(&root) && (!managed::running() || managed::shares_job_dirs()))
+        {
+            return None;
+        }
+        Some(cua_sandbox_core::repo_cache::mount(root))
+    }
+
     async fn engine(&self) -> std::result::Result<Engine, VmmError> {
         let source = LinuxSource::current();
         let mut slot = self.container.lock().await;
@@ -937,6 +1164,100 @@ impl VmmLocal {
         &self.qemu
     }
 
+    /// Every instance Cua made on this machine, in every local runtime,
+    /// for [`crate::space_orphans`]: QEMU VMs and microVMs in their own
+    /// state directories, containers with Cua's label, Apple
+    /// Containerization containers Cua created, and macOS VMs Cua recorded
+    /// as its own (`vmm/lume/owned`, never any other VM Lume has). Bases,
+    /// checkpoints and warm-pool members are left out. Never installs,
+    /// boots or starts a runtime to answer: one that is down runs nothing.
+    /// Any runtime that is up but does not answer fails the whole listing,
+    /// so a partial view never looks like "nothing there".
+    #[cfg(feature = "spaces")]
+    pub async fn cua_instances(
+        &self,
+    ) -> std::result::Result<Vec<crate::space_orphans::Found>, String> {
+        let mut out = Vec::new();
+        let mut add = |kind: BackendKind,
+                       list: std::result::Result<Vec<cua_vmm::InstanceSummary>, VmmError>|
+         -> std::result::Result<(), String> {
+            let rows = list.map_err(|e| format!("{}: {e}", kind.as_str()))?;
+            out.extend(
+                rows.into_iter()
+                    .filter(|s| !cua_vmm::is_pool_member(&s.name))
+                    .map(|s| crate::space_orphans::Found {
+                        name: s.name,
+                        runtime: kind.as_str().to_string(),
+                    }),
+            );
+            Ok(())
+        };
+        if let Some(rt) = self.container_if_up().await {
+            add(BackendKind::Container, rt.list().await)?;
+        }
+        add(BackendKind::Qemu, self.qemu.instances())?;
+        if cfg!(any(target_os = "linux", target_os = "macos", windows)) {
+            let kind = if cfg!(target_os = "macos") {
+                BackendKind::Vz
+            } else {
+                BackendKind::Firecracker
+            };
+            add(kind, self.microvm.list().await)?;
+        }
+        if cfg!(target_os = "macos") {
+            add(BackendKind::Containerization, self.apple.list().await)?;
+            let owned = cua_vmm::lume::OwnedVms::default();
+            let ours: std::collections::HashSet<String> = owned
+                .list()
+                .into_iter()
+                .filter(|v| v.kind == cua_vmm::lume::OwnedKind::Instance)
+                .map(|v| v.name)
+                .collect();
+            // Asked only when Cua recorded a macOS VM of its own: listing
+            // starts `lume serve`.
+            if !ours.is_empty() {
+                let listed = self.lume.list().await.map(|rows| {
+                    rows.into_iter()
+                        .filter(|r| ours.contains(&r.name))
+                        .collect::<Vec<_>>()
+                });
+                add(BackendKind::Lume, listed)?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Deletes `name` on the runtime `runtime` (a [`BackendKind`] word, as
+    /// [`VmmLocal::cua_instances`] reports it) only: never another
+    /// runtime's instance of the same name.
+    pub async fn delete_on(&self, runtime: &str, name: &str) -> std::result::Result<(), String> {
+        let kind = [
+            BackendKind::Container,
+            BackendKind::Qemu,
+            BackendKind::Vz,
+            BackendKind::Firecracker,
+            BackendKind::Containerization,
+            BackendKind::Lume,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == runtime)
+        .ok_or_else(|| format!("unknown runtime {runtime}"))?;
+        let rt = match kind {
+            // Never boot the built-in Linux runtime to delete: it was up
+            // when the container was listed.
+            BackendKind::Container => self
+                .container_if_up()
+                .await
+                .map(|r| r as Arc<dyn VmmRuntime>)
+                .ok_or_else(|| "the container engine is not running".to_string())?,
+            k => self.runtime(k).await.map_err(|e| e.to_string())?,
+        };
+        match rt.delete(name).await {
+            Ok(()) | Err(VmmError::NotFound(_)) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     async fn runtime(
         &self,
         kind: BackendKind,
@@ -963,7 +1284,7 @@ impl VmmLocal {
             v.push(BackendKind::Vz);
             v.push(BackendKind::Containerization);
         }
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", windows)) {
             v.push(BackendKind::Firecracker);
         }
         v
@@ -974,7 +1295,7 @@ impl VmmLocal {
         match runtime_type.trim().to_ascii_lowercase().as_str() {
             "qemu" => Some(BackendKind::Qemu),
             "lume" if cfg!(target_os = "macos") => Some(BackendKind::Lume),
-            "firecracker" | "microvm" if cfg!(target_os = "linux") => {
+            "firecracker" | "microvm" if cfg!(any(target_os = "linux", windows)) => {
                 Some(BackendKind::Firecracker)
             }
             "containerization" if cfg!(target_os = "macos") => Some(BackendKind::Containerization),
@@ -1007,6 +1328,165 @@ impl VmmLocal {
 /// How often the warm pool's policy runs (pre-warm windows open on time;
 /// settings, memory and strays are checked every 15th tick).
 pub const POOL_TICK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Opens a session of `h` in a member and closes it again (see
+/// [`PoolHost::prepare`]), then removes the run it made.
+async fn warm_session(
+    agents: &cua_agents::Agents,
+    id: &str,
+    h: &cua_agents::harness::Harness,
+) -> std::result::Result<(), String> {
+    use cua_agents::{RunStatus, runs::RunOptions};
+    let env = h.placeholder_env();
+    let started = agents
+        .start(
+            id,
+            "",
+            RunOptions {
+                env,
+                skills: Some(false),
+                idle_exit_secs: Some(120),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut result = Err("the session did not open in 120 s".to_string());
+    while std::time::Instant::now() < deadline {
+        match agents.status(&started.run_id).await {
+            Ok(st) if st.status == RunStatus::Idle && st.accepts_message => {
+                result = Ok(());
+                break;
+            }
+            Ok(st) if st.status == RunStatus::Failed => {
+                result = Err(format!("{} {:?}", st.reason, st.error));
+                break;
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+        }
+    }
+    let _ = agents.stop(&started.run_id).await;
+    let _ = agents
+        .guest()
+        .run(cua_spacesd_client::Command::shell(format!(
+            "rm -rf '{}'",
+            started.run_dir.replace('\'', "")
+        )))
+        .await;
+    result
+}
+
+/// The image of the Linux Space the `warm-pools` experiment keeps ready: the
+/// Linux slim tier, which the Spaces app's Home creates for a new agent while
+/// the experiment is on (the wizard reads the same catalog file).
+pub fn warm_pools_image() -> String {
+    cua_image::catalog::entries()
+        .iter()
+        .find(|e| {
+            e.published
+                && e.os == "linux"
+                && e.group == "canonical"
+                && e.tier.as_deref() == Some("slim")
+                && e.local.as_deref() == Some("container")
+        })
+        .map(|e| e.reference.clone())
+        .unwrap_or_else(|| "ghcr.io/trycua/linux:24.04-slim".to_string())
+}
+
+/// Ready harnesses a warm Space is not prepared for by default: antigravity
+/// is about 1 GB of the saved filesystem. Name it in `CUA_WARM_POOLS_HARNESSES`
+/// to prepare it.
+const WARM_POOLS_SKIPPED: &[&str] = &["google-antigravity"];
+
+/// The coding apps a warm Space is prepared for: `CUA_WARM_POOLS_HARNESSES`
+/// (comma separated harness ids), else every harness the app offers: the four
+/// most used (Codex, Hermes, Claude Code, OpenCode) first, then the rest of
+/// [`cua_agents::harness::ready`] except [`WARM_POOLS_SKIPPED`]. A harness
+/// missing here would install in the claimed Space (7 to 50 s) instead of
+/// starting at once. The cost is disk in the one saved member filesystem
+/// (about 2.6 GB), not memory.
+pub fn warm_pools_harnesses() -> Vec<String> {
+    let v = std::env::var("CUA_WARM_POOLS_HARNESSES").unwrap_or_else(|_| {
+        let mut all: Vec<&str> = vec!["openai-codex", "hermes", "claude-code", "opencode"];
+        let rest: Vec<&str> = cua_agents::harness::ready()
+            .into_iter()
+            .filter(|h| !all.contains(h) && !WARM_POOLS_SKIPPED.contains(h))
+            .collect();
+        all.extend(rest);
+        all.join(",")
+    });
+    v.split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty() && *h != "none")
+        .map(str::to_string)
+        .collect()
+}
+
+/// Most harnesses a warm member is prepared for before it can be claimed;
+/// the rest go into the saved filesystem in the background.
+const WARM_FIRST_MAX: usize = 3;
+
+/// The harness ids in `phases` (`persistent/phases.jsonl` lines, oldest
+/// first) and `agents` (`persistent/agents.json`), most recently used first.
+fn recent_harnesses(phases: &str, agents: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |h: &str| {
+        if !h.is_empty() && !out.iter().any(|o| o == h) {
+            out.push(h.to_string());
+        }
+    };
+    for line in phases.lines().rev().take(400) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+            && let Some(h) = v.get("harness").and_then(|h| h.as_str())
+        {
+            push(h);
+        }
+    }
+    if let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(agents) {
+        for e in a.iter().rev() {
+            if let Some(h) = e.get("harness").and_then(|h| h.as_str()) {
+                push(h);
+            }
+        }
+    }
+    out
+}
+
+/// [`warm_pools_harnesses`] with the apps this person most likely uses
+/// first, and how many of them (at most [`WARM_FIRST_MAX`]) a member is
+/// prepared for before it can be claimed: Claude Code (the Home picker's
+/// default), then the apps of their agents and recent runs. `0`: no
+/// preference (`CUA_WARM_POOLS_HARNESSES` names the list), prepare all.
+pub fn warm_pools_ordered() -> (Vec<String>, usize) {
+    let all = warm_pools_harnesses();
+    if std::env::var_os("CUA_WARM_POOLS_HARNESSES").is_some() {
+        return (all, 0);
+    }
+    let dir = cua_home::cua_home().join("persistent");
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
+    order_for_warm(
+        all,
+        &recent_harnesses(&read("phases.jsonl"), &read("agents.json")),
+    )
+}
+
+fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
+    let mut first: Vec<String> = Vec::new();
+    for h in std::iter::once(&"claude-code".to_string()).chain(recent.iter()) {
+        if first.len() < WARM_FIRST_MAX && all.contains(h) && !first.contains(h) {
+            first.push(h.clone());
+        }
+    }
+    let n = first.len();
+    let mut ordered = first;
+    let rest: Vec<String> = all.into_iter().filter(|h| !ordered.contains(h)).collect();
+    ordered.extend(rest);
+    (ordered, n)
+}
+
+/// How long the warm Space sits unused before it is given back.
+pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 
 /// What the warm pool asks of this machine: cua-spacesd of its members, and
 /// the memory they draw on.
@@ -1141,6 +1621,131 @@ impl crate::pool::PoolHost for PoolHost {
             );
         }
         Ok(())
+    }
+
+    fn can_prepare(&self, backend: BackendKind) -> bool {
+        // The runtime's declaration (the conformance table): only a member
+        // that answers before it is claimed, a container, takes its apps ahead.
+        cua_vmm::conformance::capabilities(backend).prepare
+    }
+
+    async fn prepare(
+        &self,
+        endpoints: &Endpoints,
+        secret: &str,
+        harnesses: &[String],
+        timeout: std::time::Duration,
+    ) -> std::result::Result<(), String> {
+        let run = async {
+            let client = member_client(endpoints, secret).await?;
+            let agents = cua_agents::Agents::new(client)
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut installs: Vec<&str> = Vec::new();
+            for id in harnesses {
+                let Some(h) = cua_agents::harness::harness(id).filter(|h| h.ready) else {
+                    tracing::warn!(harness = %id, "warm pool: not a harness this build can install");
+                    continue;
+                };
+                // The bridge, the runner and the skills, then the apps.
+                agents.prewarm(h, true).await.map_err(|e| e.to_string())?;
+                installs.extend(h.installs.iter().copied());
+            }
+            installs.sort_unstable();
+            installs.dedup();
+            if !installs.is_empty() {
+                agents
+                    .ensure(&installs, |_| {})
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            // One session of each app is opened and closed here, with a key
+            // that no model ever sees: the app's files are read once, so the
+            // session of the Space that claims this one does not pay a cold
+            // start for them. Nothing it wrote stays.
+            for id in harnesses {
+                let Some(h) = cua_agents::harness::harness(id).filter(|h| h.ready) else {
+                    continue;
+                };
+                if let Err(e) = warm_session(&agents, id, h).await {
+                    tracing::debug!(harness = %id, error = %e, "warm pool: the warm-up session did not open");
+                }
+            }
+            Ok::<(), String>(())
+        };
+        match tokio::time::timeout(timeout, run).await {
+            Ok(r) => r,
+            Err(_) => Err(format!("preparing took longer than {timeout:?}")),
+        }
+    }
+
+    fn pin(&self, harness: &str) -> String {
+        // The apps a build installs for the harness, at their pinned versions.
+        let Some(h) = cua_agents::harness::harness(harness) else {
+            return harness.to_string();
+        };
+        let ids: Vec<&str> = h.installs.to_vec();
+        let Ok(order) = cua_agents::installables::resolve(&ids) else {
+            return harness.to_string();
+        };
+        order
+            .iter()
+            .filter_map(|id| {
+                Some(format!(
+                    "{id}@{}",
+                    cua_agents::installables::get(id)?.version
+                ))
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    async fn warm_files(&self, endpoints: &Endpoints, secret: &str, harnesses: &[String]) {
+        // The directories the apps installed into, read once. The pool secret
+        // stops opening the member when it is claimed: a failure is fine.
+        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+        for id in harnesses {
+            if let Some(h) = cua_agents::harness::harness(id) {
+                ids.extend(h.installs.iter().copied());
+            }
+        }
+        let Ok(order) = cua_agents::installables::resolve(&ids) else {
+            return;
+        };
+        let dirs: Vec<String> = order
+            .iter()
+            .filter_map(|id| {
+                let it = cua_agents::installables::get(id)?;
+                Some(format!("\"$HOME/.cua/tools/{id}/{}\"", it.version))
+            })
+            .collect();
+        if dirs.is_empty() {
+            return;
+        }
+        let script = format!(
+            "find {} -type f -size -64M -exec cat {{}} + >/dev/null 2>&1; true",
+            dirs.join(" ")
+        );
+        let run = async {
+            let c = member_client(endpoints, secret).await?;
+            c.run(
+                cua_spacesd_client::Command::shell(script)
+                    .timeout(std::time::Duration::from_secs(120)),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        let began = std::time::Instant::now();
+        match run.await {
+            Ok(()) => tracing::debug!(
+                ms = began.elapsed().as_millis() as u64,
+                "warm pool: a member's apps were read once"
+            ),
+            Err(e) => {
+                tracing::debug!(error = %e, "warm pool: could not read a member's apps ahead")
+            }
+        }
     }
 
     async fn memory(&self, backend: BackendKind) -> Option<crate::pool::Memory> {
@@ -1298,7 +1903,15 @@ fn host_memory() -> Option<crate::pool::Memory> {
             available_mb: total * level / 100,
         })
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    {
+        // `GlobalMemoryStatusEx`, through the runtimes' own reading.
+        cua_vmm::density::host_memory().map(|m| crate::pool::Memory {
+            total_mb: m.total_mb,
+            available_mb: m.available_mb,
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         None
     }
@@ -1451,6 +2064,17 @@ impl VmmLocal {
     /// Resolves `spec` (image placement, backend, runtime) into the
     /// [`StartSpec`] its backend starts.
     async fn prepare(&self, spec: &LocalStartSpec) -> RuntimeResult<Prepared> {
+        self.prepare_with(spec, None).await
+    }
+
+    /// [`Self::prepare`], with the placement given (`Some`) instead of read
+    /// from the registry or the cache: how the next image is made ready
+    /// before creates are served it.
+    async fn prepare_with(
+        &self,
+        spec: &LocalStartSpec,
+        forced: Option<Resolved>,
+    ) -> RuntimeResult<Prepared> {
         use cua_sandbox_core::placement::{Kind, PlacementError, Runtime};
         let kind = spec
             .kind
@@ -1466,34 +2090,38 @@ impl VmmLocal {
             .transpose()
             .map_err(RuntimeError::InvalidPlacement)?
             .unwrap_or_default();
-        let mut r = self
-            .resolve_cached(
-                &spec.image,
-                &spec.os,
-                kind,
-                &runtime,
-                spec.registry_credentials.as_ref(),
-            )
-            .await
-            .map_err(|e| match e {
-                Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
-                Error::InvalidPlacement {
-                    message,
-                    axis,
-                    valid,
-                } => RuntimeError::InvalidPlacement(PlacementError {
-                    axis: match axis.as_str() {
-                        "on" => cua_sandbox_core::placement::Axis::On,
-                        "kind" => cua_sandbox_core::placement::Axis::Kind,
-                        "runtime" => cua_sandbox_core::placement::Axis::Runtime,
-                        _ => cua_sandbox_core::placement::Axis::Image,
-                    },
-                    given: spec.image.clone(),
-                    message,
-                    valid,
-                }),
-                other => RuntimeError::Other(other.to_string()),
-            })?;
+        let resolved = match forced {
+            Some(r) => Ok(r),
+            None => {
+                self.resolve_cached(
+                    &spec.image,
+                    &spec.os,
+                    kind,
+                    &runtime,
+                    spec.registry_credentials.as_ref(),
+                )
+                .await
+            }
+        };
+        let mut r = resolved.map_err(|e| match e {
+            Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
+            Error::InvalidPlacement {
+                message,
+                axis,
+                valid,
+            } => RuntimeError::InvalidPlacement(PlacementError {
+                axis: match axis.as_str() {
+                    "on" => cua_sandbox_core::placement::Axis::On,
+                    "kind" => cua_sandbox_core::placement::Axis::Kind,
+                    "runtime" => cua_sandbox_core::placement::Axis::Runtime,
+                    _ => cua_sandbox_core::placement::Axis::Image,
+                },
+                given: spec.image.clone(),
+                message,
+                valid,
+            }),
+            other => RuntimeError::Other(other.to_string()),
+        })?;
         if missing_fallback_allowed(
             kind,
             &runtime,
@@ -1516,10 +2144,10 @@ impl VmmLocal {
             .ok_or_else(|| rt_err(e))?;
         }
         let p = r.placement.clone();
-        if p.backend == BackendKind::Firecracker && !cfg!(target_os = "linux") {
+        if p.backend == BackendKind::Firecracker && !cfg!(any(target_os = "linux", windows)) {
             return Err(RuntimeError::Unsupported {
                 backend: "firecracker".into(),
-                op: "a host other than Linux (microVMs need Linux with KVM)".into(),
+                op: "a host other than Linux or Windows (microVMs need Linux with KVM, or Windows with the Hypervisor Platform)".into(),
             });
         }
         if p.backend == BackendKind::Vz && !cfg!(target_os = "macos") {
@@ -1657,8 +2285,15 @@ impl VmmLocal {
         s.restrict_network = spec.restrict_network;
         s.forkable = spec.forkable;
         s.egress = spec.egress.clone();
+        s.network = spec.network.clone();
+        s.tree = spec.tree.clone();
         s.disk_size_gb = spec.disk_size_gb;
         s.mounts = spec.mounts.clone();
+        if let Some(m) = self.repo_cache_mount(p.backend, &spec.os).await
+            && !s.mounts.iter().any(|x| x.guest == m.guest)
+        {
+            s.mounts.push(m);
+        }
         // The layers from the manifest: progress knows the total, and the
         // layers the engine already has, from the first byte.
         s.pull_layers = r
@@ -1863,8 +2498,15 @@ impl LocalRuntime for VmmLocal {
             // The built-in runtime's VM has no GPU (and is not booted to
             // say so).
             Ok(Engine::Builtin(_)) => {
+                // On a PC the built-in runtime is a WSL 2 distribution: its
+                // containers reach the PC's NVIDIA GPU through /dev/dxg.
+                let wsl = cfg!(windows) && cua_vmm::host::which("nvidia-smi").is_some();
                 for r in ["container", "gvisor"] {
-                    out.push(cua_vmm::gpu::container_support("macos", r, false));
+                    out.push(if cfg!(windows) {
+                        cua_vmm::gpu::container_support_wsl("windows", r, false, wsl)
+                    } else {
+                        cua_vmm::gpu::container_support("macos", r, false)
+                    });
                 }
             }
             Err(e) => {
@@ -1889,7 +2531,7 @@ impl LocalRuntime for VmmLocal {
     ) -> RuntimeResult<(LocalInstance, Option<cua_sandbox_core::ImageInfo>)> {
         let started = std::time::Instant::now();
         let Prepared {
-            spec: s,
+            spec: mut s,
             backend,
             rt,
             image,
@@ -1907,6 +2549,9 @@ impl LocalRuntime for VmmLocal {
             .get()
             .filter(|_| spec.warm != Some(false) && !injected)
             .filter(|_| s.egress.is_empty() || backend != BackendKind::Qemu);
+        if self.pool.get().is_some() && pool.is_none() {
+            tracing::debug!(name = spec.name, warm = ?spec.warm, injected, "warm pool: not asked for this create");
+        }
         if let Some(pool) = pool
             && let Some(inst) = pool.claim(&s, backend, spacesd).await
         {
@@ -1931,7 +2576,20 @@ impl LocalRuntime for VmmLocal {
             ));
         }
         let start_at = std::time::Instant::now();
-        let inst = rt.start(&s).await.map_err(rt_err)?;
+        let inst = match rt.start(&s).await {
+            Ok(i) => i,
+            // The repo cache is an extra: a start that this engine refuses
+            // because of its mount (a directory it does not share) runs
+            // again without it, and the daemon stops offering it.
+            Err(e) if is_repo_cache_mount_error(&s, &e) => {
+                tracing::warn!(error = %e, "repo cache mount refused; starting without it");
+                REPO_CACHE_MOUNT_REFUSED.store(true, std::sync::atomic::Ordering::SeqCst);
+                s.mounts
+                    .retain(|m| m.guest != cua_sandbox_core::repo_cache::GUEST_ROOT);
+                rt.start(&s).await.map_err(rt_err)?
+            }
+            Err(e) => return Err(rt_err(e)),
+        };
         // Behind a port forward (the probe on cua-spacesd's port says so),
         // ready once it serves an authenticated call with the Space's
         // token: see `guest_identity::wait_accepts`.
@@ -1995,6 +2653,23 @@ impl LocalRuntime for VmmLocal {
         rt.egress(name).await.map_err(rt_err)
     }
 
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        let (_, rt) = self.owner(name).await?;
+        rt.network_events(name).await.map_err(rt_err)
+    }
+
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        let (_, rt) = self.owner(name).await?;
+        rt.set_network(name, settings).await.map_err(rt_err)
+    }
+
     async fn suspend(&self, name: &str) -> RuntimeResult<()> {
         let (_, rt) = self.owner(name).await?;
         rt.suspend(name).await.map_err(rt_err)
@@ -2036,6 +2711,8 @@ impl LocalRuntime for VmmLocal {
             // The VM stops (its memory goes back to the machine) and boots
             // again from its disk.
             "lume" | "containerization" | "qemu" => Some(PowerControl::Stop),
+            // A QEMU microVM (Windows) has no snapshots: turning it off powers it down.
+            "firecracker" if cfg!(windows) => Some(PowerControl::Stop),
             "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
                 Some(PowerControl::Stop)
             }
@@ -2220,6 +2897,25 @@ impl LocalRuntime for VmmLocal {
             }
         }
         Ok(out)
+    }
+
+    /// A Lume VM behind a network gateway that ended is restarted behind a
+    /// new one ([`cua_vmm::Runtime::mend`]); other engines have nothing to
+    /// repair.
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
+        if !runtime_type.trim().eq_ignore_ascii_case("lume") {
+            return Ok(None);
+        }
+        let (_, rt) = self.owner(name).await?;
+        let Some(inst) = rt.mend(name).await.map_err(rt_err)? else {
+            return Ok(None);
+        };
+        Ok(Some(LocalInstance {
+            backend: runtime_label(&inst),
+            name: inst.name,
+            status: status_of(inst.status),
+            endpoints: endpoints_of(inst.endpoints),
+        }))
     }
 
     /// A container's exit record (its code and `OOMKilled`), read from the
@@ -2709,12 +3405,15 @@ async fn setup_with(
     } else {
         components.to_vec()
     };
-    let mut steps = Vec::new();
+    // Every name is checked before any installer runs, so a typo cannot
+    // leave a half-finished setup behind an error.
+    let mut kinds = Vec::new();
     for c in wanted {
         let kind = match c.as_str() {
             "qemu" => Some(BackendKind::Qemu),
             "lume" => Some(BackendKind::Lume),
             "container" | "runsc" | "gvisor" => Some(BackendKind::Container),
+            "managed" => Some(BackendKind::Managed),
             "firecracker" => Some(BackendKind::Firecracker),
             "microvm" | "vz" if cfg!(target_os = "macos") => Some(BackendKind::Vz),
             "microvm" => Some(BackendKind::Firecracker),
@@ -2724,6 +3423,10 @@ async fn setup_with(
         let Some(kind) = kind else {
             return Err(Error::InvalidArgument(format!("unknown component {c:?}")));
         };
+        kinds.push((c, kind));
+    }
+    let mut steps = Vec::new();
+    for (c, kind) in kinds {
         let b = report.backend(kind).cloned();
         let plan = b
             .as_ref()
@@ -2742,6 +3445,16 @@ async fn setup_with(
                 name: c,
                 status: CheckStatus::Installable as i32,
                 detail: format!("would: {plan}"),
+            });
+            continue;
+        }
+        if kind == BackendKind::Managed {
+            // The built-in Linux runtime downloads and boots with the first
+            // Linux Space, so there is nothing to run ahead of it.
+            steps.push(SetupStep {
+                name: c,
+                status: CheckStatus::Ok as i32,
+                detail: format!("set up when the first Linux Space is created ({plan})"),
             });
             continue;
         }
@@ -2808,7 +3521,12 @@ pub(crate) fn headless_command_line() -> Vec<String> {
         "/bin/sh".into(),
         "-c".into(),
         concat!(
-            "if [ -z \"$CUA_ENV_TOKEN\" ]; then ",
+            // A guest that awaits its token file (a microVM's init writes it,
+            // and rewrites it at every boot) must not also be handed the
+            // token in the environment: cua-spacesd refuses both ("--await-token-file
+            // takes the token only from --token-file"), so a restarted microVM,
+            // whose token file already held the token, never came back.
+            "if [ \"$CUA_ENV_AWAIT_TOKEN_FILE\" != 1 ] && [ -z \"$CUA_ENV_TOKEN\" ]; then ",
             "for f in /run/cua/env-token /etc/cua/env-token; do ",
             "if [ -r \"$f\" ]; then CUA_ENV_TOKEN=$(tr -d '\\r\\n' < \"$f\"); export CUA_ENV_TOKEN; break; fi; ",
             "done; fi; ",
@@ -2820,8 +3538,8 @@ pub(crate) fn headless_command_line() -> Vec<String> {
 
 /// `cua runtime setup firecracker`: the pinned Firecracker release into
 /// `~/.cua/bin` and the guest kernel into the microVM cache.
-/// macOS microVMs: the pinned guest kernel and gvproxy (`cua-vz` and the
-/// guest init ship with cua).
+/// macOS microVMs: the pinned guest kernel and gvproxy, or the network
+/// gateway under Secure Spaces (`cua-vz` and the guest init ship with cua).
 async fn install_vz() -> std::result::Result<(), VmmError> {
     use cua_vmm::microvm::{assets, vz};
     if let Some(why) = vz::unsupported_reason() {
@@ -2834,12 +3552,60 @@ async fn install_vz() -> std::result::Result<(), VmmError> {
              aarch64-unknown-linux-musl cua-microvm-init in ~/.cua/bin)",
         ));
     }
-    vz::ensure_gvproxy().await?;
+    // Secure Spaces runs the guests' network behind the Cua network gateway
+    // (it ships next to `cua`); without the experiment it is gvproxy,
+    // downloaded here.
+    if cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure {
+        if cua_vmm::netgw::bin().is_none() {
+            return Err(VmmError::missing(
+                "cua-netgw",
+                "it ships next to `cua` (a cua release, or libs/cua/netgw/build.sh into ~/.cua/bin)",
+            ));
+        }
+    } else {
+        vz::ensure_gvproxy().await?;
+    }
+    assets::ensure_kernel(&MicroVmConfig::default().root).await?;
+    Ok(())
+}
+
+/// Windows microVMs (QEMU on WHPX): the Windows Hypervisor Platform feature
+/// (one UAC prompt, then a restart when Windows asks), QEMU through winget, and
+/// the pinned guest kernel. The guest init ships next to `cua`.
+async fn install_microvm_windows() -> std::result::Result<(), VmmError> {
+    use cua_vmm::microvm::{assets, whpx};
+    if let Some(why) = whpx::unsupported_reason(&whpx::status()) {
+        match whpx::status() {
+            whpx::Whpx::FeatureOff => match whpx::enable_elevated().await? {
+                whpx::Enabled::Ready => {}
+                whpx::Enabled::RestartNeeded => {
+                    return Err(VmmError::other(
+                        "Windows Hypervisor Platform is on now; restart this PC, then run \
+                         `cua runtime setup microvm` again",
+                    ));
+                }
+            },
+            _ => return Err(VmmError::other(why)),
+        }
+    }
+    if whpx::qemu_bin().is_none() {
+        cua_vmm::qemu::install_qemu().await?;
+    }
+    if assets::init_bin().is_none() {
+        return Err(VmmError::missing(
+            "cua-microvm-init",
+            "the microVM guest init ships next to `cua` (a cua release, or build it: \
+             cargo build --release -p cua-microvm-init --target x86_64-unknown-linux-musl)",
+        ));
+    }
     assets::ensure_kernel(&MicroVmConfig::default().root).await?;
     Ok(())
 }
 
 async fn install_microvm() -> std::result::Result<(), VmmError> {
+    if cfg!(windows) {
+        return install_microvm_windows().await;
+    }
     if cua_vmm::microvm::assets::firecracker_bin().is_none() {
         cua_vmm::microvm::assets::install_firecracker().await?;
     }
@@ -3076,6 +3842,127 @@ fn claim_delivers_token(backend: BackendKind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn resolved(reference: &str) -> Resolved {
+        Resolved {
+            placement: Placement {
+                backend: BackendKind::Container,
+                image: ImageSource::oci(reference),
+            },
+            arch: None,
+            image: None,
+        }
+    }
+
+    /// A moved image of a kept-warm request is held until a warm member of
+    /// it is ready, so a create never pulls; anything else follows at once.
+    #[test]
+    fn a_moved_image_of_a_kept_warm_request_is_held_until_ready() {
+        let old = resolved("ghcr.io/trycua/linux@sha256:aaa");
+        let new = resolved("ghcr.io/trycua/linux@sha256:bbb");
+        assert_eq!(
+            hold_refresh(&old, new.clone(), true),
+            Refresh::Hold { next: new.clone() }
+        );
+        assert_eq!(hold_refresh(&old, new.clone(), false), Refresh::Serve(new));
+        // The same digest again changes nothing.
+        assert_eq!(
+            hold_refresh(&old, old.clone(), true),
+            Refresh::Serve(old.clone())
+        );
+    }
+    #[test]
+    fn members_are_prepared_where_the_conformance_table_says() {
+        use crate::pool::PoolHost as _;
+        let host = super::PoolHost {
+            local: std::sync::Weak::new(),
+        };
+        for b in cua_vmm::egress::BACKENDS {
+            let c = cua_vmm::conformance::capabilities(b);
+            assert_eq!(host.can_prepare(b), c.prepare, "{b}");
+            // A member that is prepared before its claim is a member that
+            // can be claimed.
+            assert!(!c.prepare || c.claim, "{b}");
+        }
+        assert!(host.can_prepare(cua_vmm::BackendKind::Container));
+        assert!(!host.can_prepare(cua_vmm::BackendKind::Firecracker));
+    }
+
+    #[test]
+    fn the_warm_space_is_the_image_home_creates_and_its_apps_can_be_chosen() {
+        // The Spaces app's Home creates the Linux slim tier for a new agent
+        // while the experiment is on (the wizard's `first_space_offers`); a
+        // different image here would never be claimed.
+        assert_eq!(super::warm_pools_image(), "ghcr.io/trycua/linux:24.04-slim");
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: serialised by ENV_LOCK; no other test reads this variable.
+        unsafe { std::env::remove_var("CUA_WARM_POOLS_HARNESSES") };
+        let defaults = super::warm_pools_harnesses();
+        assert_eq!(
+            defaults[..4],
+            ["openai-codex", "hermes", "claude-code", "opencode"]
+        );
+        // Every harness the app offers is prepared: one that is not would
+        // install in the Space that claims the member. The one exception is
+        // google-antigravity, about 1 GB of the saved filesystem (size).
+        for id in cua_agents::harness::ready() {
+            if id == "google-antigravity" {
+                assert!(
+                    !defaults.iter().any(|d| d == id),
+                    "{id} is skipped for size"
+                );
+                continue;
+            }
+            assert!(defaults.iter().any(|d| d == id), "{id} is not prepared");
+        }
+        assert_eq!(
+            defaults.len(),
+            cua_agents::harness::ready().len() - 1,
+            "no duplicates"
+        );
+        unsafe { std::env::set_var("CUA_WARM_POOLS_HARNESSES", " claude-code , ,none ") };
+        assert_eq!(super::warm_pools_harnesses(), ["claude-code"]);
+        unsafe { std::env::set_var("CUA_WARM_POOLS_HARNESSES", "none") };
+        assert!(super::warm_pools_harnesses().is_empty());
+        unsafe { std::env::remove_var("CUA_WARM_POOLS_HARNESSES") };
+        // Every default is a harness this build can install.
+        for id in &defaults {
+            assert!(
+                cua_agents::harness::harness(id).is_some_and(|h| h.ready),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_warm_member_is_prepared_for_the_agents_in_use_first() {
+        let all: Vec<String> = [
+            "openai-codex",
+            "hermes",
+            "claude-code",
+            "opencode",
+            "goose",
+            "pi",
+        ]
+        .map(String::from)
+        .to_vec();
+        // Nothing used yet: Claude Code alone.
+        let (o, n) = super::order_for_warm(all.clone(), &[]);
+        assert_eq!((o[0].as_str(), n), ("claude-code", 1));
+        assert_eq!(o.len(), all.len());
+        // Recent runs and agents follow, newest first, three in all.
+        let phases = "{\"harness\":\"goose\",\"phase\":\"posted\"}\n{\"harness\":\"hermes\",\"phase\":\"posted\"}\nnot json\n{\"harness\":\"hermes\"}\n";
+        let agents = r#"[{"harness":"pi"},{"harness":"claude-code"},{"harness":"gone-harness"}]"#;
+        let recent = super::recent_harnesses(phases, agents);
+        assert_eq!(recent[0], "hermes");
+        let (o, n) = super::order_for_warm(all.clone(), &recent);
+        assert_eq!(n, 3);
+        assert_eq!(&o[..3], ["claude-code", "hermes", "goose"]);
+        assert_eq!(o.len(), all.len(), "the others follow, once");
+    }
+
     #[test]
     fn a_macos_pull_is_sized_from_the_catalog() {
         let gib = 1u64 << 30;
@@ -3091,6 +3978,51 @@ mod tests {
             super::catalog_pull_bytes("example.com/not/listed:1", "arm64"),
             None
         );
+    }
+
+    /// A guest that awaits its token file (every microVM whose token is
+    /// delivered later) is never also handed the token through the
+    /// environment: cua-spacesd refuses both, and a restarted microVM, whose
+    /// token file already held the token, never came back.
+    #[cfg(unix)]
+    #[test]
+    fn a_headless_guest_that_awaits_its_token_file_is_not_given_the_token_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let cmd = headless_command_line();
+        let script = &cmd[2];
+        assert!(
+            script.contains("\"$CUA_ENV_AWAIT_TOKEN_FILE\" != 1"),
+            "the token files are read only when the guest does not await its own: {script}"
+        );
+        let dir = std::env::temp_dir().join(format!("cua-headless-cmd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stub = dir.join("spacesd");
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\necho \"token=[$CUA_ENV_TOKEN] await=[$CUA_ENV_AWAIT_TOKEN_FILE]\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = |env: &[(&str, &str)]| {
+            let mut c = std::process::Command::new(&cmd[0]);
+            c.args(&cmd[1..])
+                .env_remove("CUA_ENV_TOKEN")
+                .env_remove("CUA_ENV_AWAIT_TOKEN_FILE")
+                .env("CUA_SPACESD_BIN", &stub);
+            for (k, v) in env {
+                c.env(k, v);
+            }
+            String::from_utf8_lossy(&c.output().unwrap().stdout)
+                .trim()
+                .to_string()
+        };
+        assert_eq!(
+            run(&[("CUA_ENV_AWAIT_TOKEN_FILE", "1")]),
+            "token=[] await=[1]"
+        );
+        // A token the runtime put in the environment still passes through.
+        assert_eq!(run(&[("CUA_ENV_TOKEN", "abc")]), "token=[abc] await=[]");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3308,8 +4240,6 @@ mod tests {
             )
         );
     }
-
-    use super::*;
 
     #[test]
     fn missing_fallback_requires_auto_linux_source() {
@@ -3749,6 +4679,37 @@ mod tests {
             setup_steps(qemu_report(false), &["qemu"], true, true).await,
             steps(&[("qemu", Installable), ("kvm", Ok)])
         );
+    }
+
+    #[tokio::test]
+    async fn the_default_set_names_only_components_setup_knows() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        let mut report = qemu_report(true);
+        report.backends.push(cua_vmm::auto::BackendStatus {
+            backend: super::BackendKind::Managed,
+            ready: false,
+            provisionable: true,
+            detail: String::new(),
+            missing: vec![],
+            provisioning: vec!["download the built-in Linux runtime".into()],
+        });
+        // `cua runtime setup` with no components, as doctor lists them.
+        assert_eq!(
+            setup_steps(report.clone(), &[], true, true).await,
+            steps(&[("managed", Installable)])
+        );
+        assert_eq!(
+            setup_steps(report.clone(), &[], false, true).await,
+            steps(&[("managed", Ok)])
+        );
+        // A bad name stops before any installer runs.
+        let components = vec!["qemu".to_string(), "nope".to_string()];
+        let install = async || -> cua_vmm::Result<()> { panic!("installer ran") };
+        let kvm = async |_| kvm_step();
+        let err = super::setup_with(report, &components, false, &install, &install, kvm)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown component"), "{err}");
     }
 
     #[tokio::test]

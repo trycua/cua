@@ -69,8 +69,9 @@ pkgs.rustPlatform.buildRustPackage {
   # The `x11` crate (raw Xlib FFI for MPX multi-cursor drags) needs
   # libX11/libXi/libXtst via pkg-config. The Wayland-parity work
   # (round 2/3 — wayland::portal_screencast / wayland::libei) adds:
-  #   pipewire 0.8 -> needs libpipewire-0.3 + libspa headers via pkg-config
-  #                   + bindgen (clang) for SPA pod generation
+  #   pipewire-sys 0.10 -> needs libpipewire-0.3 + libspa headers via
+  #                   pkg-config + bindgen (clang); libpipewire is loaded at
+  #                   runtime, not linked
   #   reis 0.7     -> pure Rust libei binding, but the workspace pulls
   #                   libei-dev transitively through ashpd's tokio feature
   nativeBuildInputs = with pkgs; [
@@ -94,6 +95,16 @@ pkgs.rustPlatform.buildRustPackage {
     # reis links its keyboard support directly against libxkbcommon.
     libxkbcommon
   ];
+
+  # The portal video route dlopens libpipewire instead of linking it, so the
+  # fixup's RUNPATH shrink would drop PipeWire; put it back.
+  postFixup = ''
+    patchelf --add-rpath ${pkgs.lib.makeLibraryPath [ pkgs.pipewire ]} $out/bin/cua-driver
+    if ''${READELF:-readelf} -d $out/bin/cua-driver | grep NEEDED | grep -q libpipewire; then
+      echo "cua-driver links libpipewire; it must load it at runtime" >&2
+      exit 1
+    fi
+  '';
 
   # Skip tests that require a running X11 display or AT-SPI bus
   doCheck = false;

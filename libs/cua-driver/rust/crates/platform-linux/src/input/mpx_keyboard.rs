@@ -590,6 +590,8 @@ fn deliver(
     pacing: StepPacing,
 ) -> Result<KeyboardDeliveryReport> {
     let display = open_display()?;
+    // Some emitted transition has not been reported back by the server yet.
+    let mut unread = false;
     let result = (|| -> Result<KeyboardDeliveryReport> {
         supports_parallel_pointer_injection(display)?;
         let mut major = 2;
@@ -666,6 +668,7 @@ fn deliver(
                 }
                 return Err(error);
             }
+            unread = true;
             if step.press {
                 held.push(step.evdev_code);
             } else {
@@ -695,6 +698,7 @@ fn deliver(
                     };
                     read += usize::from(deviceid == slave_keyboard_id);
                 }
+                unread = false;
             }
         }
         let delivery_confirmed = match last {
@@ -707,6 +711,7 @@ fn deliver(
             ),
             None => true,
         };
+        unread &= !delivery_confirmed;
         // The raw event proves the server consumed the transition; give the
         // toolkit a beat to translate it under any temporary remap before the
         // guards restore the keymap and the slave disappears.
@@ -733,6 +738,11 @@ fn deliver(
             grab_popup: None,
         })
     })();
+    if unread && !remap_guards.is_empty() {
+        // A server that reads them after the restore below would type the
+        // wrong keys. Unplugging the keyboard discards the unread events.
+        forget_uinput_keyboard(cursor_id);
+    }
     drop(remap_guards);
     // The master pair is retained for reuse. Per-call teardown would hot-plug
     // a uinput keyboard and churn the XInput hierarchy on every keystroke

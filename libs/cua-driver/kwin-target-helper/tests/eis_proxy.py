@@ -11,8 +11,11 @@ import threading
 
 path = sys.argv[1]
 bus = dbus.SessionBus()
-eis = dbus.Interface(bus.get_object('org.kde.KWin', '/org/kde/KWin/EIS/RemoteDesktop'),
-                     'org.kde.KWin.EIS.RemoteDesktop')
+eis = dbus.Interface(
+    bus.get_object("org.kde.KWin", "/org/kde/KWin/EIS/RemoteDesktop"),
+    "org.kde.KWin.EIS.RemoteDesktop",
+)
+
 
 def pump(a, b):
     socks = [a, b]
@@ -29,11 +32,13 @@ def pump(a, b):
             for fd in fds:
                 os.close(fd)
 
+
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 if os.path.exists(path):
     os.unlink(path)
-srv.bind(path); srv.listen(4)
-print('eis proxy ready', flush=True)
+srv.bind(path)
+srv.listen(4)
+print("eis proxy ready", flush=True)
 while True:
     client, _ = srv.accept()
     fd, _cookie = eis.connectToEIS(3)

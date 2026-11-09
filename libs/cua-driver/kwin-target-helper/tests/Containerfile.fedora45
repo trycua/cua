@@ -1,0 +1,8 @@
+# The same test on Fedora 45, which ships a newer KWin than the Ubuntu image.
+FROM registry.fedoraproject.org/fedora:45
+RUN dnf install -y --setopt=install_weak_deps=False \
+    kwin kwin-devel cmake make gcc-c++ pkgconf extra-cmake-modules \
+    qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kconfig-devel kf6-kwindowsystem-devel kf6-kglobalaccel-devel \
+    kf6-kcoreaddons-devel libdrm-devel libepoxy-devel wayland-devel libxkbcommon-devel mesa-libEGL-devel mesa-libgbm-devel \
+    dbus-daemon dbus-tools qt6-qttools glib2 python3-gobject gtk4 python3-dbus libei mesa-dri-drivers \
+    && dnf clean all

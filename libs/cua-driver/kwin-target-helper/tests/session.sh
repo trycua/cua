@@ -5,6 +5,8 @@
 # the gate suite and, when a driver is mounted, the driver suite.
 set -u
 tests=/helper/tests; driver=/driver/cua-driver
+# Ubuntu and Debian name Qt 6's qdbus qdbus6, Fedora qdbus-qt6.
+qdbus="$(command -v qdbus6 || command -v qdbus-qt6)"
 work="$(mktemp -d)"
 export XDG_RUNTIME_DIR="$work/run" HOME="$work/home"
 mkdir -m700 "$XDG_RUNTIME_DIR"; mkdir "$HOME"
@@ -13,7 +15,10 @@ if ! cmake -S /helper -B "$work/build" -DCMAKE_BUILD_TYPE=Release >/dev/null ||
   echo "helper build failed" >&2
   exit 1
 fi
-export QT_PLUGIN_PATH="$work/build/bin" WAYLAND_DISPLAY=cua-kwin-test XDG_SESSION_TYPE=wayland \
+# Where the build puts the plugin depends on the KDE CMake version.
+plugin="$(find "$work/build" -name cua_kwin_target_helper.so -path '*/kwin/effects/plugins/*' | head -n 1)"
+[ -n "$plugin" ] || { echo "helper build produced no plugin" >&2; exit 1; }
+export QT_PLUGIN_PATH="${plugin%/kwin/effects/plugins/*}" WAYLAND_DISPLAY=cua-kwin-test XDG_SESSION_TYPE=wayland \
   XDG_CURRENT_DESKTOP=KDE CUA_DRIVER_RS_ENABLE_WAYLAND=1
 unset DISPLAY
 if [ -x "$driver" ]; then
@@ -29,8 +34,8 @@ KWIN_WAYLAND_NO_PERMISSION_CHECKS=1 KWIN_SCREENSHOT_NO_PERMISSION_CHECKS=1 \
 for _ in $(seq 50); do [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break; sleep 0.2; done
 loaded=
 for _ in $(seq 100); do
-  qdbus6 org.cua.KWinTarget /org/cua/KWinTarget GetVersion >/dev/null 2>&1 && { loaded=1; break; }
-  qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect cua_kwin_target_helper >/dev/null 2>&1
+  "$qdbus" org.cua.KWinTarget /org/cua/KWinTarget GetVersion >/dev/null 2>&1 && { loaded=1; break; }
+  "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect cua_kwin_target_helper >/dev/null 2>&1
   sleep 0.2
 done
 [ -n "$loaded" ] || { echo "KWin did not load the helper" >&2; tail "$work/kwin.log" >&2; exit 1; }

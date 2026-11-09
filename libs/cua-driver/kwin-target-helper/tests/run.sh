@@ -6,14 +6,16 @@
 #
 #   tests/run.sh                 # gate suite: the helper on its own
 #   tests/run.sh path/to/cua-driver   # also the driver suite (a portal-input build
-#                                     # linked for this image's Ubuntu 26.04)
+#                                     # whose glibc the image has)
+#   DISTRO=debian13 tests/run.sh ...  # on Debian 13 (KWin 6.3) instead of
+#   DISTRO=fedora45 tests/run.sh ...  # Ubuntu 26.04 (KWin 6.6), or Fedora 45
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 helper="$(dirname "$here")"
 engine="${CONTAINER_ENGINE:-$(command -v podman || command -v docker || true)}"
 [ -n "$engine" ] || { echo "run.sh needs podman or docker" >&2; exit 2; }
-image=cua-kwin-target-helper-test
-"$engine" build -q -t "$image" -f "$here/Containerfile" "$here" >/dev/null
+image=cua-kwin-target-helper-test${DISTRO:+-$DISTRO}
+"$engine" build -q -t "$image" -f "$here/Containerfile${DISTRO:+.$DISTRO}" "$here" >/dev/null
 
 args=(--rm -v "$helper:/helper:ro,Z")
 if [ $# -gt 0 ]; then

@@ -300,6 +300,7 @@ jobs:
 
   # The single check to require in branch protection. Skipped lanes pass
   # (path-based requirement); gated PRs need every lane green.
+  # quick runs only on pull_request and merge_group, so every other event reports it skipped.
   result:
     name: "E2E gate / result"
     if: ${{ always() && needs.quick.outputs.skip != 'true' }}
@@ -323,7 +324,7 @@ jobs:
             echo "Release-gate lanes not required for this change." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") and (.key != "macos-pr" or .value.result != "skipped") and (.key != "browsers" or .value.result != "skipped" or env.LANES_SIZE != "quick")) | "\(.key)=\(.value.result)"' <<< "$LANES")
+          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "quick" or .value.result != "skipped" or env.EVENT == "pull_request" or env.EVENT == "merge_group") and (.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") and (.key != "macos-pr" or .value.result != "skipped") and (.key != "browsers" or .value.result != "skipped" or env.LANES_SIZE != "quick")) | "\(.key)=\(.value.result)"' <<< "$LANES")
           if [[ -n "$bad" ]]; then
             echo "::error::release-gate lanes not green: $bad"; exit 1
           fi
@@ -367,7 +368,7 @@ jobs:
           set -euo pipefail
           TITLE="Cua Driver release gate failing on main (nightly)"
           mkdir -p lane-evidence
-          failed=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select(.key != "macos-pr" or .value.result != "skipped") | "- `\(.key)`: \(.value.result)"' <<< "$LANES")
+          failed=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "quick" and .key != "macos-pr") or .value.result != "skipped") | "- `\(.key)`: \(.value.result)"' <<< "$LANES")
           flaky=$(scripts/ci/summarize-flaky-cases.sh lane-evidence)
           existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" --json number,title \
             --jq "[.[]|select(.title==\"$TITLE\")][0].number // empty")

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.25.1](https://github.com/trycua/cua/compare/cua-spaces-v0.25.0...cua-spaces-v0.25.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-volume:** a saved presence heartbeat replaces the last one, and a saved change whose bytes are gone is forgotten (fixes [#6859](https://github.com/trycua/cua/issues/6859)) ([#6864](https://github.com/trycua/cua/issues/6864)) ([2349735](https://github.com/trycua/cua/commit/2349735830d4f6e8391c97557d578374e79a4ee2))
+
+## [0.25.0](https://github.com/trycua/cua/compare/cua-spaces-v0.24.0...cua-spaces-v0.25.0) (2026-11-09)
+
+
+### Features
+
+* **spaces:** a Space uses the pool, its runs are its children and are cleaned up with it ([#6945](https://github.com/trycua/cua/issues/6945)) ([a35099d](https://github.com/trycua/cua/commit/a35099d7bcc5548d9d1b86b901d20e025a0594b9))
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+* **cua-agents:** an agent's log event bigger than the read window no longer stalls the reader, and the journal keeps lines small ([#7004](https://github.com/trycua/cua/issues/7004)) ([8b339c5](https://github.com/trycua/cua/commit/8b339c56feb1b03252d3e72ff7a6e3d961af856f))
+* **spaces:** do not Authenticode-sign the Linux microVM init in the Windows build ([#7038](https://github.com/trycua/cua/issues/7038)) ([9ec4ba3](https://github.com/trycua/cua/commit/9ec4ba39013339524bfb54d2c0aeca8bd0035559))
+* **spaces:** hold back an agent's narration of its own process in the thread ([#7027](https://github.com/trycua/cua/issues/7027)) ([fa605be](https://github.com/trycua/cua/commit/fa605be7c8dc15c7042205ae98d5a85699c36a47))
+* **spaces:** New agent starts in your running Space, not a machine's desktop or an offline one ([#6976](https://github.com/trycua/cua/issues/6976)) ([f2068eb](https://github.com/trycua/cua/commit/f2068eb68198973a7463041ae32cb747dacd7aa0))
+* **spaces:** run Prettier on the Cua Spaces apps again ([#7073](https://github.com/trycua/cua/issues/7073)) ([6285c48](https://github.com/trycua/cua/commit/6285c481d2d867eb954a6e6c5531ba8a88182832))
+* **spaces:** runs from a Space are confined children and a Space cannot start its own daemon ([#7055](https://github.com/trycua/cua/issues/7055)) ([8275285](https://github.com/trycua/cua/commit/82752858f6256eaf4e8eccf9033cf27ad3163cea))
+* **spaces:** Start an agent says before Start when the agent has no provider to use ([#6977](https://github.com/trycua/cua/issues/6977)) ([e16eeb3](https://github.com/trycua/cua/commit/e16eeb3e71a5604c339c41d7770ece6da6ab69ce))
+
 ## [0.24.0](https://github.com/trycua/cua/compare/cua-spaces-v0.23.1...cua-spaces-v0.24.0) (2026-11-08)
 
 

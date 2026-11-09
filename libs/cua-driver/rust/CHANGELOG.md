@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.2...cua-driver-rs-v0.45.3) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-driver:** wait for the child's exec in the NO_AT_BRIDGE test ([#7080](https://github.com/trycua/cua/issues/7080)) ([5cd6bd5](https://github.com/trycua/cua/commit/5cd6bd5d2d6a24b46bd61a30103a6133a6c932a7))
+
 ## [0.45.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.1...cua-driver-rs-v0.45.2) (2026-11-09)
 
 

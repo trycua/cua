@@ -47,7 +47,7 @@ pub enum Command {
         /// `serve::default_socket_path()` when None.
         socket: Option<String>,
     },
-    /// `cua-driver connect`: connect Claude Code, Codex and Cursor.
+    /// `cua-driver connect`: connect Claude Code, Codex, Cursor and Factory Droid.
     Connect {
         clients: Vec<String>,
         dry_run: bool,
@@ -2106,9 +2106,9 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
             { "name": "connect",
-              "description": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
+              "description": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
               "args": [
-                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex or cursor). Repeat for several. Default: every agent found." },
+                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex, cursor or droid). Repeat for several. Default: every agent found." },
                   { "name": "--dry-run", "type": "flag", "description": "Show what would be connected without changing anything." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable output." }
               ] },
@@ -2457,6 +2457,11 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             // .factory/mcp.json (folder/project), top-level "mcpServers" with
             // "type":"stdio". The CLI takes command+args as one quoted string.
             println!("droid mcp add cua-driver \"{binary} mcp\"");
+            eprintln!(
+                "Droid asks for --auto high before any MCP tool without readOnlyHint. \
+                 `cua-driver connect --client droid` also rates the action tools medium \
+                 in ~/.factory/settings.json, so --auto medium runs them."
+            );
         }
         Some("zcode") => {
             // ZCode by Z.ai (GLM coding harness) — a GUI app. MCP servers are
@@ -4692,10 +4697,10 @@ fn cli_docs_literal() -> serde_json::Value {
             },
             {
                 "name": "connect",
-                "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
-                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+                "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
+                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
                 "arguments": no_args,
-                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex or cursor). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
+                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex, cursor or droid). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
                 "flags": [{"name":"dry-run","short_name":null,"help":"Show what would be connected without changing anything.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],
                 "subcommands": no_subcommands
             },

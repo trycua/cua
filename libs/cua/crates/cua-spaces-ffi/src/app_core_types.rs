@@ -7173,6 +7173,13 @@ pub struct AppSettings {
     /// one is a connect, which shows its app again
     /// ([`crate::agent_menu::sync`]).
     pub agent_menu_seen: Vec<String>,
+    /// Settings, General, "When I close the window": closing the main
+    /// window leaves Cua Spaces and its background service running (on, the
+    /// default); off, it quits Cua Spaces, as Quit does.
+    pub close_window_keeps_running: bool,
+    /// "Don't show this again" on the notice that Cua Spaces keeps running
+    /// when the window closes, or the Settings switch turned off.
+    pub close_notice_off: bool,
 }
 
 /// A pressed key combination.
@@ -7288,6 +7295,11 @@ pub struct AppSettingsInput {
     /// Settings, General's Show tips switch: tips are on
     /// (`!AppSettings.tips.off`). A shell that does not say reads as on.
     pub show_tips: bool,
+    /// Settings, General's "When I close the window": the window's close
+    /// button keeps Cua Spaces running in the background (none: no rows).
+    pub close_window_keeps_running: Option<bool>,
+    /// The notice that Cua Spaces keeps running is on.
+    pub close_notice: bool,
 }
 
 /// How a Settings row draws.

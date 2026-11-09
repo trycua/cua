@@ -40901,7 +40901,18 @@ export type AppSettings = {
      * one is a connect, which shows its app again
      * ([`crate::agent_menu::sync`]).
      */
-    agentMenuSeen: Array<string>
+    agentMenuSeen: Array<string>,
+    /**
+     * Settings, General, "When I close the window": closing the main
+     * window leaves Cua Spaces and its background service running (on, the
+     * default); off, it quits Cua Spaces, as Quit does.
+     */
+    closeWindowKeepsRunning: boolean,
+    /**
+     * "Don't show this again" on the notice that Cua Spaces keeps running
+     * when the window closes, or the Settings switch turned off.
+     */
+    closeNoticeOff: boolean
 }
 
 /**
@@ -40944,7 +40955,9 @@ const FfiConverterTypeAppSettings = (() => {
                 tips: FfiConverterTypeAppTipsState.read(from),
                 agentMenuShown: FfiConverterSequenceString.read(from),
                 agentMenuHidden: FfiConverterSequenceString.read(from),
-                agentMenuSeen: FfiConverterSequenceString.read(from)
+                agentMenuSeen: FfiConverterSequenceString.read(from),
+                closeWindowKeepsRunning: FfiConverterBool.read(from),
+                closeNoticeOff: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -40968,6 +40981,8 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterSequenceString.write(value.agentMenuShown, into);
             FfiConverterSequenceString.write(value.agentMenuHidden, into);
             FfiConverterSequenceString.write(value.agentMenuSeen, into);
+            FfiConverterBool.write(value.closeWindowKeepsRunning, into);
+            FfiConverterBool.write(value.closeNoticeOff, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.hotkey) +
@@ -40989,7 +41004,9 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterTypeAppTipsState.allocationSize(value.tips) +
              FfiConverterSequenceString.allocationSize(value.agentMenuShown) +
              FfiConverterSequenceString.allocationSize(value.agentMenuHidden) +
-             FfiConverterSequenceString.allocationSize(value.agentMenuSeen);
+             FfiConverterSequenceString.allocationSize(value.agentMenuSeen) +
+             FfiConverterBool.allocationSize(value.closeWindowKeepsRunning) +
+             FfiConverterBool.allocationSize(value.closeNoticeOff);
 
         }
     };
@@ -41832,7 +41849,16 @@ export type AppSettingsInput = {
      * Settings, General's Show tips switch: tips are on
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
-    showTips: boolean
+    showTips: boolean,
+    /**
+     * Settings, General's "When I close the window": the window's close
+     * button keeps Cua Spaces running in the background (none: no rows).
+     */
+    closeWindowKeepsRunning?: boolean,
+    /**
+     * The notice that Cua Spaces keeps running is on.
+     */
+    closeNotice: boolean
 }
 
 /**
@@ -41875,7 +41901,9 @@ const FfiConverterTypeAppSettingsInput = (() => {
                 autoConnect: FfiConverterOptionalBoolean.read(from),
                 overflow: FfiConverterOptionalBoolean.read(from),
                 runtimes: FfiConverterOptionalTypeAppRuntimesInput.read(from),
-                showTips: FfiConverterBool.read(from)
+                showTips: FfiConverterBool.read(from),
+                closeWindowKeepsRunning: FfiConverterOptionalBoolean.read(from),
+                closeNotice: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -41899,6 +41927,8 @@ const FfiConverterTypeAppSettingsInput = (() => {
             FfiConverterOptionalBoolean.write(value.overflow, into);
             FfiConverterOptionalTypeAppRuntimesInput.write(value.runtimes, into);
             FfiConverterBool.write(value.showTips, into);
+            FfiConverterOptionalBoolean.write(value.closeWindowKeepsRunning, into);
+            FfiConverterBool.write(value.closeNotice, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.identity) +
@@ -41920,7 +41950,9 @@ const FfiConverterTypeAppSettingsInput = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.autoConnect) +
              FfiConverterOptionalBoolean.allocationSize(value.overflow) +
              FfiConverterOptionalTypeAppRuntimesInput.allocationSize(value.runtimes) +
-             FfiConverterBool.allocationSize(value.showTips);
+             FfiConverterBool.allocationSize(value.showTips) +
+             FfiConverterOptionalBoolean.allocationSize(value.closeWindowKeepsRunning) +
+             FfiConverterBool.allocationSize(value.closeNotice);
 
         }
     };

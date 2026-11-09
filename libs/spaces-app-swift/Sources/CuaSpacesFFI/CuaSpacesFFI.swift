@@ -35881,6 +35881,17 @@ public struct AppSettings: Equatable, Hashable {
      * ([`crate::agent_menu::sync`]).
      */
     public var agentMenuSeen: [String]
+    /**
+     * Settings, General, "When I close the window": closing the main
+     * window leaves Cua Spaces and its background service running (on, the
+     * default); off, it quits Cua Spaces, as Quit does.
+     */
+    public var closeWindowKeepsRunning: Bool
+    /**
+     * "Don't show this again" on the notice that Cua Spaces keeps running
+     * when the window closes, or the Settings switch turned off.
+     */
+    public var closeNoticeOff: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35969,7 +35980,16 @@ public struct AppSettings: Equatable, Hashable {
          * The working accounts the menu last saw (`app|variable|slot`): a new
          * one is a connect, which shows its app again
          * ([`crate::agent_menu::sync`]).
-         */agentMenuSeen: [String]) {
+         */agentMenuSeen: [String],
+        /**
+         * Settings, General, "When I close the window": closing the main
+         * window leaves Cua Spaces and its background service running (on, the
+         * default); off, it quits Cua Spaces, as Quit does.
+         */closeWindowKeepsRunning: Bool,
+        /**
+         * "Don't show this again" on the notice that Cua Spaces keeps running
+         * when the window closes, or the Settings switch turned off.
+         */closeNoticeOff: Bool) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -35990,6 +36010,8 @@ public struct AppSettings: Equatable, Hashable {
         self.agentMenuShown = agentMenuShown
         self.agentMenuHidden = agentMenuHidden
         self.agentMenuSeen = agentMenuSeen
+        self.closeWindowKeepsRunning = closeWindowKeepsRunning
+        self.closeNoticeOff = closeNoticeOff
     }
 
 
@@ -36027,7 +36049,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 tips: FfiConverterTypeAppTipsState.read(from: &buf),
                 agentMenuShown: FfiConverterSequenceString.read(from: &buf),
                 agentMenuHidden: FfiConverterSequenceString.read(from: &buf),
-                agentMenuSeen: FfiConverterSequenceString.read(from: &buf)
+                agentMenuSeen: FfiConverterSequenceString.read(from: &buf),
+                closeWindowKeepsRunning: FfiConverterBool.read(from: &buf),
+                closeNoticeOff: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -36052,6 +36076,8 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.agentMenuShown, into: &buf)
         FfiConverterSequenceString.write(value.agentMenuHidden, into: &buf)
         FfiConverterSequenceString.write(value.agentMenuSeen, into: &buf)
+        FfiConverterBool.write(value.closeWindowKeepsRunning, into: &buf)
+        FfiConverterBool.write(value.closeNoticeOff, into: &buf)
     }
 }
 
@@ -36164,6 +36190,15 @@ public struct AppSettingsInput: Equatable, Hashable {
      * (`!AppSettings.tips.off`). A shell that does not say reads as on.
      */
     public var showTips: Bool
+    /**
+     * Settings, General's "When I close the window": the window's close
+     * button keeps Cua Spaces running in the background (none: no rows).
+     */
+    public var closeWindowKeepsRunning: Bool?
+    /**
+     * The notice that Cua Spaces keeps running is on.
+     */
+    public var closeNotice: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -36239,7 +36274,14 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * Settings, General's Show tips switch: tips are on
          * (`!AppSettings.tips.off`). A shell that does not say reads as on.
-         */showTips: Bool) {
+         */showTips: Bool,
+        /**
+         * Settings, General's "When I close the window": the window's close
+         * button keeps Cua Spaces running in the background (none: no rows).
+         */closeWindowKeepsRunning: Bool?,
+        /**
+         * The notice that Cua Spaces keeps running is on.
+         */closeNotice: Bool) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -36260,6 +36302,8 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.overflow = overflow
         self.runtimes = runtimes
         self.showTips = showTips
+        self.closeWindowKeepsRunning = closeWindowKeepsRunning
+        self.closeNotice = closeNotice
     }
 
 
@@ -36297,7 +36341,9 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 autoConnect: FfiConverterOptionBool.read(from: &buf),
                 overflow: FfiConverterOptionBool.read(from: &buf),
                 runtimes: FfiConverterOptionTypeAppRuntimesInput.read(from: &buf),
-                showTips: FfiConverterBool.read(from: &buf)
+                showTips: FfiConverterBool.read(from: &buf),
+                closeWindowKeepsRunning: FfiConverterOptionBool.read(from: &buf),
+                closeNotice: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -36322,6 +36368,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.overflow, into: &buf)
         FfiConverterOptionTypeAppRuntimesInput.write(value.runtimes, into: &buf)
         FfiConverterBool.write(value.showTips, into: &buf)
+        FfiConverterOptionBool.write(value.closeWindowKeepsRunning, into: &buf)
+        FfiConverterBool.write(value.closeNotice, into: &buf)
     }
 }
 

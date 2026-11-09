@@ -855,24 +855,29 @@ pub fn list_session_snapshots_with_prefix(
 /// `start_session`. The closed transport itself stays refused. These ends are
 /// never explicit, whatever `reason` the transport reports.
 pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -> usize {
-    let mut ids = {
+    let mut ids = lifecycle_records()
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, record)| record.owner_transport == owner_transport)
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    ids.extend(dormant_sessions(|_, owner| owner == Some(owner_transport)));
+    for id in &ids {
+        end_session_with_reason(id, reason, false);
+    }
+    // Release the labels only once every episode above has ended. Released
+    // earlier, another transport could claim a label in between and the loop
+    // would end that new episode.
+    if is_trackable(owner_transport) {
         let ended = ended_sessions().lock().unwrap();
         let records = lifecycle_records().lock().unwrap();
-        if is_trackable(owner_transport) && names_labels_of(&ended, &records, owner_transport) {
+        if names_labels_of(&ended, &records, owner_transport) {
             closed_transports()
                 .lock()
                 .unwrap()
                 .insert(owner_transport.to_owned());
         }
-        records
-            .iter()
-            .filter(|(_, record)| record.owner_transport == owner_transport)
-            .map(|(id, _)| id.clone())
-            .collect::<Vec<_>>()
-    };
-    ids.extend(dormant_sessions(|_, owner| owner == Some(owner_transport)));
-    for id in &ids {
-        end_session_with_reason(id, reason, false);
     }
     ids.len()
 }
@@ -2502,6 +2507,58 @@ mod tests {
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             2
+        );
+    }
+
+    #[test]
+    fn a_close_does_not_end_a_label_claimed_while_it_runs() {
+        let live = "test-close-race-live-G1H2I3";
+        let dormant = "test-close-race-dormant-G1H2I3";
+        let owner_a = "test-close-race-transport-a";
+        let owner_b = "test-close-race-transport-b";
+        let begin = |sid: &str, owner: &str| {
+            begin_session_dispatch(
+                sid,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        drop(begin(live, owner_a).unwrap());
+        drop(begin(dormant, owner_a).unwrap());
+        assert_eq!(
+            evict_idle_with_prefix(Duration::ZERO, dormant),
+            vec![dormant.to_owned()]
+        );
+
+        // B tries to claim the idle label while A's close is still ending its
+        // sessions. Either the claim waits for the close, or the close must
+        // leave B's new episode alive.
+        let claimed = Arc::new(std::sync::Mutex::new(None));
+        let claimed_in_hook = claimed.clone();
+        let _registration =
+            register_scoped_fallible_session_end_hook("close-race-test", move |ended| {
+                if ended == live {
+                    let guard = begin(dormant, owner_b);
+                    claimed_in_hook.lock().unwrap().replace(guard.is_ok());
+                }
+                Ok(())
+            });
+        end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+
+        if *claimed.lock().unwrap() == Some(true) {
+            assert!(
+                session_snapshot(dormant, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some(),
+                "A's close ended the episode B claimed during it"
+            );
+        }
+        drop(begin(dormant, owner_b).expect("B claims the label after A's close"));
+        assert!(session_snapshot(dormant, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            1
         );
     }
 

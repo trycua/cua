@@ -25,22 +25,10 @@ export type SpaceOs = "macos" | "windows" | "linux" | "unknown";
  *  - `provisioning` : being created
  *  - `deleting`     : being deleted (the user confirmed)
  */
-export type SpaceStatus =
-  | "local"
-  | "running"
-  | "approval"
-  | "suspended"
-  | "provisioning"
-  | "deleting";
+export type SpaceStatus = "local" | "running" | "approval" | "suspended" | "provisioning" | "deleting";
 
 /** Visual scene used to draw a synthetic thumbnail (no real screen capture). */
-export type ThumbnailScene =
-  | "mac-desktop"
-  | "windows-desktop"
-  | "linux-terminal"
-  | "notes"
-  | "browser"
-  | "blank";
+export type ThumbnailScene = "mac-desktop" | "windows-desktop" | "linux-terminal" | "notes" | "browser" | "blank";
 
 /**
  * What the cua SDK reported about a registered Space (`list_spaces`). Present
@@ -113,8 +101,6 @@ export interface Space {
   /** For a Space one of your machines provides: that machine's relay id
    * (the sidebar nests it under the machine) and name. */
   host?: string;
-  /** The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a top-level Space. */
-  parent?: string;
   hostName?: string;
   /** Whether and how it turns off and on (the SDK's `power`), with a power
    * action in flight; absent when it cannot (a cloud Space). */
@@ -260,8 +246,6 @@ export interface SpaceRow {
   error?: string;
   /** For a Space one of your machines provides: that machine's relay id and name. */
   host?: string;
-  /** The Space it is a child of (its id). */
-  parent?: string;
   hostName?: string;
   /** How it turns off and on (`suspend`, `stop`); absent when it cannot. */
   power?: string;

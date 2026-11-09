@@ -5,7 +5,6 @@ import i18next, { type TOptions } from "i18next";
 import ICU from "i18next-icu";
 import { initReactI18next, useTranslation } from "react-i18next";
 
-
 /** One namespace per product area. Keys: `<area>.<screen>.<element>`. */
 export const NAMESPACES = [
   "common",

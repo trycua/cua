@@ -203,6 +203,8 @@ pub struct Model {
     pub name: &'static str,
     /// A quick, cheap model (the picker's default is the first of these).
     pub fast: bool,
+    /// An older id kept so a saved choice still works: not shown in the menu, never a default.
+    pub legacy: bool,
 }
 
 /// A region (or plan) with its own base URL.
@@ -313,6 +315,7 @@ impl Provider {
             id: self.default_model,
             name: self.default_model,
             fast: false,
+            legacy: false,
         }]
     }
 

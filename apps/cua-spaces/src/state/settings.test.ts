@@ -75,9 +75,7 @@ describe("hotkey recorder formatting", () => {
   });
 
   it("orders modifiers ⌘⌃⌥⇧ and upper-cases letters", () => {
-    expect(
-      formatHotkey({ key: "k", metaKey: true, ctrlKey: true, altKey: true, shiftKey: true }),
-    ).toBe("⌘⌃⌥⇧K");
+    expect(formatHotkey({ key: "k", metaKey: true, ctrlKey: true, altKey: true, shiftKey: true })).toBe("⌘⌃⌥⇧K");
   });
 
   it("labels arrows and escape", () => {

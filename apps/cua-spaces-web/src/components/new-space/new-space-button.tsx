@@ -42,7 +42,7 @@ export function NewSpaceButton() {
             <ChevronDownIcon className="size-3.5" />
           </Button>
         }
-        items={[{ label: "Add a machine by its address\u2026", onSelect: () => wizard.showAddress() }]}
+        items={[{ label: "Add a computer by its address\u2026", onSelect: () => wizard.showAddress() }]}
       />
     </div>
   );

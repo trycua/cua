@@ -452,7 +452,73 @@ pub fn build_squashfs_native(layers: &[PathBuf], out: &Path) -> Result<()> {
     result
 }
 
-#[cfg(not(unix))]
+/// Marks `f` sparse (NTFS allocates nothing for a hole): a 16 GiB scratch
+/// disk must not take 16 GiB.
+#[cfg(windows)]
+fn make_sparse(f: &std::fs::File) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
+    let mut returned = 0u32;
+    unsafe {
+        DeviceIoControl(
+            f.as_raw_handle() as _,
+            FSCTL_SET_SPARSE,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        );
+    }
+}
+
+/// [`expand_template`] on Windows: the same image, written with
+/// `seek_write` into a sparse file.
+#[cfg(windows)]
+pub fn expand_template(template: &[u8], dest: &Path, size: u64) -> Result<()> {
+    use std::os::windows::fs::FileExt;
+    const MAGIC: &[u8] = b"CUASPARSE1";
+    let bad = || VmmError::other("the scratch disk template is corrupt");
+    let rest = template.strip_prefix(MAGIC).ok_or_else(bad)?;
+    let image = u64::from_le_bytes(
+        rest.get(..8)
+            .ok_or_else(bad)?
+            .try_into()
+            .map_err(|_| bad())?,
+    );
+    let mut body = Vec::new();
+    flate2::read::ZlibDecoder::new(&rest[8..]).read_to_end(&mut body)?;
+    if body.len() % (8 + 4096) != 0 {
+        return Err(bad());
+    }
+    let partial = dest.with_extension("partial");
+    let _ = std::fs::remove_file(&partial);
+    let f = std::fs::File::create(&partial)?;
+    make_sparse(&f);
+    f.set_len(size.max(image))?;
+    for rec in body.chunks_exact(8 + 4096) {
+        let off = u64::from_le_bytes(rec[..8].try_into().map_err(|_| bad())?);
+        if off + 4096 > image {
+            let _ = std::fs::remove_file(&partial);
+            return Err(bad());
+        }
+        let mut data = &rec[8..];
+        let mut at = off;
+        while !data.is_empty() {
+            let n = f.seek_write(data, at)?;
+            data = &data[n..];
+            at += n as u64;
+        }
+    }
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&partial, dest)?;
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn expand_template(_template: &[u8], _dest: &Path, _size: u64) -> Result<()> {
     Err(super::unix_only("a scratch disk"))
 }

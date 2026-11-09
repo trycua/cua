@@ -68,19 +68,15 @@ export function bakedFeedUrl(text: string | null, fallback = "https://github.com
 }
 
 /** Electron builds exist for Windows and Linux on both channels; macOS waits for STABLE_FEED (Stable only). */
-export const channelServed = (
-  channel: UpdateChannel,
-  stableFeed = STABLE_FEED,
-  platform: NodeJS.Platform = process.platform,
-) => platform === "win32" || platform === "linux" || (channel === "stable" && stableFeed);
+export const channelServed = (channel: UpdateChannel, stableFeed = STABLE_FEED, platform: NodeJS.Platform = process.platform) =>
+  platform === "win32" || platform === "linux" || (channel === "stable" && stableFeed);
 
 export const updateChannel = (): UpdateChannel => channelPref(readSettings(), buildChannel(), (c) => channelServed(c));
 
 /** A packaged build with a feed (electron-builder's app-update.yml); a development run has no updater. */
 export const hasFeed = () => app.isPackaged && existsSync(path.join(process.resourcesPath, "app-update.yml"));
 
-export const updatesEnabled = () =>
-  app.isPackaged && autoCheckPref(readSettings(), process.env) && channelServed(updateChannel());
+export const updatesEnabled = () => app.isPackaged && autoCheckPref(readSettings(), process.env) && channelServed(updateChannel());
 
 type AutoUpdater = (typeof import("electron-updater"))["autoUpdater"];
 

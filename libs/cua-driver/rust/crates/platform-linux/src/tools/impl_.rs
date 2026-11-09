@@ -845,7 +845,7 @@ pub(crate) fn resolve_element_local_coords(
 
     let xid = if let Some(x) = xid_hint {
         x
-    } else if crate::wayland::wayland_input_enabled() {
+    } else if crate::wayland::is_wayland() {
         crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .next()
@@ -859,7 +859,7 @@ pub(crate) fn resolve_element_local_coords(
             .ok_or_else(|| anyhow::anyhow!("No windows for pid {pid}"))?
     };
 
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
                 .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
@@ -917,7 +917,7 @@ pub(crate) fn checked_element_local_coords(
     xid_hint: Option<u64>,
 ) -> anyhow::Result<(u64, f64, f64)> {
     let (xid, lx, ly) = resolve_element_local_coords(pid, token, xid_hint)?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return Ok((xid, lx, ly));
     }
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -1332,6 +1332,13 @@ pub(crate) fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
     }
 }
 
+/// The budget of a `type_text` call that types `text`, whichever input route it
+/// takes. libei text with line breaks takes time between its parts.
+pub(crate) fn text_typing_budget(text: &str) -> std::time::Duration {
+    typing_budget(text.chars().count(), crate::wayland::niri::is_session())
+        + crate::wayland::text_pacing(text)
+}
+
 #[cfg(test)]
 #[test]
 fn niri_typing_outlasts_the_keyboard_deadline() {
@@ -1387,6 +1394,17 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         return refusal;
     }
     match crate::input::foreground::error_code(&e) {
+        Some(code) if text.ends_with(crate::wayland::NOTHING_TYPED) => {
+            ToolResult::error(text.clone()).with_structured(json!({
+                "code": code,
+                "detail": text,
+                "effect": "none",
+                // Set here so it isn't the generic hint for this code, which
+                // blames a window that could not be brought forward.
+                "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+                "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+            }))
+        }
         Some(code) => ToolResult::error(text.clone()).with_structured(json!({
             "code": code,
             "detail": text,
@@ -1401,6 +1419,28 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_refused_text_says_why_instead_of_blaming_a_window() {
+    let mut refused =
+        input_error_result(crate::wayland::type_text_focused("abc\u{8}").unwrap_err());
+    cua_driver_core::recovery_hint::annotate(
+        "type_text",
+        &cua_driver_core::recovery_hint::Seed::from_args(&json!({})),
+        &mut refused,
+    );
+    assert_eq!(
+        refused.structured_content.unwrap(),
+        json!({
+            "code": "foreground_unavailable",
+            "detail": "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed",
+            "effect": "none",
+            "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+            "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+        })
+    );
 }
 
 #[cfg(test)]
@@ -1935,17 +1975,18 @@ pub(crate) fn background_virtual_text(
     pid: u32,
     xid: u64,
     text: &str,
+    pacing: crate::input::TypePacing,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
-        match crate::input::send_popup_keyboard_text(popup.window, text) {
+        match crate::input::send_popup_keyboard_text_paced(popup.window, text, pacing) {
             Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
             delivered => return delivered,
         }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
-            crate::input::send_type_text_xtest(text)
+            crate::input::send_type_text_xtest_paced(text, pacing)
         });
     }
-    crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+    crate::input::send_virtual_keyboard_text_paced(cursor_id, xid, text, pacing)
 }
 
 pub(crate) fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
@@ -2169,7 +2210,7 @@ pub(crate) fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
+    (crate::wayland::is_wayland()
         && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
         && !delivery.is_foreground())
     .then(|| {
@@ -2750,7 +2791,7 @@ pub(crate) fn isolated_hyprland_background(delivery: crate::input::delivery::Del
 
 pub(crate) fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
-        && crate::wayland::wayland_input_enabled()
+        && crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
 }
 
@@ -2831,9 +2872,7 @@ pub(crate) async fn wm_chord_background(
     modifiers: &[String],
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if delivery.is_foreground()
-        || crate::wayland::wayland_input_enabled()
-        || crate::wayland::is_inject_mode()
+    if delivery.is_foreground() || crate::wayland::is_wayland() || crate::wayland::is_inject_mode()
     {
         return None;
     }
@@ -3954,7 +3993,7 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
             crate::interaction::policy::Scope::DesktopInput,
             crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
         )?;
-        if !crate::wayland::wayland_input_enabled() {
+        if !crate::wayland::is_wayland() {
             return Ok(crate::wayland::DesktopInputSpace::default());
         }
         crate::wayland::DesktopInputSpace::current()
@@ -4068,7 +4107,7 @@ pub(crate) fn explicit_keyboard_cursor_target(
     }
 
     let (x, y) = pixel_target?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return crate::wayland::window_geometry(xid)
             .map(|(wx, wy, _, _)| (f64::from(wx) + x.round(), f64::from(wy) + y.round()));
     }

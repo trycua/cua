@@ -21,7 +21,7 @@ const AGENTS: { value: Agent; label: string }[] = [
 export function useThisAndOthers(): { here: Machine | undefined; hereName: string; others: string[] } {
   const { data: machines } = useMachines();
   const here = machines?.find((m) => m.current);
-  return { here, hereName: here?.name ?? "this machine", others: (machines ?? []).filter((m) => !m.current && !m.device).map((m) => m.name) };
+  return { here, hereName: here?.name ?? "this computer", others: (machines ?? []).filter((m) => !m.current && !m.device).map((m) => m.name) };
 }
 
 /**
@@ -34,19 +34,20 @@ export function OtherMachineBlock() {
   return (
     <div data-connect-other-machine="" className="px-4 py-3.5">
       <p className="text-xs text-muted-foreground">
-        An agent that runs on a different machine can use {hereName} too. Host to name: <span className="font-medium text-foreground select-text">{hereName}</span>
+        An agent that runs on a different machine can use {hereName} too. Host to name:{" "}
+        <span className="font-medium text-foreground select-text">{hereName}</span>
         {here?.relayId ? (
           <>
             , its Space <code className="font-mono select-text">relay:{here.relayId}</code>
           </>
         ) : (
-          <>. Set this machine up for access first (its page in Machines) so the agent can find it</>
+          <>. Set this computer up for access first (its page in Computers) so the agent can find it</>
         )}
         .
       </p>
-      <p className="mt-3 mb-2 text-xs font-semibold">Run this on the other machine</p>
-      <Segmented aria-label="Agent on the other machine" value={agent} options={AGENTS} onValueChange={setAgent} />
-      <Snippet file="Terminal on the other machine" text={otherMachineCommand(agent)} />
+      <p className="mt-3 mb-2 text-xs font-semibold">Run this on the other computer</p>
+      <Segmented aria-label="Agent on the other computer" value={agent} options={AGENTS} onValueChange={setAgent} />
+      <Snippet file="Terminal on the other computer" text={otherMachineCommand(agent)} />
       <p className="mt-3 mb-2 text-xs font-semibold">Then tell the agent</p>
       <Snippet file="Message to the agent" text={otherMachinePrompt(hereName, here?.relayId)} />
       <p className="mt-2 text-xs text-muted-foreground" data-connect-other-permissions="">

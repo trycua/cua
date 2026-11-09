@@ -55,21 +55,33 @@ export function authorView(a: { kind: string; id: string; name: string }): Autho
 const GAP_MS = 30 * 60_000;
 const GROUP_MS = 5 * 60_000;
 
-export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: LiveAgent[]; pending: OutboxRow[]; tools: ToolGroup[]; now: number; agentName(handle: string): string; /** The names of the Space's agent members (lower case): an agent author outside it is Cua's system author. */ members?: ReadonlySet<string> }): Row[] {
+export function buildRows(opts: {
+  items: ThreadItem[];
+  me: string | null;
+  live: LiveAgent[];
+  pending: OutboxRow[];
+  tools: ToolGroup[];
+  now: number;
+  agentName(handle: string): string;
+}): Row[] {
   const rows: Row[] = [];
   let lastTs = 0;
   let lastAuthor = "";
   let lastWasMessage = false;
   // Calls of every agent that followed the same message are one group, in the order they happened.
   const toolsAfter = new Map<number, ToolCall[]>();
-  for (const t of opts.tools) toolsAfter.set(t.afterSeq, [...(toolsAfter.get(t.afterSeq) ?? []), ...t.calls].sort((a, b) => a.atMs - b.atMs));
+  for (const t of opts.tools)
+    toolsAfter.set(
+      t.afterSeq,
+      [...(toolsAfter.get(t.afterSeq) ?? []), ...t.calls].sort((a, b) => a.atMs - b.atMs),
+    );
   for (const it of opts.items) {
     if (it.type === "unread") {
       rows.push({ type: "unread", key: it.key });
       lastWasMessage = false;
       continue;
     }
-    let e = it.entry;
+    const e = it.entry;
     if (e.tsMs - lastTs > GAP_MS || rows.length === 0) {
       rows.push({ type: "day", key: `d${e.seq}`, text: dayLine(e.tsMs, opts.now) });
       lastWasMessage = false;
@@ -91,27 +103,36 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       continue;
     }
     if (it.type === "approval" || it.type === "join_request") {
-      rows.push({ type: "approval", key: it.key, entry: e, answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null });
+      rows.push({
+        type: "approval",
+        key: it.key,
+        entry: e,
+        answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null,
+      });
       lastWasMessage = false;
       lastAuthor = "";
       continue;
-    }
-    // An agent-looking author no member stands behind is Cua's own system author, drawn like every Cua entry.
-    if (opts.members && e.author.kind === "agent" && !opts.members.has(e.author.name.toLowerCase().replace(/^@/, ""))) {
-      e = { ...e, author: { kind: "system", id: "system:children", name: "Cua" } as never };
     }
     const mine = !!opts.me && e.author.id === opts.me;
     const showAuthor = !mine && (!lastWasMessage || lastAuthor !== e.author.id || e.tsMs - lastTs > GROUP_MS);
     // A reply names what it answers only when that message is not right above it.
     const prevSeq = rows.length && rows[rows.length - 1]!.type === "message" ? (rows[rows.length - 1] as { entry: ThreadEntry }).entry.seq : null;
-    const quote = it.type === "message" && e.author.kind !== "agent" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
+    const quote = it.type === "message" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
     rows.push({ type: "message", key: it.key, entry: e, mine, showAuthor, quote });
     lastWasMessage = true;
     lastAuthor = e.author.id;
     const calls = toolsAfter.get(e.seq);
     if (calls) rows.push({ type: "tools", key: `tools${e.seq}`, calls });
   }
-  for (const l of opts.live) rows.push({ type: "live", key: `live-${l.agent}`, agent: opts.agentName(l.agent.replace(/^@/, "")), stage: l.stage, text: l.text ?? "", children: l.children ?? [] });
+  for (const l of opts.live)
+    rows.push({
+      type: "live",
+      key: `live-${l.agent}`,
+      agent: opts.agentName(l.agent.replace(/^@/, "")),
+      stage: l.stage,
+      text: l.text ?? "",
+      children: l.children ?? [],
+    });
   // Messages the machine has not taken yet (waiting, sending or failed) close the thread, as the person's own words; an answer to an
   // approval shows on its card instead.
   for (const p of opts.pending) if (p.kind === "post") rows.push({ type: "pending", key: `pending-${p.id}`, row: p });

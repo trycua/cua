@@ -13,7 +13,13 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
@@ -516,6 +522,47 @@ enum BackgroundPressError {
     },
 }
 
+/// Whether the background worker may still act for its call. The worker
+/// keeps running on the blocking pool after the caller's future is dropped,
+/// so it checks this before each mutation of the target app.
+#[derive(Clone, Default)]
+struct PressAdmission(Arc<AtomicBool>);
+
+/// Cancels its [`PressAdmission`] when dropped. Held where the caller waits.
+struct CancelOnDrop(PressAdmission);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0 .0.store(true, Ordering::Release);
+    }
+}
+
+impl PressAdmission {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    /// Run `press` unless the call was cancelled.
+    fn admit<T>(&self, press: impl FnOnce() -> T) -> Result<T, BackgroundPressError> {
+        if self.is_cancelled() {
+            return Err(BackgroundPressError::Other(
+                "invoke_menu: the call was cancelled, so the menu item was not pressed".into(),
+            ));
+        }
+        Ok(press())
+    }
+}
+
+/// Run `work` on the blocking pool with an admission that is cancelled when
+/// this future is dropped, so a worker that outlives its call presses nothing.
+async fn run_admitted<T: Send + 'static>(
+    work: impl FnOnce(&PressAdmission) -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    let admission = PressAdmission::default();
+    let _cancel = CancelOnDrop(admission.clone());
+    tokio::task::spawn_blocking(move || work(&admission)).await
+}
+
 /// What the background route knows about the pressed item.
 #[derive(Debug, Clone, Copy)]
 struct PressedItem {
@@ -594,6 +641,7 @@ unsafe fn invoke_path_in_background(
     pid: i32,
     window_id: u32,
     path: &[String],
+    admission: &PressAdmission,
 ) -> Result<PressedItem, BackgroundPressError> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
@@ -622,6 +670,7 @@ unsafe fn invoke_path_in_background(
         // context check above prevents this from switching to a sibling after
         // resolving that sibling's menu; the check below revalidates dispatch.
         if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && !admission.is_cancelled()
             && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
         {
             let mut waited = Duration::ZERO;
@@ -657,7 +706,7 @@ unsafe fn invoke_path_in_background(
         let bound = require_live_menu_window(app, window_id);
         CFRelease(app as CFTypeRef);
         bound?;
-        let error = perform_action(target, action);
+        let error = admission.admit(|| perform_action(target, action))?;
         if error != kAXErrorSuccess {
             return Err(BackgroundPressError::Other(format!(
                 "invoke_menu: native action for the final menu item failed with AX error {error}"
@@ -733,9 +782,9 @@ pub(super) async fn run_in_background(
         .as_deref()
         .and_then(crate::apple_events::modified_time);
     let press_path = path.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = run_admitted(move |admission| {
         let _key_focus = crate::key_focus_guard::protect(pid);
-        unsafe { invoke_path_in_background(pid, window_id, &press_path) }
+        unsafe { invoke_path_in_background(pid, window_id, &press_path, admission) }
     })
     .await;
     let preface = request.preface(&path);
@@ -1034,6 +1083,39 @@ mod tests {
         assert_eq!(data["effect"], "refused");
         assert_eq!(data["refusal"]["code"], "automation_consent_required");
         assert_eq!(data["refusal"]["message"], reason);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_background_call_never_presses_its_item() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (pressed_tx, pressed_rx) = std::sync::mpsc::channel();
+        let call = tokio::spawn(run_admitted(move |admission| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            let _ = pressed_tx.send(admission.admit(|| ()).is_ok());
+        }));
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        // The worker outlived its call and now reaches the press.
+        release_tx.send(()).unwrap();
+        let pressed = pressed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!pressed, "a worker whose call was dropped pressed the item");
+    }
+
+    #[tokio::test]
+    async fn a_live_background_call_presses_once() {
+        let pressed = run_admitted(|admission| admission.admit(|| 7))
+            .await
+            .unwrap();
+        assert!(matches!(pressed, Ok(7)));
+        let cancelled = PressAdmission::default();
+        drop(CancelOnDrop(cancelled.clone()));
+        assert!(matches!(
+            cancelled.admit(|| 7),
+            Err(BackgroundPressError::Other(message)) if message.contains("cancelled")
+        ));
     }
 
     #[test]

@@ -79,18 +79,21 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     await waitFor(() => expect(qa("[data-agent-list] [data-chat]").length).toBeGreaterThan(1));
     // …and Home counts the same list: its count is the Agents page's own, once both have settled.
     await act(async () => void router.navigate({ to: "/home" }));
-    await waitFor(async () => {
-      const shown = q("[data-home-see-all='/agents']")?.textContent?.trim();
-      expect(shown).toMatch(/^See all \d+$/);
-      await act(async () => void router.navigate({ to: "/agents" }));
-      const total = await waitFor(() => {
-        const n = qa("[data-agent-list] [data-chat]").length;
-        expect(n).toBeGreaterThan(1);
-        return n;
-      });
-      await act(async () => void router.navigate({ to: "/home" }));
-      expect(shown).toBe(`See all ${total}`);
-    }, { timeout: 15000 });
+    await waitFor(
+      async () => {
+        const shown = q("[data-home-see-all='/agents']")?.textContent?.trim();
+        expect(shown).toMatch(/^See all \d+$/);
+        await act(async () => void router.navigate({ to: "/agents" }));
+        const total = await waitFor(() => {
+          const n = qa("[data-agent-list] [data-chat]").length;
+          expect(n).toBeGreaterThan(1);
+          return n;
+        });
+        await act(async () => void router.navigate({ to: "/home" }));
+        expect(shown).toBe(`See all ${total}`);
+      },
+      { timeout: 15000 },
+    );
     await act(async () => void router.navigate({ to: "/agents" }));
     release();
 
@@ -124,7 +127,9 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     fireEvent.click(await found("a[href='/home']"));
     await found("[data-home-agents]");
     await found("[data-home-spaces]");
-    const order = qa("[data-ask-first-home] section, [data-ask-first-home] [aria-label='What should it do?']").map((el) => el.getAttribute("data-home-agents") !== null ? "agents" : el.getAttribute("data-home-spaces") !== null ? "spaces" : "composer");
+    const order = qa("[data-ask-first-home] section, [data-ask-first-home] [aria-label='What should it do?']").map((el) =>
+      el.getAttribute("data-home-agents") !== null ? "agents" : el.getAttribute("data-home-spaces") !== null ? "spaces" : "composer",
+    );
     expect(order.indexOf("composer")).toBeLessThan(order.indexOf("agents"));
     expect(order.indexOf("agents")).toBeLessThan(order.indexOf("spaces"));
     expect(q("[data-home-see-all='/agents']")?.textContent?.trim()).toMatch(/^See all \d+$/);
@@ -140,7 +145,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
   it("a task whose Space is gone leaves nothing to list: Home is the welcome, not a bare box", async () => {
     addAskTask({ prompt: "an old job", agent: "claude-code", os: "linux", spaceId: "gone-space" });
     await mountApp("/home", { failsCreates: false, listsGhost: false, answer: (op, out) => (op === "spaces.list" ? [] : out) });
-    expect(await screen.findByRole("heading", { name: "What do you want to do?" })).toBeTruthy();
+    expect(await waitFor(() => q("[data-home-card]") ?? Promise.reject(new Error("no welcome cards")))).toBeTruthy();
     expect(q("[data-home-agents]")).toBeNull();
     expect(q("[data-home-spaces]")).toBeNull();
   });

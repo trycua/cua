@@ -1439,6 +1439,13 @@ fn outdated_daemon_policy(value: Option<&str>) -> OutdatedDaemon {
     }
 }
 
+/// Whether this process runs inside a Space (its cua-spacesd sets `CUA_SPACE`).
+pub fn inside_space() -> bool {
+    std::env::var(cua_proto::metadata::ENV_SPACE)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// The running daemon, or one started now with `cua daemon start` (the
 /// CLI from [`cua_binary`]). `CUA_DAEMON_AUTOSTART=0` turns starting off.
 ///
@@ -1447,6 +1454,21 @@ fn outdated_daemon_policy(value: Option<&str>) -> OutdatedDaemon {
 /// sessions it hosts for other clients. `CUA_DAEMON_RESTART_OUTDATED=1`
 /// stops it and starts this version instead.
 pub async fn ensure_daemon() -> Result<DaemonClient> {
+    // Inside a Space with children on, the daemon is its spawn channel: the
+    // one the Space's own children (and pool runs) go through. There is no
+    // other daemon to find, and none to start, in a Space.
+    if let Some(addr) = spawn_channel() {
+        return DaemonClient::new(addr);
+    }
+    // A Space with no children channel has no daemon to use either: one it
+    // started itself would run Spaces under no parent's rules (its tree,
+    // network and budget). The scoped channel is the only way in.
+    if inside_space() {
+        return Err(Error::Unsupported(
+            "this Space cannot make or manage Spaces: its owner has not given it children, and a              Space does not start or reach a cua daemon of its own"
+                .into(),
+        ));
+    }
     if let Ok(c) = existing_daemon_patient(Duration::from_secs(30)).await {
         let running = c.info().await.map(|i| i.version).unwrap_or_default();
         if !daemon_is_outdated(&running, crate::VERSION) {

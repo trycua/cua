@@ -146,7 +146,7 @@ pub struct DeviceArg {
 }
 
 /// What a connected agent sends with each call (`_member`).
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct MemberCredential {
     pub member_id: String,
     pub key: String,
@@ -156,6 +156,17 @@ pub struct MemberCredential {
     /// [`cua_host::device::member_message`]`(member_id, ts_ms)`.
     #[serde(default)]
     pub signature: Option<String>,
+}
+
+impl std::fmt::Debug for MemberCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemberCredential")
+            .field("member_id", &self.member_id)
+            .field("key", &"<redacted>")
+            .field("ts_ms", &self.ts_ms)
+            .field("signature", &self.signature)
+            .finish()
+    }
 }
 
 /// The per-process counters: wrong codes and posts.
@@ -201,16 +212,6 @@ fn denied(msg: impl Into<String>) -> Error {
 
 fn rate_limited(msg: impl Into<String>) -> Error {
     Error::extension("rate_limited", msg)
-}
-
-/// What the thread says when an agent is added to the Space.
-pub fn added_text(agent: &str) -> String {
-    format!("{agent} was added to this Space.")
-}
-
-/// What the thread says when a person joins the Space.
-pub fn person_joined_text(name: &str) -> String {
-    format!("{name} joined this Space.")
 }
 
 /// A person's possessive ("Ada's").
@@ -708,9 +709,17 @@ impl Persistent {
     fn note_joined(&self, store: &ThreadStore, rec: &AgentRecord, by: &Author) -> Result<()> {
         let owner = self.owner();
         let ident = identity::identity_of(rec, &owner);
+        let from = ident
+            .device
+            .as_ref()
+            .map(|d| device_words(&d.name))
+            .unwrap_or_else(|| "a computer".into());
         store.append(Draft::event(
             "join",
-            added_text(&ident.display_name),
+            format!(
+                "{} agent joined from {from}.",
+                possessive(&ident.owner.name)
+            ),
             json!({"kind": "member_joined", "member": ident, "by": Person::from(by)}),
         ))?;
         Ok(())
@@ -1255,19 +1264,5 @@ mod tests {
         assert_eq!(c.shown_state(100), "expired");
         assert_eq!(possessive("Ada"), "Ada's");
         assert_eq!(possessive("Linus"), "Linus'");
-    }
-}
-
-#[cfg(test)]
-mod notice_tests {
-    use super::*;
-
-    #[test]
-    fn joined_notices_are_plain() {
-        assert_eq!(added_text("Hermes"), "Hermes was added to this Space.");
-        assert_eq!(person_joined_text("Ada"), "Ada joined this Space.");
-        for t in [added_text("Hermes"), person_joined_text("Ada")] {
-            assert!(!t.contains('#') && !t.contains('/') && !t.chars().any(|c| c.is_ascii_digit()));
-        }
     }
 }

@@ -339,7 +339,7 @@ struct ParityTests {
                           provider: provider(a["provider"] as! String),
                           now: Int64(a["now"] as! Int), image: a["image"] as? String, kind: kind,
                           hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false,
-                          host: a["host"] as? String, hostName: a["hostName"] as? String, parent: a["parent"] as? String)
+                          host: a["host"] as? String, hostName: a["hostName"] as? String)
         case "progress":
             return .progress(id: id, phase: a["phase"] as! String,
                              fraction: (a["fraction"] as? NSNumber)?.doubleValue,

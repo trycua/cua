@@ -179,7 +179,7 @@ struct BootConfig {
 }
 
 /// Persisted per-instance state (`<root>/<name>/state.json`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct QemuState {
     pub name: String,
     pub kind: EntryKind,
@@ -299,6 +299,57 @@ pub struct QemuState {
     /// creation for Windows on ARM; forks and checkpoints keep it.
     #[serde(default)]
     pub tpm: bool,
+}
+
+impl std::fmt::Debug for QemuState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QemuState")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("arch", &self.arch)
+            .field("os", &self.os)
+            .field("disk", &self.disk)
+            .field("disk_format", &self.disk_format)
+            .field("install_iso", &self.install_iso)
+            .field("seed_iso", &self.seed_iso)
+            .field("firmware", &self.firmware)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("vnc_display", &self.vnc_display)
+            .field("qmp_port", &self.qmp_port)
+            .field("qmp_socket", &self.qmp_socket)
+            .field(
+                "vnc_password",
+                &self.vnc_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("pid", &self.pid)
+            .field("accel", &self.accel)
+            .field("ssh", &self.ssh)
+            .field("restrict_network", &self.restrict_network)
+            .field("egress", &self.egress)
+            .field("network", &self.network)
+            .field("netns", &self.netns)
+            .field("pasta_pid", &self.pasta_pid)
+            .field("gateway_control", &self.gateway_control)
+            .field("extra_args", &self.extra_args)
+            .field("snapshots", &self.snapshots)
+            .field("paused", &self.paused)
+            .field("source", &self.source)
+            .field("created_at", &self.created_at)
+            .field("gpu", &self.gpu)
+            .field("restore_from", &self.restore_from)
+            .field("memory", &self.memory)
+            .field("last_start", &self.last_start)
+            .field("free_page_reporting", &self.free_page_reporting)
+            .field("ram_file", &self.ram_file)
+            .field("headless", &self.headless)
+            .field("shared_memory", &self.shared_memory)
+            .field("pinned", &self.pinned)
+            .field("bulk", &self.bulk)
+            .field("tpm", &self.tpm)
+            .finish()
+    }
 }
 
 /// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
@@ -1086,6 +1137,12 @@ impl QemuRuntime {
                         boot.keep_ports = false;
                     }
                 }
+                // The forwarder could not join the namespace: it is off
+                // now, so this launch uses pasta's forwards.
+                Err(e) if attempt < LAUNCH_PORT_ATTEMPTS && crate::nsfwd::is_join_failure(&e) => {
+                    tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
+                    attempt += 1;
+                }
                 Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
                     tracing::warn!(
                         sandbox = %st.name,
@@ -1368,6 +1425,7 @@ impl QemuRuntime {
             // the guest's first instruction).
             let mut relay: Option<PathBuf> = None;
             let mut tree_argv: Vec<String> = Vec::new();
+            let mut fwd: Option<crate::nsfwd::Pending> = None;
             let (program, args): (PathBuf, Vec<String>) = match &netns_rules {
                 Some(rules) => {
                     let pasta = host::which("pasta").ok_or_else(|| {
@@ -1409,8 +1467,15 @@ impl QemuRuntime {
                     } else {
                         Vec::new()
                     };
+                    // The host's ports cross into the namespace through
+                    // cua's own forwarder, not pasta's splice (passt before
+                    // 2025 adds ~40 ms per round trip; [`crate::nsfwd`]).
+                    // Without one, pasta's forwards as before.
+                    let pairs: Vec<(u16, u16)> = ports.iter().map(|p| (*p, *p)).collect();
+                    fwd = crate::nsfwd::spawn(&dir, &pairs).await;
+                    let pasta_ports: &[u16] = if fwd.is_some() { &[] } else { &ports };
                     let mut a = netns_pasta_args(
-                        &ports,
+                        pasta_ports,
                         &localhost,
                         crate::pasta::supports_host_lo(&pasta),
                     );
@@ -1485,6 +1550,35 @@ impl QemuRuntime {
                 st.pasta_pid = Some(pid);
                 st.netns = true;
             }
+            if let Some(fwd) = fwd {
+                // pasta's command (the namespace's first process) appears
+                // as pasta's child at once; QEMU becomes that process.
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                let child = loop {
+                    if let Some(c) = netns_child(pid) {
+                        break Some(c);
+                    }
+                    if !host::pid_alive(pid) || tokio::time::Instant::now() >= deadline {
+                        break None;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                };
+                match child {
+                    Some(c) => {
+                        if let Err(e) = fwd.join(c).await {
+                            // End this launch before the next one uses the
+                            // same disk ([`Self::launch_admitted`] retries).
+                            for p in [c, pid] {
+                                host::signal(p, "KILL");
+                                Self::wait_exit(p, Duration::from_secs(5)).await;
+                            }
+                            return Err(e);
+                        }
+                    }
+                    // pasta is gone: the wait below reports why.
+                    None => drop(fwd),
+                }
+            }
         }
         #[cfg(not(unix))]
         {
@@ -1508,13 +1602,15 @@ impl QemuRuntime {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let mut q = loop {
             if !host::pid_alive(pid) {
+                let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
+                let mut stderr = crate::exec::tail(&log_text, 4000);
+                if st.netns && pasta_userns_denied(&log_text) {
+                    stderr = format!("{PASTA_USERNS_HINT}\n{stderr}");
+                }
                 return Err(VmmError::Command {
                     cmd: format!("{} (see {})", bin.display(), dir.join("cmdline").display()),
                     code: None,
-                    stderr: crate::exec::tail(
-                        &std::fs::read_to_string(&log_path).unwrap_or_default(),
-                        4000,
-                    ),
+                    stderr,
                 });
             }
             match QmpClient::connect(&qmp_addr(st)?).await {
@@ -1858,7 +1954,8 @@ impl QemuRuntime {
         let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
             st.pid = None;
             self.drop_aliases(Some(&self.dir(&st.name)));
-            Self::end_netns(st);
+            let run_dir = self.run_dir(st);
+            Self::end_netns(st, &run_dir);
             return self.stop_tpm(st).await;
         };
         if !graceful.is_zero() {
@@ -1874,7 +1971,8 @@ impl QemuRuntime {
             if Self::wait_exit(pid, wait).await {
                 st.pid = None;
                 self.drop_aliases(Some(&self.dir(&st.name)));
-                Self::end_netns(st);
+                let run_dir = self.run_dir(st);
+                Self::end_netns(st, &run_dir);
                 return self.stop_tpm(st).await;
             }
         }
@@ -1893,7 +1991,8 @@ impl QemuRuntime {
         }
         st.pid = None;
         self.drop_aliases(Some(&self.dir(&st.name)));
-        Self::end_netns(st);
+        let run_dir = self.run_dir(st);
+        Self::end_netns(st, &run_dir);
         self.stop_tpm(st).await
     }
 
@@ -1978,7 +2077,11 @@ impl QemuRuntime {
     }
 
     /// pasta exits with QEMU; one left behind (a VM killed with it) goes.
-    fn end_netns(st: &mut QemuState) {
+    fn end_netns(st: &mut QemuState, dir: &Path) {
+        #[cfg(unix)]
+        crate::nsfwd::stop(dir);
+        #[cfg(not(unix))]
+        let _ = dir;
         if let Some(p) = st.pasta_pid.take()
             && host::pid_alive(p)
         {
@@ -2296,6 +2399,11 @@ fn netns_pasta_args(ports: &[u16], localhost: &[u16], host_lo_to_ns_lo: bool) ->
     if host_lo_to_ns_lo {
         a.push(crate::pasta::HOST_LO_TO_NS_LO.into());
     }
+    // No ports: `none`, never pasta's default (`auto`, which would forward
+    // every port anything in the namespace listens on).
+    if ports.is_empty() {
+        a.extend(["-t".into(), "none".into()]);
+    }
     for p in ports {
         a.extend(["-t".into(), format!("127.0.0.1/{p}:{p}")]);
     }
@@ -2494,6 +2602,19 @@ pub struct Density {
 }
 
 const LAUNCH_PORT_ATTEMPTS: u32 = 4;
+
+/// What a host that stops pasta from making its namespace gets: the secure
+/// network needs it, and the guest is never started on the open network instead.
+const PASTA_USERNS_HINT: &str = "This host does not let pasta create the user namespace the secure \
+     network runs in (on Ubuntu 24.04 an AppArmor profile must allow `userns` for /usr/bin/pasta, \
+     or set kernel.apparmor_restrict_unprivileged_userns=0).";
+
+/// Whether pasta's output says it could not create its user namespace.
+fn pasta_userns_denied(log: &str) -> bool {
+    log.contains("Couldn't configure user mappings")
+        || log.contains("Couldn't write to /proc/self/uid_map")
+        || log.contains("Couldn't create user namespace")
+}
 
 /// Whether QEMU's stderr says a host port it was handed is already bound.
 fn is_port_conflict(stderr: &str) -> bool {
@@ -3821,6 +3942,14 @@ mod tests {
     }
 
     #[test]
+    fn pasta_userns_denial_is_recognised() {
+        assert!(pasta_userns_denied(
+            "Couldn't write to /proc/self/uid_map: Operation not permitted\nCouldn't configure user mappings\nclone: Operation not permitted"
+        ));
+        assert!(!pasta_userns_denied("No routable interface for IPv6"));
+    }
+
+    #[test]
     fn port_conflicts_in_qemu_stderr_are_recognised() {
         assert!(is_port_conflict(
             "qemu-system-x86_64: -vnc 127.0.0.1:7: Failed to find an available port: Address already in use"
@@ -4589,6 +4718,14 @@ mod tests {
             "{new:?}"
         );
         assert_eq!(new.len(), a.len() + 1);
+        // cua's forwarder carries the ports: pasta forwards none, never
+        // its default `auto` (every port the namespace listens on).
+        let none = netns_pasta_args(&[], &[], false);
+        assert!(
+            none.windows(2).any(|w| w[0] == "-t" && w[1] == "none"),
+            "{none:?}"
+        );
+        assert!(!none.iter().any(|x| x.starts_with("127.0.0.1/")));
     }
 
     #[test]

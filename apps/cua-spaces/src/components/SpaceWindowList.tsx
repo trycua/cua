@@ -164,7 +164,6 @@ export function SpaceWindowList({
     };
   }, [iconRequests, teleport, spaceId]);
 
-
   const icon = (row: StreamRow) => {
     if (row.icon.kind === "os") return <OsIconMark id={row.icon.id} size={16} className="ssr-os" />;
     const url = icons.get(iconKey(row.icon.appName, row.icon.appId));

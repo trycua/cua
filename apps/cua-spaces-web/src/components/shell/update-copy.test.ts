@@ -15,18 +15,29 @@ describe("updateView", () => {
   });
 
   it("says a failed step will be retried", () => {
-    expect(updateView({ ...base, status: "error", message: "The network is offline." })).toEqual({ kind: "error", label: "Couldn't update: The network is offline. Cua Spaces tries again later." });
+    expect(updateView({ ...base, status: "error", message: "The network is offline." })).toEqual({
+      kind: "error",
+      label: "Couldn't update: The network is offline. Cua Spaces tries again later.",
+    });
     expect(updateView({ ...base, status: "error" })).toEqual({ kind: "error", label: "Couldn't update. Cua Spaces tries again later." });
   });
 
   it("says it is downloading, with the percent when the host has one", () => {
     expect(updateView({ ...base, status: "available", version: "0.9.3" })).toEqual({ kind: "downloading", label: "Downloading update 0.9.3…", percent: null });
-    expect(updateView({ ...base, status: "downloading", version: "0.9.3", percent: 42.9 })).toEqual({ kind: "downloading", label: "Downloading update 0.9.3 (42%)", percent: 42 });
+    expect(updateView({ ...base, status: "downloading", version: "0.9.3", percent: 42.9 })).toEqual({
+      kind: "downloading",
+      label: "Downloading update 0.9.3 (42%)",
+      percent: 42,
+    });
     expect(updateView({ ...base, status: "downloading", version: "0.9.3", percent: 140 })?.kind).toBe("downloading");
   });
 
   it("says it is ready once downloaded", () => {
-    expect(updateView({ ...base, status: "downloaded", version: "0.9.3", percent: 100 })).toEqual({ kind: "ready", label: "Update ready", detail: "Cua Spaces 0.9.3" });
+    expect(updateView({ ...base, status: "downloaded", version: "0.9.3", percent: 100 })).toEqual({
+      kind: "ready",
+      label: "Update ready",
+      detail: "Cua Spaces 0.9.3",
+    });
     expect(updateView({ ...base, status: "downloaded" })).toEqual({ kind: "ready", label: "Update ready", detail: "A new version of Cua Spaces" });
   });
 

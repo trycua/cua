@@ -16,14 +16,14 @@ CUA_E2E_HARNESS=<harness dir>/env.sh CUA_E2E_CORE_CALL=<target>/debug/core-call 
 
 Without `CUA_E2E_HARNESS` the file does nothing, like every test that needs a host. It drives the app's real live backend (`createLiveBackend`, the relay client, the device manager, the Connect transport) with the real Rust core answering the app's core calls (`core/src/bin/core-call.rs`).
 
-| Step | Result |
-|---|---|
-| Sign in with a token from the harness identity provider (the dev sign-in the app has for this) | Real. |
-| Enroll this phone: device key made and signed by the real core, `POST /v1/devices`, device session | Real. Enrolled and a session was issued. |
-| List machines | Real. The harness machine, online. |
-| `task_options` on the machine's daemon | Real. The daemon listed its agents (all not ready: not signed in) and said it can create a Space. |
-| `GET /v1/push`, register and unregister a phone for push (body built by the core's `push.registration`) | Real against the local relay. It said `configured: true` and accepted both. The APNs token is made up; no push reached any phone. |
-| `task_start` | Real daemon answer, shown as a failed task: "the built-in Linux runtime cannot run from ... (its path is 132 bytes; Unix sockets allow 103)". That is the harness directory being too long, not the phone. The app shows a failed task with Try again. |
+| Step                                                                                                    | Result                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Sign in with a token from the harness identity provider (the dev sign-in the app has for this)          | Real.                                                                                                                                                                                                                                                  |
+| Enroll this phone: device key made and signed by the real core, `POST /v1/devices`, device session      | Real. Enrolled and a session was issued.                                                                                                                                                                                                               |
+| List machines                                                                                           | Real. The harness machine, online.                                                                                                                                                                                                                     |
+| `task_options` on the machine's daemon                                                                  | Real. The daemon listed its agents (all not ready: not signed in) and said it can create a Space.                                                                                                                                                      |
+| `GET /v1/push`, register and unregister a phone for push (body built by the core's `push.registration`) | Real against the local relay. It said `configured: true` and accepted both. The APNs token is made up; no push reached any phone.                                                                                                                      |
+| `task_start`                                                                                            | Real daemon answer, shown as a failed task: "the built-in Linux runtime cannot run from ... (its path is 132 bytes; Unix sockets allow 103)". That is the harness directory being too long, not the phone. The app shows a failed task with Try again. |
 
 The first attempt at push registration used a hand written body without `platform`, and the relay refused it in words. The test now uses the core's `push.registration` body, which is also the only body the app sends.
 

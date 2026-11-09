@@ -565,7 +565,9 @@ mod tests {
         ScreenshotToActionTransform,
     };
     use crate::image_utils::encode_rgba_to_png;
-    use crate::perception_client::{PerceptionClient, PerceptionClientResolver};
+    use crate::perception_client::{
+        PerceptionClient, PerceptionClientResolver, ResolutionDeferred,
+    };
     use sha2::Digest as _;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -771,15 +773,15 @@ mod tests {
             format!("{:?}", self.installed.lock().unwrap())
         }
 
-        fn resolve(&self) -> PerceptionClient {
+        fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred> {
             self.resolutions.fetch_add(1, Ordering::SeqCst);
-            match self.installed.lock().unwrap().as_deref() {
+            Ok(match self.installed.lock().unwrap().as_deref() {
                 Some(executable) => PerceptionClient::new(
                     crate::perception_client::PerceptionWorkerConfig::new(executable),
                 )
                 .unwrap(),
                 None => PerceptionClient::unavailable(),
-            }
+            })
         }
     }
 

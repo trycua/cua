@@ -637,7 +637,7 @@ fn main() {
             dry_run,
             json,
         } => {
-            connect::run_connect(&clients, dry_run, json);
+            connect::run_connect(&clients, &inspect_tools_without_runtime(), dry_run, json);
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -931,6 +931,12 @@ fn main() {
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
         }
+        cli::Command::KwinCapture {
+            subcommand,
+            override_portal_deny,
+        } => {
+            cli::run_kwin_capture_cmd(&subcommand, override_portal_deny);
+        }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
         }
@@ -1075,7 +1081,7 @@ fn main() -> anyhow::Result<()> {
             dry_run,
             json,
         } => {
-            connect::run_connect(&clients, dry_run, json);
+            connect::run_connect(&clients, &inspect_tools_without_runtime(), dry_run, json);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {
@@ -1252,6 +1258,13 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
+            Ok(())
+        }
+        cli::Command::KwinCapture {
+            subcommand,
+            override_portal_deny,
+        } => {
+            cli::run_kwin_capture_cmd(&subcommand, override_portal_deny);
             Ok(())
         }
         cli::Command::Skills { subcommand, flags } => {

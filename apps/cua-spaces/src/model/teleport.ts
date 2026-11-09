@@ -195,18 +195,12 @@ export interface PickerPrimary {
   enabled: boolean;
 }
 
-export function pickerPrimary(
-  tab: PickerTab,
-  selected: { supported: boolean } | null,
-): PickerPrimary {
+export function pickerPrimary(tab: PickerTab, selected: { supported: boolean } | null): PickerPrimary {
   return core("windows.pickerPrimary", { tab, selectedSupported: selected ? selected.supported : null });
 }
 
 /** Filter the Space's remote windows by a free-text query (app or title). */
-export function filterRemoteWindows(
-  windows: readonly RemoteWindow[],
-  query: string,
-): RemoteWindow[] {
+export function filterRemoteWindows(windows: readonly RemoteWindow[], query: string): RemoteWindow[] {
   const kept = core<RemoteWindow[]>("windows.filterRemoteWindows", { windows, query });
   const ids = new Set(kept.map((w) => w.id));
   return windows.filter((w) => ids.has(w.id));

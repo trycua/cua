@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import {
-  LAYOUT_CHANGE_EVENT,
   nativeVideoHandler,
   type SurfacePhase,
   type SurfaceRect,
@@ -83,14 +82,7 @@ export function modalOpen(doc: Document = document): boolean {
  * (`holes`) and the rest keeps playing. Hiding the whole video for a menu
  * turned the desktop black while the menu was open.
  */
-export const HOLE_SELECTOR = [
-  "[data-video-occluder]",
-  "[data-video-hole]",
-  '[role="menu"]',
-  '[role="listbox"]',
-  '[role="tooltip"]',
-  "[data-toast]",
-].join(",");
+export const HOLE_SELECTOR = ["[data-video-occluder]", "[data-video-hole]", '[role="menu"]', '[role="listbox"]', '[role="tooltip"]', "[data-toast]"].join(",");
 
 /** Where a slot's own controls live (a Space tile): a `[data-video-hole]`
  * inside one counts only for the slot in the same scope, and only while it
@@ -328,7 +320,8 @@ export class VideoSlotReporter {
     if (detail.event === "video.surface" && p.surfaceId) {
       const slot = this.slots.get(p.surfaceId);
       const phase = p.state === "live" || p.state === "failed" ? p.state : "connecting";
-      if (slot) this.update(slot, { ...slot.status, phase, reason: p.reason ?? undefined, opening: phase === "failed" && p.opening === true ? true : undefined });
+      if (slot)
+        this.update(slot, { ...slot.status, phase, reason: p.reason ?? undefined, opening: phase === "failed" && p.opening === true ? true : undefined });
     } else if (detail.event === "video.focus") {
       this.focused = p.surfaceId ?? null;
       for (const slot of this.slots.values()) {
@@ -342,13 +335,6 @@ export class VideoSlotReporter {
     slot.status = status;
     slot.listener(status);
   }
-
-  /** A pane moved (the page's layout committed): measure now, so the report
-   * leaves in the same frame as the new layout, then keep following it. */
-  private onLayoutChange = (): void => {
-    this.flush();
-    this.schedule();
-  };
 
   private watchDpr = (): void => {
     this.dpr?.removeEventListener("change", this.watchDpr);
@@ -378,7 +364,6 @@ export class VideoSlotReporter {
     // Hover and focus show a tile's controls by CSS alone (no DOM change): measure their holes.
     for (const type of POINTER_FOCUS) w.addEventListener(type, this.schedule, { passive: true });
     w.addEventListener("resize", this.schedule);
-    w.addEventListener(LAYOUT_CHANGE_EVENT, this.onLayoutChange);
     w.addEventListener("cua:event", this.onHostEvent);
     w.document.addEventListener("visibilitychange", this.schedule);
     this.watchDpr();
@@ -396,7 +381,6 @@ export class VideoSlotReporter {
     w.removeEventListener("scroll", this.schedule, { capture: true });
     for (const type of POINTER_FOCUS) w.removeEventListener(type, this.schedule);
     w.removeEventListener("resize", this.schedule);
-    w.removeEventListener(LAYOUT_CHANGE_EVENT, this.onLayoutChange);
     w.removeEventListener("cua:event", this.onHostEvent);
     w.document.removeEventListener("visibilitychange", this.schedule);
     this.dpr?.removeEventListener("change", this.watchDpr);
@@ -453,7 +437,8 @@ export function isOccluded(el: Element, clip: SurfaceRect, doc: Document = docum
       // An ancestor of the slot can't paint over it: it is what hit-testing
       // reaches when the slot itself takes no hits (a modal menu makes the
       // rest of the page `inert`).
-      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(keepUnderDialogs ? `${HOLE_SELECTOR},${DIALOG_HOLE_SELECTOR}` : HOLE_SELECTOR)) return true;
+      if (hit && !hit.contains(el) && !el.contains(hit) && !hit.closest(keepUnderDialogs ? `${HOLE_SELECTOR},${DIALOG_HOLE_SELECTOR}` : HOLE_SELECTOR))
+        return true;
     }
   }
   return false;

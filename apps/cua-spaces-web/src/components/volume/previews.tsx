@@ -121,7 +121,10 @@ function MiniWindow({ window: w, role, children }: { window: PreviewWindow; role
       className="absolute overflow-hidden border border-black/10 bg-white shadow-[0_2px_4px_rgba(0,0,0,0.18)] dark:border-white/10 dark:bg-neutral-800"
       style={{ left: f.x, top: f.y, width: f.width, height: f.height, borderRadius: w.radius }}
     >
-      <span /* design-ok: miniature window title bar edge, inside an illustration */ className="absolute inset-x-0 top-0 flex items-center gap-[2.5px] border-b border-black/10 pl-[5px] dark:border-white/10" style={{ height: w.titleBar }}>
+      <span
+        /* design-ok: miniature window title bar edge, inside an illustration */ className="absolute inset-x-0 top-0 flex items-center gap-[2.5px] border-b border-black/10 pl-[5px] dark:border-white/10"
+        style={{ height: w.titleBar }}
+      >
         {[0, 1, 2].map((i) => (
           <i key={i} className="block size-[3.6px] rounded-full bg-black/20 dark:bg-white/25" />
         ))}
@@ -174,8 +177,15 @@ export function DriverPreview({ fixedMs, label }: { fixedMs?: number | "still"; 
           {scene.checkboxes.map((c, i) => {
             const on = frame.checked[i] ?? 0;
             return (
-              <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ key={`box-${i}`} className="rounded-[2px] border-[0.75px] border-black/40 dark:border-white/50" style={at(c, scene.back.frame)}>
-                <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="absolute inset-0 rounded-[1.5px] bg-brand" style={{ opacity: on }} />
+              <span
+                /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ key={`box-${i}`}
+                className="rounded-[2px] border-[0.75px] border-black/40 dark:border-white/50"
+                style={at(c, scene.back.frame)}
+              >
+                <span
+                  /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="absolute inset-0 rounded-[1.5px] bg-brand"
+                  style={{ opacity: on }}
+                />
                 <svg viewBox="0 0 8 8" className="absolute inset-0 size-full">
                   <polyline
                     points="2,4.2 3.5,5.7 6.2,2.4"
@@ -196,7 +206,12 @@ export function DriverPreview({ fixedMs, label }: { fixedMs?: number | "still"; 
             <Bar key={`label-${i}`} rect={l} frame={scene.back.frame} />
           ))}
         </MiniWindow>
-        <svg className="absolute top-0 left-0 overflow-visible" width="16" height="16" style={{ transform: `translate(${frame.agent.x}px, ${frame.agent.y}px)` }}>
+        <svg
+          className="absolute top-0 left-0 overflow-visible"
+          width="16"
+          height="16"
+          style={{ transform: `translate(${frame.agent.x}px, ${frame.agent.y}px)` }}
+        >
           {frame.ripple > 0 ? (
             <g opacity={1 - frame.ripple} transform={`scale(${1 + 0.4 * frame.ripple})`} stroke={scene.agentFill} strokeWidth={1.2} strokeLinecap="round">
               {scene.agentRays.map((r, i) => (
@@ -220,7 +235,12 @@ export function DriverPreview({ fixedMs, label }: { fixedMs?: number | "still"; 
           {line && frame.selection > 0 ? (
             <span
               /* design-ok: miniature illustration shape */ className="absolute rounded-[1.5px] bg-brand/30"
-              style={{ left: line.x - scene.front.frame.x, top: line.y + line.height / 2 - 4 - scene.front.frame.y, width: line.width * frame.selection, height: 8 }}
+              style={{
+                left: line.x - scene.front.frame.x,
+                top: line.y + line.height / 2 - 4 - scene.front.frame.y,
+                width: line.width * frame.selection,
+                height: 8,
+              }}
             />
           ) : null}
           {scene.lines.map((l, i) => (
@@ -270,8 +290,14 @@ export function DriveMountPreview({ fixedMs, label }: { fixedMs?: number | "stil
           {scene.places.map((p, i) => (
             <Bar key={`place-${i}`} rect={p} frame={finder} />
           ))}
-          <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="rounded-[2px] bg-brand/25" style={{ ...at(scene.volume, finder), opacity: frame.volume }} />
-          <span /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="rounded-[1px] bg-black/45 dark:bg-white/60" style={{ ...at(scene.volumeIcon, finder), opacity: frame.volume }} />
+          <span
+            /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="rounded-[2px] bg-brand/25"
+            style={{ ...at(scene.volume, finder), opacity: frame.volume }}
+          />
+          <span
+            /* design-ok: pixel-scale shapes in a miniature illustration, not UI chrome */ className="rounded-[1px] bg-black/45 dark:bg-white/60"
+            style={{ ...at(scene.volumeIcon, finder), opacity: frame.volume }}
+          />
           <span
             className="absolute font-medium whitespace-nowrap text-foreground"
             style={{
@@ -293,7 +319,10 @@ export function DriveMountPreview({ fixedMs, label }: { fixedMs?: number | "stil
           ))}
         </MiniWindow>
         {frame.flight && icon ? (
-          <FileIcon rect={{ x: frame.flight.x, y: frame.flight.y, width: icon.width, height: icon.height }} frame={{ x: 0, y: 0, width: scene.width, height: scene.height }} />
+          <FileIcon
+            rect={{ x: frame.flight.x, y: frame.flight.y, width: icon.width, height: icon.height }}
+            frame={{ x: 0, y: 0, width: scene.width, height: scene.height }}
+          />
         ) : null}
       </Stage>
     </div>
@@ -306,7 +335,11 @@ function FileIcon({ rect, frame, opacity }: { rect: PreviewRect; frame: PreviewR
   const fold = Math.min(w, h) * 0.4;
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ ...at(rect, frame), opacity }}>
-      <path d={`M0.5 0.5 H${w - fold} L${w - 0.5} ${fold} V${h - 0.5} H0.5 Z`} className="fill-white stroke-black/40 dark:fill-neutral-200 dark:stroke-black/50" strokeWidth={0.75} />
+      <path
+        d={`M0.5 0.5 H${w - fold} L${w - 0.5} ${fold} V${h - 0.5} H0.5 Z`}
+        className="fill-white stroke-black/40 dark:fill-neutral-200 dark:stroke-black/50"
+        strokeWidth={0.75}
+      />
     </svg>
   );
 }

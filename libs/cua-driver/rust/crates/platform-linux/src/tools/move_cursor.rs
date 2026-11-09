@@ -63,7 +63,7 @@ impl Tool for MoveCursorTool {
             let (x, y) = (input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland {
                 "wayland_desktop"
             } else {

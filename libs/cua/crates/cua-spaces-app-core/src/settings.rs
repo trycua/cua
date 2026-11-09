@@ -63,8 +63,8 @@ pub struct AppSettings {
     /// Launch at login, as the user chose it (the first run's Done page or
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
-    /// Settings, Experiments: each switch has a default
-    /// ([`crate::experiments::Experiments::default`]); a stored on or off wins.
+    /// Settings, Experiments: every switch off unless turned on
+    /// ([`crate::experiments`]).
     pub experiments: Experiments,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
@@ -510,7 +510,7 @@ pub const AUTO_WIPE_NOTE: &str = "When off, sign-ins stay in a Space until you w
 pub const UNLOCK_PROMPT_LABEL: &str = "Explain unattended access before allowing it";
 
 /// The line under it.
-pub const UNLOCK_PROMPT_NOTE: &str = "Unlocking an item always asks for Touch ID. Turn this on to see the explanation again after choosing Never ask again.";
+pub const UNLOCK_PROMPT_NOTE: &str = "Show the explanation again.";
 
 /// The Keyvault section: the auto-wipe switch (off by default) and its
 /// line, the unlock prompt switch (on by default; "Never ask again" turns it
@@ -885,7 +885,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             .into(),
         ),
         button_enabled: !input.agents_busy && any_installed,
-        button_help: Some("Add the cua skills and MCP server to every detected agent".into()),
+        button_help: Some("Let every coding app on this computer use Cua.".into()),
         rows,
     });
 

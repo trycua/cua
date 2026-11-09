@@ -40,9 +40,10 @@ def component_paths(config: dict, branch: str) -> list[str]:
         return []
     component = branch[len(COMPONENT_PREFIX) :]
     return [
-        path
+        tracked
         for path, package in config.get("packages", {}).items()
         if package.get("component") == component
+        for tracked in [path, *package.get("additional-paths", [])]
     ]
 
 

@@ -46,8 +46,7 @@ export function createFallbackTransferBridge(): TransferBridge {
 export function createTauriTransferBridge(): TransferBridge {
   const core = import("@tauri-apps/api/core");
   const event = import("@tauri-apps/api/event");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     begin: (spaceId, spaceName, appName) =>

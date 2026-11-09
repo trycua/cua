@@ -124,4 +124,37 @@ struct ProtocolTests {
         #expect(s.push(Data("tail of the big line\n{\"type\":\"quit\"}\n".utf8)).map { String(decoding: $0, as: UTF8.self) }
                 == [#"{"type":"quit"}"#])
     }
+
+    /// The newline can arrive with the whole line or with its last byte.
+    @Test(arguments: [0, NotchProtocol.maxLine - 1, NotchProtocol.maxLine])
+    func anOversizedTerminatedLineIsDroppedWhole(prefix: Int) {
+        var s = LineSplitter()
+        #expect(s.push(Data(repeating: 0x61, count: prefix)).isEmpty)
+        var tail = Data(repeating: 0x61, count: NotchProtocol.maxLine + 1 - prefix)
+        tail.append(contentsOf: "\n{\"type\":\"quit\"}\n".utf8)
+        let lines = s.push(tail)
+        #expect(lines.map(\.count) == [15])
+        #expect(lines.last.map { String(decoding: $0, as: UTF8.self) } == #"{"type":"quit"}"#)
+    }
+
+    @Test(arguments: [0, NotchProtocol.maxLine])
+    func aLineAtTheLimitIsKept(prefix: Int) {
+        var s = LineSplitter()
+        let line = Data(repeating: 0x61, count: NotchProtocol.maxLine)
+        #expect(s.push(Data(line.prefix(prefix))).isEmpty)
+        var tail = Data(line.dropFirst(prefix))
+        tail.append(0x0A)
+        let lines = s.push(tail)
+        #expect(lines.map(\.count) == [NotchProtocol.maxLine])
+        #expect(lines.first == line)
+    }
+
+    /// The limit belongs to each line, not to the chunk carrying them.
+    @Test func aChunkCanCarryMoreThanTheLineLimit() {
+        var s = LineSplitter()
+        var chunk = Data(repeating: 0x61, count: NotchProtocol.maxLine)
+        chunk.append(0x0A)
+        chunk.append(contentsOf: "{\"type\":\"quit\"}\n".utf8)
+        #expect(s.push(chunk).map(\.count) == [NotchProtocol.maxLine, 15])
+    }
 }

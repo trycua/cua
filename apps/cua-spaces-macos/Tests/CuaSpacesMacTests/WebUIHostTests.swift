@@ -47,12 +47,12 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
+        let x = AppExperiments(cuaVolume: true, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
         #expect(v?["ciRunners"] as? Bool == false)
-        // The four features that are always on have no switch to send.
-        for gone in ["secureSpaces", "childSpaces", "askFirst", "warmPools"] { #expect(v?[gone] == nil, "\(gone)") }
+        // Secure Spaces and Ask first are always on: they have no switch to send.
+        for gone in ["secureSpaces", "askFirst"] { #expect(v?[gone] == nil, "\(gone)") }
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
@@ -422,6 +422,18 @@ struct WebUIHostTests {
         let (bridge, _) = bridge()
         let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
+    /// Settings carry the channel and environment the app resolved, for the
+    /// title bar's "Local · Staging" tag.
+    @Test func settingsNameTheTarget() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        let target = s?["target"] as? [String: Any]
+        let expected = appTarget()
+        #expect(target?["channel"] as? String == expected.channel)
+        #expect(target?["env"] as? String == expected.env)
+        #expect(target?["authHost"] as? String == expected.authHost)
     }
 
     /// Settings, Advanced's rows come with the page's first `settings.get`,

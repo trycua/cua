@@ -34,7 +34,10 @@ describe("the resources store", () => {
     try {
       const demo = createDemoAdapter({ latencyMs: 0 });
       const calls: boolean[] = [];
-      const adapter: DataAdapter = { ...demo, call: (op, args) => (op === "resources.get" && calls.push((args as { visible: boolean }).visible), demo.call(op, args)) };
+      const adapter: DataAdapter = {
+        ...demo,
+        call: (op, args) => (op === "resources.get" && calls.push((args as { visible: boolean }).visible), demo.call(op, args)),
+      };
       const seen: { snap?: ResourcesSnapshot | null } = {};
       render(
         <BridgeProvider adapter={adapter}>
@@ -107,7 +110,7 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     expect(document.body.textContent).not.toMatch(/is offline/);
   });
 
-  it("low disk: one quiet line for This Mac, and See what's using space lists This Mac's Spaces biggest first", async () => {
+  it("low disk: one quiet line for This Mac, and See what's using space opens This Mac's page with each Space's size", async () => {
     const { router } = await mountApp("/spaces", { failsCreates: false, listsGhost: false, answer: lowDisk });
     const warning = await waitFor(() => {
       const el = document.querySelector<HTMLElement>('[data-computer-warnings] [data-low-disk="low"]');
@@ -117,14 +120,14 @@ describe.skipIf(!wasmBuilt)("resources on Home and a Space's page", () => {
     expect(warning.textContent).toMatch(/^Disk almost full on This Mac \(41 GB left\)/);
     expect(document.querySelectorAll("[data-computer-warning]")).toHaveLength(1);
     fireEvent.click(warning.querySelector("[data-see-space-use]")!);
-    // The list, This Mac only, sorted by size.
-    await waitFor(() => expect(router.state.location.search).toEqual({ view: "list", on: "this-mac", sort: "size" }));
-    await waitFor(() => expect(document.querySelector("[data-space-list]")).not.toBeNull());
-    expect(document.querySelector('[data-sort-header="size"]')?.className).toContain("font-medium");
-    const ids = Array.from(document.querySelectorAll("[data-space-row]")).map((t) => t.getAttribute("data-space-row"));
-    expect(ids.length).toBeGreaterThan(0);
-    expect(ids.every((id) => id?.startsWith("local:"))).toBe(true);
-    expect(ids.slice(0, 2)).toEqual(["local:design-review", "local:agent-sandbox"]);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
+    // Its Spaces, each with what it takes on the disk.
+    const row = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[data-space-row="local:design-review"]');
+      if (!el) throw new Error("no design-review row");
+      return el;
+    });
+    expect(row.querySelector("[data-space-size]")?.textContent).toBe("19 GB");
   });
 
   it("a Space's page: given vs in use, how it fits on this Mac, and the warning", async () => {

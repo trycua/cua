@@ -69,7 +69,7 @@ const REFILL_DELAY: Duration = Duration::from_millis(1500);
 /// [`WarmPool::refill_later`]).
 const REFILL_MAX_WAIT: Duration = Duration::from_millis(7500);
 
-/// The explicit-pool source of warm start's Linux Space
+/// The explicit-pool source of the `warm-pools` experiment's Linux Space
 /// ([`crate::local::VmmLocal::apply_pools`]). A shape that has it is kept
 /// warm on purpose for creates that follow each other: a refill starts the
 /// moment a member is claimed, and a create that finds no member ready waits
@@ -428,7 +428,7 @@ impl Shape {
     }
 
     /// Whether a create may wait for a member that is starting: the shape is
-    /// kept warm on purpose for warm start and that pool is
+    /// kept warm on purpose for the `warm-pools` experiment and that pool is
     /// not idle.
     fn waits_for_refill(&self) -> bool {
         self.explicit
@@ -437,7 +437,7 @@ impl Shape {
             && self.refill_estimate().is_some_and(|d| d < WARM_WAIT_MAX)
     }
 
-    /// Whether the shape is kept warm for warm start, whatever the
+    /// Whether the shape is kept warm for the experiment, whatever the
     /// estimate (the refill after a claim starts at once).
     fn is_warm_source(&self) -> bool {
         self.explicit
@@ -558,7 +558,7 @@ pub struct Explicit {
 }
 
 /// A member's record (`<state>/.pool/<member>.json`, 0600).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Record {
     name: String,
     key: String,
@@ -570,6 +570,20 @@ struct Record {
     /// The agent stack was installed before the member was ready.
     #[serde(default)]
     prepared: bool,
+}
+
+impl std::fmt::Debug for Record {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Record")
+            .field("name", &self.name)
+            .field("key", &"<redacted>")
+            .field("backend", &self.backend)
+            .field("secret", &"<redacted>")
+            .field("template", &self.template)
+            .field("keep", &self.keep)
+            .field("prepared", &self.prepared)
+            .finish()
+    }
 }
 
 /// What the pool holds now ([`WarmPool::status`]).
@@ -1093,7 +1107,7 @@ impl WarmPool {
     }
 
     /// Takes a ready member of shape `key`. A shape kept warm for the
-    /// warm start ([`WARM_SOURCE`]) whose member is starting
+    /// `warm-pools` experiment ([`WARM_SOURCE`]) whose member is starting
     /// is waited for (up to [`WARM_WAIT_MAX`]): that member began before this
     /// create, so waiting is never slower than a cold start of its own, and
     /// a cold start would not have the agent stack in it. Any other shape
@@ -1195,7 +1209,7 @@ impl WarmPool {
         }
     }
 
-    /// Says why no warm Space of warm start serves `want` (a debug
+    /// Says why no warm Space of the experiment serves `want` (a debug
     /// aid for shapes that never match).
     fn explain_miss(&self, own: &str, want: &StartSpec, backend: BackendKind) {
         let shapes = self.inner.shapes.lock().unwrap();
@@ -1224,7 +1238,7 @@ impl WarmPool {
         }
     }
 
-    /// Whether shape `key` is kept warm for warm start.
+    /// Whether shape `key` is kept warm for the `warm-pools` experiment.
     fn is_warm_shape(&self, key: &str) -> bool {
         self.inner
             .shapes
@@ -1609,7 +1623,7 @@ impl WarmPool {
     /// stays within `pool.memory_percent` of the memory and above the free
     /// floor.
     ///
-    /// The one warm Space of warm start ([`WARM_SOURCE`])
+    /// The one warm Space of the `warm-pools` experiment ([`WARM_SOURCE`])
     /// is not held to the percentage while it is the only member held (on a
     /// built-in runtime of 4 GiB, 15 percent is less than one warm Space):
     /// it still needs the free floor, so it never takes memory a Space in use
@@ -3850,12 +3864,14 @@ mod tests {
                 1,
                 Some(1),
                 None,
-                Some(Duration::from_millis(1)),
+                // Long enough that the first fill (the fake boots at once) lands before the pool
+                // counts as idle; a 1 ms window raced that fill.
+                Some(Duration::from_millis(500)),
                 Some(vec!["claude-code".into()]),
             )
             .unwrap();
         until_ready(&f, &key, 1).await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(600)).await;
         // Idle now: the next tick gives the member back, nothing refills it,
         // and a create never waits for one.
         f.pool.tick().await;
@@ -3874,7 +3890,7 @@ mod tests {
                 .is_none()
         );
         assert!(t.elapsed() < Duration::from_millis(100));
-        // Withdrawn (the source is no longer kept, for instance no image to keep): the source is gone.
+        // Withdrawn (the experiment turned off): the source is gone.
         f.pool.retain_explicit(|src| src != WARM_SOURCE);
         f.pool.tick().await;
         assert_eq!(f.pool.shape_status(&key).map(|s| s.0).unwrap_or(0), 0);

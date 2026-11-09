@@ -11,7 +11,6 @@
 
 import { hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
 import { cloudsInput, cloudsView } from "./clouds";
-import { hostOs } from "./host-os";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentMessageSent, AgentRunStatus, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
@@ -22,12 +21,31 @@ import { HOST_RUNS_CREATES, loadCreateStreaks, saveCreateStreaks } from "./creat
 import { createReport, reportMailto, type CreateReport, type ReportSend } from "./diagnostic-report";
 import type { AboutInput } from "./contracts/settings";
 import { passedSteps } from "./onboarding";
-import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInFailure, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
+import type {
+  MachineRow,
+  MachinesView,
+  OnboardingMode,
+  SettingsPage,
+  SignInFailure,
+  SignInPhase,
+  SignInStart,
+  SpaceCreateConfig,
+  TelemetryView,
+} from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
 import type { BulkResult } from "./contracts/spaces-page";
-import { LIST_COMPLETE, type CreateAction, type CreatingElsewhere, type CreatesState, type ListStatus, type Space, type SpaceOs, type SpaceRow } from "./contracts/spaces";
+import {
+  LIST_COMPLETE,
+  type CreateAction,
+  type CreatingElsewhere,
+  type CreatesState,
+  type ListStatus,
+  type Space,
+  type SpaceOs,
+  type SpaceRow,
+} from "./contracts/spaces";
 import {
   INITIAL_VAULT_STATE,
   agentRows,
@@ -99,7 +117,6 @@ export interface SessionData extends SessionSnapshot {
   /** The page a waiting sign-in finishes on (to open it again). */
   signInUrl: string | null;
 }
-
 
 /** What a persistent agent is doing: paused, a turn running, or waiting. */
 export type AgentState = "running" | "paused" | "idle";
@@ -349,9 +366,7 @@ export class BridgeStore {
   trackOnboarding(before: OnboardingFlowState, action: OnboardingAction): void {
     // The pages this host passes through unseen (Menu bar off a Mac) are not reported.
     const unseen: readonly string[] = passedSteps();
-    const seen = telemetryOnboarding(this.core, before, action).filter(
-      (s) => s.type !== "onboarding-page" || !unseen.includes(s.page),
-    );
+    const seen = telemetryOnboarding(this.core, before, action).filter((s) => s.type !== "onboarding-page" || !unseen.includes(s.page));
     void this.telemetry.track(seen);
   }
 
@@ -546,8 +561,7 @@ export class BridgeStore {
       const p = progress.get(s.id);
       return p ? { ...s, progress: p, status: p.error ? "suspended" : "provisioning", detail: p.error ?? s.detail } : s;
     });
-    this.creates =
-      this.core.tryCall<CreatesState>("creates.settle", { state: this.creates, spaces: this.registry }) ?? this.creates;
+    this.creates = this.core.tryCall<CreatesState>("creates.settle", { state: this.creates, spaces: this.registry }) ?? this.creates;
     this.publishSpaces();
   }
 
@@ -681,11 +695,11 @@ export class BridgeStore {
       this.createRequests.delete(pendingId);
       await this.refresh("spaces");
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
-      // Plain words: a fresh computer inside this one (never "VM" or "container").
-      const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
-      const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this machine" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
+      // The title names it; what a Space is was said once, in setup.
+      const body = "Ready for your agent.";
       // Nor is the warming home "ready" news until a person wrote into it.
-      if (!hiddenSpaceIdsNow(this.core).some((h) => h === space.id || h === pendingId)) this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
+      if (!hiddenSpaceIdsNow(this.core).some((h) => h === space.id || h === pendingId))
+        this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(!machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;
@@ -704,7 +718,10 @@ export class BridgeStore {
    * runs it again here, unless the host runs creates and retries on its own
    * side (`HOST_RUNS_CREATES`, telling the page with `CreateProgress.retry`).
    * Any other failure is put on the row and thrown. */
-  private async createOnHost(args: { config: SpaceCreateConfig; pendingId: string; os: SpaceOs; notifyWhenReady?: boolean }, pendingId: string): Promise<SpaceRow> {
+  private async createOnHost(
+    args: { config: SpaceCreateConfig; pendingId: string; os: SpaceOs; notifyWhenReady?: boolean },
+    pendingId: string,
+  ): Promise<SpaceRow> {
     for (;;) {
       try {
         return await this.adapter.call("spaces.create", args);
@@ -953,9 +970,7 @@ export class BridgeStore {
   /** Search, select and open groups in the vault list (`keyvault.vaultReduce`). */
   vaultAction(action: VaultAction): void {
     if (!this.overview) return;
-    this.vaultState =
-      this.core.tryCall<VaultState>("keyvault.vaultReduce", { overview: this.overview, state: this.vaultState, action }) ??
-      this.vaultState;
+    this.vaultState = this.core.tryCall<VaultState>("keyvault.vaultReduce", { overview: this.overview, state: this.vaultState, action }) ?? this.vaultState;
     this.publishKeyvault();
   }
 
@@ -1057,10 +1072,17 @@ export class BridgeStore {
    * choice on its page (Share this desktop), never a side effect of a
    * sign-in. A computer already set up keeps its settings. Resolves to
    * whether this computer is set up; never throws. Once at a time.
+   *
+   * Signed out (no account session, or a browser sign-in still under way)
+   * nothing is set up or registered, and the host isn't asked to sign in
+   * on its own: the sign-in comes first, then this. Resolves to false.
    */
   addThisComputer(identity: string | null): Promise<boolean> {
     if (this.addingThisComputer) return this.addingThisComputer;
     const run = (async () => {
+      const snap = (await this.adapter.call("session.get", {}).catch(() => null)) as SessionSnapshot | null;
+      if (!snap || snap.account.authMode !== "user" || !snap.account.identity) return false;
+      if (this.signInPhase.kind === "starting" || this.signInPhase.kind === "waiting") return false;
       const status = (await this.adapter.call("host.status", {}).catch(() => null)) as { configured?: boolean } | null;
       if (!status) return false;
       if (status.configured) return true;
@@ -1244,7 +1266,15 @@ export class BridgeStore {
     const view = this.core.tryCall<MachinesView>("machines.view", { input });
     if (!view) return;
     this.ensured.add("machines");
-    this.machineRows = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [] }));
+    this.machineRows = view.machines.map((m) => ({
+      id: m.id,
+      name: m.name,
+      via: m.current ? "local" : "relay",
+      online: m.online,
+      os: m.os,
+      current: m.current || undefined,
+      limits: [],
+    }));
     this.hostOverride = undefined;
     this.viewOverride = view;
     this.machinesPinned = true;
@@ -1347,10 +1377,7 @@ export class BridgeStore {
       if (!a) return [];
       const current = a.runId ? ordered.find((r) => r.runId === a.runId) : undefined;
       const latest =
-        current ??
-        ordered
-          .filter((r) => r.spaceId === a.space && r.agent === a.harness)
-          .sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0))[0];
+        current ?? ordered.filter((r) => r.spaceId === a.space && r.agent === a.harness).sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0))[0];
       // The core says Running whenever the agent has a run; a run that is
       // waiting for a follow-up reads as idle when its status is known.
       const state: AgentState = a.paused ? "paused" : a.runId && (!current || current.status === "running") ? "running" : "idle";

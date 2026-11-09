@@ -22,7 +22,10 @@ describe("the update state machine", () => {
   });
 
   it("keeps a downloaded update through later checks, the same update found again, and failures", () => {
-    const ready = run([{ type: "available", version: "0.9.3" }, { type: "downloaded", version: "0.9.3" }]);
+    const ready = run([
+      { type: "available", version: "0.9.3" },
+      { type: "downloaded", version: "0.9.3" },
+    ]);
     expect(run([{ type: "checking" }], ready)).toBe(ready);
     expect(run([{ type: "none" }], ready)).toBe(ready);
     expect(run([{ type: "available", version: "0.9.3" }], ready)).toBe(ready);
@@ -31,7 +34,10 @@ describe("the update state machine", () => {
   });
 
   it("downloads a newer update over the one waiting", () => {
-    const ready = run([{ type: "available", version: "0.9.3" }, { type: "downloaded", version: "0.9.3" }]);
+    const ready = run([
+      { type: "available", version: "0.9.3" },
+      { type: "downloaded", version: "0.9.3" },
+    ]);
     expect(run([{ type: "available", version: "0.9.4" }], ready)).toMatchObject({ status: "available", version: "0.9.4", percent: null });
   });
 

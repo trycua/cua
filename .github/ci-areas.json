@@ -235,11 +235,13 @@
    "paths": [
     "apps/cua-spaces-macos/**",
     "libs/spaces-app-swift/**",
-    "libs/spaces-notch-swift/**"
+    "libs/spaces-notch-swift/**",
+    ".github/actions/push-generated/**"
    ],
    "workflows": [
     "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
+    "ci-cua-spaces-driver-pin.yml",
     "ci-cua-spaces-macos.yml",
     "ci-cua-spaces-web.yml",
     "ci-test-scripts.yml",
@@ -371,6 +373,46 @@
     "ci-check-docs-links.yml",
     "ci-openkoalabot-example-tauri.yml",
     "license-check.yml"
+   ]
+  }
+ },
+ "narrow": {
+  "ci-test-python.yml": {
+   "why": "Tests the Python packages and cua-sandbox against cua-sdk (cargo build -p cua-sdk); no other libs/cua crate.",
+   "packages": [
+    "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-cli"
+   ],
+   "paths": [
+    "libs/python/**",
+    "libs/cua/python/**",
+    "libs/cua-spacesd/tests/spaces-e2e/**"
+   ]
+  },
+  "ci-openkoalabot-example-tauri.yml": {
+   "why": "Checks and tests the Tauri example workspace and its UI; the package graph adds the libs/cua crates and @trycua/cua it links.",
+   "packages": [
+    "examples/openkoalabot-example-tauri",
+    "examples/openkoalabot-example-tauri/src-tauri/app",
+    "examples/openkoalabot-example-tauri/src-tauri/core"
+   ],
+   "paths": [
+    "examples/openkoalabot-example-tauri/**"
+   ]
+  },
+  "ci-openkoalabot-example-samples.yml": {
+   "why": "Builds cua-sdk for the TypeScript and Swift samples; its own scope job (ci_swift_samples_scope.py) narrows the Swift build further.",
+   "packages": [
+    "libs/cua/crates/cua-sdk",
+    "libs/cua/typescript",
+    "examples/openkoalabot-example-ts"
+   ],
+   "paths": [
+    "examples/openkoalabot-example-*/**",
+    "libs/cua/swift/**",
+    "libs/spaces-sdk-swift/**",
+    "libs/spaces-app-swift/**",
+    "libs/images/sandbox-images.json"
    ]
   }
  }

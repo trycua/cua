@@ -652,9 +652,10 @@ impl Job {
                 return Err(Error::Timeout(format!("{} is still starting", p.id)));
             }
         };
-        // The spawn capability, when this machine runs the Space: the agent makes its children
-        // from here.
-        if info.id.starts_with("local:")
+        // The spawn capability, when the person has child Spaces on and this
+        // machine runs the Space: the agent makes its children from here.
+        if cua_spaces::experiments::enabled(cua_spaces::experiments::Gate::ChildSpaces)
+            && info.id.starts_with("local:")
             && let Err(e) = self.spaces.set_children(&info.id, true)
         {
             tracing::warn!(space = %info.id, "could not turn on child Spaces: {e}");

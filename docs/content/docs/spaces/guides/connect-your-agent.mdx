@@ -66,9 +66,25 @@ you to press **Use my sign-in**:
 2. Cua keeps the access token in its own Keychain item, never your refresh
    token, and changes nothing about Claude Code's own sign-in. You stay signed
    in to Claude Code.
-3. Each Claude Code run in a Space gets that access token as
+3. This computer's own Claude Code uses it. Runs on your other computers and
+   Spaces don't get it unless you turn on **Copy my sign-in to my other
+   computers** (Settings, Connections, On another computer; off by default).
+   Then each Claude Code run there gets the access token as
    `CLAUDE_CODE_OAUTH_TOKEN`. Only Claude Code gets it: Hermes and the other
    agents never do, and a Space has no refresh token to spend.
+
+### Sign in on another computer
+
+When Claude Code or Codex runs on another computer or Space that isn't signed
+in, the agent's message offers **Sign in to Codex on Mac mini** (or Claude
+Code). Cua starts the agent's own sign-in on that computer (`codex login
+--device-auth`, `claude auth login`) and shows you its link: open it on your
+phone or computer and sign in with ChatGPT or Claude. Codex shows a short code
+to type on that page; for Claude Code, paste the code the page shows back into
+Cua. The message is then sent again. The sign-in stays in that computer's own
+Claude Code or Codex, so you only do this once per computer; Cua never holds
+it. A Space that is made again from its image asks again. For a team, use an
+API key instead ("or use an API key").
 
 The row then reads **Signed in as you@example.com (Claude Max)**, the same
 words on the Claude Code page, the Anthropic row and the card an agent shows
@@ -344,7 +360,7 @@ says to add the key in Settings, Connections or to set it for the Cua daemon.
 ### Where the keys are kept
 
 The Cua daemon keeps the keys in one item of your login Keychain (service
-`run.cua.ai`, next to your Cua sign-in). The item trusts the Cua apps of this
+`ai.cua.session`, the same item service as your Cua sign-in). The item trusts the Cua apps of this
 Mac, so the app, the daemon and the `cua` CLI read it without a prompt, and
 agents started at night by a routine still get their key.
 
@@ -361,12 +377,15 @@ vault to set up first.
   go to logs or usage data.
 </Callout>
 
-A build of cua that keeps its session in a file (an unsigned development build,
-or Linux today) can't save agent keys: they are never written to a plain file.
-Set the key in the Cua daemon's environment there instead
-(`export ANTHROPIC_API_KEY=...`, then `cua daemon stop` and `cua daemon start`)
-and name it in `env_from_host`. Windows uses the Credential Manager the same way
-as the macOS Keychain.
+A build of cua that keeps its session in a file can't save agent keys, with one
+exception, the Local development channel. On the Stable channel (Linux today,
+or an unsigned build) agent keys are never written to a plain file. Set the key
+in the Cua daemon's environment there instead (`export ANTHROPIC_API_KEY=...`,
+then `cua daemon stop` and `cua daemon start`) and name it in `env_from_host`.
+The Local channel, used to develop Cua itself, does save them: it writes an
+`agent-keys` file with mode 0600, unencrypted, and warns you. Don't put real
+production keys in it. Windows uses the Credential Manager the same way as the
+macOS Keychain.
 
 ## If it doesn't work
 

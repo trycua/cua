@@ -67,51 +67,6 @@ pub fn app_creates_reduce(state: AppCreatesState, action: AppCreateAction) -> Ap
     core::spaces::creating::reduce(&state, &action)
 }
 
-/// The actions that make the pending rows show the Spaces agents asked this
-/// computer to make (read from this computer's cua home, which the daemon writes):
-/// run each through `app_creates_reduce` on every list refresh.
-#[uniffi::export]
-pub fn app_agent_creates_actions(state: AppCreatesState, now_ms: i64) -> Vec<AppCreateAction> {
-    let creates: Vec<core::spaces::creating::AgentCreate> =
-        cua_spaces::child_creates::visible(&cua_home::cua_home())
-            .into_iter()
-            .map(|e| core::spaces::creating::AgentCreate {
-                key: e.key,
-                name: e.name,
-                os: e.os,
-                state: match e.state {
-                    cua_spaces::child_creates::State::Creating => "creating",
-                    cua_spaces::child_creates::State::Ready => "ready",
-                    cua_spaces::child_creates::State::Failed => "failed",
-                }
-                .into(),
-                phase: e.code,
-                percent: e.percent,
-                space: e.space,
-                error: e.error,
-                started_ms: e.started_ms,
-                parent: e.parent,
-            })
-            .collect();
-    core::spaces::creating::agent_actions(&state, &creates, now_ms)
-}
-
-/// The person removed an agent's failed create from the list: it is not drawn again.
-#[uniffi::export]
-pub fn app_agent_create_remove(pending_id: String) {
-    for e in cua_spaces::child_creates::visible(&cua_home::cua_home()) {
-        if core::spaces::creating::agent_pending_id(&e.key, e.started_ms) == pending_id {
-            cua_spaces::child_creates::hide(&cua_home::cua_home(), &e.key, e.started_ms);
-        }
-    }
-}
-
-/// Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
-#[uniffi::export]
-pub fn app_agent_create_is_agents(id: String) -> bool {
-    core::spaces::creating::is_agent_pending(&id)
-}
-
 /// The registry's Spaces plus a row per Space being created.
 #[uniffi::export]
 pub fn app_creates_compose(spaces: Vec<AppSpace>, state: AppCreatesState) -> Vec<AppSpace> {
@@ -234,10 +189,27 @@ pub fn app_usage_refresh_ms() -> u64 {
     core::spaces::sidebar::USAGE_REFRESH_MS
 }
 
+/// The system this process runs on, from the platform the library was
+/// built for. The shells run in the same process as the library, so this is
+/// the real host, never a macOS default.
+fn host_space_os() -> core::model::SpaceOs {
+    space_os_of_platform(std::env::consts::OS)
+}
+
+/// Maps Rust's `std::env::consts::OS` to a Space's system.
+fn space_os_of_platform(platform: &str) -> core::model::SpaceOs {
+    match platform {
+        "macos" => core::model::SpaceOs::Macos,
+        "windows" => core::model::SpaceOs::Windows,
+        "linux" => core::model::SpaceOs::Linux,
+        _ => core::model::SpaceOs::Unknown,
+    }
+}
+
 /// The "This machine" roster entry.
 #[uniffi::export]
 pub fn app_this_machine_space(status: Option<AppHostSummaryInput>, now_ms: i64) -> AppSpace {
-    core::host::this_machine_space(status.as_ref(), now_ms, core::model::SpaceOs::Macos)
+    core::host::this_machine_space(status.as_ref(), now_ms, host_space_os())
 }
 
 /// Adds the "This machine" entry to a roster, first.
@@ -247,12 +219,7 @@ pub fn app_with_this_machine(
     status: Option<AppHostSummaryInput>,
     now_ms: i64,
 ) -> Vec<AppSpace> {
-    core::host::with_this_machine(
-        &spaces,
-        status.as_ref(),
-        now_ms,
-        core::model::SpaceOs::Macos,
-    )
+    core::host::with_this_machine(&spaces, status.as_ref(), now_ms, host_space_os())
 }
 
 /// The words of a Space's sections (Stream, Agents, Teleport).
@@ -2142,6 +2109,21 @@ pub fn app_account_app_url() -> String {
     cua_home::env::account_app_url()
 }
 
+/// Which build and deployment this app runs as: its channel (`stable` or
+/// `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+/// and the host of the sign-in server it uses, resolved as every other part
+/// of the app resolves them. The web UI's title bar tag ("Local · Staging",
+/// the app core's `environment.tag`) is drawn from it, so every shell agrees.
+#[uniffi::export]
+pub fn app_target() -> AppTarget {
+    let (channel, env) = cua_home::channel::CuaChannel::current_with_env();
+    AppTarget {
+        channel: channel.name().to_string(),
+        env: env.name().to_string(),
+        auth_host: core::environment_tag::auth_host(&cua_home::env::oidc_issuer()),
+    }
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]
@@ -2209,7 +2191,7 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
 }
 
 /// Reads the settings file (defaults when missing or damaged). The
-/// experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+/// experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
 /// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -2226,6 +2208,9 @@ fn sync_experiments_from_home(
     home: &std::path::Path,
 ) -> AppExperiments {
     use cua_spaces::experiments::{Gate, switch};
+    if let Some(on) = switch(home, Gate::ChildSpaces) {
+        experiments.child_spaces = on;
+    }
     if let Some(on) = switch(home, Gate::CiRunners) {
         experiments.ci_runners = on;
     }
@@ -2234,6 +2219,9 @@ fn sync_experiments_from_home(
     }
     if let Some(on) = switch(home, Gate::Mobile) {
         experiments.mobile = on;
+    }
+    if let Some(on) = switch(home, Gate::WarmPools) {
+        experiments.warm_pools = on;
     }
     experiments
 }
@@ -2245,9 +2233,11 @@ fn sync_experiments_to_home(
     home: &std::path::Path,
 ) -> std::io::Result<()> {
     use cua_spaces::experiments::{Gate, set_switch};
+    set_switch(home, Gate::ChildSpaces, experiments.child_spaces)?;
     set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
     set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
-    set_switch(home, Gate::Mobile, experiments.mobile)
+    set_switch(home, Gate::Mobile, experiments.mobile)?;
+    set_switch(home, Gate::WarmPools, experiments.warm_pools)
 }
 
 /// Writes the settings file, and keeps the experiments the daemon enforces
@@ -2264,91 +2254,20 @@ pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
 mod experiment_sync_tests {
     use super::*;
 
-    /// The experiment list is one fact in four places: the daemon's gates, the app's
-    /// `Experiments` (which the macOS and desktop shells read), and the web Labs flags. A change
-    /// to one that leaves the others behind fails here. The four features that are always on
-    /// (Secure Spaces, Child Spaces, Ask first, Warm start) are in none of them.
     #[test]
-    fn the_experiment_lists_agree_across_the_daemon_the_app_the_shells_and_the_web() {
-        use cua_spaces::experiments::Gate;
-        let always_on = [
-            (
-                "secure_spaces",
-                "secure-spaces",
-                "secureSpaces",
-                "Secure Spaces",
-            ),
-            (
-                "child_spaces",
-                "child-spaces",
-                "childSpaces",
-                "Child Spaces",
-            ),
-            ("ask_first", "ask-first", "askFirst", "Ask first"),
-            ("warm_pools", "warm-pools", "warmPools", "Warm start"),
-        ];
-        let app = AppExperiments::default();
-        // The daemon's gates are off by default, and each with an app switch agrees with it.
-        let mut checked = 0;
-        for g in Gate::ALL {
-            assert!(!cua_spaces::experiments::enabled_in(
-                std::path::Path::new("/nonexistent"),
-                *g
-            ));
-            if let Some(e) = core::experiments::Experiment::parse(g.id()) {
-                assert!(!app.is_on(e), "{}: off by default in the app", g.name());
-                checked += 1;
-            }
+    fn a_switch_off_once_for_an_always_on_feature_is_ignored_and_removed_on_save() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("experiments");
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["secure-spaces", "ask-first"] {
+            std::fs::write(dir.join(n), "off\n").unwrap();
         }
-        assert!(
-            checked >= 3,
-            "every daemon gate with an app switch was compared"
-        );
-        for (id, name, _, title) in always_on {
-            assert!(Gate::parse(name).is_none(), "{name} is still a daemon gate");
-            assert!(
-                core::experiments::Experiment::parse(id).is_none(),
-                "{id} is still an app experiment"
-            );
-            assert!(
-                Gate::ALL.iter().all(|g| g.title() != title),
-                "{title} is still listed by the daemon"
-            );
-        }
-        // The app lists exactly the experiments that remain (the daemon also has Windows on KVM,
-        // which the app has no switch for).
-        let ids: Vec<_> = core::experiments::ALL.iter().map(|e| e.id()).collect();
-        assert_eq!(ids, ["cua_volume", "ci_runners", "tcp_shares", "mobile"]);
-        // The web Labs flags and the shells: none of the four is a flag or a field any more.
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
-        let flags = std::fs::read_to_string(repo.join("apps/cua-spaces-web/src/bridge/flags.ts"))
-            .expect("the web flags");
-        for retired in [
-            "spaces_ask_first_home",
-            "spaces_new_onboarding",
-            "secure_spaces",
-            "child_spaces",
-            "warm_pools",
-            "ask_first",
-        ] {
-            assert!(!flags.contains(retired), "flags.ts still names {retired}");
-        }
-        assert!(flags.contains("spaces_tree"), "flags.ts lost spaces_tree");
-        for file in [
-            "apps/cua-spaces-macos/Sources/CuaSpacesMacKit/Models/AppModel.swift",
-            "apps/cua-spaces-desktop/src/bridge/settings.ts",
-            "apps/cua-spaces-web/src/components/settings/advanced-tab.tsx",
-        ] {
-            let text = std::fs::read_to_string(repo.join(file)).expect(file);
-            for (id, _, camel, title) in always_on {
-                assert!(
-                    !text.contains(camel)
-                        && !text.contains(&format!("experiment:{id}"))
-                        && !text.contains(&format!("\"{title}\"")),
-                    "{file} still names the switch {camel}"
-                );
-            }
-        }
+        // Reading ignores them.
+        let seen = sync_experiments_from_home(AppExperiments::default(), home.path());
+        assert_eq!(seen, AppExperiments::default());
+        // Writing removes them.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        assert!(!dir.join("secure-spaces").exists() && !dir.join("ask-first").exists());
     }
 
     #[test]
@@ -2356,9 +2275,9 @@ mod experiment_sync_tests {
         let home = tempfile::tempdir().unwrap();
         // Nothing kept: the app's own file decides.
         let mine = AppExperiments {
-            tcp_shares: true,
+            child_spaces: true,
             ci_runners: true,
-            ..AppExperiments::all_off()
+            ..Default::default()
         };
         assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
         // What `cua experiments enable` set wins.
@@ -2369,13 +2288,16 @@ mod experiment_sync_tests {
         )
         .unwrap();
         let seen = sync_experiments_from_home(mine, home.path());
-        assert!(seen.mobile && seen.tcp_shares && seen.ci_runners);
+        assert!(seen.mobile && seen.child_spaces && seen.ci_runners);
         // The app's switches land in the home for the daemon.
         sync_experiments_to_home(&seen, home.path()).unwrap();
-        use cua_spaces::experiments::{Gate, switch};
-        assert_eq!(switch(home.path(), Gate::CiRunners), Some(true));
-        assert_eq!(switch(home.path(), Gate::TcpShares), Some(true));
-        assert_eq!(switch(home.path(), Gate::Mobile), Some(true));
+        assert_eq!(
+            cua_spaces::experiments::switch(
+                home.path(),
+                cua_spaces::experiments::Gate::ChildSpaces
+            ),
+            Some(true)
+        );
         // Only the daemon's experiments are kept there.
         let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
             .unwrap()
@@ -2383,26 +2305,13 @@ mod experiment_sync_tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
-            kept.iter()
-                .all(|n| n == "ci-runners" || n == "tcp-shares" || n == "mobile"),
+            kept.iter().all(|n| n == "child-spaces"
+                || n == "ci-runners"
+                || n == "tcp-shares"
+                || n == "mobile"
+                || n == "warm-pools"),
             "{kept:?}"
         );
-    }
-
-    #[test]
-    fn a_switch_off_once_for_an_always_on_feature_is_ignored_and_removed_on_save() {
-        let home = tempfile::tempdir().unwrap();
-        let dir = home.path().join("experiments");
-        std::fs::create_dir_all(&dir).unwrap();
-        for n in ["secure-spaces", "child-spaces", "ask-first", "warm-pools"] {
-            std::fs::write(dir.join(n), "off\n").unwrap();
-        }
-        // Reading ignores them.
-        let seen = sync_experiments_from_home(AppExperiments::default(), home.path());
-        assert_eq!(seen, AppExperiments::default());
-        // Writing removes them.
-        sync_experiments_to_home(&seen, home.path()).unwrap();
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     }
 }
 
@@ -3827,5 +3736,27 @@ mod resources_tests {
             format!("{} in use", rt::words::computer_memory(c))
         );
         assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
+    }
+}
+
+#[cfg(test)]
+mod host_os_tests {
+    use super::*;
+    use crate::app_core::core::model::SpaceOs;
+
+    #[test]
+    fn platform_words_map_to_their_system() {
+        assert_eq!(space_os_of_platform("macos"), SpaceOs::Macos);
+        assert_eq!(space_os_of_platform("windows"), SpaceOs::Windows);
+        assert_eq!(space_os_of_platform("linux"), SpaceOs::Linux);
+        assert_eq!(space_os_of_platform("freebsd"), SpaceOs::Unknown);
+    }
+
+    #[test]
+    fn this_machine_space_carries_the_real_host_system() {
+        let want = space_os_of_platform(std::env::consts::OS);
+        assert_eq!(app_this_machine_space(None, 0).os, want);
+        let roster = app_with_this_machine(Vec::new(), None, 0);
+        assert_eq!(roster[0].os, want);
     }
 }

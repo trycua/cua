@@ -10,7 +10,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Version: 0.9.0
 */}
 
-The Spaces contract: 121 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 122 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -82,6 +82,7 @@ Run coding agents inside a Space.
 | [`agent_stop`](/spaces/reference/agents#agent_stop) | Stop an agent run. | destructive |
 | [`agent_list`](/spaces/reference/agents#agent_list) | List agent runs in the Space. | read-only, idempotent |
 | [`agent_capabilities`](/spaces/reference/agents#agent_capabilities) | Report what the agent harnesses support. | read-only, idempotent |
+| [`agent_sign_in`](/spaces/reference/agents#agent_sign_in) | Sign a coding agent in on the Space's computer, the agent's own way. | read-only, idempotent |
 | [`agent_threads`](/spaces/reference/agents#agent_threads) | List the recent Claude Code, Codex and Hermes chats on this computer. For a person only. | read-only, idempotent |
 | [`agent_thread_read`](/spaces/reference/agents#agent_thread_read) | Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only. | read-only, idempotent |
 
@@ -418,7 +419,7 @@ An agent run failed outside the transport: install, configuration or a refused m
 
 Fix: Read agent_status and its output_tail for the reason.
 
-Listed by [`agent_start`](/spaces/reference/agents#agent_start), [`agent_message`](/spaces/reference/agents#agent_message), [`agent_events`](/spaces/reference/agents#agent_events), [`agent_status`](/spaces/reference/agents#agent_status), [`agent_interrupt`](/spaces/reference/agents#agent_interrupt), [`agent_stop`](/spaces/reference/agents#agent_stop), [`agent_list`](/spaces/reference/agents#agent_list), [`agent_add`](/spaces/reference/agents#agent_add), [`agent_remove`](/spaces/reference/agents#agent_remove), [`agent_send`](/spaces/reference/agents#agent_send), [`persistent_agent_save`](/spaces/reference/agents#persistent_agent_save), [`agent_pause`](/spaces/reference/agents#agent_pause), [`agent_resume`](/spaces/reference/agents#agent_resume).
+Listed by [`agent_start`](/spaces/reference/agents#agent_start), [`agent_message`](/spaces/reference/agents#agent_message), [`agent_events`](/spaces/reference/agents#agent_events), [`agent_status`](/spaces/reference/agents#agent_status), [`agent_interrupt`](/spaces/reference/agents#agent_interrupt), [`agent_stop`](/spaces/reference/agents#agent_stop), [`agent_list`](/spaces/reference/agents#agent_list), [`agent_sign_in`](/spaces/reference/agents#agent_sign_in), [`agent_add`](/spaces/reference/agents#agent_add), [`agent_remove`](/spaces/reference/agents#agent_remove), [`agent_send`](/spaces/reference/agents#agent_send), [`persistent_agent_save`](/spaces/reference/agents#persistent_agent_save), [`agent_pause`](/spaces/reference/agents#agent_pause), [`agent_resume`](/spaces/reference/agents#agent_resume).
 
 #### timeout
 

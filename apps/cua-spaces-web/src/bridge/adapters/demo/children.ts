@@ -91,7 +91,14 @@ export function createDemoChildren({
     return d;
   };
   return {
-    "spaces.tree": (): TreeNodeWire[] => rows().map((r) => ({ id: r.id, parent: parents.get(r.id) ?? null, depth: depth(r.id), children: on.has(r.id), home: agentHome && r.id === AGENT_HOME_ID ? "claude-code" : null })),
+    "spaces.tree": (): TreeNodeWire[] =>
+      rows().map((r) => ({
+        id: r.id,
+        parent: parents.get(r.id) ?? null,
+        depth: depth(r.id),
+        children: on.has(r.id),
+        home: agentHome && r.id === AGENT_HOME_ID ? "claude-code" : null,
+      })),
     "children.set": ({ spaceId, enabled }) => {
       findRow(spaceId);
       if (enabled) on.add(spaceId);
@@ -118,7 +125,9 @@ export function createDemoChildren({
         spaceId,
         action === "remove"
           ? list.filter((s) => s.name !== name)
-          : list.map((s) => (s.name === name ? { ...s, state: action === "stop" ? "stopped" : "running", restarts: action === "restart" ? s.restarts + 1 : s.restarts } : s)),
+          : list.map((s) =>
+              s.name === name ? { ...s, state: action === "stop" ? "stopped" : "running", restarts: action === "restart" ? s.restarts + 1 : s.restarts } : s,
+            ),
       );
       return null;
     },

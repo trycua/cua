@@ -5,7 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { AskFirstHome } from "@/components/ask-first/home";
 
-/** The "Ask first" Home. */
+/** Home: asks what you want done and where. */
 export const Route = createFileRoute("/home/")({
   component: AskFirstHome,
 });

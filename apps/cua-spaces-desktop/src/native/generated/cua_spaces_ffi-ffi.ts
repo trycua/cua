@@ -1707,6 +1707,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_target": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_teams": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -3647,6 +3652,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_target": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_teams": {
       args: [],
       ret: FfiType.UInt16,
@@ -4727,6 +4737,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_stream_pip_click(open: Uint8Array, row: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_stream_pip_reduce(open: Uint8Array, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_stream_section(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_target(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_teams(accountToken: Uint8Array): bigint;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_creates(state: Uint8Array, action: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_enroll(state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -5115,6 +5126,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_stream_pip_click(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_stream_pip_reduce(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_stream_section(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_target(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_teams(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_creates(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_enroll(): number;

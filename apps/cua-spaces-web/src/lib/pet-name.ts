@@ -9,7 +9,7 @@ import { PET_ADJECTIVES, PET_ANIMALS } from "./pet-names.generated";
  * A taken name is retried with another pair; a short suffix is the last resort.
  */
 export function petName(taken: (name: string) => boolean, random: () => number = Math.random): string {
-  const pick = <T,>(l: readonly T[]) => l[Math.floor(random() * l.length)]!;
+  const pick = <T>(l: readonly T[]) => l[Math.floor(random() * l.length)]!;
   for (let i = 0; i < 64; i++) {
     const n = `${pick(PET_ADJECTIVES)}-${pick(PET_ANIMALS)}`;
     if (!taken(n)) return n;

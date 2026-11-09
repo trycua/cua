@@ -492,13 +492,9 @@ pub(crate) struct Live {
     setups: std::collections::HashSet<String>,
     /// Journal shippers of durable runs, by `<run>#<epoch>`.
     shippers: HashMap<String, crate::session_journal::Shipper>,
-    /// Runs started for a task, until the agent is up: run id to the task's
-    /// seq and whether the start is a restart nobody asked for (only that
-    /// one says so in the thread; a start the person asked for shows as the
-    /// starting row).
-    joining: HashMap<String, (u64, bool)>,
-    /// Tasks put back after an agent stopped, whose next start is a restart.
-    restarted: std::collections::HashSet<u64>,
+    /// Runs started for a task whose "woke up and joined" note waits until
+    /// the agent is up: run id to the task's seq.
+    joining: HashMap<String, u64>,
     /// Agent-to-agent wakes per Space ([`wake`]).
     wake: wake::LiveWake,
     /// Local Spaces some agent names that the registry does not have, and
@@ -2295,7 +2291,13 @@ impl Persistent {
         let last = store.last_seq()?;
         let recent = store.read(last.saturating_sub(RECENT), RECENT as usize + 1)?;
         let mut drafts = vec![];
+        // The first stretch of a run is its opening line; every later one is either the closing message
+        // or narration between tool calls ("Let me look at it..."), which the thread does not carry.
+        let opening = said.iter().map(|s| s.first_seq).min();
         for s in said {
+            if Some(s.first_seq) != opening && is_process_narration(&s.text) {
+                continue;
+            }
             let prefix = format!("seg:{run}:{}:", s.first_seq);
             // How much of this stretch an earlier pass posted (it grows only when the agent paused
             // mid-sentence for longer than [`QUIET`]).
@@ -2347,9 +2349,10 @@ impl Persistent {
         let Some(task) = rec.task.as_ref().map(|t| t.seq) else {
             return Ok(());
         };
-        let kids = self.spaces.children(&rec.space).unwrap_or_default();
-        let asked = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space);
-        if kids.is_empty() && asked.is_empty() {
+        let Ok(kids) = self.spaces.children(&rec.space) else {
+            return Ok(());
+        };
+        if kids.is_empty() {
             return Ok(());
         }
         let store = self.thread_store(&rec.space);
@@ -2357,80 +2360,7 @@ impl Persistent {
         let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
         let infos = self.spaces.list()?;
         let mut drafts = vec![];
-        // The creates the host ran for this agent: one note per step and per outcome (keyed, so a
-        // pass never repeats one), which the clients fold into one row each.
-        for e in &asked {
-            let base = format!("childc:{}:{}", e.key, e.started_ms);
-            let state = match e.state {
-                cua_spaces::child_creates::State::Creating => "creating",
-                cua_spaces::child_creates::State::Ready => "ready",
-                cua_spaces::child_creates::State::Failed => "failed",
-            };
-            let key = match e.state {
-                cua_spaces::child_creates::State::Creating => format!("{base}:p:{}", e.phase),
-                _ => format!("{base}:{state}"),
-            };
-            if recent
-                .iter()
-                .any(|r| r.client_id.as_deref() == Some(key.as_str()))
-            {
-                continue;
-            }
-            let os = &e.os;
-            let text = match e.state {
-                cua_spaces::child_creates::State::Creating => {
-                    format!("Creating the {} Space {}", os, e.name).replace("  ", " ")
-                }
-                cua_spaces::child_creates::State::Ready => format!("{} is ready", e.name),
-                cua_spaces::child_creates::State::Failed => format!(
-                    "Couldn't create the {} Space {}: {}. {} was told.",
-                    os,
-                    e.name,
-                    e.error.trim_end_matches('.').to_lowercase(),
-                    rec.name
-                )
-                .replace("  ", " "),
-            };
-            let space = if e.space.is_empty() {
-                format!("local:{}", e.key)
-            } else {
-                e.space.clone()
-            };
-            let mut d = Draft::event(
-                "child_space",
-                text,
-                json!({
-                    "kind": "child_space", "space": space, "key": format!("{}:{}", e.key, e.started_ms),
-                    "name": e.name, "os": os, "agent": rec.handle(), "state": state,
-                    "phase": e.phase, "percent": e.percent, "error": e.error,
-                    "started_ms": e.started_ms, "ended_ms": e.ended_ms,
-                }),
-            );
-            d.task_seq = Some(task);
-            d.client_id = Some(key);
-            drafts.push(d);
-        }
-        let covered: std::collections::HashSet<&str> = asked
-            .iter()
-            .map(|e| e.space.as_str())
-            .filter(|s| !s.is_empty())
-            .collect();
-        // A create still under way has no Space id yet (`space` is empty): its child is already in the list of children, and
-        // the create's own row will say when it is ready. Without this the child was reported twice, once as "Ready"
-        // from here and once as "Ready in 2s" from the create.
-        let asked_names: std::collections::HashSet<&str> =
-            asked.iter().map(|e| e.name.as_str()).collect();
         for id in kids {
-            if covered.contains(id.as_str()) {
-                continue;
-            }
-            if infos
-                .iter()
-                .find(|i| i.id == id)
-                .is_some_and(|i| made_by_a_tracked_create(&asked_names, &i.name, &i.display_name))
-            {
-                continue;
-            }
             let key = format!("child:{id}");
             if recent
                 .iter()
@@ -2745,22 +2675,18 @@ impl Persistent {
                 self.thread_store(&rec.space).wake();
             }
         }
-        // A run restarted without the person asking says so once the agent
-        // is up (an agent that never gets there fails instead, and says
-        // that). A start the person asked for says nothing: its starting
-        // row already showed it.
+        // "woke up and joined" says so once the agent is up (an agent that
+        // never gets there fails instead, and says that).
         if agent_ready(&page.events)
-            && let Some((seq, restart)) = self.live.lock().await.joining.remove(&run)
+            && let Some(seq) = self.live.lock().await.joining.remove(&run)
         {
-            let store = self.thread_store(&rec.space);
-            let words = store
-                .fold()
-                .ok()
-                .and_then(|f| f.tasks.get(&seq).map(|t| t.text.clone()))
-                .unwrap_or_default();
-            if let Some(text) = members::start_note(restart, &rec.name, &words) {
-                let _ = store.append(crate::thread::Draft::note("dispatch", Some(seq), text));
-            }
+            let _ = self
+                .thread_store(&rec.space)
+                .append(crate::thread::Draft::note(
+                    "dispatch",
+                    Some(seq),
+                    format!("{} woke up and joined", members::session_name(&rec)),
+                ));
         }
         if failed.is_some() || ended.is_some() {
             self.live.lock().await.joining.remove(&run);
@@ -2861,16 +2787,6 @@ enum Activity {
     /// The turn ended: nothing.
     Cleared,
     Line(String),
-}
-
-/// Whether a child Space is the one a tracked create (a row with its own steps and time) is making or made: its name is
-/// the create's. Such a child is not announced a second time as "made the computer".
-fn made_by_a_tracked_create(
-    asked: &std::collections::HashSet<&str>,
-    name: &str,
-    display_name: &str,
-) -> bool {
-    asked.contains(name) || (!display_name.is_empty() && asked.contains(display_name))
 }
 
 /// An MCP tool's name (`mcp__cua__stream_space_window`) in plain words for the chip, or `None` for any other title.
@@ -3308,6 +3224,66 @@ mod power_tests {
     }
 }
 
+/// Whether a stretch of an agent's words is narration of its own process ("Let me look at the
+/// logo", "I'll check the packages", "Now I'm writing the script"): the agent speaks as the
+/// person's computers, and narrates neither tools nor plans. Held back in the thread; the app's own
+/// working line shows that it is busy.
+fn is_process_narration(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    let first: String = t
+        .split(['.', '!', '\n'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // "Got the logo. Let me look at it": any sentence that starts a plan counts.
+    let sentences: Vec<String> = t
+        .split(['.', '!', '\n'])
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    const STARTS: [&str; 12] = [
+        "let me ",
+        "let's ",
+        "i'll ",
+        "i will ",
+        "i'm going to ",
+        "i am going to ",
+        "now i",
+        "next, i",
+        "first, i",
+        "i need to ",
+        "i'm checking",
+        "i'm looking",
+    ];
+    let narrates = |x: &str| STARTS.iter().any(|p| x.starts_with(p));
+    narrates(&first) || (sentences.len() <= 3 && sentences.iter().any(|x| narrates(x)))
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::is_process_narration;
+
+    #[test]
+    fn narration_of_the_process_is_held_back_and_a_final_message_is_not() {
+        for n in [
+            "Got the logo. Let me look at it and see which packages exist for rasterizing.",
+            "I'll check the pool skill first.",
+            "Now I'm writing the training script.",
+            "Let's try a longer run.",
+        ] {
+            assert!(is_process_narration(n), "{n}");
+        }
+        for ok in [
+            "Training on your Mac with MLX, about 90 seconds.",
+            "Your Cua logo has grown from a single cell. The window is open in your Stream: click it to erase a patch and watch it regrow.",
+            "Opening the window now.",
+        ] {
+            assert!(!is_process_narration(ok), "{ok}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod plain_tool_tests {
     use super::plain_tool;
@@ -3325,19 +3301,5 @@ mod plain_tool_tests {
         assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
         assert_eq!(plain_tool("Terminal"), None);
         assert_eq!(plain_tool("mcp__other__thing"), None);
-    }
-}
-
-#[cfg(test)]
-mod tracked_create_tests {
-    use super::made_by_a_tracked_create;
-    use std::collections::HashSet;
-
-    #[test]
-    fn a_child_a_create_is_making_is_not_announced_twice() {
-        let asked: HashSet<&str> = ["kid-a", "kid-b"].into_iter().collect();
-        assert!(made_by_a_tracked_create(&asked, "kid-a", ""));
-        assert!(made_by_a_tracked_create(&asked, "x", "kid-b"));
-        assert!(!made_by_a_tracked_create(&asked, "other", ""));
     }
 }

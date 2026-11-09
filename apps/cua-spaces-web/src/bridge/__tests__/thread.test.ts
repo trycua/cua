@@ -11,7 +11,19 @@ import { describe, expect, it } from "vitest";
 import { HostError, UnsupportedOperationError } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
 import { DEMO_THREAD_SPACE } from "../adapters/demo/thread";
-import { agentMembersFromTool, isMissingThreadTool, threadEntryFromTool, threadLiveFromTool, threadPageFromTool, threadPostArgs, threadReadArgs, threadSetRightsArgs, threadViewFromTool, webkitThreadOps, type ThreadEntry } from "../ops/thread";
+import {
+  agentMembersFromTool,
+  isMissingThreadTool,
+  threadEntryFromTool,
+  threadLiveFromTool,
+  threadPageFromTool,
+  threadPostArgs,
+  threadReadArgs,
+  threadSetRightsArgs,
+  threadViewFromTool,
+  webkitThreadOps,
+  type ThreadEntry,
+} from "../ops/thread";
 import { foldThread, readSeqFrom } from "../thread";
 
 let seq = 0;
@@ -97,7 +109,17 @@ describe("the thread tools' JSON", () => {
         ],
       }).members,
     ).toEqual([
-      { name: "claude", harness: "claude-code", status: "working", activity: "running e2e", sessions: 3, rights: null, youCan: null, heldBy: null, identity: null },
+      {
+        name: "claude",
+        harness: "claude-code",
+        status: "working",
+        activity: "running e2e",
+        sessions: 3,
+        rights: null,
+        youCan: null,
+        heldBy: null,
+        identity: null,
+      },
       { name: "hermes", harness: "hermes", status: "asleep", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: null },
     ]);
   });
@@ -120,7 +142,16 @@ describe("the thread tools' JSON", () => {
     expect(m!.youCan).toEqual({ task: true, control: false, approve: false });
     expect(m!.heldBy).toBe("Mia");
     const page = threadPageFromTool({
-      entries: [{ seq: 1, kind: "message", author: { kind: "person", id: "acct_mia", name: "Mia" }, text: "@claude go", task: { to: "claude" }, runs_on_keys_of: { id: "acct_ada", name: "Ada" } }],
+      entries: [
+        {
+          seq: 1,
+          kind: "message",
+          author: { kind: "person", id: "acct_mia", name: "Mia" },
+          text: "@claude go",
+          task: { to: "claude" },
+          runs_on_keys_of: { id: "acct_ada", name: "Ada" },
+        },
+      ],
       role: "guest",
     });
     expect(page.entries[0]!.runsOnKeysOf).toEqual({ id: "acct_ada", name: "Ada" });
@@ -131,13 +162,28 @@ describe("the thread tools' JSON", () => {
   });
 
   it("builds the tools' arguments, bounding the long poll", () => {
-    expect(threadReadArgs({ spaceId: "local:dev", after: 0, limit: 100, markRead: true, followMs: 90_000 })).toEqual({ space: "local:dev", after: 0, limit: 100, mark_read: true, follow_ms: 25_000 });
+    expect(threadReadArgs({ spaceId: "local:dev", after: 0, limit: 100, markRead: true, followMs: 90_000 })).toEqual({
+      space: "local:dev",
+      after: 0,
+      limit: 100,
+      mark_read: true,
+      follow_ms: 25_000,
+    });
     expect(threadReadArgs({ spaceId: "local:dev" })).toEqual({ space: "local:dev" });
     // The stage key rides only a follow, so the wait ends when an agent's stage changes.
-    expect(threadReadArgs({ spaceId: "local:dev", after: 3, followMs: 25_000, liveAfter: "claude=thinking" })).toEqual({ space: "local:dev", after: 3, follow_ms: 25_000, live_after: "claude=thinking" });
+    expect(threadReadArgs({ spaceId: "local:dev", after: 3, followMs: 25_000, liveAfter: "claude=thinking" })).toEqual({
+      space: "local:dev",
+      after: 3,
+      follow_ms: 25_000,
+      live_after: "claude=thinking",
+    });
     expect(threadReadArgs({ spaceId: "local:dev", after: 3, liveAfter: "claude=thinking" })).toEqual({ space: "local:dev", after: 3 });
     expect(threadReadArgs({ spaceId: "local:dev", before: 40, limit: 100 })).toEqual({ space: "local:dev", before: 40, limit: 100 });
-    expect(threadPostArgs({ spaceId: "local:dev", text: "Denied", answer: { approval: 9, approve: false } })).toEqual({ space: "local:dev", text: "Denied", answer: { approval: 9, approve: false } });
+    expect(threadPostArgs({ spaceId: "local:dev", text: "Denied", answer: { approval: 9, approve: false } })).toEqual({
+      space: "local:dev",
+      text: "Denied",
+      answer: { approval: 9, approve: false },
+    });
   });
 
   it("reads an old daemon's missing tool as unsupported, and nothing else", () => {
@@ -194,7 +240,10 @@ describe("folding the thread", () => {
     expect(items.map((i) => i.type)).toEqual(["task", "message"]);
     expect((items[1] as Extract<(typeof items)[number], { type: "message" }>).entry.text).toBe("Looks good");
     const page = threadPageFromTool({
-      entries: [{ seq: 3, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x", task: { to: "hermes" }, fanout_of: 2 }, { seq: 2, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x" }],
+      entries: [
+        { seq: 3, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x", task: { to: "hermes" }, fanout_of: 2 },
+        { seq: 2, kind: "message", author: { kind: "person", id: "a", name: "A" }, text: "x" },
+      ],
     });
     expect(page.entries.find((e) => e.seq === 3)?.fanoutOf).toBe(2);
     expect(page.entries.find((e) => e.seq === 2)?.fanoutOf).toBeUndefined();
@@ -233,7 +282,13 @@ describe("folding the thread", () => {
     const claimed = update(task.seq, "claimed", "Session 2 picked this up");
     const elsewhere = entry({ author: SYSTEM, kind: "system", text: "about a task not on this page", noteFor: 999 });
     const items = foldThread([task, woke, reply, claimed, elsewhere]);
-    expect(items.map((i) => (i.type === "system" ? i.text : i.type))).toEqual(["task", "Hermes woke up and joined", "message", "Session 2 picked this up", "about a task not on this page"]);
+    expect(items.map((i) => (i.type === "system" ? i.text : i.type))).toEqual([
+      "task",
+      "Hermes woke up and joined",
+      "message",
+      "Session 2 picked this up",
+      "about a task not on this page",
+    ]);
   });
 
   it("puts the unread divider before the first entry someone else wrote after the cursor", () => {
@@ -271,7 +326,7 @@ describe("the demo host's thread", () => {
     expect(states).toEqual(expect.arrayContaining(["done", "working", "queued"]));
     expect(items.some((i) => i.type === "approval" && i.answer === null)).toBe(true);
     expect(items.some((i) => i.type === "unread")).toBe(true);
-    expect(items.some((i) => i.type === "system" && i.text.startsWith("Hermes stopped working on"))).toBe(true);
+    expect(items.some((i) => i.type === "system" && i.text === "Hermes woke up and joined")).toBe(true);
     expect(page.hasMoreBefore).toBe(false);
     const posted = await demo.call("thread.post", { spaceId: "local:design-review", text: "hello" });
     expect(posted?.text).toBe("hello");
@@ -293,7 +348,9 @@ describe("the demo host's thread", () => {
     expect(members.find((m) => m.name === "hermes")!.youCan).toEqual({ task: false, control: false, approve: false });
     const page = await member.call("thread.read", { spaceId: DEMO_THREAD_SPACE, limit: 100 });
     const approval = page.entries.find((e) => e.kind === "approval")!;
-    await expect(member.call("thread.post", { spaceId: DEMO_THREAD_SPACE, text: "ok", answer: { approval: approval.seq, approve: true } })).rejects.toMatchObject({
+    await expect(
+      member.call("thread.post", { spaceId: DEMO_THREAD_SPACE, text: "ok", answer: { approval: approval.seq, approve: true } }),
+    ).rejects.toMatchObject({
       code: "permission_denied",
     });
     // A task you give runs on the owner's keys; a mention of Hermes makes none.
@@ -301,7 +358,9 @@ describe("the demo host's thread", () => {
     expect(task!.runsOnKeysOf).toEqual({ id: "acct_grace", name: "Grace" });
     const plain = await member.call("thread.post", { spaceId: DEMO_THREAD_SPACE, text: "@hermes go" });
     expect(plain!.task).toBeNull();
-    await expect(member.call("thread.setRights", { spaceId: DEMO_THREAD_SPACE, name: "hermes", task: "members" })).rejects.toMatchObject({ code: "permission_denied" });
+    await expect(member.call("thread.setRights", { spaceId: DEMO_THREAD_SPACE, name: "hermes", task: "members" })).rejects.toMatchObject({
+      code: "permission_denied",
+    });
     member.dispose?.();
 
     const owner = createDemoAdapter({ latencyMs: 0, stepMs: 1 });
@@ -332,23 +391,57 @@ describe("join codes and join requests (CUA-2263)", () => {
     expect(ops.threadJoinCodeCancelArgs({ spaceId: "local:dev", id: "jc_1" })).toEqual({ space: "local:dev", id: "jc_1" });
     expect(ops.threadSettingsArgs({ spaceId: "local:dev" })).toEqual({ space: "local:dev" });
     expect(ops.threadSettingsArgs({ spaceId: "local:dev", askBeforeJoin: false })).toEqual({ space: "local:dev", ask_before_join: false });
-    expect(ops.threadAgentAddArgs({ spaceId: "local:dev", name: "codex", harness: "openai-codex" })).toEqual({ space: "local:dev", name: "codex", agent: "openai-codex" });
+    expect(ops.threadAgentAddArgs({ spaceId: "local:dev", name: "codex", harness: "openai-codex" })).toEqual({
+      space: "local:dev",
+      name: "codex",
+      agent: "openai-codex",
+    });
     expect(ops.THREAD_TOOLS["thread.joinCodeList"].tool).toBe("thread_join_code_list");
   });
 
   it("reads codes, settings and a join request as the daemon writes them", async () => {
     const ops = await import("../ops/thread");
-    const made = ops.joinCodeFromTool({ id: "jc_1", code: "7KQ2-9FXA", url: "https://cua.ai/join/7KQ2-9FXA", line: 'Join my Cua Space "dev": https://cua.ai/join/7KQ2-9FXA', expires_at_ms: 9 });
-    expect(made).toEqual({ id: "jc_1", code: "7KQ2-9FXA", url: "https://cua.ai/join/7KQ2-9FXA", line: 'Join my Cua Space "dev": https://cua.ai/join/7KQ2-9FXA', expiresAtMs: 9 });
+    const made = ops.joinCodeFromTool({
+      id: "jc_1",
+      code: "7KQ2-9FXA",
+      url: "https://cua.ai/join/7KQ2-9FXA",
+      line: 'Join my Cua Space "dev": https://cua.ai/join/7KQ2-9FXA',
+      expires_at_ms: 9,
+    });
+    expect(made).toEqual({
+      id: "jc_1",
+      code: "7KQ2-9FXA",
+      url: "https://cua.ai/join/7KQ2-9FXA",
+      line: 'Join my Cua Space "dev": https://cua.ai/join/7KQ2-9FXA',
+      expiresAtMs: 9,
+    });
     const listed = ops.joinCodesFromTool({
       codes: [
-        { id: "jc_1", created_at_ms: 1, expires_at_ms: 2, state: "redeemed", can_task: "members", ask_before_join: true, created_by: { id: "acct_ada", name: "Ada" }, member_handle: "codex" },
+        {
+          id: "jc_1",
+          created_at_ms: 1,
+          expires_at_ms: 2,
+          state: "redeemed",
+          can_task: "members",
+          ask_before_join: true,
+          created_by: { id: "acct_ada", name: "Ada" },
+          member_handle: "codex",
+        },
         { id: "jc_2", created_at_ms: 1, expires_at_ms: 2, state: "weird" },
         { nope: true },
       ],
     });
     expect(listed.codes).toEqual([
-      { id: "jc_1", createdAtMs: 1, expiresAtMs: 2, state: "redeemed", canTask: "members", askBeforeJoin: true, createdBy: { id: "acct_ada", name: "Ada" }, memberHandle: "codex" },
+      {
+        id: "jc_1",
+        createdAtMs: 1,
+        expiresAtMs: 2,
+        state: "redeemed",
+        canTask: "members",
+        askBeforeJoin: true,
+        createdBy: { id: "acct_ada", name: "Ada" },
+        memberHandle: "codex",
+      },
       { id: "jc_2", createdAtMs: 1, expiresAtMs: 2, state: "expired", canTask: "owner", askBeforeJoin: false, createdBy: null, memberHandle: null },
     ]);
     expect(ops.joinCodesFromTool([{ id: "jc_3", state: "open" }]).codes[0]!.state).toBe("open");
@@ -391,7 +484,10 @@ describe("the view a post was sent from", () => {
       view: { kind: "window", app: "Firefox", title: "Pull requests", window_id: "w42" },
     });
     // Only the fields there are.
-    expect(threadPostArgs({ spaceId: "local:dev", text: "x", view: { kind: "window", app: null, title: "notes.txt", windowId: null } }).view).toEqual({ kind: "window", title: "notes.txt" });
+    expect(threadPostArgs({ spaceId: "local:dev", text: "x", view: { kind: "window", app: null, title: "notes.txt", windowId: null } }).view).toEqual({
+      kind: "window",
+      title: "notes.txt",
+    });
     expect(threadPostArgs({ spaceId: "local:dev", text: "x" })).not.toHaveProperty("view");
     const e = threadEntryFromTool({
       seq: 4,
@@ -410,7 +506,12 @@ describe("the view a post was sent from", () => {
 
 describe("the live rows' JSON", () => {
   it("reads who is at work and the key that changes with it; a daemon without it says nobody", () => {
-    expect(threadLiveFromTool({ key: "ada=using Bash;bo=thinking", agents: [{ agent: "ada", stage: "using Bash" }, { agent: "bo", stage: "thinking" }, { agent: "", stage: "x" }, { stage: "y" }] })).toEqual({
+    expect(
+      threadLiveFromTool({
+        key: "ada=using Bash;bo=thinking",
+        agents: [{ agent: "ada", stage: "using Bash" }, { agent: "bo", stage: "thinking" }, { agent: "", stage: "x" }, { stage: "y" }],
+      }),
+    ).toEqual({
       key: "ada=using Bash;bo=thinking",
       agents: [
         { agent: "ada", stage: "using Bash" },
@@ -418,19 +519,40 @@ describe("the live rows' JSON", () => {
       ],
     });
     expect(threadPageFromTool({ entries: [], cursor: 0 }).live).toEqual({ key: "", agents: [] });
-    expect(threadPageFromTool({ entries: [], cursor: 0, live: { key: "k", agents: [{ agent: "a", stage: "starting" }] } }).live.agents).toEqual([{ agent: "a", stage: "starting" }]);
+    expect(threadPageFromTool({ entries: [], cursor: 0, live: { key: "k", agents: [{ agent: "a", stage: "starting" }] } }).live.agents).toEqual([
+      { agent: "a", stage: "starting" },
+    ]);
   });
 });
 
 describe("every agent message and the child agents in the thread", () => {
   const say = (text: string, replyTo: number) => entry({ author: CLAUDE, replyTo, text });
   const sub = (id: string, state: "running" | "done" | "failed", extra: Record<string, unknown> = {}) =>
-    entry({ author: SYSTEM, kind: "system", text: `claude's subagent: ${state}`, event: null, child: { kind: "subagent", id, agent: "claude", title: "Map the desktop", state, steps: 0, result: null, startedMs: null, endedMs: null, ...extra } as ThreadEntry["child"] });
+    entry({
+      author: SYSTEM,
+      kind: "system",
+      text: `claude's subagent: ${state}`,
+      event: null,
+      child: {
+        kind: "subagent",
+        id,
+        agent: "claude",
+        title: "Map the desktop",
+        state,
+        steps: 0,
+        result: null,
+        startedMs: null,
+        endedMs: null,
+        ...extra,
+      } as ThreadEntry["child"],
+    });
 
   it("keeps each message an agent posts under one task, in order, none replaced", () => {
     seq = 0;
     const task = entry({ text: "@claude do the thing", task: { to: "claude", session: null } });
-    const items = foldThread([task, say("On it.", task.seq), say("Found the files.", task.seq), say("All done.", task.seq), update(task.seq, "done")], { readSeq: null });
+    const items = foldThread([task, say("On it.", task.seq), say("Found the files.", task.seq), say("All done.", task.seq), update(task.seq, "done")], {
+      readSeq: null,
+    });
     const said = items.filter((i) => i.type === "message").map((i) => (i as { entry: ThreadEntry }).entry.text);
     expect(said).toEqual(["On it.", "Found the files.", "All done."]);
   });
@@ -448,15 +570,30 @@ describe("every agent message and the child agents in the thread", () => {
     seq = 0;
     const task = entry({ text: "@claude start the job", task: { to: "claude", session: null } });
     const items = foldThread([task, say("Starting.", task.seq), update(task.seq, "done"), say("The job failed: no gateway.", task.seq)], { readSeq: null });
-    expect(items.filter((i) => i.type === "message").map((i) => (i as { entry: ThreadEntry }).entry.text)).toEqual(["Starting.", "The job failed: no gateway."]);
+    expect(items.filter((i) => i.type === "message").map((i) => (i as { entry: ThreadEntry }).entry.text)).toEqual([
+      "Starting.",
+      "The job failed: no gateway.",
+    ]);
   });
 
   it("folds a subagent's notes into one row at its first note, with the latest state", () => {
     seq = 0;
     const task = entry({ text: "@claude have a subagent map my files", task: { to: "claude", session: null } });
-    const items = foldThread([task, say("Started a subagent.", task.seq), sub("t1", "running"), sub("t2", "running", { title: "Other" }), sub("t1", "done", { steps: 4, result: "3 files" })], { readSeq: null });
+    const items = foldThread(
+      [
+        task,
+        say("Started a subagent.", task.seq),
+        sub("t1", "running"),
+        sub("t2", "running", { title: "Other" }),
+        sub("t1", "done", { steps: 4, result: "3 files" }),
+      ],
+      { readSeq: null },
+    );
     const subs = items.filter((i) => i.type === "subagent") as Extract<(typeof items)[number], { type: "subagent" }>[];
-    expect(subs.map((s) => [s.sub.id, s.sub.state])).toEqual([["t1", "done"], ["t2", "running"]]);
+    expect(subs.map((s) => [s.sub.id, s.sub.state])).toEqual([
+      ["t1", "done"],
+      ["t2", "running"],
+    ]);
     expect(subs[0]!.sub.result).toBe("3 files");
     expect(items.map((i) => i.type)).toEqual(["task", "message", "subagent", "subagent"]);
   });
@@ -464,70 +601,31 @@ describe("every agent message and the child agents in the thread", () => {
   it("draws a child Space as its own row and never counts these rows as unread messages", () => {
     seq = 0;
     const read = entry({ author: GRACE, text: "hi" });
-    const child = entry({ author: SYSTEM, kind: "system", text: "claude made the computer safari", child: { kind: "child_space", space: "local:safari", name: "safari", os: "macOS", agent: "claude" } });
+    const child = entry({
+      author: SYSTEM,
+      kind: "system",
+      text: "claude made the computer safari",
+      child: { kind: "child_space", space: "local:safari", name: "safari", os: "macOS", agent: "claude" },
+    });
     const items = foldThread([read, child], { readSeq: read.seq });
     expect(items.map((i) => i.type)).toEqual(["message", "child_space"]);
   });
 
-  describe("a created Space's row hangs under its agent, with no header of its own", () => {
-    const CLAUDE = { kind: "agent" as const, id: "agent:claude", name: "claude" };
-    const row = (key: string, over: object = {}) =>
-      entry({ author: SYSTEM, kind: "system", text: "t", child: { kind: "child_space", space: `local:${key}`, key: `${key}:1`, name: key, os: "Linux", agent: "claude", state: "creating", ...over } as never });
-    const shape = (items: ReturnType<typeof foldThread>) => items.map((i) => (i.type === "message" ? `${i.entry.author.name}:${i.entry.text}` : i.type));
-
-    it("a Space still being made is not a thread item (the agent's live row carries it)", () => {
-      seq = 0;
-      const ask = entry({ author: GRACE, text: "make one" });
-      expect(shape(foldThread([ask, row("a"), row("a", { phase: "Starting it" })], { readSeq: 9999 }))).toEqual(["Grace:make one"]);
-    });
-
-    it("its outcome is one row after the agent's text, with no extra identity", () => {
-      seq = 0;
-      const ask = entry({ author: GRACE, text: "make one" });
-      const said = entry({ author: CLAUDE, text: "On it." });
-      const items = foldThread([ask, said, row("a"), row("a", { state: "ready" })], { readSeq: 9999 });
-      expect(shape(items)).toEqual(["Grace:make one", "claude:On it.", "child_space"]);
-      expect(items.filter((i) => i.type === "message" && i.entry.text === "")).toHaveLength(0);
-    });
-
-    it("never invents an identity: rows of claude, claude-2, codex, hermes and a person add no author of their own", () => {
-      seq = 0;
-      const notes = ["claude", "claude-2", "codex", "hermes"].flatMap((a) => [row(a, { agent: a, state: "ready" })]);
-      const person = row("p", { agent: "", by: { id: "acct_ada", name: "Ada" }, state: "ready" });
-      const items = foldThread([...notes, person], { readSeq: 9999 });
-      expect(items.every((i) => i.type === "child_space")).toBe(true);
-      expect(items).toHaveLength(5);
-    });
-
-    it("several creates of one agent are one row each, in the order they started", () => {
-      seq = 0;
-      const ask = entry({ author: GRACE, text: "make two" });
-      const items = foldThread([ask, row("a"), row("b"), row("b", { state: "ready" }), row("a", { state: "failed", error: "No disk" })], { readSeq: 9999 });
-      expect(items.filter((i) => i.type === "child_space").map((i) => (i.type === "child_space" ? [i.space.name, i.space.state] : []))).toEqual([["b", "ready"], ["a", "failed"]]);
-      expect(shape(items)).toEqual(["Grace:make two", "child_space", "child_space"]);
-    });
-  });
-
-  it("reads a create's state, step and reason from the daemon's JSON, and an old note as made", () => {
-    const e = threadEntryFromTool({ seq: 5, id: "y", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:mac", key: "mac:1", name: "mac", os: "macOS", agent: "claude", state: "failed", phase: "", percent: null, error: "Its network setup did not come up", started_ms: 1, ended_ms: 4 } });
-    expect(e?.child).toMatchObject({ kind: "child_space", state: "failed", error: "Its network setup did not come up", key: "mac:1", startedMs: 1, endedMs: 4 });
-    const old = threadEntryFromTool({ seq: 6, id: "z", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:a", name: "a", os: "Linux", agent: "claude" } });
-    expect(old?.child).toMatchObject({ kind: "child_space", space: "local:a" });
-    expect((old?.child as { state?: string }).state).toBeUndefined();
-  });
-
-  it("reads a Space the agent is making as a live child under its live row", () => {
-    const live = threadLiveFromTool({ key: "k", agents: [{ agent: "claude", stage: "using Terminal", children: [{ id: "space:a:5", title: "a", kind: "child_space", os: "Linux", step: "Starting it", steps: 0, percent: 40, space: "pending:agent-a-5", since_ms: 5 }, { id: "t1", title: "Map", steps: 3, step: "Ran ls" }] }] });
-    expect(live.agents[0]!.children).toEqual([
-      { id: "space:a:5", title: "a", steps: 0, step: "Starting it", sinceMs: 5, space: { os: "Linux", page: "pending:agent-a-5", percent: 40 } },
-      { id: "t1", title: "Map", steps: 3, step: "Ran ls" },
-    ]);
-  });
-
   it("reads the subagent and child notes and the live children from the daemon's JSON", () => {
-    const e = threadEntryFromTool({ seq: 9, id: "x", ts_ms: 1, author: { kind: "system", id: "system:subagent", name: "Cua" }, kind: "system", text: "t", event: { kind: "subagent", id: "t1", agent: "claude", title: "Map", state: "failed", steps: 2, result: "boom" } });
+    const e = threadEntryFromTool({
+      seq: 9,
+      id: "x",
+      ts_ms: 1,
+      author: { kind: "system", id: "system:subagent", name: "Cua" },
+      kind: "system",
+      text: "t",
+      event: { kind: "subagent", id: "t1", agent: "claude", title: "Map", state: "failed", steps: 2, result: "boom" },
+    });
     expect(e?.child).toMatchObject({ kind: "subagent", id: "t1", state: "failed", steps: 2, result: "boom" });
-    const live = threadLiveFromTool({ key: "k", agents: [{ agent: "claude", stage: "using ls", children: [{ id: "t1", title: "Map", steps: 3, step: "Ran ls" }] }] });
+    const live = threadLiveFromTool({
+      key: "k",
+      agents: [{ agent: "claude", stage: "using ls", children: [{ id: "t1", title: "Map", steps: 3, step: "Ran ls" }] }],
+    });
     expect(live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 3, step: "Ran ls" }]);
   });
 });

@@ -80,6 +80,12 @@ jobs:
           fi
           api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
           labels=$(api "repos/$GITHUB_REPOSITORY/issues/$pr/labels" --jq '[.[].name] | join(",")')
+          # The hold step above only sees pull_request events; a queue entry has no PR payload, so the
+          # label is re-read here for the pull request the queue ref names.
+          if [[ -n "$QUEUE_REF" && ",$labels," =~ ,(release-hold|hold), ]]; then
+            echo "::error::Pull request #$pr has a hold label (release-hold). Remove it and requeue; see docs/release-hold.md"
+            exit 1
+          fi
           api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" \
             --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files.txt"
           # The files API stops at 3000 entries; a PR that large waits on everything.
@@ -113,9 +119,16 @@ jobs:
             [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
             pr=${BASH_REMATCH[1]}
           fi
-          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // "")] | @tsv')
-          IFS=$'\t' read -r sha head_repo <<<"$info"
-          if [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
+          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // ""), .head.ref, ([.labels[].name] | join(","))] | @tsv')
+          IFS=$'\t' read -r sha head_repo head_ref pr_labels <<<"$info"
+          # Release Please PRs are opened by the bot and have no local-ci sign-off: nobody runs bin/ci on
+          # them. They are exempt only when all three hold: a branch of this repository (so a fork cannot
+          # claim it), the release-please branch prefix and the `autorelease: pending` label. Every other
+          # workflow is still waited on.
+          if [[ "$head_repo" == "$GITHUB_REPOSITORY" && "$head_ref" == release-please--branches--* && ",$pr_labels," == *",autorelease: pending,"* ]]; then
+            kind=release
+            what="no sign-off (Release Please pull request)"
+          elif [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
             kind=local
             what="a successful local-ci status (bin/ci --quick, then bin/ci --signoff)"
           else
@@ -124,6 +137,10 @@ jobs:
           fi
           echo "Requiring $what on ${sha:0:10}."
           { echo "kind=$kind"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          if [[ "$kind" == release ]]; then
+            echo "Release Please pull request: exempt from the sign-off."
+            exit 0
+          fi
           if [[ "$kind" == local ]]; then
             state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
           else
@@ -144,24 +161,44 @@ jobs:
           PR_SHA: ${{ github.event.pull_request.head.sha }}
           QUEUE_REF: ${{ github.event.merge_group.head_ref }}
           IGNORE_RE: ${{ steps.scope.outputs.ignore_re }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
+          QUEUE_RUNS: ${{ vars.CI_QUEUE_RUNS }}
           FLAKY_PY: base/.github/scripts/flaky/flaky.py
           QUARANTINE_FILE: base/.github/flaky/quarantine.json
         run: |
           set -uo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 120; done; return 1; }
           sha=$PR_SHA
+          queue_sha=
           if [[ -n "$QUEUE_REF" ]]; then
             [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || exit 1
             pr=${BASH_REMATCH[1]}
             sha=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha) || exit 1
+            # Merge queue runs (CUA-3856): with CI_QUEUE_RUNS on, a workflow that ran on the queue commit
+            # (merge_group, the lanes the queued pull requests touch, on the merged result) is judged by
+            # that run. A workflow with no such run, or one whose every job was skipped, keeps the pull
+            # request's own result. Off: the queue re-reads the pull request's results only.
+            [[ "${QUEUE_RUNS:-}" == true && -n "${QUEUE_SHA:-}" ]] && queue_sha=$QUEUE_SHA
           fi
           # IGNORE_RE (from the scope step) names workflow files that belong only to areas this PR
           # did not touch. Empty means wait for every run.
           # contributor-attribution enforces the CLA, so the gate never waits on cla.yml.
           scope_jq='(env.IGNORE_RE // "") == "" or ((.path | sub("@.*"; "") | split("/") | last) | test(env.IGNORE_RE) | not)'
+          list_runs() {
+            api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$1&per_page=100" \
+              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and ($2) and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)\") | not) and ($scope_jq)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
+          }
           runs() {
-            api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
-              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)\") | not) and ($scope_jq)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
+            local pr queue
+            pr=$(list_runs "$sha" '.event == "pull_request" or .event == "pull_request_target"') || return 1
+            if [[ -z "$queue_sha" ]]; then
+              [[ -z "$pr" ]] || printf '%s\n' "$pr"
+              return 0
+            fi
+            queue=$(list_runs "$queue_sha" '.event == "merge_group" and .conclusion != "skipped"') || return 1
+            { [[ -z "$queue" ]] || printf '%s\n' "$queue"
+              awk -F'\t' 'NR == FNR { if ($1 != "") seen[$1] = 1; next } !($1 in seen)' <(printf '%s\n' "$queue") <(printf '%s\n' "$pr")
+            } | sed '/^$/d'
           }
           GITHUB_WORKFLOW_ID=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id) || exit 1
           # Two identical listings cannot prove every run has appeared, so no verdict is allowed
@@ -267,6 +304,7 @@ jobs:
           set -euo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
           sha=$SHA
+          if [[ "$KIND" == release ]]; then echo "sign-off: not required (Release Please pull request)"; exit 0; fi
           tries=1
           # Polled every 15 s (it was 60 s, so a sign-off that landed just after a poll cost up to a
           # minute). Still bounded at 75 minutes.

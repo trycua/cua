@@ -33,16 +33,16 @@ async function mountDialog() {
 }
 
 describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
-  it("Connect names the machine it edits, and its On another machine block has the host, commands, permissions and reload note", async () => {
+  it("Connect names the machine it edits, and its On another computer block has the host, commands, permissions and reload note", async () => {
     await mountDialog();
     const here = await waitFor(() => {
       const h = q("[data-connect-here]");
-      if (!h || !/^On \S/.test(h.textContent ?? "") || /this machine$/.test(h.textContent ?? "") === false) throw new Error("not named yet");
+      if (!h || !/^On \S/.test(h.textContent ?? "") || /this computer$/.test(h.textContent ?? "") === false) throw new Error("not named yet");
       return h;
     });
-    const name = here.textContent!.replace(/^On /, "").replace(/this machine$/, "");
+    const name = here.textContent!.replace(/^On /, "").replace(/this computer$/, "");
     const block = q("[data-connect-other-machine]")!;
-    expect(screen.getByRole("heading", { name: "On another machine" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "On another computer" })).toBeTruthy();
     expect(block.textContent).toContain(`Host to name: ${name}`);
     // The exact commands for the chosen agent: the same account, then the agent's setup.
     expect(block.textContent).toContain("cua auth login");

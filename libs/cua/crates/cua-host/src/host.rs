@@ -64,10 +64,19 @@ pub enum HostMode {
 const REGISTRATIONS_FILE: &str = "registrations.json";
 
 /// A relay registration of this computer under one account.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct StoredRegistration {
     machine_id: String,
     machine_token: String,
+}
+
+impl std::fmt::Debug for StoredRegistration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredRegistration")
+            .field("machine_id", &self.machine_id)
+            .field("machine_token", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Account id -> the registration of this computer under it, for accounts
@@ -271,12 +280,21 @@ pub struct SetupOptions {
 }
 
 /// A relay in static-token mode ([`SetupOptions::static_relay`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StaticRelay {
     /// Relay base URL.
     pub url: String,
     /// One of its machine-registration tokens.
     pub token: String,
+}
+
+impl std::fmt::Debug for StaticRelay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StaticRelay")
+            .field("url", &self.url)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl SetupOptions {

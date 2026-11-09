@@ -84,6 +84,7 @@ pub mod drive_mount_preview;
 pub mod drive_page;
 pub mod drive_settings;
 pub mod driver_preview;
+pub mod environment_tag;
 pub mod errors;
 pub mod experiments;
 pub mod first_prompts;

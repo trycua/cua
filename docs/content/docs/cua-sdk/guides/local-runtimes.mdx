@@ -203,39 +203,44 @@ stops when none of its Spaces runs:
 ## The Linux runtime on Windows
 
 A PC with no container engine runs Linux Spaces in a WSL 2 distribution that
-cua imports and starts itself. Nothing is installed first: not Docker Desktop,
-not a `docker` CLI. The first Linux Space downloads a pinned Alpine rootfs
-(4 MB, SHA-256 checked) and Alpine's Docker packages (about 90 MB), and
-shows that as the create's progress. After that the runtime starts in a few
-seconds.
+cua imports and starts itself; nothing is installed first, not Docker Desktop.
+The first Linux Space downloads a pinned Ubuntu 24.04 base rootfs (30 MB,
+SHA-256 checked) and Ubuntu's Docker packages (about 120 MB), shown as the
+create's progress.
 
-- **Its own distribution.** `cua-runtime-<tag>`, where `<tag>` identifies the
-  cua home, with its disk under `<cua home>\runtimes\linux\wsl`. A released
-  Cua Spaces and Cua Spaces Local (each its own cua home) have separate
-  distributions and pipes. cua never starts, stops or changes any other
-  distribution (your Ubuntu, `docker-desktop`) and never touches Docker
-  Desktop. The distribution cannot see your Windows drives and has no Windows
-  interop, so a container engine running as root in it cannot reach your
-  files; for the same reason a Space cannot mount a Windows folder yet.
+- **Its own distribution.** `cua-runtime-<tag>` (one per cua home, so a
+  released Cua Spaces and Cua Spaces Local never share), with its disk under
+  `<cua home>\runtimes\linux\wsl`. cua never starts, stops or changes any other
+  distribution or Docker Desktop. It cannot see your Windows drives, so a Space
+  cannot mount a Windows folder yet.
 - **A pipe, not a port.** Windows reaches Docker at the named pipe
-  `\\.\pipe\cua-engine-<tag>`, served by the cua daemon for your user only.
-  Docker is not published on a TCP port.
-- **Starts on demand, stops when idle.** A hidden `wsl.exe` keeps Docker
-  running; the runtime stops about two minutes after the last Linux Space
-  (`CUA_RUNTIME_LINUX_IDLE_SECS`), like the Mac's. Its memory and processors
-  are WSL's: set them in `%UserProfile%\.wslconfig` (`[wsl2]`), which cua
-  never edits.
-- **When WSL 2 cannot run.** `cua runtime doctor` and the New Space page say
-  what to turn on: the Windows features *Windows Subsystem for Linux* and
-  *Virtual Machine Platform* (`wsl --install --no-distribution` in an
-  administrator PowerShell, then restart), or virtualization in the firmware.
-- **Settings.** `runtime.linux` picks the engine as on a Mac: `auto` uses a
-  working Docker engine on the PC (Docker Desktop, say) and the built-in one
-  otherwise, `builtin` always the built-in one, `system` only the PC's own.
+  `\.\pipe\cua-engine-<tag>`, served by the cua daemon for your user only.
+- **Idle stop.** The runtime stops about two minutes after the last Linux Space
+  (`CUA_RUNTIME_LINUX_IDLE_SECS`). Its memory and processors are WSL's:
+  set them in `%UserProfile%\.wslconfig`, which cua never edits.
+- **When WSL 2 cannot run.** `cua runtime doctor` and New Space say what to turn
+  on: the Windows features *Windows Subsystem for Linux* and *Virtual Machine
+  Platform* (`wsl --install --no-distribution` as administrator, then restart),
+  or virtualization in the firmware.
+- **Settings.** `runtime.linux` works as on a Mac (`auto`, `builtin`, `system`).
   Remove host setup deletes the distribution and its disk.
-- **Today.** Spaces run under `runc` (the Mac's runtime adds gVisor), and
-  the distribution shares WSL's VM with your other distributions, so its
-  Docker networks use `10.230.0.0/24` and `10.231.0.0/16`.
+- **Network policy.** WSL 2's kernel has no nftables `bridge` family, so policy
+  is enforced on routed traffic only (internet, LAN, the PC, cloud metadata,
+  other trees); Spaces of one tree can reach each other directly, and a deny of
+  another Space of the same tree is refused. `cua runtime doctor` says so.
+- **Today.** Spaces run under `runc` (the Mac adds gVisor).
+
+## microVMs on Windows
+
+`--kind microvm` runs in QEMU on the Windows Hypervisor Platform: hardware
+acceleration only, never software emulation. `cua runtime doctor` and New Space
+say what is missing: the Windows feature (`cua runtime setup microvm` turns it on
+through one administrator prompt, then restart), QEMU 9 or later (installed with
+winget), or virtualization in the firmware. Checkpoints, forks and warm pools work on the VM's disk: Windows does not
+let QEMU save a running VM's memory, so a restore or fork boots the saved disk
+(about four seconds, or half a second from a ready standby of the checkpoint);
+claiming a pooled VM is as fast. QEMU's network enforces no rules, so a microVM has no
+network.
 
 ## Your own cloud
 

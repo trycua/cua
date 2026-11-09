@@ -78,8 +78,24 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     expect(AGENT_HOME_IMAGE).toBe("ghcr.io/trycua/linux:24.04-slim");
     expect(config).not.toHaveProperty("headless");
     // The agent is a member kept on standby with the model and the briefing; the job is the thread's first message.
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.agentAdd" && c.args.standby === true && c.args.harness === "openai-codex" && typeof c.args.model === "string" && String(c.args.brief).includes("your own small Linux Space"))).toBe(true), { timeout: 15000 });
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@codex test my project on a Mac and a Windows computer")).toBe(true), { timeout: 15000 });
+    await waitFor(
+      () =>
+        expect(
+          calls.some(
+            (c) =>
+              c.op === "thread.agentAdd" &&
+              c.args.standby === true &&
+              c.args.harness === "openai-codex" &&
+              typeof c.args.model === "string" &&
+              String(c.args.brief).includes("your own small Linux Space"),
+          ),
+        ).toBe(true),
+      { timeout: 15000 },
+    );
+    await waitFor(
+      () => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@codex test my project on a Mac and a Windows computer")).toBe(true),
+      { timeout: 15000 },
+    );
     await waitFor(() => expect(askTasks()[0]).toMatchObject({ home: true, inSpace: true }));
   });
 
@@ -111,7 +127,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
       fireEvent.click(await waitFor(() => q('[data-picker="where"]')!));
     });
     await act(async () => {
-      fireEvent.click(await screen.findByText("Let the agent decide, in your existing Home"));
+      fireEvent.click(await screen.findByText("Agent decides, same Home"));
     });
     fireEvent.change(box2, { target: { value: "run the tests again" } });
     await act(async () => {

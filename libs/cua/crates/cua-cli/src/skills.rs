@@ -219,7 +219,7 @@ pub fn cmd_clean(yes: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
 // ----------------------------------------------------------------- record
 
 /// Captioning settings.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Captioner {
     /// `anthropic` or `openai`.
     pub provider: String,
@@ -227,6 +227,16 @@ pub struct Captioner {
     pub model: String,
     /// API key.
     pub api_key: String,
+}
+
+impl std::fmt::Debug for Captioner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Captioner")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Captioner {

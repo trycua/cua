@@ -56,6 +56,7 @@ on:
       - ".github/workflows/e2e-cua-driver-release-gate.yml"
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -75,12 +76,12 @@ concurrency:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   decide:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: "E2E gate / decide"
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -165,8 +166,8 @@ jobs:
 
   linux:
     name: "gate / Linux E2E"
-    needs: decide
-    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' }}
+    needs: [quick, decide]
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && needs.quick.outputs.skip != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -179,8 +180,8 @@ jobs:
 
   windows:
     name: "gate / Windows E2E"
-    needs: decide
-    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' }}
+    needs: [quick, decide]
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && needs.quick.outputs.skip != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -194,8 +195,8 @@ jobs:
   # (the probe rejects them). PRs use `macos-pr` below instead.
   macos:
     name: "gate / macOS hosted E2E"
-    needs: decide
-    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && github.event_name != 'pull_request' }}
+    needs: [quick, decide]
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && github.event_name != 'pull_request' && needs.quick.outputs.skip != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -208,11 +209,8 @@ jobs:
   # branch (an allowed TCC-seeding event), wait, and mirror its conclusion.
   macos-pr:
     name: "gate / macOS hosted E2E (dispatched)"
-    needs: decide
-    if: >-
-      !failure() && !cancelled() &&
-      needs.decide.outputs.run == 'true' && github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+    needs: [quick, decide]
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     # Hosted macOS runners queue for an hour or more under load, and the queue
     # time sits inside the dispatched run, so it counts against the wait below.
@@ -290,9 +288,9 @@ jobs:
 
   browsers:
     name: "gate / standalone browser E2E"
-    needs: decide
+    needs: [quick, decide]
     # Full runs only: the quick PR lane leaves the browser lanes to the run after merge.
-    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && needs.decide.outputs.lanes != 'quick' }}
+    if: ${{ !failure() && !cancelled() && needs.decide.outputs.run == 'true' && needs.decide.outputs.lanes != 'quick' && needs.quick.outputs.skip != 'true' }}
     permissions:
       actions: read
       contents: read
@@ -302,10 +300,11 @@ jobs:
 
   # The single check to require in branch protection. Skipped lanes pass
   # (path-based requirement); gated PRs need every lane green.
+  # quick runs only on pull_request and merge_group, so every other event reports it skipped.
   result:
     name: "E2E gate / result"
-    if: always()
-    needs: [decide, linux, windows, macos, macos-pr, browsers]
+    if: ${{ always() && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, decide, linux, windows, macos, macos-pr, browsers]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -325,7 +324,7 @@ jobs:
             echo "Release-gate lanes not required for this change." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") and (.key != "macos-pr" or .value.result != "skipped") and (.key != "browsers" or .value.result != "skipped" or env.LANES_SIZE != "quick")) | "\(.key)=\(.value.result)"' <<< "$LANES")
+          bad=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "quick" or .value.result != "skipped" or env.EVENT == "pull_request" or env.EVENT == "merge_group") and (.key != "macos" or .value.result != "skipped" or env.EVENT != "pull_request") and (.key != "macos-pr" or .value.result != "skipped") and (.key != "browsers" or .value.result != "skipped" or env.LANES_SIZE != "quick")) | "\(.key)=\(.value.result)"' <<< "$LANES")
           if [[ -n "$bad" ]]; then
             echo "::error::release-gate lanes not green: $bad"; exit 1
           fi
@@ -339,8 +338,8 @@ jobs:
     name: "E2E gate / nightly report"
     # A post-merge push without gated paths runs no lanes (decide.run == false): every lane
     # is then `skipped`, which is not a failure, so there is nothing to report.
-    if: always() && needs.decide.outputs.run == 'true' && (needs.decide.outputs.mode == 'nightly' || needs.decide.outputs.mode == 'post-merge')
-    needs: [decide, linux, windows, macos, macos-pr, browsers]
+    if: ${{ always() && needs.decide.outputs.run == 'true' && (needs.decide.outputs.mode == 'nightly' || needs.decide.outputs.mode == 'post-merge') && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, decide, linux, windows, macos, macos-pr, browsers]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -369,7 +368,7 @@ jobs:
           set -euo pipefail
           TITLE="Cua Driver release gate failing on main (nightly)"
           mkdir -p lane-evidence
-          failed=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select(.key != "macos-pr" or .value.result != "skipped") | "- `\(.key)`: \(.value.result)"' <<< "$LANES")
+          failed=$(jq -r 'to_entries[] | select(.key != "decide") | select(.value.result != "success") | select((.key != "quick" and .key != "macos-pr") or .value.result != "skipped") | "- `\(.key)`: \(.value.result)"' <<< "$LANES")
           flaky=$(scripts/ci/summarize-flaky-cases.sh lane-evidence)
           existing=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" --json number,title \
             --jq "[.[]|select(.title==\"$TITLE\")][0].number // empty")

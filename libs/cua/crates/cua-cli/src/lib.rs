@@ -23,7 +23,7 @@
 
 #![recursion_limit = "512"]
 
-#[cfg(feature = "byoc")]
+#[cfg(feature = "aws")]
 mod add_aws;
 mod agent_cmd;
 mod agent_keys_cmd;
@@ -1374,8 +1374,8 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             cua_home::experimental::TEAMS_UNAVAILABLE.into(),
         ));
     }
-    // An experiment that is off (CI runners, public TCP shares) is refused before any
-    // sign-in, daemon or relay call.
+    // An experiment that is off is refused before any sign-in, daemon or
+    // relay call.
     if let Some(g) = uses_experiment(&cli.command)
         && !cua_vmm::experiments::enabled(g)
     {
@@ -2490,8 +2490,8 @@ async fn remove_computer(
     .await
 }
 
-/// `cua cloud add aws` (builds with AWS: the `byoc` feature).
-#[cfg(feature = "byoc")]
+/// `cua cloud add aws` (builds with AWS: the `aws` feature).
+#[cfg(feature = "aws")]
 async fn add_aws(a: onboard::AwsArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     add_aws::run(a, json, out).await
 }
@@ -2518,10 +2518,10 @@ async fn cloud_trust(_cloud: &str, _out: &mut dyn Write) -> Result<i32, CuaError
     ))
 }
 
-#[cfg(not(feature = "byoc"))]
+#[cfg(not(feature = "aws"))]
 async fn add_aws(_a: onboard::AwsArgs, _json: bool, _out: &mut dyn Write) -> Result<i32, CuaError> {
     Err(CuaError::Unsupported(
-        "this cua was built without AWS (the byoc feature); install the Cua Spaces cua".into(),
+        "this build doesn't include AWS support; install the Cua Spaces cua".into(),
     ))
 }
 
@@ -2958,7 +2958,30 @@ fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
     use cua_vmm::experiments::Gate;
     match cmd {
         Command::Ci(_) => Some(Gate::CiRunners),
+        Command::Spaces(host::SpacesCmd::Create {
+            parent,
+            widen,
+            children,
+            ..
+        }) => {
+            if parent.is_some() || *widen || *children {
+                Some(Gate::ChildSpaces)
+            } else {
+                None
+            }
+        }
         Command::Share(args) if args.uses_tcp_shares() => Some(Gate::TcpShares),
+        Command::Spaces(
+            host::SpacesCmd::Ls { tree: true, .. }
+            | host::SpacesCmd::Delete {
+                keep_children: true,
+                ..
+            }
+            | host::SpacesCmd::Children { .. }
+            | host::SpacesCmd::Budget { .. }
+            | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(host::ServiceCmd::Add { .. }),
+        ) => Some(Gate::ChildSpaces),
         _ => None,
     }
 }
@@ -2990,6 +3013,21 @@ fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool)
                 .mut_subcommand("approve", |c| c.hide(true))
                 .mut_subcommand("deny", |c| c.hide(true))
                 .mut_subcommand("settings", |c| c.hide(true))
+        });
+    }
+    if !on(Gate::ChildSpaces) {
+        cmd = cmd.mut_subcommand("spaces", |s| {
+            s.mut_subcommand("create", |c| {
+                c.mut_arg("parent", |a| a.hide(true))
+                    .mut_arg("widen", |a| a.hide(true))
+                    .mut_arg("children", |a| a.hide(true))
+            })
+            .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
+            .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
+            .mut_subcommand("children", |c| c.hide(true))
+            .mut_subcommand("budget", |c| c.hide(true))
+            .mut_subcommand("orphans", |c| c.hide(true))
+            .mut_subcommand("service", |c| c.hide(true))
         });
     }
     cmd
@@ -3154,6 +3192,9 @@ fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
 }
 
 pub fn main() {
+    // First, before any thread starts: the helper that forwards a VM's
+    // ports into its network namespace joins it (cua_vmm::nsfwd).
+    cua_vmm::nsfwd::run_if_asked();
     #[cfg(windows)]
     keep_stdio_out_of_children();
     let channel = cua_home::channel::CuaChannel::current();
@@ -3661,8 +3702,8 @@ mod tests {
         (r, String::from_utf8(out).unwrap())
     }
 
-    /// The commands of the features that are always on (network, hotspot, mesh, children,
-    /// `connections github`) are listed in help and are not behind an experiment.
+    /// The commands of the features that are always on (network, hotspot, mesh,
+    /// `connections github`, `spaces set`) are listed in help and are not behind an experiment.
     #[test]
     fn the_always_on_commands_are_listed_and_need_no_experiment() {
         let mut cmd = cli_command_for(true, |_| false);
@@ -3682,17 +3723,14 @@ mod tests {
                 .is_some_and(|c| !c.is_hide_set())
         );
         let spaces = cmd.find_subcommand("spaces").expect("spaces");
-        for name in ["children", "budget", "orphans", "set"] {
-            let c = spaces
-                .get_subcommands()
-                .find(|c| c.get_name() == name)
-                .unwrap_or_else(|| panic!("spaces {name}"));
-            assert!(!c.is_hide_set(), "spaces {name} is hidden");
-        }
+        let set = spaces
+            .get_subcommands()
+            .find(|c| c.get_name() == "set")
+            .expect("spaces set");
+        assert!(!set.is_hide_set(), "spaces set is hidden");
         for args in [
             ["cua", "connections", "github"].as_slice(),
             &["cua", "network", "show", "x"],
-            &["cua", "spaces", "children", "x"],
         ] {
             if let Ok(cli) = Cli::try_parse_from(args) {
                 assert_eq!(uses_experiment(&cli.command), None, "{args:?}");
@@ -3700,6 +3738,7 @@ mod tests {
         }
         // And the switch is gone for them.
         assert!(cua_vmm::experiments::Gate::parse("ask-first").is_none());
+        assert!(cua_vmm::experiments::Gate::parse("secure-spaces").is_none());
     }
 
     /// `cua ci` belongs to the ci-runners experiment: left out of help and

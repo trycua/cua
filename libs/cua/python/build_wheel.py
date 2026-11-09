@@ -7,10 +7,12 @@ The native library comes from `--library` (a CI artifact or a local
 --release -p cua-cli`); by default the host builds under
 libs/cua/target/release are used.
 
-- `cua`: the library next to `_native.py`. Linux wheels also carry the
-  static cua-spacesd (`--spacesd`, the `cua-spacesd-linux-<arch>` that
+- `cua`: the library next to `_native.py`. Every wheel also carries the
+  static Linux cua-spacesd (`--spacesd`, the `cua-spacesd-linux-<arch>` that
   .github/scripts/fetch_static_spacesd.sh fetches) in `cua/bin/`, where the
-  in-process SDK finds it to inject into images that lack one.
+  in-process SDK finds it to inject into images that lack one. The helper
+  runs in a Linux guest, so macOS and Windows wheels need it too: their local
+  containers and microVMs are Linux.
 - `cua-cli` (cli/): `cua_cli/bin/cua[.exe]`, which the `cua` wheel requires
   at its own version (added at build time; a source install has no pin) and
   whose `cua` console command runs it, pointing it at that cua-spacesd
@@ -84,12 +86,12 @@ def main() -> None:
     parser.add_argument(
         "--spacesd",
         type=Path,
-        help="the static cua-spacesd-linux-<arch> (required for Linux wheels)",
+        help="the static Linux cua-spacesd-linux-<arch> (required for every wheel)",
     )
     parser.add_argument(
         "--no-spacesd",
         action="store_true",
-        help="build a Linux wheel without it (test builds: images without cua-spacesd fail)",
+        help="build a wheel without it (test builds: images without cua-spacesd fail)",
     )
     parser.add_argument("--platform", choices=sorted(LIB_NAMES))
     parser.add_argument("--arch", choices=["x86_64", "arm64", "universal"])
@@ -110,17 +112,21 @@ def main() -> None:
 
     bin_dir = PACKAGE / "bin"
     shutil.rmtree(bin_dir, ignore_errors=True)
-    if system == "linux" and not args.no_spacesd:
+    if args.no_spacesd:
+        if args.spacesd is not None:
+            raise SystemExit("--spacesd and --no-spacesd conflict")
+    else:
+        # The guest is Linux on every host; its architecture follows the host's.
+        if arch == "universal":
+            raise SystemExit("build one wheel per architecture: a universal wheel has no single guest helper")
         name = f"cua-spacesd-linux-{'aarch64' if arch == 'arm64' else 'x86_64'}"
         if args.spacesd is None:
-            raise SystemExit(f"a Linux wheel needs --spacesd PATH (the static {name})")
+            raise SystemExit(f"a {system} wheel needs --spacesd PATH (the static {name})")
         if not args.spacesd.is_file():
             raise SystemExit(f"missing static cua-spacesd {args.spacesd}")
         bin_dir.mkdir()
         shutil.copy2(args.spacesd, bin_dir / name)
         (bin_dir / name).chmod(0o755)
-    elif args.spacesd is not None:
-        raise SystemExit("--spacesd is for Linux wheels")
 
     shutil.rmtree(CLI_BIN, ignore_errors=True)
     if not args.no_cli:

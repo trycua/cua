@@ -424,7 +424,7 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
     # The reuse subset names `rust (ubuntu-latest)`: a plain job with that name
     # reports the result of the sharded Linux jobs.
     assert wf["jobs"]["rust-linux-result"]["name"] == "rust (ubuntu-latest)"
-    assert wf["jobs"]["rust-linux-result"]["needs"] == ["reuse", "rust-linux"]
+    assert wf["jobs"]["rust-linux-result"]["needs"] == ["quick", "reuse", "rust-linux"]
     assert wf["jobs"]["rust-linux"]["strategy"]["matrix"]["shard"] == [1, 2, 3]
     assert "--partition hash:${{ matrix.shard }}/3" in str(wf["jobs"]["rust-linux"]["steps"])
     # Both run exactly when the old Linux leg did: never when the subset is reused on a full run.
@@ -439,7 +439,7 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
 def test_cua_sdk_rust_tests_are_built_once_and_run_from_the_archive():
     wf = load("ci-cua-sdk.yml")
     build, shards = wf["jobs"]["rust-linux-build"], wf["jobs"]["rust-linux"]
-    assert build["needs"] == "reuse" and shards["needs"] == ["reuse", "rust-linux-build"]
+    assert build["needs"] == ["quick", "reuse"] and shards["needs"] == ["quick", "reuse", "rust-linux-build"]
     # Same conditions: the build runs exactly when the shards do.
     assert build["if"] == shards["if"]
     build_text, shard_text = str(build["steps"]), str(shards["steps"])
@@ -500,7 +500,7 @@ LANES = {
     "ci-cua-spacesd.yml": (
         "cua-spacesd / changes",
         {"test": ("fmt, clippy, test ({os})", "legs_test")},
-        {"relay-e2e": "relay e2e (docker)"},
+        {},
     ),
     "ci-cua-driver-contract-clients.yml": (
         "contract clients / changes",
@@ -573,3 +573,27 @@ def test_floating_inputs_are_fingerprinted(filename):
         assert "python-3.12" in flags
     if "astral-sh/setup-uv" in text:
         assert {"uv", "python-standalone"} <= flags
+
+
+def test_cua_spacesd_relay_e2e_shards_are_legs_reused_by_name():
+    """`relay e2e (docker) (<shard>)`: one job per shard, each reusable by name like the OS legs (CUA-3558)."""
+    wf = load("ci-cua-spacesd.yml")
+    changes, job = wf["jobs"]["changes"], wf["jobs"]["relay-e2e"]
+    steps = {s.get("id"): s for s in changes["steps"]}
+    shards = '["core","hosted","teleport","tunnel"]'
+    assert job["name"].replace("${{ matrix.shard }}", "{os}") == "relay e2e (docker) ({os})"
+    assert '--template "relay e2e (docker) ({os})"' in steps["legs_relay"]["run"]
+    assert steps["legs_relay"]["env"] == {"REUSED": "${{ steps.reuse.outputs.reused }}", "LEGS": shards}
+    assert steps["legs_relay"]["continue-on-error"] is True and steps["legs_relay"]["timeout-minutes"] == 1
+    assert job["strategy"]["matrix"]["shard"] == "${{ fromJSON(needs.changes.outputs.legs_relay) }}"
+    assert "needs.changes.outputs.legs_relay != '[]'" in job["if"]
+    # A failed legs step falls back to every shard.
+    assert changes["outputs"]["legs_relay"] == f"${{{{ steps.legs_relay.outputs.legs || '{shards}' }}}}"
+
+
+def test_cua_spacesd_scope_steps_read_the_paginated_files_api_per_page():
+    """`gh api --paginate --jq` runs the filter once per page, and each page is an array."""
+    wf = load("ci-cua-spacesd.yml")
+    for step_id in ("scope", "relay_scope"):
+        step = next(s for s in wf["jobs"]["changes"]["steps"] if s.get("id") == step_id)
+        assert "--jq '.[]" in step["run"], step_id

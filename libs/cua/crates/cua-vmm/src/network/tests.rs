@@ -462,7 +462,7 @@ fn golden_support_table() {
         (BackendKind::QemuDocker, "R", "R", "R"),
         (BackendKind::Container, "E", "E", "E"),
         (BackendKind::Managed, "E", "E", "E"),
-        (BackendKind::Firecracker, "E", "R", "R"),
+        (BackendKind::Firecracker, "E", "R", "N"),
         (BackendKind::Containerization, "R", "R", "R"),
         (BackendKind::Vz, "R", "E", "R"),
     ];
@@ -1308,5 +1308,45 @@ fn every_server_a_guest_is_given_is_reachable_on_53_under_secure() {
             // And HTTPS to a public address follows.
             assert!(r.allows_port(ip("1.1.1.1"), Proto::Tcp, 443));
         }
+    }
+}
+
+#[test]
+fn a_platform_resolver_is_open_on_53_only_and_the_rest_of_metadata_stays_closed() {
+    for (host, other) in [
+        ("168.63.129.16", "169.254.169.254"),   // Azure
+        ("169.254.169.254", "168.63.129.16"),   // GCP
+        ("169.254.169.253", "169.254.169.254"), // AWS
+    ] {
+        let resolvers = crate::resolver::select(None, &[ip(host)], false);
+        assert_eq!(resolvers, [ip(host)], "{host}");
+        for s in [NetworkSettings::internet(), localhost(&[3000])] {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(&s, &c, Mode::Secure).unwrap();
+            assert!(r.allows_port(ip(host), Proto::Udp, 53), "{host}");
+            assert!(r.allows_port(ip(host), Proto::Tcp, 53), "{host}");
+            // Its HTTP (wireserver 80 and 32526, metadata 80) is closed.
+            for port in [80, 443, 32526] {
+                assert!(!r.allows_port(ip(host), Proto::Tcp, port), "{host}:{port}");
+            }
+            // Other metadata endpoints stay denied on every port.
+            assert!(!r.allows_port(ip(other), Proto::Udp, 53), "{other}");
+            assert!(!r.allows_port(ip(other), Proto::Tcp, 80), "{other}");
+        }
+    }
+}
+
+#[test]
+fn a_loopback_or_made_up_resolver_is_never_opened() {
+    // Not selected: the guest gets the public fallback, and 127.0.0.1 and
+    // an arbitrary metadata address get no port-53 rule.
+    let resolvers = crate::resolver::select(None, &[ip("127.0.0.1"), ip("169.254.170.2")], false);
+    assert_eq!(resolvers, [ip("1.1.1.1"), ip("8.8.8.8")]);
+    let mut c = ctx();
+    c.resolvers = resolvers;
+    let r = compile_mode(&NetworkSettings::internet(), &c, Mode::Secure).unwrap();
+    for a in ["127.0.0.1", "169.254.170.2", "168.63.129.16"] {
+        assert!(!r.allows_port(ip(a), Proto::Udp, 53), "{a}");
     }
 }

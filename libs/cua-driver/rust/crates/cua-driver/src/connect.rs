@@ -3,10 +3,10 @@
 
 //! `cua-driver connect`: connect the agents on this computer to Cua Driver.
 //!
-//! Detects Claude Code, Codex and Cursor, registers one tool server named
-//! `cua-driver` with each (through the agent's own CLI where it has one, by
-//! merging into its JSON config otherwise) and installs the skill pack for
-//! each. Running it twice changes nothing: a server already registered under
+//! Detects Claude Code, Codex, Cursor and Factory Droid, registers one tool
+//! server named `cua-driver` with each (through the agent's own CLI where it
+//! has one, by merging into its JSON config otherwise) and installs the skill
+//! pack for each that has a skills folder. Running it twice changes nothing: a server already registered under
 //! `cua-driver`, or under the old Claude Code name `cua-computer-use`, is left
 //! alone. A failure for one agent never stops the others.
 
@@ -23,16 +23,18 @@ pub enum Agent {
     Claude,
     Codex,
     Cursor,
+    Droid,
 }
 
 impl Agent {
-    pub const ALL: [Agent; 3] = [Agent::Claude, Agent::Codex, Agent::Cursor];
+    pub const ALL: [Agent; 4] = [Agent::Claude, Agent::Codex, Agent::Cursor, Agent::Droid];
 
     pub fn label(self) -> &'static str {
         match self {
             Agent::Claude => "Claude Code",
             Agent::Codex => "Codex",
             Agent::Cursor => "Cursor",
+            Agent::Droid => "Factory Droid",
         }
     }
 
@@ -41,6 +43,7 @@ impl Agent {
             Agent::Claude => "claude",
             Agent::Codex => "codex",
             Agent::Cursor => "cursor",
+            Agent::Droid => "droid",
         }
     }
 
@@ -50,6 +53,7 @@ impl Agent {
             "claude" | "claude-code" => Some(Agent::Claude),
             "codex" => Some(Agent::Codex),
             "cursor" => Some(Agent::Cursor),
+            "droid" | "factory" => Some(Agent::Droid),
             _ => None,
         }
     }
@@ -188,6 +192,10 @@ impl Env {
         self.home.join(".cursor")
     }
 
+    fn factory_dir(&self) -> PathBuf {
+        self.home.join(".factory")
+    }
+
     fn installed(&self, agent: Agent) -> Option<PathBuf> {
         match agent {
             Agent::Claude => self.find_on_path("claude"),
@@ -199,6 +207,9 @@ impl Env {
                     self.find_on_path("cursor")
                 }
             }
+            Agent::Droid => self
+                .find_on_path("droid")
+                .or_else(|| self.factory_dir().is_dir().then(|| self.factory_dir())),
         }
     }
 }
@@ -291,10 +302,11 @@ fn connect_codex(env: &Env, cli: &Path, bin: &str, dry_run: bool) -> AgentResult
 
 // ── Cursor ────────────────────────────────────────────────────────────────
 
-/// Add the server to Cursor's `mcp.json` text. Every other key and server is
-/// kept. `Ok(None)` means it is already there; `Err` means the file is not a
-/// JSON object we can safely edit.
-pub fn merge_cursor_config(existing: Option<&str>, bin: &str) -> Result<Option<String>, String> {
+/// Add the server to an `mcp.json` text with a top-level `mcpServers` map
+/// (Cursor and Droid). Every other key and server is kept. `Ok(None)` means it
+/// is already there; `Err` means the file is not a JSON object we can safely
+/// edit.
+pub fn merge_mcp_json(existing: Option<&str>, bin: &str) -> Result<Option<String>, String> {
     let mut root = match existing.map(str::trim).filter(|t| !t.is_empty()) {
         None => serde_json::json!({}),
         Some(text) => serde_json::from_str::<serde_json::Value>(text)
@@ -331,7 +343,7 @@ fn connect_cursor(env: &Env, bin: &str, dry_run: bool) -> AgentResult {
             return AgentResult::failed(Agent::Cursor, format!("could not read mcp.json: {e}"))
         }
     };
-    let merged = match merge_cursor_config(existing.as_deref(), bin) {
+    let merged = match merge_mcp_json(existing.as_deref(), bin) {
         Ok(None) => return AgentResult::new(Agent::Cursor, Status::AlreadyConnected),
         Ok(Some(text)) => text,
         Err(e) => return AgentResult::failed(Agent::Cursor, e),
@@ -351,11 +363,122 @@ fn connect_cursor(env: &Env, bin: &str, dry_run: bool) -> AgentResult {
     }
 }
 
+// ── Factory Droid ─────────────────────────────────────────────────────────
+
+/// Tools Droid keeps at its own default (`high`) because they cannot be
+/// undone. Every other tool without `readOnlyHint` is rated `medium`.
+const DROID_KEEP_DEFAULT: &[&str] = &["kill_app"];
+
+/// Droid rates an MCP tool `low` when it declares `readOnlyHint` and `high`
+/// otherwise, so every click or keystroke needs `--auto high`, while the same
+/// actions run as `cua-driver call` commands are rated `medium`. Add a
+/// `medium` rating for each such tool to `settings.json`'s
+/// `mcpAutonomyOverrides`, keeping every value already there. `Ok(None)`
+/// means nothing was missing.
+pub fn merge_droid_settings(
+    existing: Option<&str>,
+    tools: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    let mut root = match existing.map(str::trim).filter(|t| !t.is_empty()) {
+        None => serde_json::json!({}),
+        Some(text) => serde_json::from_str::<serde_json::Value>(text)
+            .map_err(|e| format!("settings.json is not valid JSON ({e}); left unchanged"))?,
+    };
+    let rated = root
+        .as_object_mut()
+        .and_then(|o| {
+            o.entry("mcpAutonomyOverrides")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+        })
+        .and_then(|o| {
+            o.entry(SERVER_NAME)
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+        })
+        .and_then(|o| {
+            o.entry("tools")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+        })
+        .ok_or_else(|| "settings.json has an unexpected shape; left unchanged".to_owned())?;
+    let mut added = false;
+    for tool in tools
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = tool.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let read_only =
+            tool.pointer("/annotations/readOnlyHint") == Some(&serde_json::Value::Bool(true));
+        if read_only || DROID_KEEP_DEFAULT.contains(&name) || rated.contains_key(name) {
+            continue;
+        }
+        rated.insert(name.to_owned(), serde_json::json!("medium"));
+        added = true;
+    }
+    if !added {
+        return Ok(None);
+    }
+    let mut out = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    out.push('\n');
+    Ok(Some(out))
+}
+
+fn connect_droid(env: &Env, bin: &str, tools: &serde_json::Value, dry_run: bool) -> AgentResult {
+    let dir = env.factory_dir();
+    let read = |name: &str| match std::fs::read_to_string(dir.join(name)) {
+        Ok(t) => Ok(Some(t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read {name}: {e}")),
+    };
+    let merged = read("mcp.json")
+        .and_then(|t| merge_mcp_json(t.as_deref(), bin))
+        .and_then(|mcp| {
+            read("settings.json")
+                .and_then(|t| merge_droid_settings(t.as_deref(), tools))
+                .map(|settings| [("mcp.json", mcp), ("settings.json", settings)])
+        });
+    let writes = match merged {
+        Ok(files) => files,
+        Err(e) => return AgentResult::failed(Agent::Droid, e),
+    };
+    if writes.iter().all(|(_, text)| text.is_none()) {
+        return AgentResult::new(Agent::Droid, Status::AlreadyConnected);
+    }
+    if dry_run {
+        return AgentResult::new(Agent::Droid, Status::WouldConnect);
+    }
+    for (name, text) in writes {
+        let Some(text) = text else { continue };
+        let write = || -> std::io::Result<()> {
+            std::fs::create_dir_all(&dir)?;
+            let tmp = dir.join(format!("{name}.cua-driver-tmp"));
+            std::fs::write(&tmp, text)?;
+            std::fs::rename(&tmp, dir.join(name))
+        };
+        if let Err(e) = write() {
+            return AgentResult::failed(Agent::Droid, format!("could not write {name}: {e}"));
+        }
+    }
+    AgentResult::new(Agent::Droid, Status::Connected)
+}
+
 // ── Orchestration ─────────────────────────────────────────────────────────
 
-/// Connect each of `agents` (all three when empty). Skill packs are not
-/// handled here; `run_connect` adds them.
-pub fn connect_agents(env: &Env, agents: &[Agent], bin: &str, dry_run: bool) -> Vec<AgentResult> {
+/// Connect each of `agents` (every known agent when empty). `tools` is the
+/// driver's tool inventory, read for Droid's autonomy ratings. Skill packs are
+/// not handled here; `run_connect` adds them.
+pub fn connect_agents(
+    env: &Env,
+    agents: &[Agent],
+    bin: &str,
+    tools: &serde_json::Value,
+    dry_run: bool,
+) -> Vec<AgentResult> {
     let list: Vec<Agent> = if agents.is_empty() {
         Agent::ALL.to_vec()
     } else {
@@ -370,6 +493,7 @@ pub fn connect_agents(env: &Env, agents: &[Agent], bin: &str, dry_run: bool) -> 
                 Agent::Claude => connect_claude(env, &cli, bin, dry_run),
                 Agent::Codex => connect_codex(env, &cli, bin, dry_run),
                 Agent::Cursor => connect_cursor(env, bin, dry_run),
+                Agent::Droid => connect_droid(env, bin, tools, dry_run),
             }
         })
         .collect()
@@ -393,7 +517,7 @@ fn stable_binary_path() -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-pub fn run_connect(clients: &[String], dry_run: bool, json: bool) {
+pub fn run_connect(clients: &[String], tools: &serde_json::Value, dry_run: bool, json: bool) {
     let mut agents = Vec::new();
     for name in clients {
         match Agent::parse(name) {
@@ -401,7 +525,7 @@ pub fn run_connect(clients: &[String], dry_run: bool, json: bool) {
             Some(_) => {}
             None => {
                 eprintln!(
-                    "cua-driver connect: unknown agent '{name}'. Use claude, codex or cursor, \
+                    "cua-driver connect: unknown agent '{name}'. Use claude, codex, cursor or droid, \
                      or `cua-driver mcp-config --client {name}` for other agents."
                 );
                 std::process::exit(2);
@@ -413,7 +537,7 @@ pub fn run_connect(clients: &[String], dry_run: bool, json: bool) {
         std::process::exit(1);
     };
     let bin = stable_binary_path();
-    let results = connect_agents(&env, &agents, &bin, dry_run);
+    let results = connect_agents(&env, &agents, &bin, tools, dry_run);
 
     // Skill pack, for every agent that is now connected.
     let mut skills: Vec<(Agent, String)> = Vec::new();
@@ -460,7 +584,7 @@ pub fn run_connect(clients: &[String], dry_run: bool, json: bool) {
             println!("{}", r.line());
         }
         if results.iter().all(|r| r.status == Status::NotInstalled) {
-            println!("Cua Driver is installed. When you install Claude Code, Codex or Cursor, run: cua-driver connect");
+            println!("Cua Driver is installed. When you install Claude Code, Codex, Cursor or Factory Droid, run: cua-driver connect");
         }
     }
     if exit_failed(&results) {
@@ -472,6 +596,7 @@ pub fn run_connect(clients: &[String], dry_run: bool, json: bool) {
 mod tests {
     use super::*;
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     struct Fixture {
         _dir: tempfile::TempDir,
         env: Env,
@@ -516,8 +641,13 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    #[cfg(unix)]
     fn calls(f: &Fixture) -> String {
         std::fs::read_to_string(&f.log).unwrap_or_default()
+    }
+
+    fn no_tools() -> serde_json::Value {
+        serde_json::json!({ "tools": [] })
     }
 
     fn by(results: &[AgentResult], a: Agent) -> &AgentResult {
@@ -527,7 +657,7 @@ mod tests {
     #[test]
     fn nothing_installed_reports_not_installed_and_does_not_fail() {
         let f = fixture();
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
         assert!(r.iter().all(|r| r.status == Status::NotInstalled));
         assert_eq!(by(&r, Agent::Codex).line(), "Codex: not installed");
         assert!(!exit_failed(&r));
@@ -540,7 +670,7 @@ mod tests {
         fake_cli(&f, "claude", "exit 0");
         fake_cli(&f, "codex", "exit 0");
         std::fs::create_dir_all(f.env.home.join(".cursor")).unwrap();
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
         assert_eq!(by(&r, Agent::Claude).status, Status::Connected);
         assert_eq!(by(&r, Agent::Codex).status, Status::Connected);
         assert_eq!(by(&r, Agent::Cursor).status, Status::Connected);
@@ -566,7 +696,13 @@ mod tests {
                 format!("{{\"mcpServers\":{{\"{name}\":{{}}}}}}"),
             )
             .unwrap();
-            let r = connect_agents(&f.env, &[Agent::Claude], "/b/cua-driver", false);
+            let r = connect_agents(
+                &f.env,
+                &[Agent::Claude],
+                "/b/cua-driver",
+                &no_tools(),
+                false,
+            );
             assert_eq!(
                 by(&r, Agent::Claude).line(),
                 "Claude Code: already connected"
@@ -578,7 +714,7 @@ mod tests {
             "[mcp_servers.cua-driver]\ncommand = \"x\"\n",
         )
         .unwrap();
-        let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", false);
+        let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", &no_tools(), false);
         assert_eq!(by(&r, Agent::Codex).status, Status::AlreadyConnected);
         assert!(!calls(&f).contains("add"), "{}", calls(&f));
     }
@@ -592,19 +728,37 @@ mod tests {
             "claude",
             "echo 'MCP server cua-driver already exists' >&2; exit 1",
         );
-        let r = connect_agents(&f.env, &[Agent::Claude], "/b/cua-driver", false);
+        let r = connect_agents(
+            &f.env,
+            &[Agent::Claude],
+            "/b/cua-driver",
+            &no_tools(),
+            false,
+        );
         assert_eq!(by(&r, Agent::Claude).status, Status::AlreadyConnected);
         std::fs::create_dir_all(f.env.home.join(".cursor")).unwrap();
-        let first = connect_agents(&f.env, &[Agent::Cursor], "/b/cua-driver", false);
+        let first = connect_agents(
+            &f.env,
+            &[Agent::Cursor],
+            "/b/cua-driver",
+            &no_tools(),
+            false,
+        );
         assert_eq!(by(&first, Agent::Cursor).status, Status::Connected);
-        let second = connect_agents(&f.env, &[Agent::Cursor], "/b/cua-driver", false);
+        let second = connect_agents(
+            &f.env,
+            &[Agent::Cursor],
+            "/b/cua-driver",
+            &no_tools(),
+            false,
+        );
         assert_eq!(by(&second, Agent::Cursor).status, Status::AlreadyConnected);
     }
 
     #[test]
     fn cursor_merge_keeps_other_servers_and_keys() {
         let existing = r#"{"theme":"x","mcpServers":{"other":{"command":"o","args":[]}}}"#;
-        let merged = merge_cursor_config(Some(existing), "/b/cua-driver")
+        let merged = merge_mcp_json(Some(existing), "/b/cua-driver")
             .unwrap()
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
@@ -613,13 +767,88 @@ mod tests {
         assert_eq!(v["mcpServers"]["cua-driver"]["command"], "/b/cua-driver");
         assert_eq!(v["mcpServers"]["cua-driver"]["args"][0], "mcp");
         assert_eq!(
-            merge_cursor_config(Some(&merged), "/b/cua-driver").unwrap(),
+            merge_mcp_json(Some(&merged), "/b/cua-driver").unwrap(),
             None
         );
-        assert!(merge_cursor_config(None, "/b")
+        assert!(merge_mcp_json(None, "/b")
             .unwrap()
             .unwrap()
             .contains("cua-driver"));
+    }
+
+    fn droid_tools() -> serde_json::Value {
+        serde_json::json!({ "tools": [
+            { "name": "list_windows", "annotations": { "readOnlyHint": true } },
+            { "name": "click", "annotations": { "readOnlyHint": false, "destructiveHint": true } },
+            { "name": "start_session", "annotations": { "readOnlyHint": false } },
+            { "name": "kill_app", "annotations": { "readOnlyHint": false, "destructiveHint": true } },
+        ]})
+    }
+
+    #[test]
+    fn droid_gets_the_server_and_medium_ratings_for_action_tools() {
+        let f = fixture();
+        let dir = f.env.home.join(".factory");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"logoAnimation":"off","mcpAutonomyOverrides":{"cua-driver":{"tools":{"click":"high"}}}}"#,
+        )
+        .unwrap();
+        let r = connect_agents(
+            &f.env,
+            &[Agent::Droid],
+            "/b/cua-driver",
+            &droid_tools(),
+            false,
+        );
+        assert_eq!(by(&r, Agent::Droid).line(), "Factory Droid: connected");
+
+        let mcp: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("mcp.json")).unwrap()).unwrap();
+        assert_eq!(mcp["mcpServers"]["cua-driver"]["command"], "/b/cua-driver");
+        assert_eq!(mcp["mcpServers"]["cua-driver"]["args"][0], "mcp");
+        assert_eq!(mcp["mcpServers"]["cua-driver"]["type"], "stdio");
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap())
+                .unwrap();
+        let rated = &settings["mcpAutonomyOverrides"]["cua-driver"]["tools"];
+        assert_eq!(settings["logoAnimation"], "off");
+        assert_eq!(rated["click"], "high", "a rating the user chose is kept");
+        assert_eq!(rated["start_session"], "medium");
+        assert!(
+            rated.get("list_windows").is_none(),
+            "read-only tools are already low"
+        );
+        assert!(
+            rated.get("kill_app").is_none(),
+            "kill_app keeps Droid's default"
+        );
+
+        let again = connect_agents(
+            &f.env,
+            &[Agent::Droid],
+            "/b/cua-driver",
+            &droid_tools(),
+            false,
+        );
+        assert_eq!(by(&again, Agent::Droid).status, Status::AlreadyConnected);
+    }
+
+    #[test]
+    fn droid_invalid_settings_are_never_overwritten() {
+        let f = fixture();
+        let dir = f.env.home.join(".factory");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), "{ not json").unwrap();
+        let r = connect_agents(&f.env, &[Agent::Droid], "/b", &droid_tools(), false);
+        assert_eq!(by(&r, Agent::Droid).status, Status::Failed);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json")).unwrap(),
+            "{ not json"
+        );
+        assert!(!dir.join("mcp.json").exists(), "nothing is half-written");
     }
 
     #[test]
@@ -628,7 +857,7 @@ mod tests {
         let dir = f.env.home.join(".cursor");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("mcp.json"), "{ not json").unwrap();
-        let r = connect_agents(&f.env, &[Agent::Cursor], "/b", false);
+        let r = connect_agents(&f.env, &[Agent::Cursor], "/b", &no_tools(), false);
         assert_eq!(by(&r, Agent::Cursor).status, Status::Failed);
         assert_eq!(
             std::fs::read_to_string(dir.join("mcp.json")).unwrap(),
@@ -644,10 +873,13 @@ mod tests {
         fake_cli(&f, "claude", "exit 0");
         fake_cli(&f, "codex", "exit 0");
         std::fs::create_dir_all(f.env.home.join(".cursor")).unwrap();
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", true);
+        std::fs::create_dir_all(f.env.home.join(".factory")).unwrap();
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &droid_tools(), true);
         assert!(r.iter().all(|r| r.status == Status::WouldConnect));
         assert_eq!(calls(&f), "");
         assert!(!f.env.home.join(".cursor/mcp.json").exists());
+        assert!(!f.env.home.join(".factory/mcp.json").exists());
+        assert!(!f.env.home.join(".factory/settings.json").exists());
     }
 
     #[cfg(unix)]
@@ -656,7 +888,7 @@ mod tests {
         let f = fixture();
         fake_cli(&f, "claude", "echo boom >&2; exit 1");
         fake_cli(&f, "codex", "exit 0");
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
         assert_eq!(
             by(&r, Agent::Claude).line(),
             "Claude Code: could not connect (boom)"
@@ -670,7 +902,7 @@ mod tests {
     fn exits_non_zero_only_when_agents_were_found_and_none_connected() {
         let f = fixture();
         fake_cli(&f, "claude", "echo boom >&2; exit 1");
-        let r = connect_agents(&f.env, &[], "/b/cua-driver", false);
+        let r = connect_agents(&f.env, &[], "/b/cua-driver", &no_tools(), false);
         assert!(exit_failed(&r));
     }
 
@@ -680,7 +912,7 @@ mod tests {
         let f = fixture();
         fake_cli(&f, "claude", "exit 0");
         fake_cli(&f, "codex", "exit 0");
-        let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", false);
+        let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", &no_tools(), false);
         assert_eq!(r.len(), 1);
         assert!(!calls(&f).contains("claude"));
     }

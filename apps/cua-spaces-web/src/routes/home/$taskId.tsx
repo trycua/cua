@@ -5,7 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { AskFirstTask } from "@/components/ask-first/task-view";
 
-/** One task's conversation on the "Ask first" Home. */
+/** One task's conversation on Home. */
 export const Route = createFileRoute("/home/$taskId")({
   component: TaskPage,
 });

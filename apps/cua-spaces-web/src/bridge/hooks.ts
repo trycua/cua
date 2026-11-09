@@ -173,9 +173,21 @@ export function useSpaces(): SpacesHook {
   // Read through the store's subscription, not off `ctx.store` in render: the compiler keeps a property read
   // of an unchanged object from an earlier render, and the page would keep "not read yet" forever.
   const store = ctx.store;
-  const listStatus = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.listStatus ?? NOT_LOADED, () => NOT_LOADED);
-  const listNotice = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.listNotice ?? null, () => null);
-  const creatingElsewhere = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.creatingElsewhere ?? NONE_ELSEWHERE, () => NONE_ELSEWHERE);
+  const listStatus = useSyncExternalStore(
+    store ? store.subscribe : noopSubscribe,
+    () => store?.listStatus ?? NOT_LOADED,
+    () => NOT_LOADED,
+  );
+  const listNotice = useSyncExternalStore(
+    store ? store.subscribe : noopSubscribe,
+    () => store?.listNotice ?? null,
+    () => null,
+  );
+  const creatingElsewhere = useSyncExternalStore(
+    store ? store.subscribe : noopSubscribe,
+    () => store?.creatingElsewhere ?? NONE_ELSEWHERE,
+    () => NONE_ELSEWHERE,
+  );
   const run = useAction();
   return {
     ...r,

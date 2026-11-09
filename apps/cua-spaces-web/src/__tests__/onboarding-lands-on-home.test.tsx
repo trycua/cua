@@ -37,24 +37,26 @@ const click = (sel: string) => fireEvent.click(document.querySelector<HTMLElemen
 const heading = () => document.querySelector("[data-onboarding-heading]")?.textContent ?? "";
 
 async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] = []) {
-  const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, hold, intercept: (op) => (calls.push({ op }), undefined), demo: { signedIn: false, onboarded: false, noSpaces: true, keys: "several" } });
-  // The new first run (CUA-3318): Skip for now, this computer, the agent found here, Ready, next steps.
-  await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+  const { router } = await mountApp("/onboarding", {
+    failsCreates: false,
+    listsGhost: false,
+    hold,
+    intercept: (op) => (calls.push({ op }), undefined),
+    demo: { signedIn: false, onboarded: false, noSpaces: true, keys: "several" },
+  });
+  // The new first run (CUA-3318): Skip for now, the agent found here, Ready, then Home.
+  await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
   click("[data-onboarding-later]");
-  await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
-  click("[data-onboarding-primary]");
   // On a Mac, Cua Spaces' permissions come next (CUA-3550); a person can go on without them.
   await waitFor(() => expect(document.querySelector("[data-new-run=permissions], [data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
   if (document.querySelector("[data-new-run=permissions]")) click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=agent]:not([data-state=looking])")).not.toBeNull(), { timeout: 15_000 });
-  const several = document.querySelector("[data-new-run=agent][data-state=several]");
-  if (several) click("[data-new-run-agent=claude-code]");
+  // Every agent found is ticked: Continue connects them, with nothing to pick first.
   click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
-  click("[data-onboarding-primary]");
-  await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
   // Nothing is made while the first run shows.
   expect(getDriver()?.state?.wanted ?? false).toBe(false);
+  // Ready is the last screen: Done ends setup (the rest is asked for on Home after the first job, CUA-3150).
   click("[data-onboarding-primary]");
   return router;
 }
@@ -82,5 +84,7 @@ describe.skipIf(!wasmBuilt)("where the first run ends", () => {
     expect(document.querySelector("[data-prepare-line]")).toBeNull();
     expect(document.querySelector("[data-home-spaces]")?.textContent ?? "").not.toContain("home-claude-code");
     expect(document.body.textContent).not.toContain("home-claude-code");
+    // No job has run yet, so Home doesn't ask for the rest of setup.
+    expect(document.querySelector("[data-bring-rest]")).toBeNull();
   });
 });

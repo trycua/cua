@@ -159,7 +159,12 @@ export function makeModel(o: EnvironmentOptions): Environment {
 }
 
 /** Makes the live services: this app's daemon, then the SDK on it. */
-export async function makeLiveServices(native: Native, supervisor: DaemonSupervisor | null, openUrl: (url: string) => Promise<boolean>, cuaBinary: string | null = null): Promise<LiveServices> {
+export async function makeLiveServices(
+  native: Native,
+  supervisor: DaemonSupervisor | null,
+  openUrl: (url: string) => Promise<boolean>,
+  cuaBinary: string | null = null,
+): Promise<LiveServices> {
   const daemonError = await startDaemon(supervisor);
   try {
     const cua = await makeCua(native, supervisor);
@@ -171,7 +176,17 @@ export async function makeLiveServices(native: Native, supervisor: DaemonSupervi
       devices = null;
     }
     const live = new LiveSpacesBackend(native, cua);
-    return { backend: live, live, cua, account: new LiveAccount(auth, openUrl), host: new native.Host(undefined), agentSetup: new LiveAgentSetup(native, cua.agentSetup(), cuaBinary), devices, startError: null, daemonError };
+    return {
+      backend: live,
+      live,
+      cua,
+      account: new LiveAccount(auth, openUrl),
+      host: new native.Host(undefined),
+      agentSetup: new LiveAgentSetup(native, cua.agentSetup(), cuaBinary),
+      devices,
+      startError: null,
+      daemonError,
+    };
   } catch (error) {
     // Say so: an empty list would look like "no Spaces".
     const message = `Could not start the cua SDK: ${words(error)}`;

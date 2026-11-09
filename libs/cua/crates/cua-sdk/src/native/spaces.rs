@@ -64,6 +64,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("agent_capabilities", "Spaces.agent_capabilities"),
     ("agent_threads", "Spaces.call_tool_json"),
     ("agent_thread_read", "Spaces.call_tool_json"),
+    ("agent_sign_in", "Spaces.call_tool_json"),
     ("agent_add", "Spaces.persistent_agent_create"),
     ("persistent_agent_list", "Spaces.persistent_agents"),
     ("agent_remove", "Spaces.persistent_agent_remove"),
@@ -4411,6 +4412,15 @@ impl Spaces {
         run(async move {
             match &host {
                 Host::Embedded(s) => {
+                    if options.children == Some(true)
+                        && !cua_spaces::experiments::enabled(
+                            cua_spaces::experiments::Gate::ChildSpaces,
+                        )
+                    {
+                        return Err(CuaError::Unsupported(
+                            cua_spaces::experiments::Gate::ChildSpaces.off_message(),
+                        ));
+                    }
                     let created = s
                         .create(cua_spaces::SpaceCreate {
                             image: options.image,
@@ -5112,6 +5122,15 @@ impl Spaces {
             match &host {
                 Host::Embedded(s) => {
                     let id = s.resolve(&space)?.to_string();
+                    if enabled
+                        && !cua_spaces::experiments::enabled(
+                            cua_spaces::experiments::Gate::ChildSpaces,
+                        )
+                    {
+                        return Err(CuaError::Unsupported(
+                            cua_spaces::experiments::Gate::ChildSpaces.off_message(),
+                        ));
+                    }
                     if enabled && !id.starts_with("local:") {
                         return Err(CuaError::Unsupported(
                             "child Spaces are available for Spaces this computer runs".into(),
@@ -7789,7 +7808,7 @@ pub struct DriveStorage {
 }
 
 /// A storage change, or with `dry_run` a connection test.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Serialize)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record, Serialize)]
 pub struct DriveStorageUpdate {
     /// `fs` or `s3` (`cloud` is refused).
     pub backend: String,
@@ -7800,6 +7819,21 @@ pub struct DriveStorageUpdate {
     pub secret_access_key: Option<String>,
     /// Only test; change nothing.
     pub dry_run: bool,
+}
+
+impl std::fmt::Debug for DriveStorageUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveStorageUpdate")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
 }
 
 /// What a storage test found.

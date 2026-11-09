@@ -205,7 +205,7 @@ impl Probe {
 /// How to get an SSH login into a VM guest. For QEMU the runtime forwards guest
 /// port 22 and, when no user-data is given, seeds `authorized_keys` through a
 /// cloud-init NoCloud ISO.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshAccess {
     pub user: String,
     /// Private key used to log in. Its `.pub` sibling is injected via cloud-init.
@@ -213,6 +213,16 @@ pub struct SshAccess {
     /// Password, for images that allow password auth (e.g. lume `lume`/`lume`).
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshAccess")
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Everything needed to start (or create-and-start) one sandbox.
@@ -362,10 +372,25 @@ pub struct Mount {
 
 /// Checks `mounts` for any backend: absolute paths, existing host
 /// directories, no guest path twice.
+/// Where the built-in Linux runtime on Windows mounts cua's job directories
+/// inside its distribution (`drvfs`): a mount's host side that starts here is a
+/// path in the engine's own filesystem, not a Windows path.
+pub const ENGINE_MOUNT_ROOT: &str = "/mnt/cua-host/";
+
+/// Whether `host` is a path in the engine's own filesystem
+/// ([`ENGINE_MOUNT_ROOT`]), which only a Windows host has no way to check.
+pub fn is_engine_path(host: &std::path::Path) -> bool {
+    cfg!(windows)
+        && host
+            .to_string_lossy()
+            .replace('\\', "/")
+            .starts_with(ENGINE_MOUNT_ROOT)
+}
+
 pub fn check_mounts(backend: BackendKind, mounts: &[Mount]) -> crate::Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for m in mounts {
-        if !m.host.is_absolute() || !m.host.is_dir() {
+        if !is_engine_path(&m.host) && (!m.host.is_absolute() || !m.host.is_dir()) {
             return Err(crate::VmmError::invalid(format!(
                 "{}: a mount's host side must be an existing directory given by its absolute path ({})",
                 backend.as_str(),
@@ -731,7 +756,7 @@ pub struct HostPort {
 }
 
 /// VNC access to the guest framebuffer (VMM-level; no guest agent needed).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VncEndpoint {
     pub host: String,
     pub port: u16,
@@ -739,8 +764,18 @@ pub struct VncEndpoint {
     pub password: Option<String>,
 }
 
+impl std::fmt::Debug for VncEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VncEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 /// SSH access into the guest, when the image has sshd.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshEndpoint {
     pub host: String,
     pub port: u16,
@@ -749,6 +784,18 @@ pub struct SshEndpoint {
     pub private_key: Option<PathBuf>,
     #[serde(default)]
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("private_key", &self.private_key)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// How to reach a running instance from the host.
@@ -913,6 +960,24 @@ mod duration_secs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On Windows a mount under the engine's own `/mnt/cua-host/` (the job
+    /// directories mounted into its distribution) is not a Windows folder.
+    #[cfg(windows)]
+    #[test]
+    fn engine_paths_are_mounts_without_a_windows_folder() {
+        let m = |host: &str| Mount {
+            host: std::path::PathBuf::from(host),
+            guest: "/cua/job".into(),
+            read_only: false,
+        };
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/cua-host/jobs/a/job")]).is_ok());
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/elsewhere")]).is_err());
+        assert!(is_engine_path(std::path::Path::new(
+            "/mnt/cua-host/job-cache"
+        )));
+        assert!(!is_engine_path(std::path::Path::new(r"C:\x")));
+    }
 
     #[test]
     fn egress_is_on_by_default_and_only_qemu_can_cut_it() {

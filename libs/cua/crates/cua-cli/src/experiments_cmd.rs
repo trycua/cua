@@ -117,7 +117,7 @@ fn list(home: &std::path::Path, json: bool, out: &mut dyn Write) -> Result<i32, 
     line(out, "");
     line(
         out,
-        "Turn one on or off with `cua experiments enable <name>` or `disable <name>`; they are also in the app, Settings, Advanced, Labs.",
+        "Turn one on with `cua experiments enable <name>`; they are also in the app, Settings, Advanced, Labs.",
     );
     Ok(0)
 }

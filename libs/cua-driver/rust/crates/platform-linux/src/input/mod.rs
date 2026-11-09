@@ -3862,6 +3862,10 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
                     conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)
                 })?;
             }
+            if !pacing.hold().is_zero() {
+                conn.flush()?;
+                pause_unless_zero(pacing.hold());
+            }
             conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
             if needs_shift {
                 conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
@@ -3869,7 +3873,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
             conn.flush()?;
             client.borrow_mut().mark_sent(keycode);
             delivered.confirmed();
-            pause_unless_zero(pacing.hold() + pacing.gap());
+            pause_unless_zero(pacing.gap());
             sent.set(sent.get() + 1);
             if pacing.batch_boundary(sent.get()) {
                 // Bound what the server and client have queued before sending more.

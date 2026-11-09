@@ -46,6 +46,8 @@ pub enum StorageCmd {
         move_data: bool,
     },
     /// Go back to the default folder for a kind. Nothing is copied or deleted.
+    #[command(after_help = "Examples:
+  cua storage reset runtimes")]
     Reset {
         /// runtimes, images, cache, logs or trajectories.
         kind: String,
@@ -53,6 +55,9 @@ pub enum StorageCmd {
     /// Delete one computer image or runtime from `runtimes` (see `cua storage`),
     /// or an old folder left by `cua storage set --move`. Asks nothing: the
     /// Settings page confirms first.
+    #[command(after_help = "Examples:
+  # Delete the old copy after `cua storage set runtimes <path> --move`
+  cua storage remove ~/.cua/runtimes")]
     Remove {
         /// A folder listed by `cua storage --json` (items) or a folder left
         /// behind by a move.
@@ -146,8 +151,8 @@ fn human(b: u64) -> String {
     cua_disk::format_size(b)
 }
 
-pub fn run(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
-    run_inner(cmd, json, out).map(|()| 0)
+pub fn run(cmd: Option<StorageCmd>, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+    run_inner(cmd.unwrap_or(StorageCmd::Show), json, out).map(|()| 0)
 }
 
 fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), CuaError> {

@@ -12910,7 +12910,7 @@
    "hidden_aliases": [],
    "name": "storage",
    "options": [],
-   "subcommand_optional": false,
+   "subcommand_optional": true,
    "subcommands": [
     {
      "abstract": "Show every folder Cua uses, where it comes from and how big it is",
@@ -13012,6 +13012,7 @@
     },
     {
      "abstract": "Go back to the default folder for a kind. Nothing is copied or deleted",
+     "after_help": "Examples:\n  cua storage reset runtimes",
      "aliases": [],
      "arguments": [
       {
@@ -13036,6 +13037,7 @@
     },
     {
      "abstract": "Delete one computer image or runtime from `runtimes` (see `cua storage`), or an old folder left by `cua storage set --move`. Asks nothing: the Settings page confirms first",
+     "after_help": "Examples:\n  # Delete the old copy after `cua storage set runtimes <path> --move`\n  cua storage remove ~/.cua/runtimes",
      "aliases": [],
      "arguments": [
       {
@@ -13059,7 +13061,7 @@
      "usage": "cua storage remove [OPTIONS] <PATH>"
     }
    ],
-   "usage": "cua storage [OPTIONS] <COMMAND>"
+   "usage": "cua storage [OPTIONS] [COMMAND]"
   },
   {
    "abstract": "Check the host, an image and a sandbox's guest in one report (`cua doctor [REF]`), or eval parity between two variants (`cua doctor parity A B`)",

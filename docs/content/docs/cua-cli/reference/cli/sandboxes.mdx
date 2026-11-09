@@ -1350,7 +1350,7 @@ cua cache config --budget 20G --min-free 10G
 Where Cua keeps its files, how big each folder is, and moving the large ones (computers' disks, images, caches) to another drive.
 
 ```text output
-cua storage [OPTIONS] <COMMAND>
+cua storage [OPTIONS] [COMMAND]
 ```
 
 ### `cua storage show`
@@ -1428,6 +1428,12 @@ cua storage reset [OPTIONS] <KIND>
 | --- | --- | --- | --- |
 | `<KIND>` | string | required | runtimes, images, cache, logs or trajectories. |
 
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-reset"
+cua storage reset runtimes
+```
+
 ### `cua storage remove`
 
 Delete one computer image or runtime from `runtimes` (see `cua storage`), or an old folder left by `cua storage set --move`. Asks nothing: the Settings page confirms first.
@@ -1439,6 +1445,13 @@ cua storage remove [OPTIONS] <PATH>
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<PATH>` | path | required | A folder listed by `cua storage --json` (items) or a folder left behind by a move. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-remove"
+# Delete the old copy after `cua storage set runtimes <path> --move`
+cua storage remove ~/.cua/runtimes
+```
 
 ## `cua viewer`
 

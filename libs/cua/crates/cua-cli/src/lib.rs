@@ -303,8 +303,10 @@ enum Command {
     Cache(cache::CacheCmd),
     /// Where Cua keeps its files, how big each folder is, and moving the large
     /// ones (computers' disks, images, caches) to another drive.
-    #[command(subcommand)]
-    Storage(storage_cmd::StorageCmd),
+    Storage {
+        #[command(subcommand)]
+        cmd: Option<storage_cmd::StorageCmd>,
+    },
     /// Check the host, an image and a sandbox's guest in one report
     /// (`cua doctor [REF]`), or eval parity between two variants
     /// (`cua doctor parity A B`).
@@ -1714,7 +1716,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
         Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
         Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
-        Command::Storage(cmd) => return storage_cmd::run(cmd.clone(), json, out),
+        Command::Storage { cmd } => return storage_cmd::run(cmd.clone(), json, out),
         Command::Cache(cmd) => {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
@@ -2426,7 +2428,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Pools(_)
         | Command::Teleport(_)
         | Command::Cache(_)
-        | Command::Storage(_)
+        | Command::Storage { .. }
         | Command::Share(_)
         | Command::Compat(_)
         | Command::Config(_)

@@ -9,7 +9,7 @@ import Testing
 /// What closing the window and quitting do to the background service:
 /// the state machine (`BackgroundPolicy`), the stop (`BackgroundService`)
 /// and the settings behind them. No process is touched.
-@Suite("Background service")
+@Suite("Background service", .serialized)
 struct BackgroundServiceTests {
     // MARK: Closing the window
 
@@ -47,7 +47,7 @@ struct BackgroundServiceTests {
         }
     }
 
-    @Test func theSettingRowsFollowTheCoreAndPersist() throws {
+    @Test func theSettingRowsFollowTheCoreChoice() throws {
         var settings = appSettingsDefaults()
         let rows = { (s: AppSettings) in
             let json = #"{"closeWindowKeepsRunning":\#(s.closeWindowKeepsRunning),"closeNotice":\#(!s.closeNoticeOff)}"#
@@ -58,11 +58,10 @@ struct BackgroundServiceTests {
         #expect(close.options.map(\.label) == ["Keep running in the background", "Quit Cua Spaces"])
         settings = appSettingsChoose(settings: settings, row: "close-window", option: "quit")
         settings = appSettingsChoose(settings: settings, row: "close-notice", option: "off")
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID().uuidString).json").path
-        try appSettingsSave(path: path, settings: settings)
-        let back = appSettingsLoad(path: path)
-        #expect(!back.closeWindowKeepsRunning && back.closeNoticeOff)
-        #expect(rows(back).first { $0.id == "close-window" }?.options.first { $0.active }?.id == "quit")
+        // What the row shows follows the saved choice (saving is the core's serde, tested there;
+        // `appSettingsSave` also mirrors experiments into ~/.cua, which a test must never touch).
+        #expect(!settings.closeWindowKeepsRunning && settings.closeNoticeOff)
+        #expect(rows(settings).first { $0.id == "close-window" }?.options.first { $0.active }?.id == "quit")
     }
 
     @Test func anOlderSettingsFileKeepsRunningWithTheNoticeOn() throws {
@@ -90,19 +89,19 @@ struct BackgroundServiceTests {
 
     @Test func aQuitCancelledGoesBackToRunning() throws {
         let state = BackgroundService()
-        state.manage(try fakeSupervisor())
+        let supervisor = try fakeSupervisor()
+        state.manage(supervisor)
         #expect(state.beginQuit() == .stopEverything)
-        #expect(state.isQuitting)
+        #expect(state.isQuitting && supervisor.isStopping)
         state.cancelQuit()
-        #expect(!state.isQuitting)
-        #expect(!DaemonSupervisor.isStopping)
+        #expect(!state.isQuitting && !supervisor.isStopping)
     }
 
     @Test func stopTermsEachLoginItemThenStopsTheDaemon() throws {
         let runner = RecordingRunner()
         let state = BackgroundService()
-        state.manage(try fakeSupervisor())
-        defer { DaemonSupervisor.resumeSupervising() }
+        let supervisor = try fakeSupervisor()
+        state.manage(supervisor)
         let problems = state.stopEverything(runner: runner, labels: ["a.helper", "a.driver"], uid: 501, wait: 0.2,
                                             isRunning: { _ in false })
         #expect(problems.isEmpty)
@@ -110,13 +109,12 @@ struct BackgroundServiceTests {
             == ["/bin/launchctl kill SIGTERM gui/501/a.helper", "/bin/launchctl kill SIGTERM gui/501/a.driver"])
         #expect(runner.calls.dropFirst(2).first?.suffix(2) == ["daemon", "stop"])
         // The supervision loop must not start the daemon again.
-        #expect(DaemonSupervisor.isStopping)
+        #expect(supervisor.isStopping)
     }
 
     @Test func stopSaysWhatDidNotStop() throws {
         let state = BackgroundService()
         state.manage(try fakeSupervisor())
-        defer { DaemonSupervisor.resumeSupervising() }
         let problems = state.stopEverything(runner: RecordingRunner(), labels: ["a.helper"], uid: 501, wait: 0.3,
                                             isRunning: { _ in true })
         #expect(problems == ["a.helper is still running"])
@@ -124,8 +122,7 @@ struct BackgroundServiceTests {
 
     @Test func aStoppingAppNeverStartsTheDaemonAgain() throws {
         let supervisor = try fakeSupervisor()
-        DaemonSupervisor.stopSupervising()
-        defer { DaemonSupervisor.resumeSupervising() }
+        supervisor.stopSupervising()
         #expect(supervisor.start() == "Cua Spaces is quitting")
     }
 

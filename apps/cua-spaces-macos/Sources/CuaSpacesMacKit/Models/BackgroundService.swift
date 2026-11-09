@@ -81,7 +81,7 @@ public final class BackgroundService: @unchecked Sendable {
         lock.withLock {
             quitting = true
             let plan = BackgroundPolicy.quitPlan(updateRestart: updateRestart, managesService: supervisor != nil)
-            if plan == .stopEverything { DaemonSupervisor.stopSupervising() }
+            if plan == .stopEverything { supervisor?.stopSupervising() }
             return plan
         }
     }
@@ -90,7 +90,7 @@ public final class BackgroundService: @unchecked Sendable {
     public func cancelQuit() {
         lock.withLock {
             quitting = false
-            DaemonSupervisor.resumeSupervising()
+            supervisor?.resumeSupervising()
         }
     }
 

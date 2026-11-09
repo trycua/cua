@@ -25,17 +25,17 @@ public final class DaemonSupervisor: @unchecked Sendable {
 
     /// Set while the app quits for good (`BackgroundService`): the daemon is
     /// stopped and must not be started again by the supervision loop.
-    private static let stopLock = NSLock()
-    nonisolated(unsafe) private static var stopping = false
-    static var isStopping: Bool { stopLock.withLock { stopping } }
-    static func stopSupervising() { stopLock.withLock { stopping = true } }
-    static func resumeSupervising() { stopLock.withLock { stopping = false } }
+    private let stopLock = NSLock()
+    private var stopping = false
+    var isStopping: Bool { stopLock.withLock { stopping } }
+    func stopSupervising() { stopLock.withLock { stopping = true } }
+    func resumeSupervising() { stopLock.withLock { stopping = false } }
 
     /// Stops this app's daemon for Quit: `cua daemon stop` (bounded), then
     /// kills what of this bundle's is still there. `nil` when none runs
     /// afterwards, else why not.
     public func stopForQuit(runner: CommandRunning = ProcessRunner()) -> String? {
-        Self.stopSupervising()
+        stopSupervising()
         let r = runner.run(cua, ["daemon", "stop"], timeout: 12)
         for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
             Self.stop(pid: pid)
@@ -89,7 +89,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// that launch, which is gone, so every connect to this Mac's macOS VMs
     /// fails with "No route to host" whatever System Settings says.
     public func start(timeout: TimeInterval = 60) -> String? {
-        if Self.isStopping { return "Cua Spaces is quitting" }
+        if isStopping { return "Cua Spaces is quitting" }
         let error = startOnce(timeout: timeout)
         guard error == nil, let orphan = orphaned() else { return error }
         NSLog("Cua Spaces: the cua daemon (pid %d) belongs to an earlier launch of this app (macOS holds pid %d responsible); starting it again",
@@ -329,7 +329,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
                     }
                 }
                 await wake.wait(for: failures == 0 ? interval : Self.backoff(failures))
-                if Task.isCancelled || Self.isStopping { return }
+                if Task.isCancelled || self.isStopping { return }
                 if await isUp() {
                     if reported { await report(nil) }
                     failures = 0

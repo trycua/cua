@@ -93,6 +93,7 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
         updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: self)
         driver.onChange = { [weak self] in self?.onChange?() }
         driver.resumeSilentUpdate = { [weak self] in self?.updater.checkForUpdates() }
+        driver.quitApp = { NSApp.terminate(nil) }
         driver.onEvent = { [weak self] event in self?.onUpdateEvent?(event) }
         let changed: @Sendable () -> Void = { [weak self] in
             DispatchQueue.main.async { self?.onChange?() }

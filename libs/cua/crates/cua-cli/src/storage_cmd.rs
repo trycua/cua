@@ -243,6 +243,17 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
             if move_data {
                 let plan = storage::move_kind(&home, kind, &path, |_| {})
                     .map_err(CuaError::InvalidArgument)?;
+                if plan.from == plan.to {
+                    if json {
+                        util::json_line(out, &json!({"ok": true, "to": plan.to, "bytes": 0}));
+                    } else {
+                        line(
+                            out,
+                            format!("{} is already in {}", kind.name(), plan.to.display()),
+                        );
+                    }
+                    return Ok(());
+                }
                 if json {
                     util::json_line(
                         out,

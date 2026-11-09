@@ -239,6 +239,12 @@ pub fn set_override(home: &Path, kind: Kind, path: Option<&Path>) -> io::Result<
             paths.remove(&kind);
         }
     }
+    // The folder that becomes live is no "old location" any more.
+    let now_live = match path {
+        Some(p) => p.to_path_buf(),
+        None => kind.default_in(home),
+    };
+    let _ = fs::remove_file(now_live.join(MOVED_MARKER));
     if paths.is_empty() && !file.exists() {
         return Ok(());
     }
@@ -605,6 +611,18 @@ fn copy_tree(from: &Path, to: &Path, count: &mut dyn FnMut(u64)) -> io::Result<(
 /// never remove a live location.
 pub fn remove_old(old: &Path) -> io::Result<u64> {
     crate::guard_write(old)?;
+    // Never the folder in use: after `reset` the old place is live again.
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let home = crate::cua_home();
+    if Kind::ALL
+        .into_iter()
+        .any(|k| canon(&dir_in(&home, k, |v| std::env::var(v).ok())) == canon(old))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "that folder is in use",
+        ));
+    }
     let marker = old.join(MOVED_MARKER);
     let target = fs::read_to_string(&marker)
         .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "not an old Cua location"))?;
@@ -744,6 +762,25 @@ mod tests {
         remove_old(&old).unwrap();
         assert!(!old.exists());
         assert!(to.join("lume/1/disk.img").exists());
+    }
+
+    #[test]
+    fn reset_makes_the_old_place_live_again_and_it_cannot_be_removed_as_old() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        let old = h.join("images");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("a"), b"1").unwrap();
+        let to = d.path().join("new");
+        move_kind(&h, Kind::Images, &to, |_| {}).unwrap();
+        assert!(old.join(MOVED_MARKER).exists());
+        set_override(&h, Kind::Images, None).unwrap();
+        assert!(
+            !old.join(MOVED_MARKER).exists(),
+            "the marker goes when it is live again"
+        );
+        assert!(remove_old(&old).is_err());
+        assert!(old.join("a").exists());
     }
 
     #[test]

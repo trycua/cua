@@ -651,10 +651,7 @@ pub fn activate_or_revive_session_for_owner(
     let needs_cleanup = {
         let ended = ended_sessions().lock().unwrap();
         match ended.get(session_id) {
-            Some(Some(owner))
-                if owner != owner_transport
-                    && !released_to(&ended, session_id, owner_transport) =>
-            {
+            Some(Some(_)) if claim_refused(&ended, session_id, owner_transport) => {
                 return Err("session is not available to this transport");
             }
             Some(None) if owner_transport != session_id => {
@@ -672,10 +669,7 @@ pub fn activate_or_revive_session_for_owner(
     let revived = {
         let mut ended = ended_sessions().lock().unwrap();
         let revived = match ended.get(session_id) {
-            Some(Some(owner))
-                if owner != owner_transport
-                    && !released_to(&ended, session_id, owner_transport) =>
-            {
+            Some(Some(_)) if claim_refused(&ended, session_id, owner_transport) => {
                 return Err("session is not available to this transport");
             }
             Some(None) if owner_transport != session_id => {
@@ -1113,6 +1107,25 @@ fn released_to(
     owner != session_id
         && owner != owner_transport
         && closed_transports().lock().unwrap().contains(owner)
+}
+
+/// Whether `owner_transport` may not claim the tombstoned `session_id`: the
+/// tombstone names another live transport, or names `owner_transport` after
+/// it closed. A closed transport never comes back, so a late call from it
+/// must not revive what its close ended. The caller holds the
+/// `ENDED_SESSIONS` lock and passes its map.
+fn claim_refused(
+    ended: &HashMap<String, Option<String>>,
+    session_id: &str,
+    owner_transport: &str,
+) -> bool {
+    match ended.get(session_id) {
+        Some(Some(owner)) if owner == owner_transport => {
+            closed_transports().lock().unwrap().contains(owner)
+        }
+        Some(Some(_)) => !released_to(ended, session_id, owner_transport),
+        _ => false,
+    }
 }
 
 /// [`released_to`] for an ordinary call, which starts a fresh episode on the
@@ -1813,10 +1826,7 @@ pub fn revive_session_for_owner(
             return Ok(false);
         };
         match ended_owner.as_deref() {
-            Some(owner)
-                if owner != owner_transport
-                    && !released_to(&ended, session_id, owner_transport) =>
-            {
+            Some(_) if claim_refused(&ended, session_id, owner_transport) => {
                 return Err("session is not available to this transport");
             }
             // Legacy tombstones did not retain ownership. Allow only the
@@ -1840,9 +1850,7 @@ pub fn revive_session_for_owner(
         return Ok(false);
     };
     match ended_owner.as_deref() {
-        Some(owner)
-            if owner != owner_transport && !released_to(&ended, session_id, owner_transport) =>
-        {
+        Some(_) if claim_refused(&ended, session_id, owner_transport) => {
             Err("session is not available to this transport")
         }
         None if owner_transport != session_id => Err("session is not available to this transport"),
@@ -2457,6 +2465,15 @@ mod tests {
         assert!(!recreates_on_next_call(label, owner_a));
         assert_eq!(begin(label, owner_a).err(), Some("session has ended"));
         assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
+        assert_eq!(
+            start(ended_label, owner_a),
+            Err("session is not available to this transport"),
+            "the closed transport cannot start_session its old label either"
+        );
+        assert_eq!(
+            revive_session_for_owner(ended_label, owner_a),
+            Err("session is not available to this transport")
+        );
 
         // Another transport starts a fresh episode on a label A did not end.
         assert!(recreates_on_next_call(label, owner_b));

@@ -390,8 +390,10 @@ GNOME requires the optional WinRects Shell helper for
 authoritative frame and buffer geometry, observation, capture, and verified
 target activation. A portal/libei grant persists until the user revokes it, so
 subsequent driver processes do not reopen the consent dialog.
-KDE requires a future target-addressable KWin adapter; portal availability by
-itself is not evidence that input can be sent safely to a named window.
+KDE requires the optional Cua KWin helper with its input gate (protocol 2),
+built against the host's KWin; no canonical row builds it yet. Portal
+availability by itself is not evidence that input can be sent safely to a
+named window.
 Standard Wayland does not expose the physical pointer position, so canonical
 Wayland rows do not claim the real-cursor preservation oracle. Focus, full
 occlusion, sentinel input isolation, liveness, and fixture-state oracles remain

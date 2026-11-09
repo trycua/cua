@@ -265,7 +265,11 @@ driver selects a backend from compositor capabilities:
 - KDE/KWin uses AT-SPI and portal facilities where available. Where the
   operator has enabled it, it also gets exact window geometry, stacking,
   capture of a covered window, and `bring_to_front`; otherwise window capture
-  returns `surface_identity_unproven`. Raw input at a window refuses with
+  returns `surface_identity_unproven`. Raw input at a window runs only in the
+  foreground, with the optional Cua KWin helper's input gate (protocol 2)
+  loaded: the input then reaches that window or nothing, and a call whose
+  input was held back because focus left the window fails with
+  `input_interrupted`. Without the gate it refuses with
   `foreground_unavailable`.
 - The optional `cua-compositor` is a separate nested session enabled
   explicitly for controlled automation. GNOME and KDE never switch into it.
@@ -508,7 +512,7 @@ ask the user.
 | Sway/wlroots            | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound                                                                                                                                                  |
 | Hyprland/Omarchy        | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence                             | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and a private agent US keymap; user Caps-to-Ctrl/Super remaps do not alter agent semantics; complete native harness and release acceptance are separate gates |
 | GNOME/Mutter            | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input                                           | Requires the helper and portal grant; portal video parity remains open                                                                                                                                         |
-| KDE/KWin                | AT-SPI and generic discovery where exposed; where the operator enabled it, exact window geometry, capture and `bring_to_front` | Raw input at a window refuses with `foreground_unavailable`; otherwise window capture returns `surface_identity_unproven`; video needs a `portal-capture` build and a portal monitor grant                     |
+| KDE/KWin                | AT-SPI and generic discovery where exposed; where the operator enabled it, exact window geometry, capture and `bring_to_front` | Raw input at a window runs only in the foreground with the KWin helper's input gate loaded, else refuses with `foreground_unavailable`; otherwise window capture returns `surface_identity_unproven`; video needs a `portal-capture` build and a portal monitor grant                     |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage                         | The complete shared matrix remains experimental; do not infer standard-Wayland support                                                                                                                         |
 
 See [WORKFLOW.md](WORKFLOW.md) for exact targeting and verification and `RECORDING.md` for session

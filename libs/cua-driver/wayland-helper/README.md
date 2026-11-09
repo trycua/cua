@@ -150,6 +150,7 @@ installed v10 downgrades the helper until the newer app reinstalls it.
 wlroots compositors such as Sway and labwc do not need it: cua-driver uses
 foreign-toplevel activation, virtual-pointer input, and layer-shell there.
 
-KDE Plasma Wayland needs an equivalent target-addressable KWin activation
-adapter; it is not yet provided. Portal reachability alone is insufficient
-because RemoteDesktop/libei input is global to the compositor focus.
+KDE Plasma Wayland uses the separate Cua KWin helper instead
+(`../kwin-target-helper`): its input gate binds RemoteDesktop/libei input to
+one window inside KWin. Portal reachability alone is insufficient because that
+input is global to the compositor focus.

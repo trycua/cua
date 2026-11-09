@@ -252,6 +252,13 @@ fn wait_for_text(
     }
 }
 
+/// The name this process gives its libei client. KWin prefixes every device
+/// it creates for the client with it, which is how the KWin input gate tells
+/// this process's devices from any other program's (see `kwin_gate`).
+pub fn client_name() -> String {
+    format!("cua-driver {}", std::process::id())
+}
+
 /// Spawn the libei worker thread (idempotent — safe to call from every
 /// MCP tool invocation; subsequent calls are no-ops).
 pub fn ensure_started() -> anyhow::Result<()> {
@@ -805,7 +812,7 @@ impl EisState {
         match event {
             Event::Handshake(handshake, reis::ei::handshake::Event::HandshakeVersion { .. }) => {
                 handshake.handshake_version(1);
-                handshake.name("cua-driver");
+                handshake.name(&client_name());
                 handshake.context_type(reis::ei::handshake::ContextType::Sender);
                 // Advertise the interface set + versions that reis 0.7's own
                 // EIS client examples use against real compositors. The

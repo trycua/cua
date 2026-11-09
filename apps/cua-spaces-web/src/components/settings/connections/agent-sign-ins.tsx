@@ -26,7 +26,6 @@ export interface AccountActions {
 
 const same = (a: AgentAccount, b: AgentAccount) => a.env === b.env && (a.slot ?? null) === (b.slot ?? null);
 
-
 /**
  * One coding app's sign-ins on its Settings page (Settings, Connections, the app): which one it runs with, and
  * make default, rename, remove and add. They used to sit in Home's agent menu, where nobody could tell what
@@ -43,7 +42,14 @@ export function AgentSignIns({ agent, c }: { agent: string; c: Pick<Connectors, 
     onRemove: (_g, a) => void (a.slot ? keys.remove(a.env, { slot: a.slot }) : keys.remove(a.env, { keepOthers: true })).catch(() => {}),
     onRename: (_g, a, name) => void keys.rename(a.env, a.slot, name).catch(() => {}),
     // Claude Code's takes a token, the others the key of their provider.
-    onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
+    onAdd: (g, name, value) =>
+      keys.save(
+        g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"),
+        value,
+        null,
+        {},
+        { add: true, ...(name ? { label: name } : {}) },
+      ),
   };
   return (
     <SettingsGroup title={t("settings.connections.sign_ins.title")} footer={t("settings.connections.sign_ins.why")} data-agent-sign-ins={agent}>
@@ -155,7 +161,14 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
       ))}
       {adding ? (
         <GroupedRow data-manage-add-form="" className="flex-col items-stretch gap-2">
-          <Input value={newName} maxLength={40} placeholder={t("settings.connections.name_optional")} aria-label={t("settings.connections.sign_ins.name")} autoComplete="off" onChange={(e) => setNewName(e.target.value)} />
+          <Input
+            value={newName}
+            maxLength={40}
+            placeholder={t("settings.connections.name_optional")}
+            aria-label={t("settings.connections.sign_ins.name")}
+            autoComplete="off"
+            onChange={(e) => setNewName(e.target.value)}
+          />
           <Input
             type="password"
             value={value}
@@ -181,7 +194,12 @@ export function SignInList({ group, actions }: { group: AgentGroup; actions: Acc
         </GroupedRow>
       ) : (
         <GroupedRow interactive className="cursor-default p-0">
-          <button type="button" data-manage-add="" onClick={() => setAdding(true)} className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+          <button
+            type="button"
+            data-manage-add=""
+            onClick={() => setAdding(true)}
+            className="flex min-h-11 w-full items-center gap-2 px-4 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
             <PlusIcon className="size-3.5" />
             {t("settings.connections.sign_ins.add_sign_in")}
           </button>

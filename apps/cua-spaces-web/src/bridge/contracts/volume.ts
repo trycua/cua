@@ -36,7 +36,14 @@ export interface Experiments {
   warmPools?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false };
+export const NO_EXPERIMENTS: Required<Experiments> = {
+  cuaVolume: false,
+  childSpaces: false,
+  ciRunners: false,
+  tcpShares: false,
+  mobile: false,
+  warmPools: false,
+};
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

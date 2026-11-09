@@ -47,7 +47,6 @@ export const HARNESSES: readonly HarnessInfo[] = [
   { id: "t3code", name: "T3 Code", maker: "T3 Tools", mark: official("t3code"), aliases: ["t3", "t3-code"] },
 ];
 
-
 const BY_ID = new Map<string, HarnessInfo>(HARNESSES.flatMap((h) => [[h.id, h] as const, ...(h.aliases ?? []).map((a) => [a, h] as const)]));
 
 /** The harness for an id (or one of its aliases), or null for one the app doesn't know. */

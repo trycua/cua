@@ -43,7 +43,17 @@ type HostLog = "access" | "activity";
  * Remove are `machines_view::view`'s, drawn by the page. `onUseCode` opens
  * "Enter a code": the answer to a failure the account wants proof for.
  */
-export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel: HostPanelView | null; progress?: string; part?: "alerts" | "logs"; onUseCode?: () => void }) {
+export function ThisMachineExtras({
+  panel,
+  progress,
+  part,
+  onUseCode,
+}: {
+  panel: HostPanelView | null;
+  progress?: string;
+  part?: "alerts" | "logs";
+  onUseCode?: () => void;
+}) {
   const t = useT();
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
@@ -54,12 +64,21 @@ export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel:
 
   if (!part) {
     return host.formView ? (
-      <HostSetupForm view={host.formView} host={host} failure={host.setupError} progress={progress} onRetry={() => void host.retrySetUp()} onUseCode={onUseCode} />
+      <HostSetupForm
+        view={host.formView}
+        host={host}
+        failure={host.setupError}
+        progress={progress}
+        onRetry={() => void host.retrySetUp()}
+        onUseCode={onUseCode}
+      />
     ) : null;
   }
   if (!panel) return null;
   const openSettings = (url: string) =>
-    host.openSettings(url).catch((e: unknown) => toast(t("computers.this_mac.settings_open_failed"), { description: e instanceof Error ? e.message : String(e), type: "error" }));
+    host
+      .openSettings(url)
+      .catch((e: unknown) => toast(t("computers.this_mac.settings_open_failed"), { description: e instanceof Error ? e.message : String(e), type: "error" }));
 
   if (part === "alerts") {
     const any = progress || panel.permissionsTitle || host.error || panel.accessWarning || panel.activityWarning;
@@ -73,18 +92,22 @@ export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel:
             </div>
           </GroupedSection>
         ) : null}
-        {panel.permissionsTitle && perms.available ? <AppPermissionList perms={perms} variant="settings" title={panel.permissionsTitle} className="mb-6" /> : null}
+        {panel.permissionsTitle && perms.available ? (
+          <AppPermissionList perms={perms} variant="settings" title={panel.permissionsTitle} className="mb-6" />
+        ) : null}
         {panel.permissionsTitle && (!perms.available || panel.permissions.some((p) => !GUIDED.has(p.id))) ? (
           <Group title={perms.available ? t("computers.this_mac.also_in_settings") : panel.permissionsTitle}>
-            {panel.permissions.filter((p) => !perms.available || !GUIDED.has(p.id)).map((p) => (
-              <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
-                {p.settingsUrl ? (
-                  <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>
-                    {panel.openSettingsLabel}
-                  </Button>
-                ) : null}
-              </Row>
-            ))}
+            {panel.permissions
+              .filter((p) => !perms.available || !GUIDED.has(p.id))
+              .map((p) => (
+                <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
+                  {p.settingsUrl ? (
+                    <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>
+                      {panel.openSettingsLabel}
+                    </Button>
+                  ) : null}
+                </Row>
+              ))}
           </Group>
         ) : null}
         {host.error ? (
@@ -110,12 +133,18 @@ export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel:
       {access ? (
         // The newest few (repeats collapsed); the rest in a sheet, so the
         // page never grows with the log.
-        <Group title={panel.recentTitle!} more={panel.recentMore ? <ShowAll label={panel.recentMore} data-host-more="access" onClick={() => setFullLog("access")} /> : null}>
+        <Group
+          title={panel.recentTitle!}
+          more={panel.recentMore ? <ShowAll label={panel.recentMore} data-host-more="access" onClick={() => setFullLog("access")} /> : null}
+        >
           <TimedRows rows={panel.recent!} now={now} />
         </Group>
       ) : null}
       {activity ? (
-        <Group title={panel.activityTitle!} more={panel.activityMore ? <ShowAll label={panel.activityMore} data-host-more="activity" onClick={() => setFullLog("activity")} /> : null}>
+        <Group
+          title={panel.activityTitle!}
+          more={panel.activityMore ? <ShowAll label={panel.activityMore} data-host-more="activity" onClick={() => setFullLog("activity")} /> : null}
+        >
           <TimedRows rows={panel.activity!} now={now} keep="head" />
         </Group>
       ) : null}
@@ -350,7 +379,17 @@ function Progress({ text }: { text: string }) {
  * pairing code) is not something to retry: it says "Confirm it's you" and
  * its button, "Use a code from another computer", calls `onUseCode` (the
  * page's "Enter a code"). Without `onUseCode` it falls back to Retry. */
-export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure: HostFailure; retrying: boolean; onRetry: () => void; onUseCode?: () => void }) {
+export function FailureView({
+  failure,
+  retrying,
+  onRetry,
+  onUseCode,
+}: {
+  failure: HostFailure;
+  retrying: boolean;
+  onRetry: () => void;
+  onUseCode?: () => void;
+}) {
   const t = useT();
   const proof = isNeedsProof(failure) && Boolean(onUseCode);
   const [open, setOpen] = useState(false);
@@ -397,7 +436,11 @@ export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure
           </Button>
         ) : (
           <Button size="sm" variant="secondary" data-host-retry="" disabled={retrying} onClick={onRetry}>
-            {retrying ? t("computers.this_mac.retrying") : isNeedsProof(failure) ? t("computers.this_mac.retry") : (failure.actionLabel ?? t("computers.this_mac.retry"))}
+            {retrying
+              ? t("computers.this_mac.retrying")
+              : isNeedsProof(failure)
+                ? t("computers.this_mac.retry")
+                : (failure.actionLabel ?? t("computers.this_mac.retry"))}
           </Button>
         )}
       </div>
@@ -419,7 +462,10 @@ export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure
           </button>
           {open ? (
             <div className="mt-1 flex items-start gap-2">
-              <pre data-host-details-text className="max-h-20 min-w-0 flex-1 overflow-y-auto font-mono text-[11px] break-words whitespace-pre-wrap text-muted-foreground select-text">
+              <pre
+                data-host-details-text
+                className="max-h-20 min-w-0 flex-1 overflow-y-auto font-mono text-[11px] break-words whitespace-pre-wrap text-muted-foreground select-text"
+              >
                 {details}
               </pre>
               <Button

@@ -12,7 +12,8 @@ export const launchLabel = () => t("settings.general.launch_label");
 export const launchHelp = () => t("settings.general.launch_help");
 
 /** The core's "Last check: 2 minutes ago" as "Last checked 2 minutes ago" (About). */
-export const lastChecked = (line: string) => (/^Last check:\s*/.test(line) ? t("settings.about.last_checked", { when: line.replace(/^Last check:\s*/, "") }) : line);
+export const lastChecked = (line: string) =>
+  /^Last check:\s*/.test(line) ? t("settings.about.last_checked", { when: line.replace(/^Last check:\s*/, "") }) : line;
 
 /** "S3-compatible" is jargon: your own storage (S3). */
 export const plainStorage = (text: string) => text.replace(/S3-compatible( bucket| storage)?/gi, () => t("settings.storage.own_storage"));

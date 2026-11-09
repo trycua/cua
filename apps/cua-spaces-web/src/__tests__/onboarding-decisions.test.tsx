@@ -62,7 +62,12 @@ function chattyHost(extra: number): DataAdapter {
       const out = await demo.call(op as never, args);
       if (op !== "agents.recentThreads") return out;
       const rows = out as { agent: string; id: string; title: string; lastActiveMs: number }[];
-      const more = Array.from({ length: extra }, (_, i) => ({ ...rows[0]!, id: `extra-${i}`, title: `Older chat ${i + 1}`, lastActiveMs: rows[0]!.lastActiveMs - (i + 1) * 3_600_000 }));
+      const more = Array.from({ length: extra }, (_, i) => ({
+        ...rows[0]!,
+        id: `extra-${i}`,
+        title: `Older chat ${i + 1}`,
+        lastActiveMs: rows[0]!.lastActiveMs - (i + 1) * 3_600_000,
+      }));
       return [...rows, ...more];
     }) as DataAdapter["call"],
   };
@@ -90,53 +95,64 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     for (const t of TITLES) expect(screen.getByText(t)).toBeTruthy();
   });
 
-  it.skipIf(!wasmBuilt)("shows on the setup's Ready screen without a flag or a question, and is hidden when there are no chats", { timeout: 60_000 }, async () => {
-    writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
-    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
-    await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    // Listed straight away: nothing to press first, and no Labs flag in the way. Only Codex's chats: Codex was picked.
-    await waitFor(() => expect(all("[data-new-run=ready] [data-pick-up-row]").map((r) => r.dataset.pickUpRow)).toEqual(["openai-codex"]));
-    expect(screen.queryByRole("button", { name: /show my recent chats/i })).toBeNull();
-    cleanup();
-    resetFirstRunCache();
-    writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
-    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true, noChats: true } });
-    await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    await new Promise((r) => setTimeout(r, 200));
-    expect(q("[data-pick-up]")).toBeNull();
-    // The rest of the screen is still there.
-    expect(q("[data-new-run-command]")).not.toBeNull();
-  });
+  it.skipIf(!wasmBuilt)(
+    "shows on the setup's Ready screen without a flag or a question, and is hidden when there are no chats",
+    { timeout: 60_000 },
+    async () => {
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
+      await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
+      // Listed straight away: nothing to press first, and no Labs flag in the way. Only Codex's chats: Codex was picked.
+      await waitFor(() => expect(all("[data-new-run=ready] [data-pick-up-row]").map((r) => r.dataset.pickUpRow)).toEqual(["openai-codex"]));
+      expect(screen.queryByRole("button", { name: /show my recent chats/i })).toBeNull();
+      cleanup();
+      resetFirstRunCache();
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true, noChats: true } });
+      await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
+      await new Promise((r) => setTimeout(r, 200));
+      expect(q("[data-pick-up]")).toBeNull();
+      // The rest of the screen is still there.
+      expect(q("[data-new-run-command]")).not.toBeNull();
+    },
+  );
 
-  it.skipIf(!wasmBuilt)("keeps the titles on this computer: nothing stores, sends or posts them, and the continued chat stays private", { timeout: 60_000 }, async () => {
-    const calls: Calls = [];
-    writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
-    const { router } = await mountApp("/onboarding", {
-      failsCreates: false,
-      listsGhost: false,
-      demo: { signedIn: true, onboarded: false, noSpaces: true },
-      intercept: (op, args) => (calls.push({ op, args }), undefined),
-    });
-    await waitFor(() => expect(all("[data-pick-up-row]").length).toBe(1), { timeout: 15_000 });
-    // Listed, not kept: no title in this device's storage before one is picked.
-    const stored = () => Object.keys(localStorage).map((k) => localStorage.getItem(k) ?? "").join("\n");
-    for (const t of TITLES) expect(stored()).not.toContain(t);
-    fireEvent.click(all("[data-pick-up-continue]")[0]!);
-    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/home\/.+/), { timeout: 15_000 });
-    await new Promise((r) => setTimeout(r, 300));
-    // The picked chat is the only one this device remembers (its own Home task); the others are not kept.
-    expect(stored()).toContain(TITLES[1]);
-    for (const t of [TITLES[0]!, TITLES[2]!]) expect(stored()).not.toContain(t);
-    // No call carries a title: not usage data, not the relay, not a Space thread.
-    for (const c of calls) {
-      const sent = JSON.stringify(c.args ?? null);
-      for (const t of TITLES) expect(sent, `${c.op} sent a chat title`).not.toContain(t);
-    }
-    expect(calls.some((c) => c.op === "telemetry.track")).toBe(true);
-    // Private: nothing is posted to a Space thread, and nothing runs until the person sends.
-    expect(calls.some((c) => c.op === "thread.post")).toBe(false);
-    expect(calls.some((c) => c.op === "agents.start")).toBe(false);
-  });
+  it.skipIf(!wasmBuilt)(
+    "keeps the titles on this computer: nothing stores, sends or posts them, and the continued chat stays private",
+    { timeout: 60_000 },
+    async () => {
+      const calls: Calls = [];
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      const { router } = await mountApp("/onboarding", {
+        failsCreates: false,
+        listsGhost: false,
+        demo: { signedIn: true, onboarded: false, noSpaces: true },
+        intercept: (op, args) => (calls.push({ op, args }), undefined),
+      });
+      await waitFor(() => expect(all("[data-pick-up-row]").length).toBe(1), { timeout: 15_000 });
+      // Listed, not kept: no title in this device's storage before one is picked.
+      const stored = () =>
+        Object.keys(localStorage)
+          .map((k) => localStorage.getItem(k) ?? "")
+          .join("\n");
+      for (const t of TITLES) expect(stored()).not.toContain(t);
+      fireEvent.click(all("[data-pick-up-continue]")[0]!);
+      await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/home\/.+/), { timeout: 15_000 });
+      await new Promise((r) => setTimeout(r, 300));
+      // The picked chat is the only one this device remembers (its own Home task); the others are not kept.
+      expect(stored()).toContain(TITLES[1]);
+      for (const t of [TITLES[0]!, TITLES[2]!]) expect(stored()).not.toContain(t);
+      // No call carries a title: not usage data, not the relay, not a Space thread.
+      for (const c of calls) {
+        const sent = JSON.stringify(c.args ?? null);
+        for (const t of TITLES) expect(sent, `${c.op} sent a chat title`).not.toContain(t);
+      }
+      expect(calls.some((c) => c.op === "telemetry.track")).toBe(true);
+      // Private: nothing is posted to a Space thread, and nothing runs until the person sends.
+      expect(calls.some((c) => c.op === "thread.post")).toBe(false);
+      expect(calls.some((c) => c.op === "agents.start")).toBe(false);
+    },
+  );
 });
 
 describe("Always-on machine (B, CUA-3691): opt-in only", () => {
@@ -175,7 +191,10 @@ describe("Always-on machine (B, CUA-3691): opt-in only", () => {
     writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "where", reached: 1 } });
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"), { timeout: 15_000 });
-    await waitFor(() => expect(all("[data-new-run-computer]").filter((r) => r.dataset.newRunComputer !== "this" && !("offline" in r.dataset)).length).toBeGreaterThan(0), { timeout: 15_000 });
+    await waitFor(
+      () => expect(all("[data-new-run-computer]").filter((r) => r.dataset.newRunComputer !== "this" && !("offline" in r.dataset)).length).toBeGreaterThan(0),
+      { timeout: 15_000 },
+    );
     const checked = all("[data-new-run-computer]").filter((r) => r.querySelector("[data-check=on]"));
     expect(checked.map((r) => r.dataset.newRunComputer)).toEqual(["this"]);
   });
@@ -195,7 +214,9 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
   it("is one screen with two Allow buttons and Later, and names Cua Driver", () => {
     const allow = vi.fn(async () => {});
     const onContinue = vi.fn();
-    render(<PermissionsScreen view={permissionsStepView({ appName: "Cua Spaces", allGranted: false })} perms={{ data: missing, allow }} onContinue={onContinue} />);
+    render(
+      <PermissionsScreen view={permissionsStepView({ appName: "Cua Spaces", allGranted: false })} perms={{ data: missing, allow }} onContinue={onContinue} />,
+    );
     const buttons = screen.getAllByRole("button").map((b) => b.textContent);
     expect(buttons).toEqual(["Allow", "Allow", "Later"]);
     expect(all("[data-app-permission]").map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);

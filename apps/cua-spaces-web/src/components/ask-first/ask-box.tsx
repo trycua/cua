@@ -29,7 +29,11 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
   if (where.kind === "agent") return { title: where.reuse ? t("home.ask_box.agent_decides_same_home") : t("home.ask_box.agent_decides"), detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
-  if (where.kind === "new") return { title: t("home.ask_box.new_space"), detail: t("home.ask_box.new_space_detail", { os: OS_WORD[where.os], computer: where.on?.name ?? thisComputerLabel() }) };
+  if (where.kind === "new")
+    return {
+      title: t("home.ask_box.new_space"),
+      detail: t("home.ask_box.new_space_detail", { os: OS_WORD[where.os], computer: where.on?.name ?? thisComputerLabel() }),
+    };
   return { title: where.kind === "this-mac" ? thisComputerLabel() : where.space.name, detail: null };
 }
 
@@ -87,7 +91,10 @@ function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode;
   return (
     <MenuPrimitive.Item
       onClick={onSelect}
-      className={cn("flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 outline-none data-highlighted:bg-foreground/[0.06]", selected && "bg-foreground/[0.06]")}
+      className={cn(
+        "flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 outline-none data-highlighted:bg-foreground/[0.06]",
+        selected && "bg-foreground/[0.06]",
+      )}
     >
       {icon}
       <div className="min-w-0 flex-1">
@@ -103,7 +110,8 @@ function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode;
 const whereChip = "flex h-9 min-w-0 items-center rounded-lg bg-foreground/[0.06]";
 const SectionLabel = ({ children }: { children: ReactNode }) => <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">{children}</p>;
 
-const whereButton = "flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/[0.05] focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]";
+const whereButton =
+  "flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/[0.05] focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]";
 
 /**
  * Home's box, like the first prompt of a chat app: the job in your own words,
@@ -204,7 +212,10 @@ export function AskBox({
         rows={compact ? 1 : 3}
         aria-label={t("home.ask_box.label")}
         placeholder={agentHome ? t("home.ask_box.placeholder_home") : t("home.ask_box.label")}
-        className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
+        className={cn(
+          "block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground",
+          compact ? "min-h-14" : "min-h-24",
+        )}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
         <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} onConfigure={onConfigure} />
@@ -225,7 +236,16 @@ export function AskBox({
               spaces={spaces}
               computers={computers}
               trigger={
-                <button type="button" className={whereButton} data-picker="where" aria-label={needsSetUp ? t("home.ask_box.where_label_note", { place: label.title, note: chip.note }) : t("home.ask_box.where_label", { place: label.title })}>
+                <button
+                  type="button"
+                  className={whereButton}
+                  data-picker="where"
+                  aria-label={
+                    needsSetUp
+                      ? t("home.ask_box.where_label_note", { place: label.title, note: chip.note })
+                      : t("home.ask_box.where_label", { place: label.title })
+                  }
+                >
                   {where.kind === "new" ? (
                     <OsIcon os={where.os} className="size-3.5" />
                   ) : where.kind === "this-mac" ? (
@@ -290,7 +310,10 @@ export function AskBox({
           disabled={!ready}
           onClick={onSubmit}
           aria-label={t("home.ask_box.start")}
-          className={cn("flex size-10 items-center justify-center rounded-full transition-colors", ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground")}
+          className={cn(
+            "flex size-10 items-center justify-center rounded-full transition-colors",
+            ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground",
+          )}
         >
           <ArrowUpIcon className="size-5" />
         </button>
@@ -362,20 +385,22 @@ export function WherePicker({
       onSelect={() => onWhere({ kind: "this-mac" })}
     />
   );
-  const spaceRows = spaces.slice(0, 5).map((s) => (
-    <PickerRow
-      key={s.id}
-      icon={
-        <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
-          {s.provider === "local" ? <LaptopIcon className="size-4" /> : <OsIcon os={s.os} className="size-4" />}
-        </span>
-      }
-      title={s.name}
-      note={t("home.ask_box.on_now")}
-      selected={where?.kind === "space" && where.space.id === s.id}
-      onSelect={() => onWhere({ kind: "space", space: s })}
-    />
-  ));
+  const spaceRows = spaces
+    .slice(0, 5)
+    .map((s) => (
+      <PickerRow
+        key={s.id}
+        icon={
+          <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+            {s.provider === "local" ? <LaptopIcon className="size-4" /> : <OsIcon os={s.os} className="size-4" />}
+          </span>
+        }
+        title={s.name}
+        note={t("home.ask_box.on_now")}
+        selected={where?.kind === "space" && where.space.id === s.id}
+        onSelect={() => onWhere({ kind: "space", space: s })}
+      />
+    ));
   return (
     <Picker title={t("home.ask_box.where")} trigger={trigger} open={open} onOpenChange={onOpenChange}>
       {agentHome ? (

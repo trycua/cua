@@ -77,12 +77,17 @@ const GLASS_BUTTON =
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
   "inline-flex h-12 items-center justify-center rounded-full bg-white/[0.08] px-6 text-[15px] font-semibold text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md outline-none hover:bg-white/[0.14] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]";
 /** The site's underlined text link, in white. */
-// design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-const LINK = "font-semibold text-white underline decoration-white/50 underline-offset-[3px] outline-none hover:decoration-white focus-visible:ring-2 focus-visible:ring-[#5ec0e8] rounded-sm";
+const LINK =
+  // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+  "font-semibold text-white underline decoration-white/50 underline-offset-[3px] outline-none hover:decoration-white focus-visible:ring-2 focus-visible:ring-[#5ec0e8] rounded-sm";
 
 function Title({ children }: { children: ReactNode }) {
   return (
-    <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[0.98] font-semibold tracking-[-0.045em] text-balance text-white outline-none">
+    <h1
+      tabIndex={-1}
+      data-onboarding-heading=""
+      className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[0.98] font-semibold tracking-[-0.045em] text-balance text-white outline-none"
+    >
       {children}
     </h1>
   );
@@ -103,11 +108,28 @@ function Check({ on }: { on: boolean }) {
 }
 
 function Mark({ os }: { os: ComputerRow["os"] }) {
-  return <span className="flex size-7 shrink-0 items-center justify-center text-white">{os ? <OsMark os={os} className="h-[17px] w-auto" /> : <MonitorIcon className="size-4" />}</span>;
+  return (
+    <span className="flex size-7 shrink-0 items-center justify-center text-white">
+      {os ? <OsMark os={os} className="h-[17px] w-auto" /> : <MonitorIcon className="size-4" />}
+    </span>
+  );
 }
 
 /** A row in the card: picked rows are lit; `disabled` rows are greyed, with no check and no hover. */
-function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, ...rest }: { icon: ReactNode; name: string; sub: ReactNode; picked?: boolean; disabled?: boolean; onClick?: () => void; extra?: ReactNode; check?: boolean } & Record<`data-${string}`, string | undefined>) {
+function Row({
+  icon,
+  name,
+  sub,
+  picked,
+  disabled,
+  onClick,
+  extra,
+  check = true,
+  ...rest
+}: { icon: ReactNode; name: string; sub: ReactNode; picked?: boolean; disabled?: boolean; onClick?: () => void; extra?: ReactNode; check?: boolean } & Record<
+  `data-${string}`,
+  string | undefined
+>) {
   const body = (
     <>
       {icon}
@@ -119,8 +141,12 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
       {check && !disabled ? <Check on={Boolean(picked)} /> : null}
     </>
   );
-  // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-  const cls = cn("flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px]", picked && "bg-white/10 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.5)]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
+  const cls = cn(
+    // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+    "flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px]",
+    picked && "bg-white/10 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.5)]",
+    disabled && "pointer-events-none cursor-not-allowed opacity-40",
+  );
   if (!onClick || disabled)
     return (
       <div className={cls} aria-disabled={disabled || undefined} {...rest}>
@@ -128,14 +154,24 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
       </div>
     );
   return (
-    <div role="checkbox" aria-checked={Boolean(picked)} tabIndex={0} className={cn(cls, "cursor-pointer outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]")} onClick={onClick} onKeyDown={(e) => (e.key === " " || e.key === "Enter") && (e.preventDefault(), onClick())} {...rest}>
+    <div
+      role="checkbox"
+      aria-checked={Boolean(picked)}
+      tabIndex={0}
+      className={cn(cls, "cursor-pointer outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]")}
+      onClick={onClick}
+      onKeyDown={(e) => (e.key === " " || e.key === "Enter") && (e.preventDefault(), onClick())}
+      {...rest}
+    >
       {body}
     </div>
   );
 }
 
 const Divider = () => <div className="mx-3 my-1.5 h-px bg-white/[0.14]" />;
-const Label = ({ children }: { children: ReactNode }) => <div className={cn("px-3 pt-3 pb-1 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>{children}</div>;
+const Label = ({ children }: { children: ReactNode }) => (
+  <div className={cn("px-3 pt-3 pb-1 text-[12.5px] font-semibold tracking-[0.02em]", GREY)}>{children}</div>
+);
 
 /** How far above the footer the content fades out. */
 const FADE_PX = 28;
@@ -175,7 +211,12 @@ function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
     const update = () => {
       frame = 0;
       const footer = main.querySelector<HTMLElement>("[data-new-run-footer]");
-      const above = footer ? [...(footer.parentElement?.children ?? [])].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== footer && Boolean(el.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING)) : [];
+      const above = footer
+        ? [...(footer.parentElement?.children ?? [])].filter(
+            (el): el is HTMLElement =>
+              el instanceof HTMLElement && el !== footer && Boolean(el.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING),
+          )
+        : [];
       for (const el of [...masked]) if (!above.includes(el)) clear(el);
       if (!footer) return;
       const top = footer.getBoundingClientRect().top;
@@ -254,15 +295,35 @@ export function StepDots({ dots, onGo }: { dots: StepDot[]; onGo: (i: number, vi
 
 /* ---- The screens (drawn from their views, so tests draw every state) --------------------- */
 
-export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: () => void; usage?: WelcomeUsage | null; onUsage?: (on: boolean) => void; onUsageLink?: () => void }) {
+export function WelcomeScreen({
+  onAdd,
+  usage,
+  onUsage,
+  onUsageLink,
+}: {
+  onAdd: () => void;
+  usage?: WelcomeUsage | null;
+  onUsage?: (on: boolean) => void;
+  onUsageLink?: () => void;
+}) {
   return (
     <div data-new-run="welcome">
       <Title>{WELCOME.title}</Title>
       <Line>{WELCOME.line}</Line>
       {usage ? (
         // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
-        <div className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
-          <Switch className="mt-px shrink-0" checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
+        <div
+          className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)}
+          data-new-run-usage={usage.on ? "on" : "off"}
+        >
+          <Switch
+            className="mt-px shrink-0"
+            checked={usage.on}
+            disabled={!usage.enabled}
+            onCheckedChange={(on) => onUsage?.(on)}
+            aria-label={usage.label}
+            data-new-run-usage-switch=""
+          />
           <span className="min-w-0">
             <span className="block text-white">{usage.label}</span>
             <span className="block" data-new-run-usage-notice="">
@@ -284,7 +345,17 @@ export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: (
   );
 }
 
-export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: SignInView; onTryAgain: () => void; onUseCode: () => void; onOpen: (url: string) => void }) {
+export function SignInScreen({
+  view,
+  onTryAgain,
+  onUseCode,
+  onOpen,
+}: {
+  view: SignInView;
+  onTryAgain: () => void;
+  onUseCode: () => void;
+  onOpen: (url: string) => void;
+}) {
   return (
     <div data-new-run="signin" data-state={view.state}>
       <Title>{view.title}</Title>
@@ -340,7 +411,19 @@ export function WhereScreen({
   const sep = view.separate;
   const fold = view.offlineFold;
   const [showOffline, setShowOffline] = useState(false);
-  const other = (o: ComputerRow) => <Row key={o.id} icon={<Mark os={o.os} />} name={o.name} sub={o.sub} picked={o.picked} disabled={o.disabled} onClick={() => onToggle(o.id)} data-new-run-computer={o.id} data-offline={o.disabled ? "" : undefined} />;
+  const other = (o: ComputerRow) => (
+    <Row
+      key={o.id}
+      icon={<Mark os={o.os} />}
+      name={o.name}
+      sub={o.sub}
+      picked={o.picked}
+      disabled={o.disabled}
+      onClick={() => onToggle(o.id)}
+      data-new-run-computer={o.id}
+      data-offline={o.disabled ? "" : undefined}
+    />
+  );
   return (
     <div data-new-run="where">
       <div data-new-run-content="">
@@ -396,7 +479,10 @@ export function WhereScreen({
                         data-new-run-offline-fold={fold.rows.length}
                       >
                         <span className="flex size-7 shrink-0 items-center justify-center text-white">
-                          <ChevronRightIcon className={cn("size-4 transition-transform motion-reduce:transition-none", showOffline && "rotate-90")} strokeWidth={2.2} />
+                          <ChevronRightIcon
+                            className={cn("size-4 transition-transform motion-reduce:transition-none", showOffline && "rotate-90")}
+                            strokeWidth={2.2}
+                          />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-[15px] leading-5 font-medium text-white">{fold.label}</span>
@@ -417,8 +503,13 @@ export function WhereScreen({
           {view.addAnother ? (
             <>
               <Divider />
-              {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-              <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={onAddAnother} data-new-run-add-another="">
+              <button
+                type="button"
+                // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+                className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]"
+                onClick={onAddAnother}
+                data-new-run-add-another=""
+              >
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
                   <PlusIcon className="size-4" strokeWidth={2.2} />
                 </span>
@@ -443,26 +534,26 @@ export function WhereScreen({
         </div>
         {/* Only where this computer can make one (CUA-3150, idea D). */}
         {sep ? (
-        <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
-          <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
-            <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
-            {sep.disabled || sep.state !== "offer" ? (
-              <span>{sep.title}</span>
-            ) : (
-              <button type="button" className={LINK} onClick={onSeparate} data-new-run-separate-open="">
-                {sep.title}
-              </button>
-            )}
-          </div>
-          <p className={cn("mt-[3px] pl-6 text-[13.5px] leading-[19px] font-medium", GREY)}>{sep.sub}</p>
-          {sep.action ? (
-            <div className="mt-2 pl-6">
-              <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={onSeparate} data-new-run-separate-action="">
-                {sep.action}
-              </button>
+          <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
+            <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
+              <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
+              {sep.disabled || sep.state !== "offer" ? (
+                <span>{sep.title}</span>
+              ) : (
+                <button type="button" className={LINK} onClick={onSeparate} data-new-run-separate-open="">
+                  {sep.title}
+                </button>
+              )}
             </div>
-          ) : null}
-        </div>
+            <p className={cn("mt-[3px] pl-6 text-[13.5px] leading-[19px] font-medium", GREY)}>{sep.sub}</p>
+            {sep.action ? (
+              <div className="mt-2 pl-6">
+                <button type="button" className={cn(GLASS_CHIP, "h-[30px] px-3.5 text-[13.5px]")} onClick={onSeparate} data-new-run-separate-action="">
+                  {sep.action}
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <Actions>
@@ -474,7 +565,21 @@ export function WhereScreen({
   );
 }
 
-export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onLater: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+export function AgentScreen({
+  view,
+  onPick,
+  onContinue,
+  onLater,
+  onInstall,
+  busy,
+}: {
+  view: AgentView;
+  onPick: (id: string) => void;
+  onContinue: () => void;
+  onLater: () => void;
+  onInstall: (agent: "claude-code" | "codex") => void;
+  busy: boolean;
+}) {
   const later = view.later ? (
     <button type="button" className={cn(LINK, "text-[15px]")} disabled={busy} onClick={onLater} data-new-run-agent-later="">
       {view.later}
@@ -503,7 +608,11 @@ export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy
           ))}
         </div>
       ) : null}
-      {view.note ? <p className={cn("mt-3 max-w-[480px] text-[13.5px] font-medium", GREY)} data-new-run-agent-note="">{view.note}</p> : null}
+      {view.note ? (
+        <p className={cn("mt-3 max-w-[480px] text-[13.5px] font-medium", GREY)} data-new-run-agent-note="">
+          {view.note}
+        </p>
+      ) : null}
       {view.error ? (
         <p role="alert" className="mt-3 max-w-[480px] text-[13.5px] font-medium text-white" data-new-run-agent-error="">
           {view.error}
@@ -543,11 +652,27 @@ export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy
  * place; hidden when there are none. Only each chat's title, folder and time are read here; its
  * messages are read when it is picked.
  */
-export function PickUpWhereYouLeftOff({ onContinue, agents, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; agents?: readonly string[]; place?: string; className?: string }) {
+export function PickUpWhereYouLeftOff({
+  onContinue,
+  agents,
+  place = thisComputerText(),
+  className,
+}: {
+  onContinue: (task: AskTask) => void;
+  agents?: readonly string[];
+  place?: string;
+  className?: string;
+}) {
   const threads = useRecentThreads(PICK_UP_LIMIT, agents);
   if (threads && !threads.length) return null;
   return (
-    <section aria-labelledby="pick-up-heading" aria-busy={threads ? undefined : true} className={cn("w-full", className)} data-pick-up="" data-pick-up-loading={threads ? undefined : ""}>
+    <section
+      aria-labelledby="pick-up-heading"
+      aria-busy={threads ? undefined : true}
+      className={cn("w-full", className)}
+      data-pick-up=""
+      data-pick-up-loading={threads ? undefined : ""}
+    >
       <h2 id="pick-up-heading" className="text-[15px] font-semibold text-white">
         Pick up where you left off
       </h2>
@@ -575,7 +700,12 @@ export function PickUpWhereYouLeftOff({ onContinue, agents, place = thisComputer
                 <span className="block truncate text-[15px] leading-5 font-medium text-white">{t.title}</span>
                 <span className={cn("block truncate text-[13.5px] leading-[19px] font-medium", GREY)}>{folder ? `${folder}, ${when}` : when}</span>
               </span>
-              <button type="button" className={cn(GLASS_CHIP, "h-[30px] shrink-0 px-3 text-[13.5px]")} onClick={() => onContinue(addImportedTask(t))} data-pick-up-continue="">
+              <button
+                type="button"
+                className={cn(GLASS_CHIP, "h-[30px] shrink-0 px-3 text-[13.5px]")}
+                onClick={() => onContinue(addImportedTask(t))}
+                data-pick-up-continue=""
+              >
                 Continue in Cua
               </button>
             </li>
@@ -587,7 +717,23 @@ export function PickUpWhereYouLeftOff({ onContinue, agents, place = thisComputer
   );
 }
 
-export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; agents?: readonly string[]; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
+export function ReadyScreen({
+  view,
+  agent,
+  agents,
+  onDone,
+  onContinueChat,
+  onCopied,
+  place,
+}: {
+  view: ReadyView;
+  agent: string;
+  agents?: readonly string[];
+  onDone: () => void;
+  onContinueChat?: (task: AskTask) => void;
+  onCopied?: () => void;
+  place?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     onCopied?.();
@@ -599,8 +745,11 @@ export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCop
     <div data-new-run="ready">
       <Title>{view.title}</Title>
       <Line>{view.line}</Line>
-      {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-      <div className="mt-7 flex w-full max-w-[600px] items-center gap-3 rounded-[20px] bg-white/[0.08] py-2.5 pr-2.5 pl-4 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md" data-new-run-command="">
+      <div
+        // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
+        className="mt-7 flex w-full max-w-[600px] items-center gap-3 rounded-[20px] bg-white/[0.08] py-2.5 pr-2.5 pl-4 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)] backdrop-blur-md"
+        data-new-run-command=""
+      >
         <AppMarkImage agent={agent} className="size-4 shrink-0" />
         <code className="min-w-0 flex-1 truncate font-mono text-[14.5px] text-white select-text">
           <span className={GREY}>$ </span>
@@ -612,7 +761,9 @@ export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCop
         </button>
       </div>
       {/* The person's own recent chats with the agent they picked (CUA-3319), hidden when there are none. */}
-      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={agents?.length ? agents : [agent]} place={place} onContinue={onContinueChat} /> : null}
+      {onContinueChat ? (
+        <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={agents?.length ? agents : [agent]} place={place} onContinue={onContinueChat} />
+      ) : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
@@ -627,14 +778,38 @@ export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCop
  * that runs macOS Spaces also gets Local Network (`net`), asked here so the first macOS Space just starts. Never blocks
  * the run.
  */
-export function PermissionsScreen({ view, perms, net, appName, onContinue }: { view: PermissionsStepView; perms: PermissionsView; net?: LocalNetworkState | null; appName?: string; onContinue: () => void }) {
+export function PermissionsScreen({
+  view,
+  perms,
+  net,
+  appName,
+  onContinue,
+}: {
+  view: PermissionsStepView;
+  perms: PermissionsView;
+  net?: LocalNetworkState | null;
+  appName?: string;
+  onContinue: () => void;
+}) {
   return (
     <div data-new-run="permissions">
       <Title>{view.title}</Title>
       <Line>{view.line}</Line>
-      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null} />
+      <AppPermissionList
+        perms={perms}
+        variant="hero"
+        className="mt-[min(28px,3vh)]"
+        footer={view.note}
+        extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null}
+      />
       <Actions>
-        <button type="button" className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON} onClick={onContinue} data-onboarding-primary="" data-new-run-permissions-next={view.primary.label}>
+        <button
+          type="button"
+          className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON}
+          onClick={onContinue}
+          data-onboarding-primary=""
+          data-new-run-permissions-next={view.primary.label}
+        >
           {view.primary.label}
         </button>
       </Actions>
@@ -718,7 +893,10 @@ export function NewFirstRun() {
     telemetry: telemetry ? onboardingTelemetry(telemetry) : null,
   });
   // Screen 1's usage line, in the core's words (the same as Settings, Privacy).
-  const usage = s.screen === "welcome" && core && telemetry ? welcomeUsage(onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(telemetry) })) : null;
+  const usage =
+    s.screen === "welcome" && core && telemetry
+      ? welcomeUsage(onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(telemetry) }))
+      : null;
   const runStarted = useRef(false);
   useEffect(() => {
     if (runStarted.current || !store || !core || !telemetry) return;
@@ -741,7 +919,8 @@ export function NewFirstRun() {
   useEffect(() => {
     const keep = dotFocus.current;
     dotFocus.current = null;
-    const el = keep !== null ? document.querySelector<HTMLElement>(`[data-step-dot="${keep}"]`) : document.querySelector<HTMLElement>("[data-onboarding-heading]");
+    const el =
+      keep !== null ? document.querySelector<HTMLElement>(`[data-step-dot="${keep}"]`) : document.querySelector<HTMLElement>("[data-onboarding-heading]");
     el?.focus();
   }, [s.screen]);
 
@@ -1026,7 +1205,14 @@ export function NewFirstRun() {
   let body: ReactNode = null;
   switch (s.screen) {
     case "welcome":
-      body = <WelcomeScreen onAdd={startSignIn} usage={usage} onUsage={(on) => void settings.updateSetting("telemetry", on).catch(() => {})} onUsageLink={() => usage && open(usage.linkUrl)} />;
+      body = (
+        <WelcomeScreen
+          onAdd={startSignIn}
+          usage={usage}
+          onUsage={(on) => void settings.updateSetting("telemetry", on).catch(() => {})}
+          onUsageLink={() => usage && open(usage.linkUrl)}
+        />
+      );
       break;
     case "signin":
       body = (
@@ -1112,7 +1298,12 @@ export function NewFirstRun() {
   }
 
   return (
-    <div className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white" data-window-surface="#050607" data-new-first-run="" data-step={s.screen}>
+    <div
+      className="dark relative flex h-full flex-col overflow-hidden bg-[#050607] text-white"
+      data-window-surface="#050607"
+      data-new-first-run=""
+      data-step={s.screen}
+    >
       <FloatKeys copyRight={544} />
       {/* A fixed height, with or without Skip for now, so the content under it never moves between steps. */}
       <header className="relative z-30 box-content flex h-9 shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
@@ -1131,7 +1322,9 @@ export function NewFirstRun() {
           (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. On windows taller
           than 1000px the area stops at 860px, so the button stays near the text instead of the far bottom edge. */}
       <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col scroll-y-stable px-16" data-new-run-main="">
-        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">{body}</div>
+        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">
+          {body}
+        </div>
       </main>
       {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
       <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">

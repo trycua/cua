@@ -62,13 +62,7 @@ function NotificationsPage() {
       ) : (
         <PlainList data-notifications>
           {view.rows.map((row) => (
-            <NotificationRow
-              key={row.id}
-              row={row}
-              entry={data?.feed.find((n) => n.id === row.id)}
-              open={open.has(row.id)}
-              onToggle={() => toggle(row)}
-            />
+            <NotificationRow key={row.id} row={row} entry={data?.feed.find((n) => n.id === row.id)} open={open.has(row.id)} onToggle={() => toggle(row)} />
           ))}
         </PlainList>
       )}

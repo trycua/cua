@@ -64,11 +64,7 @@ export function matchLocale(tag: string, available: readonly string[]): string |
  * then the system's languages in order (reviewed languages only), then
  * English. `saved` may be the pseudo locale.
  */
-export function detectLocale(
-  saved: string | null,
-  systemLanguages: readonly string[],
-  languages: readonly UiLanguage[] = LANGUAGES,
-): string {
+export function detectLocale(saved: string | null, systemLanguages: readonly string[], languages: readonly UiLanguage[] = LANGUAGES): string {
   if (saved === PSEUDO_LOCALE) return PSEUDO_LOCALE;
   if (saved) {
     const m = matchLocale(saved, codes(languages));

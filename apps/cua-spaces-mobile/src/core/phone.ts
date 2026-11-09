@@ -100,7 +100,8 @@ export interface PromptSuggestion {
   prompt: string;
 }
 const PHONE_ENV = { defaultLocation: "auto", localAvailable: false, localReason: "A phone does not run Spaces.", maxCpus: 0 };
-export const promptSuggestions = (): PromptSuggestion[] => core.tryCall<{ suggestions: PromptSuggestion[] }>("firstPrompts.choose", { env: PHONE_ENV, hostOs: "linux" })?.suggestions ?? [];
+export const promptSuggestions = (): PromptSuggestion[] =>
+  core.tryCall<{ suggestions: PromptSuggestion[] }>("firstPrompts.choose", { env: PHONE_ENV, hostOs: "linux" })?.suggestions ?? [];
 
 /* ---- Tool rows ---------------------------------------------------------------------- */
 
@@ -146,7 +147,17 @@ export interface OutboxState {
   messages: OutMessage[];
 }
 export type OutboxAction =
-  | { type: "send"; nowMs: number; id: string; space: string; kind?: string; text?: string; replyTo?: number | null; mode?: string; extra?: Record<string, unknown> | null }
+  | {
+      type: "send";
+      nowMs: number;
+      id: string;
+      space: string;
+      kind?: string;
+      text?: string;
+      replyTo?: number | null;
+      mode?: string;
+      extra?: Record<string, unknown> | null;
+    }
   | { type: "online"; nowMs: number; online: boolean }
   | { type: "tick"; nowMs: number }
   | { type: "delivered"; nowMs: number; id: string }
@@ -184,7 +195,8 @@ export interface EntryLite {
 }
 
 export const outboxInitial = (): OutboxState | null => core.tryCall<OutboxState>("outbox.initial");
-export const outboxReduce = (state: OutboxState, action: OutboxAction) => core.tryCall<{ state: OutboxState; effects: OutboxEffect[] }>("outbox.reduce", { state, action });
+export const outboxReduce = (state: OutboxState, action: OutboxAction) =>
+  core.tryCall<{ state: OutboxState; effects: OutboxEffect[] }>("outbox.reduce", { state, action });
 export const outboxView = (state: OutboxState, space?: string | null) => core.tryCall<OutboxView>("outbox.view", { state, ...(space ? { space } : {}) });
 /** The line over saved content while offline ("You're offline. Showing what was saved 2h ago."); null while online. */
 export const cacheLine = (savedMs: number | null, nowMs: number, offline: boolean) => core.tryCall<string | null>("cache.line", { savedMs, nowMs, offline });
@@ -218,7 +230,8 @@ export interface ApprovalsView {
   buttons: ApprovalButton[];
   scopeNote: string | null;
 }
-export const approvalsView = (input: { pending: PendingApproval[]; current?: number | null; allowLabel?: string | null; denyLabel?: string | null }) => core.tryCall<ApprovalsView>("approvals.view", { input });
+export const approvalsView = (input: { pending: PendingApproval[]; current?: number | null; allowLabel?: string | null; denyLabel?: string | null }) =>
+  core.tryCall<ApprovalsView>("approvals.view", { input });
 export const approvalResult = (approve: boolean, scope: string | null, title: string) => core.tryCall<string>("approvals.result", { approve, scope, title });
 
 export interface SendChoice {
@@ -234,7 +247,8 @@ export interface SendModeView {
   stop: boolean;
   stopLabel: string;
 }
-export const sendModeView = (input: { running: boolean; hasText: boolean; queued?: number; canSteer?: boolean }) => core.tryCall<SendModeView>("sendMode.view", { input });
+export const sendModeView = (input: { running: boolean; hasText: boolean; queued?: number; canSteer?: boolean }) =>
+  core.tryCall<SendModeView>("sendMode.view", { input });
 
 export type PermissionWord = "undetermined" | "granted" | "denied" | "restricted";
 export interface VoiceView {
@@ -256,7 +270,8 @@ export interface VoiceInput {
   error?: string | null;
 }
 export const voiceView = (input: VoiceInput) => core.tryCall<VoiceView>("voice.view", { input });
-export const voiceInsert = (text: string, start: number, end: number, transcript: string) => core.tryCall<{ text: string; cursor: number }>("voice.insert", { text, start, end, transcript });
+export const voiceInsert = (text: string, start: number, end: number, transcript: string) =>
+  core.tryCall<{ text: string; cursor: number }>("voice.insert", { text, start, end, transcript });
 
 /* ---- Push --------------------------------------------------------------------------- */
 
@@ -296,7 +311,8 @@ export interface PushSettingsView {
   status: { text: string; tone: "ok" | "warn" | "muted"; action: "allow" | "open-settings" | null; actionLabel: string | null };
   footer: string;
 }
-export const pushSettingsView = (input: { permission: string; needsYou: boolean; done: boolean; registered: boolean; pushAvailable: boolean }) => core.tryCall<PushSettingsView>("push.settings", { input });
+export const pushSettingsView = (input: { permission: string; needsYou: boolean; done: boolean; registered: boolean; pushAvailable: boolean }) =>
+  core.tryCall<PushSettingsView>("push.settings", { input });
 
 /* ---- Diffs -------------------------------------------------------------------------- */
 
@@ -317,7 +333,19 @@ export interface ChangesView {
   filesTotal: string;
   additions: string;
   deletions: string;
-  files: { path: string; name: string; dir: string; status: string; statusLabel: string; additions: string; deletions: string; note: string; bar: ("add" | "del" | "none")[]; binary: boolean; preview: "image" | "text" | "none" }[];
+  files: {
+    path: string;
+    name: string;
+    dir: string;
+    status: string;
+    statusLabel: string;
+    additions: string;
+    deletions: string;
+    note: string;
+    bar: ("add" | "del" | "none")[];
+    binary: boolean;
+    preview: "image" | "text" | "none";
+  }[];
   truncatedNote: string | null;
   empty: string | null;
   verifiedNote: string | null;
@@ -336,7 +364,15 @@ export interface DiffLabels {
 }
 export const diffLabels = () => core.tryCall<DiffLabels>("diff.labels");
 
-export const diffChanges = (input: { repo: string; branch: string; base?: string | null; headSha?: string | null; files: FileChange[]; truncated?: boolean; verified?: boolean }) => core.tryCall<ChangesView>("diff.changes", { input });
+export const diffChanges = (input: {
+  repo: string;
+  branch: string;
+  base?: string | null;
+  headSha?: string | null;
+  files: FileChange[];
+  truncated?: boolean;
+  verified?: boolean;
+}) => core.tryCall<ChangesView>("diff.changes", { input });
 
 export interface Segment {
   text: string;
@@ -370,4 +406,5 @@ export interface PreviewView {
   sizeLabel: string | null;
   note: string | null;
 }
-export const diffPreview = (input: { path: string; mime?: string | null; size?: number | null; binary?: boolean; truncated?: boolean }) => core.tryCall<PreviewView>("diff.preview", { input });
+export const diffPreview = (input: { path: string; mime?: string | null; size?: number | null; binary?: boolean; truncated?: boolean }) =>
+  core.tryCall<PreviewView>("diff.preview", { input });

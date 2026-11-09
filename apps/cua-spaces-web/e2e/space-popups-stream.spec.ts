@@ -61,7 +61,10 @@ async function viewer(page: Page): Promise<Surface> {
 
 /** Tells the page the host's stream is live, as the host does when frames arrive. */
 async function live(page: Page, surfaceId: string) {
-  await page.evaluate((id) => window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: "video.surface", payload: { surfaceId: id, state: "live" } } })), surfaceId);
+  await page.evaluate(
+    (id) => window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: "video.surface", payload: { surfaceId: id, state: "live" } } })),
+    surfaceId,
+  );
 }
 
 const overlaps = (a: Surface["rect"], b: Surface["rect"]) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -107,7 +110,10 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
             rect: now.rect,
           };
         },
-        { message: `${name}: drawn at the same size and place, ${modal ? "hidden and non-interactive under a modal dialog" : "interactive, with a hole where the popup floats over it"}`, timeout: 5_000 },
+        {
+          message: `${name}: drawn at the same size and place, ${modal ? "hidden and non-interactive under a modal dialog" : "interactive, with a hole where the popup floats over it"}`,
+          timeout: 5_000,
+        },
       )
       .toEqual({ settled: true, holes: "ok", occluded: modal, visible: true, interactive: !modal, rect: before.rect });
     return over;

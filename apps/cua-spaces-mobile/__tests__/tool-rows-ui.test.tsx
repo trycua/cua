@@ -20,7 +20,13 @@ describe("tool rows in the thread: one muted phrase, short rows, the state of ea
   it("says a call is running or failed, in the core's words, and opens the detail on a tap", async () => {
     await render(
       <ThemeProvider force="light">
-        <ToolGroup calls={[call("a", "read", "Read README.md", "done"), call("b", "ran", "Ran npm test", "running", "$ npm test"), call("c", "ran", "Ran make", "failed", "exit 2")]} />
+        <ToolGroup
+          calls={[
+            call("a", "read", "Read README.md", "done"),
+            call("b", "ran", "Ran npm test", "running", "$ npm test"),
+            call("c", "ran", "Ran make", "failed", "exit 2"),
+          ]}
+        />
       </ThemeProvider>,
     );
     const group = screen.getByTestId("tool-group");

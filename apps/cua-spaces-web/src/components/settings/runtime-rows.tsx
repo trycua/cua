@@ -77,7 +77,14 @@ function DetectedRow({ row, onChoose }: { row: SettingsRow; onChoose: (row: Sett
       <span className="text-[13px] text-muted-foreground" data-row-label>
         {row.label}
       </span>
-      <Select aria-label={row.label} className="max-w-[26rem] min-w-64" value={value} options={options} disabled={!row.enabled} onValueChange={(v) => v && onChoose(row, v)} />
+      <Select
+        aria-label={row.label}
+        className="max-w-[26rem] min-w-64"
+        value={value}
+        options={options}
+        disabled={!row.enabled}
+        onValueChange={(v) => v && onChoose(row, v)}
+      />
     </GroupedRow>
   );
 }
@@ -87,7 +94,17 @@ function DetectedRow({ row, onChoose }: { row: SettingsRow; onChoose: (row: Sett
  * to another one (checked as it is typed, saved on Enter or when the field
  * is left); "Reset to detected" goes back to the detected one.
  */
-function PathRow({ kind, row, check, onChoose }: { kind: string; row: SettingsRow; check?: SettingsRow; onChoose: (row: SettingsRow, option: string) => void }) {
+function PathRow({
+  kind,
+  row,
+  check,
+  onChoose,
+}: {
+  kind: string;
+  row: SettingsRow;
+  check?: SettingsRow;
+  onChoose: (row: SettingsRow, option: string) => void;
+}) {
   const t = useT();
   const { core, data } = useBridge();
   const saved = row.value ?? "";

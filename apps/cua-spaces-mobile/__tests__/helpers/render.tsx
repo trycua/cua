@@ -18,7 +18,10 @@ const me = () => "acct:you";
 /** Ids the outbox gives its messages: m1, m2, ... per render, so every core call the tests make is the same each run. */
 const fixedNow = () => NOW;
 
-export async function renderWithApp(ui: ReactElement, opts: { scheme?: "light" | "dark"; wrap?: (b: Backend) => Backend; store?: SealedStore; offline?: boolean; createMs?: number } = {}) {
+export async function renderWithApp(
+  ui: ReactElement,
+  opts: { scheme?: "light" | "dark"; wrap?: (b: Backend) => Backend; store?: SealedStore; offline?: boolean; createMs?: number } = {},
+) {
   clearThreadMemory();
   const demo = createDemoBackend({ now: () => NOW, wordMs: 0, offline: opts.offline, createMs: opts.createMs });
   const backend = opts.wrap ? opts.wrap(demo) : demo;

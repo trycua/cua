@@ -57,7 +57,8 @@ export function removeText(
   const keepKey = n === 0 ? "computers.tree.remove_keep_none" : n === 1 ? "computers.tree.remove_keep_one" : "computers.tree.remove_keep_many";
   // A computer is removed while it is offline (CUA-3479): ticked, its Spaces leave the account now, and the relay keeps
   // them as pending deletions that the computer carries out, files included, the next time it comes online.
-  const deleted = n === 1 ? t("computers.tree.remove_deleted_one", { name: node.name }) : t("computers.tree.remove_deleted_many", { name: node.name, count: n });
+  const deleted =
+    n === 1 ? t("computers.tree.remove_deleted_one", { name: node.name }) : t("computers.tree.remove_deleted_many", { name: node.name, count: n });
   return {
     title: t("computers.tree.remove_title", { name: node.name }),
     lead,
@@ -138,7 +139,13 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   );
   const sheets = (
     <>
-      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={search.join !== undefined ? "enter" : "pick"} initialCode={search.join ?? ""} initialRelay={search.relay ?? null} />
+      <AddComputerSheet
+        open={adding}
+        onOpenChange={setAdding}
+        initialView={search.join !== undefined ? "enter" : "pick"}
+        initialCode={search.join ?? ""}
+        initialRelay={search.relay ?? null}
+      />
       <EnrollSheet />
       {pendingActions.notMeDialog((machine) => machines.remove(machine, null))}
     </>
@@ -209,18 +216,30 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
     const items: MenuItem[] = [{ label: t("computers.page.open"), onSelect: () => open(n) }];
     if (canRename(n)) items.push({ label: t("computers.page.rename"), onSelect: () => setEditing({ key: n.key, name: n.name }) });
     if (n.settingsId && !n.isDefault && !defaults.unsupported)
-      items.push({ label: t("computers.page.make_default"), onSelect: () => void defaults.makeDefault(n.settingsId!).catch(toastError(t("computers.page.default_failed"))) });
+      items.push({
+        label: t("computers.page.make_default"),
+        onSelect: () => void defaults.makeDefault(n.settingsId!).catch(toastError(t("computers.page.default_failed"))),
+      });
     if (n.kind === "computer" && !n.current && n.machine) {
       const r = viewRemove(n);
       // The core keeps Remove off while a computer is online. The tree's offline (the relay's own answer) wins over a
       // machines list that lags; the relay still refuses a computer that is connected.
-      items.push({ label: t("computers.tree.remove_named", { name: n.name }), destructive: true, disabled: r ? !r.enabled && n.online : false, onSelect: () => setRemoving(n) });
+      items.push({
+        label: t("computers.tree.remove_named", { name: n.name }),
+        destructive: true,
+        disabled: r ? !r.enabled && n.online : false,
+        onSelect: () => setRemoving(n),
+      });
     }
     if (pinnable(n)) {
       const id = n.space!.id;
-      items.push({ label: pins.pinned.has(id) ? t("computers.page.unpin") : t("computers.page.pin"), onSelect: () => void pins.toggle(id).catch(toastError(t("computers.menu.notch_failed"))) });
+      items.push({
+        label: pins.pinned.has(id) ? t("computers.page.unpin") : t("computers.page.pin"),
+        onSelect: () => void pins.toggle(id).catch(toastError(t("computers.menu.notch_failed"))),
+      });
     }
-    if (n.kind === "space" && n.space?.access?.canDelete !== false) items.push({ label: t("computers.page.delete"), destructive: true, onSelect: () => setDeleting(n) });
+    if (n.kind === "space" && n.space?.access?.canDelete !== false)
+      items.push({ label: t("computers.page.delete"), destructive: true, onSelect: () => setDeleting(n) });
     return items;
   };
 
@@ -304,7 +323,11 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               <span className="truncate">{state === "creating" && n.space?.progress?.label ? n.space.progress.label : n.status}</span>
               {state === "creating" && n.space ? (
                 <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-foreground/10" aria-hidden>
-                  <span data-create-progress="" className="block h-full rounded-full bg-brand" style={{ width: `${Math.round(createProgress(n.space) * 100)}%` }} />
+                  <span
+                    data-create-progress=""
+                    className="block h-full rounded-full bg-brand"
+                    style={{ width: `${Math.round(createProgress(n.space) * 100)}%` }}
+                  />
                 </span>
               ) : null}
               {state === "creating" && n.space?.progress?.transfer ? (
@@ -323,7 +346,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               <Menu
                 items={menu(n)}
                 trigger={
-                  <button type="button" aria-label={t("computers.menu.more_for", { name: n.name })} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground" data-tree-menu={n.key}>
+                  <button
+                    type="button"
+                    aria-label={t("computers.menu.more_for", { name: n.name })}
+                    className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                    data-tree-menu={n.key}
+                  >
                     <MoreHorizontalIcon className="size-4" />
                   </button>
                 }
@@ -353,7 +381,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
       >
         <div role="cell" className="flex min-w-0 items-center gap-2.5">
           <TreeIcon node={{ kind: "computer", current: true, os: null }} />
-          <Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} className="min-w-0 truncate font-semibold outline-none hover:underline focus-visible:underline" data-tree-name="this-mac">
+          <Link
+            to="/spaces/computer/$computerId"
+            params={{ computerId: THIS_COMPUTER }}
+            className="min-w-0 truncate font-semibold outline-none hover:underline focus-visible:underline"
+            data-tree-name="this-mac"
+          >
             {thisComputerLabel()}
           </Link>
         </div>
@@ -365,9 +398,16 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         <div role="cell" />
         <div role="cell" className="flex justify-end">
           <Menu
-            items={[{ label: t("computers.page.open"), onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } }) }]}
+            items={[
+              { label: t("computers.page.open"), onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } }) },
+            ]}
             trigger={
-              <button type="button" aria-label={t("computers.menu.more_for", { name: thisComputerLabel() })} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground" data-tree-menu="this-mac">
+              <button
+                type="button"
+                aria-label={t("computers.menu.more_for", { name: thisComputerLabel() })}
+                className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                data-tree-menu="this-mac"
+              >
                 <MoreHorizontalIcon className="size-4" />
               </button>
             }
@@ -383,7 +423,12 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   const strays = creatingElsewhere.filter((c) => !tree.roots.some((r) => r.machine?.id === c.machineId));
   const branch = (r: TreeNode) => [
     rowFor(r, 0),
-    ...(collapsed.has(r.key) ? [] : [...r.children.map((c) => rowFor(c, 1)), ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />)]),
+    ...(collapsed.has(r.key)
+      ? []
+      : [
+          ...r.children.map((c) => rowFor(c, 1)),
+          ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />),
+        ]),
   ];
   const offlineRow =
     folded.length > 0 ? (
@@ -464,7 +509,10 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         onConfirm={() => {
           const n = deleting!;
           setDeleting(null);
-          void deleteSpace(n.space!.id).then(() => toast(t("computers.page.deleted", { name: n.name }), { type: "success" }), toastError(t("computers.page.delete_failed", { name: n.name })));
+          void deleteSpace(n.space!.id).then(
+            () => toast(t("computers.page.deleted", { name: n.name }), { type: "success" }),
+            toastError(t("computers.page.delete_failed", { name: n.name })),
+          );
         }}
       />
     </Page>
@@ -477,7 +525,12 @@ function ElsewhereRow({ creating: c, nested }: { creating: CreatingElsewhere; ne
   const os: SpaceOs = c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
   const percent = `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
   return (
-    <div role="row" data-creating-elsewhere={c.machineId} aria-label={t("computers.page.elsewhere_label", { name: c.name, machine: c.machineName.trim() || t("computers.page.another_computer"), percent })} className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}>
+    <div
+      role="row"
+      data-creating-elsewhere={c.machineId}
+      aria-label={t("computers.page.elsewhere_label", { name: c.name, machine: c.machineName.trim() || t("computers.page.another_computer"), percent })}
+      className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}
+    >
       <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", nested && "pl-8")}>
         <TreeIcon node={{ kind: "space", current: false, os }} />
         <span className="min-w-0 truncate">{c.name}</span>

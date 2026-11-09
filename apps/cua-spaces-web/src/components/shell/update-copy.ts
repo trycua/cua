@@ -25,8 +25,16 @@ export function updateView(state: UpdateState | undefined, installing = false): 
       return { kind: "downloading", label: t(key, { version: state.version ?? "", percent: percent ?? 0 }), percent };
     }
     case "downloaded":
-      if (installing) return { kind: "installing", label: t(state.version ? "shell.update.installing_version" : "shell.update.installing", { version: state.version ?? "" }) };
-      return { kind: "ready", label: t("shell.update.ready"), detail: state.version ? t("shell.update.ready_version", { version: state.version }) : t("shell.update.ready_new_version") };
+      if (installing)
+        return {
+          kind: "installing",
+          label: t(state.version ? "shell.update.installing_version" : "shell.update.installing", { version: state.version ?? "" }),
+        };
+      return {
+        kind: "ready",
+        label: t("shell.update.ready"),
+        detail: state.version ? t("shell.update.ready_version", { version: state.version }) : t("shell.update.ready_new_version"),
+      };
     case "error":
       return { kind: "error", label: state.message ? t("shell.update.error_reason", { reason: state.message.replace(/\.$/, "") }) : t("shell.update.error") };
     default:

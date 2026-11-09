@@ -86,7 +86,10 @@ describe("<SidebarUpdateButton>", () => {
 
   it("spins while Restart to update runs", async () => {
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 200, update: ready });
-    const adapter: DataAdapter = { ...demo, call: (op, args) => (op === "agents.runs" ? (Promise.resolve([]) as ReturnType<typeof demo.call>) : demo.call(op, args)) };
+    const adapter: DataAdapter = {
+      ...demo,
+      call: (op, args) => (op === "agents.runs" ? (Promise.resolve([]) as ReturnType<typeof demo.call>) : demo.call(op, args)),
+    };
     render(
       <BridgeProvider adapter={adapter} core={noCore}>
         <SidebarUpdateButton />
@@ -126,7 +129,10 @@ describe("<SidebarUpdateButton>", () => {
 
   it("shows nothing on a host with no updater (the call is unsupported)", async () => {
     const demo = createDemoAdapter({ latencyMs: 0 });
-    const adapter: DataAdapter = { ...demo, call: (op, args) => (op === "update.get" ? Promise.reject(Object.assign(new Error("unsupported"), { code: "unsupported" })) : demo.call(op, args)) } as DataAdapter;
+    const adapter: DataAdapter = {
+      ...demo,
+      call: (op, args) => (op === "update.get" ? Promise.reject(Object.assign(new Error("unsupported"), { code: "unsupported" })) : demo.call(op, args)),
+    } as DataAdapter;
     render(
       <BridgeProvider adapter={adapter} core={noCore}>
         <SidebarUpdateButton />

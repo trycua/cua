@@ -119,7 +119,11 @@ function save(next: AskTask[]): void {
  * this device only remembers which Space and run a task is. Best effort: a
  * host without the thread still runs the task.
  */
-export async function postToSpaceThread(data: Pick<DataAdapter, "call" | "mode"> | null | undefined, spaceId: string | null | undefined, text: string): Promise<void> {
+export async function postToSpaceThread(
+  data: Pick<DataAdapter, "call" | "mode"> | null | undefined,
+  spaceId: string | null | undefined,
+  text: string,
+): Promise<void> {
   if (!data || !spaceId || !text.trim() || !threadOpAvailable(data.mode, "thread.post")) return;
   await data.call("thread.post", { spaceId, text: text.trim() }).catch(() => {});
 }
@@ -219,8 +223,17 @@ export function mostUsedAgent(tasks: readonly AskTask[]): string | null {
 
 /** A task's title: its first line, short. */
 export function taskTitle(prompt: string, max = 80): string {
-  const line = prompt.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
-  return [...line].length <= max ? line : `${[...line].slice(0, max - 1).join("").trimEnd()}…`;
+  const line =
+    prompt
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) ?? "";
+  return [...line].length <= max
+    ? line
+    : `${[...line]
+        .slice(0, max - 1)
+        .join("")
+        .trimEnd()}…`;
 }
 
 /**
@@ -266,7 +279,9 @@ export const HOST_NOT_SHARED = `${THIS_MAC_ID}: this Mac isn't shared by its hos
  * it shares its desktop on. Null when it isn't set up or doesn't share its
  * desktop.
  */
-export function hostSpaceId(status: Pick<HostStatus, "configured" | "mode" | "machineId" | "directUrl" | "sharing" | "shareDesktop"> | null | undefined): string | null {
+export function hostSpaceId(
+  status: Pick<HostStatus, "configured" | "mode" | "machineId" | "directUrl" | "sharing" | "shareDesktop"> | null | undefined,
+): string | null {
   if (!status?.configured || !status.sharing || status.shareDesktop === false) return null;
   if (status.mode === "relay" && status.machineId) return `relay:${status.machineId}`;
   if (status.mode === "direct" && status.directUrl) {
@@ -312,7 +327,13 @@ export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
 /** Your other computers whose desktops are online to run a job on: never this computer's own (`this-mac` is its row). */
 export function otherComputerDesktops(spaces: readonly Space[] | undefined, thisMachineId: string | null): Space[] {
   return (spaces ?? []).filter(
-    (s) => isMachineDesktop(s) && s.id !== THIS_MAC_ID && s.status !== "local" && s.id !== `relay:${thisMachineId}` && s.status === "running" && spaceState(s) === "running",
+    (s) =>
+      isMachineDesktop(s) &&
+      s.id !== THIS_MAC_ID &&
+      s.status !== "local" &&
+      s.id !== `relay:${thisMachineId}` &&
+      s.status === "running" &&
+      spaceState(s) === "running",
   );
 }
 
@@ -406,9 +427,19 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: t("home.start_error.cant_start_here_title", { computer: thisComputerText() }), body: t("home.start_error.cant_start_here_body", { computer: thisComputerText() }), action: "retry", retry: true };
+    return {
+      title: t("home.start_error.cant_start_here_title", { computer: thisComputerText() }),
+      body: t("home.start_error.cant_start_here_body", { computer: thisComputerText() }),
+      action: "retry",
+      retry: true,
+    };
   if (/cloud has ended/.test(e))
-    return { title: t("home.start_error.gone_title"), body: t("home.start_error.gone_body", { computer: thisComputerText() }), action: "change-computer", retry: false };
+    return {
+      title: t("home.start_error.gone_title"),
+      body: t("home.start_error.gone_body", { computer: thisComputerText() }),
+      action: "change-computer",
+      retry: false,
+    };
   if (/more than one|ambiguous/.test(e))
     return { title: t("home.start_error.ambiguous_title"), body: t("home.start_error.ambiguous_body"), action: "change-computer", retry: false };
   if (/not found|no such|unknown space|add_space/.test(e))
@@ -418,7 +449,12 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
     return { title: t("home.start_error.unreachable_title"), body: t("home.start_error.unreachable_body"), action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
-    return { title: t("home.start_error.no_room_title", { computer: thisComputerLabel() }), body: t("home.start_error.no_room_body"), action: "retry", retry: true };
+    return {
+      title: t("home.start_error.no_room_title", { computer: thisComputerLabel() }),
+      body: t("home.start_error.no_room_body"),
+      action: "retry",
+      retry: true,
+    };
   return { title: t("home.start_error.failed_title", { agent }), body: t("home.start_error.failed_body"), action: "retry", retry: true, report: true };
 }
 
@@ -444,7 +480,10 @@ export function taskState(
 
 /** An object whose values are catalog strings read when used, so a language change shows at once. */
 function lazyWords<K extends string>(keys: Record<K, string>): Record<K, string> {
-  return Object.defineProperties({}, Object.fromEntries(Object.entries<string>(keys).map(([k, key]) => [k, { enumerable: true, get: () => t(key) }]))) as Record<K, string>;
+  return Object.defineProperties(
+    {},
+    Object.fromEntries(Object.entries<string>(keys).map(([k, key]) => [k, { enumerable: true, get: () => t(key) }])),
+  ) as Record<K, string>;
 }
 
 export const TASK_STATE_TEXT: Record<TaskState, string> = lazyWords<TaskState>({
@@ -467,7 +506,8 @@ export const TASK_STATE_TEXT_HOME: Partial<Record<TaskState, string>> = lazyWord
 });
 
 /** A task's state line. */
-export const taskStateText = (state: TaskState, task: Pick<AskTask, "home">): string => (task.home ? TASK_STATE_TEXT_HOME[state] : undefined) ?? TASK_STATE_TEXT[state];
+export const taskStateText = (state: TaskState, task: Pick<AskTask, "home">): string =>
+  (task.home ? TASK_STATE_TEXT_HOME[state] : undefined) ?? TASK_STATE_TEXT[state];
 
 /** Home's order: needs you first, then running, then the rest, newest first. */
 export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: T[]): T[] {

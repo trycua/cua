@@ -94,16 +94,9 @@ pub fn schema() -> Value {
     json!({
         "type": "string",
         "enum": ["default", "report", "none"],
-        "description": "How long the result waits for the post-action window-change report. \
-                        \"default\": on macOS the result returns as soon as the input is \
-                        delivered; on Linux X11 foreground delivery it waits up to 150 ms. \
-                        \"report\" waits for a new window, menu, dialog or foreground change \
-                        (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at \
-                        delivery and says window changes were not observed. On macOS the watch \
-                        keeps running in the background and a change it sees later is reported \
-                        on the next action's result. Only paths that already observe window \
-                        changes are affected; for example a right_click that does not watch is \
-                        unchanged."
+        "description": "Wait for a window change this action caused: \"default\" (macOS \
+                        none, Linux X11 150 ms), \"report\" (300 ms, Linux X11 800 ms) or \
+                        \"none\". See EMBEDDING.md."
     })
 }
 

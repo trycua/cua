@@ -156,32 +156,183 @@ fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
-/// The canonical spelling of an accelerator request: `gpu` (any),
-/// `apple`, `nvidia`, or empty (none needed).
-pub fn normalize_accelerator(a: &str) -> Result<String, String> {
-    match a.trim().to_ascii_lowercase().as_str() {
-        "" | "none" => Ok(String::new()),
-        "gpu" | "any" | "auto" => Ok("gpu".into()),
-        "apple" | "metal" | "mps" => Ok("apple".into()),
-        "nvidia" | "cuda" => Ok("nvidia".into()),
+/// What a job asks of an accelerator: `vendor[:model][:NNGB]`, for example
+/// `nvidia`, `nvidia:24GB` (a GPU with 24 GB free), `nvidia:L4` or
+/// `nvidia:RTX PRO 6000:40GB`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccelReq {
+    /// `gpu` (any), `apple` or `nvidia`; empty: none needed.
+    pub vendor: String,
+    /// A word the GPU's name must contain (case does not matter); empty: any.
+    pub model: String,
+    /// Video memory the job needs free on one GPU (MiB); 0: not said.
+    pub vram_mb: u64,
+}
+
+fn vendor_word(v: &str) -> Result<&'static str, String> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "gpu" | "any" | "auto" => Ok("gpu"),
+        "apple" | "metal" | "mps" => Ok("apple"),
+        "nvidia" | "cuda" => Ok("nvidia"),
         other => Err(format!(
-            "accelerator {other:?}: use gpu (any), apple or nvidia"
+            "accelerator {other:?}: use gpu (any), apple or nvidia, with an optional GPU model \
+             and memory (`nvidia:L4:24GB`)"
         )),
     }
 }
 
-/// Whether a host that reports `accelerators` satisfies `want` (a
-/// [`normalize_accelerator`] word).
-pub fn accelerator_fits(want: &str, accelerators: &[String]) -> bool {
-    match want {
-        "" => true,
-        "gpu" => !accelerators.is_empty(),
-        vendor => accelerators.iter().any(|a| {
-            a.split(':')
-                .next()
-                .is_some_and(|v| v.eq_ignore_ascii_case(vendor))
-        }),
+/// `24GB`, `24 GB`, `0.5TB` as MiB.
+fn parse_size_mb(s: &str) -> Option<u64> {
+    let s = s.trim().to_ascii_lowercase();
+    let (num, mult) = if let Some(n) = s.strip_suffix("tb") {
+        (n, 1024.0 * 1024.0)
+    } else if let Some(n) = s.strip_suffix("gb") {
+        (n, 1024.0)
+    } else {
+        (s.strip_suffix("mb")?, 1.0)
+    };
+    let v: f64 = num.trim().parse().ok()?;
+    (v.is_finite() && v > 0.0).then(|| (v * mult).ceil() as u64)
+}
+
+/// Reads an accelerator request ([`AccelReq`]); empty or `none` is no request.
+pub fn parse_accelerator(a: &str) -> Result<AccelReq, String> {
+    let a = a.trim();
+    if a.is_empty() || a.eq_ignore_ascii_case("none") {
+        return Ok(AccelReq::default());
     }
+    let mut parts = a.split(':').map(str::trim);
+    let vendor = vendor_word(parts.next().unwrap_or_default())?.to_string();
+    let mut req = AccelReq {
+        vendor,
+        ..Default::default()
+    };
+    for p in parts {
+        if p.is_empty() {
+            continue;
+        }
+        match parse_size_mb(p) {
+            Some(mb) if req.vram_mb == 0 => req.vram_mb = mb,
+            Some(_) => return Err(format!("accelerator {a:?}: one memory size only")),
+            None if req.model.is_empty() => req.model = p.to_string(),
+            None => return Err(format!("accelerator {a:?}: one GPU model only")),
+        }
+    }
+    Ok(req)
+}
+
+/// The canonical spelling of an accelerator request: `gpu` (any), `apple`,
+/// `nvidia`, or empty (none needed), then an optional GPU model and memory
+/// (`nvidia:L4:24GB`).
+pub fn normalize_accelerator(a: &str) -> Result<String, String> {
+    let r = parse_accelerator(a)?;
+    if r.vendor.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = r.vendor;
+    if !r.model.is_empty() {
+        out.push(':');
+        out.push_str(&r.model);
+    }
+    if r.vram_mb > 0 {
+        let gb = r.vram_mb.div_ceil(1024);
+        out.push_str(&format!(":{gb}GB"));
+    }
+    Ok(out)
+}
+
+/// What a host reports of one accelerator: `vendor:name[:cores GPU]:96 GB[:80 GB free]`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuWord {
+    /// `apple` or `nvidia`.
+    pub vendor: String,
+    /// The GPU's name and the words between it and the sizes.
+    pub name: String,
+    /// Its memory (MiB; 0 when the host says none).
+    pub total_mb: u64,
+    /// Memory free now (MiB), when the host says.
+    pub free_mb: Option<u64>,
+}
+
+/// Reads a host's accelerator word ([`GpuWord`]).
+pub fn parse_gpu_word(w: &str) -> GpuWord {
+    let mut out = GpuWord::default();
+    let mut names = Vec::new();
+    for (i, p) in w.split(':').enumerate() {
+        let p = p.trim();
+        if i == 0 {
+            out.vendor = p.to_ascii_lowercase();
+        } else if let Some(f) = p.strip_suffix(" free").or_else(|| p.strip_suffix("free")) {
+            out.free_mb = parse_size_mb(f);
+        } else if let Some(mb) = parse_size_mb(p) {
+            out.total_mb = mb;
+        } else {
+            names.push(p);
+        }
+    }
+    out.name = names.join(" ");
+    out
+}
+
+/// Whether one accelerator word of a host satisfies `req` (the model, and the
+/// memory free on it).
+fn gpu_word_fits(req: &AccelReq, w: &GpuWord) -> bool {
+    if req.vendor != "gpu" && w.vendor != req.vendor {
+        return false;
+    }
+    if !req.model.is_empty() && !w.name.to_lowercase().contains(&req.model.to_lowercase()) {
+        return false;
+    }
+    // A host that does not say how much memory it has is taken at its word.
+    let have = w.free_mb.unwrap_or(w.total_mb);
+    req.vram_mb == 0 || have == 0 || have >= req.vram_mb
+}
+
+/// Whether a host that reports `accelerators` satisfies `want` (a
+/// [`normalize_accelerator`] word): a GPU of that vendor and model with the
+/// memory free.
+pub fn accelerator_fits(want: &str, accelerators: &[String]) -> bool {
+    let Ok(req) = parse_accelerator(want) else {
+        return false;
+    };
+    if req.vendor.is_empty() {
+        return true;
+    }
+    accelerators
+        .iter()
+        .any(|a| gpu_word_fits(&req, &parse_gpu_word(a)))
+}
+
+/// `words` with `mb` of video memory taken off the NVIDIA GPUs that have it
+/// free (the first one first): what a scheduler has already sent a host since
+/// its last report.
+pub fn reserve_vram(words: &[String], mb: u64) -> Vec<String> {
+    if mb == 0 {
+        return words.to_vec();
+    }
+    let mut left = mb;
+    words
+        .iter()
+        .map(|w| {
+            let g = parse_gpu_word(w);
+            if g.vendor != "nvidia" || g.total_mb == 0 {
+                return w.clone();
+            }
+            let free = g.free_mb.unwrap_or(g.total_mb);
+            let take = left.min(free);
+            left -= take;
+            let base = match w.rsplit_once(':') {
+                Some((head, tail)) if tail.trim_end().ends_with("free") => head,
+                _ => w.as_str(),
+            };
+            format!("{base}:{} GB free", (free - take) / 1024)
+        })
+        .collect()
+}
+
+/// Video memory a job asks for (MiB; 0: none said).
+pub fn vram_request_mb(accelerator: &str) -> u64 {
+    parse_accelerator(accelerator).map_or(0, |r| r.vram_mb)
 }
 
 /// The canonical spelling of a CPU architecture (`arm64` is `aarch64`,
@@ -466,6 +617,34 @@ mod tests {
         );
         assert!(is_job_space(&a) && is_job_space(&format!("local:{a}")));
         assert!(!is_job_space("cj-notahash-1") && !is_job_space("local:research"));
+    }
+
+    #[test]
+    fn a_gpu_request_names_a_model_and_the_memory_it_needs_free() {
+        let pc =
+            vec!["nvidia:RTX PRO 6000 Blackwell Workstation Edition:96 GB:40 GB free".to_string()];
+        let l4 = vec!["nvidia:L4:24 GB".to_string()];
+        assert_eq!(
+            normalize_accelerator("CUDA : L4 : 24 GB").unwrap(),
+            "nvidia:L4:24GB"
+        );
+        assert_eq!(normalize_accelerator("nvidia:16gb").unwrap(), "nvidia:16GB");
+        assert!(normalize_accelerator("nvidia:16GB:24GB").is_err());
+        assert!(normalize_accelerator("tpu:16GB").is_err());
+        // Free memory counts, not the card's total.
+        assert!(accelerator_fits("nvidia:32GB", &pc));
+        assert!(!accelerator_fits("nvidia:48GB", &pc));
+        assert!(accelerator_fits("gpu:24GB", &l4) && !accelerator_fits("gpu:32GB", &l4));
+        // A model is a word of the name, whatever its case.
+        assert!(accelerator_fits("nvidia:rtx pro", &pc) && !accelerator_fits("nvidia:L4", &pc));
+        assert!(accelerator_fits("nvidia:L4:16GB", &l4));
+        assert_eq!(vram_request_mb("nvidia:L4:24GB"), 24 * 1024);
+        let w = parse_gpu_word("apple:M2 Max:38-core GPU:96 GB");
+        assert_eq!(
+            (w.vendor.as_str(), w.total_mb, w.free_mb),
+            ("apple", 96 * 1024, None)
+        );
+        assert_eq!(w.name, "M2 Max 38-core GPU");
     }
 
     #[test]

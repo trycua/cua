@@ -64,6 +64,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("agent_capabilities", "Spaces.agent_capabilities"),
     ("agent_threads", "Spaces.call_tool_json"),
     ("agent_thread_read", "Spaces.call_tool_json"),
+    ("agent_sign_in", "Spaces.call_tool_json"),
     ("agent_add", "Spaces.persistent_agent_create"),
     ("persistent_agent_list", "Spaces.persistent_agents"),
     ("agent_remove", "Spaces.persistent_agent_remove"),

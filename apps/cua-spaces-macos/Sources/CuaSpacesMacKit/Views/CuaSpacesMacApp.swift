@@ -381,9 +381,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The main window was closed: the notice, or a quit (Settings, General,
     /// "When I close the window").
     private func mainWindowClosed(_ model: AppModel) {
-        switch BackgroundPolicy.windowClosed(keepsRunning: model.settings.closeWindowKeepsRunning,
+        let action = BackgroundPolicy.windowClosed(keepsRunning: model.settings.closeWindowKeepsRunning,
                                              noticeOff: model.settings.closeNoticeOff,
-                                             terminating: BackgroundService.shared.isQuitting) {
+                                             terminating: BackgroundService.shared.isQuitting)
+        NSLog("Cua Spaces: main window closed: %@", String(describing: action))
+        switch action {
         case .nothing: break
         case .quitApp: NSApp.terminate(nil)
         case .showNotice:

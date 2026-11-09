@@ -23,17 +23,24 @@ public final class BackgroundNotice: NSObject, NSPopoverDelegate {
 
     /// The status item's window of this app (the menu bar icon), when there is one.
     static func statusWindow() -> NSWindow? {
-        NSApp.windows.first { String(describing: type(of: $0)).contains("StatusBar") && $0.isVisible }
+        // An item-sized window: the menu bar's own (a full-width one is not the icon).
+        NSApp.windows.first {
+            String(describing: type(of: $0)).contains("StatusBar") && $0.isVisible
+                && $0.frame.width < 300 && $0.frame.height < 60
+        }
     }
 
     public func show(turnOff: @escaping @MainActor () -> Void, openSettings: @escaping @MainActor () -> Void) {
         dismiss()
+        let anchor = Self.statusWindow()?.contentView
+        NSLog("Cua Spaces: notice shown %@", anchor == nil ? "at the top right" : "under the menu bar icon")
         let view = BackgroundNoticeView(
+            card: anchor == nil,
             turnOff: { [weak self] in turnOff(); self?.dismiss() },
             openSettings: { [weak self] in openSettings(); self?.dismiss() })
         let host = NSHostingController(rootView: view)
         host.sizingOptions = [.preferredContentSize]
-        if let anchor = Self.statusWindow()?.contentView {
+        if let anchor {
             let popover = NSPopover()
             popover.behavior = .transient
             popover.animates = true
@@ -77,6 +84,8 @@ public final class BackgroundNotice: NSObject, NSPopoverDelegate {
 }
 
 struct BackgroundNoticeView: View {
+    /// Drawn as its own card (no popover around it).
+    var card = false
     let turnOff: () -> Void
     let openSettings: () -> Void
 
@@ -96,5 +105,11 @@ struct BackgroundNoticeView: View {
         }
         .padding(14)
         .frame(width: 300)
+        .background {
+            if card {
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.regularMaterial)
+                    .shadow(radius: 8, y: 2)
+            }
+        }
     }
 }

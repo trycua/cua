@@ -36,7 +36,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// afterwards, else why not.
     public func stopForQuit(runner: CommandRunning = ProcessRunner()) -> String? {
         Self.stopSupervising()
-        let r = runner.run(cua, ["daemon", "stop"], timeout: 20)
+        let r = runner.run(cua, ["daemon", "stop"], timeout: 12)
         for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
             Self.stop(pid: pid)
         }

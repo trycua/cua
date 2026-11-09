@@ -103,7 +103,8 @@ public final class BackgroundService: @unchecked Sendable {
                                labels: [String] = [HelperService.label, DriverService.label],
                                uid: uid_t = getuid(),
                                wait: TimeInterval = 8,
-                               isRunning: (String) -> Bool = { HelperService.runningPid(target: "gui/\(getuid())/\($0)") != nil }) -> [String] {
+                               isRunning: ((String) -> Bool)? = nil) -> [String] {
+        let isRunning = isRunning ?? { HelperService.runningPid(target: "gui/\(getuid())/\($0)") != nil }
         var problems: [String] = []
         for label in labels {
             _ = runner.run("/bin/launchctl", ["kill", "SIGTERM", "gui/\(uid)/\(label)"], timeout: 5)

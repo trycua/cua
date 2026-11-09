@@ -100,6 +100,12 @@ impl TypePacing {
     }
 }
 const PING_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long borrowed keycodes stay bound after the last key on them. X11
+/// has no signal that a client has translated a key event: Xlib and Qt look
+/// keys up in their own copy of the keymap, and a server round trip or a
+/// `_NET_WM_PING` answer does not prove the lookup happened. A client that
+/// looks a key up later than this after it was sent reads `NoSymbol`
+/// (pinned by `spare_keycode_restore_tests`).
 const SPARE_KEYCODE_IDLE: Duration = Duration::from_millis(150);
 static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
@@ -4507,16 +4513,27 @@ mod spare_keycode_restore_tests {
     }
 
     #[test]
+    #[ignore = "starts its own Xvfb"]
     fn a_client_without_ping_looks_its_spare_keycodes_up_before_they_are_restored() {
-        assert_eq!(type_into_a_late_reader(false), TEXT);
+        assert_eq!(type_into_a_late_reader(false, SPARE_KEYCODE_IDLE / 3), TEXT);
     }
 
     #[test]
+    #[ignore = "starts its own Xvfb"]
     fn a_client_that_answers_the_ping_before_its_lookups_still_reads_them() {
-        assert_eq!(type_into_a_late_reader(true), TEXT);
+        assert_eq!(type_into_a_late_reader(true, SPARE_KEYCODE_IDLE / 3), TEXT);
     }
 
-    fn type_into_a_late_reader(answers_ping: bool) -> String {
+    /// The known limit: nothing proves a client has looked its keys up, so
+    /// one slower than the idle window reads the restored keymap.
+    #[test]
+    #[ignore = "starts its own Xvfb"]
+    fn a_client_that_looks_up_after_the_idle_window_reads_no_symbol() {
+        let typed = type_into_a_late_reader(false, SPARE_KEYCODE_IDLE * 3);
+        assert_eq!(typed, "?".repeat(TEXT.chars().count()));
+    }
+
+    fn type_into_a_late_reader(answers_ping: bool, lookup_after: Duration) -> String {
         let mut server = Server(
             Command::new("Xvfb")
                 .args(["-displayfd", "1", "-nolisten", "tcp"])
@@ -4572,7 +4589,7 @@ mod spare_keycode_restore_tests {
             let mut keys = Vec::new();
             let mut ready: Option<Instant> = None;
             let deadline = Instant::now() + Duration::from_secs(5);
-            while ready.is_none_or(|at| at.elapsed() < Duration::from_millis(50)) {
+            while ready.is_none_or(|at| at.elapsed() < lookup_after) {
                 assert!(
                     Instant::now() < deadline,
                     "the reader saw {} of {count} keys and was not ready within 5 s",

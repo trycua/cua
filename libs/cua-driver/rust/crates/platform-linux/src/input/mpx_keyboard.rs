@@ -316,6 +316,20 @@ fn ensure_master_keyboard(
             .and_then(|(_, _, name)| name.strip_suffix(" keyboard").map(str::to_owned))
             .ok_or_else(|| anyhow!("master keyboard {} vanished", ids.keyboard_id))?;
         let device_name = slave_keyboard_name(&base);
+        if let Some(old) = ids.slave_keyboard_id {
+            // A keyboard unplugged by an earlier call can still be listed
+            // under the same name; never attach it in place of the new one.
+            let deadline = crate::interaction::operation_deadline(Duration::from_secs(5));
+            while xi2_query_devices(display)?
+                .iter()
+                .any(|(id, _, _)| *id == old)
+            {
+                if std::time::Instant::now() >= deadline {
+                    bail!("unplugged uinput keyboard {old} is still listed");
+                }
+                crate::interaction::pause(Duration::from_millis(20));
+            }
+        }
         let mut device = create_uinput_keyboard(&device_name)?;
         let slave_keyboard_id = wait_for_slave_id(
             display,

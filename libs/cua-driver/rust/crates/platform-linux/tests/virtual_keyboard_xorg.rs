@@ -92,8 +92,13 @@ fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored(
         TEXT,
         TypePacing { delay_ms: 30 },
     );
-    stall.join().unwrap();
     let error = typed.expect_err("the stalled server cannot confirm the text");
+    // Retry at once, while the server may still list the unplugged keyboard.
+    let retry = std::thread::spawn(move || {
+        send_virtual_keyboard_text_paced(cursor, u64::from(window), "a", TypePacing::default())
+    });
+    stall.join().unwrap();
+    let retried = retry.join().unwrap();
     assert!(
         format!("{error:#}").contains("the X server read"),
         "{error:#}"
@@ -120,7 +125,9 @@ fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored(
             }
             Some(Event::KeyPress(press)) => {
                 pressed += 1;
-                if restored.get(&press.detail) == Some(&true) {
+                // The retry's new keyboard taps X keycode 248 (evdev
+                // KEY_UNKNOWN) to warm up; it is NoSymbol once restored.
+                if press.detail != 248 && restored.get(&press.detail) == Some(&true) {
                     late.push(press.detail);
                 }
             }
@@ -128,10 +135,9 @@ fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored(
             None => std::thread::sleep(Duration::from_millis(5)),
         }
     }
-    // The next call gets a fresh keyboard.
-    send_virtual_keyboard_text_paced(cursor, u64::from(window), "a", TypePacing::default())
-        .unwrap();
     forget_master_pointer(cursor);
+    let report = retried.expect("the retry types on a fresh keyboard");
+    assert!(report.delivery_confirmed, "{report:?}");
     assert!(pressed > 0, "no key reached the window before the stall");
     assert_eq!(restored.len(), TEXT.chars().count(), "{restored:?}");
     assert!(

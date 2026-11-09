@@ -4,6 +4,7 @@
 import type { Machine, SpaceOs } from "@/bridge";
 import { machineSpacesLabel } from "@/bridge/derive";
 import { OS_NAME } from "@/components/os-icon";
+import { t } from "@/i18n";
 import { relativeTime } from "@/lib/utils";
 
 /** The machine's OS as one of the three the app draws, or null when the host did not say. */
@@ -18,22 +19,19 @@ export function machineOs(m: Pick<Machine, "os">): SpaceOs | null {
 /** "macOS", or "Unknown OS". */
 export function osName(m: Pick<Machine, "os">): string {
   const os = machineOs(m);
-  return os ? OS_NAME[os] : "Unknown OS";
+  return os ? OS_NAME[os] : t("computers.row.unknown_os");
 }
 
-export const CONNECTION_LABEL: Record<"relay" | "direct", string> = {
-  relay: "Cua relay",
-  direct: "Direct",
-};
+const connectionWord = (c: "relay" | "direct"): string => (c === "relay" ? t("computers.row.connection_relay") : t("computers.row.connection_direct"));
 
 /** A row that is only a signed-in machine (`machines_view::DEVICE_LINE`). */
-export const DEVICE_LINE = "Signed in, not sharing";
+const deviceLine = (): string => t("computers.row.device_line");
 
 /** How other machines reach it, in words. */
 export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pick<Partial<Machine>, "device">): string {
-  if (m.connection) return CONNECTION_LABEL[m.connection];
-  if (m.device) return DEVICE_LINE;
-  return m.current ? "Not set up for access" : "Unknown";
+  if (m.connection) return connectionWord(m.connection);
+  if (m.device) return deviceLine();
+  return m.current ? t("computers.row.not_set_up") : t("computers.row.unknown");
 }
 
 /** The list row's second line: OS, then how it is reached. */
@@ -44,7 +42,7 @@ export function machineSubtitle(m: Pick<Machine, "os" | "connection" | "current"
 /** The core's word for a machine its owner stopped sharing
  * (`machines::NOT_SHARING`): connected to the relay, but it refuses every
  * call. */
-export const NOT_SHARING = "Not sharing";
+const notSharing = (): string => t("computers.row.not_sharing");
 
 /** Usable from here: online and shared (a machine whose owner stopped
  * sharing it is connected, but nothing here can reach it). */
@@ -54,15 +52,15 @@ export const reachable = (m: Pick<Machine, "online" | "notSharing">): boolean =>
  * last seen. */
 export function presenceLabel(m: Pick<Machine, "online" | "lastSeen" | "notSharing" | "status">, now: number): string {
   if (m.online || !m.lastSeen) return presenceWord(m);
-  return `Offline, last seen ${relativeTime(m.lastSeen * 1000, now)}`;
+  return t("computers.row.offline_last_seen", { when: relativeTime(m.lastSeen * 1000, now) });
 }
 
 /** The list row's one word: the core's (`machines::status_word`, the same
  * the SwiftUI Machines list shows): "Online", "Not sharing" or "Offline". */
 export function presenceWord(m: Pick<Machine, "online" | "notSharing" | "status">): string {
   if (m.status) return m.status;
-  if (!m.online) return "Offline";
-  return m.notSharing ? NOT_SHARING : "Online";
+  if (!m.online) return t("computers.row.offline");
+  return m.notSharing ? notSharing() : t("computers.row.online");
 }
 
 /** "1 Space", "3 Spaces", "No Spaces". */

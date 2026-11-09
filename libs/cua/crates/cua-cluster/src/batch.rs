@@ -142,6 +142,7 @@ fn misfit(c: &Candidate, g: &BatchGroup) -> Option<String> {
     // this check, so a long batch does not run the host "out of CPU".)
     let mut idle = c.clone();
     idle.pending_millicpus = 0;
+    idle.pending_vram_mb = 0;
     idle.misfit(&Need {
         millicpus: 0,
         ..g.member.clone()
@@ -310,6 +311,8 @@ pub fn plan_batch(cands: &[Candidate], groups: &[BatchGroup], policy: Policy) ->
             c.pending_memory_mb += c.memory_need(&g.member) * u64::from(n)
                 + if shared { g.shared_memory_mb } else { 0 };
             c.pending_jobs += n;
+            c.pending_vram_mb +=
+                crate::model::vram_request_mb(&g.member.accelerator) * u64::from(n);
             placed_worlds[host].insert(g.world.clone());
             plan.parts.push(GroupPart {
                 group: gi,

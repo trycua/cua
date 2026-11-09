@@ -47,7 +47,10 @@ beforeEach(() => {
 
 describe("the agent the box starts with", () => {
   it("is the first connected app with its own account and quick model when nothing was picked", () => {
-    const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "sonnet" } };
+    const v = {
+      ...view([group("codex", []), claude]),
+      default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "sonnet" },
+    };
     const s = resolveAgent(v, null)!;
     expect(s.harness).toBe("claude-code");
     expect(agentLine(s)).toBe("Claude Code");
@@ -75,7 +78,10 @@ describe("the agent the box starts with", () => {
   });
 
   it("falls back to the default when the remembered app is no longer connected, and to nothing when none is", () => {
-    const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "sonnet" } };
+    const v = {
+      ...view([group("codex", []), claude]),
+      default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "sonnet" },
+    };
     expect(resolveAgent(v, { harness: "openai-codex", env: "CODEX_AUTH_JSON" })!.harness).toBe("claude-code");
     expect(resolveAgent(view([group("codex", [])]), null)).toBeNull();
     expect(resolveAgent(null, null)).toBeNull();

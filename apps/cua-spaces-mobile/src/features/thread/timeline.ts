@@ -55,14 +55,26 @@ export function authorView(a: { kind: string; id: string; name: string }): Autho
 const GAP_MS = 30 * 60_000;
 const GROUP_MS = 5 * 60_000;
 
-export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: LiveAgent[]; pending: OutboxRow[]; tools: ToolGroup[]; now: number; agentName(handle: string): string }): Row[] {
+export function buildRows(opts: {
+  items: ThreadItem[];
+  me: string | null;
+  live: LiveAgent[];
+  pending: OutboxRow[];
+  tools: ToolGroup[];
+  now: number;
+  agentName(handle: string): string;
+}): Row[] {
   const rows: Row[] = [];
   let lastTs = 0;
   let lastAuthor = "";
   let lastWasMessage = false;
   // Calls of every agent that followed the same message are one group, in the order they happened.
   const toolsAfter = new Map<number, ToolCall[]>();
-  for (const t of opts.tools) toolsAfter.set(t.afterSeq, [...(toolsAfter.get(t.afterSeq) ?? []), ...t.calls].sort((a, b) => a.atMs - b.atMs));
+  for (const t of opts.tools)
+    toolsAfter.set(
+      t.afterSeq,
+      [...(toolsAfter.get(t.afterSeq) ?? []), ...t.calls].sort((a, b) => a.atMs - b.atMs),
+    );
   for (const it of opts.items) {
     if (it.type === "unread") {
       rows.push({ type: "unread", key: it.key });
@@ -91,7 +103,12 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       continue;
     }
     if (it.type === "approval" || it.type === "join_request") {
-      rows.push({ type: "approval", key: it.key, entry: e, answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null });
+      rows.push({
+        type: "approval",
+        key: it.key,
+        entry: e,
+        answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null,
+      });
       lastWasMessage = false;
       lastAuthor = "";
       continue;
@@ -107,7 +124,15 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
     const calls = toolsAfter.get(e.seq);
     if (calls) rows.push({ type: "tools", key: `tools${e.seq}`, calls });
   }
-  for (const l of opts.live) rows.push({ type: "live", key: `live-${l.agent}`, agent: opts.agentName(l.agent.replace(/^@/, "")), stage: l.stage, text: l.text ?? "", children: l.children ?? [] });
+  for (const l of opts.live)
+    rows.push({
+      type: "live",
+      key: `live-${l.agent}`,
+      agent: opts.agentName(l.agent.replace(/^@/, "")),
+      stage: l.stage,
+      text: l.text ?? "",
+      children: l.children ?? [],
+    });
   // Messages the machine has not taken yet (waiting, sending or failed) close the thread, as the person's own words; an answer to an
   // approval shows on its card instead.
   for (const p of opts.pending) if (p.kind === "post") rows.push({ type: "pending", key: `pending-${p.id}`, row: p });

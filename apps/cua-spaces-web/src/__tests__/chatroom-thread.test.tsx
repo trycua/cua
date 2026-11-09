@@ -87,8 +87,21 @@ describe("streaming snapshots", () => {
     const { BridgeProvider } = await import("@/bridge");
     const { useSpaceThread, LIVE_COALESCE_MS } = await import("@/bridge/thread");
     const { noCore } = await import("@/bridge/__tests__/testCore");
-    const snapshot = (stage: string, text?: string) => ({ key: `ada=${stage}#${text?.length ?? 0}`, agents: [{ agent: "ada", stage, ...(text ? { text } : {}) }] });
-    const page = (live: ReturnType<typeof snapshot>) => ({ entries: [], cursor: 1, caughtUp: true, unread: 0, readSeq: 1, me: "me", hasMoreBefore: false, role: null, live });
+    const snapshot = (stage: string, text?: string) => ({
+      key: `ada=${stage}#${text?.length ?? 0}`,
+      agents: [{ agent: "ada", stage, ...(text ? { text } : {}) }],
+    });
+    const page = (live: ReturnType<typeof snapshot>) => ({
+      entries: [],
+      cursor: 1,
+      caughtUp: true,
+      unread: 0,
+      readSeq: 1,
+      me: "me",
+      hasMoreBefore: false,
+      role: null,
+      live,
+    });
     // The follow answers at once, three snapshots of one stage (what is said grows), then waits.
     const script = [page(snapshot("replying", "Hel")), page(snapshot("replying", "Hello")), page(snapshot("replying", "Hello wor"))];
     let follows = 0;

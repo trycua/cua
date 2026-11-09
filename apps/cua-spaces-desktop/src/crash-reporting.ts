@@ -58,9 +58,19 @@ type Env = Readonly<Record<string, string | undefined>>;
 /** `0/false/no/off/disable(d)` is false, `1/true/yes/on/enable(d)` true (config.rs `parse_bool`). */
 export function parseBool(value: string): boolean | null {
   switch (value.trim().toLowerCase()) {
-    case "0": case "false": case "no": case "off": case "disable": case "disabled":
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+    case "disable":
+    case "disabled":
       return false;
-    case "1": case "true": case "yes": case "on": case "enable": case "enabled":
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+    case "enable":
+    case "enabled":
       return true;
     default:
       return null;
@@ -97,8 +107,21 @@ export function configTelemetryEnabled(toml: string): boolean | null {
 }
 
 const CI_VARIABLES = [
-  "CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "CIRCLECI", "BUILDKITE", "TF_BUILD",
-  "TEAMCITY_VERSION", "TRAVIS", "APPVEYOR", "BITBUCKET_BUILD_NUMBER", "CODEBUILD_BUILD_ID", "DRONE", "HUDSON_URL",
+  "CI",
+  "CONTINUOUS_INTEGRATION",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "JENKINS_URL",
+  "CIRCLECI",
+  "BUILDKITE",
+  "TF_BUILD",
+  "TEAMCITY_VERSION",
+  "TRAVIS",
+  "APPVEYOR",
+  "BITBUCKET_BUILD_NUMBER",
+  "CODEBUILD_BUILD_ID",
+  "DRONE",
+  "HUDSON_URL",
 ];
 
 /** What the consent check reads from the machine. */

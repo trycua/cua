@@ -424,7 +424,7 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
     # The reuse subset names `rust (ubuntu-latest)`: a plain job with that name
     # reports the result of the sharded Linux jobs.
     assert wf["jobs"]["rust-linux-result"]["name"] == "rust (ubuntu-latest)"
-    assert wf["jobs"]["rust-linux-result"]["needs"] == ["reuse", "rust-linux"]
+    assert wf["jobs"]["rust-linux-result"]["needs"] == ["quick", "reuse", "rust-linux"]
     assert wf["jobs"]["rust-linux"]["strategy"]["matrix"]["shard"] == [1, 2, 3]
     assert "--partition hash:${{ matrix.shard }}/3" in str(wf["jobs"]["rust-linux"]["steps"])
     # Both run exactly when the old Linux leg did: never when the subset is reused on a full run.
@@ -439,7 +439,7 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
 def test_cua_sdk_rust_tests_are_built_once_and_run_from_the_archive():
     wf = load("ci-cua-sdk.yml")
     build, shards = wf["jobs"]["rust-linux-build"], wf["jobs"]["rust-linux"]
-    assert build["needs"] == "reuse" and shards["needs"] == ["reuse", "rust-linux-build"]
+    assert build["needs"] == ["quick", "reuse"] and shards["needs"] == ["quick", "reuse", "rust-linux-build"]
     # Same conditions: the build runs exactly when the shards do.
     assert build["if"] == shards["if"]
     build_text, shard_text = str(build["steps"]), str(shards["steps"])

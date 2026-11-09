@@ -13,7 +13,10 @@ interface Fixture {
   error?: string;
 }
 
-const canon = (v: unknown): string => JSON.stringify(v, (_, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
+const canon = (v: unknown): string =>
+  JSON.stringify(v, (_, x) =>
+    x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x,
+  );
 
 export const FIXTURES: Fixture[] = JSON.parse(readFileSync(join(__dirname, "../../core/fixtures/results.json"), "utf8"));
 
@@ -27,7 +30,8 @@ export function installFixtureCore(): void {
         appendFileSync(join(__dirname, "../../core/fixtures/pending.ndjson"), `${JSON.stringify({ method, args: JSON.parse(args) })}\n`);
         return "null";
       }
-      if (!table.has(key)) throw new Error(`no fixture for ${method} ${args}: add it to core/fixtures/calls.json and run UPDATE_FIXTURES=1 cargo test --test fixtures in core/`);
+      if (!table.has(key))
+        throw new Error(`no fixture for ${method} ${args}: add it to core/fixtures/calls.json and run UPDATE_FIXTURES=1 cargo test --test fixtures in core/`);
       const f = table.get(key)!;
       if (f.error) throw new Error(f.error);
       return JSON.stringify(f.result);

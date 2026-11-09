@@ -34,21 +34,126 @@ describe("usage events", () => {
         { type: "step", step: "app_launched", ok: true, email: "ada@example.com" },
         { type: "feature", feature: "/Users/ada" },
         { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: -1, gpu: false },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false },
-        { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "need 52 GB" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 2, errorSubclass: "none" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "error", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 0, errorSubclass: "/Users/ada" },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "vm",
+          outcome: "ok",
+          failedPhase: "none",
+          stalled: false,
+          elapsedMs: -1,
+          gpu: false,
+        },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "vm",
+          outcome: "ready",
+          failedPhase: "none",
+          stalled: false,
+          elapsedMs: 10,
+          gpu: false,
+        },
+        {
+          type: "space-create",
+          location: "yours",
+          guestOs: "windows",
+          kind: "vm",
+          outcome: "error",
+          failedPhase: "booting",
+          stalled: false,
+          elapsedMs: 10,
+          gpu: false,
+          errorVariant: "InsufficientDisk",
+        },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "vm",
+          outcome: "error",
+          failedPhase: "booting",
+          stalled: false,
+          elapsedMs: 10,
+          gpu: false,
+          errorVariant: "need 52 GB",
+        },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "vm",
+          outcome: "ok",
+          failedPhase: "none",
+          stalled: false,
+          elapsedMs: 10,
+          gpu: false,
+          errorVariant: "",
+          retryAttempt: 1,
+          errorSubclass: "runtime_start",
+        },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "vm",
+          outcome: "ok",
+          failedPhase: "none",
+          stalled: false,
+          elapsedMs: 10,
+          gpu: false,
+          errorVariant: "",
+          retryAttempt: 2,
+          errorSubclass: "none",
+        },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "vm",
+          outcome: "error",
+          failedPhase: "none",
+          stalled: false,
+          elapsedMs: 10,
+          gpu: false,
+          errorVariant: "",
+          retryAttempt: 0,
+          errorSubclass: "/Users/ada",
+        },
         { type: "made-up", word: "x" },
         "step",
       ]),
     ).toEqual([
       { type: "step", step: "app_launched", ok: true },
       { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
-      { type: "space-create", location: "yours", guestOs: "windows", kind: "vm", outcome: "error", failedPhase: "booting", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "InsufficientDisk" },
-      { type: "space-create", location: "local", guestOs: "linux", kind: "vm", outcome: "ok", failedPhase: "none", stalled: false, elapsedMs: 10, gpu: false, errorVariant: "", retryAttempt: 1, errorSubclass: "runtime_start" },
+      {
+        type: "space-create",
+        location: "yours",
+        guestOs: "windows",
+        kind: "vm",
+        outcome: "error",
+        failedPhase: "booting",
+        stalled: false,
+        elapsedMs: 10,
+        gpu: false,
+        errorVariant: "InsufficientDisk",
+      },
+      {
+        type: "space-create",
+        location: "local",
+        guestOs: "linux",
+        kind: "vm",
+        outcome: "ok",
+        failedPhase: "none",
+        stalled: false,
+        elapsedMs: 10,
+        gpu: false,
+        errorVariant: "",
+        retryAttempt: 1,
+        errorSubclass: "runtime_start",
+      },
     ]);
   });
 
@@ -173,8 +278,21 @@ describe("this device's access to its machines", () => {
 
 describe("this machine on the relay (CUA-1527)", () => {
   const HOST = "09c8b17b5a55f89bc1e376eaeabf111f";
-  const wkSpace = (id: string, name: string, host?: string) => ({ space: { id, name, provider: "relay", status: "running", os: "linux", host, hostName: host ? "lg-x11" : undefined } });
-  const status = { configured: true, mode: "relay", machineId: HOST, name: "lg-x11", sharing: true, serviceInstalled: true, serviceRunning: true, serviceKind: "systemd", clients: [], permissions: [] };
+  const wkSpace = (id: string, name: string, host?: string) => ({
+    space: { id, name, provider: "relay", status: "running", os: "linux", host, hostName: host ? "lg-x11" : undefined },
+  });
+  const status = {
+    configured: true,
+    mode: "relay",
+    machineId: HOST,
+    name: "lg-x11",
+    sharing: true,
+    serviceInstalled: true,
+    serviceRunning: true,
+    serviceKind: "systemd",
+    clients: [],
+    permissions: [],
+  };
 
   it("lists the machine that is set up for access once, as This machine, with its Spaces", () => {
     const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
@@ -185,24 +303,45 @@ describe("this machine on the relay (CUA-1527)", () => {
   });
 
   it("puts the Spaces this machine provides on This machine", () => {
-    const rows = toMachineRows({ spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST)] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    const rows = toMachineRows(
+      { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST)] } as never,
+      { devices: null, signedIn: true, host: status } as never,
+      "linux",
+    );
     const here = rows.find((r) => r.current)!;
     expect(machineIdOf({ id: "relay:space-16dec1e7810d08b6", provider: "relay", host: HOST }, rows)).toBe(here.id);
   });
 
   it("does not list a Space registered on the relay as a machine", () => {
-    const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
+    const rows = toMachineRows(
+      { spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never,
+      { devices: null, signedIn: true } as never,
+      "linux",
+    );
     expect(rows.map((r) => r.name)).toEqual(["This computer"]);
   });
 
   it("still lists another machine's Spaces under that machine", () => {
-    const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
+    const rows = toMachineRows(
+      { spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never,
+      { devices: null, signedIn: true, host: status } as never,
+      "linux",
+    );
     expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
   });
 });
 
 describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (wasm core)", () => {
-  const row = (over: Partial<SpaceRow>): SpaceRow => ({ id: "relay:studio", name: "Studio", provider: "relay", os: "macos", spacesdVersion: "0.6.0", features: ["desktop_stream", "host_spaces"], reachable: true, ...over });
+  const row = (over: Partial<SpaceRow>): SpaceRow => ({
+    id: "relay:studio",
+    name: "Studio",
+    provider: "relay",
+    os: "macos",
+    spacesdVersion: "0.6.0",
+    features: ["desktop_stream", "host_spaces"],
+    reachable: true,
+    ...over,
+  });
 
   it("greys out a machine's connection actions while this device is not enrolled, and leaves other Spaces alone", async () => {
     const core = await testCore();
@@ -237,7 +376,12 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (wasm core)
     expect(desktopCover(core, input)).toMatchObject({ kind: "connecting", text: "Connecting\u2026", openStream: true });
     expect(desktopCover(core, { ...input, autoConnect: false })).toMatchObject({ kind: "connect", button: "Connect", openStream: false });
     expect(desktopCover(core, { ...input, stream: "failed" })).toMatchObject({ kind: "status", text: "Could not connect to the desktop", button: "Try again" });
-    expect(desktopCover(core, { ...input, access: NOTICE })).toMatchObject({ kind: "connect", buttonDisabled: true, action: NOTICE.actionLabel, text: NOTICE.text });
+    expect(desktopCover(core, { ...input, access: NOTICE })).toMatchObject({
+      kind: "connect",
+      buttonDisabled: true,
+      action: NOTICE.actionLabel,
+      text: NOTICE.text,
+    });
   });
 });
 
@@ -270,7 +414,9 @@ describe("a Space's drop well", () => {
 describe.skipIf(!wasmBuilt)("a Space's Agents rows (wasm core)", () => {
   it("are the agent, what it was asked, and its status word", async () => {
     const core = await testCore();
-    const [row] = agentRunLines(core, [{ runId: "r1", agent: "claude-code", status: "idle", reason: "waiting", summary: "Fix the tests", createdAt: null, phase: "", turn: 1 }]);
+    const [row] = agentRunLines(core, [
+      { runId: "r1", agent: "claude-code", status: "idle", reason: "waiting", summary: "Fix the tests", createdAt: null, phase: "", turn: 1 },
+    ]);
     expect(row).toMatchObject({ runId: "r1", status: "Idle", reason: "waiting" });
     expect(row!.line).toMatch(/^Claude Code · /);
   });
@@ -278,20 +424,62 @@ describe.skipIf(!wasmBuilt)("a Space's Agents rows (wasm core)", () => {
 
 describe("the Machines page's rows from the host (machines.pageRows)", () => {
   it("lists the host's core rows as they are: devices of their own, a machine that stopped sharing", () => {
-    const rows = toMachineRows(
-      { spaces: [{ space: { id: "relay:b695", detail: "Not reachable" } }] } as never,
-      {
-        devices: { rows: [{ id: "dev_l1", name: "Laptop", platform: "macOS", current: false, detail: "macOS · Enrolled" }] },
-        signedIn: true,
-        thisMachine: { status: "local", statusText: "Sharing", detail: "Sharing · Relay" },
-        deviceStates: { dev_l1: "enrolled" },
-        rows: [
-          { id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: "dev_me", deviceOnly: false, spaceId: "this-mac", stoppedSharing: false, lastSeen: 1799999990, status: "Online", spaces: 1, spacesLabel: "1 Space" },
-          { id: "b695", name: "studio-2.local", online: true, os: "macos", via: "relay", current: false, device: "dev_s", deviceOnly: false, spaceId: "relay:b695", stoppedSharing: true, lastSeen: null, status: "Not sharing", spaces: 0, spacesLabel: "No Spaces" },
-          { id: "dev_l1", name: "Laptop", online: false, os: "macos", via: "relay", current: false, device: "dev_l1", deviceOnly: true, spaceId: null, stoppedSharing: false, lastSeen: 1797000000, status: "Offline", spaces: 0, spacesLabel: "" },
-        ],
-      },
-    );
+    const rows = toMachineRows({ spaces: [{ space: { id: "relay:b695", detail: "Not reachable" } }] } as never, {
+      devices: { rows: [{ id: "dev_l1", name: "Laptop", platform: "macOS", current: false, detail: "macOS · Enrolled" }] },
+      signedIn: true,
+      thisMachine: { status: "local", statusText: "Sharing", detail: "Sharing · Relay" },
+      deviceStates: { dev_l1: "enrolled" },
+      rows: [
+        {
+          id: "this-mac",
+          name: "This Mac",
+          online: true,
+          os: "macos",
+          via: "local",
+          current: true,
+          device: "dev_me",
+          deviceOnly: false,
+          spaceId: "this-mac",
+          stoppedSharing: false,
+          lastSeen: 1799999990,
+          status: "Online",
+          spaces: 1,
+          spacesLabel: "1 Space",
+        },
+        {
+          id: "b695",
+          name: "studio-2.local",
+          online: true,
+          os: "macos",
+          via: "relay",
+          current: false,
+          device: "dev_s",
+          deviceOnly: false,
+          spaceId: "relay:b695",
+          stoppedSharing: true,
+          lastSeen: null,
+          status: "Not sharing",
+          spaces: 0,
+          spacesLabel: "No Spaces",
+        },
+        {
+          id: "dev_l1",
+          name: "Laptop",
+          online: false,
+          os: "macos",
+          via: "relay",
+          current: false,
+          device: "dev_l1",
+          deviceOnly: true,
+          spaceId: null,
+          stoppedSharing: false,
+          lastSeen: 1797000000,
+          status: "Offline",
+          spaces: 0,
+          spacesLabel: "",
+        },
+      ],
+    });
     expect(rows.map((r) => [r.id, r.name, r.online, Boolean(r.device), r.detail])).toEqual([
       ["this-mac", "This Mac", true, false, "Sharing · Relay"],
       ["b695", "studio-2.local", true, false, "Not reachable"],
@@ -314,9 +502,18 @@ describe("the Machines page's rows from the host (machines.pageRows)", () => {
 
 describe("the Machines rows listed here for an older host (machinesView)", () => {
   const desktop = (id: string, over: object = {}) =>
-    ({ id: `relay:${id}`, name: id, os: "macos", status: "running", provider: "relay", sdk: { features: ["desktop_stream"], reachable: true }, ...over }) as never;
+    ({
+      id: `relay:${id}`,
+      name: id,
+      os: "macos",
+      status: "running",
+      provider: "relay",
+      sdk: { features: ["desktop_stream"], reachable: true },
+      ...over,
+    }) as never;
   const hosted = (id: string, n: number) => ({ id: `relay:${id}/space-${n}`, name: `s${n}`, status: "running", provider: "relay", host: id }) as never;
-  const machine = (id: string, over: object = {}) => ({ id, name: id, os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over }) as never;
+  const machine = (id: string, over: object = {}) =>
+    ({ id, name: id, os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over }) as never;
 
   /** The rows the core is asked to draw. */
   function rowsFor(machines: never[], spaces: never[]) {
@@ -335,7 +532,14 @@ describe("the Machines rows listed here for an older host (machinesView)", () =>
   it("says a shared desktop, a desktop with Spaces, Spaces only, and a machine that stopped sharing", () => {
     const labels = rowsFor(
       [machine("solo"), machine("both"), machine("box"), machine("stopped", { notSharing: "stopped sharing" })],
-      [desktop("solo"), desktop("both"), hosted("both", 1), hosted("box", 1), hosted("box", 2), desktop("stopped", { sdk: { features: [], reachable: false, error: "stopped sharing" } })],
+      [
+        desktop("solo"),
+        desktop("both"),
+        hosted("both", 1),
+        hosted("box", 1),
+        hosted("box", 2),
+        desktop("stopped", { sdk: { features: [], reachable: false, error: "stopped sharing" } }),
+      ],
     );
     expect(labels).toEqual({ solo: "Desktop shared", both: "Desktop and 1 Space", box: "2 Spaces", stopped: "No Spaces" });
   });

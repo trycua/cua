@@ -41,14 +41,28 @@ export function FailureNote({
   return (
     <div data-failure={failure.class} className="mt-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        {needsConnect ? <ConnectActions harness={harness} provider={failure.provider} taskText={taskText} onRetry={onRetry} /> : <RetryButton taskText={taskText} onRetry={failure.retryable ? onRetry : undefined} enabled />}
+        {needsConnect ? (
+          <ConnectActions harness={harness} provider={failure.provider} taskText={taskText} onRetry={onRetry} />
+        ) : (
+          <RetryButton taskText={taskText} onRetry={failure.retryable ? onRetry : undefined} enabled />
+        )}
         <FailureDetails message={failure.message} />
       </div>
     </div>
   );
 }
 
-function ConnectActions({ harness, provider, taskText, onRetry }: { harness: string; provider: string | null; taskText: string | null; onRetry?: (text: string) => Promise<void> }) {
+function ConnectActions({
+  harness,
+  provider,
+  taskText,
+  onRetry,
+}: {
+  harness: string;
+  provider: string | null;
+  taskText: string | null;
+  onRetry?: (text: string) => Promise<void>;
+}) {
   const c = useConnectors();
   const { core } = useBridge();
   // The agent was refused its credential: Settings reads the saved list again, which says it needs a reconnect.

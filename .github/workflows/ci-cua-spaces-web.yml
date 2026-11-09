@@ -25,6 +25,7 @@ on:
       - ".github/flaky/**"
       - ".github/scripts/flaky/**"
       - ".github/actions/flaky-upload/**"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -53,13 +54,13 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   # The app core wasm is built once here; test and parity download it.
   core-wasm:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: build app core wasm
     runs-on: ubuntu-24.04
     steps:
@@ -88,7 +89,7 @@ jobs:
 
   test:
     needs: [quick, core-wasm]
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: typecheck, tests, bridge contract, build
     runs-on: ubuntu-24.04
     env:
@@ -151,8 +152,8 @@ jobs:
 
   parity:
     name: parity flows (${{ matrix.host }})
-    needs: [test, core-wasm]
-    if: ${{ !failure() && !cancelled() && needs.test.result == 'success' && needs.core-wasm.result == 'success' }}
+    needs: [quick, test, core-wasm]
+    if: ${{ !failure() && !cancelled() && needs.test.result == 'success' && needs.core-wasm.result == 'success' && needs.quick.outputs.skip != 'true' }}
     env:
       CORE_WASM_PREBUILT: "1"
     strategy:

@@ -24,7 +24,15 @@ import { chatsPollMs, forEachLimit, jittered, MissCache } from "../lib/poll-plan
 import { useBridge, useSpaces } from "./hooks";
 import type { Space } from "./contracts/spaces";
 import { foldThread, readSeqFrom, type ThreadItem } from "./thread";
-import { isMissingThreadTool, THREAD_FOLLOW_MAX_MS, type AgentMember, type MemberIdentity, type NeedsYou, type ThreadEntry, type ThreadRole } from "./ops/thread";
+import {
+  isMissingThreadTool,
+  THREAD_FOLLOW_MAX_MS,
+  type AgentMember,
+  type MemberIdentity,
+  type NeedsYou,
+  type ThreadEntry,
+  type ThreadRole,
+} from "./ops/thread";
 
 /** One agent's membership in one Space. */
 export interface AgentChatSpace {
@@ -103,7 +111,11 @@ export function chatKey(spaceId: string, m: AgentMember): string {
  * rows, their order and every word; this only hangs each Space's member
  * records back on the rows. The Agents page and Home both use it.
  */
-export function mergeChats(core: CoreClient, perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[], attempts: readonly ChatAttempt[] = []): AgentChat[] {
+export function mergeChats(
+  core: CoreClient,
+  perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[],
+  attempts: readonly ChatAttempt[] = [],
+): AgentChat[] {
   const input = {
     spaces: perSpace.map(({ space, members }) => ({
       spaceId: space.id,
@@ -127,15 +139,18 @@ export function mergeChats(core: CoreClient, perSpace: readonly { space: Space; 
   if (!view) return [];
 
   return view.rows.map((r) => {
-    const spaces: AgentChatSpace[] = r.kind === "agent"
-      ? r.places.flatMap((pl) => {
-          // A Space may come in more than one part: the one that has this member.
-          const p = perSpace.find((x) => x.space.id === pl.spaceId && x.members.some((m) => m.name === pl.handle));
-          const member = p?.members.find((m) => m.name === pl.handle);
-          return p && member ? [{ spaceId: p.space.id, spaceName: p.space.name, os: p.space.os, handle: pl.handle, member, role: p.role }] : [];
-        })
-      : [];
-    const needsYou: ChatNeed[] = spaces.flatMap((sp) => (sp.member.needsYou ?? []).map((n) => ({ ...n, spaceId: sp.spaceId, spaceName: sp.spaceName }))).sort((a, b) => b.tsMs - a.tsMs);
+    const spaces: AgentChatSpace[] =
+      r.kind === "agent"
+        ? r.places.flatMap((pl) => {
+            // A Space may come in more than one part: the one that has this member.
+            const p = perSpace.find((x) => x.space.id === pl.spaceId && x.members.some((m) => m.name === pl.handle));
+            const member = p?.members.find((m) => m.name === pl.handle);
+            return p && member ? [{ spaceId: p.space.id, spaceName: p.space.name, os: p.space.os, handle: pl.handle, member, role: p.role }] : [];
+          })
+        : [];
+    const needsYou: ChatNeed[] = spaces
+      .flatMap((sp) => (sp.member.needsYou ?? []).map((n) => ({ ...n, spaceId: sp.spaceId, spaceName: sp.spaceName })))
+      .sort((a, b) => b.tsMs - a.tsMs);
     return {
       key: r.key,
       label: r.label,
@@ -271,7 +286,10 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
     const readOne = async (space: Space) => {
       inflight.current.add(space.id);
       try {
-        const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
+        const [{ members }, page] = await Promise.all([
+          data.call("thread.members", { spaceId: space.id, overview: true }),
+          data.call("thread.read", { spaceId: space.id, limit: 1 }),
+        ]);
         reads.current!.set(space.id, { role: page.role, members, me: page.me });
       } catch (e) {
         // No thread there (an old daemon): not in the list, and not asked again for a while.
@@ -435,7 +453,13 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
         let backoff = 1_000;
         while (alive) {
           try {
-            const page = await data.call("thread.read", { spaceId: t.spaceId, with: t.handle, after: cursor, followMs: THREAD_FOLLOW_MAX_MS, markRead: visible() });
+            const page = await data.call("thread.read", {
+              spaceId: t.spaceId,
+              with: t.handle,
+              after: cursor,
+              followMs: THREAD_FOLLOW_MAX_MS,
+              markRead: visible(),
+            });
             if (!alive) return;
             cursor = Math.max(cursor, page.cursor);
             merge(t.spaceId, page.entries);

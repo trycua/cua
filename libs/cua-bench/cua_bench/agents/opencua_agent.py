@@ -1,9 +1,8 @@
 import asyncio
-import base64
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict
 
 from . import register_agent
 from .base import AgentResult, BaseAgent, FailureMode
@@ -52,87 +51,6 @@ class OpenCUAAgent(BaseAgent):
     @staticmethod
     def name() -> str:
         return "opencua"
-
-    def _create_custom_computer(self, session: "DesktopSession") -> Dict[str, Any]:
-        """Build a computer-handler dict from a DesktopSession."""
-        from ..types import (
-            ClickAction,
-            DoubleClickAction,
-            DragAction,
-            HotkeyAction,
-            KeyAction,
-            MiddleClickAction,
-            MoveToAction,
-            RightClickAction,
-            ScrollAction,
-            TypeAction,
-            WaitAction,
-        )
-
-        async def screenshot():
-            raw = await session.screenshot()
-            return base64.b64encode(raw).decode("utf-8")
-
-        async def click(x: int, y: int, button: str = "left"):
-            if button == "left":
-                action = ClickAction(x=x, y=y)
-            elif button == "right":
-                action = RightClickAction(x=x, y=y)
-            elif button == "middle":
-                action = MiddleClickAction(x=x, y=y)
-            else:
-                raise ValueError(f"Unknown button type: {button}")
-            await session.execute_action(action)
-
-        async def double_click(x: int, y: int):
-            await session.execute_action(DoubleClickAction(x=x, y=y))
-
-        async def type_text(text: str):
-            await session.execute_action(TypeAction(text=text))
-
-        async def keypress(keys):
-            if isinstance(keys, str):
-                await session.execute_action(KeyAction(key=keys))
-            else:
-                await session.execute_action(HotkeyAction(keys=list(keys)))
-
-        async def move(x: int, y: int):
-            await session.execute_action(MoveToAction(x=x, y=y))
-
-        async def scroll(x: int, y: int, scroll_x: int, scroll_y: int):
-            direction = "up" if scroll_y < 0 else "down"
-            await session.execute_action(ScrollAction(direction=direction, amount=abs(scroll_y)))
-
-        async def drag(path: List[Dict[str, int]]):
-            if len(path) < 2:
-                raise ValueError("Path must have at least 2 points")
-            start, end = path[0], path[-1]
-            await session.execute_action(
-                DragAction(from_x=start["x"], from_y=start["y"], to_x=end["x"], to_y=end["y"])
-            )
-
-        async def wait(ms: int = 1000):
-            await session.execute_action(WaitAction(seconds=ms / 1000.0))
-
-        async def get_dimensions():
-            return (1280, 800)
-
-        async def get_environment():
-            return "linux"
-
-        return {
-            "screenshot": screenshot,
-            "dimensions": get_dimensions,
-            "environment": get_environment,
-            "click": click,
-            "double_click": double_click,
-            "type": type_text,
-            "keypress": keypress,
-            "move": move,
-            "scroll": scroll,
-            "drag": drag,
-            "wait": wait,
-        }
 
     async def perform_task(
         self,

@@ -190,15 +190,14 @@ fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, 
 }
 
 /// One session's XI2 master pair (XIAddMaster always creates a pointer AND a
-/// keyboard) plus the uinput slaves attached to it. The keyboard slave is
-/// created lazily by `mpx_keyboard::ensure_master_keyboard`, so a pointer-only
-/// click never pays for a second device hotplug.
+/// keyboard) plus its uinput pointer slave. The keyboard slave is plugged in
+/// lazily and owned by `mpx_keyboard`, so a pointer-only click never pays
+/// for a second device hotplug.
 #[derive(Clone, Copy, Debug)]
 struct MasterPointerIds {
     pointer_id: i32,
     keyboard_id: i32,
     _slave_pointer_id: i32,
-    slave_keyboard_id: Option<i32>,
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
@@ -819,7 +818,6 @@ fn ensure_master_pointer_for_session(
         pointer_id,
         keyboard_id,
         _slave_pointer_id: slave_pointer_id,
-        slave_keyboard_id: None,
     };
     mpx_pointers()
         .lock()
@@ -912,7 +910,7 @@ fn remove_master_pair(cursor_id: &str) {
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
     uinput_pointers().lock().unwrap().remove(cursor_id);
-    mpx_keyboard::forget_uinput_keyboard(cursor_id);
+    mpx_keyboard::unplug_keyboard(cursor_id);
     let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
         return;
     };
@@ -3807,7 +3805,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             pause_unless_zero(pacing.hold());
             conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
             conn.flush()?;
-            client.borrow_mut().mark_sent(keycode);
+            client.borrow_mut().borrowed.mark_sent(keycode);
             pause_unless_zero(pacing.gap());
             sent.set(sent.get() + 1);
             if pacing.batch_boundary(sent.get()) {
@@ -3871,7 +3869,7 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
                 conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
             conn.flush()?;
-            client.borrow_mut().mark_sent(keycode);
+            client.borrow_mut().borrowed.mark_sent(keycode);
             delivered.confirmed();
             pause_unless_zero(pacing.gap());
             sent.set(sent.get() + 1);
@@ -4653,7 +4651,7 @@ mod spare_keycode_restore_tests {
                     conn.xtest_fake_input(kind, keycode, 0, x11rb::NONE, 0, 0, 0)?;
                 }
                 conn.flush()?;
-                client.borrow_mut().mark_sent(keycode);
+                client.borrow_mut().borrowed.mark_sent(keycode);
                 pause_unless_zero(pacing.hold() + pacing.gap());
                 Ok(())
             },
@@ -5103,12 +5101,62 @@ impl Drop for RemappedKeycode<'_> {
     }
 }
 
+/// The spare keycodes one text has borrowed and when it last sent a key on
+/// one. They stay bound until [`SPARE_KEYCODE_IDLE`] after that key:
+/// `restore` waits out the rest of it, and so does dropping this.
+pub(crate) struct BorrowedKeycodes<'a> {
+    guards: Vec<RemappedKeycode<'a>>,
+    last_key: Option<Instant>,
+}
+
+impl<'a> BorrowedKeycodes<'a> {
+    fn new(guards: Vec<RemappedKeycode<'a>>) -> Self {
+        Self {
+            guards,
+            last_key: None,
+        }
+    }
+
+    fn push(&mut self, guard: RemappedKeycode<'a>) {
+        self.guards.push(guard);
+    }
+
+    fn contains(&self, keycode: u8) -> bool {
+        self.guards.iter().any(|guard| guard.keycode == keycode)
+    }
+
+    /// A key on `keycode` was just sent.
+    fn mark_sent(&mut self, keycode: u8) {
+        if self.contains(keycode) {
+            self.last_key = Some(Instant::now());
+        }
+    }
+
+    fn idle_left(&self) -> Duration {
+        self.last_key.map_or(Duration::ZERO, |at| {
+            SPARE_KEYCODE_IDLE.saturating_sub(at.elapsed())
+        })
+    }
+
+    fn restore(&mut self) {
+        sleep(self.idle_left());
+        self.guards.clear();
+        self.last_key = None;
+    }
+}
+
+impl Drop for BorrowedKeycodes<'_> {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
 /// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.
 /// completely unused — so borrowing it cannot clobber a real key. Keycode 8 is
 /// evdev KEY_RESERVED, which a virtual keyboard cannot send, and the virtual
 /// keyboard's warm-up taps its own keycode, so neither is ever borrowed.
 fn is_spare_keycode(keycode: usize, keysyms: &[u32]) -> bool {
-    let warm_up = usize::from(mpx_keyboard::WARM_UP_EVDEV_CODE) + 8;
+    let warm_up = usize::from(mpx_keyboard::WARM_UP_X_KEYCODE);
     keycode > 8 && keycode != warm_up && keysyms.iter().all(|&s| s == 0)
 }
 
@@ -5211,10 +5259,9 @@ enum ClientSync {
 struct TextClient<'a> {
     conn: &'a RustConnection,
     target: Option<Window>,
-    borrowed: Vec<RemappedKeycode<'a>>,
+    borrowed: BorrowedKeycodes<'a>,
     sent: Vec<Window>,
     unanswered: Vec<Window>,
-    last_borrowed_key: Instant,
 }
 
 impl<'a> TextClient<'a> {
@@ -5222,10 +5269,9 @@ impl<'a> TextClient<'a> {
         Self {
             conn,
             target,
-            borrowed: Vec::new(),
+            borrowed: BorrowedKeycodes::new(Vec::new()),
             sent: Vec::new(),
             unanswered: Vec::new(),
-            last_borrowed_key: Instant::now(),
         }
     }
 
@@ -5237,7 +5283,7 @@ impl<'a> TextClient<'a> {
     }
 
     fn record_recipient(&mut self, keycode: u8) {
-        if !self.borrows(keycode) {
+        if !self.borrowed.contains(keycode) {
             return;
         }
         if let Some(window) = self.recipient() {
@@ -5247,18 +5293,8 @@ impl<'a> TextClient<'a> {
         }
     }
 
-    fn mark_sent(&mut self, keycode: u8) {
-        if self.borrows(keycode) {
-            self.last_borrowed_key = Instant::now();
-        }
-    }
-
-    fn borrows(&self, keycode: u8) -> bool {
-        self.borrowed.iter().any(|guard| guard.keycode == keycode)
-    }
-
     fn pacing_for(&self, keycode: u8, pacing: TypePacing) -> TypePacing {
-        if self.borrows(keycode) {
+        if self.borrowed.contains(keycode) {
             TypePacing {
                 delay_ms: pacing.delay_ms.max(KEY_DELAY_MS),
             }
@@ -5281,10 +5317,7 @@ impl<'a> TextClient<'a> {
         for &window in &sent {
             self.ping(window);
         }
-        if !sent.is_empty() {
-            sleep(SPARE_KEYCODE_IDLE.saturating_sub(self.last_borrowed_key.elapsed()));
-        }
-        self.borrowed.clear();
+        self.borrowed.restore();
         let unanswered = std::mem::take(&mut self.unanswered);
         !sent.iter().any(|window| unanswered.contains(window))
     }
@@ -5750,7 +5783,6 @@ mod path_tests {
                 pointer_id: 90,
                 keyboard_id: 91,
                 _slave_pointer_id: 92,
-                slave_keyboard_id: None,
             },
         );
         assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-live");
@@ -5764,7 +5796,6 @@ mod path_tests {
                 pointer_id: 93,
                 keyboard_id: 94,
                 _slave_pointer_id: 95,
-                slave_keyboard_id: None,
             },
         );
         assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-next");

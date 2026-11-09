@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
+import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { listView, useBridge, useMachines, useNotchPins, useResources, useSpaces, useSpacesDefault, type CreatingElsewhere, type SpaceOs } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { NewSpaceButton } from "@/components/new-space/new-space-button";
-import { ComputerWarnings } from "@/components/resources/computer-resources";
+import { computerWarnings } from "@/components/resources/computer-resources";
 import { EnrollSheet, useMachinesAccount, usePendingActions } from "@/components/machines/account-parts";
 import { PageTip } from "@/components/tips";
 import { UpsellPrompt } from "@/components/upsell-prompt";
@@ -39,7 +39,7 @@ import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 /** How long a click on a name waits for a second one (a double-click renames) before it opens the row. */
 export const DOUBLE_CLICK_MS = 300;
 
-const COLS = "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)_96px_96px_32px] items-center gap-3";
+const COLS = "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)_96px_32px] items-center gap-3";
 
 /** "Safari check, 1 agent task stops". */
 export function stopsLine(node: Pick<TreeNode, "name" | "running">): string {
@@ -260,10 +260,18 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
     return items;
   };
 
+  // A computer with a low disk says so on its own row (a small mark by its status), not in a banner above the list.
+  const diskMarks = new Map(
+    computerWarnings(resources, machines.data ?? []).map(
+      (w) =>
+        [w.machineId, { level: w.level, title: t(w.level === "critical" ? "computers.row.disk_full" : "computers.row.disk_low", { free: w.free }) }] as const,
+    ),
+  );
   const rowFor = (n: TreeNode, depth: number) => {
     const folded = collapsed.has(n.key);
     const state = n.space ? spaceState(n.space) : null;
     const isEditing = editing?.key === n.key;
+    const warning = n.kind === "computer" && n.machine ? diskMarks.get(n.machine.id) : undefined;
     return (
       <div
         key={n.key}
@@ -337,7 +345,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           {pinnable(n) && !isEditing ? <PinnedMark id={n.space!.id} /> : null}
         </div>
         {isEditing ? (
-          <div role="cell" className="col-span-3 text-right text-[13px] text-muted-foreground">
+          <div role="cell" className="col-span-2 text-right text-[13px] text-muted-foreground">
             {t("computers.page.rename_hint")}
           </div>
         ) : (
@@ -347,6 +355,13 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
               {/* A Space being made says its step ("Downloading macOS (first time only)…") and how far it got, as the
                   sidebar's Making card does. */}
               <span className="truncate">{state === "creating" && n.space?.progress?.label ? n.space.progress.label : n.status}</span>
+              {warning ? (
+                // A low disk is a mark on the computer's own row; its page says the rest.
+                <span title={warning.title} data-tree-disk-warning={warning.level} className="flex shrink-0 text-warning">
+                  <TriangleAlertIcon aria-hidden className="size-3.5" />
+                  <span className="sr-only">{warning.title}</span>
+                </span>
+              ) : null}
               {state === "creating" && n.space ? (
                 <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-foreground/10" aria-hidden>
                   <span
@@ -364,9 +379,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
             </div>
             <div role="cell">
               <PeopleFaces people={n.people} />
-            </div>
-            <div role="cell" className="text-[13px] text-muted-foreground" data-tree-tasks={n.key}>
-              {n.tasks}
             </div>
             <div role="cell" className="flex justify-end">
               <Menu
@@ -405,7 +417,8 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         data-online={String(here.online)}
         className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}
       >
-        <div role="cell" className="flex min-w-0 items-center gap-2.5">
+        <div role="cell" className="flex min-w-0 items-center gap-1.5">
+          <span className="size-5 shrink-0" aria-hidden />
           <TreeIcon node={{ kind: "computer", current: true, os: null }} />
           <Link
             to="/spaces/computer/$computerId"
@@ -420,7 +433,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           <TreeDot tone="offline" />
           <span className="truncate">{t("computers.page.not_set_up")}</span>
         </div>
-        <div role="cell" />
         <div role="cell" />
         <div role="cell" className="flex justify-end">
           <Menu
@@ -461,21 +473,22 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   const offlineRow =
     folded.length > 0 ? (
       <div key="offline" role="row" data-tree-offline-fold="" className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px] text-muted-foreground")}>
-        <div role="cell" className="col-span-5 flex min-w-0 items-center gap-2.5">
-          <button
-            type="button"
-            aria-expanded={showOffline}
-            onClick={() => setShowOffline((v) => !v)}
-            className="flex min-w-0 items-center gap-1.5 text-left outline-none hover:text-foreground focus-visible:underline"
-            data-tree-offline-toggle=""
-          >
-            <span className="flex size-5 shrink-0 items-center justify-center">
-              <ChevronRightIcon className={cn("size-3.5 transition-transform", showOffline && "rotate-90")} />
-            </span>
-            <span className="shrink-0 font-medium text-foreground">{t("computers.page.offline_fold", { count: folded.length })}</span>
-            {showOffline ? null : <span className="min-w-0 truncate">{folded.map((n) => n.name).join(", ")}</span>}
-          </button>
-          <RemoveOldButton />
+        {/* One quiet sentence, level with the names above it (past the caret slot and the icon). */}
+        <div role="cell" className="col-span-4 flex min-w-0 items-center gap-3" style={{ paddingLeft: INDENT_PX }}>
+          <span className="min-w-0 truncate">
+            {t("computers.page.offline_hidden", { count: folded.length })}
+            {"\u00a0"}
+            <button
+              type="button"
+              aria-expanded={showOffline}
+              onClick={() => setShowOffline((v) => !v)}
+              className="cursor-default underline decoration-border underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground"
+              data-tree-offline-toggle=""
+            >
+              {showOffline ? t("computers.page.offline_hide") : t("computers.page.offline_show")}
+            </button>
+          </span>
+          {showOffline ? <RemoveOldButton /> : null}
         </div>
       </div>
     ) : null;
@@ -484,7 +497,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
       <PageHeader title={t("computers.page.title")} description={editing ? t("computers.page.rename_help") : treeSummary(tree)} actions={addButton} />
       <PageTip place="spaces" />
       {waiting}
-      <ComputerWarnings snapshot={resources} machines={machines.data ?? []} />
       <div role="table" aria-label={t("computers.page.table")} data-spaces-tree="">
         <div role="row" className={cn(COLS, "px-4 pb-2 text-[13px] text-muted-foreground")}>
           <div role="columnheader" className="pl-[26px]">
@@ -492,7 +504,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           </div>
           <div role="columnheader">{t("computers.page.col_status")}</div>
           <div role="columnheader">{t("computers.page.col_people")}</div>
-          <div role="columnheader">{t("computers.page.col_tasks")}</div>
           <div role="columnheader" aria-label={t("computers.page.col_actions")} />
         </div>
         <GroupedSection role="rowgroup">
@@ -595,7 +606,6 @@ function ElsewhereRow({ creating: c, nested }: { creating: CreatingElsewhere; ne
           {percent}
         </span>
       </div>
-      <div role="cell" />
       <div role="cell" />
       <div role="cell" />
     </div>

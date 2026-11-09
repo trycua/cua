@@ -71,12 +71,13 @@ describe("buildSpacesTree", () => {
   it("counts computers, Spaces, online rows and running tasks (a computer adds up its Spaces')", () => {
     const t = tree();
     expect([t.computers, t.spaces, t.online]).toEqual([3, 4, 6]);
-    expect(treeSummary(t)).toBe("3 computers and 4 Spaces made on them. 7 in all, 6 online.");
-    expect(t.roots.map((r) => r.tasks)).toEqual(["1 running", "2 running", "1 running"]);
-    expect(t.roots[1]!.children.map((c) => [c.status, c.tasks])).toEqual([
-      ["Online", "1 running"],
-      ["Online", "1 running"],
-      ["Stopped", "None"],
+    expect(t.spacesRunning).toBe(3);
+    expect(treeSummary(t)).toBe("3 computers and 3 Spaces running");
+    expect(t.roots.map((r) => r.running)).toEqual([1, 2, 1]);
+    expect(t.roots[1]!.children.map((c) => [c.status, c.running])).toEqual([
+      ["Online", 1],
+      ["Online", 1],
+      ["Stopped", 0],
     ]);
   });
 
@@ -109,26 +110,24 @@ describe("buildSpacesTree", () => {
     const t = tree({ defaultSpace: "relay:studio", relayOnline: new Map([["relay:studio", false]]) });
     expect(t.roots[1]!.online).toBe(false);
     expect(t.roots[1]!.status).toBe("Offline, seen 20 minutes ago, Default");
-    expect(t.roots[1]!.children.every((c) => c.status === "Waits for Studio Mac mini")).toBe(true);
+    expect(t.roots[1]!.children.every((c) => c.status === "Offline")).toBe(true);
     // Unset: the relay's offline computer isn't the default either.
     expect(tree({ relayOnline: new Map([["relay:studio", false]]) }).defaultKey).toBe("relay:dillon");
     // The relay only ever turns a computer offline here, never online.
     expect(tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], relayOnline: new Map([["relay:studio", true]]) }).roots[1]!.online).toBe(false);
   });
 
-  it("greys out the Spaces of an offline computer: they wait for it and their tasks are paused", () => {
+  it("greys out the Spaces of an offline computer: each just reads Offline, and the page line says nothing about it", () => {
     // Set as the default, it stays marked Default while offline (the fallback line says where tasks go instead).
     const t = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], defaultSpace: "relay:studio" });
     const studio = t.roots[1]!;
     expect(studio.status).toBe("Offline, seen 20 minutes ago, Default");
-    expect(studio.tasks).toBe("Paused");
-    expect(studio.children.map((c) => [c.status, c.tasks, c.dim, c.online])).toEqual([
-      ["Waits for Studio Mac mini", "Paused", true, false],
-      ["Waits for Studio Mac mini", "Paused", true, false],
-      ["Waits for Studio Mac mini", "None", true, false],
+    expect(studio.children.map((c) => [c.status, c.dim, c.online])).toEqual([
+      ["Offline", true, false],
+      ["Offline", true, false],
+      ["Offline", true, false],
     ]);
-    expect(t.offlineParent?.key).toBe("relay:studio");
-    expect(treeSummary(t)).toBe("Studio Mac mini is offline, so the 3 Spaces on it are too. They come back when it does.");
+    expect(treeSummary(t)).not.toMatch(/Studio|offline/i);
   });
 
   it("lists a Space whose computer isn't one of yours as a top row of its own", () => {
@@ -164,8 +163,8 @@ describe("buildSpacesTree", () => {
     expect([empty.computers, empty.spaces]).toEqual([0, 0]);
 
     const single = buildSpacesTree({ spaces: [SPACES[0]!], machines: [THIS_MAC], defaultSpace: null, me: "f@trycua.com", now: NOW });
-    expect(single.roots.map((r) => [r.name, r.status, r.tasks, r.people])).toEqual([["This Mac", "Online, Default", "None", ["f@trycua.com"]]]);
-    expect(treeSummary(single)).toBe("1 computer. New tasks run on This Mac until you add another.");
+    expect(single.roots.map((r) => [r.name, r.status, r.people])).toEqual([["This Mac", "Online, Default", ["f@trycua.com"]]]);
+    expect(treeSummary(single)).toBe("1 computer");
   });
 
   it("leaves devices that are only signed in out of the tree", () => {
@@ -220,18 +219,17 @@ describe("child Spaces in the tree", () => {
     const studio = t.roots[1]!;
     const build = studio.children[1]!;
     expect([build.running, build.children[0]!.running, build.children[0]!.children[0]!.running]).toEqual([4, 3, 2]);
-    expect(studio.tasks).toBe("5 running");
-    expect(build.tasks).toBe("4 running");
+    expect([studio.running, build.running]).toEqual([5, 4]);
   });
 
-  it("waits for the computer, not for the parent, when the parent is stopped", () => {
+  it("reads Offline with its computer, not Stopped with its parent, when the parent is stopped", () => {
     const stoppedParent = SPACES.map((s) => (s.id === BUILD ? { ...s, power: { control: "stop" as const, off: true } } : s));
     const t = withKids({ spaces: [...stoppedParent, KID_A, KID_B, GRAND] });
     const kid = t.roots[1]!.children[1]!.children[0]!;
     expect(kid.status).toBe("Online");
     const off = withKids({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] });
-    expect(off.roots[1]!.children[1]!.children[0]!.status).toBe("Waits for Studio Mac mini");
-    expect(treeSummary(off)).toBe("Studio Mac mini is offline, so the 6 Spaces on it are too. They come back when it does.");
+    expect(off.roots[1]!.children[1]!.children[0]!.status).toBe("Offline");
+    expect(treeSummary(off)).not.toMatch(/Studio|offline/i);
   });
 
   it("leaves a child on its computer when its parent isn't listed, and ignores a loop", () => {

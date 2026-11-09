@@ -535,10 +535,17 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
 }
 
 /// A combo box or list without an editable value: pick the option `value`
-/// names through the element's `Selection`. `None` when it lists no
-/// selectable options (the caller keeps its no-value-route error).
+/// names through the element's `Selection`, else (Chromium's `<select>`, whose
+/// combo box has none) through the option's own `select` action. `None` when
+/// it lists no selectable options (the caller keeps its no-value-route error).
 fn select_option(object_ref: &native::ObjectRef, value: &str) -> Option<Result<()>> {
-    match native::select_option_ref(object_ref, value) {
+    let picked = match native::select_option_ref(object_ref, value) {
+        Ok(native::OptionPick::Unavailable) => {
+            native::select_option_by_action_ref(object_ref, value)
+        }
+        other => other,
+    };
+    match picked {
         Ok(native::OptionPick::Picked { .. }) => Some(Ok(())),
         Ok(native::OptionPick::NoMatch { options }) => Some(Err(no_such_option(value, &options))),
         Ok(native::OptionPick::Unavailable) => None,

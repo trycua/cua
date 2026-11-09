@@ -3415,10 +3415,13 @@ const ACTIVATION_VERBS: &[&str] = &[
     "dodefault",
 ];
 
-/// Checkbox-only verbs exposed by Chromium's AT-SPI bridge. These are not
-/// globally safe activation names: an unrelated widget may advertise a
-/// namespaced action ending in `check`, so the role gate is mandatory.
-const CHECKBOX_ACTIVATION_VERBS: &[&str] = &["check", "uncheck"];
+/// Chromium names a control's default action (what a click does) after its
+/// effect: `check` / `uncheck` on a check box or radio button, `select` on a
+/// list or menu option. These are not globally safe activation names: an
+/// unrelated widget may advertise a namespaced action ending in `check` or
+/// `select`, so each verb is gated to the roles Chromium gives it.
+const CHECKABLE_ACTIVATION_VERBS: &[&str] = &["check", "uncheck"];
+const OPTION_ACTIVATION_VERBS: &[&str] = &["select"];
 
 fn normalized_action_verb(name: &str) -> String {
     name.rsplit('.')
@@ -3441,21 +3444,32 @@ fn is_activation_action(name: &str) -> bool {
     ACTIVATION_VERBS.contains(&verb.as_str())
 }
 
-fn is_checkbox_role(role: &str) -> bool {
+fn is_checkable_role(role: &str) -> bool {
     matches!(
         role.trim().to_ascii_lowercase().as_str(),
-        "check box" | "checkbox"
+        "check box" | "checkbox" | "radio button"
     )
+}
+
+/// The role-gated verbs Chromium uses for this role's default action.
+fn role_activation_verbs(role: &str) -> &'static [&'static str] {
+    if is_checkable_role(role) {
+        CHECKABLE_ACTIVATION_VERBS
+    } else if is_option_role(role) {
+        OPTION_ACTIVATION_VERBS
+    } else {
+        &[]
+    }
 }
 
 /// Index of the action to actuate, or `None` when the element advertises no
 /// activation. `None` must not fall back to index 0: firing an arbitrary
 /// action is worse than reporting that there is nothing to fire.
 fn activation_index(role: &str, actions: &[String]) -> Option<usize> {
+    let role_verbs = role_activation_verbs(role);
     actions.iter().position(|action| {
         is_activation_action(action)
-            || (is_checkbox_role(role)
-                && CHECKBOX_ACTIVATION_VERBS.contains(&normalized_action_verb(action).as_str()))
+            || role_verbs.contains(&normalized_action_verb(action).as_str())
     })
 }
 
@@ -4664,6 +4678,59 @@ where
     Ok(())
 }
 
+/// The `ActionProxy` and index of the action that scrolls `proxies`' element
+/// in `direction`, if it has one.
+async fn directional_scroll_action<'a>(
+    proxies: &atspi::proxy::proxy_ext::Proxies<'a>,
+    direction: &str,
+) -> Option<(atspi::proxy::action::ActionProxy<'a>, i32)> {
+    let wanted = match direction {
+        "up" => ["scrollup", "scrollbackward"],
+        "left" => ["scrollleft", "scrollbackward"],
+        "right" => ["scrollright", "scrollforward"],
+        _ => ["scrolldown", "scrollforward"],
+    };
+    let action = proxies.action().await.ok()?;
+    let count = call(action.n_actions())
+        .await
+        .and_then(|result| result.ok())
+        .unwrap_or(0);
+    for action_index in 0..count {
+        if let Some(Ok(name)) = call(action.get_name(action_index)).await {
+            let normalized: String = name
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .flat_map(|ch| ch.to_lowercase())
+                .collect();
+            if wanted.iter().any(|candidate| *candidate == normalized) {
+                return Some((action, action_index));
+            }
+        }
+    }
+    None
+}
+
+/// Pre-order indices of `target`'s ancestors, nearest first, from the walk's
+/// depths: each is the closest earlier node one level shallower than the last.
+fn ancestor_indices(depths: impl Iterator<Item = usize>, target: usize) -> Vec<usize> {
+    let depths: Vec<usize> = depths.take(target + 1).collect();
+    let Some(&target_depth) = depths.get(target) else {
+        return Vec::new();
+    };
+    let mut ancestors = Vec::new();
+    let mut depth = target_depth;
+    for index in (0..target).rev() {
+        if depths[index] < depth {
+            ancestors.push(index);
+            depth = depths[index];
+            if depth == 0 {
+                break;
+            }
+        }
+    }
+    ancestors
+}
+
 fn descendant_indices(depths: impl Iterator<Item = usize>, target: usize) -> Vec<usize> {
     let depths: Vec<_> = depths.collect();
     ((target + 1)..depths.len())
@@ -4733,6 +4800,22 @@ impl PageMotion {
 mod page_scroll_tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn ancestors_are_the_shallower_nodes_before_the_target_nearest_first() {
+        // 0 window, 1 document, 2 section, 3 sibling button, 3 target button.
+        assert_eq!(
+            ancestor_indices([0, 1, 2, 3, 3].into_iter(), 4),
+            vec![2, 1, 0]
+        );
+        // A sibling subtree before the target is not an ancestor.
+        assert_eq!(
+            ancestor_indices([0, 1, 2, 3, 1, 2].into_iter(), 5),
+            vec![4, 0]
+        );
+        assert!(ancestor_indices([0, 1].into_iter(), 0).is_empty());
+        assert!(ancestor_indices([0, 1].into_iter(), 9).is_empty());
+    }
 
     #[test]
     fn probes_are_bounded_descendants_in_preorder() {
@@ -4961,52 +5044,44 @@ pub fn scroll_element(
                 )
                 .into(),
             })?;
-            let proxies = target
+            let target_proxies = target
                 .acc
                 .proxies()
                 .await
                 .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
-            let wanted = match direction {
-                "up" => ["scrollup", "scrollbackward"],
-                "left" => ["scrollleft", "scrollbackward"],
-                "right" => ["scrollright", "scrollforward"],
-                _ => ["scrolldown", "scrollforward"],
-            };
-            let mut selected = None;
-            let mut action_proxy = None;
-            if let Ok(action) = proxies.action().await {
-                let count = call(action.n_actions())
-                    .await
-                    .and_then(|result| result.ok())
-                    .unwrap_or(0);
-                for action_index in 0..count {
-                    if let Some(Ok(name)) = call(action.get_name(action_index)).await {
-                        let normalized: String = name
-                            .chars()
-                            .filter(|ch| ch.is_ascii_alphanumeric())
-                            .flat_map(|ch| ch.to_lowercase())
-                            .collect();
-                        if wanted.iter().any(|candidate| *candidate == normalized) {
-                            selected = Some(action_index);
-                            break;
-                        }
+            let target_index = visited
+                .iter()
+                .position(|node| std::ptr::eq(node, target))
+                .expect("target found in this walk");
+            // The element's own directional scroll action, else its Value
+            // (a scroll bar or slider), else the nearest ancestor that scrolls
+            // in that direction: what a wheel turned over the element moves.
+            // Chromium gives a page's controls no scroll actions of their own;
+            // only the document and scrollable regions carry them.
+            let mut host = None;
+            if let Some(found) = directional_scroll_action(&target_proxies, direction).await {
+                host = Some((target_index, target_proxies.clone(), found));
+            } else if !target.has_value {
+                for index in ancestor_indices(visited.iter().map(|node| node.depth), target_index) {
+                    let Some(Ok(proxies)) = call(visited[index].acc.proxies()).await else {
+                        continue;
+                    };
+                    if let Some(found) = directional_scroll_action(&proxies, direction).await {
+                        dlog!("scroll_element: element has no scroll route; scrolling ancestor {index}");
+                        host = Some((index, proxies, found));
+                        break;
                     }
                 }
-                action_proxy = Some(action);
             }
 
-            if let (Some(action), Some(action_index)) = (action_proxy, selected) {
+            if let Some((host_index, proxies, (action, action_index))) = host {
                 let mut observation = None;
                 if by == cua_driver_contract::ScrollBy::Page && amount > 1 {
                     let component = proxies.component().await?;
-                    let target_index = visited
-                        .iter()
-                        .position(|node| std::ptr::eq(node, target))
-                        .unwrap();
                     let mut probes = Vec::new();
                     // Fix probe identities before dispatch; never replace vanished descendants.
                     for index in
-                        descendant_indices(visited.iter().map(|node| node.depth), target_index)
+                        descendant_indices(visited.iter().map(|node| node.depth), host_index)
                     {
                         if !visited[index].has_component {
                             continue;
@@ -5071,7 +5146,7 @@ pub fn scroll_element(
             }
 
             if target.has_value {
-                let value = proxies
+                let value = target_proxies
                     .value()
                     .await
                     .map_err(|e| anyhow!("Value interface unavailable: {e}"))?;
@@ -5109,7 +5184,8 @@ pub fn scroll_element(
             }
 
             Err(anyhow!(
-                "the element exposes neither directional scroll actions nor Value"
+                "neither the element nor any ancestor exposes a directional scroll action, \
+                 and the element has no Value"
             ))
         },
         || Err(anyhow!("scroll_element timed out for pid {pid}")),
@@ -5822,6 +5898,108 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
     )
 }
 
+/// Read-back window for an option's `select` action: Chromium applies it
+/// asynchronously, so the SELECTED state can trail the action's reply.
+const OPTION_SELECTED_READBACK: Duration = Duration::from_millis(1000);
+
+/// Pick the option `value` names on a snapshot-cached combo box that has no
+/// `Selection` of its own (Chromium's `<select>`) through the option's own
+/// role-gated `select` action, the default action Chromium gives a list or
+/// menu option. Unlike a GTK menu item's `click`, it selects the option
+/// while the popup is closed, focus-free. Only that verb is fired here:
+/// another toolkit's option activation is left to the open-popup route.
+/// The pick counts only once the option reports SELECTED.
+pub fn select_option_by_action_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPick> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            live_accessible(conn, object_ref).await?;
+            let options = list_options(conn, &raw_ref(object_ref)).await;
+            if options.is_empty() {
+                return Ok(OptionPick::Unavailable);
+            }
+            let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
+            let Some(found) = match_option(&names, value) else {
+                return Ok(OptionPick::NoMatch { options: names });
+            };
+            let option = &options[found];
+            let acc = match call(accessible_for(conn, &option.oref)).await {
+                Some(Ok(acc)) => acc,
+                _ => return Err(anyhow!("option {:?} is gone", option.name)),
+            };
+            let role = call(acc.get_role_name())
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let Some(Ok(proxies)) = call(acc.proxies()).await else {
+                return Ok(OptionPick::Unavailable);
+            };
+            let Some(Ok(ap)) = call(proxies.action()).await else {
+                return Ok(OptionPick::Unavailable);
+            };
+            let actions = action_names(&ap).await;
+            let Some(chosen) = actions.iter().position(|action| {
+                OPTION_ACTIVATION_VERBS.contains(&normalized_action_verb(action).as_str())
+            }) else {
+                return Ok(OptionPick::Unavailable);
+            };
+            if !is_option_role(&role) {
+                return Ok(OptionPick::Unavailable);
+            }
+            send_pick(
+                "the option's select action",
+                &option.name,
+                ap.do_action(chosen as i32),
+            )
+            .await?;
+            let started = tokio::time::Instant::now();
+            loop {
+                if let Some(Ok(state)) = call(acc.get_state()).await {
+                    if state.contains(State::Selected) {
+                        return Ok(OptionPick::Picked {
+                            name: option.name.clone(),
+                        });
+                    }
+                }
+                if started.elapsed() >= OPTION_SELECTED_READBACK {
+                    return Err(OptionPickSent(format!(
+                        "the select action for option {:?} was accepted, but the option \
+                         did not report SELECTED within {OPTION_SELECTED_READBACK:?}",
+                        option.name
+                    ))
+                    .into());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        },
+        || {
+            Err(anyhow!(
+                "select option by action (cached element) timed out"
+            ))
+        },
+    )
+}
+
+/// Name of the option of a combo box without its own `Selection` that
+/// reports SELECTED (Chromium's `<select>`), for the `set_value` read-back.
+async fn selected_option_name(
+    conn: &AccessibilityConnection,
+    object_ref: &ObjectRef,
+) -> Option<String> {
+    for option in list_options(conn, &raw_ref(object_ref)).await {
+        let acc = call(accessible_for(conn, &option.oref)).await?.ok()?;
+        if call(acc.get_state())
+            .await
+            .and_then(|state| state.ok())
+            .is_some_and(|state| state.contains(State::Selected))
+        {
+            return Some(option.name);
+        }
+    }
+    None
+}
+
 /// Activate the option `value` names in the open popup of a snapshot-cached
 /// combo box (its items exist and act only while it is open): the option's
 /// own click/activate action selects it and closes the popup.
@@ -5932,6 +6110,19 @@ pub fn read_value_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
                     if let Some(Ok(v)) = call(vp.current_value()).await {
                         return Ok(Some(format_value(v)));
                     }
+                }
+            }
+            // A combo box without its own Selection (Chromium's `<select>`)
+            // exposes only an object-replacement character as its text: its
+            // value is the option that reports SELECTED.
+            if !ifaces.contains(Interface::Selection)
+                && call(acc.get_role_name())
+                    .await
+                    .and_then(|role| role.ok())
+                    .is_some_and(|role| role.eq_ignore_ascii_case("combo box"))
+            {
+                if let Some(name) = selected_option_name(conn, object_ref).await {
+                    return Ok(Some(name));
                 }
             }
             if ifaces.contains(Interface::Text) {
@@ -8160,10 +8351,29 @@ mod coord_tests {
 
         assert_eq!(activation_index("check box", &check), Some(0));
         assert_eq!(activation_index("checkbox", &uncheck), Some(0));
+        // Live capture from Chrome 157 on KDE Wayland: a radio button offers
+        // only `check` (and `uncheck` once checked).
+        assert_eq!(activation_index("radio button", &check), Some(0));
+        assert_eq!(activation_index("radio button", &uncheck), Some(0));
         assert_eq!(activation_index("text", &check), None);
         assert_eq!(activation_index("entry", &uncheck), None);
+        assert_eq!(activation_index("menu item", &check), None);
         assert!(!is_activation_action("check"));
         assert!(!is_activation_action("uncheck"));
+    }
+
+    #[test]
+    fn chromium_select_verb_is_gated_to_options() {
+        // Live capture from Chrome 157 on KDE Wayland: a `<select>` option is
+        // a `menu item`, a list box option a `list item`, both offering `select`.
+        let select = vec!["select".to_owned(), "showContextMenu".to_owned()];
+        assert_eq!(activation_index("menu item", &select), Some(0));
+        assert_eq!(activation_index("list item", &select), Some(0));
+        assert_eq!(activation_index("option", &select), Some(0));
+        assert_eq!(activation_index("text", &select), None);
+        assert_eq!(activation_index("check box", &select), None);
+        assert_eq!(activation_index("table", &select), None);
+        assert!(!is_activation_action("select"));
     }
 
     #[test]

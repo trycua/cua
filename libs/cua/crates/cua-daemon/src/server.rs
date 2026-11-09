@@ -27,7 +27,7 @@ use tonic::Status;
 use tower::{Service, ServiceExt};
 
 /// Where and how to listen.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// Unix socket (unix only). Created with mode 0600; a stale socket file
     /// is replaced.
@@ -40,6 +40,18 @@ pub struct ServerConfig {
     pub discovery_path: Option<PathBuf>,
     /// Lifetime of media bridge tickets.
     pub bridge_ticket_ttl: Duration,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConfig")
+            .field("socket_path", &self.socket_path)
+            .field("loopback", &self.loopback)
+            .field("token", &"<redacted>")
+            .field("discovery_path", &self.discovery_path)
+            .field("bridge_ticket_ttl", &self.bridge_ticket_ttl)
+            .finish()
+    }
 }
 
 impl ServerConfig {

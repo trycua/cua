@@ -507,7 +507,7 @@ impl ImageBuild {
 }
 
 /// Options for [`Sandboxes::create`].
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SandboxCreateOptions {
     /// Where it runs: `local`, `direct:<addr>` (an existing machine running
     /// cua-spacesd) or a registered provider. `None` (the default): the
@@ -642,6 +642,44 @@ pub struct SandboxCreateOptions {
     /// Other kinds ignore it. `None` (the default): not one.
     #[uniffi(default = None)]
     pub forkable: Option<bool>,
+}
+
+impl std::fmt::Debug for SandboxCreateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxCreateOptions")
+            .field("on", &self.on)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("image", &self.image)
+            .field("name", &self.name)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("pool", &self.pool)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout_ms", &self.ready_timeout_ms)
+            .field("env", &self.env)
+            .field("ttl_seconds", &self.ttl_seconds)
+            .field("command", &self.command)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_secret",
+                &self.registry_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("network", &self.network)
+            .field("overlays", &self.overlays)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("profile", &self.profile)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 impl Default for SandboxCreateOptions {

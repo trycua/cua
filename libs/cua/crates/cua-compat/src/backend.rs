@@ -68,12 +68,21 @@ fn plan_limit_sentence(text: &str) -> String {
 pub type Result<T> = std::result::Result<T, BackendError>;
 
 /// Which Cua identity a call runs as (from the provider API key).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct Identity {
     /// Cua daemon address; `None`: the ambient one.
     pub daemon: Option<String>,
     /// Cua daemon token.
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Identity")
+            .field("daemon", &self.daemon)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// What a new sandbox starts from.

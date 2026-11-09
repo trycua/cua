@@ -360,10 +360,19 @@ pub struct Started {
 }
 
 /// The guest's own MCP endpoint (cua-spacesd `/mcp`, cua-driver tools).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SpacesdMcp {
     pub url: String,
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for SpacesdMcp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpacesdMcp")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Header naming the agent run on the guest MCP: cua-spacesd keys the

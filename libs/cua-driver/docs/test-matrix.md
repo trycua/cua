@@ -176,8 +176,8 @@ Windows native harnesses are repo-local applications built from source:
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
 The WinForms keyboard rows observe native `KeyDown`/`KeyUp` receipts, exact-control
-Unicode text fallback, a decoy control, unchanged control focus, and passive
-`Activated` events across the complete call. Background
+Unicode text fallback, a decoy control, passive `GotFocus`/`LostFocus` transition
+counts, and `Activated` events across the complete call. Background
 rows also use the existing foreground sentinel and desktop-side-effect
 oracles, so a transient activation cannot be hidden by restoring foreground.
 

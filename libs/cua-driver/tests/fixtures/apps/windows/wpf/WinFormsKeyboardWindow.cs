@@ -21,6 +21,7 @@ public sealed class WinFormsKeyboardWindow : Form
     private readonly LinkLabel _link = new() { Name = "key-link-container", AccessibleName = "Link container", Text = "Key link", Top = 100, Left = 20, Width = 260 };
     private int _linkClicks;
     private int _activations;
+    private int _focusChanges;
     private int _targetDown;
     private int _targetUp;
     private int _decoyDown;
@@ -52,6 +53,10 @@ public sealed class WinFormsKeyboardWindow : Form
         _decoy.KeyDown += (_, e) => { _decoyDown++; Count(_decoyDownByKey, e.KeyCode); Publish(); };
         _target.TextChanged += (_, _) => Publish();
         _decoy.TextChanged += (_, _) => Publish();
+        _target.GotFocus += (_, _) => { _focusChanges++; Publish(); };
+        _target.LostFocus += (_, _) => { _focusChanges++; Publish(); };
+        _decoy.GotFocus += (_, _) => { _focusChanges++; Publish(); };
+        _decoy.LostFocus += (_, _) => { _focusChanges++; Publish(); };
     }
 
     private static void Count(Dictionary<string, int> receipts, Keys key)
@@ -65,6 +70,7 @@ public sealed class WinFormsKeyboardWindow : Form
         var state = new
         {
             activations = _activations,
+            focus_changes = _focusChanges,
             target_down = _targetDown,
             target_up = _targetUp,
             decoy_down = _decoyDown,

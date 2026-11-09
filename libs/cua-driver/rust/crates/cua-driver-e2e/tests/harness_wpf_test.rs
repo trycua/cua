@@ -1388,6 +1388,7 @@ fn harness_winforms_background_element_key_preserves_focus() {
                     assert_eq!(state["decoy_down"], 0, "key reached the wrong control");
                     assert_eq!(state["last_key"], "F6");
                     assert_eq!(state["last_modifiers"], "None");
+                    assert_eq!(state["focus_changes"], before["focus_changes"]);
                     assert_eq!(state["target_focused"], before["target_focused"]);
                     assert_eq!(state["decoy_focused"], before["decoy_focused"]);
                     assert_eq!(
@@ -1425,6 +1426,7 @@ fn harness_winforms_background_element_key_preserves_focus() {
                     assert_eq!(state["target_down"], 1);
                     assert_eq!(state["target_up"], 1);
                     assert_eq!(state["decoy_down"], 0);
+                    assert_eq!(state["focus_changes"], before["focus_changes"]);
                     assert_eq!(state["target_focused"], before["target_focused"]);
                     assert_eq!(state["decoy_focused"], before["decoy_focused"]);
                     assert_eq!(state["activations"], before["activations"]);

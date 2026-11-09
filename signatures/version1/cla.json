@@ -951,6 +951,14 @@
       "created_at": "2026-11-09T07:42:25Z",
       "repoId": 925270205,
       "pullRequestNo": 7085
+    },
+    {
+      "name": "ryoshin0830",
+      "id": 36604859,
+      "comment_id": 6737118737,
+      "created_at": "2026-11-09T09:53:36Z",
+      "repoId": 925270205,
+      "pullRequestNo": 7088
     }
   ]
 }

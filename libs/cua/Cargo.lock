@@ -2681,6 +2681,7 @@ name = "cua-crash"
 version = "0.17.1"
 dependencies = [
  "cua-telemetry",
+ "regex-lite",
  "sentry",
  "serde_json",
 ]

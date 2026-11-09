@@ -80,6 +80,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.status", "agents.connect", "agents.disconnect",
         // The coding agents' own recent chats on this Mac (person-only daemon tools, CUA-3319).
         "agents.recentThreads", "agents.threadHistory",
+        // An agent's own sign-in on another computer (person-only daemon tool agent_sign_in, CUA-3907).
+        "agents.computerSignIn",
         // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
         "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
@@ -88,6 +90,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+        "agentKeys.copySignIn",
         // Settings, Connections, GitHub: the daemon's github.* methods (WebUIBridge+Pages.swift).
         "github.status", "github.rescan", "github.use", "github.enable",
         // New Space's address form and Connect a cloud, Teleport and Share,
@@ -436,6 +439,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "agents.recentThreads", "agents.threadHistory":
             return try await agentThreads(method, args)
+
+        case "agents.computerSignIn":
+            return try await computerSignIn(args)
 
         case "checklist.get": return ["state": model.checklist.stored]
         case "checklist.send":

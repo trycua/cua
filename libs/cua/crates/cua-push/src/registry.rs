@@ -40,7 +40,7 @@ pub enum Platform {
 pub const CATEGORIES: [&str; 2] = ["needs_you", "done"];
 
 /// A registered phone.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registration {
     /// The phone's device id (`dev_...`, the one it enrolled with): a
     /// phone has one registration, and registering again replaces it.
@@ -71,6 +71,24 @@ pub struct Registration {
     pub created_at: u64,
     #[serde(default)]
     pub updated_at: u64,
+}
+
+impl std::fmt::Debug for Registration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registration")
+            .field("id", &self.id)
+            .field("platform", &self.platform)
+            .field("token", &"<redacted>")
+            .field("app", &self.app)
+            .field("sandbox", &self.sandbox)
+            .field("name", &self.name)
+            .field("categories", &self.categories)
+            .field("locale", &self.locale)
+            .field("bound", &self.bound)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 fn all_categories() -> Vec<String> {

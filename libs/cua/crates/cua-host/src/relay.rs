@@ -236,7 +236,7 @@ pub fn is_relay_outdated(e: &Error) -> bool {
 }
 
 /// `POST /v1/machines` response.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Registration {
     /// The machine.
     pub machine: Machine,
@@ -245,6 +245,16 @@ pub struct Registration {
     /// The relay's signing keys (JWKS), pinned by the host.
     #[serde(default)]
     pub jwks: serde_json::Value,
+}
+
+impl std::fmt::Debug for Registration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registration")
+            .field("machine", &self.machine)
+            .field("machine_token", &"<redacted>")
+            .field("jwks", &self.jwks)
+            .finish()
+    }
 }
 
 /// The account's default Space and the order to try when it is offline
@@ -1385,7 +1395,7 @@ fn http_error(status: u16, body: &str) -> Error {
 }
 
 /// Body of a TCP share allocation (see the relay's `tcp_shares`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TcpShareRequest {
     /// The share's token (40 hex).
     pub token: String,
@@ -1410,6 +1420,21 @@ pub struct TcpShareRequest {
     /// The most bytes the share may move (the owner's daily data cap).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bytes: Option<u64>,
+}
+
+impl std::fmt::Debug for TcpShareRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TcpShareRequest")
+            .field("token", &"<redacted>")
+            .field("target_port", &self.target_port)
+            .field("ttl_secs", &self.ttl_secs)
+            .field("service", &self.service)
+            .field("name", &self.name)
+            .field("allow", &self.allow)
+            .field("check_host", &self.check_host)
+            .field("max_bytes", &self.max_bytes)
+            .finish()
+    }
 }
 
 /// One TCP share port as the relay reports it.

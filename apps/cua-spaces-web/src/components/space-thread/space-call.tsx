@@ -47,6 +47,9 @@ import { ProfileScopeProvider } from "./profile-card";
 import { queuedItems, useQueued } from "./queued";
 import { ThreadView } from "./thread-view";
 
+/** This Mac's own desktop (`this-mac-desktop.tsx`): its agents use the sign-in this Mac already has. */
+const THIS_MAC_SPACE = "this-mac";
+
 /** Why `@everyone` is off for someone who can't give tasks. */
 const EVERYONE_REASON = "Only people who can give tasks can message everyone";
 
@@ -316,6 +319,7 @@ export function SpaceCall({
   const threadView = (endInset: number) => (
     <ThreadView
       className="min-h-0 flex-1"
+      computer={{ space: spaceId, name: spaceName, thisMac: spaceId === THIS_MAC_SPACE }}
       endInset={endInset}
       items={items}
       roster={shown}

@@ -367,7 +367,7 @@ impl RuleManager {
 }
 
 /// The edge this home deployed, and the tunnel token it holds.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct EdgeRecord {
     /// The connection it lives on.
     pub conn: Option<Connection>,
@@ -377,6 +377,17 @@ pub struct EdgeRecord {
     pub token: String,
     /// Unix seconds a share last used it.
     pub last_used: u64,
+}
+
+impl std::fmt::Debug for EdgeRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EdgeRecord")
+            .field("conn", &self.conn)
+            .field("edge", &self.edge)
+            .field("token", &"<redacted>")
+            .field("last_used", &self.last_used)
+            .finish()
+    }
 }
 
 /// The share edge of this home (at most one per cloud connection).

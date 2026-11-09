@@ -179,7 +179,7 @@ struct BootConfig {
 }
 
 /// Persisted per-instance state (`<root>/<name>/state.json`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct QemuState {
     pub name: String,
     pub kind: EntryKind,
@@ -299,6 +299,57 @@ pub struct QemuState {
     /// creation for Windows on ARM; forks and checkpoints keep it.
     #[serde(default)]
     pub tpm: bool,
+}
+
+impl std::fmt::Debug for QemuState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QemuState")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("arch", &self.arch)
+            .field("os", &self.os)
+            .field("disk", &self.disk)
+            .field("disk_format", &self.disk_format)
+            .field("install_iso", &self.install_iso)
+            .field("seed_iso", &self.seed_iso)
+            .field("firmware", &self.firmware)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("vnc_display", &self.vnc_display)
+            .field("qmp_port", &self.qmp_port)
+            .field("qmp_socket", &self.qmp_socket)
+            .field(
+                "vnc_password",
+                &self.vnc_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("pid", &self.pid)
+            .field("accel", &self.accel)
+            .field("ssh", &self.ssh)
+            .field("restrict_network", &self.restrict_network)
+            .field("egress", &self.egress)
+            .field("network", &self.network)
+            .field("netns", &self.netns)
+            .field("pasta_pid", &self.pasta_pid)
+            .field("gateway_control", &self.gateway_control)
+            .field("extra_args", &self.extra_args)
+            .field("snapshots", &self.snapshots)
+            .field("paused", &self.paused)
+            .field("source", &self.source)
+            .field("created_at", &self.created_at)
+            .field("gpu", &self.gpu)
+            .field("restore_from", &self.restore_from)
+            .field("memory", &self.memory)
+            .field("last_start", &self.last_start)
+            .field("free_page_reporting", &self.free_page_reporting)
+            .field("ram_file", &self.ram_file)
+            .field("headless", &self.headless)
+            .field("shared_memory", &self.shared_memory)
+            .field("pinned", &self.pinned)
+            .field("bulk", &self.bulk)
+            .field("tpm", &self.tpm)
+            .finish()
+    }
 }
 
 /// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.

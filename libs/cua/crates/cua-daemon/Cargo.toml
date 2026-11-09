@@ -25,7 +25,12 @@ contrib-daytona = ["dep:cua-contrib", "cua-contrib/daytona"]
 contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
 # Your own cloud account as a location (`--on aws|gcp|hetzner|modal`): the cua-byoc
 # providers and `cua cloud`.
-byoc = ["dep:cua-byoc", "cua-byoc/all"]
+byoc = ["dep:cua-byoc", "cua-byoc/azure", "cua-byoc/gcp", "cua-byoc/hetzner", "cua-byoc/modal"]
+# AWS (EC2 for `--on aws`, S3 for the checkpoint fallback): the AWS SDK
+# crates are the slowest part of a cold build, so local development builds
+# leave this off. Without it `--on aws` and an S3 fallback fail with "this
+# build doesn't include AWS support".
+aws = ["byoc", "cua-byoc/aws", "cua-snapshot-sync?/s3"]
 # `fixtures`: a MockServer spacesd on loopback, for tests
 # and the `cua-test-fixtures` binary behind the language-binding smoke tests
 # (libs/cua-spacesd/tests/spaces-e2e). Never shipped.

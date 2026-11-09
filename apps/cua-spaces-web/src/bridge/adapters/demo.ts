@@ -56,7 +56,7 @@ import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoR
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoGithubHandlers, demoGithubState, type DemoGithubStart } from "./demo/github";
 import { demoCiHandlers, demoCiState, type DemoCiStart } from "./demo/ci";
-import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
+import { demoHostSetupHandlers, demoHostSetupState, demoHostStatusFor, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
 import { demoLinksHandlers, demoLinksState, type DemoLinksState, type DemoSharesPreset } from "./demo/links";
@@ -71,8 +71,6 @@ import { createDemoNetwork, demoAgentHomeRows, demoNetworkSpaceRows } from "./de
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
 export interface DemoOptions {
-  /** The Ask first experiment is on (`?demo=ask-first`; the GitHub demos turn it on too): Settings, Connections lists GitHub and Labs has its switch. */
-  askFirst?: boolean;
   /** Connections, GitHub: `gh` with two accounts and an Enterprise host (default), `?demo=github-none`, `github-saved` (a saved token) or `github-warning` (scopes broader than needed). */
   github?: DemoGithubStart;
   /** CI Runners: nothing connected (`?demo=ci-fresh`), GitHub connected and no job yet (`?demo=ci-connected`), or a week of jobs (default). */
@@ -280,7 +278,6 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
-    ...(flags.has("ask-first") ? { askFirst: true } : {}),
     ...(flags.has("github-none") ? { github: "none" as const } : flags.has("github-saved") ? { github: "saved" as const } : flags.has("github-warning") ? { github: "warning" as const } : {}),
     ...(flags.has("ci-fresh") ? { ci: "fresh" as const } : flags.has("ci-connected") ? { ci: "connected" as const } : {}),
     keyvaultLocked: flags.has("locked"),
@@ -437,9 +434,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
     runtimes: demoRuntimesState(),
     volume: (() => {
-      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, Boolean(options.askFirst || options.github), options.ci !== undefined);
+      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, options.ci !== undefined);
       return options.shares || options.network || options.agentHome
-        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.network ? { secureSpaces: true } : {}), ...(options.agentHome ? { childSpaces: true, askFirst: true } : {}) } }
+        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.agentHome ? { childSpaces: true } : {}) } }
         : v;
     })(),
     ...demoTelemetryState(),
@@ -784,7 +781,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       emit({ type: "machines.changed" });
       return null;
     },
-    "host.status": () => ({ ...state.host }),
+    "host.status": (args) => demoHostStatusFor(state, args),
 
     "settings.get": () => settingsSnapshot(),
     "settings.set": ({ key, value }) => {

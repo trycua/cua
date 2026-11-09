@@ -95,7 +95,7 @@ function AgentsChatPage() {
             refresh();
           }
         }}
-        spaces={spaces.map((s) => ({ id: s.id, name: s.name }))}
+        spaces={spaces}
         taken={taken}
       />
     </div>

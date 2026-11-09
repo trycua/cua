@@ -4546,7 +4546,7 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
 
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
@@ -14601,22 +14601,10 @@ export type AppExperiments = {
      */
     cuaVolume: boolean,
     /**
-     * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
-     * it (the switch is kept in the cua home).
-     */
-    secureSpaces: boolean,
-    /**
      * Child Spaces: a Space may make Spaces of its own. Off unless turned
      * on; the daemon enforces it (the switch is kept in the cua home).
      */
     childSpaces: boolean,
-    /**
-     * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-     * switch is kept in the cua home).
-     */
-    askFirst: boolean,
     /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
@@ -14665,9 +14653,7 @@ const FfiConverterTypeAppExperiments = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 cuaVolume: FfiConverterBool.read(from),
-                secureSpaces: FfiConverterBool.read(from),
                 childSpaces: FfiConverterBool.read(from),
-                askFirst: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
                 mobile: FfiConverterBool.read(from),
@@ -14676,9 +14662,7 @@ const FfiConverterTypeAppExperiments = (() => {
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.cuaVolume, into);
-            FfiConverterBool.write(value.secureSpaces, into);
             FfiConverterBool.write(value.childSpaces, into);
-            FfiConverterBool.write(value.askFirst, into);
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
@@ -14686,9 +14670,7 @@ const FfiConverterTypeAppExperiments = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
-             FfiConverterBool.allocationSize(value.secureSpaces) +
              FfiConverterBool.allocationSize(value.childSpaces) +
-             FfiConverterBool.allocationSize(value.askFirst) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
              FfiConverterBool.allocationSize(value.mobile) +
@@ -71924,7 +71906,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 56775) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 17320) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {

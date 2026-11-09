@@ -267,6 +267,10 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
+    /// Called when the setup form, the Provide Spaces switch or joining with
+    /// a code turned providing Spaces on here (never the sign-in's own setup,
+    /// never for a Mac that already provided them); `bySetup` for a setup.
+    public var onStartedProvidingSpaces: ((_ bySetup: Bool) -> Void)?
     /// This Mac provides Spaces now (as of the last status).
     public var providesSpaces: Bool { status.map { $0.configured && $0.provideSpaces } ?? false }
     /// The host's last status, as the SDK reported it.
@@ -294,6 +298,12 @@ public final class HostModel {
     public var formView: AppHostFormView? { form.map { appHostFormView(state: $0, identity: identity) } }
     /// What the roster's This machine entry reads.
     public var summaryInput: AppHostSummaryInput? { state.map { appHostSummaryInput(state: $0) } }
+
+    /// Calls `onStartedProvidingSpaces` when providing Spaces went from off
+    /// (`was`) to on with the last status.
+    func followProviding(from was: Bool, bySetup: Bool = false) {
+        if !was && providesSpaces { onStartedProvidingSpaces?(bySetup) }
+    }
 
     func apply(_ status: HostStatus) {
         self.status = status
@@ -443,7 +453,7 @@ public final class HostModel {
             }
             guard let request = appHostFormView(state: f, identity: self.identity).request else { return }
             do {
-                try await self.setUp(request, on: host)
+                try await self.setUp(request, on: host, signingIn: true)
             } catch {
                 self.setupFailure = Self.isUnauthenticated(error)
                     ? HostSetupFailure.presenting(LiveSpacesBackend.words(error), as: .signedOut)
@@ -457,13 +467,16 @@ public final class HostModel {
 
     /// Host setup with a request the core's form built and validated (the
     /// form's submit, and the web UI's): relay setup with the account token.
-    func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
+    /// `signingIn`: the sign-in's own setup, which asks nothing.
+    func setUp(_ request: AppHostSetupRequest, on host: HostRunning, signingIn: Bool = false) async throws {
         defer { progress = nil }
+        let was = providesSpaces
         let status = request.mode == "relay"
             ? try await setUpRelay(host, request)
             : try await host.setupRequest(request: request, accountToken: nil)
         setupFailure = nil
         apply(status)
+        if !signingIn { followProviding(from: was, bySetup: true) }
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a
@@ -662,8 +675,10 @@ public final class HostModel {
     private func perform(_ id: AppHostActionId, on host: HostRunning) async throws {
         // The two settings: the core says what each switch changes.
         if let change = appHostSettingChange(id: id) {
+            let was = providesSpaces
             apply(try await host.configure(change: HostSettingsChange(
                 shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces)))
+            followProviding(from: was)
             return
         }
         switch id {

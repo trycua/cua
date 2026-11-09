@@ -664,6 +664,8 @@ describe("webkit adapter", () => {
     const a = createWebkitAdapter(win);
     expect(await a.call("spaces.cancelCreate", { pendingId: "pending:1" })).toEqual({ id: "pending:1", state: "cancelled", message: "" });
     const host = await a.call("host.status", {});
+    // The permissions page asks for Local Network with these args; the Mac app lists the row only when it gets them.
+    await a.call("host.status", { localNetwork: true, localNetworkCheck: false });
     expect(host).toMatchObject({ configured: true, mode: "relay", machineId: "m1", service: { installed: true, running: true, kind: "launchd" } });
     expect(host.permissions[0]).toMatchObject({ id: "accessibility", label: "Accessibility", granted: false });
     expect(await a.call("keyvault.approve", { requestId: "req-1", items: ["i1"] })).toMatchObject({ id: "g1", request_id: "req-1", not_after_ms: 2 });
@@ -672,6 +674,7 @@ describe("webkit adapter", () => {
     expect(sent.map((r) => [r.method, r.args])).toEqual([
       ["spaces.cancelCreate", { pendingId: "pending:1" }],
       ["host.status", {}],
+      ["host.status", { localNetwork: true, localNetworkCheck: false }],
       ["keyvault.approve", { requestId: "req-1", items: ["i1"] }],
       ["keyvault.deny", { requestId: "req-2" }],
       ["keyvault.revokeGrant", { id: "g1" }],

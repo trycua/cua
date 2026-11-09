@@ -412,12 +412,14 @@ extension WebUIBridge {
             guard let cua = AppEnvironment.bundledCuaPath else {
                 throw Failure.unsupported("This build has no bundled cua to join with")
             }
+            let was = model.host.providesSpaces
             do {
                 try await JoinWithCode.run(cua: cua, args: cliArgs)
             } catch let failed as JoinWithCode.FailedRun {
                 throw Failure(code: "failed", message: failed.message)
             }
             await model.host.refresh()
+            model.host.followProviding(from: was)
             return hostStatus()
         case "host.action":
             guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
@@ -447,6 +449,8 @@ extension WebUIBridge {
             // dialog of its own); the pane opens only when it stays blocked
             // and no macOS prompt is waiting for an answer.
             if url.contains("Privacy_LocalNetwork") {
+                // Explained here, so a later macOS Space create does not explain it again.
+                UserDefaults.standard.set(true, forKey: LocalNetworkGate.askedKey)
                 await model.checkLocalNetworkFromDaemon(every: 0)
                 if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
                     NSWorkspace.shared.open(u)

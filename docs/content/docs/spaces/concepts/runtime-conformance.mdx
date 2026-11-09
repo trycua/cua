@@ -73,9 +73,8 @@ on a container engine you run on a Linux host.
 
 ### Where the default network is not enforced yet
 
-The default network is the Secure Spaces experiment
-(`cua experiments enable secure-spaces`); this page describes a Space with it
-on. A runtime that cannot enforce it never starts a Space open by accident.
+The default network is Secure Spaces, always on; this page describes a Space
+with it. A runtime that cannot enforce it never starts a Space open by accident.
 Apple's Containerization puts every guest on Apple's vmnet network. Only `pf`
 can filter that network, and `pf` needs root. A firewall inside the guest
 would not hold against the Space's own root, so Cua does not offer one as the

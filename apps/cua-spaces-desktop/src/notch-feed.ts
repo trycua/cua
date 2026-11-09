@@ -17,7 +17,6 @@
 //   that window's app in that Space, the same way as its bundle dropped there.
 import { basename } from "node:path";
 import { fileOffers, sendOffered } from "./bridge/files";
-import { refreshDaemonExperiments } from "./bridge/settings";
 import type { AppModel } from "./model/app-model";
 import { words } from "./model/errors";
 import type { TeleportLike } from "./native/generated/index";
@@ -137,13 +136,8 @@ export function feedNotch(notch: Pick<Notch, "setSpaces" | "setShown" | "setActi
     }),
     model.activity.subscribe(activity),
   ];
-  // Spaces exiting through this machine light the hotspot indicator too (Labs: Secure Spaces; off, nothing is read).
+  // Spaces exiting through this machine light the hotspot indicator too.
   const exits = async () => {
-    refreshDaemonExperiments(model);
-    if (!model.settings.experiments.secureSpaces) {
-      model.activity.setExits([]);
-      return;
-    }
     const ids = await model.backend.exitsThroughThisMachine?.().catch(() => null);
     if (ids) model.activity.setExits(ids);
   };

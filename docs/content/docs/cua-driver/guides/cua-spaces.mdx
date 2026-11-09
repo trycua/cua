@@ -46,9 +46,11 @@ inside Cua Spaces. The **Cua Driver** page shows the version you have.
 
 **How permissions work.** Because Cua Spaces starts Cua Driver, macOS gives
 Cua Driver the permissions you gave Cua Spaces. You allow Accessibility and
-Screen Recording once, for Cua Spaces. No second app, such as CuaDriver, shows
-up in System Settings. The Cua Driver page lists both permissions and tells you
-if one is missing.
+Screen Recording once, for Cua Spaces. Cua Spaces does not add a CuaDriver
+entry to System Settings. If you also installed Cua Driver on its own, its
+CuaDriver entry stays, with its own permissions. Cua Spaces does not use them,
+so allow Cua Spaces even if you already allowed CuaDriver. The Cua Driver page
+lists both permissions and tells you if one is missing.
 
 **How your agents connect.** **Set up** adds Cua Driver to Claude Code and Codex.
 It writes their settings so they reach the Cua Driver that Cua Spaces runs. If

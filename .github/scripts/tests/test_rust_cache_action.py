@@ -1,9 +1,9 @@
 """A failed sccache download never fails the job that uses the Rust cache.
 
 The action promises that cargo compiles without sccache when it cannot start.
-On 9 Nov 2026 GitHub's release CDN answered the sccache download with 504s for
-about twenty minutes, and every Rust job of the pull requests that ran then
-failed at "Install sccache" (and again at its post step) before compiling.
+On 9 Nov 2026 GitHub's release CDN answered the sccache download with 504s,
+and every Rust job of the pull requests that ran then failed at "Install
+sccache" (and again at its post step) before compiling.
 """
 
 from __future__ import annotations

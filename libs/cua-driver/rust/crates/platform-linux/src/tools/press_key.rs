@@ -404,8 +404,9 @@ impl Tool for PressKeyTool {
         let key_for_task = key.clone();
         let cursor_id = resolve_cursor_key(&args);
         // Foreground delivery is one atomic activate-and-XTest transaction.
-        // A preceding PX click establishes internal widget focus, but that
-        // click restores the prior top-level before returning.
+        // A preceding PX click establishes internal widget focus and gives the
+        // prior top-level back; this transaction activates the target again,
+        // and the toolkit keeps the widget focus it set.
         let deliver_fg = delivery.is_foreground();
         let result = spawn_blocking_bounded(
             "press_key",

@@ -1605,6 +1605,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::SamePid,
             window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1617,6 +1618,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Target,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
         assert_eq!(v["effect"], "unverifiable");
@@ -1628,6 +1630,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Unknown,
             window_change: Some("closed: window 3 \"Format Cells\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", closed, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1642,6 +1645,7 @@ mod pointer_argument_tests {
             focus_after,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured(
             "x11_xtest_fg",
@@ -1669,6 +1673,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Elsewhere,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
         assert_eq!(v["effect"], "suspected_noop");
@@ -2124,8 +2129,9 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     match route {
         KeyRoute::Foreground(report) => ToolResult::text(format!(
             "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
-             not verified — confirm with a screenshot.",
-            report.focus_after.as_str()
+             not verified — confirm with a screenshot.{}",
+            report.focus_after.as_str(),
+            report.focus_note()
         ))
         .with_structured(foreground_structured(
             "key_events_fg",
@@ -2290,8 +2296,9 @@ pub(crate) enum PointerRoute {
     Atspi(crate::atspi::AtPointHit),
     /// Target-addressed synthetic `XSendEvent` (core-only toolkits).
     Synthetic,
-    /// Activated the window first and used XTest (delivery_mode=foreground).
-    Foreground,
+    /// Activated the window first and used XTest (delivery_mode=foreground);
+    /// the pid whose open menu kept the target focused.
+    Foreground { menu_open: Option<u32> },
     /// Native Wayland pointer route.
     Wayland,
 }
@@ -2303,7 +2310,7 @@ impl PointerRoute {
             Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
             Self::Atspi(_) => Some("x11_atspi"),
             Self::Synthetic => Some("x11_xsendevent"),
-            Self::Foreground => Some("x11_xtest_fg"),
+            Self::Foreground { .. } => Some("x11_xtest_fg"),
             Self::Wayland => None,
         }
     }
@@ -2441,6 +2448,9 @@ impl PointerRoute {
     /// Human-readable tail for the result text.
     pub(crate) fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
+        if let Self::Foreground { menu_open } = self {
+            text.push_str(&crate::input::foreground::menu_open_note(*menu_open));
+        }
         if let Self::Mpx(effect) = self {
             if let Some(popup) = effect.popups.last() {
                 text.push_str(&format!(

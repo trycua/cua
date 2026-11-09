@@ -398,15 +398,20 @@ impl Drop for SessionDispatchGuard {
             record.last_activity = Instant::now();
             (record.in_flight == 0)
                 .then(|| {
-                    record
-                        .pending_end
-                        .take()
-                        .map(|reason| (reason, record.pending_explicit_end))
+                    record.pending_end.take().map(|reason| {
+                        (
+                            reason,
+                            record.pending_explicit_end,
+                            record.owner_transport.clone(),
+                        )
+                    })
                 })
                 .flatten()
         };
-        if let Some((reason, explicit)) = pending {
-            finish_session_end(&self.session_id, reason, explicit, None);
+        // Bound to this episode's owner: if another end and a new owner's
+        // claim land before this finish, the new episode is left alone.
+        if let Some((reason, explicit, owner)) = pending {
+            finish_session_end(&self.session_id, reason, explicit, Some(&owner), None);
         }
     }
 }
@@ -863,8 +868,10 @@ pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
     ids.extend(dormant_sessions(|_, owner| owner == Some(owner_transport)));
+    // Each end is bound to this owner, so an overlapping close of the same
+    // transport cannot end an episode another transport has since claimed.
     for id in &ids {
-        end_session_with_reason(id, reason, false);
+        end_session_with_reason(id, reason, false, Some(owner_transport));
     }
     // Release the labels only once every episode above has ended. Released
     // earlier, another transport could claim a label in between and the loop
@@ -1433,6 +1440,7 @@ fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -
         SessionEndReason::Unknown,
         false,
         None,
+        None,
     );
     let _ = retry_session_cleanup(session_id);
     transition == EndTransition::First
@@ -1440,7 +1448,8 @@ fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EndTransition {
-    /// The idle sweep's candidate was used, or ended, after it was picked.
+    /// The idle sweep's candidate was used, or ended, after it was picked, or
+    /// an owner-bound end found the episode held by another transport.
     StillLive,
     /// The episode's first end.
     First,
@@ -1462,11 +1471,25 @@ fn mark_session_ended(
     owner_transport: Option<&str>,
     reason: SessionEndReason,
     explicit: bool,
+    bound_to: Option<&str>,
     idle: Option<IdleCheck>,
 ) -> EndTransition {
     let mut ended = ended_sessions().lock().unwrap();
     let record = {
         let mut records = lifecycle_records().lock().unwrap();
+        // An end bound to an owner ends only an episode that owner still
+        // holds, live or dormant.
+        if let Some(bound) = bound_to {
+            let held = match records.get(session_id) {
+                Some(record) => record.owner_transport == bound,
+                None => ended
+                    .get(session_id)
+                    .is_some_and(|owner| owner.as_deref() == Some(bound)),
+            };
+            if !held {
+                return EndTransition::StillLive;
+            }
+        }
         // The sweep's idle decision and the removal share this critical
         // section, so a call that started and finished after the sweep picked
         // the session keeps it alive.
@@ -1891,16 +1914,24 @@ pub fn session_idle_duration(session_id: &str) -> Option<Duration> {
 /// ended this way stays refused for ordinary calls until a `start_session`,
 /// also after its owner transport closes.
 pub fn end_session(session_id: &str) {
-    end_session_with_reason(session_id, SessionEndReason::Explicit, true);
+    end_session_with_reason(session_id, SessionEndReason::Explicit, true, None);
 }
 
-fn end_session_with_reason(session_id: &str, reason: SessionEndReason, explicit: bool) {
+fn end_session_with_reason(
+    session_id: &str,
+    reason: SessionEndReason,
+    explicit: bool,
+    bound_to: Option<&str>,
+) {
     if !is_trackable(session_id) {
         return;
     }
     let defer = {
         let mut records = lifecycle_records().lock().unwrap();
         match records.get_mut(session_id) {
+            Some(record) if bound_to.is_some_and(|bound| bound != record.owner_transport) => {
+                return;
+            }
             Some(record) if record.in_flight > 0 => {
                 // A terminal end overrides a pending idle end, which would
                 // keep the session's launch records.
@@ -1917,16 +1948,17 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason, explicit:
     if defer {
         return;
     }
-    finish_session_end(session_id, reason, explicit, None);
+    finish_session_end(session_id, reason, explicit, bound_to, None);
 }
 
 fn finish_session_end(
     session_id: &str,
     reason: SessionEndReason,
     explicit: bool,
+    bound_to: Option<&str>,
     idle: Option<IdleCheck>,
 ) -> EndTransition {
-    let transition = mark_session_ended(session_id, None, reason, explicit, idle);
+    let transition = mark_session_ended(session_id, None, reason, explicit, bound_to, idle);
     if transition == EndTransition::StillLive {
         return transition;
     }
@@ -2013,7 +2045,7 @@ fn evict_idle_matching(ttl: Duration, keep: impl Fn(&str) -> bool) -> Vec<String
     candidates
         .into_iter()
         .filter(|id| {
-            finish_session_end(id, SessionEndReason::IdleTimeout, false, Some(idle))
+            finish_session_end(id, SessionEndReason::IdleTimeout, false, None, Some(idle))
                 != EndTransition::StillLive
         })
         .collect()
@@ -2187,7 +2219,7 @@ mod tests {
         // A whole call lands between the sweep's pick and its end.
         use_session(sid).unwrap();
         assert_eq!(
-            finish_session_end(sid, SessionEndReason::IdleTimeout, false, Some(idle)),
+            finish_session_end(sid, SessionEndReason::IdleTimeout, false, None, Some(idle)),
             EndTransition::StillLive
         );
         assert!(!is_session_ended(sid), "a just-used session stays live");
@@ -2206,7 +2238,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(2));
         use_session(sid).unwrap();
         assert_eq!(
-            finish_session_end(sid, SessionEndReason::IdleTimeout, false, Some(idle)),
+            finish_session_end(sid, SessionEndReason::IdleTimeout, false, None, Some(idle)),
             EndTransition::StillLive
         );
         assert!(!is_session_ended(sid));
@@ -2556,6 +2588,86 @@ mod tests {
         }
         drop(begin(dormant, owner_b).expect("B claims the label after A's close"));
         assert!(session_snapshot(dormant, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            1
+        );
+    }
+
+    #[test]
+    fn an_overlapping_close_does_not_end_a_label_claimed_between_them() {
+        let live = "test-double-close-live-J4K5L6";
+        let dormant = "test-double-close-dormant-J4K5L6";
+        let owner_a = "test-double-close-transport-a";
+        let owner_b = "test-double-close-transport-b";
+        let begin = |sid: &str, owner: &str| {
+            begin_session_dispatch(
+                sid,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        drop(begin(live, owner_a).unwrap());
+        drop(begin(dormant, owner_a).unwrap());
+        assert_eq!(
+            evict_idle_with_prefix(Duration::ZERO, dormant),
+            vec![dormant.to_owned()]
+        );
+
+        // A second close of A (the legacy session_end racing the EOF reaper)
+        // finishes while the first is still ending A's live label, and B
+        // claims the released dormant label before the first close reaches it.
+        let claimed = Arc::new(std::sync::Mutex::new(None));
+        let claimed_in_hook = claimed.clone();
+        let _registration =
+            register_scoped_fallible_session_end_hook("double-close-test", move |ended| {
+                if ended == live && claimed_in_hook.lock().unwrap().is_none() {
+                    end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+                    let guard = begin(dormant, owner_b);
+                    claimed_in_hook.lock().unwrap().replace(guard.is_ok());
+                }
+                Ok(())
+            });
+        end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+
+        assert_eq!(*claimed.lock().unwrap(), Some(true));
+        assert!(
+            session_snapshot(dormant, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some(),
+            "the first close ended the episode B claimed after the second close"
+        );
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            1
+        );
+    }
+
+    #[test]
+    fn an_owner_bound_end_leaves_another_transports_episode_alone() {
+        let label = "test-owner-bound-end-M7N8O9";
+        let owner_a = "test-owner-bound-end-transport-a";
+        let owner_b = "test-owner-bound-end-transport-b";
+        let begin = |owner: &str| {
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        // A deferred end captured while A held the label finishes only after
+        // A closed and B claimed it. Bound to A, it must not end B's episode.
+        drop(begin(owner_a).unwrap());
+        end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+        drop(begin(owner_b).expect("B claims the released label"));
+        finish_session_end(label, SessionEndReason::Explicit, true, Some(owner_a), None);
+        assert!(session_snapshot(label, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
+        end_session_with_reason(label, SessionEndReason::Explicit, true, Some(owner_a));
+        assert!(session_snapshot(label, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             1
@@ -3050,7 +3162,7 @@ mod tests {
             }
         });
 
-        end_session_with_reason(sid, SessionEndReason::IdleTimeout, false);
+        end_session_with_reason(sid, SessionEndReason::IdleTimeout, false, None);
         end_session(sid);
         drop(guard);
 
@@ -3198,7 +3310,7 @@ mod tests {
             SessionClientKind::Mcp,
         )
         .unwrap();
-        end_session_with_reason(idle, SessionEndReason::IdleTimeout, false);
+        end_session_with_reason(idle, SessionEndReason::IdleTimeout, false, None);
 
         let revived = "test-observer-revived-MN34";
         use_session(revived).unwrap();

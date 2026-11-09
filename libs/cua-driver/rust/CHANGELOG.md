@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.46.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.4...cua-driver-rs-v0.46.0) (2026-11-09)
+
+
+### Features
+
+* **cua-driver:** formally-verify-cua-driver skill and TLA+ models for the driver's state machines ([#7035](https://github.com/trycua/cua/issues/7035)) ([a6b4b30](https://github.com/trycua/cua/commit/a6b4b307e5524d4d0c695712ea038c19e8273638))
+
+
+### Bug Fixes
+
+* **cua-driver:** an invoke_menu worker keeps its pid lease and the desktop lane until it returns ([#7039](https://github.com/trycua/cua/issues/7039)) ([02e4aa0](https://github.com/trycua/cua/commit/02e4aa0bb947d04b9806d1b9a595c593069dafea))
+
 ## [0.45.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.3...cua-driver-rs-v0.45.4) (2026-11-09)
 
 

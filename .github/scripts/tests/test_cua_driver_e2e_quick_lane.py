@@ -48,7 +48,8 @@ class QuickLane(unittest.TestCase):
     def test_full_macos_lane_runs_on_push_and_is_not_quick(self):
         macos = job(GATE, "macos")
         self.assertIn("github.event_name != 'pull_request'", macos)
-        self.assertNotIn("quick", macos)
+        # Not the quick lane: the only `quick` here is the shared stage's scope decision.
+        self.assertNotIn("quick", macos.replace("needs.quick.outputs.skip", "").replace("needs: [quick, ", "needs: ["))
 
     def test_failures_after_merge_open_the_tracking_issue(self):
         report = job(GATE, "nightly-report")

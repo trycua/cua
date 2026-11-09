@@ -24310,7 +24310,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
      */
     public var team: Bool
     /**
-     * The page's status line ("Online", "Offline").
+     * The page's status line ("Online", "Offline"; "Online, 1 thing to
+     * fix" when it has issues, so the words agree with the dot).
      */
     public var status: String
     /**
@@ -24417,7 +24418,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
          * Someone shares it with you (a team machine).
          */team: Bool,
         /**
-         * The page's status line ("Online", "Offline").
+         * The page's status line ("Online", "Offline"; "Online, 1 thing to
+         * fix" when it has issues, so the words agree with the dot).
          */status: String,
         /**
          * After the status: who shares it ("Shared by your team").

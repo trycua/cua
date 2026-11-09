@@ -29,6 +29,7 @@ on:
       - "flake.nix"
       - "flake.lock"
       - ".github/workflows/ci-rust-linux.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -78,12 +79,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   pacman:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Arch native pacman updates
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -140,7 +141,7 @@ jobs:
 
   unit:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
     # 10 to 14 minutes warm. The headroom covers a run with neither the

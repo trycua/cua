@@ -447,20 +447,56 @@ function Get-RelocatedFolders([string]$CuaHome) {
     return $found
 }
 
+# Whether an entry is one Cua itself writes for a kind (the list `cua storage` uses): runtimes
+# linux and lume; images blobs, disks, rootfs, refs; cache icons, installables, thumbnails;
+# logs *.log and *.log.N; trajectories a machine folder holding only YYYYMMDD-HHMMSS sessions.
+# Anything else is a person's own file.
+function Test-CuaKnownEntry([string]$Kind, [System.IO.FileSystemInfo]$Entry) {
+    $name = $Entry.Name
+    $isDir = $Entry.PSIsContainer
+    switch ($Kind) {
+        'runtimes' { return ($isDir -and $name -in @('linux', 'lume')) }
+        'images' { return ($isDir -and $name -in @('blobs', 'disks', 'rootfs', 'refs')) }
+        'cache' { return ($isDir -and $name -in @('icons', 'installables', 'thumbnails')) }
+        'logs' { return ((-not $isDir) -and ($name -like '*.log' -or $name -like '*.log.*')) }
+        'trajectories' {
+            if (-not $isDir) { return $false }
+            foreach ($c in Get-ChildItem -LiteralPath $Entry.FullName -Force -ErrorAction SilentlyContinue) {
+                if ($c.Name -notmatch '^\d{8}-\d{6}$') { return $false }
+            }
+            return $true
+        }
+    }
+    return $false
+}
+
 # cache and logs go like the other settings and caches (unless -KeepData); runtimes, images and
-# trajectories hold Spaces' disks and recordings, so only -DeleteSpaces removes them. A folder is
-# removed only when Cua created it (its .cua-storage marker says owned=1); one that already had
-# other files is never emptied, only listed.
+# trajectories hold Spaces' disks and recordings, so only -DeleteSpaces removes them. Only the
+# entries Cua itself writes are removed; the folder goes only when nothing else is in it, and a
+# person's own files are named and left alone. The drive is never touched.
 function Remove-RelocatedFolders {
-    foreach ($f in Get-RelocatedFolders (Get-CuaHome)) {
+    $cuaHome = Get-CuaHome
+    foreach ($f in Get-RelocatedFolders $cuaHome) {
         if (-not (Test-Path -LiteralPath $f.Path -PathType Container)) { continue }
         $removable = if ($f.Kind -in @('cache', 'logs')) { -not $KeepData } else { [bool]$DeleteSpaces }
-        if (-not $removable) { Write-Info "kept $($f.Kind) in $($f.Path)"; continue }
-        $marker = Join-Path $f.Path '.cua-storage'
-        if ((Test-Path -LiteralPath $marker) -and (Select-String -LiteralPath $marker -Pattern '^owned=1' -Quiet)) {
-            Remove-CuaPath $f.Path
+        if (-not $removable) {
+            $note = if ($KeepData) { 'storage.toml is kept, so a reinstall finds it again' }
+                    else { "storage.toml is removed with the settings, so after a reinstall run: cua storage set $($f.Kind) ""$($f.Path)""" }
+            Write-Info "kept $($f.Kind) in $($f.Path); $note"
+            continue
+        }
+        $left = @()
+        foreach ($e in Get-ChildItem -LiteralPath $f.Path -Force -ErrorAction SilentlyContinue) {
+            if ($e.Name -in @('.cua-storage', '.cua-moved-to', '.last-used') -or (Test-CuaKnownEntry $f.Kind $e)) {
+                Remove-CuaPath $e.FullName
+            } else {
+                $left += $e.Name
+            }
+        }
+        if ($left.Count -gt 0) {
+            Write-Info "kept $($f.Path): it holds files Cua did not put there ($($left -join ', ')); Cua's own $($f.Kind) files are gone"
         } else {
-            Write-Warn "$($f.Path) was not created by Cua (or holds other files), so it is left as it is; remove Cua's $($f.Kind) there by hand"
+            Remove-EmptyDirectory $f.Path
         }
     }
 }

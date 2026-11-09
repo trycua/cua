@@ -1039,11 +1039,47 @@ relocated_folders() {
     done
 }
 
+# cua_known_entry KIND PATH: whether PATH is one of the entries Cua itself writes for KIND
+# (the same list as `cua storage`): runtimes linux and lume; images blobs, disks, rootfs and
+# refs; cache icons, installables and thumbnails; logs *.log and *.log.N; trajectories a
+# machine folder holding only YYYYMMDD-HHMMSS sessions. Anything else is a person's own file.
+cua_known_entry() {
+    name="${2##*/}"
+    case "$1" in
+    runtimes) [ -d "$2" ] && case "$name" in linux | lume) return 0 ;; esac ;;
+    images) [ -d "$2" ] && case "$name" in blobs | disks | rootfs | refs) return 0 ;; esac ;;
+    cache) [ -d "$2" ] && case "$name" in icons | installables | thumbnails) return 0 ;; esac ;;
+    logs) [ -f "$2" ] && case "$name" in *.log | *.log.*) return 0 ;; esac ;;
+    trajectories)
+        [ -d "$2" ] || return 1
+        for session in "$2"/* "$2"/.[!.]*; do
+            [ -e "$session" ] || continue
+            case "${session##*/}" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+            *) return 1 ;;
+            esac
+        done
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+# Cua's own bookkeeping files in a storage folder.
+cua_bookkeeping() {
+    case "$1" in
+    .cua-storage | .cua-moved-to | .last-used | .DS_Store) return 0 ;;
+    .*.part) return 0 ;;
+    esac
+    return 1
+}
+
 # clean_relocated: what lives in relocated folders. cache and logs go like the rest of the
 # settings and caches (unless --keep-data); runtimes, images and trajectories hold Spaces'
-# disks and recordings, so only --delete-spaces removes them. A folder is removed only when
-# Cua created it (its .cua-storage marker says owned=1); a folder that already had other
-# files is never emptied, only listed.
+# disks and recordings, so only --delete-spaces removes them. Only the entries Cua itself
+# writes are removed (cua_known_entry); the folder goes only when nothing else is in it, and
+# a person's own files are named and left alone. The drive and the folder's other contents
+# are never touched.
 clean_relocated() {
     list="$(relocated_folders)"
     [ -n "$list" ] || return 0
@@ -1055,13 +1091,28 @@ clean_relocated() {
         *) removable=$([ "$delete_spaces" = 1 ] && echo 1 || echo 0); why="--delete-spaces removes it" ;;
         esac
         if [ "$removable" = 0 ]; then
-            info "kept $kind in $path ($why)"
+            if [ "$keep_data" = 1 ]; then
+                note="storage.toml is kept, so a reinstall finds it again"
+            else
+                note="storage.toml is removed with the settings, so after a reinstall run: cua storage set $kind \"$path\""
+            fi
+            info "kept $kind in $path ($why); $note"
             continue
         fi
-        if grep -q '^owned=1' "$path/.cua-storage" 2>/dev/null; then
-            rm_path "$path"
+        left=""
+        for entry in "$path"/* "$path"/.[!.]*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            ename="${entry##*/}"
+            if cua_bookkeeping "$ename" || cua_known_entry "$kind" "$entry"; then
+                rm_path "$entry"
+            else
+                left="$left$ename "
+            fi
+        done
+        if [ -n "$left" ]; then
+            info "kept $path: it holds files Cua did not put there ($left); Cua's own $kind files are gone"
         else
-            warn "$path was not created by Cua (or holds other files), so it is left as it is; remove Cua's $kind there by hand"
+            rmdir_quiet "$path"
         fi
     done <<LIST
 $list

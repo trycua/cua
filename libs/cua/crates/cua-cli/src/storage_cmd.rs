@@ -144,9 +144,15 @@ pub fn report() -> serde_json::Value {
     let old: Vec<_> = Kind::ALL
         .into_iter()
         .filter(|k| k.movable())
-        .map(|k| k.default_in(&home))
-        .filter(|p| p.join(storage::MOVED_MARKER).exists() && !storage::is_in_use(&home, p))
-        .map(|p| json!({"path": p, "bytes": storage::disk_usage(&p)}))
+        .map(|k| (k, k.default_in(&home)))
+        .filter(|(_, p)| p.join(storage::MOVED_MARKER).exists() && !storage::is_in_use(&home, p))
+        .map(|(k, p)| {
+            json!({
+                "path": p,
+                "bytes": storage::known_usage(k, &p),
+                "other": storage::other_entries(k, &p),
+            })
+        })
         .collect();
     let (traj_bytes, traj_age) = cua_disk::scratch::trajectory_caps();
     json!({
@@ -241,7 +247,7 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
             if let Some(e) = runtimes_path_problem(kind, &path) {
                 return Err(CuaError::InvalidArgument(e));
             }
-            let needed = storage::needed_bytes(&storage::dir(kind), &path);
+            let needed = storage::needed_bytes(kind, &storage::dir(kind), &path);
             match storage::validate(&home, kind, &path, needed) {
                 Ok(v) => {
                     if json {
@@ -301,9 +307,12 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
                 if json {
                     util::json_line(
                         out,
-                        &json!({"ok": true, "from": plan.from, "to": plan.to, "bytes": plan.bytes}),
+                        &json!({"ok": true, "from": plan.from, "to": plan.to, "bytes": plan.bytes, "warnings": plan.warnings}),
                     );
                 } else {
+                    for w in &plan.warnings {
+                        hint_line(out, w);
+                    }
                     line(
                         out,
                         format!("Moved {} to {}", human(plan.bytes), plan.to.display()),
@@ -328,6 +337,15 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
                         out,
                         format!("{} now lives in {}", kind.name(), path.display()),
                     );
+                    hint_line(
+                        out,
+                        format!(
+                            "Nothing was copied. Computers and files already in {} are not found until you copy them (cua storage set {} <path> --move) or point back (cua storage reset {}).",
+                            storage::dir_in(&home, kind, |_| None).display(),
+                            kind.name(),
+                            kind.name()
+                        ),
+                    );
                 }
             }
             Ok(())
@@ -350,11 +368,23 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
             Ok(())
         }
         StorageCmd::Remove { path } => {
-            let removed = remove(&home, &path).map_err(CuaError::InvalidArgument)?;
+            let report = remove(&home, &path).map_err(CuaError::InvalidArgument)?;
             if json {
-                util::json_line(out, &json!({"ok": true, "freed_bytes": removed}));
+                util::json_line(
+                    out,
+                    &json!({"ok": true, "freed_bytes": report.freed, "left": report.left}),
+                );
             } else {
-                line(out, format!("Removed {}", human(removed)));
+                line(out, format!("Removed {}", human(report.freed)));
+                if !report.left.is_empty() {
+                    hint_line(
+                        out,
+                        format!(
+                            "Left in place, because Cua did not put them there: {}",
+                            report.left.join(", ")
+                        ),
+                    );
+                }
             }
             Ok(())
         }
@@ -363,7 +393,7 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
 
 /// Deletes a computer image or runtime below `runtimes`, or an old location
 /// marked by a move. Anything else is refused.
-fn remove(home: &Path, path: &Path) -> Result<u64, String> {
+fn remove(home: &Path, path: &Path) -> Result<storage::RemoveReport, String> {
     let canon = path
         .canonicalize()
         .map_err(|_| "That folder does not exist.".to_string())?;
@@ -396,5 +426,8 @@ fn remove(home: &Path, path: &Path) -> Result<u64, String> {
     std::fs::remove_dir_all(&canon)
         .or_else(|_| std::fs::remove_file(&canon))
         .map_err(|e| e.to_string())?;
-    Ok(bytes)
+    Ok(storage::RemoveReport {
+        freed: bytes,
+        left: vec![],
+    })
 }

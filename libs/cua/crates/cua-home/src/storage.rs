@@ -369,8 +369,12 @@ pub fn validate(
             return Err(format!("That folder overlaps the {} folder.", other.name()));
         }
     }
-    if candidate.starts_with(&current) && candidate != current {
+    let (cur_n, cand_n) = (normalize(&current), normalize(candidate));
+    if cand_n.starts_with(&cur_n) && cand_n != cur_n {
         return Err("The new location cannot be inside the current one.".into());
+    }
+    if cur_n.starts_with(&cand_n) && cand_n != cur_n {
+        return Err("The new location cannot contain the current one: the old files could never be removed.".into());
     }
     if fs::metadata(candidate).is_ok_and(|md| !md.is_dir()) {
         return Err("That is a file, not a folder.".into());
@@ -389,6 +393,20 @@ pub fn validate(
             .unwrap_or(false)
     {
         warnings.push("The folder is not empty. Cua will add to it.".into());
+        let others = other_entries(kind, candidate);
+        if !others.is_empty() {
+            warnings.push(format!(
+                "The new folder holds files Cua does not recognise ({}). They stay as they are.",
+                list_names(&others)
+            ));
+        }
+    }
+    let src_others = other_entries(kind, &current);
+    if !src_others.is_empty() {
+        warnings.push(format!(
+            "The current folder holds files Cua does not recognise ({}). They are not moved and not deleted.",
+            list_names(&src_others)
+        ));
     }
     let created = fs::create_dir_all(candidate);
     if let Err(e) = created {
@@ -444,12 +462,12 @@ pub fn validate(
 /// when the target keeps files sparse and clones them (APFS), else the logical
 /// size, because a sparse 40 GB disk becomes 40 GB on exFAT, NTFS or a network
 /// share.
-pub fn needed_bytes(from: &Path, candidate: &Path) -> u64 {
-    let allocated = disk_usage(from);
+pub fn needed_bytes(kind: Kind, from: &Path, candidate: &Path) -> u64 {
+    let allocated = known_usage(kind, from);
     if fs_type(candidate).is_some_and(|t| t == "apfs") {
         allocated
     } else {
-        allocated.max(logical(from).1)
+        allocated.max(known_logical(kind, from).1)
     }
 }
 
@@ -505,6 +523,14 @@ pub fn fs_type(path: &Path) -> Option<String> {
     }
 }
 
+fn list_names(names: &[String]) -> String {
+    let mut shown: Vec<&str> = names.iter().take(3).map(String::as_str).collect();
+    if names.len() > 3 {
+        shown.push("...");
+    }
+    shown.join(", ")
+}
+
 fn human(b: u64) -> String {
     format!("{:.1} GB", b as f64 / 1e9)
 }
@@ -529,6 +555,137 @@ fn same_volume(_: &Path, _: &Path) -> bool {
     false
 }
 
+// -------------------------------------------------------- what Cua owns
+
+/// Whether a top-level entry of `dir` is one Cua itself writes for `kind`. A move
+/// copies, and a removal deletes, only such entries: anything else in the folder
+/// (a person's own files, another program's) is left alone.
+///
+/// - runtimes: `linux`, `lume`
+/// - images: `blobs`, `disks`, `rootfs`, `refs`
+/// - cache: `icons`, `installables`, `thumbnails`
+/// - logs: files ending `.log` or `.log.N`
+/// - trajectories: a machine folder whose entries are all `YYYYMMDD-HHMMSS` sessions
+///
+/// Cua's own bookkeeping files (`.cua-storage`, `.cua-moved-to`, `.last-used`,
+/// `.DS_Store`, `*.part` leftovers of an interrupted copy) are never "other".
+pub fn is_known_entry(kind: Kind, path: &Path) -> bool {
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+        return false;
+    };
+    let is_dir = fs::symlink_metadata(path).is_ok_and(|m| m.is_dir());
+    match kind {
+        Kind::Runtimes => is_dir && matches!(name.as_str(), "linux" | "lume"),
+        Kind::Images => is_dir && matches!(name.as_str(), "blobs" | "disks" | "rootfs" | "refs"),
+        Kind::Cache => is_dir && matches!(name.as_str(), "icons" | "installables" | "thumbnails"),
+        Kind::Logs => !is_dir && (name.ends_with(".log") || name.contains(".log.")),
+        Kind::Trajectories => {
+            is_dir
+                && fs::read_dir(path).is_ok_and(|rd| {
+                    rd.flatten().all(|e| {
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        n.len() == 15
+                            && n.as_bytes()[8] == b'-'
+                            && n.bytes()
+                                .enumerate()
+                                .all(|(i, b)| i == 8 || b.is_ascii_digit())
+                    })
+                })
+        }
+        _ => false,
+    }
+}
+
+fn is_bookkeeping(name: &str) -> bool {
+    matches!(
+        name,
+        OWNED_MARKER | MOVED_MARKER | ".last-used" | ".DS_Store"
+    ) || (name.starts_with('.') && name.ends_with(".part"))
+}
+
+/// The top-level entries of `dir`: (Cua's, others). Bookkeeping files are in neither.
+pub fn entries(kind: Kind, dir: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let (mut known, mut other) = (Vec::new(), Vec::new());
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if is_bookkeeping(&name) {
+                continue;
+            }
+            if is_known_entry(kind, &e.path()) {
+                known.push(e.path());
+            } else {
+                other.push(e.path());
+            }
+        }
+    }
+    known.sort();
+    other.sort();
+    (known, other)
+}
+
+/// Short names of the entries Cua does not recognise in `dir`.
+pub fn other_entries(kind: Kind, dir: &Path) -> Vec<String> {
+    entries(kind, dir)
+        .1
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect()
+}
+
+/// Bytes allocated by Cua's own entries of `dir`.
+pub fn known_usage(kind: Kind, dir: &Path) -> u64 {
+    entries(kind, dir).0.iter().map(|p| disk_usage(p)).sum()
+}
+
+fn known_logical(kind: Kind, dir: &Path) -> (u64, u64) {
+    entries(kind, dir)
+        .0
+        .iter()
+        .map(|p| logical(p))
+        .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
+}
+
+/// What a removal did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemoveReport {
+    /// Bytes freed.
+    pub freed: u64,
+    /// Names of entries that were not Cua's and stay (the folder stays too).
+    pub left: Vec<String>,
+}
+
+/// Removes Cua's own entries of `kind` from `dir`, plus its bookkeeping files, and
+/// then the folder itself only if nothing else is in it.
+pub fn remove_known(kind: Kind, dir: &Path) -> io::Result<RemoveReport> {
+    crate::guard_write(dir)?;
+    let (known, other) = entries(kind, dir);
+    let mut freed = 0;
+    for p in &known {
+        freed += disk_usage(p);
+        if fs::symlink_metadata(p)?.is_dir() {
+            fs::remove_dir_all(p)?;
+        } else {
+            fs::remove_file(p)?;
+        }
+    }
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if is_bookkeeping(&e.file_name().to_string_lossy()) {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
+    let left: Vec<String> = other
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    if left.is_empty() {
+        let _ = fs::remove_dir(dir);
+    }
+    Ok(RemoveReport { freed, left })
+}
+
 // ----------------------------------------------------------------- move
 
 /// What a move would do.
@@ -544,12 +701,14 @@ pub struct MovePlan {
     pub bytes: u64,
     /// Same volume: the move is a rename and needs no extra space.
     pub same_volume: bool,
+    /// Notes to show (files Cua does not recognise in either folder, an external drive).
+    pub warnings: Vec<String>,
 }
 
 /// Validates the move of `kind` to `to` and describes it.
 pub fn plan_move(home: &Path, kind: Kind, to: &Path) -> Result<MovePlan, String> {
     let from = dir_in(home, kind, |k| std::env::var(k).ok());
-    let bytes = needed_bytes(&from, to);
+    let bytes = needed_bytes(kind, &from, to);
     let v = validate(home, kind, to, bytes)?;
     Ok(MovePlan {
         kind,
@@ -557,6 +716,7 @@ pub fn plan_move(home: &Path, kind: Kind, to: &Path) -> Result<MovePlan, String>
         to: to.to_path_buf(),
         bytes,
         same_volume: !v.other_volume,
+        warnings: v.warnings,
     })
 }
 
@@ -624,15 +784,22 @@ pub fn move_kind(
     fs::create_dir_all(&plan.to).map_err(|e| e.to_string())?;
     if plan.from.exists() {
         let mut done = 0u64;
-        copy_tree(&plan.from, &plan.to, &mut |n| {
-            done += n;
-            progress(done);
-        })
-        .map_err(|e| format!("Copy failed, nothing was changed: {e}"))?;
-        let (a, b) = (disk_usage(&plan.from), disk_usage(&plan.to));
+        // Only Cua's own entries are copied; anything else in the folder stays where it is.
+        for src in entries(kind, &plan.from).0 {
+            let dst = plan.to.join(src.file_name().unwrap_or_default());
+            copy_tree(&src, &dst, &mut |n| {
+                done += n;
+                progress(done);
+            })
+            .map_err(|e| format!("Copy failed, nothing was changed: {e}"))?;
+        }
+        let (a, b) = (known_usage(kind, &plan.from), known_usage(kind, &plan.to));
         // Allocated sizes differ a little between volumes; compare file counts and
         // logical sizes, which must match exactly.
-        let (fa, fb) = (logical(&plan.from), logical(&plan.to));
+        let (fa, fb) = (
+            known_logical(kind, &plan.from),
+            known_logical(kind, &plan.to),
+        );
         if fb.0 < fa.0 || fb.1 < fa.1 {
             return Err(format!(
                 "The copy is incomplete ({} of {} files, {} of {} bytes); nothing was changed. (allocated {a} vs {b})",
@@ -648,7 +815,7 @@ pub fn move_kind(
     if plan.from.exists() {
         let _ = fs::write(
             plan.from.join(MOVED_MARKER),
-            plan.to.to_string_lossy().as_bytes(),
+            format!("{}\nkind={}\n", plan.to.to_string_lossy(), kind.name()),
         );
     }
     Ok(plan)
@@ -680,6 +847,24 @@ fn logical(p: &Path) -> (u64, u64) {
 /// copies to a `.part` name first so a half-written file is never taken for
 /// a finished one.
 fn copy_tree(from: &Path, to: &Path, count: &mut dyn FnMut(u64)) -> io::Result<()> {
+    if !fs::symlink_metadata(from)?.is_dir() {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let len = fs::metadata(from)?.len();
+        if fs::metadata(to).is_ok_and(|m| m.len() == len) {
+            count(len);
+            return Ok(());
+        }
+        let part = to.with_file_name(format!(
+            ".{}.part",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        let n = fs::copy(from, &part)?;
+        fs::rename(&part, to)?;
+        count(n);
+        return Ok(());
+    }
     fs::create_dir_all(to)?;
     for e in fs::read_dir(from)? {
         let e = e?;
@@ -752,24 +937,36 @@ fn normalize(path: &Path) -> PathBuf {
     }
 }
 
-/// Deletes the old folder left by [`move_kind`]. Only call after the person
-/// confirmed. Refuses anything that does not carry the marker, and anything
-/// that is, contains or lies inside a folder in use, so it can never remove a
-/// live location.
-pub fn remove_old(old: &Path) -> io::Result<u64> {
+/// Removes Cua's own entries from the old folder left by [`move_kind`]. Only call
+/// after the person confirmed. Refuses anything that does not carry the marker,
+/// and anything that is, contains or lies inside a folder in use. Entries Cua
+/// does not recognise (a person's own files that were in the folder) are never
+/// touched: the folder stays and the report names them.
+pub fn remove_old(old: &Path) -> io::Result<RemoveReport> {
     crate::guard_write(old)?;
     let denied = |m: &str| io::Error::new(io::ErrorKind::PermissionDenied, m.to_string());
     if is_in_use(&crate::cua_home(), old) {
         return Err(denied("that folder is in use"));
     }
-    let marker = old.join(MOVED_MARKER);
-    let target = fs::read_to_string(&marker).map_err(|_| denied("not an old Cua location"))?;
+    let marker = fs::read_to_string(old.join(MOVED_MARKER))
+        .map_err(|_| denied("not an old Cua location"))?;
+    let mut lines = marker.lines();
+    let new_dir = PathBuf::from(lines.next().unwrap_or("").trim());
+    // The kind the marker names, else the one the folder is called (images, runtimes, ...).
+    let kind = lines
+        .find_map(|l| l.strip_prefix("kind=").and_then(Kind::parse))
+        .or_else(|| {
+            old.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(Kind::parse)
+        })
+        .filter(|k| k.movable())
+        .ok_or_else(|| denied("cannot tell what this folder held; keeping it"))?;
     // The data must really be in the new place before the old copy goes.
-    let new_dir = Path::new(target.trim());
     if !new_dir.is_dir() {
         return Err(denied("the new location is missing; keeping the old data"));
     }
-    if logical(new_dir).0 + 1 < logical(old).0 {
+    if known_logical(kind, &new_dir).0 < known_logical(kind, old).0 {
         return Err(denied(
             "the new location has fewer files than the old one; keeping the old data",
         ));
@@ -777,9 +974,7 @@ pub fn remove_old(old: &Path) -> io::Result<u64> {
     if !processes_using(old).is_empty() {
         return Err(denied("a computer is still using that folder"));
     }
-    let bytes = disk_usage(old);
-    fs::remove_dir_all(old)?;
-    Ok(bytes)
+    remove_known(kind, old)
 }
 
 /// Processes (other than this one) whose command line names a path inside
@@ -939,8 +1134,7 @@ mod tests {
         let plan = move_kind(&h, Kind::Runtimes, &to, |n| last = n).unwrap();
         assert_eq!(plan.from, old);
         assert_eq!(fs::read(to.join("lume/1/disk.img")).unwrap().len(), 100_000);
-        assert_eq!(fs::read(to.join("top.txt")).unwrap(), b"hi");
-        assert!(last >= 100_002);
+        assert!(last >= 100_000);
         assert_eq!(dir_in(&h, Kind::Runtimes, no_env), to);
         // The old data is still there, with a marker.
         assert!(old.join("lume/1/disk.img").exists());
@@ -950,9 +1144,16 @@ mod tests {
         assert_eq!(again.from, again.to);
         // Removing the old copy needs the marker; a live place is refused.
         assert!(remove_old(&to).is_err());
-        assert!(to.join("top.txt").exists());
-        remove_old(&old).unwrap();
-        assert!(!old.exists());
+        assert!(to.join("lume/1/disk.img").exists());
+        let rep = remove_old(&old).unwrap();
+        // Cua's own entry goes; the person's top.txt and link were never Cua's, so they stay.
+        assert!(!old.join("lume").exists());
+        assert_eq!(rep.left, vec!["link".to_string(), "top.txt".to_string()]);
+        assert!(old.join("top.txt").exists());
+        assert!(
+            !to.join("top.txt").exists(),
+            "files Cua does not know are not copied"
+        );
         assert!(to.join("lume/1/disk.img").exists());
     }
 
@@ -961,8 +1162,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = d.path().join("home");
         let old = h.join("images");
-        fs::create_dir_all(&old).unwrap();
-        fs::write(old.join("a"), b"1").unwrap();
+        fs::create_dir_all(old.join("blobs")).unwrap();
+        fs::write(old.join("blobs/a"), b"1").unwrap();
         let to = d.path().join("new");
         move_kind(&h, Kind::Images, &to, |_| {}).unwrap();
         assert!(old.join(MOVED_MARKER).exists());
@@ -972,7 +1173,7 @@ mod tests {
             "the marker goes when it is live again"
         );
         assert!(remove_old(&old).is_err());
-        assert!(old.join("a").exists());
+        assert!(old.join("blobs/a").exists());
     }
 
     #[test]
@@ -995,15 +1196,15 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = d.path().join("home");
         let old = h.join("images");
-        fs::create_dir_all(&old).unwrap();
-        fs::write(old.join("a"), b"aaaa").unwrap();
-        fs::write(old.join("b"), b"bbbb").unwrap();
+        fs::create_dir_all(old.join("blobs")).unwrap();
+        fs::write(old.join("blobs/a"), b"aaaa").unwrap();
+        fs::write(old.join("blobs/b"), b"bbbb").unwrap();
         let to = d.path().join("new");
-        fs::create_dir_all(&to).unwrap();
-        fs::write(to.join("a"), b"aaaa").unwrap();
-        fs::write(to.join(".b.part"), b"bb").unwrap();
+        fs::create_dir_all(to.join("blobs")).unwrap();
+        fs::write(to.join("blobs/a"), b"aaaa").unwrap();
+        fs::write(to.join("blobs/.b.part"), b"bb").unwrap();
         move_kind(&h, Kind::Images, &to, |_| {}).unwrap();
-        assert_eq!(fs::read(to.join("b")).unwrap(), b"bbbb");
+        assert_eq!(fs::read(to.join("blobs/b")).unwrap(), b"bbbb");
     }
 
     fn set_cua_home_for_test(h: &Path) {
@@ -1022,8 +1223,8 @@ mod tests {
         let h = d.path().join("home");
         set_cua_home_for_test(&h);
         let live = h.join("images");
-        fs::create_dir_all(&live).unwrap();
-        fs::write(live.join("a"), b"live").unwrap();
+        fs::create_dir_all(live.join("blobs")).unwrap();
+        fs::write(live.join("blobs/a"), b"live").unwrap();
         let b = d.path().join("B");
         move_kind(&h, Kind::Images, &b, |_| {}).unwrap();
         set_override(&h, Kind::Images, None).unwrap();
@@ -1031,19 +1232,19 @@ mod tests {
             remove_old(&live).is_err(),
             "reset: the default is live again"
         );
-        assert!(live.join("a").exists());
+        assert!(live.join("blobs/a").exists());
         // Move back (B becomes the old copy, the default is live).
         move_kind(&h, Kind::Images, &b, |_| {}).unwrap();
         move_kind(&h, Kind::Images, &live, |_| {}).unwrap();
         assert!(remove_old(&live).is_err());
-        assert!(live.join("a").exists());
+        assert!(live.join("blobs/a").exists());
         // Even with a stale marker planted in the live folder.
         fs::write(live.join(MOVED_MARKER), b.to_string_lossy().as_bytes()).unwrap();
         assert!(remove_old(&live).is_err());
-        assert!(live.join("a").exists());
+        assert!(live.join("blobs/a").exists());
         // The old copy in B may go.
         assert!(remove_old(&b).is_ok());
-        assert!(live.join("a").exists());
+        assert!(live.join("blobs/a").exists());
     }
 
     #[cfg(unix)]
@@ -1090,13 +1291,13 @@ mod tests {
     fn the_size_to_copy_counts_logical_bytes_off_apfs() {
         let d = tempfile::tempdir().unwrap();
         let src = d.path().join("rt");
-        fs::create_dir_all(&src).unwrap();
-        let f = fs::File::create(src.join("datadisk")).unwrap();
+        fs::create_dir_all(src.join("linux")).unwrap();
+        let f = fs::File::create(src.join("linux/datadisk")).unwrap();
         f.set_len(40 << 30).unwrap(); // a sparse 40 GB disk
         assert!(disk_usage(&src) < (1 << 20));
         let target = d.path().join("other");
         // The temp dir is not APFS on CI Linux; on APFS the clone stays cheap.
-        let need = needed_bytes(&src, &target);
+        let need = needed_bytes(Kind::Runtimes, &src, &target);
         if fs_type(&target).as_deref() == Some("apfs") {
             assert!(need < (1 << 20));
         } else {
@@ -1123,5 +1324,77 @@ mod tests {
         let err = r.unwrap_err();
         assert!(err.contains("still running"), "{err}");
         assert!(!d.path().join("new").exists(), "nothing was copied");
+    }
+
+    /// N1/N2: a person's own file in a Cua folder is never copied, moved or deleted.
+    #[test]
+    fn users_own_files_in_either_folder_are_never_touched() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        set_cua_home_for_test(&h);
+        let old = h.join("trajectories");
+        fs::create_dir_all(old.join("mac/20260101-120000")).unwrap();
+        fs::write(old.join("mac/20260101-120000/turn_001.json"), b"{}").unwrap();
+        fs::write(old.join("my-vacation-video.mov"), b"precious").unwrap();
+        // The target already holds the person's files too.
+        let to = d.path().join("ext");
+        fs::create_dir_all(&to).unwrap();
+        fs::write(to.join("tax.pdf"), b"also precious").unwrap();
+        let plan = move_kind(&h, Kind::Trajectories, &to, |_| {}).unwrap();
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("my-vacation-video.mov")),
+            "{:?}",
+            plan.warnings
+        );
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("tax.pdf")),
+            "{:?}",
+            plan.warnings
+        );
+        assert!(to.join("mac/20260101-120000/turn_001.json").exists());
+        assert!(!to.join("my-vacation-video.mov").exists(), "not copied");
+        let rep = remove_old(&old).unwrap();
+        assert_eq!(rep.left, vec!["my-vacation-video.mov".to_string()]);
+        assert_eq!(
+            fs::read(old.join("my-vacation-video.mov")).unwrap(),
+            b"precious"
+        );
+        assert!(!old.join("mac").exists());
+        assert!(!old.join(MOVED_MARKER).exists());
+        assert_eq!(fs::read(to.join("tax.pdf")).unwrap(), b"also precious");
+        // remove_known on the new folder (what uninstall does) keeps tax.pdf and its folder.
+        let rep = remove_known(Kind::Trajectories, &to).unwrap();
+        assert_eq!(rep.left, vec!["tax.pdf".to_string()]);
+        assert!(to.join("tax.pdf").exists() && !to.join("mac").exists());
+    }
+
+    #[test]
+    fn a_folder_with_only_cuas_entries_goes_whole() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("lg");
+        fs::create_dir_all(&f).unwrap();
+        fs::write(f.join("daemon.log"), b"x").unwrap();
+        fs::write(f.join("daemon.log.1"), b"x").unwrap();
+        fs::write(f.join(OWNED_MARKER), b"owned=1").unwrap();
+        let rep = remove_known(Kind::Logs, &f).unwrap();
+        assert!(rep.left.is_empty());
+        assert!(!f.exists());
+    }
+
+    /// N3: the target may not be a parent of the live folder.
+    #[test]
+    fn a_target_that_contains_the_current_folder_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        fs::create_dir_all(h.join("images")).unwrap();
+        let e = validate(&h, Kind::Images, &h, 0).unwrap_err();
+        assert!(e.contains("overlap") || e.contains("contain"), "{e}");
+        let ext = d.path().join("ext");
+        fs::create_dir_all(ext.join("img")).unwrap();
+        set_override(&h, Kind::Images, Some(&ext.join("img"))).unwrap();
+        assert!(validate(&h, Kind::Images, &ext, 0).is_err());
     }
 }

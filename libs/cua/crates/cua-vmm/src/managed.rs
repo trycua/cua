@@ -446,6 +446,22 @@ fn take_shutdown_note_in(dir: &Path) -> Option<String> {
     Some(s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// The longest Unix socket path the built-in Linux runtime would create if its
+/// runtimes folder were `runtimes` (see [`check_path_length`]).
+pub fn longest_socket_path(runtimes: &Path) -> usize {
+    let rel = instance_dir();
+    let rel = rel
+        .strip_prefix(root())
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    runtimes
+        .join("linux")
+        .join(rel)
+        .join("ssh.sock.1234567890123456")
+        .as_os_str()
+        .len()
+}
+
 /// Lima's sockets live in the VM's directory and must fit a Unix socket
 /// path (104 bytes on macOS, with the suffix Lima adds).
 fn check_path_length() -> Result<()> {
@@ -454,7 +470,7 @@ fn check_path_length() -> Result<()> {
     if len >= 104 {
         return Err(VmmError::other(format!(
             "the built-in Linux runtime cannot run from {} (its path is {len} bytes; Unix \
-             sockets allow 103): set CUA_HOME to a shorter directory",
+             sockets allow 103): choose a shorter folder for computers (`cua storage set runtimes <path>`, or CUA_HOME)",
             root().display()
         )));
     }

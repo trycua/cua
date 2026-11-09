@@ -23,6 +23,10 @@ use std::path::{Path, PathBuf};
 
 /// File name of the storage settings under the cua home.
 pub const SETTINGS_FILE: &str = "storage.toml";
+/// Written in a relocated folder: whether Cua created it (`owned=1`), so an
+/// uninstall may remove the whole folder, or the person pointed Cua at a
+/// folder that already had files (`owned=0`).
+pub const OWNED_MARKER: &str = ".cua-storage";
 /// Marker written in an old location after a move, naming the new one.
 pub const MOVED_MARKER: &str = ".cua-moved-to";
 
@@ -372,6 +376,12 @@ pub fn validate(
         return Err("That is a file, not a folder.".into());
     }
     let existed = candidate.exists();
+    // The topmost folder this check would create, to remove again.
+    let first_missing = candidate
+        .ancestors()
+        .take_while(|a| !a.exists())
+        .last()
+        .map(Path::to_path_buf);
     let mut warnings = Vec::new();
     if existed
         && fs::read_dir(candidate)
@@ -387,11 +397,27 @@ pub fn validate(
     let probe = candidate.join(format!(".cua-write-test-{}", std::process::id()));
     let writable = fs::write(&probe, b"x");
     let _ = fs::remove_file(&probe);
-    if !existed {
-        let _ = fs::remove_dir(candidate);
+    // Take back every empty folder this check created, from the leaf up.
+    if let Some(top) = &first_missing {
+        let mut cur = Some(candidate);
+        while let Some(c) = cur {
+            if fs::remove_dir(c).is_err() || c == top.as_path() {
+                break;
+            }
+            cur = c.parent();
+        }
     }
     writable.map_err(|e| format!("That folder is not writable: {e}"))?;
     let available = available_space(candidate);
+    if let Some(fs_name) = fs_type(candidate)
+        && matches!(fs_name.as_str(), "msdos" | "vfat")
+        && largest_file(&dir_in(home, kind, |k| std::env::var(k).ok())) >= (4 << 30) - 1
+    {
+        return Err(
+            "That drive is formatted as FAT32, which cannot hold files of 4 GB or more. Choose a drive formatted as APFS, Mac OS Extended, exFAT or NTFS."
+                .into(),
+        );
+    }
     if let Some(a) = available
         && a < needed.saturating_add(5 << 30)
     {
@@ -412,6 +438,71 @@ pub fn validate(
         other_volume: !same_volume(&current, candidate),
         warnings,
     })
+}
+
+/// The size `kind`'s data takes when copied to `candidate`: allocated blocks
+/// when the target keeps files sparse and clones them (APFS), else the logical
+/// size, because a sparse 40 GB disk becomes 40 GB on exFAT, NTFS or a network
+/// share.
+pub fn needed_bytes(from: &Path, candidate: &Path) -> u64 {
+    let allocated = disk_usage(from);
+    if fs_type(candidate).is_some_and(|t| t == "apfs") {
+        allocated
+    } else {
+        allocated.max(logical(from).1)
+    }
+}
+
+/// The largest single file under `dir`.
+fn largest_file(dir: &Path) -> u64 {
+    let Ok(md) = fs::symlink_metadata(dir) else {
+        return 0;
+    };
+    if md.is_dir() {
+        fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| largest_file(&e.path()))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
+    } else {
+        md.len()
+    }
+}
+
+/// The file system type name of the volume holding `path` (`apfs`, `exfat`,
+/// `msdos`, `ntfs`, `smbfs`, ...), when known (macOS).
+pub fn fs_type(path: &Path) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let mut p = path.to_path_buf();
+        while !p.exists() {
+            if !p.pop() {
+                return None;
+            }
+        }
+        let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
+        // SAFETY: `c` is NUL-terminated and `st` is plain data filled in by the call.
+        let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
+            return None;
+        }
+        let name: Vec<u8> = st
+            .f_fstypename
+            .iter()
+            .take_while(|&&b| b != 0)
+            .map(|&b| b as u8)
+            .collect();
+        Some(String::from_utf8_lossy(&name).to_lowercase())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 fn human(b: u64) -> String {
@@ -458,7 +549,7 @@ pub struct MovePlan {
 /// Validates the move of `kind` to `to` and describes it.
 pub fn plan_move(home: &Path, kind: Kind, to: &Path) -> Result<MovePlan, String> {
     let from = dir_in(home, kind, |k| std::env::var(k).ok());
-    let bytes = disk_usage(&from);
+    let bytes = needed_bytes(&from, to);
     let v = validate(home, kind, to, bytes)?;
     Ok(MovePlan {
         kind,
@@ -511,11 +602,25 @@ pub fn move_kind(
     if daemon_running(home) {
         return Err("Stop Cua's computers before moving their files.".into());
     }
+    let current = dir_in(home, kind, |k| std::env::var(k).ok());
+    let busy = processes_using(&current);
+    if !busy.is_empty() {
+        return Err(format!(
+            "A computer is still running from that folder ({}). Stop it first.",
+            busy.join(", ")
+        ));
+    }
     let plan = plan_move(home, kind, to)?;
     if plan.from == plan.to {
         return Ok(plan);
     }
     crate::guard_write(&plan.to).map_err(|e| e.to_string())?;
+    // Cua owns the folder only if it was new or empty: uninstall removes such a
+    // folder, and never anything else on a drive the person shares with other files.
+    let was_empty = !plan.to.exists()
+        || fs::read_dir(&plan.to)
+            .map(|mut r| r.all(|e| e.is_ok_and(|e| e.file_name() == OWNED_MARKER)))
+            .unwrap_or(false);
     fs::create_dir_all(&plan.to).map_err(|e| e.to_string())?;
     if plan.from.exists() {
         let mut done = 0u64;
@@ -536,6 +641,10 @@ pub fn move_kind(
         }
     }
     set_override(home, kind, Some(&plan.to)).map_err(|e| e.to_string())?;
+    let _ = fs::write(
+        plan.to.join(OWNED_MARKER),
+        format!("kind={}\nowned={}\n", kind.name(), u8::from(was_empty)),
+    );
     if plan.from.exists() {
         let _ = fs::write(
             plan.from.join(MOVED_MARKER),
@@ -606,35 +715,118 @@ fn copy_tree(from: &Path, to: &Path, count: &mut dyn FnMut(u64)) -> io::Result<(
     Ok(())
 }
 
+/// Whether `path` is, contains or lies inside a folder Cua is using now (the
+/// relocatable kinds), or contains the cua home itself. Symlinks are resolved,
+/// so a link to a live folder counts as that folder.
+pub fn is_in_use(home: &Path, path: &Path) -> bool {
+    let canon = |p: &Path| normalize(p);
+    let me = canon(path);
+    if canon(home).starts_with(&me) {
+        return true;
+    }
+    Kind::ALL.into_iter().filter(|k| k.movable()).any(|k| {
+        let live = canon(&dir_in(home, k, |v| std::env::var(v).ok()));
+        live.starts_with(&me) || me.starts_with(&live)
+    })
+}
+
+/// `path` with its nearest existing ancestor resolved through symlinks.
+fn normalize(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut cur = path;
+    loop {
+        if let Ok(c) = cur.canonicalize() {
+            let mut out = c;
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                cur = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
 /// Deletes the old folder left by [`move_kind`]. Only call after the person
-/// confirmed. Refuses anything that does not carry the marker, so it can
-/// never remove a live location.
+/// confirmed. Refuses anything that does not carry the marker, and anything
+/// that is, contains or lies inside a folder in use, so it can never remove a
+/// live location.
 pub fn remove_old(old: &Path) -> io::Result<u64> {
     crate::guard_write(old)?;
-    // Never the folder in use: after `reset` the old place is live again.
-    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    let home = crate::cua_home();
-    if Kind::ALL
-        .into_iter()
-        .any(|k| canon(&dir_in(&home, k, |v| std::env::var(v).ok())) == canon(old))
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "that folder is in use",
-        ));
+    let denied = |m: &str| io::Error::new(io::ErrorKind::PermissionDenied, m.to_string());
+    if is_in_use(&crate::cua_home(), old) {
+        return Err(denied("that folder is in use"));
     }
     let marker = old.join(MOVED_MARKER);
-    let target = fs::read_to_string(&marker)
-        .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "not an old Cua location"))?;
-    if !Path::new(target.trim()).is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "the new location is missing; keeping the old data",
+    let target = fs::read_to_string(&marker).map_err(|_| denied("not an old Cua location"))?;
+    // The data must really be in the new place before the old copy goes.
+    let new_dir = Path::new(target.trim());
+    if !new_dir.is_dir() {
+        return Err(denied("the new location is missing; keeping the old data"));
+    }
+    if logical(new_dir).0 + 1 < logical(old).0 {
+        return Err(denied(
+            "the new location has fewer files than the old one; keeping the old data",
         ));
+    }
+    if !processes_using(old).is_empty() {
+        return Err(denied("a computer is still using that folder"));
     }
     let bytes = disk_usage(old);
     fs::remove_dir_all(old)?;
     Ok(bytes)
+}
+
+/// Processes (other than this one) whose command line names a path inside
+/// `dir`: a running VM, its host agent, or anything else holding the
+/// folder's files. Empty when the list cannot be read or on Windows.
+pub fn processes_using(dir: &Path) -> Vec<String> {
+    #[cfg(unix)]
+    {
+        let needle = normalize(dir).to_string_lossy().into_owned();
+        let raw = dir.to_string_lossy().into_owned();
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-axww", "-o", "pid=,command="])
+            .output()
+        else {
+            return vec![];
+        };
+        let me = std::process::id().to_string();
+        let mut found = Vec::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let line = line.trim();
+            let Some((pid, cmd)) = line.split_once(' ') else {
+                continue;
+            };
+            if pid == me {
+                continue;
+            }
+            let hit = |n: &str| {
+                cmd.match_indices(n).any(|(i, _)| {
+                    let after = cmd[i + n.len()..].chars().next();
+                    after.is_none_or(|c| c == '/' || c.is_whitespace() || c == '"' || c == ':')
+                })
+            };
+            if hit(&needle) || hit(&raw) {
+                found.push(format!(
+                    "{} ({})",
+                    cmd.split_whitespace().next().unwrap_or(""),
+                    pid
+                ));
+            }
+        }
+        found
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        vec![]
+    }
 }
 
 /// Reads a whole file into a string, for callers that only want a quick
@@ -812,5 +1004,124 @@ mod tests {
         fs::write(to.join(".b.part"), b"bb").unwrap();
         move_kind(&h, Kind::Images, &to, |_| {}).unwrap();
         assert_eq!(fs::read(to.join("b")).unwrap(), b"bbbb");
+    }
+
+    fn set_cua_home_for_test(h: &Path) {
+        // remove_old/is_in_use read the live folders through the global cua home.
+        // SAFETY: tests in this module that touch the environment run one at a time (#[serial-like] via the lock).
+        unsafe { std::env::set_var("CUA_HOME", h) };
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The audit's data-loss repro: move away, reset, then remove the default folder.
+    #[test]
+    fn remove_can_never_delete_the_live_folder_after_reset_or_a_move_back() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        set_cua_home_for_test(&h);
+        let live = h.join("images");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("a"), b"live").unwrap();
+        let b = d.path().join("B");
+        move_kind(&h, Kind::Images, &b, |_| {}).unwrap();
+        set_override(&h, Kind::Images, None).unwrap();
+        assert!(
+            remove_old(&live).is_err(),
+            "reset: the default is live again"
+        );
+        assert!(live.join("a").exists());
+        // Move back (B becomes the old copy, the default is live).
+        move_kind(&h, Kind::Images, &b, |_| {}).unwrap();
+        move_kind(&h, Kind::Images, &live, |_| {}).unwrap();
+        assert!(remove_old(&live).is_err());
+        assert!(live.join("a").exists());
+        // Even with a stale marker planted in the live folder.
+        fs::write(live.join(MOVED_MARKER), b.to_string_lossy().as_bytes()).unwrap();
+        assert!(remove_old(&live).is_err());
+        assert!(live.join("a").exists());
+        // The old copy in B may go.
+        assert!(remove_old(&b).is_ok());
+        assert!(live.join("a").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_refuses_parents_children_and_symlinks_of_live_folders() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        set_cua_home_for_test(&h);
+        let ext = d.path().join("ext");
+        let live = ext.join("rt");
+        fs::create_dir_all(&live).unwrap();
+        set_override(&h, Kind::Runtimes, Some(&live)).unwrap();
+        for p in [&ext, &live, &live.join("sub")] {
+            fs::create_dir_all(p).unwrap();
+            fs::write(p.join(MOVED_MARKER), live.to_string_lossy().as_bytes()).unwrap();
+            assert!(remove_old(p).is_err(), "{}", p.display());
+        }
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&live, &link).unwrap();
+        assert!(remove_old(&link).is_err());
+        assert!(live.exists());
+        // The cua home is never "old".
+        fs::write(h.join(MOVED_MARKER), live.to_string_lossy().as_bytes()).unwrap();
+        assert!(remove_old(&h).is_err());
+    }
+
+    #[test]
+    fn check_leaves_no_empty_parents_behind() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        fs::create_dir_all(&h).unwrap();
+        let deep = d.path().join("a/b/c");
+        validate(&h, Kind::Runtimes, &deep, 0).unwrap();
+        assert!(!d.path().join("a").exists());
+        // An existing parent stays.
+        fs::create_dir_all(d.path().join("keep")).unwrap();
+        validate(&h, Kind::Runtimes, &d.path().join("keep/x/y"), 0).unwrap();
+        assert!(d.path().join("keep").exists() && !d.path().join("keep/x").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_size_to_copy_counts_logical_bytes_off_apfs() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("rt");
+        fs::create_dir_all(&src).unwrap();
+        let f = fs::File::create(src.join("datadisk")).unwrap();
+        f.set_len(40 << 30).unwrap(); // a sparse 40 GB disk
+        assert!(disk_usage(&src) < (1 << 20));
+        let target = d.path().join("other");
+        // The temp dir is not APFS on CI Linux; on APFS the clone stays cheap.
+        let need = needed_bytes(&src, &target);
+        if fs_type(&target).as_deref() == Some("apfs") {
+            assert!(need < (1 << 20));
+        } else {
+            assert!(need >= 40 << 30, "{need}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_move_is_refused_while_a_process_runs_from_the_folder() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        let old = h.join("runtimes");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("disk"), b"x").unwrap();
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 20; true", &old.join("vm").to_string_lossy()])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let r = move_kind(&h, Kind::Runtimes, &d.path().join("new"), |_| {});
+        let _ = child.kill();
+        let _ = child.wait();
+        let err = r.unwrap_err();
+        assert!(err.contains("still running"), "{err}");
+        assert!(!d.path().join("new").exists(), "nothing was copied");
     }
 }

@@ -81,6 +81,20 @@ fn source_name(s: Source) -> &'static str {
     }
 }
 
+/// The runtimes folder must leave room for the Linux runtime's socket paths
+/// (103 bytes). `None` when the path is fine or the kind is another one.
+fn runtimes_path_problem(kind: Kind, path: &Path) -> Option<String> {
+    if kind != Kind::Runtimes {
+        return None;
+    }
+    let len = cua_vmm::managed::longest_socket_path(path);
+    (len > 103).then(|| {
+        format!(
+            "That path is too long for computers to run from it ({len} bytes; the limit is 103). Choose a shorter folder, for example /Volumes/Drive/cua."
+        )
+    })
+}
+
 /// The report `cua storage --json` prints (also what the app reads).
 pub fn report() -> serde_json::Value {
     let home = cua_home::cua_home();
@@ -97,6 +111,9 @@ pub fn report() -> serde_json::Value {
                 "env_var": k.env_var(),
                 // The home itself holds config, data and keys: counted once, as "home".
                 "bytes": if k.movable() { storage::disk_usage(&dir) } else { 0 },
+                "free_bytes": storage::available_space(&dir),
+                "owned": std::fs::read_to_string(dir.join(storage::OWNED_MARKER)).ok()
+                    .map(|t| t.contains("owned=1")),
             })
         })
         .collect();
@@ -128,13 +145,23 @@ pub fn report() -> serde_json::Value {
         .into_iter()
         .filter(|k| k.movable())
         .map(|k| k.default_in(&home))
-        .filter(|p| p.join(storage::MOVED_MARKER).exists())
+        .filter(|p| p.join(storage::MOVED_MARKER).exists() && !storage::is_in_use(&home, p))
         .map(|p| json!({"path": p, "bytes": storage::disk_usage(&p)}))
         .collect();
     let (traj_bytes, traj_age) = cua_disk::scratch::trajectory_caps();
     json!({
         "home": home,
         "home_bytes": storage::disk_usage(&home),
+        // Everything Cua keeps: the home plus each relocated folder (the home alone drops
+        // when a folder moves to another drive).
+        "total_bytes": storage::disk_usage(&home)
+            + Kind::ALL
+                .into_iter()
+                .filter(|k| k.movable())
+                .map(|k| storage::dir_in(&home, k, env))
+                .filter(|d| !d.starts_with(&home))
+                .map(|d| storage::disk_usage(&d))
+                .sum::<u64>(),
         "free_bytes": storage::available_space(&home),
         "kinds": kinds,
         "items": items,
@@ -197,7 +224,10 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
         }
         StorageCmd::Check { kind, path } => {
             let kind = kind_arg(&kind)?;
-            let needed = storage::disk_usage(&storage::dir(kind));
+            if let Some(e) = runtimes_path_problem(kind, &path) {
+                return Err(CuaError::InvalidArgument(e));
+            }
+            let needed = storage::needed_bytes(&storage::dir(kind), &path);
             match storage::validate(&home, kind, &path, needed) {
                 Ok(v) => {
                     if json {
@@ -339,6 +369,13 @@ fn remove(home: &Path, path: &Path) -> Result<u64, String> {
     }
     if storage::daemon_running(home) {
         return Err("Stop Cua's computers before removing their files.".into());
+    }
+    let busy = storage::processes_using(&canon);
+    if !busy.is_empty() {
+        return Err(format!(
+            "A computer is still running from that folder ({}).",
+            busy.join(", ")
+        ));
     }
     cua_home::guard_write(&canon).map_err(|e| e.to_string())?;
     let bytes = storage::disk_usage(&canon);

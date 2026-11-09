@@ -25,7 +25,7 @@ pub const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Options for [`Spaces::create`]: the same location / kind / runtime model
 /// as sandboxes ([`cua_sandbox_core::placement`]).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct SpaceCreate {
     /// Image. Default: the canonical Linux image
     /// (`ghcr.io/trycua/linux:24.04`, or `CUA_IMAGE_LINUX`).
@@ -144,6 +144,47 @@ pub struct SpaceCreate {
     /// is signed in and sharing (the `relay.spaces` setting), and a child
     /// follows its parent's `off`.
     pub relay: Option<bool>,
+}
+
+impl std::fmt::Debug for SpaceCreate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpaceCreate")
+            .field("image", &self.image)
+            .field("on", &self.on)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("name", &self.name)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("timeout", &self.timeout)
+            .field("wait", &self.wait)
+            .field("reuse", &self.reuse)
+            .field("command", &self.command)
+            .field("env", &self.env)
+            .field("services", &self.services)
+            .field("spacesd", &self.spacesd)
+            .field("env_token", &self.env_token.as_ref().map(|_| "<redacted>"))
+            .field("progress", &self.progress)
+            .field("create_id", &self.create_id)
+            .field("gpu", &self.gpu)
+            .field("durable", &self.durable)
+            .field("mounts", &self.mounts)
+            .field("headless", &self.headless)
+            .field("forkable", &self.forkable)
+            .field("volumes", &self.volumes)
+            .field("network", &self.network)
+            .field("labels", &self.labels)
+            .field("egress", &self.egress)
+            .field("network_settings", &self.network_settings)
+            .field("parent", &self.parent)
+            .field("tree", &self.tree)
+            .field("widen", &self.widen)
+            .field("instance_type", &self.instance_type)
+            .field("region", &self.region)
+            .field("relay", &self.relay)
+            .finish()
+    }
 }
 
 /// Where [`SpaceCreate::progress`] reports go.

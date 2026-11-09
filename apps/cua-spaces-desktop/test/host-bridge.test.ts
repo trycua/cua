@@ -44,7 +44,11 @@ const json = (v: unknown) => JSON.parse(JSON.stringify({ v })).v as unknown;
 const shapeProblems = (method: string, answer: unknown) => validate(SHAPES.webkit[method]!, json(answer), SHAPES.$defs).map((e) => `${method} ${e}`);
 const ELECTRON_ADAPTER = path.resolve(__dirname, "../../cua-spaces-web/src/bridge/adapters/electron.ts");
 const pageAdapter = async (win: unknown) =>
-  ((await import(/* @vite-ignore */ ELECTRON_ADAPTER)) as { createElectronAdapter(win: unknown): { call(op: string, args: unknown): Promise<unknown>; dispose?(): void } }).createElectronAdapter(win);
+  (
+    (await import(/* @vite-ignore */ ELECTRON_ADAPTER)) as {
+      createElectronAdapter(win: unknown): { call(op: string, args: unknown): Promise<unknown>; dispose?(): void };
+    }
+  ).createElectronAdapter(win);
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
 /** The daemon's tools as the fixture daemon answers them. */
@@ -62,7 +66,16 @@ class ToolBackend extends FixtureSpacesBackend {
       case "volume_mount_status":
       case "volume_mount":
       case "volume_unmount":
-        return { enabled: true, state: "unmounted", method: "nfs", path: "~/Cua Volume", volume_name: "Cua Volume", detail: null, settings_url: null, volume_errors: [] };
+        return {
+          enabled: true,
+          state: "unmounted",
+          method: "nfs",
+          path: "~/Cua Volume",
+          volume_name: "Cua Volume",
+          detail: null,
+          settings_url: null,
+          volume_errors: [],
+        };
       case "volume_cache_stats":
         return { size_bytes: 10, capacity_bytes: 1024 };
       case "volume_requests":
@@ -111,7 +124,14 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-host-bridge-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -505,7 +525,13 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
 
   it("makes, lists and revokes the codes that add a machine", async () => {
     const made = (await call("devices.createPairingCode", { team: null })) as Record<string, unknown>;
-    expect(made).toMatchObject({ id: "pc_fixture1", state: "active", team: null, url: expect.stringContaining("/add/"), installSh: expect.stringContaining("--pair") });
+    expect(made).toMatchObject({
+      id: "pc_fixture1",
+      state: "active",
+      team: null,
+      url: expect.stringContaining("/add/"),
+      installSh: expect.stringContaining("--pair"),
+    });
     expect(typeof made.expiresAt).toBe("number");
     const listed = (await call("devices.pairingCodes", {})) as Record<string, unknown>[];
     expect(listed).toEqual([expect.objectContaining({ id: "pc_fixture1", code: null, url: null })]);
@@ -539,7 +565,20 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       globalShortcut: unknown;
     };
     const rows = s.page.sections.flatMap((x) => x.rows.map((r) => r.id));
-    expect(rows).toEqual(expect.arrayContaining(["account", "notch", "auto-connect", "welcome", "teams", "teams-manage", "teams-billing", "telemetry", "telemetry-note", "launch-at-login"]));
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        "account",
+        "notch",
+        "auto-connect",
+        "welcome",
+        "teams",
+        "teams-manage",
+        "teams-billing",
+        "telemetry",
+        "telemetry-note",
+        "launch-at-login",
+      ]),
+    );
     // One runtime row per kind, on every system.
     expect(rows).toEqual(expect.arrayContaining(["runtime:container", "runtime:vm", "runtime:microvm"]));
     expect(s.updateChannel).toBe("stable");
@@ -630,20 +669,35 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.tips).toEqual({ off: false, done: [] });
   });
 
-  it("offers every experiment, and none of the switches that are gone", async () => {
+  it("offers every experiment that remains, and none of the switches that are gone or always on (Secure Spaces, Ask first)", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
-    expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:secure_spaces", "experiment:warm_pools"]));
-    for (const gone of ["your_cloud", "sharing", "web_ui", "classic_ui"]) expect(rows).not.toContain(`experiment:${gone}`);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        "experiment:cua_volume",
+        "experiment:child_spaces",
+        "experiment:ci_runners",
+        "experiment:tcp_shares",
+        "experiment:mobile",
+        "experiment:warm_pools",
+      ]),
+    );
+    for (const gone of ["your_cloud", "sharing", "web_ui", "classic_ui", "secure_spaces", "ask_first"]) expect(rows).not.toContain(`experiment:${gone}`);
   });
 
   it("New Space's \u201cUse built-in Lume\u201d and Settings' kind rows write the per-kind runtime settings", async () => {
     const fixture = backend as unknown as { runtimeSettings: Map<string, string> };
     // The wizard's switch (`RUNTIME_SWITCH_ROW`): the same choice as Settings, Advanced.
-    const s = (await call("settings.choose", { row: "runtime:vm", option: "builtin" })) as { page: { sections: { rows: { id: string; label: string; value?: string; options: { id: string; active: boolean }[] }[] }[] } };
+    const s = (await call("settings.choose", { row: "runtime:vm", option: "builtin" })) as {
+      page: { sections: { rows: { id: string; label: string; value?: string; options: { id: string; active: boolean }[] }[] }[] };
+    };
     expect(fixture.runtimeSettings.get("runtime.vm")).toBe("builtin");
     const rows = () => s.page.sections.flatMap((x) => x.rows);
-    expect(rows().find((r) => r.id === "runtime:vm")!.options.find((o) => o.active)?.id).toBe("builtin");
+    expect(
+      rows()
+        .find((r) => r.id === "runtime:vm")!
+        .options.find((o) => o.active)?.id,
+    ).toBe("builtin");
     // Already installed: what is installed and the path in use.
     const t = (await call("settings.choose", { row: "runtime:container", option: "system" })) as typeof s;
     const path = t.page.sections.flatMap((x) => x.rows).find((r) => r.id === "runtime-path:container")!;
@@ -659,7 +713,15 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   });
 
   it("reads, changes and clears the repo cache, and refuses what is not a number of GB", async () => {
-    const view = (await call("repoCache.get")) as { enabled: boolean; repos: number; bytes: number; capBytes: number; sizeSetting: string; summary: string; week: string };
+    const view = (await call("repoCache.get")) as {
+      enabled: boolean;
+      repos: number;
+      bytes: number;
+      capBytes: number;
+      sizeSetting: string;
+      summary: string;
+      week: string;
+    };
     expect(view).toMatchObject({ enabled: true, repos: 3, sizeSetting: "auto", summary: "Repos: 3, 1.2 GB of 5 GB" });
     // The SDK's 64-bit sizes reach the page as numbers.
     expect(typeof view.bytes).toBe("number");
@@ -784,7 +846,12 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     system.updater.report({ type: "downloaded", version: "0.9.3" }, "downloaded");
     await tick(5);
     expect(events.some((e) => e.event === "update.changed")).toBe(true);
-    expect(await call("update.get")).toMatchObject({ status: "downloaded", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3" });
+    expect(await call("update.get")).toMatchObject({
+      status: "downloaded",
+      version: "0.9.3",
+      percent: 100,
+      notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3",
+    });
     expect(system.updater.installs).toBe(0);
     const answer = await call("update.install");
     expect((answer as { status: string }).status).toBe("downloaded");
@@ -802,7 +869,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(actions).toEqual(["checked", "found", "downloaded", "installed"]);
   });
 
-  it("About carries the bundle's build, for \"Version 0.7.2 (0.7.2.41)\" as the SwiftUI app shows it", async () => {
+  it('About carries the bundle\'s build, for "Version 0.7.2 (0.7.2.41)" as the SwiftUI app shows it', async () => {
     await make({ build: "1.2.3.41" });
     expect(((await call("about.get")) as Record<string, unknown>).build).toBe("1.2.3.41");
   });
@@ -891,7 +958,10 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     // The first read marks the feed seen without posting it (the core's first run).
     expect(system.notes).toEqual([]);
     expect(model.settings.notificationsSeenMs).toBe(1000n);
-    backend.notifications = [...backend.notifications, { id: "n2", at_ms: 2000, agent: "ada", kind: "request", title: "Ada asks", body: "May I read public/?\nmore", read: false }];
+    backend.notifications = [
+      ...backend.notifications,
+      { id: "n2", at_ms: 2000, agent: "ada", kind: "request", title: "Ada asks", body: "May I read public/?\nmore", read: false },
+    ];
     await parts.notifications.poll();
     await parts.notifications.poll();
     expect(system.notes).toEqual([{ id: "agent-n2", title: "Ada asks", body: "May I read public/?", route: "/notifications" }]);
@@ -943,7 +1013,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("onboarding.complete", { mode: "server" })).toBe("bad_args");
   });
 
-  it("posts \"<Space> is ready\" for a create the first run started, and for no other", async () => {
+  it('posts "<Space> is ready" for a create the first run started, and for no other', async () => {
     const config = { image: "ghcr.io/trycua/linux:24.04", kind: "container", on: "local" };
     await call("spaces.create", { pendingId: "pending:n1", config: { ...config, name: "quiet" }, os: "linux" });
     await call("spaces.create", { pendingId: "pending:n2", config: { ...config, name: "no" }, os: "linux", notifyWhenReady: false });
@@ -960,7 +1030,9 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     ]);
     // Without a system side (a build that has none) the create still answers.
     await make({ system: null });
-    const made = (await call("spaces.create", { pendingId: "pending:n4", config: { ...config, name: "bare" }, os: "linux", notifyWhenReady: true })) as { id: string };
+    const made = (await call("spaces.create", { pendingId: "pending:n4", config: { ...config, name: "bare" }, os: "linux", notifyWhenReady: true })) as {
+      id: string;
+    };
     expect(made.id).toBe("local:bare");
   });
 
@@ -998,7 +1070,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     const { wireView } = await import("../src/notch/core");
     await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
     const base = backend.rowsNow[2]!;
-    const home = { ...base, id: "local:home-claude-code", name: "home-claude-code", provider: "local", host: undefined, reachable: true, power: undefined, powerState: undefined };
+    const home = {
+      ...base,
+      id: "local:home-claude-code",
+      name: "home-claude-code",
+      provider: "local",
+      host: undefined,
+      reachable: true,
+      power: undefined,
+      powerState: undefined,
+    };
     backend.rowsNow = [...backend.rowsNow, { ...home, hidden: true }];
     await model.refresh();
     const core = native as unknown as import("../src/notch/core").NotchCore;
@@ -1042,7 +1123,11 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(ids).not.toContain("this-mac");
     expect(ids.some((id) => isMachineDesktop(model.spaces.find((s) => s.id === id)!))).toBe(false);
     // The list and the menu's count are the same Spaces.
-    expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
+    expect(ids.sort()).toEqual(
+      realSpaces(model.spaces)
+        .map((s) => s.id)
+        .sort(),
+    );
     // The tab counts the Spaces on or starting (never a stopped one), though it lists them all.
     expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
   });
@@ -1050,8 +1135,24 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
   it("the notch lists a machine's shared desktop, counts it while it runs, and a pin puts it first and keeps it when it goes offline", async () => {
     const { wireView } = await import("../src/notch/core");
     await call("host.setUp", { request: { mode: "direct", direct: "0.0.0.0:3211" } });
-    const wsl = { ...backend.rowsNow[2]!, id: "relay:wsl", name: "WSL", provider: "relay", host: undefined, features: ["desktop_stream", "window_stream", "host_spaces"], reachable: true };
-    const studio = { ...backend.rowsNow[2]!, id: "relay:studio", name: "Studio", provider: "relay", host: undefined, features: ["host_spaces"], reachable: true };
+    const wsl = {
+      ...backend.rowsNow[2]!,
+      id: "relay:wsl",
+      name: "WSL",
+      provider: "relay",
+      host: undefined,
+      features: ["desktop_stream", "window_stream", "host_spaces"],
+      reachable: true,
+    };
+    const studio = {
+      ...backend.rowsNow[2]!,
+      id: "relay:studio",
+      name: "Studio",
+      provider: "relay",
+      host: undefined,
+      features: ["host_spaces"],
+      reachable: true,
+    };
     backend.rowsNow = [...backend.rowsNow, wsl, studio];
     await model.refresh();
     const core = native as unknown as import("../src/notch/core").NotchCore;

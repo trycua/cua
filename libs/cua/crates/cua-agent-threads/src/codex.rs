@@ -25,7 +25,7 @@ const INDEX_MAX: u64 = 4 * 1024 * 1024;
 
 pub(crate) fn recent(root: &Path, limit: usize) -> Vec<ThreadSummary> {
     let mut files = vec![];
-    walk(&root.join("sessions"), 0, &mut files);
+    newest(&root.join("sessions"), limit * SCAN_FACTOR, &mut files);
     files.sort_by_key(|f| std::cmp::Reverse(f.1));
     let names = index(root);
     files
@@ -36,26 +36,85 @@ pub(crate) fn recent(root: &Path, limit: usize) -> Vec<ThreadSummary> {
         .collect()
 }
 
+/// Day folders read past the one where enough chats were found: a chat
+/// started earlier and taken up again since is written to its first day's
+/// folder, so a week back still finds it.
+const LOOKBACK_DAYS: usize = 7;
+
+/// A `rollout-*.jsonl` name (Codex's archived `.jsonl.zst` and backups are not chats).
+fn is_rollout(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
+}
+
 /// `rollout-*.jsonl` files up to four folders down.
 fn walk(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u64)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for e in entries.flatten() {
-        let Ok(meta) = e.metadata() else { continue };
-        let path = e.path();
-        if meta.is_dir() && depth < 4 {
-            walk(&path, depth + 1, out);
-        } else if meta.is_file()
-            && path.extension().is_some_and(|x| x == "jsonl")
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("rollout-"))
+        let Ok(kind) = e.file_type() else { continue };
+        if kind.is_dir() && depth < 4 {
+            walk(&e.path(), depth + 1, out);
+        } else if !kind.is_dir()
+            && is_rollout(&e.file_name())
+            && let Ok(meta) = e.metadata()
+            && meta.is_file()
         {
-            out.push((path, mtime_ms(&meta)));
+            out.push((e.path(), mtime_ms(&meta)));
         }
     }
+}
+
+/// The newest rollouts for a listing: Codex's `YYYY/MM/DD` folders newest
+/// first, stopping [`LOOKBACK_DAYS`] folders after `want` files were found,
+/// so a store of years of chats is not read whole. Within reach, the order
+/// is still each file's last change.
+fn newest(dir: &Path, want: usize, out: &mut Vec<(PathBuf, u64)>) {
+    let mut extra = None::<usize>;
+    newest_in(dir, 0, want, &mut extra, out);
+}
+
+/// Returns false once the listing has read far enough.
+fn newest_in(
+    dir: &Path,
+    depth: usize,
+    want: usize,
+    extra: &mut Option<usize>,
+    out: &mut Vec<(PathBuf, u64)>,
+) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return true;
+    };
+    let (mut dirs, mut files) = (vec![], false);
+    for e in entries.flatten() {
+        let Ok(kind) = e.file_type() else { continue };
+        if kind.is_dir() {
+            if depth < 4 {
+                dirs.push(e.path());
+            }
+        } else if is_rollout(&e.file_name())
+            && let Ok(meta) = e.metadata()
+            && meta.is_file()
+        {
+            out.push((e.path(), mtime_ms(&meta)));
+            files = true;
+        }
+    }
+    if files {
+        if let Some(n) = extra.as_mut() {
+            *n += 1;
+        } else if out.len() >= want {
+            *extra = Some(0);
+        }
+        if extra.is_some_and(|n| n >= LOOKBACK_DAYS) {
+            return false;
+        }
+    }
+    // `2026` > `2025`, `11` > `10`: the names sort as the dates do.
+    dirs.sort_unstable_by(|a, b| b.file_name().cmp(&a.file_name()));
+    dirs.iter()
+        .all(|d| newest_in(d, depth + 1, want, extra, out))
 }
 
 /// The chats' names from `session_index.jsonl`, the latest per id.

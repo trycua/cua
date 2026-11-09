@@ -6985,17 +6985,9 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Secure Spaces: a Space reaches the internet and nothing else on the
-    /// network unless it is opened. Off unless turned on; the daemon enforces
-    /// it (the switch is kept in the cua home).
-    pub secure_spaces: bool,
     /// Child Spaces: a Space may make Spaces of its own. Off unless turned
     /// on; the daemon enforces it (the switch is kept in the cua home).
     pub child_spaces: bool,
-    /// Ask first: an agent asks on a card before something leaves its Space
-    /// (a push to GitHub). Off unless turned on; the daemon enforces it (the
-    /// switch is kept in the cua home).
-    pub ask_first: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).
@@ -10715,7 +10707,8 @@ pub struct AppMachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline").
+    /// The page's status line ("Online", "Offline"; "Online, 1 thing to
+    /// fix" when it has issues, so the words agree with the dot).
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     pub shared_by: Option<String>,
@@ -11131,6 +11124,21 @@ pub struct AppRelayUsageView {
     pub notice: Option<AppRelayAllowanceNotice>,
     /// Settings' plan card.
     pub plan_card: AppPlanCard,
+}
+
+/// Which build and deployment the app runs as, resolved by the host
+/// (`cua_home::channel::CuaChannel`, `cua_home::env::CuaEnv`).
+pub type AppTarget = core::environment_tag::Target;
+#[uniffi::remote(Record)]
+pub struct AppTarget {
+    /// `stable` or `local` (`CuaChannel`); anything else is Stable.
+    pub channel: String,
+    /// `prod` or `staging` (`CuaEnv::name`).
+    pub env: String,
+    /// The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+    /// OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+    /// Empty: the environment's default.
+    pub auth_host: String,
 }
 
 /// Whose Space it is.

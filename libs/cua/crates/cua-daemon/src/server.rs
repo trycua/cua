@@ -27,7 +27,7 @@ use tonic::Status;
 use tower::{Service, ServiceExt};
 
 /// Where and how to listen.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// Unix socket (unix only). Created with mode 0600; a stale socket file
     /// is replaced.
@@ -40,6 +40,18 @@ pub struct ServerConfig {
     pub discovery_path: Option<PathBuf>,
     /// Lifetime of media bridge tickets.
     pub bridge_ticket_ttl: Duration,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConfig")
+            .field("socket_path", &self.socket_path)
+            .field("loopback", &self.loopback)
+            .field("token", &"<redacted>")
+            .field("discovery_path", &self.discovery_path)
+            .field("bridge_ticket_ttl", &self.bridge_ticket_ttl)
+            .finish()
+    }
 }
 
 impl ServerConfig {
@@ -532,6 +544,21 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                 rt.reap_expired().await;
                 #[cfg(feature = "spaces")]
                 rt.spaces().reap_expired().await;
+            }
+        });
+    }
+    // A macOS Space whose network gateway ended under a running VM (the
+    // gateway was stopped by something that stopped the whole app bundle)
+    // has no network and no agent: restarted behind a new gateway, and the
+    // connections to it dropped.
+    {
+        let rt = runtime.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                rt.mend_local().await;
             }
         });
     }

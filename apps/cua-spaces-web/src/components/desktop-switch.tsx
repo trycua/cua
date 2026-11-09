@@ -8,7 +8,7 @@ import { useMachines, useSession, useThisMachine, type MachinesViewToggle } from
 import { SettingRow } from "@/components/ui/grouped";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
-import { showDesktop } from "@/lib/hidden-desktops";
+import { useHiddenDesktops } from "@/lib/hidden-desktops";
 import { THIS_COMPUTER } from "@/lib/machines";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -24,6 +24,7 @@ export function useDesktopSwitch(): { toggle: MachinesViewToggle | undefined; bu
   const host = useThisMachine(session?.identity ?? null);
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const desktops = useHiddenDesktops();
   const toggle = view?.machines.find((m) => m.current)?.toggles.find((t) => t.id === "desktop");
   const flip = () => {
     if (!toggle) return;
@@ -37,7 +38,7 @@ export function useDesktopSwitch(): { toggle: MachinesViewToggle | undefined; bu
     void (async () => {
       try {
         for (const a of toggle.actions) await host.run(a);
-        if (turningOn) showDesktop("this-mac");
+        if (turningOn) desktops.show("this-mac");
       } catch (e) {
         toast(`Couldn't change ${toggle.label}`, { description: errorText(e), type: "error" });
       } finally {
@@ -57,7 +58,9 @@ export function DesktopSwitchRow() {
       data-desktop-switch=""
       label={toggle.label}
       labelId="desktop-switch-label"
-      control={<Switch checked={toggle.on} disabled={!toggle.editable || !toggle.enabled || busy} aria-labelledby="desktop-switch-label" onCheckedChange={flip} />}
+      control={
+        <Switch checked={toggle.on} disabled={!toggle.editable || !toggle.enabled || busy} aria-labelledby="desktop-switch-label" onCheckedChange={flip} />
+      }
     />
   );
 }

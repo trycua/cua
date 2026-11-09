@@ -325,6 +325,26 @@ pub(crate) fn run_with_timeout(
     }
 }
 
+/// Spawns, retrying briefly on ETXTBSY ("text file busy", Linux). A binary
+/// that was just written can still be held open for writing by a child that
+/// another thread forked at the same moment; the hold lasts until that child
+/// execs, so a short retry gets past it instead of reading "can't start".
+fn spawn_retrying_text_busy(
+    mut spawn: impl FnMut() -> std::io::Result<std::process::Child>,
+) -> Option<std::process::Child> {
+    const ETXTBSY: i32 = 26;
+    for attempt in 0..50 {
+        match spawn() {
+            Ok(child) => return Some(child),
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt < 49 => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Runs `program args` with stdin closed; its exit code and stdout, or
 /// None when it can't start or outlives `timeout` (then it is killed and
 /// reaped).
@@ -334,13 +354,14 @@ pub(crate) fn run_capture(
     args: &[&str],
     timeout: Duration,
 ) -> Option<(Option<i32>, String)> {
-    let mut child = base_command(env, program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut child = spawn_retrying_text_busy(|| {
+        base_command(env, program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+    })?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut s = Vec::new();

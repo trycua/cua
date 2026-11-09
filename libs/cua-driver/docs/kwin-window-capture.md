@@ -83,7 +83,9 @@ matches the entry's `Exec` to the client's executable and looks it up for each
 new Wayland connection; the adapter opens a new one on every call. KWin resolves
 that link when it checks, so a release update keeps the grant. If the
 executable moves some other way, `kwin-capture status` says the entry names
-another executable; run `kwin-capture on` again. Separate the Wayland
+another executable; run `kwin-capture on` again. It reads only `Exec` and the
+interface lists, so editing `Name` keeps the grant, and an entry without window
+management or ScreenShot2 gets the same advice. Separate the Wayland
 interfaces with commas: KWin 6.3.6 doesn't honor a semicolon list.
 `org_kde_kwin_keystate` isn't for capture. It tells desktop typing whether Caps
 Lock is on, and KWin 6.3 to 6.5 offers it only to an entry that lists it.
@@ -122,6 +124,18 @@ with row-stride and premultiplied-alpha handling. Unsupported formats, invalid
 layouts, mismatched owners/UUIDs, closed windows and timeouts return
 `surface_identity_unproven`, the same refusal as any window the driver can't
 capture exactly. The driver log at debug level names the cause.
+
+## Desktop capture
+
+While the adapter is on, a desktop screenshot asks `CaptureWorkspace` before
+the Screenshot portal, in logical pixels and with every output. Its image is the
+desktop frame `get_desktop_state` and desktop input use, so window positions and
+clicks line up with it on any layout. Where KWin answers (see
+[Turning it on and off](#turning-it-on-and-off)), there is no consent dialog.
+`ScreenShot2` never asks the portal, so the switch is what keeps a portal
+**Deny**: a saved Deny keeps this off, as it does window capture, unless
+`--override-portal-deny` was given. While the adapter is off, or where KWin
+refuses, the portal runs as before.
 
 ## Focused native regression
 

@@ -196,6 +196,14 @@ pub trait Runtime: Send + Sync {
     /// How to reach a running instance.
     async fn endpoints(&self, name: &str) -> Result<Endpoints>;
 
+    /// Repairs a running instance that lost what it needs to be reached
+    /// (a macOS VM whose network gateway ended), returning it as it is
+    /// now when it had to be restarted. Default: nothing to repair.
+    async fn mend(&self, name: &str) -> Result<Option<Instance>> {
+        let _ = name;
+        Ok(None)
+    }
+
     /// Whether a TCP listener on `guest_port` exists *inside* the guest, as
     /// seen from the guest side of any host forwarder. `None` when the
     /// backend has no such view (callers then fall back to a host-side

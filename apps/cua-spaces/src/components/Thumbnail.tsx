@@ -58,10 +58,7 @@ export function Thumbnail({
   // delete shows immediately.
   const overlay = deleting ? (
     <span className="thumb-provisioning">
-      <RadialProgress
-        className="thumb-radial"
-        estimateMs={local ? LOCAL_DELETE_ESTIMATE_MS : undefined}
-      />
+      <RadialProgress className="thumb-radial" estimateMs={local ? LOCAL_DELETE_ESTIMATE_MS : undefined} />
       <span className="thumb-provisioning-status">{t("spaces.thumbnail.deleting")}</span>
     </span>
   ) : status === "provisioning" ? (

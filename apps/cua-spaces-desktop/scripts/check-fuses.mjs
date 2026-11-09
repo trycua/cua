@@ -60,8 +60,18 @@ function findBuilds(dist) {
   for (const dir of readdirSync(dist)) {
     const full = path.join(dist, dir);
     if (!statSync(full).isDirectory()) continue;
-    if (dir.startsWith("mac")) out.push(...readdirSync(full).filter((f) => f.endsWith(".app")).map((f) => path.join(full, f)));
-    else if (dir.startsWith("win") && dir.endsWith("-unpacked")) out.push(...readdirSync(full).filter((f) => f.endsWith(".exe") && !/^Uninstall/i.test(f)).map((f) => path.join(full, f)));
+    if (dir.startsWith("mac"))
+      out.push(
+        ...readdirSync(full)
+          .filter((f) => f.endsWith(".app"))
+          .map((f) => path.join(full, f)),
+      );
+    else if (dir.startsWith("win") && dir.endsWith("-unpacked"))
+      out.push(
+        ...readdirSync(full)
+          .filter((f) => f.endsWith(".exe") && !/^Uninstall/i.test(f))
+          .map((f) => path.join(full, f)),
+      );
     else if (dir.startsWith("linux") && dir.endsWith("-unpacked") && existsSync(path.join(full, "cua-spaces"))) out.push(path.join(full, "cua-spaces"));
   }
   return out;

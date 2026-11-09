@@ -86,7 +86,16 @@ describe.skipIf(!wasmBuilt)("the Machines page and New Space's Run on (wasm core
         defaultLocation: "local" as const,
         localAvailable: true,
         maxCpus: 8,
-        hosts: [{ id: "gamma", name: "gamma-4 Mac Studio", via: "relay", online: true, os: "macos", limits: [{ resource: "sharing", used: 0, limit: 0, reason: LINE }] }],
+        hosts: [
+          {
+            id: "gamma",
+            name: "gamma-4 Mac Studio",
+            via: "relay",
+            online: true,
+            os: "macos",
+            limits: [{ resource: "sharing", used: 0, limit: 0, reason: LINE }],
+          },
+        ],
       },
     };
     const env = wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
@@ -118,7 +127,13 @@ describe.skipIf(!wasmBuilt)("share usage events", () => {
   it("records a share that failed", async () => {
     const sent: TelemetrySignal[] = [];
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
-    const failing = { ...demo, call: (op: string, args: unknown) => (op === "sharing.share" ? Promise.reject(new Error("relay: error sending request for url (https://relay.cua.ai/v1/machines)")) : demo.call(op as never, args as never)) };
+    const failing = {
+      ...demo,
+      call: (op: string, args: unknown) =>
+        op === "sharing.share"
+          ? Promise.reject(new Error("relay: error sending request for url (https://relay.cua.ai/v1/machines)"))
+          : demo.call(op as never, args as never),
+    };
     const s = new ShareStore(failing as typeof demo, await testCore(), (signals) => sent.push(...signals));
     s.open(space, true);
     await s.send({ type: "set-who", who: "bob@example.com" });
@@ -130,7 +145,10 @@ describe.skipIf(!wasmBuilt)("share usage events", () => {
     const sent: TelemetrySignal[] = [];
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 2 });
     let why = "not shared: user presence was not confirmed: biometric authorization was cancelled";
-    const failing = { ...demo, call: (op: string, args: unknown) => (op === "sharing.share" ? Promise.reject(new Error(why)) : demo.call(op as never, args as never)) };
+    const failing = {
+      ...demo,
+      call: (op: string, args: unknown) => (op === "sharing.share" ? Promise.reject(new Error(why)) : demo.call(op as never, args as never)),
+    };
     const s = new ShareStore(failing as typeof demo, await testCore(), (signals) => sent.push(...signals));
     s.open(space, true);
     await s.send({ type: "set-who", who: "bob@example.com" });

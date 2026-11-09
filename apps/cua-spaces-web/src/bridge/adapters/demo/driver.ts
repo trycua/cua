@@ -45,10 +45,10 @@ const OTHERS: DriverMachine[] = [
   { machineId: "linux-box", name: "Linux box", os: "linux", thisMachine: false, state: "ready", version: "0.38.1", update: null },
 ];
 
-export const demoDriverState = (now: number, firstRun: boolean): DemoDriverState => ({
+export const demoDriverState = (now: number, firstRun: boolean, update = false): DemoDriverState => ({
   driver: {
     version: "0.38.0",
-    update: null,
+    update: update ? { version: "0.38.1", note: "Faster clicks in Chrome" } : null,
     paused: false,
     lastTest: firstRun ? null : { passed: true, atMs: now - 2 * 60_000, failure: null, tookMs: 4_000 },
     config: structuredClone(CONFIG),
@@ -71,8 +71,23 @@ function setPath(config: DriverConfig, key: string, value: unknown): void {
   at[parts.at(-1)!] = value === "on" ? true : value === "off" ? false : value;
 }
 
-export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<
-  "driver.status" | "driver.list" | "driver.config" | "driver.setConfig" | "driver.test" | "driver.pause" | "driver.setApp" | "driver.setup" | "driver.update" | "driver.permissions"
+export function demoDriverHandlers({
+  state,
+  now,
+  wait,
+  emit,
+  stepMs,
+}: DemoContext): DemoHandlers<
+  | "driver.status"
+  | "driver.list"
+  | "driver.config"
+  | "driver.setConfig"
+  | "driver.test"
+  | "driver.pause"
+  | "driver.setApp"
+  | "driver.setup"
+  | "driver.update"
+  | "driver.permissions"
 > {
   const d = () => state.driver;
   const permissions = (): DriverPermission[] =>
@@ -109,7 +124,13 @@ export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoConte
     const test: DriverLiveTest = {
       passed: !missing && !d().paused,
       atMs: now(),
-      failure: missing ? (missing.id === "screen" ? "Screen Recording is off for Cua Spaces" : "Accessibility is off for Cua Spaces") : d().paused ? "Cua Driver isn't running" : null,
+      failure: missing
+        ? missing.id === "screen"
+          ? "Screen Recording is off for Cua Spaces"
+          : "Accessibility is off for Cua Spaces"
+        : d().paused
+          ? "Cua Driver isn't running"
+          : null,
       tookMs: Math.max(now() - started, 4_000),
     };
     d().lastTest = test;
@@ -137,7 +158,10 @@ export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoConte
     },
     "driver.list": () => {
       const s = status();
-      return [{ machineId: "this-mac", name: "This Mac", os: "macos", thisMachine: true, state: s.state, version: s.version, update: s.update?.version ?? null }, ...d().others.map((m) => ({ ...m }))];
+      return [
+        { machineId: "this-mac", name: "This Mac", os: "macos", thisMachine: true, state: s.state, version: s.version, update: s.update?.version ?? null },
+        ...d().others.map((m) => ({ ...m })),
+      ];
     },
     "driver.permissions": () => ({ appName: "Cua Spaces", permissions: permissions() }),
     "driver.config": () => structuredClone(d().config),

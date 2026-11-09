@@ -10,7 +10,11 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    // The web sources this shell imports (../cua-spaces-web/src) resolve their
+    // packages from this project's node_modules: the release build installs
+    // only this project, not the web app. See tsdown.config.mts.
+    "paths": { "*": ["./node_modules/*"] }
   },
   "include": ["src", "test", "tsdown.config.mts"]
 }

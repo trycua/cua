@@ -13,6 +13,7 @@ use cua_proto::daemon::v1 as dpb;
 use cua_sandbox_core::placement::{Kind, On, Runtime};
 use cua_sandbox_core::{CreateOptions, LocalRuntime, PortTarget, Probe, ProviderKind, Sandboxes};
 use cua_spacesd_client::{ConnectOptions, SpacesdClient, pb};
+use cua_vmm::stack::boxed;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,7 +25,7 @@ pub const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Options for [`Spaces::create`]: the same location / kind / runtime model
 /// as sandboxes ([`cua_sandbox_core::placement`]).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct SpaceCreate {
     /// Image. Default: the canonical Linux image
     /// (`ghcr.io/trycua/linux:24.04`, or `CUA_IMAGE_LINUX`).
@@ -143,6 +144,47 @@ pub struct SpaceCreate {
     /// is signed in and sharing (the `relay.spaces` setting), and a child
     /// follows its parent's `off`.
     pub relay: Option<bool>,
+}
+
+impl std::fmt::Debug for SpaceCreate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpaceCreate")
+            .field("image", &self.image)
+            .field("on", &self.on)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("name", &self.name)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("timeout", &self.timeout)
+            .field("wait", &self.wait)
+            .field("reuse", &self.reuse)
+            .field("command", &self.command)
+            .field("env", &self.env)
+            .field("services", &self.services)
+            .field("spacesd", &self.spacesd)
+            .field("env_token", &self.env_token.as_ref().map(|_| "<redacted>"))
+            .field("progress", &self.progress)
+            .field("create_id", &self.create_id)
+            .field("gpu", &self.gpu)
+            .field("durable", &self.durable)
+            .field("mounts", &self.mounts)
+            .field("headless", &self.headless)
+            .field("forkable", &self.forkable)
+            .field("volumes", &self.volumes)
+            .field("network", &self.network)
+            .field("labels", &self.labels)
+            .field("egress", &self.egress)
+            .field("network_settings", &self.network_settings)
+            .field("parent", &self.parent)
+            .field("tree", &self.tree)
+            .field("widen", &self.widen)
+            .field("instance_type", &self.instance_type)
+            .field("region", &self.region)
+            .field("relay", &self.relay)
+            .finish()
+    }
 }
 
 /// Where [`SpaceCreate::progress`] reports go.
@@ -2401,8 +2443,8 @@ impl Spaces {
     pub async fn create(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::progress::{Phase, Progress, report};
         crate::registry::validate_labels(&opts.labels)?;
-        // Secure Spaces and Child Spaces are experiments: until they are on, a
-        // create asks for no more than the old lists and no parent.
+        // Under the operator override that turns the secure default off, a create asks for no
+        // more than the old lists. Child Spaces is an experiment: until it is on, no parent.
         crate::network::require_secure_spaces(opts.network_settings.as_ref())?;
         if opts.parent.is_some()
             && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
@@ -2444,7 +2486,7 @@ impl Spaces {
         // A fork of a checkpoint, wherever the checkpoint is.
         if crate::pool_checkpoints::checkpoint_image(opts.image.as_deref()).is_some() {
             // Boxed: the fork's future is deep (the batch planner).
-            return Box::pin(self.create_from_checkpoint(opts)).await;
+            return boxed(move || self.create_from_checkpoint(opts)).await;
         }
         if let Some(r) = opts
             .image
@@ -2452,7 +2494,7 @@ impl Spaces {
             .and_then(|i| i.strip_prefix(crate::build::BUILD_IMAGE_PREFIX))
         {
             let r = r.to_string();
-            return self.create_from_build(&r, opts).await;
+            return boxed(|| self.create_from_build(&r, opts)).await;
         }
         if opts.durable {
             if !opts.labels.is_empty() {
@@ -2461,7 +2503,7 @@ impl Spaces {
                      machine, which would not carry them",
                 ));
             }
-            return self.create_durable(opts).await;
+            return boxed(move || self.create_durable(opts)).await;
         }
         self.require_volumes(&opts.volumes)?;
         if !opts.volumes.is_empty() {
@@ -2529,7 +2571,7 @@ impl Spaces {
             let id = key.id.clone();
             opts.wait = Some(true);
             tokio::spawn(cua_sandbox_core::progress::carry(sink, async move {
-                match Box::pin(spaces.create_tracked(opts, key, flight)).await {
+                match boxed(|| spaces.create_tracked(opts, key, flight)).await {
                     Ok(_) => report(Progress::phase(Phase::Ready)),
                     Err(e) => tracing::warn!(error = %e, "background Space create failed"),
                 }
@@ -2541,7 +2583,7 @@ impl Spaces {
         }
         let flight = crate::creating::register(self.home_dir(), &key)?;
         cua_sandbox_core::progress::carry(sink, async move {
-            let created = Box::pin(self.create_tracked(opts, key, flight)).await?;
+            let created = boxed(move || self.create_tracked(opts, key, flight)).await?;
             report(Progress::phase(Phase::Ready));
             Ok(created)
         })
@@ -2715,8 +2757,8 @@ impl Spaces {
                             .registry
                             .set_overlay_volumes(&info.id, volumes.clone())?;
                     }
-                    if let Err(e) = self.ensure_volumes(&info.id).await {
-                        let _ = self.delete(&info.id).await;
+                    if let Err(e) = boxed(|| self.ensure_volumes(&info.id)).await {
+                        let _ = boxed(|| self.delete(&info.id)).await;
                         return Err(e);
                     }
                 }
@@ -2846,7 +2888,18 @@ impl Spaces {
         result
     }
 
-    pub(crate) async fn create_inner(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
+    /// The create, off the caller's frame. A named return type, not an
+    /// `async fn`: the body awaits this again (the overflow retry), and an
+    /// opaque future cannot be asked for `Send` while it is being defined.
+    pub(crate) fn create_inner(
+        &self,
+        opts: SpaceCreate,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SpaceCreated>> + Send + '_>>
+    {
+        boxed(move || self.create_inner_body(opts))
+    }
+
+    async fn create_inner_body(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::placement;
         let omitted = opts.on.is_none();
         // A child made on another of your computers joins its parent's tree
@@ -2871,15 +2924,17 @@ impl Spaces {
         {
             let mut local = opts.clone();
             local.on = Some(On::Local);
-            return match Box::pin(self.create_inner(local)).await {
+            return match self.create_inner(local).await {
                 Err(e) if overflows(&e) => {
                     tracing::info!("this machine is full ({e}); overflowing into your clouds");
-                    self.create_overflow(opts).await.map_err(|c| match c {
-                        Error::LimitExceeded(why) => Error::LimitExceeded(format!(
-                            "this machine is full and no cloud machine fits the budget: {why}"
-                        )),
-                        other => other,
-                    })
+                    boxed(move || self.create_overflow(opts))
+                        .await
+                        .map_err(|c| match c {
+                            Error::LimitExceeded(why) => Error::LimitExceeded(format!(
+                                "this machine is full and no cloud machine fits the budget: {why}"
+                            )),
+                            other => other,
+                        })
                 }
                 r => r,
             };
@@ -2904,9 +2959,9 @@ impl Spaces {
             // Without one: the least-loaded of your machines, by what their
             // Spaces reserve (idle capacity is reclaimed before a refusal).
             if self.elastic_has_clouds().await {
-                return self.create_on_auto_elastic(opts).await;
+                return boxed(move || self.create_on_auto_elastic(opts)).await;
             }
-            return self.create_on_auto(opts).await;
+            return boxed(move || self.create_on_auto(opts)).await;
         }
         if let On::Host(query) = &on {
             if opts.reuse {
@@ -2915,7 +2970,7 @@ impl Spaces {
                 ));
             }
             placement::validate(&on, opts.kind, &opts.runtime).map_err(place)?;
-            let info = self.create_on_host(query, opts).await?;
+            let info = boxed(move || self.create_on_host(query, opts)).await?;
             return Ok(SpaceCreated::Ready {
                 info,
                 reused: false,
@@ -2930,7 +2985,7 @@ impl Spaces {
             && self.elastic_policy().autoscale
             && self.elastic_supplier(word).await
         {
-            return self.create_on_auto_elastic(opts).await;
+            return boxed(move || self.create_on_auto_elastic(opts)).await;
         }
         if let On::Provider(word) = &on
             && match self.inner.sandboxes.contrib_provider(word) {
@@ -2962,7 +3017,7 @@ impl Spaces {
                 )));
             }
             // `create_in_cloud` keeps the Space's network or refuses it.
-            let info = self.create_in_cloud(word, opts).await?;
+            let info = boxed(move || self.create_in_cloud(word, opts)).await?;
             return Ok(SpaceCreated::Ready {
                 info,
                 reused: false,
@@ -2989,7 +3044,8 @@ impl Spaces {
             }
         };
         if opts.reuse
-            && let Some(info) = self.reusable(provider, &opts.services, expect_env).await?
+            && let Some(info) =
+                boxed(|| self.reusable(provider, &opts.services, expect_env)).await?
         {
             return Ok(SpaceCreated::Ready { info, reused: true });
         }
@@ -3021,7 +3077,7 @@ impl Spaces {
         // `create` runs a `wait = false` create in the background
         // itself, so here it always waits.
         Ok(SpaceCreated::Ready {
-            info: self.provision_local(local).await?,
+            info: boxed(move || self.provision_local(local)).await?,
             reused: false,
         })
     }

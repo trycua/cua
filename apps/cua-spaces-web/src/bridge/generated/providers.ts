@@ -14,18 +14,18 @@ export interface ProviderEntry {
   keyEnv: string;
   defaultModel: string;
   /** The models a person can pick (empty: only the default, when it has one). */
-  models: { id: string; name: string; fast: boolean }[];
+  models: { id: string; name: string; fast: boolean; legacy: boolean }[];
 }
 
 /** The providers a person can see, in rank order. */
 export const PROVIDER_REGISTRY: ProviderEntry[] = [
-  { id: "anthropic", name: "Anthropic", icon: "anthropic", tier: "top", aliases: [], keyEnv: "ANTHROPIC_API_KEY", defaultModel: "claude-sonnet-5", models: [{ id: "claude-haiku-4-5", name: "Claude Haiku 4.5", fast: true }, { id: "claude-sonnet-5", name: "Claude Sonnet 5", fast: false }, { id: "claude-opus-5-5", name: "Claude Opus 5.5", fast: false }] },
-  { id: "openai", name: "OpenAI", icon: "openai", tier: "top", aliases: [], keyEnv: "OPENAI_API_KEY", defaultModel: "gpt-5.5", models: [{ id: "gpt-5.5", name: "GPT-5.5", fast: false }] },
-  { id: "openrouter", name: "OpenRouter", icon: "openrouter", tier: "top", aliases: [], keyEnv: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-sonnet-5", models: [{ id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", fast: false }] },
-  { id: "google", name: "Google AI Studio", icon: "google", tier: "top", aliases: ["gemini", "google ai", "aistudio"], keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-3.8-flash", models: [{ id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", fast: true }] },
-  { id: "xai", name: "xAI", icon: "xai", tier: "top", aliases: ["grok"], keyEnv: "XAI_API_KEY", defaultModel: "grok-4.6", models: [{ id: "grok-4.6", name: "Grok 4.6", fast: false }] },
-  { id: "deepseek", name: "DeepSeek", icon: "deepseek", tier: "top", aliases: [], keyEnv: "DEEPSEEK_API_KEY", defaultModel: "deepseek-flash", models: [{ id: "deepseek-flash", name: "DeepSeek Flash", fast: true }] },
-  { id: "kimi", name: "Kimi (Moonshot)", icon: "kimi", tier: "top", aliases: ["moonshot", "kimi code"], keyEnv: "KIMI_API_KEY", defaultModel: "kimi-k3", models: [{ id: "kimi-k3", name: "Kimi K3", fast: false }] },
+  { id: "anthropic", name: "Anthropic", icon: "anthropic", tier: "top", aliases: [], keyEnv: "ANTHROPIC_API_KEY", defaultModel: "claude-sonnet-5-5", models: [{ id: "claude-haiku-5-5", name: "Claude Haiku 5.5", fast: true, legacy: false }, { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", fast: false, legacy: false }, { id: "claude-opus-5-5", name: "Claude Opus 5.5", fast: false, legacy: false }, { id: "claude-fable-5-1", name: "Claude Fable 5.1", fast: false, legacy: false }, { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", fast: true, legacy: true }, { id: "claude-sonnet-5", name: "Claude Sonnet 5", fast: false, legacy: true }] },
+  { id: "openai", name: "OpenAI", icon: "openai", tier: "top", aliases: [], keyEnv: "OPENAI_API_KEY", defaultModel: "gpt-5.5", models: [{ id: "gpt-5.5", name: "GPT-5.5", fast: false, legacy: false }] },
+  { id: "openrouter", name: "OpenRouter", icon: "openrouter", tier: "top", aliases: [], keyEnv: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-sonnet-5", models: [{ id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5", fast: false, legacy: false }] },
+  { id: "google", name: "Google AI Studio", icon: "google", tier: "top", aliases: ["gemini", "google ai", "aistudio"], keyEnv: "GEMINI_API_KEY", defaultModel: "gemini-3.8-flash", models: [{ id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", fast: true, legacy: false }] },
+  { id: "xai", name: "xAI", icon: "xai", tier: "top", aliases: ["grok"], keyEnv: "XAI_API_KEY", defaultModel: "grok-4.6", models: [{ id: "grok-4.6", name: "Grok 4.6", fast: false, legacy: false }] },
+  { id: "deepseek", name: "DeepSeek", icon: "deepseek", tier: "top", aliases: [], keyEnv: "DEEPSEEK_API_KEY", defaultModel: "deepseek-flash", models: [{ id: "deepseek-flash", name: "DeepSeek Flash", fast: true, legacy: false }] },
+  { id: "kimi", name: "Kimi (Moonshot)", icon: "kimi", tier: "top", aliases: ["moonshot", "kimi code"], keyEnv: "KIMI_API_KEY", defaultModel: "kimi-k3", models: [{ id: "kimi-k3", name: "Kimi K3", fast: false, legacy: false }] },
   { id: "github", name: "GitHub Copilot", icon: "github", tier: "more", aliases: ["copilot", "github copilot cli"], keyEnv: "COPILOT_GITHUB_TOKEN", defaultModel: "", models: [] },
   { id: "huggingface", name: "Hugging Face", icon: "huggingface", tier: "more", aliases: ["hf"], keyEnv: "HF_TOKEN", defaultModel: "moonshotai/Kimi-K2.5", models: [] },
   { id: "zai", name: "Z.AI (GLM)", icon: "zai", tier: "more", aliases: ["glm", "zhipu", "z.ai"], keyEnv: "GLM_API_KEY", defaultModel: "glm-5.3", models: [] },

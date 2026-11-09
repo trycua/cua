@@ -40,7 +40,14 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-bridge-spaces-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -121,7 +128,17 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
     it("lists the windows as the core's remote windows, with the display", async () => {
       expect(await call("spaces.windows", { spaceId: aurora })).toEqual({
         windows: [
-          { id: "w-1", appName: "Terminal", title: "cua@space: ~", visible: true, appId: "org.gnome.Terminal", targetEpoch: 3, widthPx: 1280, heightPx: 800, pid: 412 },
+          {
+            id: "w-1",
+            appName: "Terminal",
+            title: "cua@space: ~",
+            visible: true,
+            appId: "org.gnome.Terminal",
+            targetEpoch: 3,
+            widthPx: 1280,
+            heightPx: 800,
+            pid: 412,
+          },
           { id: "w-2", appName: "Thunar", title: "", visible: true, appId: "", targetEpoch: 1, widthPx: null, heightPx: null, pid: null },
         ],
         display: { widthPx: 1920, heightPx: 1080 },
@@ -138,7 +155,11 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
       const saved = StreamRows.windowsTimeout;
       StreamRows.windowsTimeout = 0.01;
       try {
-        const rows = new StreamRows(native, () => new Promise(() => {}), async () => null);
+        const rows = new StreamRows(
+          native,
+          () => new Promise(() => {}),
+          async () => null,
+        );
         await rows.refresh();
         expect([rows.windows, rows.failed]).toEqual([[], true]);
       } finally {
@@ -149,7 +170,13 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
     it("pops a window and the desktop out, lists the open rows, and pops them back in", async () => {
       const desktop = native.appStreamDesktopRowId();
       expect(await call("stream.pip", { spaceId: aurora, command: { type: "open", row: "w-1" } })).toEqual(["w-1"]);
-      expect(pipSpecs[0]).toMatchObject({ spaceId: aurora, os: "linux", key: "window:w-1", title: "cua@space: ~", source: { kind: "window", window: { id: "w-1", epoch: 3 } } });
+      expect(pipSpecs[0]).toMatchObject({
+        spaceId: aurora,
+        os: "linux",
+        key: "window:w-1",
+        title: "cua@space: ~",
+        source: { kind: "window", window: { id: "w-1", epoch: 3 } },
+      });
       expect(await call("stream.pip", { spaceId: aurora, command: { type: "open", row: desktop } })).toEqual([desktop, "w-1"]);
       expect(await call("stream.pip", { spaceId: aurora, command: { type: "close", row: desktop } })).toEqual(["w-1"]);
       // The window list says which panels are open (the viewer and the detail read it).
@@ -176,9 +203,17 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
     it("asks for one no older than the background interval, and answers a data URL", async () => {
       expect(await call("spaces.thumbnail", { spaceId: aurora })).toBeNull();
       backend.thumbnails.set(aurora, { image: Uint8Array.of(0xff, 0xd8, 0xff), format: "jpeg", width: 320, height: 200, capturedAtMs: 1_700_000_000_000 });
-      expect(await call("spaces.thumbnail", { spaceId: aurora, maxAgeMs: 15_000 })).toEqual({ url: "data:image/jpeg;base64,/9j/", capturedAtMs: 1_700_000_000_000 });
+      expect(await call("spaces.thumbnail", { spaceId: aurora, maxAgeMs: 15_000 })).toEqual({
+        url: "data:image/jpeg;base64,/9j/",
+        capturedAtMs: 1_700_000_000_000,
+      });
       const policy = native.appThumbnailPolicy();
-      expect(backend.thumbnailCalls.filter(([id]) => id === aurora).map(([, ms]) => ms).slice(-2)).toEqual([Number(policy.backgroundIntervalMs), 15_000]);
+      expect(
+        backend.thumbnailCalls
+          .filter(([id]) => id === aurora)
+          .map(([, ms]) => ms)
+          .slice(-2),
+      ).toEqual([Number(policy.backgroundIntervalMs), 15_000]);
       expect(await code("spaces.thumbnail", { spaceId: "local:nope" })).toBe("not_found");
     });
 
@@ -217,7 +252,14 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
     });
 
     it("says so where the build has no picker", async () => {
-      const bare = createBridge({ model, supervisor: null, version: "1", platform: "linux", env: {}, ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} } });
+      const bare = createBridge({
+        model,
+        supervisor: null,
+        version: "1",
+        platform: "linux",
+        env: {},
+        ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} },
+      });
       expect(await bare.registry.dispatch({ id: "1", method: "spaces.chooseFiles", args: {} })).toMatchObject({ ok: false, error: { code: "unsupported" } });
       expect(await bare.registry.dispatch({ id: "2", method: "stream.pip", args: { spaceId: aurora, command: { type: "open", row: "w-1" } } })).toMatchObject({
         ok: false,
@@ -229,7 +271,9 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
   describe("bulk delete and leave", () => {
     it("deletes several, one result per id in order, a failure restoring only its row", async () => {
       backend.bulkErrors.set("direct:builder", "timed out");
-      const answer = (await call("spaces.deleteMany", { ids: [aurora, "direct:builder", "local:nowhere"] })) as { results: { id: string; ok: boolean; error?: string }[] };
+      const answer = (await call("spaces.deleteMany", { ids: [aurora, "direct:builder", "local:nowhere"] })) as {
+        results: { id: string; ok: boolean; error?: string }[];
+      };
       expect(answer.results).toEqual([
         { id: aurora, ok: true },
         { id: "direct:builder", ok: false, error: "timed out" },
@@ -267,7 +311,17 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
           name: "qa-shared",
           provider: "relay",
           hostName: "Mac mini",
-          sharing: { ownerId: "sam", ownerEmail: "sam@example.com", ownerName: "Sam Rivera", role: "editor", team: undefined, teamName: undefined, editors: [], viewers: [], teams: [] },
+          sharing: {
+            ownerId: "sam",
+            ownerEmail: "sam@example.com",
+            ownerName: "Sam Rivera",
+            role: "editor",
+            team: undefined,
+            teamName: undefined,
+            editors: [],
+            viewers: [],
+            teams: [],
+          },
         },
       ];
       await model.refresh();
@@ -287,8 +341,12 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
   describe("sharing", () => {
     it("lists, shares view only and unshares, answering who it is shared with", async () => {
       expect(await call("sharing.list", { spaceId: aurora })).toEqual([]);
-      expect(await call("sharing.share", { spaceId: aurora, who: "bo@example.com", role: "viewer" })).toEqual([{ who: "bo@example.com", role: "viewer", connected: false }]);
-      expect(await call("sharing.share", { spaceId: aurora, who: "bo@example.com", role: "editor" })).toEqual([{ who: "bo@example.com", role: "editor", connected: false }]);
+      expect(await call("sharing.share", { spaceId: aurora, who: "bo@example.com", role: "viewer" })).toEqual([
+        { who: "bo@example.com", role: "viewer", connected: false },
+      ]);
+      expect(await call("sharing.share", { spaceId: aurora, who: "bo@example.com", role: "editor" })).toEqual([
+        { who: "bo@example.com", role: "editor", connected: false },
+      ]);
       expect(await call("sharing.unshare", { spaceId: aurora, who: "bo@example.com" })).toEqual([]);
       expect(await code("sharing.share", { spaceId: aurora, who: "bo@example.com" })).toBe("bad_args");
       expect(await code("sharing.unshare", { spaceId: aurora })).toBe("bad_args");
@@ -376,32 +434,18 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
       expect(calls).toEqual([]);
     });
 
-    it("lights the hotspot for Spaces that exit through this computer, only while Secure Spaces is on", async () => {
+    it("lights the hotspot for Spaces that exit through this computer", async () => {
       const feed = { setSpaces: () => {}, setShown: () => {}, setKeyvault: () => {}, setPinned: () => {}, setActivity: () => {} };
       const settle = () => new Promise((r) => setTimeout(r, 0));
       backend.exitsNow = ["local:aurora"];
-      // Off (the default): the backend is not even asked.
       const asked = backend.exitsThroughThisMachine.bind(backend);
       let reads = 0;
       backend.exitsThroughThisMachine = async () => (reads++, asked());
       feedNotch(feed, model)();
       await settle();
-      expect(reads).toBe(0);
-      expect(model.activity.hotspot).toBe(false);
-      // On: the hotspot shows, and its Spaces are kept.
-      model.settings = { ...model.settings, experiments: { ...model.settings.experiments, secureSpaces: true } };
-      model.saveSettings();
-      feedNotch(feed, model)();
-      await settle();
       expect(reads).toBe(1);
       expect(model.activity.hotspot).toBe(true);
       expect(model.activity.exitSpaces).toEqual(["local:aurora"]);
-      // Off again: it goes out.
-      model.settings = { ...model.settings, experiments: { ...model.settings.experiments, secureSpaces: false } };
-      model.saveSettings();
-      feedNotch(feed, model)();
-      await settle();
-      expect(model.activity.hotspot).toBe(false);
     });
 
     it("gives a tile the store's thumbnail, no older than the open interval", async () => {

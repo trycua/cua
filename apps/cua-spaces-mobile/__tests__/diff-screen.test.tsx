@@ -10,7 +10,8 @@ import { renderWithApp } from "./helpers/render";
 beforeAll(installFixtureCore);
 afterAll(uninstallCore);
 
-const diff = (props: Partial<React.ComponentProps<typeof DiffScreen>> = {}) => renderWithApp(<DiffScreen spaceId="relay:sample-checkout-api" onBack={() => {}} {...props} />);
+const diff = (props: Partial<React.ComponentProps<typeof DiffScreen>> = {}) =>
+  renderWithApp(<DiffScreen spaceId="relay:sample-checkout-api" onBack={() => {}} {...props} />);
 
 describe("reviewing what an agent changed", () => {
   it("lists the files with the same counts and bars as the push card", async () => {
@@ -63,7 +64,15 @@ describe("reviewing what an agent changed", () => {
 
   it("says why when a Space cannot list its changes, and tries again", async () => {
     let n = 0;
-    await renderWithApp(<DiffScreen spaceId="relay:sample-checkout-api" onBack={() => {}} />, { wrap: (b) => ({ ...b, changes: async (...a: Parameters<NonNullable<typeof b.changes>>) => { if (n++ === 0) throw new Error("This machine has no changes tool."); return b.changes!(...a); } }) });
+    await renderWithApp(<DiffScreen spaceId="relay:sample-checkout-api" onBack={() => {}} />, {
+      wrap: (b) => ({
+        ...b,
+        changes: async (...a: Parameters<NonNullable<typeof b.changes>>) => {
+          if (n++ === 0) throw new Error("This machine has no changes tool.");
+          return b.changes!(...a);
+        },
+      }),
+    });
     expect(await screen.findByText("This Space cannot list its changes from the phone yet.")).toBeTruthy();
     expect(screen.getByText("This machine has no changes tool.")).toBeTruthy();
     await fireEvent.press(screen.getByText("Try again"));

@@ -189,6 +189,122 @@ impl Scoped {
         }
     }
 
+    /// One request to the account's pool, from a Space of the tree under
+    /// `root`: `cua run`, `cua jobs` and `cua computers` inside the Space.
+    /// What the Space submits is recorded under it ([`super::runs`]); it sees,
+    /// reads and cancels only its own tree's runs; the pool's other methods
+    /// are refused.
+    async fn scoped_pool_request(
+        &self,
+        root: &str,
+        max_depth: u32,
+        mut r: pb::PoolRequestRequest,
+    ) -> R<pb::PoolRequestResponse> {
+        use serde_json::json;
+        let home = self.spaces().home_dir().to_path_buf();
+        let mut params: Value = if r.params_json.trim().is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&r.params_json)
+                .map_err(|e| Status::invalid_argument(format!("params_json: {e}")))?
+        };
+        let run_of = |p: &Value| p["run"].as_str().unwrap_or_default().to_string();
+        let own = |run: &str| super::runs::Ledger::load(&home).visible(run, root);
+        let method = r.method.clone();
+        use super::runs::PoolOp;
+        match super::runs::pool_op(method.as_str()) {
+            // The computers and the queue: read only.
+            PoolOp::Read => {}
+            PoolOp::Submit => {
+                let mut run = run_of(&params);
+                if run.trim().is_empty() {
+                    run = format!("p-{:08x}", rand::random::<u32>());
+                    params["run"] = json!(run);
+                }
+                // The job's Space is a child of this one wherever it runs
+                // ([`cua_cluster::model::ENV_PARENT_SPACE`]).
+                let (_, depth) = position(self.spaces(), &self.space);
+                if depth.saturating_add(1) > max_depth {
+                    return Err(Status::resource_exhausted(format!(
+                        "this Space is {depth} level(s) below its tree's root and the tree allows                          {max_depth}: a run is a child Space, so it cannot start one"
+                    )));
+                }
+                if let Err(why) = super::runs::confine_submit(
+                    &mut params,
+                    &run,
+                    &self.space,
+                    root,
+                    depth,
+                    &self.own_network(),
+                ) {
+                    self.audit("refuse", &run, &why);
+                    return Err(refused(&why));
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let (space, root) = (self.space.clone(), root.to_string());
+                let (jname, jgpu) = super::runs::job_facts(&params);
+                let ok = super::runs::Ledger::update(&home, |l| {
+                    let ok = l.claim(&run, &space, &root, now);
+                    if ok {
+                        l.describe(&run, &jname, jgpu);
+                    }
+                    ok
+                });
+                if !ok {
+                    return Err(not_found(&run));
+                }
+                self.audit("pool-submit", &run, "a run submitted from a Space");
+            }
+            PoolOp::List => {}
+            PoolOp::OwnRun => {
+                let run = run_of(&params);
+                if !own(&run) {
+                    return Err(not_found(&run));
+                }
+            }
+            PoolOp::OwnJob => {
+                // A job id names a run only by asking for the job first.
+                let probe = self
+                    .owner()
+                    .pool_request(Request::new(pb::PoolRequestRequest {
+                        target: r.target.clone(),
+                        method: "job".into(),
+                        params_json: params.to_string(),
+                    }))
+                    .await?
+                    .into_inner();
+                let body: Value = serde_json::from_str(&probe.body_json).unwrap_or(Value::Null);
+                let run = body["run"]
+                    .as_str()
+                    .or_else(|| body["run_id"].as_str())
+                    .unwrap_or_default();
+                if probe.status == 200 && !own(run) {
+                    return Err(not_found(&params["id"].to_string()));
+                }
+            }
+            PoolOp::Refused => return deny(),
+        }
+        r.params_json = params.to_string();
+        let out = self.owner().pool_request(Request::new(r)).await?;
+        if method != "runs" {
+            return Ok(out);
+        }
+        // The list holds this tree's runs only.
+        let mut resp = out.into_inner();
+        if resp.status == 200 {
+            let mut body: Value = serde_json::from_str(&resp.body_json).unwrap_or(Value::Null);
+            if let Some(list) = body["runs"].as_array_mut() {
+                let ledger = super::runs::Ledger::load(&home);
+                list.retain(|v| ledger.visible(v["run"].as_str().unwrap_or_default(), root));
+            }
+            resp.body_json = body.to_string();
+        }
+        Ok(Response::new(resp))
+    }
+
     /// The caller's own record (its egress, lifetime).
     fn own_meta(&self) -> Option<cua_spaces::registry::SpaceMeta> {
         self.spaces().registry().meta(&self.space)
@@ -440,8 +556,26 @@ impl Scoped {
         Some(match name {
             "stop_space" | "start_space" | "space_bash" | "space_write" | "upload" | "download"
             | "list_tools" | "call_tool" | "list_space_windows" => "space",
+            // What the person sees of the Space (its own too): a window or the
+            // whole desktop on their screen.
+            "stream_space_window" | "show_space_pip" | "hide_space_pip" | "open_space_viewer" => {
+                "space"
+            }
             _ => return None,
         })
+    }
+
+    /// Whether the tool shows a Space on the person's desktop: it may name the
+    /// caller itself, not only its children.
+    fn shows_on_desktop(name: &str) -> bool {
+        matches!(
+            name,
+            "stream_space_window"
+                | "show_space_pip"
+                | "hide_space_pip"
+                | "open_space_viewer"
+                | "list_space_windows"
+        )
     }
 
     /// Rewrites a tool call's Space argument to the child's id, refusing
@@ -450,11 +584,25 @@ impl Scoped {
         let Some(key) = Self::tool_target(name) else {
             return Err(refused("use its children's own tools"));
         };
-        let q = args
-            .get(key)
-            .and_then(Value::as_str)
-            .ok_or_else(|| Status::invalid_argument(format!("{name} needs `{key}`")))?
-            .to_owned();
+        let own_name = self
+            .space
+            .split_once(':')
+            .map(|(_, n)| n.to_owned())
+            .unwrap_or_default();
+        let q = match args.get(key).and_then(Value::as_str) {
+            Some(q) => q.to_owned(),
+            // The window or desktop of the Space asking, when it names none.
+            None if Self::shows_on_desktop(name) => self.space.clone(),
+            None => {
+                return Err(Status::invalid_argument(format!("{name} needs `{key}`")));
+            }
+        };
+        if Self::shows_on_desktop(name)
+            && (q == self.space || q == "self" || (!own_name.is_empty() && q == own_name))
+        {
+            args[key] = Value::String(self.space.clone());
+            return Ok(());
+        }
         let child = self.resolve(&q)?;
         args[key] = Value::String(child.id);
         Ok(())
@@ -1100,8 +1248,13 @@ impl SpaceService for Scoped {
         deny()
     }
 
-    async fn pool_request(&self, _: Request<pb::PoolRequestRequest>) -> R<pb::PoolRequestResponse> {
-        deny()
+    async fn pool_request(
+        &self,
+        req: Request<pb::PoolRequestRequest>,
+    ) -> R<pb::PoolRequestResponse> {
+        let claims = claims(&req)?;
+        self.scoped_pool_request(&claims.root, claims.max_depth, req.into_inner())
+            .await
     }
 
     async fn get_space_thumbnail(

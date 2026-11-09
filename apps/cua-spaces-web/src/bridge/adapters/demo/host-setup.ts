@@ -14,9 +14,23 @@ import type { DemoContext, DemoHandlers } from "./context";
 export interface DemoHostSetupState {
   /** This machine as a host (`machines.list`'s current row, `host.status`). */
   host: HostStatus;
+  /** The demo Mac's Local Network switch for the app (off until Allow). */
+  localNetworkGranted: boolean;
 }
 
-export const demoHostSetupState = (now: number, firstRun: boolean): DemoHostSetupState => ({ host: demoHostStatus(now, firstRun) });
+export const demoHostSetupState = (now: number, firstRun: boolean): DemoHostSetupState => ({ host: demoHostStatus(now, firstRun), localNetworkGranted: false });
+
+export const LOCAL_NETWORK_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork";
+
+/**
+ * `host.status` as the Mac app answers it: with `localNetwork`, a Mac set up to run Spaces (Apple silicon) also lists
+ * its Local Network access, as the "local-network" permission.
+ */
+export function demoHostStatusFor(state: DemoHostSetupState, args?: { localNetwork?: boolean }): HostStatus {
+  const h = { ...state.host };
+  if (!args?.localNetwork || !h.configured || !h.provideSpaces) return h;
+  return { ...h, permissions: [...h.permissions, { id: "local-network", label: "Local Network", settingsUrl: LOCAL_NETWORK_PANE, granted: state.localNetworkGranted }] };
+}
 
 export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.limits" | "host.openSettings"> {
   const set = (host: HostStatus) => {
@@ -86,6 +100,14 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     // A browser can't open System Settings; the pane only has to be one.
     "host.openSettings": ({ url }) => {
       if (!isSettingsPane(url)) throw new HostError("Only System Settings panes open here", "bad_args");
+      // Local Network: the demo plays macOS's prompt answered with Allow.
+      if (url === LOCAL_NETWORK_PANE) {
+        setTimeout(() => {
+          state.localNetworkGranted = true;
+          emit({ type: "machines.changed" });
+        }, stepMs * 4);
+        return null;
+      }
       // The demo plays the user turning it on in System Settings.
       setTimeout(() => {
         state.host = { ...state.host, permissions: state.host.permissions.map((p) => (p.settingsUrl === url ? { ...p, granted: true } : p)) };

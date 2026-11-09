@@ -276,6 +276,9 @@
             "string",
             "null"
           ]
+        },
+        "copySignIn": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2308,13 +2311,7 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "secureSpaces": {
-          "type": "boolean"
-        },
         "childSpaces": {
-          "type": "boolean"
-        },
-        "askFirst": {
           "type": "boolean"
         },
         "ciRunners": {
@@ -5491,6 +5488,28 @@
             "name",
             "installed"
           ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
+          ]
         }
       },
       "required": [
@@ -8242,6 +8261,28 @@
             "installed"
           ]
         },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
+          ]
+        },
         "tips": {
           "type": "object",
           "properties": {
@@ -8598,6 +8639,9 @@
     "agentKeys.check": {
       "$ref": "#/$defs/AgentKeysReport"
     },
+    "agentKeys.copySignIn": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.fromShell": {
       "$ref": "#/$defs/AgentKeysReport"
     },
@@ -8635,6 +8679,48 @@
     },
     "agents.allowComputer": {
       "type": "null"
+    },
+    "agents.computerSignIn": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "not_signed_in",
+            "signing_in",
+            "signed_in",
+            "failed",
+            "expired"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pasteCode": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "url",
+        "code",
+        "pasteCode",
+        "reason"
+      ]
     },
     "agents.configure": {
       "type": "array",
@@ -11588,6 +11674,129 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.copySignIn": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11693,6 +11902,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11798,6 +12016,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11903,6 +12130,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -12008,6 +12244,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -12113,6 +12358,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -12232,6 +12486,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -15349,6 +15612,7 @@
     }
   },
   "webkitUnshaped": {
+    "agents.computerSignIn": "the daemon tool's JSON as-is (agent_sign_in); ops/agent-sign-in.ts maps it for every host",
     "agents.recentThreads": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
     "agents.threadHistory": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
     "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",

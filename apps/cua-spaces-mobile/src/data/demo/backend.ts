@@ -10,7 +10,18 @@
 
 import type { TaskRequest } from "../../core/phone";
 import { summarize, type SpaceInput } from "../summary";
-import { changesFromTool, fileDiffFromTool, filePreviewFromTool, mergeTaskOptions, mergeToolRows, offlineMachineOptions, taskOptionsFromTool, taskResultFromTool, toolRowsFromTool, type ToolGroup } from "../thread/phone-protocol";
+import {
+  changesFromTool,
+  fileDiffFromTool,
+  filePreviewFromTool,
+  mergeTaskOptions,
+  mergeToolRows,
+  offlineMachineOptions,
+  taskOptionsFromTool,
+  taskResultFromTool,
+  toolRowsFromTool,
+  type ToolGroup,
+} from "../thread/phone-protocol";
 import type { AgentMember, Backend, InputAction, SpaceList, StreamTicket, TaskResult, ThreadEntry, ThreadPage } from "../types";
 import * as D from "./data";
 
@@ -72,7 +83,21 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
   const t0 = now();
   const machines = D.machines(t0);
   const sp = D.spaces(t0);
-  const st: State = { entries: new Map(), members: new Map(), read: new Map(), asleep: new Set(), controlled: new Set(), live: new Map(), tools: new Map(), queued: new Map(), epoch: new Map(), chain: new Map(), tasks: new Map(), posted: new Map(), ready: new Map() };
+  const st: State = {
+    entries: new Map(),
+    members: new Map(),
+    read: new Map(),
+    asleep: new Set(),
+    controlled: new Set(),
+    live: new Map(),
+    tools: new Map(),
+    queued: new Map(),
+    epoch: new Map(),
+    chain: new Map(),
+    tasks: new Map(),
+    posted: new Map(),
+    ready: new Map(),
+  };
   const record: DemoRecord = { inputs: [], pushRegistrations: [], pushRemoved: 0, started: [] };
   const own = (id: string, e: ThreadEntry[], unread: number) => {
     st.entries.set(id, e);
@@ -80,7 +105,11 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
   };
   own("relay:sample-checkout-api", D.checkoutThread(t0), 2);
   own("relay:sample-design-review", D.designThread(t0), 0);
-  own("relay:sample-ledger", D.simpleThread(t0, D.BOOKKEEPER, ["Matched 41 of 44 March invoices.", "3 invoices have no purchase order. I listed them in the sheet."]), 1);
+  own(
+    "relay:sample-ledger",
+    D.simpleThread(t0, D.BOOKKEEPER, ["Matched 41 of 44 March invoices.", "3 invoices have no purchase order. I listed them in the sheet."]),
+    1,
+  );
   own("relay:sample-desktop-pc", D.simpleThread(t0, D.OPERATOR, ["Nothing to do right now. Message me when you need the PC."]), 0);
   own("relay:sample-web-research", D.simpleThread(t0, D.RESEARCHER, ["Three reports read. Drafting the summary now."]), 0);
   own("relay:sample-ci-runner", D.simpleThread(t0, D.CLAUDE, ["Runner idle since yesterday."]), 0);
@@ -94,9 +123,7 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
       const e = st.entries.get(s.id) ?? [];
       const last = [...e].reverse().find((x) => x.kind === "message" || x.kind === "approval") ?? null;
       const readSeq = st.read.get(s.id) ?? 0;
-      const members = (st.members.get(s.id) ?? []).map((m) =>
-        st.asleep.has(s.id) ? { ...m, status: "asleep", activity: null } : m,
-      );
+      const members = (st.members.get(s.id) ?? []).map((m) => (st.asleep.has(s.id) ? { ...m, status: "asleep", activity: null } : m));
       return {
         id: s.id,
         name: s.name,
@@ -126,11 +153,17 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
     const wake = st.asleep.has(spaceId) || m.status === "asleep";
     if (wake) {
       st.asleep.delete(spaceId);
-      st.members.set(spaceId, (st.members.get(spaceId) ?? []).map((x) => (x.name === to ? { ...x, status: "working", activity: "reading your message" } : x)));
+      st.members.set(
+        spaceId,
+        (st.members.get(spaceId) ?? []).map((x) => (x.name === to ? { ...x, status: "working", activity: "reading your message" } : x)),
+      );
       const e = st.entries.get(spaceId)!;
       e.push(D.entry(nextSeq(spaceId), now(), D.CUA, `${m.identity?.displayName ?? to} woke up`, { kind: "system" }));
     }
-    const text = `Got it: "${ask.text.split("\n")[0]!.replace(/@\S+\s*/g, "").slice(0, 60)}". I'm on it and will post here when it is done.`;
+    const text = `Got it: "${ask.text
+      .split("\n")[0]!
+      .replace(/@\S+\s*/g, "")
+      .slice(0, 60)}". I'm on it and will post here when it is done.`;
     st.live.set(spaceId, [{ agent: to, stage: "thinking" }]);
     await sleep(wordMs * 6);
     if (stale()) return;
@@ -151,7 +184,9 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
       await sleep(wordMs);
     }
     st.live.set(spaceId, []);
-    st.entries.get(spaceId)!.push(D.entry(nextSeq(spaceId), now(), { kind: "agent", id: `agent:${to}`, name: m.identity?.displayName ?? to }, text, { replyTo: ask.seq }));
+    st.entries
+      .get(spaceId)!
+      .push(D.entry(nextSeq(spaceId), now(), { kind: "agent", id: `agent:${to}`, name: m.identity?.displayName ?? to }, text, { replyTo: ask.seq }));
   }
 
   /** Runs replies one at a time per Space: a queued message waits for the turn in progress. */
@@ -189,9 +224,50 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
       const machineId = req.where.kind === "machine" ? req.where.machine : "studio-mac";
       const handle = req.agent === "openai-codex" ? "codex" : req.agent === "hermes" ? "hermes" : req.agent === "openclaw" ? "openclaw" : "claude";
       const label = handle === "claude" ? "Claude Code" : handle === "codex" ? "Codex" : handle === "hermes" ? "Hermes" : "OpenClaw";
-      const name = req.prompt.split(/\s+/).slice(0, 3).join("-").toLowerCase().replace(/[^a-z0-9-]/g, "") || `task-${taskN}`;
-      const m: AgentMember = { name: handle, handle, harness: req.agent, status: "asleep", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: { origin: "space", handle, displayName: label, collides: false, icon: null, harness: { id: req.agent, version: null, reported: true }, owner: { id: D.ME.id, name: D.ME.name }, device: null, joined: { method: "started", atMs: null, by: null }, state: "active", lastSeenMs: null }, dm: { unread: 0, last: null }, needsYou: [] };
-      sp.push({ id: spaceId, name, machineId, scope: "machine", kindLabel: "Linux", scene: "terminal", role: "owner", members: [m], people: [{ id: D.ME.id, name: D.ME.name, kind: "person", harness: null, status: "here", activity: null, role: "Owner", here: true }] });
+      const name =
+        req.prompt
+          .split(/\s+/)
+          .slice(0, 3)
+          .join("-")
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, "") || `task-${taskN}`;
+      const m: AgentMember = {
+        name: handle,
+        handle,
+        harness: req.agent,
+        status: "asleep",
+        activity: null,
+        sessions: 1,
+        rights: null,
+        youCan: null,
+        heldBy: null,
+        identity: {
+          origin: "space",
+          handle,
+          displayName: label,
+          collides: false,
+          icon: null,
+          harness: { id: req.agent, version: null, reported: true },
+          owner: { id: D.ME.id, name: D.ME.name },
+          device: null,
+          joined: { method: "started", atMs: null, by: null },
+          state: "active",
+          lastSeenMs: null,
+        },
+        dm: { unread: 0, last: null },
+        needsYou: [],
+      };
+      sp.push({
+        id: spaceId,
+        name,
+        machineId,
+        scope: "machine",
+        kindLabel: "Linux",
+        scene: "terminal",
+        role: "owner",
+        members: [m],
+        people: [{ id: D.ME.id, name: D.ME.name, kind: "person", harness: null, status: "here", activity: null, role: "Owner", here: true }],
+      });
       st.members.set(spaceId, [m]);
       st.entries.set(spaceId, []);
       st.read.set(spaceId, 0);
@@ -229,7 +305,19 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
         offline = on;
       },
     },
-    capabilities: { sample: true, stream: "viewer", input: true, sleep: true, share: true, startTask: true, diff: true, scopes: true, steer: true, push: true, why: {} },
+    capabilities: {
+      sample: true,
+      stream: "viewer",
+      input: true,
+      sleep: true,
+      share: true,
+      startTask: true,
+      diff: true,
+      scopes: true,
+      steer: true,
+      push: true,
+      why: {},
+    },
     async listSpaces(): Promise<SpaceList> {
       down();
       void inputs;
@@ -267,7 +355,10 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
     },
     async members(spaceId) {
       down();
-      return withQueued(spaceId, (st.members.get(spaceId) ?? []).map((m) => (st.asleep.has(spaceId) ? { ...m, status: "asleep", activity: null } : m)));
+      return withQueued(
+        spaceId,
+        (st.members.get(spaceId) ?? []).map((m) => (st.asleep.has(spaceId) ? { ...m, status: "asleep", activity: null } : m)),
+      );
     },
     async post(spaceId, text, o) {
       down();
@@ -296,7 +387,10 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
     async answer(spaceId, approval, approve, o) {
       down();
       if (o?.clientId && st.posted.has(o.clientId)) return st.posted.get(o.clientId)!;
-      const e = D.entry(nextSeq(spaceId), now(), D.ME, approve ? (o?.scope === "space" ? "Allowed for this Space" : "Approved") : "Denied", { kind: "answer", answer: { approval, approve, note: null, scope: approve ? (o?.scope ?? "once") : null } });
+      const e = D.entry(nextSeq(spaceId), now(), D.ME, approve ? (o?.scope === "space" ? "Allowed for this Space" : "Approved") : "Denied", {
+        kind: "answer",
+        answer: { approval, approve, note: null, scope: approve ? (o?.scope ?? "once") : null },
+      });
       if (o?.clientId) {
         e.clientId = o.clientId;
         st.posted.set(o.clientId, e);
@@ -308,7 +402,9 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
         spaceId,
         space.map((m) => {
           const left = (m.needsYou ?? []).filter((n) => n.seq !== approval);
-          return left.length ? { ...m, needsYou: left } : { ...m, status: approve ? "working" : "idle", activity: approve ? "pushing the branch" : null, needsYou: [] };
+          return left.length
+            ? { ...m, needsYou: left }
+            : { ...m, status: approve ? "working" : "idle", activity: approve ? "pushing the branch" : null, needsYou: [] };
         }),
       );
       return e;
@@ -378,18 +474,34 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
     async takeControl(spaceId, on) {
       if (on) st.controlled.add(spaceId);
       else st.controlled.delete(spaceId);
-      st.members.set(spaceId, (st.members.get(spaceId) ?? []).map((m) => (on && m.status === "working" ? { ...m, status: "paused", activity: "paused while you drive" } : !on && m.status === "paused" ? { ...m, status: "working", activity: "back at it" } : m)));
+      st.members.set(
+        spaceId,
+        (st.members.get(spaceId) ?? []).map((m) =>
+          on && m.status === "working"
+            ? { ...m, status: "paused", activity: "paused while you drive" }
+            : !on && m.status === "paused"
+              ? { ...m, status: "working", activity: "back at it" }
+              : m,
+        ),
+      );
     },
     async stopAgent(spaceId) {
       st.live.set(spaceId, []);
-      st.members.set(spaceId, (st.members.get(spaceId) ?? []).map((m) => (m.status === "working" ? { ...m, status: "idle", activity: null } : m)));
+      st.members.set(
+        spaceId,
+        (st.members.get(spaceId) ?? []).map((m) => (m.status === "working" ? { ...m, status: "idle", activity: null } : m)),
+      );
     },
     async toolRows(spaceId) {
       down();
       // The daemon's wire shape, read through the same mapper as a live answer.
       const groups = st.tools.get(spaceId) ?? [];
       return toolRowsFromTool({
-        groups: groups.map((g) => ({ after_seq: g.afterSeq, agent: g.agent, calls: g.calls.map((c) => ({ id: c.id, cat: c.cat, line: c.line, detail: c.detail, state: c.state, at_ms: c.atMs })) })),
+        groups: groups.map((g) => ({
+          after_seq: g.afterSeq,
+          agent: g.agent,
+          calls: g.calls.map((c) => ({ id: c.id, cat: c.cat, line: c.line, detail: c.detail, state: c.state, at_ms: c.atMs })),
+        })),
         // A counter that moves whenever a call is added or finishes, like the daemon's.
         cursor: groups.flatMap((g) => g.calls).reduce((n, c) => n + 10 + (c.state === "running" ? 0 : 1), 0),
         caught_up: true,

@@ -75,7 +75,7 @@ pub struct PoolInfo {
 }
 
 /// A sandbox creation request (union of the providers' options).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct CreateRequest {
     /// Where: `local`, `cloud`, `direct:<addr>` or a registered provider.
     /// `None`: the older `provider` / `url` fields, else the user default
@@ -151,6 +151,47 @@ pub struct CreateRequest {
     /// shared file, so its checkpoints take milliseconds and forks of them
     /// share its pages. Other kinds ignore it.
     pub forkable: bool,
+}
+
+impl std::fmt::Debug for CreateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateRequest")
+            .field("location", &self.location)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("provider", &self.provider)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("pool", &self.pool)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("labels", &self.labels)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_credentials",
+                &self.registry_credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("container_runtime", &self.container_runtime)
+            .field("network", &self.network)
+            .field("owner_pid", &self.owner_pid)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("profile", &self.profile)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 /// What callers see of a sandbox, identical in both topologies.
@@ -575,6 +616,12 @@ impl Runtime {
             Some(l) => Some(On::parse(l)?),
             None => legacy,
         };
+        // A Space that runs on this computer lives on its disk: with the disk full (it filled once
+        // and corrupted the Space runtime's own disk) starting another only makes it worse, so it is
+        // refused up front, with the floor (`CUA_DISK_MIN_FREE`, default 5 GiB) and the way out.
+        if on.as_ref().is_none_or(|o| *o == On::Local) {
+            local_disk_floor(&cua_sandbox_core::settings::cua_home())?;
+        }
         // A local pool by name: the create runs its shape, kind and runtime
         // included (so it resolves exactly like the pool's sandboxes and
         // claims one of them).
@@ -1526,6 +1573,16 @@ impl Runtime {
         Ok(())
     }
 
+    /// Repairs the local sandboxes that lost their network gateway and drops
+    /// the connections the restarted ones had ([`Sandboxes::mend_local`]).
+    pub async fn mend_local(&self) {
+        for name in self.inner.sandboxes.mend_local().await {
+            if let Ok(key) = self.key(&name).await {
+                self.refresh_handle(&key).await;
+            }
+        }
+    }
+
     /// A sandbox that booted again may listen on new host ports (a microVM
     /// picks them on every boot): point its cached handle and env connection
     /// at the endpoints its record now holds.
@@ -2020,5 +2077,70 @@ fn record_of(key: &str, h: &Handle, status: Status) -> SandboxRecord {
         provider_details: sb.provider_details(),
         image_info: sb.image_info().cloned(),
         stop_reason: None,
+    }
+}
+
+/// Refuses to start a Space on this computer when the disk holding `home` has less free than
+/// the floor (`CUA_DISK_MIN_FREE`, default 5 GiB). An unknown free space never blocks.
+fn local_disk_floor(home: &std::path::Path) -> Result<()> {
+    let cfg = cua_vmm::disk::CacheConfig::load();
+    disk_floor_in(
+        &cua_vmm::disk::GlobalProbe,
+        home,
+        cfg.min_free,
+        cfg.warn_free,
+    )
+}
+
+fn disk_floor_in(
+    probe: &dyn cua_vmm::disk::SpaceProbe,
+    home: &std::path::Path,
+    min_free: u64,
+    warn_free: u64,
+) -> Result<()> {
+    cua_vmm::disk::ensure_space_in(probe, home, 0, "start a Space", min_free, warn_free)
+        .map_err(|e| Error::InsufficientDisk(e.to_string()))
+}
+
+#[cfg(test)]
+mod disk_floor_tests {
+    use super::*;
+    use cua_vmm::disk::{GIB, Space, SpaceProbe};
+
+    struct Free(u64);
+    impl SpaceProbe for Free {
+        fn space(&self, _: &std::path::Path) -> std::io::Result<Space> {
+            Ok(Space {
+                available: self.0,
+                total: 1000 * GIB,
+            })
+        }
+    }
+    struct Unknown;
+    impl SpaceProbe for Unknown {
+        fn space(&self, _: &std::path::Path) -> std::io::Result<Space> {
+            Err(std::io::Error::other("no answer"))
+        }
+    }
+
+    #[test]
+    fn a_full_disk_refuses_a_new_space_and_says_how_to_get_out() {
+        let home = std::path::Path::new("/home/u/.cua");
+        let e = disk_floor_in(&Free(GIB), home, 5 * GIB, 20 * GIB).unwrap_err();
+        assert!(matches!(e, Error::InsufficientDisk(_)), "{e:?}");
+        let m = e.to_string();
+        assert!(
+            m.contains("start a Space") && m.contains("CUA_DISK_MIN_FREE"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn room_or_an_unknown_answer_starts_the_space() {
+        let home = std::path::Path::new("/home/u/.cua");
+        assert!(disk_floor_in(&Free(50 * GIB), home, 5 * GIB, 20 * GIB).is_ok());
+        assert!(disk_floor_in(&Unknown, home, 5 * GIB, 20 * GIB).is_ok());
+        // A floor of 0 turns it off.
+        assert!(disk_floor_in(&Free(0), home, 0, 0).is_ok());
     }
 }

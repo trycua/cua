@@ -25,6 +25,9 @@ const RETRY: Duration = Duration::from_secs(5);
 /// cua-spacesd).
 const NO_FEATURE_RETRY: Duration = Duration::from_secs(60);
 
+/// How long a Space counts as just started.
+const YOUNG: Duration = Duration::from_secs(180);
+
 /// How often orphaned children are judged.
 const REAP_EVERY: Duration = Duration::from_secs(60);
 
@@ -102,6 +105,112 @@ pub(crate) fn reap(shared: &Arc<Shared>) {
     }
 }
 
+/// Cancels the pool runs whose submitting Space is gone or turned off: a
+/// deleted or stopped parent leaves no job running ([`super::runs`]).
+pub(crate) fn reap_runs(shared: &Arc<Shared>) {
+    let spaces = shared.runtime.spaces();
+    let home = spaces.home_dir().to_path_buf();
+    let ledger = super::runs::Ledger::load(&home);
+    if ledger.runs.is_empty() {
+        return;
+    }
+    // A registry that cannot be read decides nothing.
+    let Ok(records) = spaces.registry().list() else {
+        return;
+    };
+    let ids: std::collections::BTreeSet<String> = records.into_iter().map(|r| r.id).collect();
+    let alive = |id: &str| {
+        if !ids.contains(id) {
+            return false;
+        }
+        let (_, state) = spaces.power_of(id);
+        !matches!(state.as_str(), "stopped" | "suspended")
+    };
+    for run in super::runs::orphaned(&ledger, alive) {
+        let shared = shared.clone();
+        let home = home.clone();
+        tokio::spawn(async move {
+            use cua_proto::daemon::v1::space_service_server::SpaceService as _;
+            let target = if run.starts_with("l-") {
+                "local"
+            } else {
+                "pool"
+            };
+            let owner = crate::server::Svc(shared);
+            let r = owner
+                .pool_request(tonic::Request::new(
+                    cua_proto::daemon::v1::PoolRequestRequest {
+                        target: target.into(),
+                        method: "cancel_run".into(),
+                        params_json: serde_json::json!({ "run": run }).to_string(),
+                    },
+                ))
+                .await;
+            match r {
+                // Canceled, or no such run any more: done either way.
+                Ok(_) => {
+                    tracing::info!(%run, "canceled a run whose Space is gone");
+                    super::runs::Ledger::update(&home, |l| {
+                        l.runs.remove(&run);
+                    });
+                }
+                Err(e) => tracing::warn!(%run, error = %e, "could not cancel an orphaned run"),
+            }
+        });
+    }
+}
+
+/// Writes the job rows of the child Spaces list (`spawn/job-rows.json`): one per run of a
+/// Space's tree, from the run ledger and the pool's own answer, wherever the run is placed
+/// (this computer, another one, a native machine job with no Space at all). The app reads it
+/// with the tree, so a job shows under its submitting Space as the logical child it is.
+pub(crate) async fn write_job_rows(shared: &Arc<Shared>) {
+    use cua_proto::daemon::v1::space_service_server::SpaceService as _;
+    let home = shared.runtime.spaces().home_dir().to_path_buf();
+    let ledger = super::runs::Ledger::load(&home);
+    let path = home.join("spawn").join("job-rows.json");
+    if ledger.runs.is_empty() {
+        if path.exists() {
+            let _ = std::fs::write(&path, b"[]");
+        }
+        return;
+    }
+    // What the pool says of each run: the pool's list, and the local coordinator's.
+    let mut known: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    for target in ["pool", "local"] {
+        let owner = crate::server::Svc(shared.clone());
+        let r = owner
+            .pool_request(tonic::Request::new(
+                cua_proto::daemon::v1::PoolRequestRequest {
+                    target: target.into(),
+                    method: "runs".into(),
+                    params_json: "{}".into(),
+                },
+            ))
+            .await;
+        let Ok(r) = r else { continue };
+        let body: serde_json::Value =
+            serde_json::from_str(&r.into_inner().body_json).unwrap_or_default();
+        for run in body["runs"].as_array().into_iter().flatten() {
+            if let Some(id) = run["run"].as_str() {
+                known.insert(id.to_string(), run.clone());
+            }
+        }
+    }
+    let rows: Vec<super::runs::JobRowOut> = ledger
+        .runs
+        .iter()
+        .filter_map(|(run, owned)| super::runs::job_row(run, owned, known.get(run)))
+        .collect();
+    let json = serde_json::to_vec_pretty(&rows).unwrap_or_default();
+    if std::fs::read(&path).ok().as_deref() != Some(json.as_slice()) {
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, &json).is_ok() {
+            let _ = std::fs::rename(tmp, path);
+        }
+    }
+}
+
 /// Only Spaces this computer runs itself hold a channel to it.
 fn runs_here(id: &str) -> bool {
     id.starts_with("local:")
@@ -117,6 +226,8 @@ pub(crate) fn spawn(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) ->
         let mut last_reap = std::time::Instant::now() - REAP_EVERY;
         loop {
             reconcile(&shared, &mut bridges);
+            reap_runs(&shared);
+            write_job_rows(&shared).await;
             if last_reap.elapsed() >= REAP_EVERY {
                 last_reap = std::time::Instant::now();
                 reap(&shared);
@@ -194,6 +305,7 @@ fn tree_limit(shared: &Shared, root: &str) -> u32 {
 /// Keeps one Space's channel until the task is aborted.
 async fn run(shared: Arc<Shared>, id: String) {
     let mut warned = false;
+    let born = std::time::Instant::now();
     loop {
         let spaces = shared.runtime.spaces();
         let space = match spaces.space(&id).await {
@@ -215,7 +327,15 @@ async fn run(shared: Arc<Shared>, id: String) {
                 );
                 warned = true;
             }
-            tokio::time::sleep(NO_FEATURE_RETRY).await;
+            // A guest that has just started answers before its services are
+            // up: look again at once for its first minutes (the agent's first
+            // command must find the channel), then rarely (an older cua-spacesd).
+            tokio::time::sleep(if born.elapsed() < YOUNG {
+                RETRY
+            } else {
+                NO_FEATURE_RETRY
+            })
+            .await;
             continue;
         }
         let Some(authority) = shared.spawn_authority() else {

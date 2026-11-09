@@ -17,6 +17,7 @@ import { useSyncExternalStore } from "react";
 import type { AgentRunStatus, HostStatus, Space, SpaceOs, TranscriptItem } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
 import { threadOpAvailable } from "@/bridge/ops/thread";
+import { t } from "@/i18n";
 
 import { isMachineDesktop, orderSpaces, spaceState } from "./spaces";
 import { thisComputerLabel, thisComputerText } from "./host-labels";
@@ -118,7 +119,11 @@ function save(next: AskTask[]): void {
  * this device only remembers which Space and run a task is. Best effort: a
  * host without the thread still runs the task.
  */
-export async function postToSpaceThread(data: Pick<DataAdapter, "call" | "mode"> | null | undefined, spaceId: string | null | undefined, text: string): Promise<void> {
+export async function postToSpaceThread(
+  data: Pick<DataAdapter, "call" | "mode"> | null | undefined,
+  spaceId: string | null | undefined,
+  text: string,
+): Promise<void> {
   if (!data || !spaceId || !text.trim() || !threadOpAvailable(data.mode, "thread.post")) return;
   await data.call("thread.post", { spaceId, text: text.trim() }).catch(() => {});
 }
@@ -218,8 +223,17 @@ export function mostUsedAgent(tasks: readonly AskTask[]): string | null {
 
 /** A task's title: its first line, short. */
 export function taskTitle(prompt: string, max = 80): string {
-  const line = prompt.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
-  return [...line].length <= max ? line : `${[...line].slice(0, max - 1).join("").trimEnd()}…`;
+  const line =
+    prompt
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) ?? "";
+  return [...line].length <= max
+    ? line
+    : `${[...line]
+        .slice(0, max - 1)
+        .join("")
+        .trimEnd()}…`;
 }
 
 /**
@@ -265,7 +279,9 @@ export const HOST_NOT_SHARED = `${THIS_MAC_ID}: this Mac isn't shared by its hos
  * it shares its desktop on. Null when it isn't set up or doesn't share its
  * desktop.
  */
-export function hostSpaceId(status: Pick<HostStatus, "configured" | "mode" | "machineId" | "directUrl" | "sharing" | "shareDesktop"> | null | undefined): string | null {
+export function hostSpaceId(
+  status: Pick<HostStatus, "configured" | "mode" | "machineId" | "directUrl" | "sharing" | "shareDesktop"> | null | undefined,
+): string | null {
   if (!status?.configured || !status.sharing || status.shareDesktop === false) return null;
   if (status.mode === "relay" && status.machineId) return `relay:${status.machineId}`;
   if (status.mode === "direct" && status.directUrl) {
@@ -311,7 +327,13 @@ export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
 /** Your other computers whose desktops are online to run a job on: never this computer's own (`this-mac` is its row). */
 export function otherComputerDesktops(spaces: readonly Space[] | undefined, thisMachineId: string | null): Space[] {
   return (spaces ?? []).filter(
-    (s) => isMachineDesktop(s) && s.id !== THIS_MAC_ID && s.status !== "local" && s.id !== `relay:${thisMachineId}` && s.status === "running" && spaceState(s) === "running",
+    (s) =>
+      isMachineDesktop(s) &&
+      s.id !== THIS_MAC_ID &&
+      s.status !== "local" &&
+      s.id !== `relay:${thisMachineId}` &&
+      s.status === "running" &&
+      spaceState(s) === "running",
   );
 }
 
@@ -370,8 +392,8 @@ export function useThisMacConfirmed(): boolean {
 /** What the person is told, once, before a task works on this Mac itself. */
 export function thisMacConfirmText(agent: string): { title: string; description: string } {
   return {
-    title: `Work on ${thisComputerText()}?`,
-    description: `${agent} will work directly on ${thisComputerText()}, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
+    title: t("home.confirm.title", { computer: thisComputerText() }),
+    description: t("home.confirm.description", { agent }),
   };
 }
 
@@ -385,6 +407,8 @@ export interface StartErrorView {
   action: StartErrorAction;
   /** Whether Try again can help (not for a target that can't work). */
   retry: boolean;
+  /** No known cause: the card also offers Send a report. */
+  report?: boolean;
 }
 
 /**
@@ -396,27 +420,42 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   const e = raw.toLowerCase();
   if (e.includes("isn't shared"))
     return {
-      title: `${thisComputerLabel()} isn't set up for tasks yet`,
-      body: `Turn on sharing for ${thisComputerText()} on its page in Computers, then try again. Or pick another computer.`,
+      title: t("home.start_error.not_shared_title", { computer: thisComputerLabel() }),
+      body: t("home.start_error.not_shared_body", { computer: thisComputerText() }),
       action: "set-up-host",
       retry: true,
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: `Couldn't start on ${thisComputerText()}`, body: `Try again to start it on ${thisComputerText()}, or pick another computer.`, action: "retry", retry: true };
+    return {
+      title: t("home.start_error.cant_start_here_title", { computer: thisComputerText() }),
+      body: t("home.start_error.cant_start_here_body", { computer: thisComputerText() }),
+      action: "retry",
+      retry: true,
+    };
   if (/cloud has ended/.test(e))
-    return { title: "That computer is no longer available", body: `Cua Cloud has ended. Pick a computer on ${thisComputerText()} instead.`, action: "change-computer", retry: false };
+    return {
+      title: t("home.start_error.gone_title"),
+      body: t("home.start_error.gone_body", { computer: thisComputerText() }),
+      action: "change-computer",
+      retry: false,
+    };
   if (/more than one|ambiguous/.test(e))
-    return { title: "More than one computer has that name", body: "Pick the one you mean.", action: "change-computer", retry: false };
+    return { title: t("home.start_error.ambiguous_title"), body: t("home.start_error.ambiguous_body"), action: "change-computer", retry: false };
   if (/not found|no such|unknown space|add_space/.test(e))
-    return { title: "Couldn't find that computer", body: "It may have been deleted or renamed. Pick another one.", action: "change-computer", retry: false };
+    return { title: t("home.start_error.not_found_title"), body: t("home.start_error.not_found_body"), action: "change-computer", retry: false };
   if (/api key|key|sign in|signed in|auth|login|credential|unauthori[sz]ed|401/.test(e))
-    return { title: `${agent} needs your key`, body: `Add it in Settings → Connected apps, then try again.`, action: "add-key", retry: true };
+    return { title: t("home.start_error.key_title", { agent }), body: t("home.start_error.key_body"), action: "add-key", retry: true };
   if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
-    return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
+    return { title: t("home.start_error.unreachable_title"), body: t("home.start_error.unreachable_body"), action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
-    return { title: `${thisComputerLabel()} doesn't have room for a new computer`, body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
-  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another computer.", action: "retry", retry: true };
+    return {
+      title: t("home.start_error.no_room_title", { computer: thisComputerLabel() }),
+      body: t("home.start_error.no_room_body"),
+      action: "retry",
+      retry: true,
+    };
+  return { title: t("home.start_error.failed_title", { agent }), body: t("home.start_error.failed_body"), action: "retry", retry: true, report: true };
 }
 
 /** Where a task stands, in the words Home and the thread use. */
@@ -439,27 +478,36 @@ export function taskState(
   return task.ending === "kept" ? "kept" : "done";
 }
 
-export const TASK_STATE_TEXT: Record<TaskState, string> = {
-  starting: "Getting a computer ready",
-  working: "Working",
-  "needs-you": "Needs you",
-  stuck: "No progress for 10 minutes",
-  done: "Done",
-  "didnt-start": "Didn't start",
-  failed: "Stopped",
-  kept: "Done. Computer kept",
-  thrown: "Done. Computer thrown away",
-};
+/** An object whose values are catalog strings read when used, so a language change shows at once. */
+function lazyWords<K extends string>(keys: Record<K, string>): Record<K, string> {
+  return Object.defineProperties(
+    {},
+    Object.fromEntries(Object.entries<string>(keys).map(([k, key]) => [k, { enumerable: true, get: () => t(key) }])),
+  ) as Record<K, string>;
+}
+
+export const TASK_STATE_TEXT: Record<TaskState, string> = lazyWords<TaskState>({
+  starting: "home.state.starting",
+  working: "home.state.working",
+  "needs-you": "home.state.needs_you",
+  stuck: "home.state.stuck",
+  done: "home.state.done",
+  "didnt-start": "home.state.didnt_start",
+  failed: "home.state.failed",
+  kept: "home.state.kept",
+  thrown: "home.state.thrown",
+});
 
 /** The same states for a task in an agent home: its Space is a home, not a computer made for the job. */
-export const TASK_STATE_TEXT_HOME: Partial<Record<TaskState, string>> = {
-  starting: "Getting its home ready",
-  kept: "Done. Home kept",
-  thrown: "Done. Home thrown away",
-};
+export const TASK_STATE_TEXT_HOME: Partial<Record<TaskState, string>> = lazyWords<"starting" | "kept" | "thrown">({
+  starting: "home.state.home_starting",
+  kept: "home.state.home_kept",
+  thrown: "home.state.home_thrown",
+});
 
 /** A task's state line. */
-export const taskStateText = (state: TaskState, task: Pick<AskTask, "home">): string => (task.home ? TASK_STATE_TEXT_HOME[state] : undefined) ?? TASK_STATE_TEXT[state];
+export const taskStateText = (state: TaskState, task: Pick<AskTask, "home">): string =>
+  (task.home ? TASK_STATE_TEXT_HOME[state] : undefined) ?? TASK_STATE_TEXT[state];
 
 /** Home's order: needs you first, then running, then the rest, newest first. */
 export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: T[]): T[] {
@@ -468,23 +516,35 @@ export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: 
 }
 
 /** The jobs offered on an empty Home: real dev work where a fresh computer matters. */
-export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: string }[] = [
+export const SUGGESTIONS: { title: string; detail?: string; os: SpaceOs; prompt: string }[] = [
   {
-    title: "Run my project's tests on a clean Linux Space",
-    detail: "Find out if it works somewhere that has never seen your code.",
+    get title() {
+      return t("home.suggestion.tests_title");
+    },
     os: "linux",
-    prompt: "Get my project, make a clean Linux Space for it, install what it needs and run its tests. Tell me what passed and what failed: ",
+    get prompt() {
+      return t("home.suggestion.tests_prompt");
+    },
   },
   {
-    title: "Try a pull request before merging",
-    detail: "Paste the link. It builds the branch and tells you what breaks.",
+    get title() {
+      return t("home.suggestion.pr_title");
+    },
+    get detail() {
+      return t("home.suggestion.pr_detail");
+    },
     os: "linux",
-    prompt: "Check out this pull request, build it and run its tests, then tell me if it's safe to merge: ",
+    get prompt() {
+      return t("home.suggestion.pr_prompt");
+    },
   },
   {
-    title: "Check my site works on Safari",
-    detail: "It clicks through your pages on a macOS Space and shows you what looks wrong.",
+    get title() {
+      return t("home.suggestion.safari_title");
+    },
     os: "macos",
-    prompt: "Make a macOS Space, open my site in Safari, click through the main pages and tell me what looks or works wrong: ",
+    get prompt() {
+      return t("home.suggestion.safari_prompt");
+    },
   },
 ];

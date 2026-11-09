@@ -28,7 +28,13 @@ function mount(adapter: DataAdapter, ui: () => ReactNode) {
 }
 
 function NavLabels() {
-  return <div data-nav="">{useNavItems().map((n) => n.label).join(",")}</div>;
+  return (
+    <div data-nav="">
+      {useNavItems()
+        .map((n) => n.label)
+        .join(",")}
+    </div>
+  );
 }
 
 describe("pointer settings from the driver's get_config", () => {
@@ -55,7 +61,7 @@ describe("pointer settings from the driver's get_config", () => {
 });
 
 describe("Cua Driver in the app", () => {
-  it("is no sidebar item: it is one of This Mac's settings, under Computers (CUA-3551)", async () => {
+  it("is no nav item of its own: it is one of This Mac's settings, a line under Computers (CUA-3551)", async () => {
     mount(createDemoAdapter({ latencyMs: 0, stepMs: 0 }), () => <NavLabels />);
     await waitFor(() => expect(document.querySelector("[data-nav]")?.textContent).toMatch(/^Home,Computers,Agents/));
     expect(document.querySelector("[data-nav]")?.textContent).not.toMatch(/Cua Driver|Machines/);
@@ -120,7 +126,13 @@ describe("Cua Driver in the app", () => {
   it("says a permission is missing, and Allow opens Cua Spaces' guide", async () => {
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
     demo.state.host.permissions = [
-      { id: "screen-recording", label: "Screen Recording", instructions: "", settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture", granted: false },
+      {
+        id: "screen-recording",
+        label: "Screen Recording",
+        instructions: "",
+        settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        granted: false,
+      },
     ];
     const calls: string[] = [];
     const spy = Object.assign(Object.create(demo) as DataAdapter, {
@@ -134,7 +146,7 @@ describe("Cua Driver in the app", () => {
     await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Off"));
     // The app the grant goes to, by name, and that the driver needs no second one.
     expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Screen Recording, given to Cua Spaces");
-    expect(document.body.textContent).toContain("Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.");
+    expect(document.body.textContent).not.toContain("It never asks for its own.");
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     await waitFor(() => expect(calls).toContain("host.openSettings"));
     // The demo plays the grant in System Settings: the row turns On without another click.

@@ -53,12 +53,17 @@ export function makeSystem(o: {
   const confirmPresence = async (reason: string) => {
     // Windows Hello sits over the foreground window, and polkit's dialog over the session: be in front.
     if (platform !== "darwin") app.focus({ steal: true });
-    await confirmOwner(platform, reason, (r) => o.native.appConfirmPresence(r), async (w) => {
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      const options: Electron.MessageBoxOptions = { type: "warning", ...w, buttons: ["Approve", "Cancel"], defaultId: 1, cancelId: 1 };
-      const r = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
-      return r.response === 0;
-    });
+    await confirmOwner(
+      platform,
+      reason,
+      (r) => o.native.appConfirmPresence(r),
+      async (w) => {
+        const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+        const options: Electron.MessageBoxOptions = { type: "warning", ...w, buttons: ["Approve", "Cancel"], defaultId: 1, cancelId: 1 };
+        const r = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+        return r.response === 0;
+      },
+    );
   };
 
   return {

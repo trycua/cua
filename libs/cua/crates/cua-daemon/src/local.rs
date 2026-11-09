@@ -2503,8 +2503,15 @@ impl LocalRuntime for VmmLocal {
             // The built-in runtime's VM has no GPU (and is not booted to
             // say so).
             Ok(Engine::Builtin(_)) => {
+                // On a PC the built-in runtime is a WSL 2 distribution: its
+                // containers reach the PC's NVIDIA GPU through /dev/dxg.
+                let wsl = cfg!(windows) && cua_vmm::host::which("nvidia-smi").is_some();
                 for r in ["container", "gvisor"] {
-                    out.push(cua_vmm::gpu::container_support("macos", r, false));
+                    out.push(if cfg!(windows) {
+                        cua_vmm::gpu::container_support_wsl("windows", r, false, wsl)
+                    } else {
+                        cua_vmm::gpu::container_support("macos", r, false)
+                    });
                 }
             }
             Err(e) => {
@@ -2895,6 +2902,25 @@ impl LocalRuntime for VmmLocal {
             }
         }
         Ok(out)
+    }
+
+    /// A Lume VM behind a network gateway that ended is restarted behind a
+    /// new one ([`cua_vmm::Runtime::mend`]); other engines have nothing to
+    /// repair.
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
+        if !runtime_type.trim().eq_ignore_ascii_case("lume") {
+            return Ok(None);
+        }
+        let (_, rt) = self.owner(name).await?;
+        let Some(inst) = rt.mend(name).await.map_err(rt_err)? else {
+            return Ok(None);
+        };
+        Ok(Some(LocalInstance {
+            backend: runtime_label(&inst),
+            name: inst.name,
+            status: status_of(inst.status),
+            endpoints: endpoints_of(inst.endpoints),
+        }))
     }
 
     /// A container's exit record (its code and `OOMKilled`), read from the

@@ -29,7 +29,17 @@ import type {
   TelemetryView,
   RuntimesInput,
 } from "./contracts/host";
-import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, AgentStartRequest, ConnectionReport, ConnectResult, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
+import type {
+  AgentEventsPage,
+  AgentMessageSent,
+  AgentSetupRow,
+  AgentStarted,
+  AgentStartRequest,
+  ConnectionReport,
+  ConnectResult,
+  PersistentAgent,
+  SpaceAgentRun,
+} from "./contracts/agents";
 import type { KeyvaultOverview, KvGrant, KvItem } from "./contracts/keyvault";
 import type { SpaceOs, SpaceRow } from "./contracts/spaces";
 import type { BulkResult } from "./contracts/spaces-page";
@@ -60,6 +70,7 @@ import { THREAD_OPERATIONS, type ThreadOps } from "./ops/thread";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { CLOUD_APPROVE_OPERATIONS, type CloudApproveOps } from "./ops/cloud-approve";
 import { AGENT_THREADS_OPERATIONS, type AgentThreadsOps } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_OPERATIONS, type AgentSignInOps } from "./ops/agent-sign-in";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import { DRIVER_OPERATIONS, type DriverOps } from "./ops/driver";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
@@ -144,6 +155,21 @@ export interface SettingsSnapshot {
    * plan) and whether it is on this computer. Absent or null: the host
    * can't say, and the hints stay hidden. */
   cli?: CliInfo | null;
+  /** The channel and environment this app runs as, as the host resolved them
+   * (`app_target`, from cua-home): the title bar's "Local · Staging" tag
+   * (the core's `environment.tag`). Absent or null: the host can't say, and
+   * no tag shows. */
+  target?: AppTarget | null;
+}
+
+/** `SettingsSnapshot.target` (`environment_tag::Target` in the app core). */
+export interface AppTarget {
+  /** `stable` or `local`. */
+  channel: string;
+  /** `prod` or `staging`. */
+  env: string;
+  /** The sign-in server's host (`auth.staging.cua.ai`); empty: the environment's. */
+  authHost: string;
 }
 
 /** `SettingsSnapshot.cli`. */
@@ -257,6 +283,7 @@ export interface HostOperations
     PresenceOps,
     CloudApproveOps,
     AgentThreadsOps,
+    AgentSignInOps,
     RuntimeFixOps,
     DriverOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
@@ -310,7 +337,10 @@ export interface HostOperations
    * (`own`, `off`) setting. `home` (CUA-2630): what the person approved for an agent home while it
    * runs, written to the cua home's `agent-home/grants.json` where this machine's daemon reads it (`mentions`: Spaces and machines @mentioned in a later request, which count as the grant)
    * (SwiftUI and Electron; the Tauri shell does not answer this operation). */
-  "spaces.setAccess": { args: { spaceId: string; clipboard?: string; volume?: string; home?: { listAll?: boolean; machines?: string[]; mentions?: string[] } }; result: null };
+  "spaces.setAccess": {
+    args: { spaceId: string; clipboard?: string; volume?: string; home?: { listAll?: boolean; machines?: string[]; mentions?: string[] } };
+    result: null;
+  };
   /** Every Space's place in its tree, and whether it may make children
    * (the SDK's `Spaces.list`: `parent`, `depth`, `children`). */
   "spaces.tree": { args: Record<string, never>; result: TreeNodeWire[] };
@@ -332,8 +362,10 @@ export interface HostOperations
 
   "machines.list": { args: Record<string, never>; result: MachineRow[] };
   /** `localNetwork`: the permissions page is asking, so a Mac that runs macOS Spaces also lists its
-   * Local Network access ("local-network", granted or not) and checks it from the daemon. */
-  "host.status": { args: { localNetwork?: boolean }; result: HostStatus };
+   * Local Network access ("local-network", granted or not) and checks it from the daemon (the check makes macOS ask
+   * the first time). `localNetworkCheck: false` lists the row without checking: the first run checks only once the
+   * person pressed Allow, right after the step explains why. */
+  "host.status": { args: { localNetwork?: boolean; localNetworkCheck?: boolean }; result: HostStatus };
 
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };
@@ -391,7 +423,14 @@ export interface HostOperations
   /** Starts an agent's device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns): the link and the code to show. */
   "agents.signInStart": { args: { agent: string }; result: { id: string; url: string; code: string } };
   /** Waits for that sign-in to be approved and saves it in Keyvault on This Mac (as Connect's `sign_in`). */
-  "agents.signInWait": { args: { id: string }; result: { imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null; refused: string | null; line: string | null } };
+  "agents.signInWait": {
+    args: { id: string };
+    result: {
+      imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null;
+      refused: string | null;
+      line: string | null;
+    };
+  };
 }
 
 export type OpName = keyof HostOperations;
@@ -564,6 +603,7 @@ export const OPERATIONS = [
   ...PRESENCE_OPERATIONS,
   ...CLOUD_APPROVE_OPERATIONS,
   ...AGENT_THREADS_OPERATIONS,
+  ...AGENT_SIGN_IN_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
   ...DRIVER_OPERATIONS,
   ...SETTINGS_OPERATIONS,

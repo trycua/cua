@@ -306,3 +306,73 @@ def test_gate_runs_the_selector_from_the_base_commit_not_the_pull_request():
     assert 'ref' not in head and head['path'] == 'head'
     assert 'python3 base/.github/scripts/ci_gate_scope.py' in run
     assert scope_step['env']['CI_GATE_HEAD_ROOT'].endswith('/head')
+
+
+# --- narrowing and the execution scope (CUA-3856) ----------------------------------------------------
+
+def test_every_narrowed_workflow_exists_and_names_real_packages():
+    names = {w.name for w in WORKFLOWS}
+    for workflow, rule in CFG['narrow'].items():
+        assert workflow in names, workflow
+        assert rule.get('packages') or rule.get('paths'), workflow
+        for pkg in rule.get('packages', []):
+            assert pkg in GRAPH.packages, f'{workflow}: {pkg} is not a package directory'
+
+
+# A spaces app-core change (the Rust half of #6992, an 8 Nov copy pass): the Rust, web and app lanes
+# that build the crate or its dependents run; the Python, Tauri-example and samples suites do not.
+SPACES_CORE = ['libs/cua/crates/cua-spaces-app-core/src/first_run.rs']
+
+
+@pytest.mark.parametrize('workflow', [
+    'ci-test-python.yml', 'ci-openkoalabot-example-tauri.yml', 'ci-openkoalabot-example-samples.yml'])
+def test_a_spaces_core_change_skips_suites_that_do_not_build_it(workflow):
+    assert workflow in ignored(*SPACES_CORE)
+
+
+@pytest.mark.parametrize('workflow', ['ci-cua-sdk.yml', 'ci-cua-spaces.yml', 'ci-cua-spaces-web.yml'])
+def test_a_spaces_core_change_still_runs_the_rust_lanes_that_build_it(workflow):
+    assert workflow not in ignored(*SPACES_CORE)
+
+
+@pytest.mark.parametrize(('path', 'workflow'), [
+    ('libs/cua/crates/cua-sdk/src/lib.rs', 'ci-test-python.yml'),
+    ('libs/cua/crates/cua-proto/src/lib.rs', 'ci-test-python.yml'),  # in cua-sdk's closure
+    ('libs/cua/proto/cua/v1/spaces.proto', 'ci-test-python.yml'),     # an input of cua-proto
+    ('libs/cua/Cargo.lock', 'ci-test-python.yml'),                     # the workspace
+    ('libs/python/core/core/x.py', 'ci-test-python.yml'),
+    ('libs/cua/crates/cua-spacesd-client/src/lib.rs', 'ci-openkoalabot-example-tauri.yml'),
+    ('examples/openkoalabot-example-tauri/src/App.tsx', 'ci-openkoalabot-example-tauri.yml'),
+    ('libs/cua/typescript/src/index.ts', 'ci-openkoalabot-example-samples.yml'),
+    ('libs/cua/swift/Sources/CuaSDK/CuaSDK.swift', 'ci-openkoalabot-example-samples.yml'),
+    ('.github/workflows/ci-test-python.yml', 'ci-test-python.yml'),
+])
+def test_a_narrowed_workflow_still_runs_when_what_it_builds_changes(path, workflow):
+    assert workflow not in ignored(path)
+
+
+def test_a_web_only_change_runs_only_the_web_lane():
+    web = ['apps/cua-spaces-web/src/components/shell/sidebar.tsx',
+           'apps/cua-spaces-web/src/__tests__/tips.test.tsx']
+    assert areas_of(*web) == ['spaces-web']
+    skipped = ignored(*web)
+    assert 'ci-cua-spaces-web.yml' not in skipped
+    for heavy in ('ci-cua-sdk.yml', 'ci-rust-linux.yml', 'ci-swift-lume.yml', 'ci-test-python.yml',
+                  'ci-openkoalabot-example-samples.yml', 'e2e-cua-sdk.yml'):
+        assert heavy in skipped, heavy
+
+
+def test_workflow_mode_writes_the_skip_output(tmp_path):
+    out = tmp_path / 'out'
+    def decide(workflow, files):
+        out.write_text('')
+        subprocess.run([sys.executable, str(scope.ROOT / '.github/scripts/ci_gate_scope.py'), '--workflow', workflow],
+                       input='\n'.join(files), text=True, check=True, capture_output=True,
+                       env={**os.environ, 'GITHUB_OUTPUT': str(out)})
+        return dict(line.split('=', 1) for line in out.read_text().splitlines())['skip']
+    assert decide('ci-test-python.yml', SPACES_CORE) == 'true'
+    assert decide('ci-cua-sdk.yml', SPACES_CORE) == 'false'
+    # A workflow the map does not know (CI: Quick itself, a new workflow) always runs.
+    assert decide('ci-quick.yml', SPACES_CORE) == 'false'
+    # No file list (a failed diff would be an error, never this) runs everything.
+    assert decide('ci-test-python.yml', []) == 'false'

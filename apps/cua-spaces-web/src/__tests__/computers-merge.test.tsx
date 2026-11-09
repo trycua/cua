@@ -5,8 +5,8 @@
 // routes and the wasm core: the old Machines and Cua Driver addresses land
 // on it (a notification, a bookmark, a `cua://add` link from an older Cua
 // Spaces), with "Add a computer" open or the same computer's page when the
-// link named one; Cua Driver is one of This Mac's settings, only where this
-// Cua Spaces carries it.
+// link named one; Cua Driver is one of This Mac's settings, with a line under
+// Computers in the sidebar, only where this Cua Spaces carries it.
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,7 +32,10 @@ describe("where an old link lands", () => {
   it("/machines opens the list, with Add a computer for add or join, and a named computer on its own page", () => {
     expect(machinesLinkTarget({})).toEqual({ to: "/spaces", search: {} });
     expect(machinesLinkTarget({ add: "1" })).toEqual({ to: "/spaces", search: { add: true } });
-    expect(machinesLinkTarget({ join: "K7QM4XPB2RHD", relay: "https://r.example" })).toEqual({ to: "/spaces", search: { join: "K7QM4XPB2RHD", relay: "https://r.example" } });
+    expect(machinesLinkTarget({ join: "K7QM4XPB2RHD", relay: "https://r.example" })).toEqual({
+      to: "/spaces",
+      search: { join: "K7QM4XPB2RHD", relay: "https://r.example" },
+    });
     expect(machinesLinkTarget({ machine: "studio" })).toEqual({ to: "/spaces/computer/$computerId", params: { computerId: "studio" } });
     // Adding wins over a named computer: the sheet is what the link asked for.
     expect(machinesLinkTarget({ machine: "studio", add: 1 })).toEqual({ to: "/spaces", search: { add: true } });
@@ -99,6 +102,25 @@ describe.skipIf(!wasmBuilt)("one list of your computers (real routes, wasm core)
     await waitFor(() => expect(path(router)).toBe("/spaces/computer/this-mac"));
   });
 
+  it("the sidebar's Cua Driver line opens the page; This Mac's Cua Driver row says when it needs a person", { timeout: 30000 }, async () => {
+    const stopped: TestHost = { ...demo, answer: (op, out) => (op === "driver.status" ? { ...(out as object), state: "stopped" } : out) };
+    const { router } = await mountApp("/spaces/computer/this-mac", stopped);
+    const row = await waitFor(() => {
+      const el = q("[data-computer-driver-link] [data-driver-attention]");
+      if (!el) throw new Error("no word on the Cua Driver row");
+      return el;
+    });
+    expect(row.textContent).toBe("Stopped");
+    const line = await waitFor(() => {
+      const el = q("[data-sidebar-driver]");
+      if (!el) throw new Error("no Cua Driver line in the sidebar");
+      return el;
+    });
+    expect(line.querySelector("[data-driver-attention]")?.textContent).toBe("Stopped");
+    act(() => line.click());
+    await waitFor(() => expect(path(router)).toBe("/spaces/computer/this-mac/driver"));
+  });
+
   it("when the account wants proof for This Mac, its page offers a code from another computer and opens Enter a code", { timeout: 30000 }, async () => {
     const refused = new HostError("To add this Mac to your account, enter a code from a computer you already added.", "failed", {
       title: "Confirm it’s you",
@@ -137,5 +159,6 @@ describe.skipIf(!wasmBuilt)("one list of your computers (real routes, wasm core)
       await new Promise((r) => setTimeout(r, 50));
     });
     expect(q("[data-computer-driver]")).toBeNull();
+    expect(q("[data-sidebar-driver]")).toBeNull();
   });
 });

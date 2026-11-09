@@ -7109,6 +7109,7 @@ pub async fn run_children_ls(
                     "parent": parent_of(s),
                     "tree_address": s.tree_address,
                     "power": s.power,
+                    "state": s.power_state,
                     "image": s.image,
                     "expires_at_unix": s.expires_at_unix,
                 })
@@ -7134,10 +7135,12 @@ pub async fn run_children_ls(
         } else {
             &s.display_name
         };
-        let state = if s.power.is_empty() {
+        // The state (`running`, `stopped`), not how it turns off (`power`:
+        // `stop` or `suspend`), which reads as "stopped" for a running VM.
+        let state = if s.power_state.is_empty() {
             "-"
         } else {
-            s.power.as_str()
+            s.power_state.as_str()
         };
         // A VM's tree address; a container is reached by name on its
         // tree's network.

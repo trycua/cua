@@ -15,9 +15,9 @@ import type {
   OpenFileInput,
   PersistentAgentInput,
   RoutineInput,
-} from '../model/persistent';
-import { feedFromTool } from '../model/persistent';
-import { hasTauri } from './bridge';
+} from "../model/persistent";
+import { feedFromTool } from "../model/persistent";
+import { hasTauri } from "./bridge";
 
 /** Runs one Spaces tool in the daemon (the shell's `agents_tool`). */
 export type ToolCall = (tool: string, args?: Record<string, unknown>) => Promise<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -56,7 +56,7 @@ export interface AgentsBridge {
 /** A tool's JSON object answer, or null when the daemon cannot answer. */
 function objectOrNull(answer: Promise<any>): Promise<any> {
   return answer.then(
-    (r) => (r !== null && typeof r === 'object' && !Array.isArray(r) ? r : null),
+    (r) => (r !== null && typeof r === "object" && !Array.isArray(r) ? r : null),
     () => null,
   );
 }
@@ -64,7 +64,7 @@ function objectOrNull(answer: Promise<any>): Promise<any> {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function createAgentsBridgeOver(
   call: ToolCall,
-  reveal: (path: string) => Promise<void> = () => Promise.reject(new Error('Showing files needs the Cua Spaces app')),
+  reveal: (path: string) => Promise<void> = () => Promise.reject(new Error("Showing files needs the Cua Spaces app")),
   userHome: () => Promise<string | null> = async () => null,
 ): AgentsBridge {
   const entry = (e: any): DriveEntryInput => ({
@@ -75,12 +75,12 @@ export function createAgentsBridgeOver(
   });
   return {
     agents: async () =>
-      ((await call('persistent_agent_list')).agents ?? []).map((a: any) => ({
+      ((await call("persistent_agent_list")).agents ?? []).map((a: any) => ({
         name: a.name,
         harness: a.harness,
         space: a.space,
         paused: Boolean(a.paused),
-        spaceState: a.space_state ?? 'running',
+        spaceState: a.space_state ?? "running",
         runId: a.run_id ?? null,
         savedMs: a.saved_ms ?? 0,
         lastError: a.last_error ?? null,
@@ -91,7 +91,7 @@ export function createAgentsBridgeOver(
       // Bounded: at most MAX_HOME_ENTRIES entries and 50 folders.
       for (let folders = 0; queue.length > 0 && folders < 50 && out.length < MAX_HOME_ENTRIES; folders++) {
         const path = queue.shift() as string;
-        const r = await call('volume_ls', { path });
+        const r = await call("volume_ls", { path });
         for (const e of (r.entries ?? []).map(entry)) {
           if (e.folder) queue.push(e.path);
           else out.push(e);
@@ -100,14 +100,14 @@ export function createAgentsBridgeOver(
       return out;
     },
     routines: async (name) =>
-      ((await call('routine_list', { agent: name })).routines ?? []).map((r: any) => ({
+      ((await call("routine_list", { agent: name })).routines ?? []).map((r: any) => ({
         id: r.id,
         title: r.title,
-        label: r.label ?? '',
+        label: r.label ?? "",
         enabled: r.isEnabled !== false,
       })),
     access: async () => {
-      const r = await call('computer_access_list', { audit: 20 });
+      const r = await call("computer_access_list", { audit: 20 });
       return {
         grants: (r.grants ?? []).map((g: any) => ({ agent: g.agent, machine: g.machine, revoked: Boolean(g.revoked) })),
         audit: (r.audit ?? []).map((e: any) => ({
@@ -115,16 +115,16 @@ export function createAgentsBridgeOver(
           action: e.action,
           principal: e.principal,
           path: e.path,
-          detail: e.detail ?? '',
+          detail: e.detail ?? "",
         })),
       };
     },
     readFile: async (path) => {
-      const [f, h] = await Promise.all([call('volume_read', { path }), call('volume_history', { path })]);
-      const binary = f.encoding === 'base64';
+      const [f, h] = await Promise.all([call("volume_read", { path }), call("volume_history", { path })]);
+      const binary = f.encoding === "base64";
       return {
         path,
-        text: binary ? '' : f.content ?? '',
+        text: binary ? "" : (f.content ?? ""),
         binary,
         versions: (h.versions ?? []).map((v: any) => ({
           version: v.version,
@@ -136,20 +136,20 @@ export function createAgentsBridgeOver(
     },
     run: async (r) => {
       switch (r.kind) {
-        case 'pause':
-          await call('agent_pause', { name: r.name });
+        case "pause":
+          await call("agent_pause", { name: r.name });
           return;
-        case 'resume':
-          await call('agent_resume', { name: r.name });
+        case "resume":
+          await call("agent_resume", { name: r.name });
           return;
-        case 'load':
-        case 'read-file':
+        case "load":
+        case "read-file":
           return; // the page loads these itself
-        case 'restore':
-          await call('volume_restore', { path: r.path, version: r.version });
+        case "restore":
+          await call("volume_restore", { path: r.path, version: r.version });
           return;
-        case 'add-routine':
-          await call('routine_add', {
+        case "add-routine":
+          await call("routine_add", {
             agent: r.agent,
             title: r.title,
             prompt: r.prompt,
@@ -158,29 +158,29 @@ export function createAgentsBridgeOver(
             weekly_on: r.weekly_on,
           });
           return;
-        case 'set-routine':
-          await call('routine_set_enabled', { id: r.id, enabled: r.enabled });
+        case "set-routine":
+          await call("routine_set_enabled", { id: r.id, enabled: r.enabled });
           return;
-        case 'remove-routine':
-          await call('routine_remove', { id: r.id });
+        case "remove-routine":
+          await call("routine_remove", { id: r.id });
           return;
-        case 'allow':
-          await call('computer_access_grant', { agent: r.agent, machine: r.machine });
+        case "allow":
+          await call("computer_access_grant", { agent: r.agent, machine: r.machine });
           return;
-        case 'revoke':
-          await call('computer_access_revoke', { agent: r.agent, machine: r.machine });
+        case "revoke":
+          await call("computer_access_revoke", { agent: r.agent, machine: r.machine });
           return;
       }
     },
     drive: async () => {
-      const [req, gr] = await Promise.all([call('volume_requests'), call('volume_grants')]);
+      const [req, gr] = await Promise.all([call("volume_requests"), call("volume_grants")]);
       return {
         requests: (req.requests ?? []).map((q: any) => ({
           id: q.id,
           principal: q.principal,
           prefix: q.prefix,
           mode: q.mode,
-          reason: q.reason ?? '',
+          reason: q.reason ?? "",
         })),
         grants: (gr.grants ?? []).map((g: any) => ({
           id: g.id,
@@ -193,41 +193,41 @@ export function createAgentsBridgeOver(
     },
     runDrive: async (r) => {
       switch (r.kind) {
-        case 'load':
+        case "load":
           return; // the page loads itself
-        case 'mount-and-reveal': {
+        case "mount-and-reveal": {
           // Mount, then show the mount point; a mount that did not finish
           // says why.
-          const status = await call('volume_mount');
-          if (status?.state === 'mounted' && status.path) {
+          const status = await call("volume_mount");
+          if (status?.state === "mounted" && status.path) {
             await reveal(status.path);
             return;
           }
-          throw new Error(status?.detail || 'The volume could not be mounted');
+          throw new Error(status?.detail || "The volume could not be mounted");
         }
-        case 'approve':
-          await call('volume_approve', { request_id: r.id });
+        case "approve":
+          await call("volume_approve", { request_id: r.id });
           return;
-        case 'deny':
-          await call('volume_deny', { request_id: r.id });
+        case "deny":
+          await call("volume_deny", { request_id: r.id });
           return;
-        case 'revoke':
-          await call('volume_revoke', { grant_id: r.id });
+        case "revoke":
+          await call("volume_revoke", { grant_id: r.id });
           return;
-        case 'reveal':
+        case "reveal":
           await reveal(r.path);
           return;
-        case 'resolve':
-          await call('volume_sync_resolve', { path: r.path });
+        case "resolve":
+          await call("volume_sync_resolve", { path: r.path });
           return;
       }
     },
     userHome: () => userHome().catch(() => null),
-    mountStatus: () => objectOrNull(call('volume_mount_status')),
-    syncStatus: () => objectOrNull(call('volume_sync_status')),
-    notifications: async () => feedFromTool((await call('notifications_list')).notifications ?? []),
+    mountStatus: () => objectOrNull(call("volume_mount_status")),
+    syncStatus: () => objectOrNull(call("volume_sync_status")),
+    notifications: async () => feedFromTool((await call("notifications_list")).notifications ?? []),
     markAllRead: async () => {
-      await call('notifications_ack', { ids: [] });
+      await call("notifications_ack", { ids: [] });
     },
   };
 }
@@ -236,25 +236,25 @@ export function createAgentsBridgeOver(
 /** The shell's `agents_tool` (a rejecting stand-in outside it). */
 export function agentsToolCall(): ToolCall {
   if (hasTauri()) {
-    const core = import('@tauri-apps/api/core');
-    return async (tool, args) => (await core).invoke('agents_tool', { tool, args: args ?? {} });
+    const core = import("@tauri-apps/api/core");
+    return async (tool, args) => (await core).invoke("agents_tool", { tool, args: args ?? {} });
   }
-  return () => Promise.reject(new Error('Agents need the Cua Spaces app'));
+  return () => Promise.reject(new Error("Agents need the Cua Spaces app"));
 }
 
 /** The shell's `drive_reveal` (a rejecting stand-in outside it). */
 export function driveRevealCall(): (path: string) => Promise<void> {
   if (hasTauri()) {
-    const core = import('@tauri-apps/api/core');
-    return async (path) => (await core).invoke<void>('drive_reveal', { path });
+    const core = import("@tauri-apps/api/core");
+    return async (path) => (await core).invoke<void>("drive_reveal", { path });
   }
-  return () => Promise.reject(new Error('Showing files needs the Cua Spaces app'));
+  return () => Promise.reject(new Error("Showing files needs the Cua Spaces app"));
 }
 
 /** The user's home folder from the shell (null outside it). */
 function homeDirCall(): () => Promise<string | null> {
   if (hasTauri()) {
-    return () => import('@tauri-apps/api/path').then(({ homeDir }) => homeDir());
+    return () => import("@tauri-apps/api/path").then(({ homeDir }) => homeDir());
   }
   return async () => null;
 }

@@ -827,4 +827,138 @@ struct WebUIVideoSurfacesTests {
         #expect(rows.prefix(3).map(\.id) == ["local:bench-1", "local:bench-2", "local:bench-3"])
         #expect(rows.count == FixtureSpacesBackend.sample.count + 3)
     }
+
+    // MARK: - Intent (prewarm) and posters
+
+    @Test func readsThePrewarmMessage() {
+        #expect(VideoSurfaceMessage(body: ["type": "prewarm", "spaceId": "local:a"]) == .prewarm(spaceId: "local:a"))
+        #expect(VideoSurfaceMessage(body: ["type": "prewarm", "spaceId": ""]) == nil)
+        #expect(VideoSurfaceMessage(body: ["type": "prewarm"]) == nil)
+    }
+
+    /// The pointer on a Space's tile opens its viewer stream; the click that
+    /// follows binds to it: live on its first word, no second open.
+    @Test func aPrewarmedStreamIsLiveAtOnceWhenItsSlotComes() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.handle(["type": "prewarm", "spaceId": "a"])
+        await settle { host.opened.count == 1 && s.streamsSnapshot().first?.1.session != nil }
+        // Told again (the pointer moves within the tile): the same stream.
+        s.handle(["type": "prewarm", "spaceId": "a"])
+        await settle(tries: 10) { false }
+        #expect(host.opened.count == 1)
+        let session = try #require(s.streamsSnapshot().first?.1.session)
+        await settle { session.decodedFrameCount > 0 }
+
+        let came = Date()
+        s.handle(message([entry("v", space: "a")]))
+        await settle(tries: 5) { !host.phases("v").isEmpty }
+        #expect(host.phases("v") == ["live"])
+        #expect(Date().timeIntervalSince(came) < 1.0)
+        #expect(host.opened.count == 1)
+        #expect(s.sessionFor(try #require(s.surfaces["v"])) === session)
+        s.removeAll()
+    }
+
+    @Test func anUnclaimedPrewarmedStreamIsLetGoAfterItsGrace() async {
+        let host = Host()
+        let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
+        s.prewarmGrace = .milliseconds(800)
+        s.handle(["type": "prewarm", "spaceId": "a"])
+        await settle { host.opened.count == 1 }
+        #expect(s.stats().count == 1)
+        await settle { s.stats().isEmpty }
+        #expect(s.stats().isEmpty)
+        s.removeAll()
+    }
+
+    @Test func aPrewarmIsKeptToTheWarmLimitAndNothingOpensForAHiddenWindow() async {
+        let host = Host()
+        let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
+        s.maxWarm = 2
+        for id in ["a", "b", "c"] { s.handle(["type": "prewarm", "spaceId": id]) }
+        await settle { host.opened.count == 3 }
+        #expect(Set(s.stats().compactMap { $0["spaceId"] as? String }) == ["b", "c"])
+        s.setPaused(true)
+        s.handle(["type": "prewarm", "spaceId": "d"])
+        await settle(tries: 10) { false }
+        #expect(host.opened.count == 3)
+        s.removeAll()
+    }
+
+    /// A prewarm that failed (the Space was turning off, say) is no verdict
+    /// on the page that follows: its slot opens the stream again.
+    @Test func aFailedPrewarmIsTriedAgainForItsSlot() async {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        var attempts = 0
+        let s = surfaces(host) { _, _ in
+            attempts += 1
+            if attempts == 1 { throw StreamError.noStream("not up yet") }
+            return SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30)
+        }
+        s.handle(["type": "prewarm", "spaceId": "a"])
+        await settle { attempts == 1 && s.streamsSnapshot().first?.1.failure != nil }
+        s.handle(message([entry("v", space: "a")]))
+        await settle { host.phases("v").contains("live") }
+        #expect(host.phases("v").last == "live")
+        #expect(host.opened.count == 2)
+        s.removeAll()
+    }
+
+    /// Opening a Space again shows its last picture while it connects, dimmed
+    /// and taking no input, then the live one.
+    @Test func aSlotShowsTheSpacesLastPictureWhileItConnects() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        var slow = false
+        let s = surfaces(host) { _, _ in
+            if slow { try await Task.sleep(for: .seconds(30)) }
+            return SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30)
+        }
+        s.slotGrace = .zero
+        s.handle(message([entry("v1", space: "a")]))
+        await settle { host.phases("v1").contains("live") }
+        // Gone for good (no grace): its last picture is kept as the poster.
+        s.handle(message([], remove: ["v1"]))
+        await settle { s.stats().isEmpty }
+        #expect(s.poster(for: .init(spaceId: "a", tier: .full)) != nil)
+        #expect(s.poster(for: .init(spaceId: "b", tier: .full)) == nil)
+
+        slow = true
+        s.handle(message([entry("v2", space: "a")]))
+        let view = try #require(s.surfaces["v2"]?.view)
+        await settle { view.posterOnly }
+        #expect(view.posterOnly)
+        #expect(!view.isHidden)
+        #expect(view.alphaValue == WebUIVideoSurfaces.posterAlpha)
+        #expect(view.input.layerHasPixels)
+        // Still connecting as far as the page knows, and it takes no input.
+        #expect(host.phases("v2").isEmpty)
+        view.interactive = true
+        #expect(view.hitTest(NSPoint(x: 10, y: 10)) == nil)
+        s.removeAll()
+    }
+
+    @Test func postersAreBoundedAndExpire() async throws {
+        let host = Host()
+        let units = AccessUnit.split(Self.tinyH264)
+        let s = surfaces(host) { _, _ in SyntheticStreamProvider(units: units, size: CGSize(width: 64, height: 48), fps: 30) }
+        s.slotGrace = .zero
+        for i in 0..<(WebUIVideoSurfaces.posterCap + 2) {
+            s.handle(message([entry("v\(i)", space: "s\(i)")]))
+            await settle { host.phases("v\(i)").contains("live") }
+            s.handle(message([], remove: ["v\(i)"]))
+            await settle { s.stats().isEmpty }
+        }
+        let held = (0..<(WebUIVideoSurfaces.posterCap + 2)).filter { s.poster(for: .init(spaceId: "s\($0)", tier: .full)) != nil }
+        #expect(held.count == WebUIVideoSurfaces.posterCap)
+        #expect(!held.contains(0))
+        // A day later none is good.
+        let base = s.now()
+        s.now = { base + WebUIVideoSurfaces.posterMaxAge + 1 }
+        #expect(s.poster(for: .init(spaceId: "s\(WebUIVideoSurfaces.posterCap + 1)", tier: .full)) == nil)
+        s.removeAll()
+    }
 }

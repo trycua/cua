@@ -17107,22 +17107,10 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var cuaVolume: Bool
     /**
-     * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
-     * it (the switch is kept in the cua home).
-     */
-    public var secureSpaces: Bool
-    /**
      * Child Spaces: a Space may make Spaces of its own. Off unless turned
      * on; the daemon enforces it (the switch is kept in the cua home).
      */
     public var childSpaces: Bool
-    /**
-     * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-     * switch is kept in the cua home).
-     */
-    public var askFirst: Bool
     /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
@@ -17155,19 +17143,9 @@ public struct AppExperiments: Equatable, Hashable {
          * Cua Volume in the first run and Settings, Storage.
          */cuaVolume: Bool,
         /**
-         * Secure Spaces: a Space reaches the internet and nothing else on the
-         * network unless it is opened. Off unless turned on; the daemon enforces
-         * it (the switch is kept in the cua home).
-         */secureSpaces: Bool,
-        /**
          * Child Spaces: a Space may make Spaces of its own. Off unless turned
          * on; the daemon enforces it (the switch is kept in the cua home).
          */childSpaces: Bool,
-        /**
-         * Ask first: an agent asks on a card before something leaves its Space
-         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-         * switch is kept in the cua home).
-         */askFirst: Bool,
         /**
          * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
          * and the CI Runners page). Off unless turned on; the daemon and the
@@ -17189,9 +17167,7 @@ public struct AppExperiments: Equatable, Hashable {
          * turned on; the daemon enforces it (the switch is kept in the cua home).
          */warmPools: Bool) {
         self.cuaVolume = cuaVolume
-        self.secureSpaces = secureSpaces
         self.childSpaces = childSpaces
-        self.askFirst = askFirst
         self.ciRunners = ciRunners
         self.tcpShares = tcpShares
         self.mobile = mobile
@@ -17215,9 +17191,7 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         return
             try AppExperiments(
                 cuaVolume: FfiConverterBool.read(from: &buf),
-                secureSpaces: FfiConverterBool.read(from: &buf),
                 childSpaces: FfiConverterBool.read(from: &buf),
-                askFirst: FfiConverterBool.read(from: &buf),
                 ciRunners: FfiConverterBool.read(from: &buf),
                 tcpShares: FfiConverterBool.read(from: &buf),
                 mobile: FfiConverterBool.read(from: &buf),
@@ -17227,9 +17201,7 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
 
     public static func write(_ value: AppExperiments, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.cuaVolume, into: &buf)
-        FfiConverterBool.write(value.secureSpaces, into: &buf)
         FfiConverterBool.write(value.childSpaces, into: &buf)
-        FfiConverterBool.write(value.askFirst, into: &buf)
         FfiConverterBool.write(value.ciRunners, into: &buf)
         FfiConverterBool.write(value.tcpShares, into: &buf)
         FfiConverterBool.write(value.mobile, into: &buf)
@@ -24338,7 +24310,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
      */
     public var team: Bool
     /**
-     * The page's status line ("Online", "Offline").
+     * The page's status line ("Online", "Offline"; "Online, 1 thing to
+     * fix" when it has issues, so the words agree with the dot).
      */
     public var status: String
     /**
@@ -24445,7 +24418,8 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
          * Someone shares it with you (a team machine).
          */team: Bool,
         /**
-         * The page's status line ("Online", "Offline").
+         * The page's status line ("Online", "Offline"; "Online, 1 thing to
+         * fix" when it has issues, so the words agree with the dot).
          */status: String,
         /**
          * After the status: who shares it ("Shared by your team").
@@ -42152,6 +42126,86 @@ public func FfiConverterTypeAppTabView_lift(_ buf: RustBuffer) throws -> AppTabV
 #endif
 public func FfiConverterTypeAppTabView_lower(_ value: AppTabView) -> RustBuffer {
     return FfiConverterTypeAppTabView.lower(value)
+}
+
+
+public struct AppTarget: Equatable, Hashable {
+    /**
+     * `stable` or `local` (`CuaChannel`); anything else is Stable.
+     */
+    public var channel: String
+    /**
+     * `prod` or `staging` (`CuaEnv::name`).
+     */
+    public var env: String
+    /**
+     * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+     * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+     * Empty: the environment's default.
+     */
+    public var authHost: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `stable` or `local` (`CuaChannel`); anything else is Stable.
+         */channel: String,
+        /**
+         * `prod` or `staging` (`CuaEnv::name`).
+         */env: String,
+        /**
+         * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+         * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+         * Empty: the environment's default.
+         */authHost: String) {
+        self.channel = channel
+        self.env = env
+        self.authHost = authHost
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppTarget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppTarget: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppTarget {
+        return
+            try AppTarget(
+                channel: FfiConverterString.read(from: &buf),
+                env: FfiConverterString.read(from: &buf),
+                authHost: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppTarget, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.channel, into: &buf)
+        FfiConverterString.write(value.env, into: &buf)
+        FfiConverterString.write(value.authHost, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppTarget_lift(_ buf: RustBuffer) throws -> AppTarget {
+    return try FfiConverterTypeAppTarget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppTarget_lower(_ value: AppTarget) -> RustBuffer {
+    return FfiConverterTypeAppTarget.lower(value)
 }
 
 
@@ -80865,7 +80919,7 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 }
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
@@ -81357,6 +81411,19 @@ public func appStreamSection(input: AppStreamSectionInput) -> AppStreamSection  
     return try!  FfiConverterTypeAppStreamSection_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_stream_section(
         FfiConverterTypeAppStreamSectionInput_lower(input),$0
+    )
+})
+}
+/**
+ * Which build and deployment this app runs as: its channel (`stable` or
+ * `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+ * and the host of the sign-in server it uses, resolved as every other part
+ * of the app resolves them. The web UI's title bar tag ("Local · Staging",
+ * the app core's `environment.tag`) is drawn from it, so every shell agrees.
+ */
+public func appTarget() -> AppTarget  {
+    return try!  FfiConverterTypeAppTarget_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_target($0
     )
 })
 }
@@ -82960,7 +83027,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 56775) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 17320) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
@@ -83093,6 +83160,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_stream_section() != 40082) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_target() != 5718) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_teams() != 64616) {

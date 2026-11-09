@@ -2,7 +2,18 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, CircleAlertIcon, InfoIcon, LockIcon, MousePointer2Icon, PencilIcon, PlusIcon, ServerIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  CircleAlertIcon,
+  InfoIcon,
+  LockIcon,
+  MousePointer2Icon,
+  PencilIcon,
+  PlusIcon,
+  ServerIcon,
+  TriangleAlertIcon,
+  UsersIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -22,6 +33,7 @@ import {
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { BackLink } from "@/components/back-link";
+import { DriverAttentionLabel } from "@/components/driver/attention";
 import { driverLine } from "@/components/driver/copy";
 import { EnrollSheet, RecentAccess, TrustSection, useMachinesAccount } from "@/components/machines/account-parts";
 import { EmptyState, Page } from "@/components/page";
@@ -37,7 +49,8 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { useMachinesLive } from "@/hooks/use-machines-live";
 import { useNewSpace } from "@/hooks/use-new-space";
-import { showDesktop } from "@/lib/hidden-desktops";
+import { useT } from "@/i18n";
+import { useHiddenDesktops } from "@/lib/hidden-desktops";
 import { accessFor } from "@/lib/machines-account";
 import { withRelayStatus } from "@/lib/machines-relay-status";
 import { THIS_COMPUTER, computerFor } from "@/lib/machines";
@@ -57,6 +70,7 @@ const HEALTH_EVERY_MS = 60_000;
  * Spaces has it.
  */
 export function ComputerPage({ id }: { id: string }) {
+  const t = useT();
   const { data: machines = [], isLoading, view: hostView, checkHealth } = useMachines();
   // Re-read every 30 s; a computer the relay calls offline shows offline (and can be removed) at once, as in the list.
   const { relayOnline } = useMachinesLive(true);
@@ -78,13 +92,17 @@ export function ComputerPage({ id }: { id: string }) {
       {m ? (
         <ComputerDetail key={m.id} machine={m} row={row} onUseCode={() => setEnterCode(true)} />
       ) : isLoading || !view ? (
-        <div aria-busy="true" aria-label="Loading the computer" className="space-y-3">
+        <div aria-busy="true" aria-label={t("computers.page.computer_loading")} className="space-y-3">
           <div className="h-7 w-56 animate-pulse rounded-lg bg-muted" />
           <div className="h-28 animate-pulse rounded-lg bg-muted" />
         </div>
       ) : (
-        <EmptyState icon={<ServerIcon />} title="This computer isn't in your list" action={<Button render={<Link to="/spaces" />}>See your computers</Button>}>
-          It may have been removed, or it was added to another account.
+        <EmptyState
+          icon={<ServerIcon />}
+          title={t("computers.page.missing_title")}
+          action={<Button render={<Link to="/spaces" />}>{t("computers.page.missing_action")}</Button>}
+        >
+          {t("computers.page.missing_body")}
         </EmptyState>
       )}
       <EnrollSheet />
@@ -93,31 +111,42 @@ export function ComputerPage({ id }: { id: string }) {
   );
 }
 
-/** This Mac's Cua Driver, as one of its settings: only where this Cua Spaces carries the driver (CUA-2706). */
+/** This Mac's Cua Driver, as one of its settings: only where this Cua Spaces carries the driver (CUA-2706), with the sidebar line's word when it needs a person. */
 function DriverRow({ computerId }: { computerId: string }) {
+  const t = useT();
   const driver = useDriver();
   if (!driver.available) return null;
   return (
     <GroupedSection className="mt-[22px]" data-computer-driver="">
-      <Link to="/spaces/computer/$computerId/driver" params={{ computerId }} className="flex min-h-11 items-center gap-3 px-4 py-2.5 outline-none hover:bg-accent/50 focus-visible:bg-accent/50" data-computer-driver-link="">
+      <Link
+        to="/spaces/computer/$computerId/driver"
+        params={{ computerId }}
+        className="flex min-h-11 items-center gap-3 px-4 py-2.5 outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
+        data-computer-driver-link=""
+      >
         <MousePointer2Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-medium">Cua Driver</span>
+          <span className="block text-[13px] font-medium">{t("common.cua_driver")}</span>
           <span className="block text-xs text-muted-foreground">{driverLine()}</span>
         </span>
+        <DriverAttentionLabel status={driver.status} className="shrink-0" />
         <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
       </Link>
     </GroupedSection>
   );
 }
 
-/** Green when usable, grey when not; amber or red when the computer has issues (`health`). */
+/**
+ * Green when usable, grey when not; amber when the computer has something to fix (`health`, warn or fail), which its
+ * status line then says ("Online, 1 thing to fix"). Never red beside "Online": it still answers, it just needs a fix.
+ */
 function StatusDot({ online, health, className }: { online: boolean; health?: string; className?: string }) {
-  const tint = health === "fail" ? "bg-destructive" : health === "warn" ? "bg-warning" : online ? "bg-success" : "bg-muted-foreground/45";
+  const tint = health === "fail" || health === "warn" ? "bg-warning" : online ? "bg-success" : "bg-muted-foreground/45";
   return <span aria-hidden data-machine-health={health || undefined} className={cn("size-2 shrink-0 rounded-full", tint, className)} />;
 }
 
 function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewMachine; row: Machine | undefined; onUseCode?: () => void }) {
+  const t = useT();
   const { data: session } = useSession();
   const { account, now, devices } = useMachinesAccount();
   const host = useThisMachine(session?.identity ?? null);
@@ -127,18 +156,22 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState<MachinesViewRemove | null>(null);
   const [busy, setBusy] = useState(false);
+  const desktops = useHiddenDesktops();
+  // Its desktop's tile on Home, which Hide takes off (per account, on this device): the switch below brings it back.
+  const desktopId = m.desktop?.id ?? (m.current ? "this-mac" : null);
+  const onHome = desktopId ? !desktops.hidden.has(desktopId) : true;
   const fail = (what: string) => (e: unknown) => toast(what, { description: errorText(e), type: "error" });
 
-  const flip = (t: MachinesViewToggle) => {
-    if (t.setup) return host.openForm(t.setup);
+  const flip = (tg: MachinesViewToggle) => {
+    if (tg.setup) return host.openForm(tg.setup);
     setBusy(true);
     void (async () => {
       try {
-        for (const a of t.actions) await host.run(a);
+        for (const a of tg.actions) await host.run(a);
         // Turning this Mac's desktop on shows its row in the Spaces list again, if it was hidden.
-        if (m.current && t.id === "desktop" && !t.on) showDesktop("this-mac");
+        if (m.current && tg.id === "desktop" && !tg.on) desktops.show("this-mac");
       } catch (e) {
-        fail(`Couldn't change ${t.label}`)(e);
+        fail(t("computers.page.toggle_failed", { name: tg.label }))(e);
       } finally {
         setBusy(false);
       }
@@ -147,14 +180,14 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
   const runRemove = (r: MachinesViewRemove) => {
     void navigate({ to: "/spaces" });
     const done = r.host ? host.run("remove") : remove(r.machine ?? null, r.device ?? null);
-    void done.then(() => toast(`Removed ${m.name}`, { type: "success" }), fail(`Couldn't remove ${m.name}`));
+    void done.then(() => toast(t("computers.page.removed", { name: m.name }), { type: "success" }), fail(t("computers.page.remove_failed", { name: m.name })));
   };
   // A switch is read-only on another computer: dimmed when it can't be
   // reached at all (offline), plain with a note when it is.
-  const dim = (t: MachinesViewToggle) => !t.editable && !m.togglesNote;
+  const dim = (tg: MachinesViewToggle) => !tg.editable && !m.togglesNote;
   // Another computer's Space limit, read-only: its host reports it with its other limits.
   const spaceLimit = !m.current ? row?.limits?.find((l) => l.resource === "spaces" && l.limit > 0)?.limit : undefined;
-  const helpOf = (t: MachinesViewToggle) => (t.id === "spaces" && t.on && spaceLimit ? `Spaces can be created here (up to ${spaceLimit})` : t.help);
+  const helpOf = (tg: MachinesViewToggle) => (tg.id === "spaces" && tg.on && spaceLimit ? t("computers.page.spaces_limit", { limit: spaceLimit }) : tg.help);
 
   // What each Space takes on this computer's disk, where the host says (the low-disk warning leads here).
   const resources = useResources();
@@ -168,14 +201,14 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
   // This computer's setup form takes the page while it is open.
   if (m.current && host.formView) {
     return (
-      <section aria-label={`${m.name} details`} className="min-w-0">
+      <section aria-label={t("computers.page.details", { name: m.name })} className="min-w-0">
         <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} onUseCode={onUseCode} />
       </section>
     );
   }
 
   return (
-    <section aria-label={`${m.name} details`} className="min-w-0 max-w-[620px]" data-machine-detail={m.id}>
+    <section aria-label={t("computers.page.details", { name: m.name })} className="min-w-0 max-w-[620px]" data-machine-detail={m.id}>
       <div className="flex items-center gap-2">
         <h2 className="truncate text-[22px] font-semibold tracking-[-0.015em]">{m.name}</h2>
         {m.rename ? (
@@ -211,26 +244,39 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
             ) : null}
           </div>
         ) : null}
-        {m.toggles.map((t) => (
-          <div key={t.id} className="flex items-center justify-between gap-5 px-4 py-3.5" data-machine-toggle={t.id}>
-            <div className={cn(dim(t) && "opacity-50")}>
-              <div className="text-[13px] font-medium" id={`toggle-${t.id}`}>
-                {t.label}
+        {m.toggles.map((tg) => (
+          <div key={tg.id} className="flex items-center justify-between gap-5 px-4 py-3.5" data-machine-toggle={tg.id}>
+            <div className={cn(dim(tg) && "opacity-50")}>
+              <div className="text-[13px] font-medium" id={`toggle-${tg.id}`}>
+                {tg.label}
               </div>
-              <div className="mt-px text-xs text-muted-foreground" data-machine-toggle-help={t.id}>
-                {helpOf(t)}
-              </div>
+              {helpOf(tg) ? (
+                <div className="mt-px text-xs text-muted-foreground" data-machine-toggle-help={tg.id}>
+                  {helpOf(tg)}
+                </div>
+              ) : null}
             </div>
             <Switch
-              checked={t.on}
-              disabled={!t.editable || !t.enabled || busy || host.busy}
-              aria-labelledby={`toggle-${t.id}`}
-              aria-readonly={!t.editable || undefined}
-              className={cn(!t.editable && !dim(t) && "data-disabled:opacity-60")}
-              onCheckedChange={() => flip(t)}
+              checked={tg.on}
+              disabled={!tg.editable || !tg.enabled || busy || host.busy}
+              aria-labelledby={`toggle-${tg.id}`}
+              aria-readonly={!tg.editable || undefined}
+              className={cn(!tg.editable && !dim(tg) && "data-disabled:opacity-60")}
+              onCheckedChange={() => flip(tg)}
             />
           </div>
         ))}
+        {desktopId && (m.desktop || !onHome) ? (
+          <div className="flex items-center justify-between gap-5 px-4 py-3.5" data-machine-on-home={onHome ? "on" : "off"}>
+            <div>
+              <div className="text-[13px] font-medium" id="toggle-on-home">
+                {t("computers.page.show_on_home")}
+              </div>
+              <div className="mt-px text-xs text-muted-foreground">{onHome ? t("computers.page.on_home") : t("computers.page.off_home")}</div>
+            </div>
+            <Switch checked={onHome} aria-labelledby="toggle-on-home" onCheckedChange={(on) => (on ? desktops.show(desktopId) : desktops.hide(desktopId))} />
+          </div>
+        ) : null}
         {m.togglesNote ? (
           <div className="flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground" data-machine-toggles-note>
             {m.team ? <UsersIcon className="size-3.5" /> : <LockIcon className="size-3.5" />}
@@ -245,40 +291,39 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
 
       {m.spacesTitle ? (
         <GroupedSection title={m.spacesTitle} className="mt-7" data-machine-spaces>
-            {rows.map((s) => (
-              <div key={s.id} className="group/row relative">
-                <Link
-                  to="/spaces/$spaceId"
-                  params={{ spaceId: s.id }}
-                  title={`Open ${s.name}`}
-                  data-space-row={s.id}
-                  className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50"
-                >
-                  <span className="truncate font-mono text-xs">{s.name}</span>
-                  {s.label ? <span className="shrink-0 text-xs text-muted-foreground">{s.label}</span> : null}
-                  {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
-                  {sizeOf(s.id) ? (
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-space-size="">
-                      {sizeOf(s.id)}
-                    </span>
-                  ) : null}
-                  <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <StatusDot online={s.running} className="size-[7px]" />
-                    {s.status}
+          {rows.map((s) => (
+            <div key={s.id} className="group/row relative">
+              <Link
+                to="/spaces/$spaceId"
+                params={{ spaceId: s.id }}
+                title={t("computers.page.open_named", { name: s.name })}
+                data-space-row={s.id}
+                className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/40 focus-visible:bg-accent/50"
+              >
+                <span className="truncate font-mono text-xs">{s.name}</span>
+                {s.label ? <span className="shrink-0 text-xs text-muted-foreground">{s.label}</span> : null}
+                {s.os ? <span className="truncate text-muted-foreground">{s.os}</span> : null}
+                {sizeOf(s.id) ? (
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-space-size="">
+                    {sizeOf(s.id)}
                   </span>
-                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-hover/row:invisible group-focus-within/row:invisible" />
-                </Link>
-                {/* Not This Mac's own desktop: it is never a notch tile. */}
-                {m.current && s.id === m.desktop?.id ? null : <MachineRowMenu id={s.id} name={s.name} />}
-              </div>
-            ))}
-            {m.spacesEmpty ? <p className="px-4 py-3.5 text-xs text-muted-foreground">{m.spacesEmpty}</p> : null}
-            <div className="px-4 py-2.5">
-              <NewSpaceHere machine={m} />
+                ) : null}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <StatusDot online={s.running} className="size-[7px]" />
+                  {s.status}
+                </span>
+                <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60 group-hover/row:invisible group-focus-within/row:invisible" />
+              </Link>
+              {/* Not This Mac's own desktop: it is never a notch tile. */}
+              {m.current && s.id === m.desktop?.id ? null : <MachineRowMenu id={s.id} name={s.name} />}
             </div>
+          ))}
+          {m.spacesEmpty ? <p className="px-4 py-3.5 text-xs text-muted-foreground">{m.spacesEmpty}</p> : null}
+          <div className="px-4 py-2.5">
+            <NewSpaceHere machine={m} />
+          </div>
         </GroupedSection>
       ) : null}
-
 
       <div className="mt-6">
         <button
@@ -308,7 +353,15 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
       </div>
 
       <div className="mt-7 flex flex-wrap items-center gap-x-5" data-machine-actions="">
-        {account ? <RecentAccess lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)} title={account.recentTitle} empty={account.recentEmpty} now={now} error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null} /> : null}
+        {account ? (
+          <RecentAccess
+            lines={accessFor(account.access, m.current ? (row?.relayId ?? m.id) : m.id, m.current ? null : row?.device ? m.id : null)}
+            title={account.recentTitle}
+            empty={account.recentEmpty}
+            now={now}
+            error={m.current && account.thisMachine?.kind === "enrolled" ? account.readError : null}
+          />
+        ) : null}
         {m.remove ? (
           <span title={m.remove.help ?? undefined} className="inline-flex">
             <button
@@ -346,7 +399,16 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
  * with its fix where there is one here. Nothing at all when it is healthy.
  * `hidePermissions`: This Mac lists the permissions it needs already.
  */
-function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: MachinesViewMachine; hidePermissions: boolean; onFail: (what: string) => (e: unknown) => void }) {
+function MachineIssues({
+  machine: m,
+  hidePermissions,
+  onFail,
+}: {
+  machine: MachinesViewMachine;
+  hidePermissions: boolean;
+  onFail: (what: string) => (e: unknown) => void;
+}) {
+  const t = useT();
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
   const issues = (m.issues ?? []).filter((i) => !(hidePermissions && i.id.startsWith("machine.permissions.")));
@@ -357,23 +419,30 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
     // Restart into the downloaded Cua Spaces update: the sidebar's own flow, which asks first while an agent is running.
     if (a.appUpdate) return update.restart();
     const done = a.url ? host.openSettings(a.url) : a.hostAction ? host.run(a.hostAction) : Promise.resolve();
-    void Promise.resolve(done).catch(onFail(`Couldn't ${a.label.charAt(0).toLowerCase()}${a.label.slice(1)}`));
+    void Promise.resolve(done).catch(onFail(t("computers.page.action_failed", { action: a.label.charAt(0).toLowerCase() + a.label.slice(1) })));
   };
   return (
     <>
-      <GroupedSection title={m.issuesTitle || "Issues"} className="mt-[22px]" data-machine-issues>
+      <GroupedSection title={m.issuesTitle || t("computers.page.issues")} className="mt-[22px]" data-machine-issues>
         {issues.map((i) => (
           <div key={i.id} className="flex items-center gap-2.5 px-4 py-2.5" data-machine-issue={i.id} data-level={i.level}>
             {i.level === "fail" ? (
-              <CircleAlertIcon aria-label="Problem" className="size-3.5 shrink-0 text-destructive" />
+              <CircleAlertIcon aria-label={t("computers.page.issue_problem")} className="size-3.5 shrink-0 text-destructive" />
             ) : i.level === "info" ? (
-              <InfoIcon aria-label="Note" className="size-3.5 shrink-0 text-muted-foreground" />
+              <InfoIcon aria-label={t("computers.page.issue_note")} className="size-3.5 shrink-0 text-muted-foreground" />
             ) : (
-              <TriangleAlertIcon aria-label="Warning" className="size-3.5 shrink-0 text-warning" />
+              <TriangleAlertIcon aria-label={t("computers.page.issue_warning")} className="size-3.5 shrink-0 text-warning" />
             )}
             <span className="min-w-0 flex-1 text-[13px]">{i.text}</span>
             {i.action ? (
-              <Button size="sm" variant="outline" className="shrink-0" disabled={host.busy || (i.action.appUpdate && update.installing)} onClick={() => act(i)} data-machine-issue-action={i.id}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                disabled={host.busy || (i.action.appUpdate && update.installing)}
+                onClick={() => act(i)}
+                data-machine-issue-action={i.id}
+              >
                 {i.action.label}
               </Button>
             ) : null}
@@ -402,6 +471,7 @@ function NewSpaceHere({ machine: m }: { machine: MachinesViewMachine }) {
 }
 
 function RenameDialog({ open, machine: m, onClose }: { open: boolean; machine: MachinesViewMachine; onClose: () => void }) {
+  const t = useT();
   const { rename, refresh } = useMachines();
   const devices = useDevices();
   const [name, setName] = useState(m.name);
@@ -415,8 +485,8 @@ function RenameDialog({ open, machine: m, onClose }: { open: boolean; machine: M
     onClose();
     const done = r.target === "device" ? devices.rename(r.id, clean).then(refresh) : rename(r.id, clean);
     void done.then(
-      () => toast(`Renamed to ${clean}`, { type: "success" }),
-      (e: unknown) => toast("Couldn't rename the computer", { description: errorText(e), type: "error" }),
+      () => toast(t("computers.page.renamed", { name: clean }), { type: "success" }),
+      (e: unknown) => toast(t("computers.page.computer_rename_failed"), { description: errorText(e), type: "error" }),
     );
   };
   return (
@@ -430,12 +500,20 @@ function RenameDialog({ open, machine: m, onClose }: { open: boolean; machine: M
         >
           <div className="px-5 pt-5 pb-4">
             <DialogTitle className="text-[15px] font-semibold">{r.title}</DialogTitle>
-            <Input className="mt-3" aria-label={r.title} value={name} autoFocus maxLength={64} onChange={(e) => setName(e.currentTarget.value)} data-machine-rename-input />
+            <Input
+              className="mt-3"
+              aria-label={r.title}
+              value={name}
+              autoFocus
+              maxLength={64}
+              onChange={(e) => setName(e.currentTarget.value)}
+              data-machine-rename-input
+            />
           </div>
           {/* design-ok: a dialog's footer bar, as ConfirmDialog's */}
           <div className="flex justify-end gap-2 border-t bg-muted/60 px-5 py-3">
             <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
+              {t("computers.page.cancel")}
             </Button>
             <Button type="submit" disabled={!name.trim()}>
               {r.confirmLabel}

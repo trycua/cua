@@ -34,9 +34,10 @@ const X_KEYCODE_OFFSET: u16 = 8;
 const MAX_EVDEV_KEY: u16 = 0xff;
 /// Unicode keysyms are the codepoint with this bit set (X11 keysym encoding).
 const UNICODE_KEYSYM_BASE: u32 = 0x0100_0000;
-/// How long the server gets to report the last emitted key through a raw
-/// event before the pair is torn down.
+/// How long the server gets to report the awaited key events as raw events
+/// before a confirm gives up.
 const DELIVERY_CONFIRM_TIMEOUT: Duration = Duration::from_millis(1500);
+const UNCONFIRMED_STEPS: usize = 8;
 
 static UINPUT_KEYBOARDS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> =
     OnceLock::new();
@@ -455,9 +456,32 @@ fn wait_for_raw_key(
         x11::xinput2::XI_RawKeyRelease
     };
     let deadline = std::time::Instant::now() + timeout;
+    while let Some((evtype, detail, _)) = next_raw_key(display, xi_opcode, device_ids, deadline) {
+        if evtype == want_type && detail == i32::from(last.x_keycode()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn next_raw_key(
+    display: *mut x11::xlib::Display,
+    xi_opcode: std::os::raw::c_int,
+    device_ids: &[i32],
+    deadline: std::time::Instant,
+) -> Option<(i32, i32, i32)> {
     while std::time::Instant::now() < deadline {
         if unsafe { x11::xlib::XPending(display) } == 0 {
-            sleep(Duration::from_millis(2));
+            let wait = deadline.saturating_duration_since(std::time::Instant::now());
+            let mut socket = libc::pollfd {
+                // SAFETY: display is the open connection the caller passes in.
+                fd: unsafe { x11::xlib::XConnectionNumber(display) },
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let timeout = i32::try_from(wait.as_millis()).unwrap_or(i32::MAX);
+            // SAFETY: socket is one valid pollfd that outlives the call.
+            unsafe { libc::poll(&mut socket, 1, timeout) };
             continue;
         }
         let mut ev: x11::xlib::XEvent = unsafe { std::mem::zeroed() };
@@ -478,18 +502,16 @@ fn wait_for_raw_key(
             continue;
         }
         let raw = cookie.data as *const x11::xinput2::XIRawEvent;
-        let matched = !raw.is_null() && {
-            let raw = unsafe { &*raw };
-            cookie.evtype == want_type
-                && raw.detail == i32::from(last.x_keycode())
-                && (device_ids.contains(&raw.deviceid) || device_ids.contains(&raw.sourceid))
-        };
+        // SAFETY: XGetEventData filled cookie.data, which stays valid until XFreeEventData.
+        let key = unsafe { raw.as_ref() }
+            .filter(|raw| device_ids.contains(&raw.deviceid) || device_ids.contains(&raw.sourceid))
+            .map(|raw| (cookie.evtype, raw.detail, raw.deviceid));
         unsafe { x11::xlib::XFreeEventData(display, &mut cookie) };
-        if matched {
-            return true;
+        if key.is_some() {
+            return key;
         }
     }
-    false
+    None
 }
 
 /// Everything the planners need from the server's keymap, resolved once per
@@ -618,7 +640,9 @@ fn deliver(
 
         let mut last = None;
         let mut held: Vec<u16> = Vec::new();
-        for step in steps {
+        let confirm_at = confirm_points(steps);
+        let mut read = 0;
+        for (sent, step) in steps.iter().enumerate() {
             let emitted = {
                 let mut device = device.lock().unwrap();
                 let event = [InputEvent::new(
@@ -655,6 +679,22 @@ fn deliver(
             };
             if !pause.is_zero() {
                 sleep(pause);
+            }
+            if confirm_at.binary_search(&sent).is_ok() {
+                let deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
+                while read <= sent {
+                    let Some((_, _, deviceid)) =
+                        next_raw_key(display, xi_opcode, &[slave_keyboard_id], deadline)
+                    else {
+                        bail!(
+                            "virtual keyboard: the X server read {} of the first {} characters \
+                             within {DELIVERY_CONFIRM_TIMEOUT:?}; the rest was not sent",
+                            characters(&steps[..read]),
+                            characters(&steps[..=sent])
+                        );
+                    };
+                    read += usize::from(deviceid == slave_keyboard_id);
+                }
             }
         }
         let delivery_confirmed = match last {
@@ -701,6 +741,39 @@ fn deliver(
     let _ = cursor_id;
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
+}
+
+fn characters(steps: &[KeyStep]) -> usize {
+    let mut held = 0usize;
+    let mut done = 0;
+    for step in steps {
+        held = if step.press {
+            held + 1
+        } else {
+            held.saturating_sub(1)
+        };
+        done += usize::from(!step.press && held == 0);
+    }
+    done
+}
+
+fn confirm_points(steps: &[KeyStep]) -> Vec<usize> {
+    let mut points = Vec::new();
+    let mut held = 0usize;
+    let mut unconfirmed = 0;
+    for (index, step) in steps.iter().enumerate() {
+        held = if step.press {
+            held + 1
+        } else {
+            held.saturating_sub(1)
+        };
+        unconfirmed += 1;
+        if unconfirmed >= UNCONFIRMED_STEPS && held == 0 && index + 1 < steps.len() {
+            points.push(index);
+            unconfirmed = 0;
+        }
+    }
+    points
 }
 
 /// Type `text` into `target_window` without touching the core focus or the
@@ -904,6 +977,30 @@ mod tests {
                 step(28, false),
             ]
         );
+    }
+
+    #[test]
+    fn a_long_text_is_confirmed_in_windows_that_fit_the_evdev_buffer() {
+        let (steps, _) = plan_text_with_fallback::<()>(
+            &mapping(),
+            Some(50),
+            &"aA1!".repeat(20),
+            |_, _| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(characters(&steps), 80);
+        let points = confirm_points(&steps);
+        assert!(!points.is_empty());
+        assert!(*points.last().unwrap() < steps.len() - 1);
+        let mut start = 0;
+        for &point in points.iter().chain([steps.len() - 1].iter()) {
+            let window = &steps[start..=point];
+            assert!(window.len() <= UNCONFIRMED_STEPS + 3, "{window:?}");
+            let pressed = window.iter().filter(|step| step.press).count();
+            assert_eq!(pressed * 2, window.len(), "{window:?}");
+            start = point + 1;
+        }
+        assert!(confirm_points(&steps[..UNCONFIRMED_STEPS - 1]).is_empty());
     }
 
     #[test]

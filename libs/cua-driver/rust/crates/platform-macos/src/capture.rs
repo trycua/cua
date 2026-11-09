@@ -25,14 +25,12 @@
 //!
 //! ## Windows on another Space (CUA-1351)
 //!
-//! ScreenCaptureKit and `screencapture -l` return no content for a window
-//! that sits on a Space the user is not looking at (another desktop or a
-//! full-screen Space). For those windows the private SkyLight call
-//! `SLSHWCaptureWindowList` reads the window's backing store directly, without
-//! switching Spaces, ordering windows or activating anything. It is used first
-//! only when WindowServer says the window is off the current Space, and last
-//! when every public path failed. A missing symbol or a fully transparent
-//! image counts as a failure.
+//! Try ScreenCaptureKit first even for windows on another desktop or
+//! full-screen Space. Some off-Space windows are available through a
+//! desktop-independent filter. If both public backends fail, the private
+//! `SLSHWCaptureWindowList` fallback can read the backing store without
+//! switching Spaces, ordering windows or activating anything. WindowServer
+//! can block in that call, so the caller waits only up to the fallback timeout.
 //!
 //! ## Display capture
 //!
@@ -247,6 +245,13 @@ where
 
 /// Shell compatibility path: `screencapture -l <id> -x -o <tmp.png>`.
 fn screenshot_window_bytes_shell(window_id: u32) -> anyhow::Result<Vec<u8>> {
+    static GATE: NativeCaptureGate = NativeCaptureGate::new("screencapture");
+    run_native_capture_worker(&GATE, WINDOW_CAPTURE_FALLBACK_TIMEOUT, move || {
+        screenshot_window_bytes_shell_inner(window_id)
+    })
+}
+
+fn screenshot_window_bytes_shell_inner(window_id: u32) -> anyhow::Result<Vec<u8>> {
     let capture = SecureCapturePath::new("window.png")?;
     let tmp_path = capture.file.to_string_lossy().into_owned();
 
@@ -366,15 +371,14 @@ fn current_window_capture_identity(window_id: u32) -> anyhow::Result<WindowCaptu
 const WINDOW_PLAN_CACHE_TTL: Duration = Duration::from_secs(2);
 const WINDOW_PLAN_CACHE_CAPACITY: usize = 32;
 /// Keep native capture below the public observation deadline after the AX
-/// walk's own 20-second bound. The shell fallback retains its prior behavior.
+/// walk's own 20-second bound.
 const WINDOW_CAPTURE_NATIVE_TIMEOUT: Duration = Duration::from_secs(3);
+const WINDOW_CAPTURE_FALLBACK_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Permit at most one ScreenCaptureKit worker. If an Apple completion callback
-/// never fires, the timed-out worker keeps this permit, and every later request
-/// goes straight to the compatibility fallback instead of leaking more
-/// blocked threads. The refusal says whether the holder is a live capture or a
-/// worker its caller already gave up on.
+/// Permit at most one worker per capture backend. A timed-out worker keeps
+/// its permit until it returns, so retries cannot accumulate blocked threads.
 struct NativeCaptureGate {
+    backend: &'static str,
     tickets: AtomicU64,
     state: Mutex<NativeCaptureState>,
 }
@@ -389,8 +393,9 @@ enum NativeCaptureState {
 }
 
 impl NativeCaptureGate {
-    const fn new() -> Self {
+    const fn new(backend: &'static str) -> Self {
         Self {
+            backend,
             tickets: AtomicU64::new(0),
             state: Mutex::new(NativeCaptureState::Idle),
         }
@@ -438,7 +443,7 @@ impl Drop for NativeCapturePermit {
 }
 
 fn native_capture_gate() -> &'static NativeCaptureGate {
-    static GATE: NativeCaptureGate = NativeCaptureGate::new();
+    static GATE: NativeCaptureGate = NativeCaptureGate::new("ScreenCaptureKit");
     &GATE
 }
 
@@ -451,35 +456,36 @@ where
     T: Send + 'static,
     F: FnOnce() -> anyhow::Result<T> + Send + 'static,
 {
+    let backend = gate.backend;
     let permit = gate.try_acquire().map_err(|held| match held {
         NativeCaptureState::Stalled { since, .. } => anyhow::anyhow!(
-            "a timed-out ScreenCaptureKit worker is still blocked after {} ms",
+            "a timed-out {backend} worker is still blocked after {} ms",
             since.elapsed().as_millis()
         ),
-        _ => anyhow::anyhow!("ScreenCaptureKit capture already in flight"),
+        _ => anyhow::anyhow!("{backend} capture already in flight"),
     })?;
     let ticket = permit.ticket;
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
-        .name("cua-sck-window-capture".into())
+        .name(format!("cua-{backend}-capture"))
         .spawn(move || {
             let result = autoreleasepool(|_| work());
             drop(permit);
             let _ = sender.send(result);
         })
-        .map_err(|error| anyhow::anyhow!("failed to start ScreenCaptureKit worker: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("failed to start {backend} worker: {error}"))?;
 
     match receiver.recv_timeout(timeout) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             gate.mark_stalled(ticket);
             anyhow::bail!(
-                "ScreenCaptureKit capture timed out after {} ms",
+                "{backend} capture timed out after {} ms",
                 timeout.as_millis()
             )
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            anyhow::bail!("ScreenCaptureKit worker ended without a result")
+            anyhow::bail!("{backend} worker ended without a result")
         }
     }
 }
@@ -825,8 +831,7 @@ fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<CapturedImage> 
 /// Capture a window by its `window_id` (CGWindowID).
 /// Returns raw PNG bytes or an error.
 ///
-/// Tries ScreenCaptureKit first; falls back to the `screencapture` CLI on
-/// native error or empty output.
+/// Tries ScreenCaptureKit first, then `screencapture`, then SkyLight.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
     screenshot_window_image(window_id)?.into_png()
 }
@@ -850,12 +855,8 @@ pub fn screenshot_window_image(window_id: u32) -> anyhow::Result<CapturedImage> 
     )
 }
 
-/// Route a window capture by Space.
-///
-/// Off the current Space, the public backends return nothing useful, so the
-/// SkyLight capture goes first and the public chain is the fallback. On the
-/// current Space the public chain goes first and SkyLight is the last resort.
-/// When everything fails the error keeps every backend's context.
+/// Try the public backends before SkyLight on every Space. Keep Space and
+/// backend context in the error if no capture succeeds.
 fn capture_window_with_space_route<P, S>(
     window_id: u32,
     off_space: bool,
@@ -866,39 +867,30 @@ where
     P: FnOnce(u32) -> anyhow::Result<CapturedImage>,
     S: FnOnce(u32) -> anyhow::Result<CapturedImage>,
 {
-    if off_space {
-        let skylight_err = match skylight(window_id) {
-            Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
-            Ok(_) => anyhow::anyhow!("SkyLight capture produced empty bytes"),
-            Err(error) => error,
-        };
-        return public(window_id).map_err(|public_err| {
-            anyhow::anyhow!(
-                "window {window_id} is on another Space; SkyLight capture: {skylight_err:#}; \
-                 {public_err:#}"
-            )
-        });
-    }
-    match public(window_id) {
-        Ok(bytes) => Ok(bytes),
-        Err(public_err) => match skylight(window_id) {
-            Ok(bytes) if !bytes.is_empty() => Ok(bytes),
-            Ok(_) => Err(anyhow::anyhow!(
-                "{public_err:#}; SkyLight capture produced empty bytes"
-            )),
-            Err(skylight_err) => Err(anyhow::anyhow!(
-                "{public_err:#}; SkyLight capture: {skylight_err:#}"
-            )),
-        },
-    }
+    let public_err = match public(window_id) {
+        Ok(image) if !image.is_empty() => return Ok(image),
+        Ok(_) => anyhow::anyhow!("public capture produced empty bytes"),
+        Err(error) => error,
+    };
+    let skylight_err = match skylight(window_id) {
+        Ok(image) if !image.is_empty() => return Ok(image),
+        Ok(_) => anyhow::anyhow!("capture produced empty bytes"),
+        Err(error) => error,
+    };
+    let space = if off_space { " on another Space" } else { "" };
+    anyhow::bail!("window {window_id}{space}: {public_err:#}; SkyLight capture: {skylight_err:#}")
 }
 
-/// Off-Space capture through `SLSHWCaptureWindowList` (see module docs).
+/// Keep a blocked WindowServer call off the caller's thread. The gate stays
+/// occupied until the call really returns, independently of public capture.
 fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<CapturedImage> {
-    let image = crate::input::skylight::hw_capture_window(window_id).ok_or_else(|| {
-        anyhow::anyhow!("SLSHWCaptureWindowList returned no image for window {window_id}")
-    })?;
-    core_cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
+    static GATE: NativeCaptureGate = NativeCaptureGate::new("SkyLight");
+    run_native_capture_worker(&GATE, WINDOW_CAPTURE_FALLBACK_TIMEOUT, move || {
+        let image = crate::input::skylight::hw_capture_window(window_id).ok_or_else(|| {
+            anyhow::anyhow!("SLSHWCaptureWindowList returned no image for window {window_id}")
+        })?;
+        core_cgimage_to_rgba(&image, &format!("window {window_id}")).map(CapturedImage::Rgba)
+    })
 }
 
 /// Read a CoreGraphics image of any pixel layout as straight-alpha RGBA8 by
@@ -1016,7 +1008,7 @@ pub const OVERLAY_EXCLUSION_METHOD: &str = "screencapturekit_excluding_windows";
 const DISPLAY_CAPTURE_NATIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn display_capture_gate() -> &'static NativeCaptureGate {
-    static GATE: NativeCaptureGate = NativeCaptureGate::new();
+    static GATE: NativeCaptureGate = NativeCaptureGate::new("ScreenCaptureKit");
     &GATE
 }
 
@@ -1273,71 +1265,36 @@ mod tests {
     }
 
     #[test]
-    fn off_space_window_uses_skylight_before_public_backends() {
-        let public_calls = Cell::new(0u32);
-        let got = capture_window_with_space_route(
-            7,
-            true,
-            |_| {
-                public_calls.set(public_calls.get() + 1);
-                anyhow::bail!("public backends must not run when SkyLight succeeds off-Space")
-            },
-            |window_id| Ok(png(format!("sky-{window_id}").into_bytes())),
-        )
-        .expect("off-Space SkyLight capture should succeed");
-        assert_eq!(got, png(b"sky-7".to_vec()));
-        assert_eq!(public_calls.get(), 0);
+    fn public_capture_success_skips_skylight_on_either_space() {
+        for off_space in [false, true] {
+            let got = capture_window_with_space_route(
+                7,
+                off_space,
+                |window_id| Ok(png(format!("public-{window_id}").into_bytes())),
+                |_| panic!("SkyLight must not run after public capture succeeds"),
+            )
+            .expect("public capture should succeed");
+            assert_eq!(got, png(b"public-7".to_vec()));
+        }
     }
 
     #[test]
-    fn off_space_skylight_failure_falls_back_to_public_backends() {
-        let got = capture_window_with_space_route(
-            7,
-            true,
-            |_| Ok(png(b"public".to_vec())),
-            |_| anyhow::bail!("SPI missing"),
-        )
-        .expect("public fallback should run");
-        assert_eq!(got, png(b"public".to_vec()));
-
-        let got = capture_window_with_space_route(
-            7,
-            true,
-            |_| Ok(png(b"public".to_vec())),
-            |_| Ok(png(Vec::new())),
-        )
-        .expect("empty SkyLight bytes fall back");
-        assert_eq!(got, png(b"public".to_vec()));
-    }
-
-    #[test]
-    fn on_space_window_uses_public_backends_and_skylight_last() {
-        let sky_calls = Cell::new(0u32);
-        let got = capture_window_with_space_route(
-            7,
-            false,
-            |_| Ok(png(b"public".to_vec())),
-            |_| {
-                sky_calls.set(sky_calls.get() + 1);
-                Ok(png(b"sky".to_vec()))
-            },
-        )
-        .expect("public capture should succeed");
-        assert_eq!(got, png(b"public".to_vec()));
-        assert_eq!(
-            sky_calls.get(),
-            0,
-            "SkyLight must not run when public capture works"
-        );
-
-        let got = capture_window_with_space_route(
-            7,
-            false,
-            |_| anyhow::bail!("sck and shell failed"),
-            |_| Ok(png(b"sky".to_vec())),
-        )
-        .expect("SkyLight is the last resort");
-        assert_eq!(got, png(b"sky".to_vec()));
+    fn public_capture_failure_or_empty_image_uses_skylight_on_either_space() {
+        for off_space in [false, true] {
+            for public in [
+                Ok(png(Vec::new())),
+                Err(anyhow::anyhow!("public capture failed")),
+            ] {
+                let got = capture_window_with_space_route(
+                    7,
+                    off_space,
+                    |_| public,
+                    |window_id| Ok(png(format!("sky-{window_id}").into_bytes())),
+                )
+                .expect("SkyLight fallback should succeed");
+                assert_eq!(got, png(b"sky-7".to_vec()));
+            }
+        }
     }
 
     #[test]
@@ -1631,7 +1588,7 @@ mod tests {
 
     #[test]
     fn native_capture_gate_allows_only_one_worker_until_permit_drops() {
-        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+        static GATE: NativeCaptureGate = NativeCaptureGate::new("ScreenCaptureKit");
 
         let permit = GATE.try_acquire().expect("first worker acquires gate");
         assert!(
@@ -1648,7 +1605,7 @@ mod tests {
 
     #[test]
     fn late_timeout_cannot_mark_a_newer_permit_stalled() {
-        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+        static GATE: NativeCaptureGate = NativeCaptureGate::new("ScreenCaptureKit");
 
         let stale_ticket = GATE.try_acquire().expect("first permit").ticket;
         let current = GATE.try_acquire().expect("gate idle after drop");
@@ -1663,7 +1620,7 @@ mod tests {
 
     #[test]
     fn pooled_native_worker_returns_work_result_and_error() {
-        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+        static GATE: NativeCaptureGate = NativeCaptureGate::new("ScreenCaptureKit");
 
         let ok = run_native_capture_worker(&GATE, Duration::from_secs(5), || Ok(7u8));
         assert_eq!(ok.expect("work result flows through the pooled worker"), 7);
@@ -1682,7 +1639,7 @@ mod tests {
     fn timed_out_native_worker_blocks_replacement_until_original_returns() {
         use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+        static GATE: NativeCaptureGate = NativeCaptureGate::new("SkyLight");
         static SPAWNED_WORK: AtomicUsize = AtomicUsize::new(0);
         let (started_sender, started_receiver) = mpsc::channel();
         let (release_sender, release_receiver) = mpsc::channel();
@@ -1704,7 +1661,7 @@ mod tests {
         assert!(first
             .expect_err("stalled worker times out")
             .to_string()
-            .contains("timed out"));
+            .contains("SkyLight capture timed out after 10 ms"));
 
         let second = run_native_capture_worker(&GATE, Duration::from_secs(1), || {
             SPAWNED_WORK.fetch_add(1, AtomicOrdering::SeqCst);
@@ -1713,7 +1670,7 @@ mod tests {
         assert!(second
             .expect_err("replacement is refused while original remains blocked")
             .to_string()
-            .contains("timed-out ScreenCaptureKit worker is still blocked"));
+            .contains("timed-out SkyLight worker is still blocked"));
         assert_eq!(
             SPAWNED_WORK.load(AtomicOrdering::SeqCst),
             1,

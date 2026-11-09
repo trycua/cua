@@ -35,6 +35,7 @@ mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
 mod mcp_http;
+mod owner;
 mod perception_cli;
 mod private_worker;
 mod proxy;
@@ -602,6 +603,7 @@ fn main() {
         cli::Command::Serve {
             socket,
             pid_file,
+            owner_pid,
             permission_mode,
             dangerously_bypass_approvals,
             capability_manifest,
@@ -717,7 +719,7 @@ fn main() {
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
-                    serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                    serve::run_serve_cmd(driver, &sp, Some(&pid_path), owner_pid);
                     std::process::exit(0);
                 })
                 .expect("spawn serve thread");
@@ -1046,6 +1048,7 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Serve {
             socket,
             pid_file,
+            owner_pid,
             permission_mode,
             dangerously_bypass_approvals,
             capability_manifest,
@@ -1102,7 +1105,7 @@ fn main() -> anyhow::Result<()> {
             let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
-                serve::run_serve_cmd(driver, &sp, Some(&pid_path));
+                serve::run_serve_cmd(driver, &sp, Some(&pid_path), owner_pid);
             })
             .join()
             .ok();

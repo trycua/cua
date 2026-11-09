@@ -139,7 +139,9 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Offline"));
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')?.hasAttribute("data-dim")).toBe(true);
     expect(document.body.textContent).not.toMatch(/Waits for|so the \d+ Spaces? on it/);
-    expect(q("[data-tree-tasks]")).toBeNull();
+    // The tasks cell of a row with none is empty.
+    expect(q('[data-tree-tasks="relay:linux-box/ubuntu-build"]')?.textContent).toBe("");
+    expect(document.body.textContent).not.toMatch(/\bNone\b/);
   });
 
   it('folds offline computers with no Spaces on them into one "N offline" row that opens', { timeout: 30000 }, async () => {

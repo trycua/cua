@@ -44,8 +44,10 @@ export interface TreeNode {
   isDefault: boolean;
   /** Its computer is offline: the row is greyed out until it's back. */
   dim: boolean;
-  /** Running agent tasks: its own, and for a computer its Spaces' too (the remove dialog names what stops). */
+  /** Running agent tasks: its own, and for a computer its Spaces' too. */
   running: number;
+  /** "1 running", "Paused" while its computer is offline, or "" (an empty cell) when there are none. */
+  tasks: string;
   /** Who's on it: the owner (or you) first, then who it's shared with. */
   people: string[];
   /** What it sits under: the computer it was made on, or for a child Space the Space that made it; null for a computer, or a Space whose computer isn't listed. */
@@ -139,6 +141,11 @@ const withDefault = (word: string): string => t("computers.tree.status_default",
 
 function offlineWord(m: Pick<Machine, "lastSeen">, now: number): string {
   return m.lastSeen ? t("computers.tree.offline_seen", { when: relativeTime(m.lastSeen * 1000, now) }) : t("computers.row.offline");
+}
+
+function tasksText(running: number, waits: boolean): string {
+  if (running === 0) return "";
+  return waits ? t("computers.tree.tasks_paused") : t("computers.tree.tasks_running", { count: running });
 }
 
 function peopleOf(space: Space | null, me: string | null): string[] {
@@ -245,6 +252,7 @@ export function buildSpacesTree({
       isDefault,
       dim: waits,
       running: n,
+      tasks: tasksText(n, waits),
       people: peopleOf(s, me),
       parentKey: parent?.key ?? null,
       children: [],
@@ -256,6 +264,7 @@ export function buildSpacesTree({
     node.children = kids.map((c) => spaceNode(c, node, computer, node.depth + 1));
     for (const c of node.children) placed.add(c.key);
     node.running = n + node.children.reduce((sum, c) => sum + c.running, 0);
+    node.tasks = tasksText(node.running, waits);
     return node;
   };
 
@@ -287,6 +296,7 @@ export function buildSpacesTree({
       isDefault,
       dim: false,
       running: 0,
+      tasks: "",
       people: peopleOf(own, me),
       parentKey: null,
       children: [],
@@ -297,6 +307,8 @@ export function buildSpacesTree({
     for (const s of kids) placed.add(s.id);
     node.children = top.map((s) => spaceNode(s, node));
     node.running = runningOf(id) + (m.current ? runningOf("this-mac") : 0) + node.children.reduce((sum, c) => sum + c.running, 0);
+    node.tasks = tasksText(node.running, false);
+    if (!online && node.running > 0) node.tasks = t("computers.tree.tasks_paused");
     // A computer shared with you: whoever is on its Spaces is on it too.
     if (node.people.length <= 1) node.people = [...new Set([...node.people, ...node.children.flatMap((c) => c.people)])];
     roots.push(node);

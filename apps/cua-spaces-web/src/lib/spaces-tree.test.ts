@@ -73,11 +73,12 @@ describe("buildSpacesTree", () => {
     expect([t.computers, t.spaces, t.online]).toEqual([3, 4, 6]);
     expect(t.spacesRunning).toBe(3);
     expect(treeSummary(t)).toBe("3 computers and 3 Spaces running");
-    expect(t.roots.map((r) => r.running)).toEqual([1, 2, 1]);
-    expect(t.roots[1]!.children.map((c) => [c.status, c.running])).toEqual([
-      ["Online", 1],
-      ["Online", 1],
-      ["Stopped", 0],
+    expect(t.roots.map((r) => r.tasks)).toEqual(["1 running", "2 running", "1 running"]);
+    // No tasks: an empty cell, not "None".
+    expect(t.roots[1]!.children.map((c) => [c.status, c.tasks])).toEqual([
+      ["Online", "1 running"],
+      ["Online", "1 running"],
+      ["Stopped", ""],
     ]);
   });
 
@@ -122,10 +123,11 @@ describe("buildSpacesTree", () => {
     const t = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], defaultSpace: "relay:studio" });
     const studio = t.roots[1]!;
     expect(studio.status).toBe("Offline, seen 20 minutes ago, Default");
-    expect(studio.children.map((c) => [c.status, c.dim, c.online])).toEqual([
-      ["Offline", true, false],
-      ["Offline", true, false],
-      ["Offline", true, false],
+    expect(studio.tasks).toBe("Paused");
+    expect(studio.children.map((c) => [c.status, c.tasks, c.dim, c.online])).toEqual([
+      ["Offline", "Paused", true, false],
+      ["Offline", "Paused", true, false],
+      ["Offline", "", true, false],
     ]);
     expect(treeSummary(t)).not.toMatch(/Studio|offline/i);
   });
@@ -163,7 +165,7 @@ describe("buildSpacesTree", () => {
     expect([empty.computers, empty.spaces]).toEqual([0, 0]);
 
     const single = buildSpacesTree({ spaces: [SPACES[0]!], machines: [THIS_MAC], defaultSpace: null, me: "f@trycua.com", now: NOW });
-    expect(single.roots.map((r) => [r.name, r.status, r.people])).toEqual([["This Mac", "Online, Default", ["f@trycua.com"]]]);
+    expect(single.roots.map((r) => [r.name, r.status, r.tasks, r.people])).toEqual([["This Mac", "Online, Default", "", ["f@trycua.com"]]]);
     expect(treeSummary(single)).toBe("1 computer");
   });
 
@@ -219,7 +221,7 @@ describe("child Spaces in the tree", () => {
     const studio = t.roots[1]!;
     const build = studio.children[1]!;
     expect([build.running, build.children[0]!.running, build.children[0]!.children[0]!.running]).toEqual([4, 3, 2]);
-    expect([studio.running, build.running]).toEqual([5, 4]);
+    expect([studio.tasks, build.tasks]).toEqual(["5 running", "4 running"]);
   });
 
   it("reads Offline with its computer, not Stopped with its parent, when the parent is stopped", () => {

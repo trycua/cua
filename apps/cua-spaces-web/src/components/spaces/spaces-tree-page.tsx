@@ -39,7 +39,7 @@ import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 /** How long a click on a name waits for a second one (a double-click renames) before it opens the row. */
 export const DOUBLE_CLICK_MS = 300;
 
-const COLS = "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)_96px_32px] items-center gap-3";
+const COLS = "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)_96px_96px_32px] items-center gap-3";
 
 /** "Safari check, 1 agent task stops". */
 export function stopsLine(node: Pick<TreeNode, "name" | "running">): string {
@@ -345,7 +345,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           {pinnable(n) && !isEditing ? <PinnedMark id={n.space!.id} /> : null}
         </div>
         {isEditing ? (
-          <div role="cell" className="col-span-2 text-right text-[13px] text-muted-foreground">
+          <div role="cell" className="col-span-3 text-right text-[13px] text-muted-foreground">
             {t("computers.page.rename_hint")}
           </div>
         ) : (
@@ -379,6 +379,9 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
             </div>
             <div role="cell">
               <PeopleFaces people={n.people} />
+            </div>
+            <div role="cell" className="text-[13px] text-muted-foreground" data-tree-tasks={n.key}>
+              {n.tasks}
             </div>
             <div role="cell" className="flex justify-end">
               <Menu
@@ -434,6 +437,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           <span className="truncate">{t("computers.page.not_set_up")}</span>
         </div>
         <div role="cell" />
+        <div role="cell" />
         <div role="cell" className="flex justify-end">
           <Menu
             items={[
@@ -474,7 +478,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
     folded.length > 0 ? (
       <div key="offline" role="row" data-tree-offline-fold="" className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px] text-muted-foreground")}>
         {/* One quiet sentence, level with the names above it (past the caret slot and the icon). */}
-        <div role="cell" className="col-span-4 flex min-w-0 items-center gap-3" style={{ paddingLeft: INDENT_PX }}>
+        <div role="cell" className="col-span-5 flex min-w-0 items-center gap-3" style={{ paddingLeft: INDENT_PX }}>
           <span className="min-w-0 truncate">
             {t(showOffline ? "computers.page.offline_shown" : "computers.page.offline_hidden", { count: folded.length })}
             {"\u00a0"}
@@ -504,6 +508,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           </div>
           <div role="columnheader">{t("computers.page.col_status")}</div>
           <div role="columnheader">{t("computers.page.col_people")}</div>
+          <div role="columnheader">{t("computers.page.col_tasks")}</div>
           <div role="columnheader" aria-label={t("computers.page.col_actions")} />
         </div>
         <GroupedSection role="rowgroup">
@@ -606,6 +611,7 @@ function ElsewhereRow({ creating: c, nested }: { creating: CreatingElsewhere; ne
           {percent}
         </span>
       </div>
+      <div role="cell" />
       <div role="cell" />
       <div role="cell" />
     </div>

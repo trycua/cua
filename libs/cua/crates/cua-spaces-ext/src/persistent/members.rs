@@ -194,8 +194,25 @@ fn denied(msg: impl Into<String>) -> Error {
 /// An entry as `thread_read` shows it. An approval also says what kind of
 /// request it is (decided by the host, never from the agent's words), what
 /// an answer may choose (`scope_choices`) and which entry answered it.
-fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold) -> Value {
+fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold, all: &[ThreadEntry]) -> Value {
     let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+    // Text clients (the CLI, an agent reading the thread) get the card as one plain line, outcome included.
+    if let Some(a) = &e.approval {
+        let outcome = fold
+            .answer_of
+            .get(&e.seq)
+            .and_then(|s| all.iter().find(|x| x.seq == *s))
+            .and_then(|x| {
+                x.answer
+                    .as_ref()
+                    .map(|ans| (ans.approve, x.author.name.clone()))
+            });
+        v["line"] = json!(approval_line(
+            &a.action,
+            &a.details,
+            outcome.as_ref().map(|(ok, who)| (*ok, who.as_str()))
+        ));
+    }
     if e.approval.is_some()
         && let Some(a) = v.get_mut("approval").and_then(Value::as_object_mut)
     {
@@ -209,6 +226,20 @@ fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold) -> Value {
         }
     }
     v
+}
+
+/// The approval card as one plain line: `[approval] ability:spaces.create: Create a child Space named x. Approved by Owner`.
+pub(crate) fn approval_line(action: &str, details: &str, outcome: Option<(bool, &str)>) -> String {
+    let what = if details.trim().is_empty() {
+        action.to_string()
+    } else {
+        format!("{action}: {}", details.trim().trim_end_matches('.'))
+    };
+    match outcome {
+        Some((true, who)) => format!("[approval] {what}. Approved by {who}"),
+        Some((false, who)) => format!("[approval] {what}. Denied by {who}"),
+        None => format!("[approval] {what}. Waiting for an answer"),
+    }
 }
 
 /// Managing members (add, remove, schedules) is the owner's.
@@ -788,7 +819,60 @@ impl Persistent {
         }
     }
 
+    /// An agent's own request nobody answered for [`approval_ttl`] is closed as not allowed, with a
+    /// note in the thread, and the agent is told so it can report what it could not do. Its turn
+    /// ended while it waited, so nothing else would wake it.
+    fn expire_approvals(&self, rec: &AgentRecord, store: &ThreadStore) -> Result<()> {
+        let fold = store.fold()?;
+        let now = cua_volume::now_ms();
+        let ttl = approval_ttl().as_millis() as u64;
+        for (seq, answered) in &fold.approvals {
+            if *answered || fold.join_requests.contains_key(seq) {
+                continue;
+            }
+            let Some(e) = store.get(*seq)? else { continue };
+            if e.author.agent_name() != Some(rec.name.as_str())
+                || crate::thread::grants::kind(&e) == "push"
+                || now.saturating_sub(e.ts_ms) < ttl
+            {
+                continue;
+            }
+            let Some(a) = &e.approval else { continue };
+            let what = if a.details.trim().is_empty() {
+                a.action.clone()
+            } else {
+                a.details.trim().to_string()
+            };
+            let mut ans = Draft::new(Author::system("approval"), EntryKind::Answer, String::new());
+            ans.reply_to = Some(*seq);
+            ans.answer = Some(Answer {
+                approval: *seq,
+                approve: false,
+                note: "No one answered in time, so nothing was done".into(),
+                scope: None,
+                client_id: Some(format!("expired:{seq}")),
+            });
+            ans.client_id = Some(format!("expired:{seq}"));
+            // What people read is the plain statement, addressed with a real @mention; what the agent is
+            // told to do about it rides in a field the thread does not print.
+            let (visible, guidance) = expired_text(&rec.name, &what);
+            let tell = crate::thread::events::draft(&crate::thread::events::AgentEvent {
+                kind: crate::thread::events::Kind::ApprovalExpired,
+                agent: rec.name.clone(),
+                text: visible,
+                guidance: Some(guidance),
+                payload: json!({"approval": seq}),
+                task_seq: None,
+                client_id: Some(format!("expired-tell:{seq}")),
+                from: "approval",
+            });
+            store.append_many(vec![ans, tell])?;
+        }
+        Ok(())
+    }
+
     async fn dispatch_member(&self, rec: &AgentRecord, store: &ThreadStore) -> Result<Vec<u64>> {
+        self.expire_approvals(rec, store)?;
         // A claim nobody renewed (its session is gone or unreachable): the
         // task goes back to the queue, and the session lets go of it.
         let requeued = store.requeue_expired(&rec.name, &[], !rec.paused)?;
@@ -878,8 +962,13 @@ impl Persistent {
             .as_ref()
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
+        // Guidance only the agent gets (an outcome notice's "what to do now"): the thread does not print it.
+        let text = match posted.as_ref().and_then(crate::thread::events::guidance_of) {
+            Some(g) => format!("{text}\n\n{g}"),
+            None => text,
+        };
         let framed = format!(
-            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it); if that is refused, say what the refusal says.)",
+            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; its output says whether it is running; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it). Say a computer is stopped only after you checked its state with `cua spaces ls` after it had a few seconds to start; if it is not running, start it with `cua spaces start NAME` first. If a command is refused, say what the refusal says.)",
             task.seq, task.author.name
         );
         // The member's standing instructions go in front of the first message
@@ -1363,6 +1452,18 @@ impl Persistent {
                             .collect()
                     })
                     .unwrap_or_default();
+                // The Spaces it is making now hang under the same live row, like a subagent.
+                let mut running = running;
+                for e in cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space)
+                    .into_iter()
+                    .filter(|e| e.state == cua_spaces::child_creates::State::Creating)
+                {
+                    running.push(json!({
+                        "id": format!("space:{}:{}", e.key, e.started_ms), "title": e.name, "state": "running",
+                        "kind": "child_space", "os": e.os, "step": e.phase, "steps": 0, "percent": e.percent,
+                        "space": format!("pending:agent-{}-{}", e.key, e.started_ms), "since_ms": e.started_ms,
+                    }));
+                }
                 if !running.is_empty() {
                     row["children"] = json!(running);
                 }
@@ -1380,6 +1481,11 @@ impl Persistent {
                     r["text"].as_str().map_or(0, str::len)
                         + 7919 * r["children"].as_array().map_or(0, |c| c.len())
                         + r["children"][0]["steps"].as_u64().unwrap_or(0) as usize
+                        + r["children"].as_array().map_or(0, |c| c
+                            .iter()
+                            .map(|k| k["step"].as_str().map_or(0, str::len)
+                                + k["percent"].as_u64().unwrap_or(0) as usize)
+                            .sum::<usize>())
                 )
             })
             .collect::<Vec<_>>()
@@ -1606,6 +1712,16 @@ pub struct Thread {
 }
 
 impl Thread {
+    /// The answer entries of the approvals among `entries` (what the plain line of an approval says).
+    fn answers_for(&self, entries: &[ThreadEntry], fold: &crate::thread::Fold) -> Vec<ThreadEntry> {
+        entries
+            .iter()
+            .filter(|e| e.approval.is_some())
+            .filter_map(|e| fold.answer_of.get(&e.seq))
+            .filter_map(|s| self.store.get(*s).ok().flatten())
+            .collect()
+    }
+
     /// The thread as session `k` of the calling agent.
     pub fn as_session(mut self, k: u32) -> Thread {
         self.session = Some(k.max(1));
@@ -1905,6 +2021,12 @@ impl Thread {
             .as_ref()
             .filter(|a| fold.join_requests.contains_key(&a.approval))
             .map(|a| (a.approval, a.approve));
+        // An answer to the agent's own request wakes it with the outcome: its turn may have ended
+        // while it waited, and nothing else would tell it.
+        let answered_ask = draft_answer
+            .as_ref()
+            .filter(|a| !fold.join_requests.contains_key(&a.approval))
+            .map(|a| (a.approval, a.approve, a.note.clone()));
         if let Some(k) = args.to_session {
             let to = task_to.as_deref().ok_or_else(|| {
                 Error::invalid("to_session needs an @mention of an agent member of this Space")
@@ -1979,6 +2101,12 @@ impl Thread {
             .as_ref()
             .filter(|a| a.scope.as_deref() == Some("space"))
             .map(|a| a.approval);
+        let auto_note = granted.as_ref().map(|g| {
+            format!(
+                "Allowed for this Space (you said yes to this in #{})",
+                g.approval
+            )
+        });
         let e = match granted {
             Some(g) => {
                 let mut auto =
@@ -2001,6 +2129,11 @@ impl Thread {
         if let Some(approval) = space_grant {
             self.remember_grant(approval, &e)?;
         }
+        // An agent whose request was answered by a grant is told like any other answer: it has ended
+        // its turn waiting for it and nobody else will ever answer.
+        if let Some(note) = auto_note {
+            self.wake_asker(e.seq, true, &note, "the person")?;
+        }
         let mut copied = vec![];
         for (to, mut c) in copies {
             c.fanout_of = Some(e.seq);
@@ -2009,6 +2142,9 @@ impl Thread {
         if let Some((seq, approve)) = answered_join {
             self.p
                 .answer_join_request(&self.caller, &self.store, seq, approve)?;
+        }
+        if let Some((ap, approve, note)) = answered_ask {
+            self.wake_asker(ap, approve, &note, &who)?;
         }
         for (to, holders) in refused {
             self.store.append(Draft::note(
@@ -2037,6 +2173,48 @@ impl Thread {
             }
         }
         Ok(e)
+    }
+
+    /// Tells the agent that asked in approval `ap` what the person answered, as a task for it, so
+    /// it continues (allowed) or stops asking (declined). Only an agent's own request: the host's
+    /// own approvals (a push) wait inside their tool call.
+    fn wake_asker(&self, ap: u64, approve: bool, note: &str, who: &str) -> Result<()> {
+        let Some(asked) = self.store.get(ap)? else {
+            return Ok(());
+        };
+        let Some(agent) = asked.author.agent_name().map(str::to_string) else {
+            return Ok(());
+        };
+        let Some(a) = &asked.approval else {
+            return Ok(());
+        };
+        if crate::thread::grants::kind(&asked) == "push" || self.p.get(&agent).is_err() {
+            return Ok(());
+        }
+        let what = if a.details.trim().is_empty() {
+            a.action.clone()
+        } else {
+            a.details.trim().to_string()
+        };
+        let (text, guidance) = outcome_text(&agent, who, approve, &what, note);
+        crate::thread::events::post_agent_event(
+            &self.store,
+            &crate::thread::events::AgentEvent {
+                kind: if approve {
+                    crate::thread::events::Kind::ApprovalAllowed
+                } else {
+                    crate::thread::events::Kind::ApprovalDenied
+                },
+                agent,
+                text,
+                guidance: Some(guidance),
+                payload: json!({"approval": ap, "approve": approve}),
+                task_seq: None,
+                client_id: None,
+                from: "approval",
+            },
+        )?;
+        Ok(())
     }
 
     /// Resolves attachments: Volume paths the caller can read are
@@ -2170,6 +2348,7 @@ impl Thread {
         let read_seq = self.store.cursors()?.get(&me.id).map_or(0, |c| c.read_seq);
         // A join request says whether this caller may answer it.
         let fold = self.store.fold()?;
+        let all_entries = self.answers_for(&entries, &fold);
         let answers_joins = matches!(
             self.p.role_of(&self.caller),
             policy::Role::Owner | policy::Role::Admin
@@ -2179,7 +2358,7 @@ impl Thread {
             .map(|e| {
                 let open =
                     e.join_request.is_some() && fold.join_requests.get(&e.seq) == Some(&None);
-                let mut v = approval_overlay(&e, &fold);
+                let mut v = approval_overlay(&e, &fold, &all_entries);
                 if e.join_request.is_some() {
                     v["you_can_answer"] = json!(open && answers_joins);
                 }
@@ -2256,7 +2435,10 @@ impl Thread {
             .filter(|e| e.seq > read_seq && e.author.id != me.id)
             .count();
         let fold = self.store.fold()?;
-        let entries: Vec<Value> = entries.iter().map(|e| approval_overlay(e, &fold)).collect();
+        let entries: Vec<Value> = entries
+            .iter()
+            .map(|e| approval_overlay(e, &fold, &all))
+            .collect();
         Ok(json!({
             "space": self.store.space(),
             "me": me,
@@ -2553,8 +2735,10 @@ impl Thread {
         let t = self.task(seq)?;
         let name = self.agent_of(None, &t)?;
         self.may_steer(&t)?;
-        // The same words already said under this task by the same author (a retry, or a tool
-        // call a restarted bridge ran again): that entry is the answer, nothing is added twice.
+        // The same words said again at once under this task by the same author (a retry, or a tool call
+        // a restarted bridge ran again): that entry is the answer, nothing is added twice. Only the
+        // author's latest message under the task can be the one retried, so a later "Done." after other
+        // words is a new reply, not the earlier one.
         if attachments.is_empty() {
             let last = self.store.last_seq()?;
             let me = self.author().id;
@@ -2564,11 +2748,9 @@ impl Thread {
                 .into_iter()
                 .rev()
                 .find(|e| {
-                    e.kind == EntryKind::Message
-                        && e.reply_to == Some(seq)
-                        && e.author.id == me
-                        && e.text.trim() == text.trim()
+                    e.kind == EntryKind::Message && e.reply_to == Some(seq) && e.author.id == me
                 })
+                .filter(|e| e.text.trim() == text.trim())
             {
                 return Ok((same.clone(), same));
             }
@@ -2750,6 +2932,55 @@ pub(crate) enum Delivered {
 /// row already showed it.
 pub(crate) fn start_note(restart: bool, agent: &str, task_text: &str) -> Option<String> {
     restart.then(|| restarted_text(agent, task_text))
+}
+
+/// How long an agent's request may wait for a person's answer.
+pub(crate) fn approval_ttl() -> std::time::Duration {
+    std::env::var("CUA_APPROVAL_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(30 * 60),
+            std::time::Duration::from_secs,
+        )
+}
+
+/// The thread entry for a request nobody answered in time (a plain statement that @mentions the agent) and what the
+/// agent alone is told to do about it.
+pub(crate) fn expired_text(agent: &str, what: &str) -> (String, String) {
+    (
+        format!("@{agent} Nobody answered your request in time: {what}. Nothing was done."),
+        "Tell the person plainly what you could not do, and ask again only if it still matters."
+            .into(),
+    )
+}
+
+/// What an agent is told when the person answered its request: allowed means go on, declined means
+/// the answer is no and the agent does not ask again or look for a way around it.
+pub(crate) fn outcome_text(
+    agent: &str,
+    who: &str,
+    approve: bool,
+    what: &str,
+    note: &str,
+) -> (String, String) {
+    let note = note.trim();
+    let extra = if note.is_empty() {
+        String::new()
+    } else {
+        format!(" They said: {note}")
+    };
+    if approve {
+        (
+            format!("@{agent} {who} allowed your request: {what}.{extra}"),
+            "Go ahead now. Tell the thread what happened when it is done or if it fails, in your own words.".into(),
+        )
+    } else {
+        (
+            format!("@{agent} {who} said no to your request: {what}.{extra}"),
+            "Do not try it again and do not look for a way around it. Tell the thread what you will do instead, or stop.".into(),
+        )
+    }
 }
 
 /// What the thread says when a run restarted by itself is back on its task.
@@ -2937,5 +3168,30 @@ mod notice_tests {
         );
         assert!(!t.contains("session") && !t.contains('#') && !t.contains('/'));
         assert!(!t.chars().any(|c| c.is_ascii_digit()));
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn the_agent_hears_yes_and_no_plainly() {
+        let (y, ynote) = outcome_text("claude", "Ada", true, "create a macOS Space", "");
+        assert_eq!(y, "@claude Ada allowed your request: create a macOS Space.");
+        assert!(ynote.contains("Go ahead now"));
+        let (n, nnote) = outcome_text("claude", "Ada", false, "create a macOS Space", "too big");
+        assert_eq!(
+            n,
+            "@claude Ada said no to your request: create a macOS Space. They said: too big"
+        );
+        assert!(nnote.contains("Do not try it again"), "{nnote}");
+        // The visible text carries no instruction for the agent.
+        for t in [&y, &n] {
+            assert!(
+                !t.contains("Go ahead") && !t.contains("Do not try") && !t.contains("Tell the"),
+                "{t}"
+            );
+        }
     }
 }

@@ -400,6 +400,12 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     event: { kind: "subagent", id: "sub-1", agent: "claude", title: "Check the reconnect logs for the last failures", state: "running", steps: 3, started_ms: min(1) },
   });
   add({ ts_ms: min(12), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Cursor was added to this Space." });
+  const cs = (key: string, name: string, os: string, extra: Json) =>
+    add({ ts_ms: min(1), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: `Creating ${name}`, task_seq: bump, event: { kind: "child_space", space: `local:${name}`, key, name, os, agent: "claude", ...extra } });
+  cs("build-box:1", "build-box", "Linux", { state: "ready", phase: "Ready", started_ms: min(1) - 62_000, ended_ms: min(1) - 8_000 });
+  cs("macos-child:2", "macos-child", "macOS", { state: "failed", error: "Its network setup did not come up", started_ms: min(1) - 40_000, ended_ms: min(1) - 20_000 });
+  cs("test-win:3", "test-win", "Windows", { state: "creating", phase: "Downloading the image", percent: 42, started_ms: min(1) - 20_000 });
+
   const changelog = add({
     ts_ms: min(11),
     author: CLAUDE,

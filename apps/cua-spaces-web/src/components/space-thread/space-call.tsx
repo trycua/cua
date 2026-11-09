@@ -57,6 +57,7 @@ export function SpaceCall({
   identity,
   facts,
   detailsExtra,
+  childSpaces,
   more,
   windows,
   desktop,
@@ -95,6 +96,8 @@ export function SpaceCall({
   facts: readonly SpaceFact[];
   /** Rows after the facts, before More (the Network row). */
   detailsExtra?: ReactNode;
+  /** The Space's child Spaces section in the side panel. */
+  childSpaces?: ReactNode;
   /** The classic page's sections (resources, all facts, Teleport, windows, runs). */
   more: ReactNode;
   /** The Space's windows (Stream rows without the desktop). */
@@ -375,6 +378,7 @@ export function SpaceCall({
           presence={presence}
           facts={panelFacts(facts)}
           extra={detailsExtra}
+          childSpaces={childSpaces}
           onMore={() => setMoreOpen(true)}
           windows={windows}
           desktop={desktop}

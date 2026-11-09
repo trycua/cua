@@ -139,6 +139,12 @@ pub fn current_pins() -> Vec<Pin> {
             }
         }
     }
+    // The slim Linux image every agent home starts from: a create that has resolved its digest must still find it.
+    let slim = "ghcr.io/trycua/linux:24.04-slim";
+    out.push(Pin {
+        reference: slim.to_string(),
+        digest: cua_image::catalog::find(slim).and_then(|e| e.digest.clone()),
+    });
     out
 }
 
@@ -314,9 +320,19 @@ fn unix(t: SystemTime) -> u64 {
         .unwrap_or(0)
 }
 
+/// How long a pulled image must have been unused before the cache cleanup may remove it.
+pub const PULLED_IMAGE_MIN_IDLE: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Whether GC may evict `item` at `now` (cache, unreferenced, idle for the
 /// grace period, not being written).
 pub fn eligible(item: &Item, now: SystemTime, grace: Duration) -> bool {
+    // A pulled image is what a create in flight (or the next one) starts from, and it is not referenced until
+    // the Space exists: it is never evicted within a day of its last use, whatever the grace.
+    let grace = if item.kind == "pulled-image" {
+        grace.max(PULLED_IMAGE_MIN_IDLE)
+    } else {
+        grace
+    };
     let idle = match item.last_used {
         Some(t) => unix(now).saturating_sub(t) >= grace.as_secs(),
         None => true,
@@ -669,7 +685,30 @@ pub async fn auto_gc(reason: &str) -> Option<GcReport> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Pin, pinned_by};
+    use super::{Pin, eligible, pinned_by};
+    use crate::scan::{Category, Item, Target};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn a_pulled_image_is_not_evicted_within_a_day_of_its_last_use_whatever_the_grace() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let img = |used_ago: u64, kind: &str| Item {
+            kind: kind.into(),
+            category: Category::DockerImages,
+            evictable: true,
+            target: Target::DockerImage("ghcr.io/trycua/linux@sha256:374d".into()),
+            last_used: Some(1_000_000 - used_ago),
+            ..Default::default()
+        };
+        let grace = Duration::from_secs(60);
+        assert!(
+            !eligible(&img(2 * 3600, "pulled-image"), now, grace),
+            "used two hours ago: a create may need it"
+        );
+        assert!(eligible(&img(3 * 86_400, "pulled-image"), now, grace));
+        // Other cache items keep the plain grace.
+        assert!(eligible(&img(2 * 3600, "rootfs"), now, grace));
+    }
 
     #[test]
     fn a_reference_names_a_pin_by_digest_or_by_tag() {

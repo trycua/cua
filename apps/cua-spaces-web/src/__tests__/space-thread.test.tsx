@@ -55,6 +55,8 @@ describe("a Space's thread", () => {
     const replyRow = q("[data-attachment='report.html']")!.closest("[data-entry]")!;
     expect(replyRow).not.toBeNull();
     expect(done.contains(replyRow)).toBe(false);
+    // An AI message shows no quote of what it answers.
+    expect(qa("[data-entry]").filter((el) => el.querySelector("[data-reply-quote]") && el.textContent?.includes("Claude Code")).length).toBe(0);
     // Each row has its author and time.
     expect(replyRow.querySelector("time")).not.toBeNull();
     expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes stopped working on \u201cwrite the 2 failures up for the changelog\u201d. It will pick it up again.");

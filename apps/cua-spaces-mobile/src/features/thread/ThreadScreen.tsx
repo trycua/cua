@@ -75,7 +75,7 @@ export function ThreadScreen({ spaceId, onBack, onFullStream, hideHeaderStream, 
   const seen = useRef(0);
 
   const nameOf = useCallback((handle: string) => thread.members.find((m) => m.name === handle)?.identity?.displayName ?? handle, [thread.members]);
-  const rows = useMemo(() => buildRows({ items: thread.items, me: thread.me, live: thread.live, pending: thread.pending, tools, now: Date.now(), agentName: nameOf }), [thread.items, thread.me, thread.live, thread.pending, tools, nameOf]);
+  const rows = useMemo(() => buildRows({ items: thread.items, me: thread.me, live: thread.live, pending: thread.pending, tools, now: Date.now(), agentName: nameOf, members: new Set(thread.members.map((m) => m.name.toLowerCase())) }), [thread.items, thread.me, thread.live, thread.pending, tools, nameOf, thread.members]);
 
   // Opening lands on the newest entry. Rows of different heights (a card) are measured after the first draw, so the
   // end is asked for again while the list settles, until the reader scrolls by hand.

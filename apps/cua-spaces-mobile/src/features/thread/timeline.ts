@@ -55,7 +55,7 @@ export function authorView(a: { kind: string; id: string; name: string }): Autho
 const GAP_MS = 30 * 60_000;
 const GROUP_MS = 5 * 60_000;
 
-export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: LiveAgent[]; pending: OutboxRow[]; tools: ToolGroup[]; now: number; agentName(handle: string): string }): Row[] {
+export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: LiveAgent[]; pending: OutboxRow[]; tools: ToolGroup[]; now: number; agentName(handle: string): string; /** The names of the Space's agent members (lower case): an agent author outside it is Cua's system author. */ members?: ReadonlySet<string> }): Row[] {
   const rows: Row[] = [];
   let lastTs = 0;
   let lastAuthor = "";
@@ -69,7 +69,7 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       lastWasMessage = false;
       continue;
     }
-    const e = it.entry;
+    let e = it.entry;
     if (e.tsMs - lastTs > GAP_MS || rows.length === 0) {
       rows.push({ type: "day", key: `d${e.seq}`, text: dayLine(e.tsMs, opts.now) });
       lastWasMessage = false;
@@ -96,11 +96,15 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       lastAuthor = "";
       continue;
     }
+    // An agent-looking author no member stands behind is Cua's own system author, drawn like every Cua entry.
+    if (opts.members && e.author.kind === "agent" && !opts.members.has(e.author.name.toLowerCase().replace(/^@/, ""))) {
+      e = { ...e, author: { kind: "system", id: "system:children", name: "Cua" } as never };
+    }
     const mine = !!opts.me && e.author.id === opts.me;
     const showAuthor = !mine && (!lastWasMessage || lastAuthor !== e.author.id || e.tsMs - lastTs > GROUP_MS);
     // A reply names what it answers only when that message is not right above it.
     const prevSeq = rows.length && rows[rows.length - 1]!.type === "message" ? (rows[rows.length - 1] as { entry: ThreadEntry }).entry.seq : null;
-    const quote = it.type === "message" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
+    const quote = it.type === "message" && e.author.kind === "person" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
     rows.push({ type: "message", key: it.key, entry: e, mine, showAuthor, quote });
     lastWasMessage = true;
     lastAuthor = e.author.id;

@@ -14,8 +14,8 @@
 import { Link } from "@tanstack/react-router";
 import { CheckIcon, XIcon } from "lucide-react";
 
-import type { LiveChild, ThreadItem } from "@/bridge";
-import { cn } from "@/lib/utils";
+import type { LiveChild, SpaceOs, ThreadItem } from "@/bridge";
+import { OsIcon } from "@/components/os-icon";
 
 import { WorkingFor, elapsedText } from "./live-row";
 
@@ -72,47 +72,105 @@ export function SubagentRow({ item }: { item: Extract<ThreadItem, { type: "subag
   );
 }
 
-/** A child Space the agent made: its name and a link to open it. */
+const OS_KEY = (os: string) => (os === "macOS" ? "macos" : os === "Windows" ? "windows" : os === "Linux" ? "linux" : "unknown") as SpaceOs;
+
+/**
+ * A child Space the agent made, drawn as a subagent row: the same quiet mark, a line for the
+ * Space (its OS logo and name), a muted line for where it is ("Cloning the disk", "Ready in 1m 04s",
+ * "Failed: ..."). The whole row opens the child's page, which exists from the moment the create starts.
+ */
+/** The page a child row opens: the Space once it exists, else its being-made row (the same page a New Space has). */
+export function childPageId(space: { space: string; key?: string; state?: string }): string {
+  if (space.state === "ready" || !space.key) return space.space;
+  return `pending:agent-${space.key.replace(/:(\d+)$/, "-$1")}`;
+}
+
 export function ChildSpaceRow({ item }: { item: Extract<ThreadItem, { type: "child_space" }> }) {
   const { space } = item;
-  return (
-    <div data-child-space={space.space} className="ml-10 flex items-baseline gap-3 py-1 text-[13px]">
-      <span className="min-w-0 truncate">
-        <span className="text-muted-foreground">Made a {space.os || "new"} computer </span>
-        {space.name}
+  const state = space.state ?? "ready";
+  const mark = state === "creating" ? "running" : state === "failed" ? "failed" : "done";
+  const took = space.startedMs != null && space.endedMs != null ? elapsedText(space.endedMs - space.startedMs) : null;
+  const facts =
+    state === "creating" ? (
+      <span className="flex flex-wrap items-center gap-x-3 text-[12px] text-muted-foreground">
+        <span data-child-space-phase>
+          {space.phase || "Starting"}
+          {space.percent != null ? `, ${space.percent}%` : ""}
+        </span>
+        {space.startedMs != null ? <WorkingFor label="" sinceMs={space.startedMs} /> : null}
       </span>
-      <Link to="/spaces/$spaceId" params={{ spaceId: space.space }} className={cn("shrink-0 text-brand-strong hover:underline")}>
-        Open
+    ) : state === "failed" ? (
+      <span data-child-space-phase className="block text-[12px] text-muted-foreground">
+        Couldn't make it: {space.error || "something went wrong"}
+      </span>
+    ) : (
+      <span data-child-space-phase className="block text-[12px] text-muted-foreground">
+        Ready{took ? ` in ${took}` : ""}
+      </span>
+    );
+  return (
+    <div data-child-space={space.space} data-child-space-state={state} className="ml-10 py-1">
+      <Link to="/spaces/$spaceId" params={{ spaceId: childPageId(space) }} className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40" aria-label={`Open ${space.name}`}>
+        <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
+          <ChildMark state={mark} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-foreground">
+            <OsIcon os={OS_KEY(space.os)} className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{space.name}</span>
+          </span>
+          {facts}
+        </span>
       </Link>
     </div>
   );
 }
 
-/** The subagents an agent has running now, under its working line. */
+/**
+ * What an agent has running now, under its working line: its subagents and the Spaces it is making (OS logo,
+ * name, plain step, and a link to the page that exists from the first moment).
+ */
 export function LiveChildren({ children }: { children: readonly LiveChild[] }) {
   if (!children.length) return null;
   return (
     <ul data-live-children="" className="mt-1 ml-10 space-y-0.5">
-      {children.map((c) => (
-        <li key={c.id} data-live-child={c.id} className="flex min-w-0 items-start gap-2.5">
-          <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
-            <ChildMark state="running" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px]">{c.title}</span>
-            <span className="block truncate text-[12px] text-muted-foreground">
-              {c.step ?? "Starting"}
-              {c.steps > 0 ? `, ${stepsText(c.steps)}` : ""}
-              {c.sinceMs ? (
-                <>
-                  {", "}
-                  <WorkingFor label="Running" sinceMs={c.sinceMs} />
-                </>
-              ) : null}
+      {children.map((c) => {
+        const body = (
+          <>
+            <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
+              <ChildMark state="running" />
             </span>
-          </span>
-        </li>
-      ))}
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-1.5 text-[13px]">
+                {c.space ? <OsIcon os={OS_KEY(c.space.os)} className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+                <span className="truncate">{c.title}</span>
+              </span>
+              <span className="block truncate text-[12px] text-muted-foreground">
+                {c.step || "Starting"}
+                {c.space?.percent != null ? `, ${c.space.percent}%` : ""}
+                {!c.space && c.steps > 0 ? `, ${stepsText(c.steps)}` : ""}
+                {c.sinceMs ? (
+                  <>
+                    {", "}
+                    <WorkingFor label="" sinceMs={c.sinceMs} />
+                  </>
+                ) : null}
+              </span>
+            </span>
+          </>
+        );
+        return (
+          <li key={c.id} data-live-child={c.id} data-live-child-space={c.space ? "" : undefined}>
+            {c.space ? (
+              <Link to="/spaces/$spaceId" params={{ spaceId: c.space.page }} className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40" aria-label={`Open ${c.title}`}>
+                {body}
+              </Link>
+            ) : (
+              <div className="flex min-w-0 items-start gap-2.5">{body}</div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

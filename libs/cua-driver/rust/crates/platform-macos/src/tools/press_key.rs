@@ -571,12 +571,15 @@ mod tests {
     #[test]
     fn the_oracle_returns_on_the_first_changed_read() {
         let mut reads = 0;
-        let started = std::time::Instant::now();
-        assert!(poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || {
-            reads += 1;
-            reads == 2
-        }));
-        assert!(started.elapsed() < AX_ORACLE_WAIT);
+        assert!(poll_until(
+            std::time::Duration::from_secs(5),
+            AX_ORACLE_POLL,
+            || {
+                reads += 1;
+                reads == 2
+            }
+        ));
+        assert_eq!(reads, 2, "no read after the change");
     }
 
     #[test]

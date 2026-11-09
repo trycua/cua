@@ -34,7 +34,10 @@ describe("the resources store", () => {
     try {
       const demo = createDemoAdapter({ latencyMs: 0 });
       const calls: boolean[] = [];
-      const adapter: DataAdapter = { ...demo, call: (op, args) => (op === "resources.get" && calls.push((args as { visible: boolean }).visible), demo.call(op, args)) };
+      const adapter: DataAdapter = {
+        ...demo,
+        call: (op, args) => (op === "resources.get" && calls.push((args as { visible: boolean }).visible), demo.call(op, args)),
+      };
       const seen: { snap?: ResourcesSnapshot | null } = {};
       render(
         <BridgeProvider adapter={adapter}>

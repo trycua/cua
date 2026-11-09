@@ -4,6 +4,4 @@
 // The methods that still answer `unimplemented` on the Electron host. Each
 // area's port removes its methods from this list (bridge-registry.test.ts
 // checks it against the registry).
-export const NOT_YET: string[] = [
-];
-
+export const NOT_YET: string[] = [];

@@ -280,7 +280,11 @@ export interface WebkitRequest {
 
 export type WebkitResponse =
   | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string } };
+  | {
+      id: string;
+      ok: false;
+      error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string };
+    };
 
 /** `CustomEvent("cua:event").detail`. */
 export interface WebkitEventDetail {

@@ -19,7 +19,11 @@ import type { GithubReport } from "./ops/github";
 
 /** The section the core draws for the daemon's status (`error`: why there is none). */
 export function githubView(core: CoreClient, report: GithubReport | null, error: string | null): GithubView | null {
-  return core.tryCall<GithubView>("githubConnection.view", { input: { ...(report ?? { hosts: [], ghFound: false, ghOld: false, canSave: false }), ...(error ? { error } : {}) } }) ?? null;
+  return (
+    core.tryCall<GithubView>("githubConnection.view", {
+      input: { ...(report ?? { hosts: [], ghFound: false, ghOld: false, canSave: false }), ...(error ? { error } : {}) },
+    }) ?? null
+  );
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -50,23 +54,20 @@ export function useGithub(active = true, saved = false): GithubHook {
   const [notice, setNotice] = useState<string | null>(null);
   const seq = useRef(0);
 
-  const run = useCallback(
-    async (call: () => Promise<GithubReport>, quiet = false) => {
-      const mine = ++seq.current;
-      try {
-        const r = await call();
-        if (mine === seq.current) {
-          setReport(r);
-          setError(null);
-        }
-      } catch (e) {
-        if (mine !== seq.current) return;
-        if (quiet) setError(message(e));
-        else setNotice(message(e));
+  const run = useCallback(async (call: () => Promise<GithubReport>, quiet = false) => {
+    const mine = ++seq.current;
+    try {
+      const r = await call();
+      if (mine === seq.current) {
+        setReport(r);
+        setError(null);
       }
-    },
-    [],
-  );
+    } catch (e) {
+      if (mine !== seq.current) return;
+      if (quiet) setError(message(e));
+      else setNotice(message(e));
+    }
+  }, []);
 
   // Opening the page reads the status at once (nothing is looked up on the network).
   useEffect(() => {

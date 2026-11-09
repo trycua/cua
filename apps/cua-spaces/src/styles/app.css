@@ -878,8 +878,9 @@ select:focus-visible {
 
 @keyframes island-expand {
   from {
-    clip-path: inset(0 calc(50% - var(--notch-width) / 2) calc(100% - var(--notch-height))
-      round 0 0 var(--radius-lg) var(--radius-lg));
+    clip-path: inset(
+      0 calc(50% - var(--notch-width) / 2) calc(100% - var(--notch-height)) round 0 0 var(--radius-lg) var(--radius-lg)
+    );
   }
   to {
     clip-path: inset(0 0 0 0 round 0 0 var(--radius-xl) var(--radius-xl));
@@ -937,8 +938,9 @@ select:focus-visible {
     clip-path: inset(0 0 0 0 round 0 0 var(--radius-xl) var(--radius-xl));
   }
   to {
-    clip-path: inset(0 calc(50% - var(--notch-width) / 2) calc(100% - var(--notch-height))
-      round 0 0 var(--radius-lg) var(--radius-lg));
+    clip-path: inset(
+      0 calc(50% - var(--notch-width) / 2) calc(100% - var(--notch-height)) round 0 0 var(--radius-lg) var(--radius-lg)
+    );
     opacity: 0.85;
   }
 }
@@ -2924,7 +2926,9 @@ select {
   color: var(--ink);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .teleport-window-cell:hover,
 .teleport-window-cell:focus-visible {
@@ -3160,7 +3164,9 @@ select {
   height: 0;
   pointer-events: none;
   z-index: 5;
-  transition: left 90ms linear, top 90ms linear;
+  transition:
+    left 90ms linear,
+    top 90ms linear;
   --cursor-color: #3b82f6;
 }
 .ws-remote-cursor-arrow {
@@ -3189,12 +3195,22 @@ select {
   animation: ws-remote-cursor-pulse 420ms ease-out;
 }
 @keyframes ws-remote-cursor-pulse {
-  0% { transform: translate(-50%, -50%) scale(0.4); opacity: 0.55; }
-  100% { transform: translate(-50%, -50%) scale(3.2); opacity: 0; }
+  0% {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0.55;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(3.2);
+    opacity: 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ws-remote-cursor { transition: none; }
-  .ws-remote-cursor.is-pressed .ws-remote-cursor-pulse { animation: none; }
+  .ws-remote-cursor {
+    transition: none;
+  }
+  .ws-remote-cursor.is-pressed .ws-remote-cursor-pulse {
+    animation: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -3236,7 +3252,9 @@ html.is-teleport-picker,
   background: var(--acrylic-bg-strong);
   backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
   -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
-  box-shadow: 0 28px 70px -20px rgba(0, 0, 0, 0.55), 0 6px 16px -8px rgba(0, 0, 0, 0.4);
+  box-shadow:
+    0 28px 70px -20px rgba(0, 0, 0, 0.55),
+    0 6px 16px -8px rgba(0, 0, 0, 0.4);
   color: var(--ink);
   overflow: hidden;
   animation: notice-in var(--dur) var(--ease-out);
@@ -3285,7 +3303,9 @@ html.is-teleport-picker,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
 .hp-tab:hover {
@@ -3370,7 +3390,9 @@ html.is-teleport-picker,
   color: var(--ink);
   cursor: pointer;
   text-align: left;
-  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .hp-card:hover {
   background: var(--fill-hover);
@@ -3846,7 +3868,6 @@ html.is-teleport-picker,
   }
 }
 
-
 /* ------------------------------------------------------------------ */
 /* Per-window view + list view (switcher)                             */
 /* ------------------------------------------------------------------ */
@@ -4080,7 +4101,6 @@ html.is-teleport-picker,
 
 /* The popped-out Spaces list window (label `spaces-list`): a normal decorated
    OS window, so it paints an opaque panel under the system title bar. */
-
 
 /* Transparent to the window's native material; the page paints nothing. */
 html.is-spaces-list,
@@ -4953,7 +4973,38 @@ li.installer-agent {
 }
 
 /* Summary: a small info icon after a long value; the text shows on hover, focus or click. */
-.wz-info { position: relative; display: inline-block; margin-left: 6px; vertical-align: middle; }
-.wz-info-btn { display: inline-flex; padding: 0; border: 0; background: none; color: inherit; opacity: 0.6; cursor: pointer; }
-.wz-info-btn:hover, .wz-info-btn:focus-visible { opacity: 1; }
-.wz-info-pop { position: absolute; z-index: 5; left: 0; top: 100%; margin-top: 4px; width: max-content; max-width: 280px; padding: 6px 8px; border: 1px solid var(--border, rgba(128, 128, 128, 0.35)); border-radius: 6px; background: var(--surface, Canvas); font-size: 12px; line-height: 1.4; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); }
+.wz-info {
+  position: relative;
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.wz-info-btn {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.wz-info-btn:hover,
+.wz-info-btn:focus-visible {
+  opacity: 1;
+}
+.wz-info-pop {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  top: 100%;
+  margin-top: 4px;
+  width: max-content;
+  max-width: 280px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  background: var(--surface, Canvas);
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}

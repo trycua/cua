@@ -126,4 +126,3 @@ describe.skipIf(!wasmBuilt)("About, Reset & Show", () => {
     expect(localStorage.getItem(TEAMMATES_KEY)).toBe(before[TEAMMATES_KEY]);
   });
 });
-

@@ -108,7 +108,10 @@ declare module "../protocol" {
      * Adds or replaces a key; `env` names an `other` key. With `add` it is saved as another key
      * beside the first one for the provider (named `label`); it replaces nothing. Answers the list after.
      */
-    "agentKeys.set": { args: { provider: AgentKeyProvider; env?: string | null; value: string; add?: boolean; label?: string } & KeyChoices; result: AgentKeysReport };
+    "agentKeys.set": {
+      args: { provider: AgentKeyProvider; env?: string | null; value: string; add?: boolean; label?: string } & KeyChoices;
+      result: AgentKeysReport;
+    };
     /**
      * Removes the key named `env` and every key saved beside it, or with `slot` only that one, or with
      * `keepOthers` only the first (the oldest of the others takes its place). Answers the list after.
@@ -204,7 +207,19 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     if (!env) return [];
     const added = r.added_ms ?? r.addedMs;
     const slot = typeof r.slot === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(r.slot) ? r.slot : "";
-    return [{ provider: providerOf(r.provider), env, ...(slot ? { slot } : {}), last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0, ...(r.expired === true ? { expired: true } : {}), ...(label(r.label) ? { label: label(r.label) } : {}), ...(line(r.region) ? { region: line(r.region) } : {}), ...(Object.keys(fieldsOf(r.fields)).length ? { fields: fieldsOf(r.fields) } : {}) }];
+    return [
+      {
+        provider: providerOf(r.provider),
+        env,
+        ...(slot ? { slot } : {}),
+        last4: str(r.last4).slice(-4),
+        addedMs: typeof added === "number" ? added : 0,
+        ...(r.expired === true ? { expired: true } : {}),
+        ...(label(r.label) ? { label: label(r.label) } : {}),
+        ...(line(r.region) ? { region: line(r.region) } : {}),
+        ...(Object.keys(fieldsOf(r.fields)).length ? { fields: fieldsOf(r.fields) } : {}),
+      },
+    ];
   });
   const providers = (Array.isArray(o.providers) ? o.providers : []).flatMap((p): AgentKeyProviderRow[] => {
     const r = (p ?? {}) as Record<string, unknown>;
@@ -236,10 +251,16 @@ const choicesOf = ({ region, fields }: KeyChoices) => ({
 });
 const setArgs = ({ provider, env, value, region, fields, add, label }: OpArgs<"agentKeys.set">) => {
   const more = { ...(add ? { add: true } : {}), ...(label?.trim() ? { label: label.trim() } : {}) };
-  return provider === "other" ? { provider, env: (env ?? "").trim(), value, ...choicesOf({ region, fields }), ...more } : { provider, value, ...choicesOf({ region, fields }), ...more };
+  return provider === "other"
+    ? { provider, env: (env ?? "").trim(), value, ...choicesOf({ region, fields }), ...more }
+    : { provider, value, ...choicesOf({ region, fields }), ...more };
 };
 /** The arguments `agent_keys.remove` takes (the daemon's `keep_others`). */
-const removeArgs = ({ env, slot, keepOthers }: OpArgs<"agentKeys.remove">) => ({ env, ...(slot ? { slot } : {}), ...(keepOthers ? { keep_others: true } : {}) });
+const removeArgs = ({ env, slot, keepOthers }: OpArgs<"agentKeys.remove">) => ({
+  env,
+  ...(slot ? { slot } : {}),
+  ...(keepOthers ? { keep_others: true } : {}),
+});
 
 type Handlers = { [K in AgentKeysOp]: (args: OpArgs<K>) => Promise<OpResult<K>> };
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;

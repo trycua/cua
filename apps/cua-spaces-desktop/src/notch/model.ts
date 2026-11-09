@@ -8,7 +8,18 @@
 // thumbnails. It decides nothing itself; the helper only draws what it
 // emits. Pure (no Electron), so it is tested with a fake core and clock.
 
-import { dragKind, needsRow, overlayPhase, triggerPhase, wireLayout, wireView, type CoreNotchState, type CoreTriggerState, type NotchCore, type Tagged } from "./core";
+import {
+  dragKind,
+  needsRow,
+  overlayPhase,
+  triggerPhase,
+  wireLayout,
+  wireView,
+  type CoreNotchState,
+  type CoreTriggerState,
+  type NotchCore,
+  type Tagged,
+} from "./core";
 import type { NotchInput, NotchLayout, NotchView, OsIcon, ScreenFacts, StateMessage } from "./protocol";
 
 /** A window drag as the SDK's monitor reports it (`TeleportWindowDragEvent`). */
@@ -131,8 +142,7 @@ export function settingsURL(pane: string): string {
     : "x-apple.systempreferences:com.apple.preference.security";
 }
 
-const toBytes = (v: Uint8Array | ArrayBuffer | null | undefined): Uint8Array | null =>
-  v ? (v instanceof Uint8Array ? v : new Uint8Array(v)) : null;
+const toBytes = (v: Uint8Array | ArrayBuffer | null | undefined): Uint8Array | null => (v ? (v instanceof Uint8Array ? v : new Uint8Array(v)) : null);
 
 export class NotchModel {
   private state: CoreNotchState;
@@ -608,7 +618,9 @@ export class NotchModel {
     const hit = isMove && event.phase !== "cancel" ? targets.at(event.x, event.y) : null;
     const seen = `${event.phase === "move" ? "move" : event.phase} ${hit ? `${hit.spaceId}@${hit.window}` : "-"}`;
     if (this.options.trace && (event.phase !== "move" || seen !== this.lastTrace)) {
-      this.options.trace(`window drag ${event.phase} (${event.x}, ${event.y}) kind=${dragKind(this.trigger.kind)} tile=${hit ? `${hit.spaceId} in window ${hit.window}` : "none"}`);
+      this.options.trace(
+        `window drag ${event.phase} (${event.x}, ${event.y}) kind=${dragKind(this.trigger.kind)} tile=${hit ? `${hit.spaceId} in window ${hit.window}` : "none"}`,
+      );
     }
     this.lastTrace = seen;
     if (ending || !hit) this.setWindowTarget(null);

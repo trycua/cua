@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.0](https://github.com/trycua/cua/compare/cua-sdk-v0.16.0...cua-sdk-v0.17.0) (2026-11-09)
+
+
+### Features
+
+* **spaces:** a Space uses the pool, its runs are its children and are cleaned up with it ([#6945](https://github.com/trycua/cua/issues/6945)) ([a35099d](https://github.com/trycua/cua/commit/a35099d7bcc5548d9d1b86b901d20e025a0594b9))
+* **spaces:** Ask first and Secure Spaces are always on, their Labs switches are gone (CUA-3551) ([#6775](https://github.com/trycua/cua/issues/6775)) ([cc67e71](https://github.com/trycua/cua/commit/cc67e715d11b7450a82663bf7e308e6680422beb))
+
+
+### Bug Fixes
+
+* **cua-agents:** an agent's log event bigger than the read window no longer stalls the reader, and the journal keeps lines small ([#7004](https://github.com/trycua/cua/issues/7004)) ([8b339c5](https://github.com/trycua/cua/commit/8b339c56feb1b03252d3e72ff7a6e3d961af856f))
+* **spaces:** hold back an agent's narration of its own process in the thread ([#7027](https://github.com/trycua/cua/issues/7027)) ([fa605be](https://github.com/trycua/cua/commit/fa605be7c8dc15c7042205ae98d5a85699c36a47))
+
 ## [0.16.0](https://github.com/trycua/cua/compare/cua-sdk-v0.15.1...cua-sdk-v0.16.0) (2026-11-08)
 
 

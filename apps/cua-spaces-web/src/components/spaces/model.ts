@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { Space, SpaceAccess } from "@/bridge";
+import { t } from "@/i18n";
 import { isMachineDesktop, isThisMacDesktop, isUnsharedDesktop, type SpaceState } from "@/lib/spaces";
 
 /** One Space as the Spaces page draws it (a tile or a list row). */
@@ -27,8 +28,8 @@ export function desktopOf(space: Space): SpaceItem["desktop"] {
 
 /** What a desktop row says in place of the core's state word: "Not sharing", or "Sharing" for This Mac's own (another machine's says "Running"). */
 export function desktopWord(item: Pick<SpaceItem, "desktop" | "space">): string | undefined {
-  if (item.desktop === "off") return "Not sharing";
-  return item.desktop === "shared" && item.space.id === "this-mac" ? "Sharing" : undefined;
+  if (item.desktop === "off") return t("computers.row.not_sharing");
+  return item.desktop === "shared" && item.space.id === "this-mac" ? t("computers.tile.sharing") : undefined;
 }
 
 /** Whether the row has its "⋯" menu: a Space, and another machine's shared desktop. Not This Mac's desktop, and not a desktop that is not shared. */

@@ -21,18 +21,26 @@ beforeEach(() => {
 afterEach(cleanup);
 
 /** This Mac's roster row: reachable while its desktop is shared. */
-const thisMac = (shared: boolean) => ({ id: "this-mac", name: "This Mac", provider: "local", spacesdVersion: "", features: [], reachable: shared, os: "macos" });
+const thisMac = (shared: boolean) => ({
+  id: "this-mac",
+  name: "This Mac",
+  provider: "local",
+  spacesdVersion: "",
+  features: [],
+  reachable: shared,
+  os: "macos",
+});
 
 const withDesktop = (shared: boolean, only = false) => ({
   failsCreates: false,
   listsGhost: false,
   answer: (op: string, out: unknown) => {
     if (op === "host.status") return { ...(out as object), shareDesktop: shared };
-    if (op === "machines.list") return (out as { current?: boolean; host?: object }[]).map((r) => (r.current && r.host ? { ...r, host: { ...r.host, shareDesktop: shared } } : r));
+    if (op === "machines.list")
+      return (out as { current?: boolean; host?: object }[]).map((r) => (r.current && r.host ? { ...r, host: { ...r.host, shareDesktop: shared } } : r));
     return op === "spaces.list" ? (only ? [thisMac(shared)] : [...(out as unknown[]), thisMac(shared)]) : out;
   },
 });
-
 
 describe.skipIf(!wasmBuilt)("This Mac's desktop row", () => {
   it("never counts as a Space: the line under Computers stays the same with it listed", async () => {
@@ -135,7 +143,12 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
     const { router } = await mountApp("/home", withDesktop(true, true));
     const tile = () => document.querySelector('[data-home-spaces] [data-space-id="this-mac"]');
     await waitFor(() => expect(tile()).not.toBeNull(), { timeout: 15_000 });
-    await act(async () => void fireEvent.click(tile()!.querySelector<HTMLElement>("[data-tile-hide]") ?? document.querySelector<HTMLElement>("[data-home-spaces] [data-tile-hide]")!));
+    await act(
+      async () =>
+        void fireEvent.click(
+          tile()!.querySelector<HTMLElement>("[data-tile-hide]") ?? document.querySelector<HTMLElement>("[data-home-spaces] [data-tile-hide]")!,
+        ),
+    );
     await waitFor(() => expect(tile()).toBeNull());
     // Never gone for good: "1 hidden · Show" stays under Home's computers.
     const line = await waitFor(() => {
@@ -152,11 +165,14 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
     await act(async () => void fireEvent.click(document.querySelector<HTMLElement>("[data-home-spaces] [data-tile-hide]")!));
     await waitFor(() => expect(tile()).toBeNull());
     await act(async () => void router.navigate({ to: "/spaces/computer/$computerId", params: { computerId: "this-mac" } }));
-    const row = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>("[data-machine-on-home]");
-      expect(el).not.toBeNull();
-      return el!;
-    }, { timeout: 15_000 });
+    const row = await waitFor(
+      () => {
+        const el = document.querySelector<HTMLElement>("[data-machine-on-home]");
+        expect(el).not.toBeNull();
+        return el!;
+      },
+      { timeout: 15_000 },
+    );
     expect(row.getAttribute("data-machine-on-home")).toBe("off");
     expect(row.textContent).toContain("Hidden from Home");
     await act(async () => void fireEvent.click(row.querySelector<HTMLElement>("[role=switch]")!));

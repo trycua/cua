@@ -214,7 +214,15 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       if (!b.setNetwork) throw Failure.unsupported("network settings");
       const list = (k: string) => (Array.isArray(args[k]) ? (args[k] as unknown[]).filter((x): x is string => typeof x === "string") : []);
       const via = typeof args.via === "string" ? args.via : undefined;
-      const applied = await b.setNetwork(string(args, "spaceId"), string(args, "network"), list("allow"), list("deny"), args.widen === true, args.tree === true, via);
+      const applied = await b.setNetwork(
+        string(args, "spaceId"),
+        string(args, "network"),
+        list("allow"),
+        list("deny"),
+        args.widen === true,
+        args.tree === true,
+        via,
+      );
       return { applied };
     },
     "network.log": async (args) => {

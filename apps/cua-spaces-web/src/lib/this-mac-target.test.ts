@@ -57,7 +57,10 @@ describe("Set up on the chip", () => {
 describe("the switcher's other computers", () => {
   it("lists your other computers' desktops that are on, never this computer's own", () => {
     const row = (id: string, over: object = {}) => ({ id, name: id, os: "macos", status: "running", provider: "relay", ...over }) as never;
-    const list = otherComputerDesktops([row("this-mac", { status: "local" }), row("relay:m-here"), row("relay:mini"), row("relay:space-abc"), row("relay:off", { status: "suspended" })], "m-here");
+    const list = otherComputerDesktops(
+      [row("this-mac", { status: "local" }), row("relay:m-here"), row("relay:mini"), row("relay:space-abc"), row("relay:off", { status: "suspended" })],
+      "m-here",
+    );
     expect(list.map((s) => s.id)).toEqual(["relay:mini"]);
   });
 });

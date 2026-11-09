@@ -31,9 +31,9 @@ def components() -> dict[str, str]:
     ("tag", "component", "paths", "excludes"),
     [
         ("cua-sdk-v0.4.2", "cua-sdk", ["libs/cua"], ["libs/cua/proto/MEDIA.md", "libs/cua/README.md"]),
-        # additional-paths is not a release-please 17.3.0 option: the changelog
-        # covers the package path only, so the notes do too.
-        ("cua-spaces-v0.8.0", "cua-spaces", ["apps/cua-spaces-macos"], []),
+        # The additional paths count toward the changelog, so the notes cover them.
+        ("cua-spaces-v0.8.0", "cua-spaces",
+         ["apps/cua-spaces-macos", "libs/cua", "apps/cua-spaces-web", "apps/cua-spaces-desktop"], []),
         ("cua-spacesd-v0.5.4", "cua-spacesd", ["libs/cua-spacesd"], None),
         ("sandbox-v0.9.1", "sandbox", ["libs/python/cua-sandbox"], []),
         ("bench-v0.3.1", "bench", ["libs/cua-bench"], []),

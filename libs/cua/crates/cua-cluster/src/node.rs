@@ -314,6 +314,8 @@ struct Inner {
     contact: HashMap<String, Instant>,
     used_millicpus: u64,
     used_memory_mb: u64,
+    /// Video memory the accepted jobs asked for (MiB).
+    used_vram_mb: u64,
     running: u32,
     running_by_kind: BTreeMap<String, u32>,
     draining: bool,
@@ -795,7 +797,7 @@ impl NodeJobs {
             dedicated: offers.kinds.iter().any(|k| k == crate::model::KIND_MACHINE),
             job_services: true,
             kinds: offers.kinds,
-            accelerators: crate::sysinfo::accelerators(),
+            accelerators: crate::sysinfo::accelerators_free(g.used_vram_mb),
             addresses: crate::sysinfo::addresses(),
             usd_per_hour: crate::sysinfo::usd_per_hour(),
             self_fence_after_ms: {
@@ -936,6 +938,19 @@ impl NodeJobs {
                 ));
             }
         }
+        // Video memory: refused here, whatever the scheduler thought, when the
+        // jobs already accepted (and what else uses the GPU) leave too little.
+        let vram = crate::model::vram_request_mb(&spec.accelerator);
+        if vram > 0 {
+            let words = crate::sysinfo::accelerators_free(g.used_vram_mb);
+            if !crate::model::accelerator_fits(&spec.accelerator, &words) {
+                return Some(format!(
+                    "not enough video memory free ({}; the job asks for {})",
+                    words.join(", "),
+                    spec.accelerator
+                ));
+            }
+        }
         let mem = g.used_memory_mb + ext.memory_mb + want_mem;
         if mem > self.cfg.memory_total_mb {
             return Some(format!(
@@ -1061,6 +1076,7 @@ impl NodeJobs {
                 let (cpu, mem) = reservation(spec);
                 g.used_millicpus += cpu;
                 g.used_memory_mb += mem;
+                g.used_vram_mb += crate::model::vram_request_mb(&spec.accelerator);
                 if spec.kind == "vm"
                     && let Some(v) = crate::sysinfo::vm_capacity()
                 {
@@ -1482,6 +1498,9 @@ fn release(g: &mut Inner, spec: &JobSpec, kind: &str) {
     let (cpu, mem) = reservation(spec);
     g.used_millicpus = g.used_millicpus.saturating_sub(cpu);
     g.used_memory_mb = g.used_memory_mb.saturating_sub(mem);
+    g.used_vram_mb = g
+        .used_vram_mb
+        .saturating_sub(crate::model::vram_request_mb(&spec.accelerator));
     g.running = g.running.saturating_sub(1);
     if let Some(n) = g.running_by_kind.get_mut(kind) {
         *n = n.saturating_sub(1);

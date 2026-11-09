@@ -74,7 +74,12 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
 
   it("picks an app and an account, shows both on the chip, and remembers them across a reload", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const host = { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op: string, args: unknown) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) };
+    const host = {
+      failsCreates: false,
+      listsGhost: false,
+      ...ACCOUNTS,
+      intercept: (op: string, args: unknown) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    };
     await mountApp("/home", host);
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
@@ -90,7 +95,11 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
       fireEvent.keyDown(q("[data-agent-menu]")!, { key: "Escape" });
     });
     // The host keeps which account the app runs with, so a run uses the one shown.
-    await waitFor(() => expect(calls.some((c) => c.op === "agentKeys.use" && c.args.app === "claude-code" && c.args.env === "CLAUDE_CODE_OAUTH_TOKEN" && c.args.slot === "kwork")).toBe(true));
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.op === "agentKeys.use" && c.args.app === "claude-code" && c.args.env === "CLAUDE_CODE_OAUTH_TOKEN" && c.args.slot === "kwork"),
+      ).toBe(true),
+    );
     cleanup();
     // A new launch: the choice is still there (the app and model here, the account from the host's store).
     await mountApp("/home", host);
@@ -114,7 +123,12 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
 
   it("an app's sign-ins live on its Settings page: why, which one is in use, use another, rename and remove", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    await mountApp("/settings/connections/claude-code", { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+    await mountApp("/settings/connections/claude-code", {
+      failsCreates: false,
+      listsGhost: false,
+      ...ACCOUNTS,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
     const page = await waitFor(() => {
       const el = q('[data-agent-sign-ins="claude-code"]');
       expect(el).not.toBeNull();
@@ -208,14 +222,21 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
 
   it("adds a repo from a link, refuses what is not one, keeps it on the task, and removes it with the x", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+    const { router } = await mountApp("/home", {
+      failsCreates: false,
+      listsGhost: false,
+      ...ACCOUNTS,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
     await act(async () => {
-      fireEvent.click(await waitFor(() => {
-        const el = q('[data-picker="repo"]');
-        expect(el).not.toBeNull();
-        return el!;
-      }));
+      fireEvent.click(
+        await waitFor(() => {
+          const el = q('[data-picker="repo"]');
+          expect(el).not.toBeNull();
+          return el!;
+        }),
+      );
     });
     const field = await screen.findByLabelText("Repo link or owner/name");
     fireEvent.change(field, { target: { value: "what is this" } });
@@ -235,7 +256,15 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     });
     await waitFor(() => expect(askTasks()[0]!.repo).toEqual({ url: "https://github.com/trycua/demo-failing-tests", label: "trycua/demo-failing-tests" }));
     // The agent is told the repo in the job's own message.
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("find out why the tests fail\n\nRepo: https://github.com/trycua/demo-failing-tests"))).toBe(true), { timeout: 15000 });
+    await waitFor(
+      () =>
+        expect(
+          calls.some(
+            (c) => c.op === "thread.post" && String(c.args.text).includes("find out why the tests fail\n\nRepo: https://github.com/trycua/demo-failing-tests"),
+          ),
+        ).toBe(true),
+      { timeout: 15000 },
+    );
     // It stays for the next job until removed (back on Home, the job's Space is open now).
     await act(async () => void router.navigate({ to: "/home" }));
     await act(async () => {

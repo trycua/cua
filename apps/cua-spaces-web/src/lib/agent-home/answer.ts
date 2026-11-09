@@ -48,7 +48,12 @@ function machineFor(req: AbilityRequest, machines: ReadonlyMap<string, string>):
  * ability request's grant kept first. Also answers, once, the open requests
  * that what the agent already holds covers.
  */
-export function useAbilityAnswer(spaceId: string, items: readonly ThreadItem[], roster: Pick<Roster, "agents">, answer: (approval: number, approve: boolean) => Promise<void>): (approval: number, approve: boolean) => Promise<void> {
+export function useAbilityAnswer(
+  spaceId: string,
+  items: readonly ThreadItem[],
+  roster: Pick<Roster, "agents">,
+  answer: (approval: number, approve: boolean) => Promise<void>,
+): (approval: number, approve: boolean) => Promise<void> {
   const { data } = useBridge();
   const { data: machineRows } = useMachines();
   const machines = useMemo(() => new Map((machineRows ?? []).map((m) => [m.id, m.name] as const)), [machineRows]);

@@ -8,18 +8,15 @@ import { ProviderMark } from "@/components/settings/connections/provider-mark";
 import { Button } from "@/components/ui/button";
 import { GroupedRow } from "@/components/ui/grouped";
 import { ChoiceMenu } from "@/components/ui/menu";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 const same = (a: UseOption, b: UseOption) => a.env === b.env && a.slot === b.slot;
 
 /** What a credential reads as under its provider's name: "API key ending 4f2a", then the model when one was set. */
 function Line({ o }: { o: UseOption }) {
-  return (
-    <>
-      {o.line}
-      {o.model ? `, model ${o.model}` : ""}
-    </>
-  );
+  const t = useT();
+  return <>{o.model ? t("settings.connections.uses.line_model", { line: o.line, model: o.model }) : o.line}</>;
 }
 
 /**
@@ -28,12 +25,11 @@ function Line({ o }: { o: UseOption }) {
  * Choosing signs nothing out and deletes nothing; it takes effect on the app's next run.
  */
 export function UsesRow({ agent, uses, onChoose, onConnect }: { agent: string; uses: AppUses; onChoose: (o: UseOption) => void; onConnect: () => void }) {
+  const t = useT();
   const cur = uses.current;
   return (
     <GroupedRow className="min-h-14" data-connector-uses={uses.state} data-connector-uses-app={agent}>
-      {cur ? (
-        <ProviderMark id={cur.provider} name={cur.providerName} />
-      ) : null}
+      {cur ? <ProviderMark id={cur.provider} name={cur.providerName} /> : null}
       <div className="min-w-0 flex-1">
         {cur ? (
           <>
@@ -57,8 +53,8 @@ export function UsesRow({ agent, uses, onChoose, onConnect }: { agent: string; u
         <ChoiceMenu
           popupAttrs={{ "data-uses-popup": "" }}
           trigger={
-            <Button size="sm" variant="outline" disabled={!uses.enabled} data-uses-menu="" aria-label={`Choose what ${agent} uses`}>
-              {cur ? "Change" : "Choose"}
+            <Button size="sm" variant="outline" disabled={!uses.enabled} data-uses-menu="" aria-label={t("settings.connections.uses.choose_aria", { agent })}>
+              {cur ? t("settings.connections.uses.change") : t("settings.connections.uses.choose")}
               <ChevronsUpDownIcon className="size-3.5 text-muted-foreground" />
             </Button>
           }
@@ -94,7 +90,7 @@ export function UsesRow({ agent, uses, onChoose, onConnect }: { agent: string; u
         />
       ) : (
         <Button size="sm" variant="outline" disabled={!uses.enabled} data-uses-connect="" onClick={onConnect}>
-          Connect
+          {t("settings.connections.connect")}
         </Button>
       )}
     </GroupedRow>

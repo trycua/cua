@@ -518,8 +518,8 @@ export interface HostStatus {
   account?: HostAccount | null;
   /** What a running setup (or Sign In) waits for, such as finishing the
    * sign-in in the browser (the SwiftUI app's `HostModel.progress`). */
-  progress?: string | null;  /** The name System Settings lists the app under ("Cua Spaces", "Cua
-   * Spaces Local"): the Mac app's own name, for the permissions screen. */
+  progress?: string | null /** The name System Settings lists the app under ("Cua Spaces", "Cua
+   * Spaces Local"): the Mac app's own name, for the permissions screen. */;
   appName?: string | null;
 }
 
@@ -802,16 +802,7 @@ export interface SettingsInput {
   showTips?: boolean;
 }
 
-export type SettingsRowKind =
-  | "text"
-  | "choice"
-  | "note"
-  | "error"
-  | "field"
-  | "secret"
-  | "prompt"
-  | "link"
-  | "toggle";
+export type SettingsRowKind = "text" | "choice" | "note" | "error" | "field" | "secret" | "prompt" | "link" | "toggle";
 
 export interface SettingsOption {
   id: string;

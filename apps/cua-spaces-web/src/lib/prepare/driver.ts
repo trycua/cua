@@ -53,7 +53,8 @@ export interface PrepareEnv {
 }
 
 /** Words of a failure that is the connection's, not the machine's. */
-const NETWORK = /(network|connection|connect|timed?\s?out|time-?out|offline|dns|resolve|resolving|reset|refused|unreachable|temporary failure|tls|handshake|eof|broken pipe|no route|download|registry|ghcr|socket|try again later|\b50[234]\b)/i;
+const NETWORK =
+  /(network|connection|connect|timed?\s?out|time-?out|offline|dns|resolve|resolving|reset|refused|unreachable|temporary failure|tls|handshake|eof|broken pipe|no route|download|registry|ghcr|socket|try again later|\b50[234]\b)/i;
 
 /** Whether a failure is about the connection (it carries on by itself). */
 export function isNetworkFailure(message: string): boolean {

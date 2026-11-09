@@ -24,8 +24,16 @@ function Counts({ additions, deletions, className }: { additions: string; deleti
   if (!additions && !deletions) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-baseline gap-1.5 font-mono tabular-nums", className)}>
-      {additions ? <span data-diff="add" className="text-diff-add">{additions}</span> : null}
-      {deletions ? <span data-diff="del" className="text-diff-del">{deletions}</span> : null}
+      {additions ? (
+        <span data-diff="add" className="text-diff-add">
+          {additions}
+        </span>
+      ) : null}
+      {deletions ? (
+        <span data-diff="del" className="text-diff-del">
+          {deletions}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -59,7 +67,9 @@ export function ExportCard({ view }: { view: ExportCardView }) {
   const [open, setOpen] = useState(false);
   return (
     <div data-export-card="" className="mt-0.5 space-y-1 text-[12.5px]">
-      <p data-card-line="headline" className="text-[13px]">{view.headline}</p>
+      <p data-card-line="headline" className="text-[13px]">
+        {view.headline}
+      </p>
       <p data-card-line="branch" data-branch-line="" className="flex items-center gap-1.5 text-muted-foreground">
         <GitBranchIcon className="size-3.5 shrink-0" aria-hidden />
         <span className="min-w-0 truncate font-mono text-[12px]" title={view.branchLine}>
@@ -72,7 +82,9 @@ export function ExportCard({ view }: { view: ExportCardView }) {
         <Counts additions={view.totals.additions} deletions={view.totals.deletions} />
       </p>
       {view.account ? (
-        <p data-card-line="account" data-account="" className="text-[11.5px] text-muted-foreground">{view.account}</p>
+        <p data-card-line="account" data-account="" className="text-[11.5px] text-muted-foreground">
+          {view.account}
+        </p>
       ) : null}
       {view.expandable ? (
         <button
@@ -106,7 +118,9 @@ export function ExportCard({ view }: { view: ExportCardView }) {
                 {view.commits.map((c) => (
                   <li key={c.sha} data-commit={c.sha} className="flex items-baseline gap-2 leading-5">
                     <code className="shrink-0 font-mono text-[11.5px] text-muted-foreground">{c.sha}</code>
-                    <span className="min-w-0 flex-1 truncate" title={c.subject}>{c.subject}</span>
+                    <span className="min-w-0 flex-1 truncate" title={c.subject}>
+                      {c.subject}
+                    </span>
                     <span className="shrink-0 text-[11.5px] text-muted-foreground">{c.author}</span>
                   </li>
                 ))}
@@ -118,12 +132,20 @@ export function ExportCard({ view }: { view: ExportCardView }) {
             <section aria-label="Pull request" data-pr="" className="rounded-lg bg-background/60 px-2.5 py-2">
               <p className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate font-medium">{view.pr.title}</span>
-                <span data-pr-state={view.pr.state} className={cn("shrink-0 rounded-lg bg-muted px-1.5 text-[11px] leading-5 font-medium", view.pr.state === "Open" ? "text-diff-add" : "text-muted-foreground")}>
+                <span
+                  data-pr-state={view.pr.state}
+                  className={cn(
+                    "shrink-0 rounded-lg bg-muted px-1.5 text-[11px] leading-5 font-medium",
+                    view.pr.state === "Open" ? "text-diff-add" : "text-muted-foreground",
+                  )}
+                >
                   {view.pr.state}
                 </span>
               </p>
               {view.pr.body.map((l, i) => (
-                <p key={i} className="truncate text-[12px] text-muted-foreground" title={l}>{l}</p>
+                <p key={i} className="truncate text-[12px] text-muted-foreground" title={l}>
+                  {l}
+                </p>
               ))}
             </section>
           ) : null}

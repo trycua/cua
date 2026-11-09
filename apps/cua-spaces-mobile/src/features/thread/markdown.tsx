@@ -13,7 +13,12 @@ import { Linking, View } from "react-native";
 import { useTheme } from "../../theme/theme";
 import { Text } from "../../ui/Text";
 
-export type Inline = { t: "text"; v: string } | { t: "bold"; v: string } | { t: "code"; v: string } | { t: "link"; v: string; href: string } | { t: "mention"; v: string };
+export type Inline =
+  | { t: "text"; v: string }
+  | { t: "bold"; v: string }
+  | { t: "code"; v: string }
+  | { t: "link"; v: string; href: string }
+  | { t: "mention"; v: string };
 export type Block = { t: "p"; inline: Inline[] } | { t: "code"; v: string };
 
 export function parseBlocks(src: string): Block[] {
@@ -73,20 +78,40 @@ export function Markdown({ text, color }: { text: string; color: string }) {
       {blocks.map((b, i) =>
         b.t === "code" ? (
           <View key={i} style={{ backgroundColor: c.background, borderRadius: 8, padding: 8 }} accessibilityLabel={`Code: ${b.v}`}>
-            <Text variant="mono" style={{ color: c.foreground, fontFamily: mono }}>{b.v}</Text>
+            <Text variant="mono" style={{ color: c.foreground, fontFamily: mono }}>
+              {b.v}
+            </Text>
           </View>
         ) : (
           <Text key={i} variant="body" style={{ color }}>
             {b.inline.map((n, j) => {
               switch (n.t) {
                 case "bold":
-                  return <Text key={j} variant="body" weight="700" style={{ color }}>{n.v}</Text>;
+                  return (
+                    <Text key={j} variant="body" weight="700" style={{ color }}>
+                      {n.v}
+                    </Text>
+                  );
                 case "code":
                   return <Text key={j} variant="body" style={{ color, fontFamily: mono, backgroundColor: c.background }}>{` ${n.v} `}</Text>;
                 case "mention":
-                  return <Text key={j} variant="body" weight="600" style={{ color: brand }}>{n.v}</Text>;
+                  return (
+                    <Text key={j} variant="body" weight="600" style={{ color: brand }}>
+                      {n.v}
+                    </Text>
+                  );
                 case "link":
-                  return <Text key={j} variant="body" style={{ color: brand, textDecorationLine: "underline" }} onPress={() => void Linking.openURL(n.href)} accessibilityRole="link">{n.v}</Text>;
+                  return (
+                    <Text
+                      key={j}
+                      variant="body"
+                      style={{ color: brand, textDecorationLine: "underline" }}
+                      onPress={() => void Linking.openURL(n.href)}
+                      accessibilityRole="link"
+                    >
+                      {n.v}
+                    </Text>
+                  );
                 default:
                   return n.v;
               }

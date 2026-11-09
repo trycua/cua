@@ -8,7 +8,18 @@
  * names the composer's `@` picker offers.
  */
 
-import { DEFAULT_AGENT_RIGHTS, type ThreadFailure, type AgentMember, type AgentRight, type AgentRights, type MemberIdentity, type ShareEntry, type ThreadAuthor, type ThreadEntry, type ThreadRole } from "@/bridge";
+import {
+  DEFAULT_AGENT_RIGHTS,
+  type ThreadFailure,
+  type AgentMember,
+  type AgentRight,
+  type AgentRights,
+  type MemberIdentity,
+  type ShareEntry,
+  type ThreadAuthor,
+  type ThreadEntry,
+  type ThreadRole,
+} from "@/bridge";
 import type { MentionCandidate } from "@/lib/mentions";
 
 export interface RosterAgent {
@@ -108,7 +119,8 @@ const LOOP_QUIET_MS = 2 * 60_000;
 
 /** The line under an idle agent's name: a connected one that is not watching the thread (a CLI session that runs only when prompted) says it waits for you; others say where they post from. */
 export function idleCaption(identity: MemberIdentity, nowMs = Date.now()): string {
-  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS)) return "Waits for you to message it";
+  if (identity.origin === "external" && identity.state === "active" && (identity.lastSeenMs == null || nowMs - identity.lastSeenMs > LOOP_QUIET_MS))
+    return "Waits for you to message it";
   return postsFrom(identity);
 }
 

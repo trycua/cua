@@ -38,5 +38,12 @@ docs/next-env.d.ts
 # MDX files (prettier mangles {/* */} comment syntax into {/_ _/})
 *.mdx
 
+# Cua Spaces web UI, Electron shell and mobile app: written in their own style
+# (double quotes) from the start and not checked by CI, so the pre-commit hook and
+# format-on-save must not rewrite whole files to the root config.
+apps/cua-spaces-web/
+apps/cua-spaces-desktop/
+apps/cua-spaces-mobile/
+
 # Git worktrees (separate branches)
 .worktrees/

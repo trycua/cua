@@ -135,6 +135,11 @@ mod clipboard;
 #[cfg(target_os = "windows")]
 pub mod wgc;
 
+// DXGI Desktop Duplication fast path for fullscreen flip-model Direct3D
+// windows, whose content DWM does not keep up to date for PrintWindow.
+#[cfg(target_os = "windows")]
+mod dxgi_duplication;
+
 #[cfg(target_os = "windows")]
 pub mod launch_uwp;
 

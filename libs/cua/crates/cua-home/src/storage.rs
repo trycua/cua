@@ -145,7 +145,7 @@ pub enum Source {
 pub fn source_in(home: &Path, kind: Kind, env: impl Fn(&str) -> Option<String>) -> Source {
     if kind
         .env_var()
-        .and_then(|v| env(v))
+        .and_then(&env)
         .is_some_and(|v| !v.trim().is_empty())
     {
         Source::Env
@@ -362,10 +362,8 @@ pub fn validate(
     if candidate.starts_with(&current) && candidate != current {
         return Err("The new location cannot be inside the current one.".into());
     }
-    if let Ok(md) = fs::metadata(candidate) {
-        if !md.is_dir() {
-            return Err("That is a file, not a folder.".into());
-        }
+    if fs::metadata(candidate).is_ok_and(|md| !md.is_dir()) {
+        return Err("That is a file, not a folder.".into());
     }
     let existed = candidate.exists();
     let mut warnings = Vec::new();

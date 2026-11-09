@@ -972,7 +972,7 @@ impl Scanner {
     fn scan_data(&self, items: &mut Vec<Item>) {
         let home = self.layout.home();
         // Linux images the built-in runtime downloaded: cache, evictable.
-        if let Ok(rd) = std::fs::read_dir(&self.layout.linux_image_downloads()) {
+        if let Ok(rd) = std::fs::read_dir(self.layout.linux_image_downloads()) {
             for e in rd.flatten() {
                 let p = e.path();
                 items.push(Item {

@@ -312,7 +312,7 @@ impl Spaces {
                     "base digest not resolved ({e}); using the local cache"
                 );
                 cua_image::ImageCache::new(cua_home::storage::dir_in(
-                    &self.home_dir(),
+                    self.home_dir(),
                     cua_home::storage::Kind::Images,
                     |k| std::env::var(k).ok(),
                 ))

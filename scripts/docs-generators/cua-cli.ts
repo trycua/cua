@@ -121,7 +121,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'sandboxes',
     title: 'Sandboxes',
     summary: 'Create, reach and delete sandboxes; local runtimes, disk cleanup and the sandbox viewer',
-    commands: ['sandbox', 'runtime', 'cache', 'viewer'],
+    commands: ['sandbox', 'runtime', 'cache', 'storage', 'viewer'],
   },
   {
     slug: 'ci-runners',

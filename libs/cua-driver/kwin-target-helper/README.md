@@ -93,21 +93,26 @@ Limits of the gate:
   run. A held-back event can still move the cursor or briefly change the
   modifier state another window sees, but never delivers a key, button, motion,
   or scroll to it.
+- Text a libei client sends as a string (`ei_text`, KWin 6.8 and newer) goes
+  to KWin's input method without passing any input filter, so the gate never
+  sees it. While a gate is armed, Cua Driver sends text only as key presses on
+  the active layout, and refuses text the layout has no key for.
 
 ## Testing the input gate
 
 `tests/run.sh` is an opt-in test that never touches your desktop session. It
-builds a container image with KWin 6.6 (Ubuntu 26.04), builds the helper against
-it, and starts a headless KWin on the container's own D-Bus with two windows
+builds a container image with KWin, builds the helper against it, and starts a headless KWin on the container's own D-Bus with two windows
 that log every key and click they receive.
 
 ```bash
 tests/run.sh                        # gate suite: the helper with a raw libei client
 tests/run.sh path/to/cua-driver     # also the driver suite
+DISTRO=debian13 tests/run.sh ...    # KWin 6.3 instead of Ubuntu 26.04's 6.6
+DISTRO=fedora45 tests/run.sh ...    # KWin 6.8, which offers ei_text
 ```
 
-The driver suite needs a `--features portal-input` build linked for Ubuntu
-26.04. It checks that typing, a pixel click and a key press reach the named
+The driver suite needs a `--features portal-input` build whose glibc the image
+has; one built on Debian 13 runs on all three. It checks that typing, a pixel click and a key press reach the named
 window while another window is active, that stealing focus mid-typing fails the
 call with `input_interrupted` while the other window receives nothing, that
 background input stays refused, and that input is refused once the helper is

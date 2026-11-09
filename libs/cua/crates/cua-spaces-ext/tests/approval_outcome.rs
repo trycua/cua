@@ -266,6 +266,9 @@ async fn an_allowed_request_wakes_the_agent_to_go_on() {
 /// asked is still told, or it would wait for an answer nobody will give.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_request_allowed_by_a_space_wide_grant_still_wakes_the_agent() {
+    // Answering for the whole Space is an approval scope, part of the phone wire, which is the
+    // `mobile` experiment: this test turns it on for its own run.
+    let _mobile = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::Mobile, true);
     let mut fx = setup().await;
     let p = member(&mut fx, 1).await;
     let ask = || json!({"text": "May I run the build?", "approval": {"action": "run the build", "details": "Run the build"}});

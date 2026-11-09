@@ -137,8 +137,10 @@ enum DiskStorage {
 
 extension WebUIBridge {
     /// Where the app's uninstall script is (`Contents/Resources/uninstall.sh`).
+    /// Never in a Local build: that script removes the released app and `~/.cua`.
     static var bundledUninstallScript: String? {
-        Bundle.main.resourcePath.map { $0 + "/uninstall.sh" }.flatMap {
+        if AppEnvironment.isLocalChannel { return nil }
+        return Bundle.main.resourcePath.map { $0 + "/uninstall.sh" }.flatMap {
             FileManager.default.isReadableFile(atPath: $0) ? $0 : nil
         }
     }

@@ -130,6 +130,10 @@ fi
 others="$(find "$agents" -maxdepth 1 -name '*.plist' ! -name "$want_helper.plist" ! -name "$want_driver.plist" 2>/dev/null || true)"
 [ -z "$others" ] || bad "other launch agents in the bundle: $(printf '%s' "$others" | tr '\n' ' ')"
 
+# The released app's uninstall.sh removes the released Cua Spaces, ~/.cua and the `cua` CLI: a
+# Local bundle must not carry it (its Settings page would offer to uninstall the real install).
+[ ! -e "$app/Contents/Resources/uninstall.sh" ] || bad "Contents/Resources/uninstall.sh is the released app's uninstaller; a Local bundle must not ship it"
+
 # The signature (build-app.sh signs ad hoc under the bundle id; install-local
 # re-signs with the stable local certificate, under the same identifier).
 signed="$(codesign -dv "$app" 2>&1 | sed -n 's/^Identifier=//p')"

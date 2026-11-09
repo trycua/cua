@@ -4,7 +4,7 @@
   "libs/lume": "0.7.0",
   "libs/python/cua-sandbox": "0.9.1",
   "libs/cua": "0.17.0",
-  "libs/cua-spacesd": "0.12.7",
+  "libs/cua-spacesd": "0.12.8",
   "apps/cua-spaces-macos": "0.24.0",
   "libs/cua-bench": "0.3.1"
 }

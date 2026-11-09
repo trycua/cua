@@ -308,7 +308,7 @@ check_prerequisites() {
     # The web UI's app core is Rust built for the browser (WebAssembly), with
     # the toolchain and the wasm-bindgen the release build pins.
     toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$WASM_TOOLCHAIN_FILE" 2>/dev/null | head -n 1)"
-    wasm_bindgen_version="$(sed -n 's/^const WASM_BINDGEN = "\(.*\)"/\1/p' "$WASM_SCRIPT" 2>/dev/null | head -n 1)"
+    wasm_bindgen_version="$(sed -n 's/^const WASM_BINDGEN = "\([^"]*\)".*/\1/p' "$WASM_SCRIPT" 2>/dev/null | head -n 1)"
     if [ -n "$toolchain" ]; then
         { have rustup && rustup target list --installed --toolchain "$toolchain" 2>/dev/null | grep -qx wasm32-unknown-unknown; } \
             || missing "the wasm32 Rust target for Rust $toolchain (the web UI; after Rust is installed): rustup toolchain install $toolchain --profile minimal --target wasm32-unknown-unknown"

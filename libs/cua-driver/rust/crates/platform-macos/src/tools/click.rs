@@ -738,6 +738,19 @@ impl ClickTool {
                 let middle_guard = element_guard.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    // AppKit hit-tests the window-local stamp, so an unrouted
+                    // post never reaches the control (CUA-3797). Same as the
+                    // pixel path.
+                    let routed_middle_click = || {
+                        let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+                            .map(|b| (cx - b.x, cy - b.y))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("cannot resolve bounds for window_id {wid}")
+                            })?;
+                        crate::input::mouse::middle_click_at_xy_with_window_local(
+                            pid, cx, cy, wx, wy, wid, &m,
+                        )
+                    };
                     // Re-read after any activation: the early read skips a
                     // foreground call into a background app.
                     let ensure_enabled = || {
@@ -770,13 +783,13 @@ impl ClickTool {
                             wid,
                             || {
                                 ensure_enabled()?;
-                                crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                                routed_middle_click()
                             },
                         )
                         .map(|_| ())
                     } else {
                         ensure_enabled()?;
-                        crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                        routed_middle_click()
                     }
                 })
                 .await;

@@ -102,7 +102,8 @@ cua-host = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 humantime.workspace = true
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+# Path only: cua-daemon is not published, so the published manifest drops this line.
+cua-daemon = { path = "../cua-daemon", default-features = false, features = ["server", "client", "test-fixtures"] }
 tempfile.workspace = true
 # Paused time for the keyframe ticker test.
 tokio = { workspace = true, features = ["test-util"] }

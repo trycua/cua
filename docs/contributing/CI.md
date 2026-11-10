@@ -95,10 +95,11 @@ sign off a run that failed or skipped a check. Sign off again after every new co
 `ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it. The author,
 labels and commit trailers are not read.
 
-- **A branch of this repository** (members and agents): a successful `local-ci` status. Our Mac runner sets
-  it after `bin/ci --quick` (`ci-remote-sweep` starts that run for each such PR), or you set it with
-  `bin/ci --signoff`. When it is missing the gate says "Run bin/ci --quick and bin/ci --signoff on this head
-  commit."
+- **A branch of this repository** (members and agents): a successful `local-ci` status. It is automatic:
+  `ci-local-signoff.yml` runs `bin/ci --quick` on our self-hosted Mac runners (label `cua-local-ci`) on every
+  push, retries infra flakes, and sets `local-ci` to `success`, or to `failure` when a check fails. You can
+  still set it yourself with `bin/ci --signoff`. When it is missing the gate says to rerun that workflow or
+  sign off by hand. See "Self-hosted sign-off runner" below.
 - **A fork** (community): fork code never runs on our Macs. The sign-off is a successful `CI: Quick` run
   (`ci-quick.yml`, which runs `bin/ci --quick`) on the head commit in GitHub Actions: a `pull_request` job
   with a read-only token and no secrets. A first-time contributor's run needs a maintainer to approve it.
@@ -115,6 +116,37 @@ How it authenticates: `bin/ci --signoff` calls `gh api` with whatever credential
 reads the result of the last green run from `.git/bin-ci/last-run.json` in that checkout, so run `bin/ci`
 and `bin/ci --signoff` in the same checkout. The status is an ordinary commit status (context `local-ci`)
 on a commit SHA, so another machine or credential can set it, as long as the checks passed on that commit.
+
+### Self-hosted sign-off runner
+
+`ci-local-signoff.yml` has two jobs. `bin-ci` runs on our Mac (`runs-on: [cua-local-ci]`) with a read-only
+token and no secrets, and tries `bin/ci --quick` up to three times when the failure is infra (bin/ci's guard
+exit 3, a vitest worker that never started, a dropped connection). `sign-off` runs on a GitHub-hosted runner,
+never checks out pull request code, and sets the status. If the job ends with no verdict (the runner was lost),
+`ci-local-signoff-retry.yml` reruns it, up to three attempts. After a success it reruns a `ci-gate` run that
+already failed while waiting. `ci-gate` does not wait for this workflow's run; its sign-off step waits for the
+status.
+
+The repository is public, so fork code must never reach the runner. Three layers stop it:
+
+1. The job's `if:` only lets pull requests from branches of this repository run there.
+2. A fork can edit that `if:`, so the runner checks too. A root-owned job-started hook
+   (`.github/runners/local-ci/job-started.sh`) refuses every job that is not this workflow on a
+   `pull_request` whose head is a branch of this repository, before the job's first step.
+3. The runner runs as a password-less, non-admin user. Its work directory is emptied after every job
+   (`job-completed.sh`) and at service start.
+
+`.github/runners/local-ci/setup.sh` installs or repairs a runner host (run it as root; it is idempotent).
+Fork approval stays on ("require approval for all external contributors").
+
+### When main breaks
+
+`ci-main-break.yml` watches the lanes that run on both pull requests and pushes to main. When one fails on
+main it reruns the failed jobs once. If they fail again and exactly one commit since that lane's last green
+run on main reaches the lane (by `.github/ci-areas.json`, as `ci-gate` decides it), it opens
+"revert: <original title> (main broken: <lane>)" with the label `auto-revert` and queues it with auto-merge.
+It also opens one issue per lane labelled `main-broken`, and closes it when the lane is green again. It never
+reverts a revert, opens at most one auto-revert an hour, and only reports when the culprit is unclear.
 
 ## Quick stage
 

@@ -1,0 +1,151 @@
+name: "CI: main break"
+
+# A CI lane that fails on main is rerun once; if it fails again, the pull request that broke it is
+# reverted and an issue labelled `main-broken` is opened (CUA-4001). Logic, guards and the culprit
+# rule: .github/scripts/main_break.py. In short:
+#   - attempt 1 failed: rerun the failed jobs once (flake check), nothing else;
+#   - attempt 2 failed: the culprit is the only commit since the lane's last green run on main that
+#     reaches the lane (ci-areas.json, as ci-gate decides it). A clear culprit gets a revert pull
+#     request, "revert: <title> (main broken: <lane>)", queued with auto-merge; it still goes
+#     through ci-gate, the local-ci sign-off and the merge queue. Anything unclear is only reported;
+#   - never a revert of a revert, at most one auto-revert per hour, one per culprit;
+#   - the sweep (every 30 minutes) catches missed events and closes the issue once the lane is green.
+#
+# Watched: the lanes that run on both pull requests and pushes to main, except the ones that depend
+# on outside services or are not correctness checks (see EXCLUDED in
+# .github/scripts/tests/test_main_break.py, which keeps this list and WATCH in sync with the workflows).
+# CI: Cua Spaces and its SwiftUI lane are fixed forward by policy (ci-postmerge-issue-bundles.yml).
+#
+# The revert pull request is opened with the release App token: a pull request opened with the job
+# token would not start any workflow, so it could never pass ci-gate. This workflow only runs main's
+# own code (workflow_run and schedule run from the default branch); it never checks out a pull request.
+
+on:
+  workflow_run:
+    types: [completed]
+    workflows:
+      - "CI: cua your-cloud providers"
+      - "CI: cua-compat"
+      - "CI: cua contrib providers"
+      - "CI: cua-driver contract clients"
+      - "CI: cua-driver Valgrind"
+      - "CI: microVMs"
+      - "CI: OCI images as Spaces"
+      - "CI: cua-oidc"
+      - "CI: Cua Perception release contract"
+      - "CI: cua proto contract"
+      - "CI: cua-relay image"
+      - "CI: cua-s1"
+      - "CI: Image doctor with the driver and daemon under test"
+      - "CI: cua SDK"
+      - "CI: Cua Spaces web UI and Electron shell"
+      - "CI: cua-spacesd-html5"
+      - "CI: cua-spacesd"
+      - "CI: cua-driver distro-compat matrix"
+      - "CI: Hyprland plugin unit and mock"
+      - "CI: infinite-canvas (Swift)"
+      - "CI: jev-use"
+      - "CI: Nix Linux Rust source"
+      - "CI: openkoalabot-example (TypeScript and Swift)"
+      - "CI: platform-linux off Linux"
+      - "CI: Rust Linux unit"
+      - "CI: Rust macOS unit"
+      - "CI: Rust Windows unit"
+      - "CI: macOS Swift linker"
+      - "CI: Test Python"
+      - "Docs: Swift, Kotlin and Rust blocks compile"
+      - "e2b-bindings"
+      - "E2E: Cua Driver release gate"
+      - "CI: License direction"
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: ci-main-break
+  cancel-in-progress: false
+
+jobs:
+  main-break:
+    name: main break
+    if: >-
+      github.repository == 'trycua/cua'
+      && (github.event_name != 'workflow_run'
+          || (github.event.workflow_run.event == 'push'
+              && github.event.workflow_run.head_branch == github.event.repository.default_branch
+              && contains(fromJSON('["failure","timed_out"]'), github.event.workflow_run.conclusion)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WATCH: |
+        CI: cua your-cloud providers
+        CI: cua-compat
+        CI: cua contrib providers
+        CI: cua-driver contract clients
+        CI: cua-driver Valgrind
+        CI: microVMs
+        CI: OCI images as Spaces
+        CI: cua-oidc
+        CI: Cua Perception release contract
+        CI: cua proto contract
+        CI: cua-relay image
+        CI: cua-s1
+        CI: Image doctor with the driver and daemon under test
+        CI: cua SDK
+        CI: Cua Spaces web UI and Electron shell
+        CI: cua-spacesd-html5
+        CI: cua-spacesd
+        CI: cua-driver distro-compat matrix
+        CI: Hyprland plugin unit and mock
+        CI: infinite-canvas (Swift)
+        CI: jev-use
+        CI: Nix Linux Rust source
+        CI: openkoalabot-example (TypeScript and Swift)
+        CI: platform-linux off Linux
+        CI: Rust Linux unit
+        CI: Rust macOS unit
+        CI: Rust Windows unit
+        CI: macOS Swift linker
+        CI: Test Python
+        Docs: Swift, Kotlin and Rust blocks compile
+        e2b-bindings
+        E2E: Cua Driver release gate
+        CI: License direction
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Generate the release App token (opens the revert pull request)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name || 'cua' }}
+      - name: Rerun, revert or report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r name; do
+            [[ -n "$name" ]] && args+=(--watch "$name")
+          done <<< "$WATCH"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            mode=(--event "$GITHUB_EVENT_PATH")
+          else
+            mode=(--sweep)
+          fi
+          python3 .github/scripts/main_break.py --repo "$GITHUB_REPOSITORY" --default-branch "$DEFAULT_BRANCH" "${args[@]}" "${mode[@]}"

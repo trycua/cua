@@ -4,3 +4,4 @@
 self-hosted-runner:
   labels:
     - lume
+    - cua-local-ci  # ci-local-signoff.yml only (.github/runners/local-ci)

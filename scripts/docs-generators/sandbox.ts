@@ -56,10 +56,6 @@ export interface SandboxFactsManifest {
 }
 
 interface SourceFacts {
-  sandboxVersion: string;
-  cuaVersion: string;
-  pythonFleetVersion: string;
-  typescriptFleetVersion: string;
   sandboxDriverVersion: string;
   qualifiedDirectDriverVersion: string;
   linuxImage: string;
@@ -206,11 +202,6 @@ function capture(contents: string, pattern: RegExp, label: string): string {
   return match[1];
 }
 
-function projectVersion(relativePath: string): string {
-  const contents = read(relativePath);
-  return capture(contents, /\[project\][\s\S]*?\nversion\s*=\s*"([^"]+)"/, relativePath);
-}
-
 const CANONICAL_RS = 'libs/cua/crates/cua-image/src/canonical.rs';
 
 /** A `pub const NAME: &str = "..."` of the canonical-image module. */
@@ -229,12 +220,6 @@ export function loadSourceFacts(): SourceFacts {
     read('libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json')
   ) as { source?: { driver_version?: string } };
   return {
-    sandboxVersion: projectVersion('libs/python/cua-sandbox/pyproject.toml'),
-    cuaVersion: projectVersion('libs/cua/python/pyproject.toml'),
-    pythonFleetVersion: capture(sandboxProject, /"cua-fleet==([^"]+)"/, 'cua-fleet pin'),
-    typescriptFleetVersion: String(
-      (JSON.parse(read('libs/typescript/fleet/package.json')) as { version: string }).version
-    ),
     sandboxDriverVersion: capture(sandboxProject, /"cua-driver==([^"]+)"/, 'Sandbox Driver pin'),
     qualifiedDirectDriverVersion: string(
       profile.source?.driver_version,
@@ -284,9 +269,9 @@ export function replaceGeneratedSection(document: string, name: string, body: st
 }
 
 export function renderRuntimePackageFacts(source: SourceFacts): string {
-  return `This reference describes the Python Sandbox SDK in \`cua-sandbox\` **${source.sandboxVersion}**, exported
-by \`cua\` **${source.cuaVersion}**. An accepted image specification or generated Fleet template is
-evidence of SDK behavior, not proof that a guest boots on every host or deployment.`;
+  return `This reference describes the Python Sandbox SDK in the \`cua-sandbox\` package, exported
+by \`cua\`. An accepted image specification is evidence of SDK behavior,
+not proof that a guest boots on every host or deployment.`;
 }
 
 export function renderBuiltinMappings(source: SourceFacts): string {
@@ -298,13 +283,11 @@ export function renderBuiltinMappings(source: SourceFacts): string {
 }
 
 export function renderEvidence(source: SourceFacts): string {
-  return `- \`cua-sandbox\` ${source.sandboxVersion} source: image constructors, runtime selection, pool
-  claims, Fleet validation, firmware, and services.
+  return `- \`cua-sandbox\` source: image constructors, runtime selection,
+  firmware, and services.
 - \`cua-image\` source (\`canonical.rs\`): the canonical image references.
-- \`cua\` ${source.cuaVersion} source: public Python exports.
-- \`cua-fleet\` ${source.pythonFleetVersion} package mapping: Python bound-claim service requests.
-- \`@trycua/fleet\` ${source.typescriptFleetVersion} package mapping: TypeScript service requests.
-- \`cua-sandbox[driver]\` ${source.sandboxVersion} maps direct Driver use to \`cua-driver\`
+- \`cua\` source: public Python exports.
+- \`cua-sandbox[driver]\` maps direct Driver use to \`cua-driver\`
   ${source.sandboxDriverVersion}. This client mapping is not the Driver version inside a particular
   published or deployment-qualified guest image.`;
 }
@@ -356,10 +339,12 @@ export type SandboxImageList = {
 
 export const IMAGE_LIST_PATH = 'libs/images/sandbox-images.json';
 
-const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu'];
+const OPTIONAL_IMAGE_FIELDS = ['guide', 'lock', 'benchmarks', 'sdk', 'digest', 'sizes', 'tier', 'gpu', 'derived_from'];
 
 /** The tag suffix each tier puts before `-disk`: `<os-version>[-<tier>][-disk]`. */
-const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode' };
+const TIER_SUFFIX: Record<string, string> = { slim: '-slim', full: '', xcode: '-xcode', docker: '-docker' };
+/** Tiers that exist only as a VM disk (their rootfs never runs the tier's point, dockerd). */
+const VM_ONLY_TIERS = new Set(['docker']);
 
 const IMAGE_FIELDS = [
   'ref',
@@ -458,13 +443,16 @@ export function validateImageList(value: unknown, source: SourceFacts): SandboxI
     }
     if (image.tier !== undefined) {
       if (image.group !== 'canonical' || !(image.tier in TIER_SUFFIX)) {
-        throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} tier must be slim, full or xcode on a canonical image`);
+        throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} tier must be slim, full, docker or xcode on a canonical image`);
       }
       if (image.tier === 'xcode' && image.os !== 'macos') {
         throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} the xcode tier is macOS only`);
       }
+      if (image.tier === 'docker' && image.os !== 'linux') {
+        throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} the docker tier is Linux only`);
+      }
       const base = image.ref.split(':')[1].replace(/-disk$/, '');
-      const suffix = base.match(/-(slim|xcode(-[0-9.]+)?)$/)?.[0] ?? '';
+      const suffix = base.match(/-(slim|docker|xcode(-[0-9.]+)?)$/)?.[0] ?? '';
       if (suffix.replace(/-[0-9.]+$/, '') !== TIER_SUFFIX[image.tier]) {
         throw new Error(`${IMAGE_LIST_PATH}: ${image.ref} tag does not match tier ${image.tier}`);
       }
@@ -491,6 +479,8 @@ export function validateImageList(value: unknown, source: SourceFacts): SandboxI
     `${source.windowsImage}-disk`,
     `${source.linuxImage}-slim`,
     `${source.linuxImage}-slim-disk`,
+    `${source.linuxImage}-docker`,
+    `${source.linuxImage}-docker-disk`,
     source.macosTahoeImage,
     `${source.macosTahoeImage}-slim`,
     `${source.macosTahoeImage}-xcode`,
@@ -519,10 +509,6 @@ const LOCAL_RUNTIME: Record<string, string> = {
   qemu: 'QEMU VM',
   lume: 'Lume VM (Apple silicon)',
 };
-const CLOUD_RUNTIME: Record<string, string> = {
-  gvisor: 'gVisor container',
-  kubevirt: 'KubeVirt VM',
-};
 
 const BROWSER_NAME: Record<string, string> = {
   chromium: 'Chromium',
@@ -538,15 +524,15 @@ function browserName(id: string): string {
 
 export function renderImageList(list: SandboxImageList): string {
   const lines = [
-    '| Image | Group | Name | Tier | Local | Cloud | cua-spacesd | Browsers |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Image | Group | Name | Tier | Local | cua-spacesd | Browsers |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
   ];
   const label = new Map(list.groups.map((g) => [g.id, g.label]));
   for (const image of pickerImages(list)) {
     lines.push(
       `| \`${image.ref}\` | ${label.get(image.group)} | ${image.guide ? `[${image.name}](${image.guide})` : image.name} | ${image.tier ?? '-'} | ${
         image.local ? LOCAL_RUNTIME[image.local] : 'Not available'
-      } | ${image.cloud ? CLOUD_RUNTIME[image.cloud] : 'Not available yet'} | ${image.spacesd ? 'Yes' : 'No'} | ${image.browsers.map(browserName).join(', ') || 'None'} |`
+      } | ${image.spacesd ? 'Yes' : 'No'} | ${image.browsers.map(browserName).join(', ') || 'None'} |`
     );
   }
   return lines.join('\n');
@@ -558,7 +544,10 @@ export function renderImageList(list: SandboxImageList): string {
  */
 export function renderTiers(list: SandboxImageList): string {
   const lines = ['| Image | Tier | SDK | Status |', '| --- | --- | --- | --- |'];
-  for (const image of list.images.filter((i) => i.tier !== undefined && !i.ref.endsWith('-disk'))) {
+  // A VM-only tier (docker) is named by its disk; the others by their rootfs.
+  const named = (i: SandboxImage) =>
+    i.tier !== undefined && (VM_ONLY_TIERS.has(i.tier) ? i.ref.endsWith('-disk') : !i.ref.endsWith('-disk'));
+  for (const image of list.images.filter(named)) {
     lines.push(
       `| \`${image.ref}\` | ${image.tier} | ${image.sdk ? `\`${image.sdk}\`` : '-'} | ${
         // An unpublished tier's ref is not pullable yet: the docs image-ref
@@ -573,14 +562,14 @@ export function renderTiers(list: SandboxImageList): string {
 /** The published Cua images (not benchmarks): the table hand-written pages embed. */
 export function renderCuaImages(list: SandboxImageList): string {
   const lines = [
-    '| Image | Name | Local | Cloud | cua-spacesd |',
-    '| --- | --- | --- | --- | --- |',
+    '| Image | Name | Local | cua-spacesd |',
+    '| --- | --- | --- | --- |',
   ];
   for (const image of pickerImages(list)) {
     lines.push(
       `| \`${image.ref}\` | ${image.name} | ${image.local ? LOCAL_RUNTIME[image.local] : 'Not available'} | ${
-        image.cloud ? CLOUD_RUNTIME[image.cloud] : 'Not available yet'
-      } | ${image.spacesd ? 'Yes' : 'No'} |`
+        image.spacesd ? 'Yes' : 'No'
+      } |`
     );
   }
   return lines.join('\n');
@@ -705,9 +694,9 @@ export function renderCatalog(manifest: SandboxFactsManifest, source: SourceFact
       'Linux',
       'Ubuntu 24.04, amd64 and arm64',
       'XFCE on Xvfb, HTML5 viewer on 3211 (`/viewer/`)',
-      'Container (local: Docker or Podman, gVisor when installed; cloud: gVisor); `kind="vm"`: the `-disk` containerDisk (local QEMU, cloud KubeVirt)',
+      'Container (Docker or Podman, gVisor when installed); `kind="vm"`: the `-disk` containerDisk (QEMU)',
       `\`${source.linuxImage}\``,
-      `\`Image.linux()\` default. Built from \`libs/images/linux\`; ships cua-spacesd on 3211 (service \`env\`). Warm by default in the cloud. The resolver pins the digest.`,
+      `\`Image.linux()\` default. Built from \`libs/images/linux\`; ships cua-spacesd on 3211 (service \`env\`). The resolver pins the digest.`,
     ]),
   ];
   for (const image of manifest.qualifiedImages) {
@@ -739,9 +728,9 @@ export function renderCatalog(manifest: SandboxFactsManifest, source: SourceFact
       'Windows',
       'Server 2022, amd64',
       'Native Windows desktop',
-      'VM from the `-disk` containerDisk (local QEMU, cloud KubeVirt); EFI firmware',
+      'VM from the `-disk` containerDisk (QEMU); EFI firmware',
       `\`${source.windowsImage}\``,
-      `\`Image.windows()\` default. Ships cua-spacesd (a logon task in the desktop session) with input through the Windows cua-driver. Warm by default in the cloud.`,
+      `\`Image.windows()\` default. Ships cua-spacesd (a logon task in the desktop session) with input through the Windows cua-driver.`,
     ]),
     row([
       'macOS',
@@ -749,7 +738,7 @@ export function renderCatalog(manifest: SandboxFactsManifest, source: SourceFact
       'Native macOS desktop',
       'Local Lume VM',
       `\`${source.macosTahoeImage}\``,
-      `\`Image.macos()\` default (full tier; \`tier="slim"\` for \`:26-slim\`). Compatible Apple silicon host required; no cloud variant yet. Built from \`libs/images/macos\`; ships cua-spacesd at login on 3211 (service \`env\`), gated on \`cua-spacesd doctor --strict\` and the accessibility probe. The resolver pins the digest.`,
+      `\`Image.macos()\` default (full tier; \`tier="slim"\` for \`:26-slim\`). Compatible Apple silicon host required. Built from \`libs/images/macos\`; ships cua-spacesd at login on 3211 (service \`env\`), gated on \`cua-spacesd doctor --strict\` and the accessibility probe. The resolver pins the digest.`,
     ]),
     row([
       'macOS',
@@ -757,7 +746,7 @@ export function renderCatalog(manifest: SandboxFactsManifest, source: SourceFact
       'Native macOS desktop',
       'Local Lume VM',
       `\`${source.macosSequoiaImage}\``,
-      `\`Image.macos("15")\`. Compatible Apple silicon host required; no cloud variant yet. ${legacyAgent} ${lumeAgentless}`,
+      `\`Image.macos("15")\`. Compatible Apple silicon host required. ${legacyAgent} ${lumeAgentless}`,
     ])
   );
   return `| OS | Distribution / version / architecture | Desktop / window manager | Image kind / runtime | Registry image or source | Evidence / limits |
@@ -791,7 +780,7 @@ export function generateDocuments(): Map<string, string> {
   catalog = replaceGeneratedSection(catalog, 'sandbox-image-tiers', renderTiers(loadImageList(source)));
   const list = loadImageList(source);
   const page = (title: string, description: string, body: string) =>
-    renderPage({ title, description, generator: GENERATOR, source: SOURCE, version: `cua ${source.cuaVersion}`, body });
+    renderPage({ title, description, generator: GENERATOR, source: SOURCE, body });
   return new Map([
     [
       RUNTIME_DOC,

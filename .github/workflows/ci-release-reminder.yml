@@ -1,10 +1,11 @@
 name: "CI: Release Reminder"
 
-# This workflow only reads PR metadata through GitHub's API. It deliberately
-# never checks out or executes contributor-controlled code, so
-# pull_request_target is safe here and lets the reminder work for fork PRs.
+# This workflow only reads PR metadata through GitHub's API and never checks out code. It runs
+# on pull_request, where same-repo pull requests get a write token. A fork pull request gets a
+# read-only token and cannot comment, so the job is skipped for forks (the reminder only
+# concerns the release owners' own pull requests).
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
@@ -12,6 +13,7 @@ permissions:
 
 jobs:
   release-reminder:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -32,13 +34,7 @@ jobs:
 
           # Map paths to publishable services
           declare -A PATH_TO_SERVICE=(
-            ["libs/xfce-cua/"]="docker/xfce-cua"
-            ["libs/xfce/"]="docker/xfce"
-            ["libs/kasm/"]="docker/kasm"
             ["libs/lumier/"]="docker/lumier"
-            ["libs/qemu-docker/android/"]="docker/qemu-android"
-            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
-            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
           )
 
           # Find affected services

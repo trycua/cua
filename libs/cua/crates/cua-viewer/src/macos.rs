@@ -394,14 +394,24 @@ struct Arguments {
     show_stats: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct ConnectionEndpoint {
     url: String,
     token: Option<String>,
     quic_cert_sha256: Option<String>,
 }
 
-#[derive(Debug, Default)]
+impl std::fmt::Debug for ConnectionEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionEndpoint")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("quic_cert_sha256", &self.quic_cert_sha256)
+            .finish()
+    }
+}
+
+#[derive(Default)]
 struct BundledRemoteAppConfig {
     url: Option<String>,
     token: Option<String>,
@@ -413,6 +423,23 @@ struct BundledRemoteAppConfig {
     fallback_endpoints: Vec<ConnectionEndpoint>,
     sync_window_size: bool,
     show_stats: bool,
+}
+
+impl std::fmt::Debug for BundledRemoteAppConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BundledRemoteAppConfig")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("max_fps", &self.max_fps)
+            .field("max_dimension", &self.max_dimension)
+            .field("max_bitrate_kbps", &self.max_bitrate_kbps)
+            .field("protocol_name", &self.protocol_name)
+            .field("quic_cert_sha256", &self.quic_cert_sha256)
+            .field("fallback_endpoints", &self.fallback_endpoints)
+            .field("sync_window_size", &self.sync_window_size)
+            .field("show_stats", &self.show_stats)
+            .finish()
+    }
 }
 
 fn connection_endpoint_from_json(value: &serde_json::Value) -> ClientResult<ConnectionEndpoint> {

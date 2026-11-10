@@ -42,3 +42,16 @@ text content can form `element_token: "<snapshot_id>:N"` from a row `[N]` in
 the tree. This includes `full_output:true` and empty trees when a snapshot was
 published; observation-only reads without a snapshot omit the field. Programs should
 still read `snapshot_id` and `element_token` from `structuredContent`.
+
+On Windows, `get_window_state.elements_complete` is true only when the
+unprojected UI Automation walk visited every exposed node without a traversal
+bound, timeout, or enumeration failure skipping a node or subtree. Reaching
+`max_elements` or `max_depth` exactly at the end of a tree remains complete.
+`query` projects the returned Markdown and structured element rows, but does
+not make the underlying snapshot incomplete; compare `total_element_count`
+with `returned_element_count` to measure that projection. Partial MSAA trees,
+unusable UIA trees, and process-root fallbacks remain incomplete because they
+cannot prove the exact target window's full UIA tree.
+Internal `verify_state` reads also remain incomplete while the Windows
+structured projection omits display-only UIA nodes. A complete native walk
+does not make that projection exhaustive.

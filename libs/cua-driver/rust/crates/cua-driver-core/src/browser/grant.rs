@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Daemon-memory grants for user-owned browser profile attachment.
 //!
 //! Grant identifiers never cross the public tool boundary. The store itself is

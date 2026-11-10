@@ -33,9 +33,10 @@ cua-driver doctor
 ```
 
 On macOS, the installed `CuaDriver.app` needs Accessibility and Screen
-Recording permission. On Windows, the daemon must run in an interactive user
-desktop rather than Session 0. On Linux, the daemon must share the graphical
-session and AT-SPI session bus.
+Recording permission; `MACOS.md` explains how to grant it, including through
+an MDM profile or, when the owner authorizes it, an agent. On Windows, the
+daemon must run in an interactive user desktop rather than Session 0. On
+Linux, the daemon must share the graphical session and AT-SPI session bus.
 
 ## Install the skill
 

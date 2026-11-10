@@ -6,8 +6,6 @@ Usage:
     cb status                           # Show system overview
 """
 
-from cua_bench._ended import CLOUD_ENDED
-
 from ._help import examples
 import asyncio
 import os
@@ -35,17 +33,6 @@ def _check(label: str, ok: bool, good: str, bad: str) -> None:
     print(f"  {label:<9}{mark}")
 
 
-def _cloud_auth() -> str:
-    """The credential source, without reading the OS credential vault: a
-    dashboard is not an explicit sign-in check (``cb run --on cloud`` is)."""
-    try:
-        from cua_sandbox import fleet_auth_source
-
-        return fleet_auth_source(read_session=False) or ""
-    except Exception:  # noqa: BLE001 - SDK not loadable
-        return ""
-
-
 async def _execute_async(args) -> int:
     """Execute status command asynchronously."""
     print("\ncua-bench Status")
@@ -59,10 +46,6 @@ async def _execute_async(args) -> int:
         _check("KVM:", os.path.exists("/dev/kvm"), "available", "not available (VMs)")
     if system == "Darwin":
         _check("Lume:", shutil.which("lume") is not None, "installed", "not installed (macOS VMs)")
-
-    print(f"\n{BOLD}Cloud{RESET}")
-    print("-" * 70)
-    print(f"  {YELLOW}{CLOUD_ENDED}{RESET}")
 
     print(f"\n{BOLD}Images{RESET} (canonical; any registry image works with --image)")
     print("-" * 70)
@@ -135,7 +118,7 @@ async def _execute_async(args) -> int:
     print("-" * 70)
     print("  cb run <task> --dry-run       # What a run would start")
     print("  cb image list                 # Canonical images")
-    print("  cb env ls                     # Managed cloud pools")
+    print("  cb env ls                     # Local sandboxes")
     print("  cb run list                   # Show active runs")
     print()
 

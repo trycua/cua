@@ -4,6 +4,7 @@
 import CuaSDK
 import CuaSpacesFFI
 @testable import CuaSpacesMacKit
+import AppKit
 import Foundation
 import Sparkle
 import Testing
@@ -26,15 +27,15 @@ struct UpdatesTests {
         model.telemetry = telemetry
         model.checkNow()
         updater.nextResult = "found"
-        model.choose(channel: "beta")
-        model.checkNow()
+        // A switch checks the new channel at once.
+        model.choose(channel: "nightly")
         // Sparkle installs what it found on its own schedule.
         updater.onUpdateEvent?("installed")
         let got = telemetry.recorded.map { ParityTests.signalFrame($0) }
             .map { "\($0["action"]!) \($0["channel"]!) \($0["trigger"]!)" }
         #expect(got == [
             "checked stable user", "not_found stable user",
-            "checked beta user", "found beta user", "installed beta user",
+            "checked nightly user", "found nightly user", "installed nightly user",
         ])
         // A scheduled check is the background's.
         updater.nextResult = "not_found"
@@ -49,7 +50,7 @@ struct UpdatesTests {
         var v = model.view
         #expect(v.title == "Cua Spaces for macOS")
         #expect(v.versionLine == "Version 0.2.0-staging.5 (0.2.0.105)")
-        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "Report an Issue\u{2026}"])
+        #expect(v.links.map(\.label) == ["Acknowledgements", "Privacy Policy", "Terms of Service", "System Status", "Report an Issue\u{2026}"])
         #expect(v.updates?.lastCheck == "Last check: Never")
         #expect(v.updates?.autoInstallEnabled == true)
 
@@ -80,7 +81,7 @@ struct UpdatesTests {
     @Test func noUpdaterNoControls() {
         let model = UpdatesModel(updater: nil, info: Self.info)
         #expect(model.view.updates == nil)
-        #expect(model.view.links.count == 4)
+        #expect(model.view.links.count == 5)
     }
 
     @Test func theChannelIsSavedAndGivesSparkleItsChannels() {
@@ -89,13 +90,32 @@ struct UpdatesTests {
         var saved: [AppUpdateChannel] = []
         model.saveChannel = { saved.append($0) }
         #expect(updater.channels.isEmpty)
-        model.choose(channel: "beta")
-        #expect(updater.channels == ["beta"])
-        #expect(saved == [.beta])
-        #expect(model.view.updates?.channels.first(where: \.active)?.id == "beta")
+        #expect(updater.feedURL == nil)
+        #expect(model.view.updates?.channels.map(\.id) == ["stable", "nightly"])
+        model.choose(channel: "nightly")
+        #expect(updater.channels == ["nightly"])
+        #expect(updater.feedURL == "https://github.com/trycua/cua/releases/download/cua-spaces-nightly/cua-spaces-nightly-appcast.xml")
+        #expect(saved == [.nightly])
+        #expect(model.view.updates?.channels.first(where: \.active)?.id == "nightly")
+        // A switch checks the new channel at once.
+        #expect(updater.checks == 1)
         model.choose(channel: "stable")
         #expect(updater.channels.isEmpty)
-        #expect(saved == [.beta, .stable])
+        #expect(updater.feedURL == nil)
+        #expect(saved == [.nightly, .stable])
+        // A page from before Nightly asks for Beta: that is Nightly.
+        model.choose(channel: "beta")
+        #expect(model.channel == .nightly)
+    }
+
+    /// A nightly's About says when it was built, and its notes are the nightly release.
+    @Test func aNightlyShowsItsBuildDayAndNotes() {
+        let info = AboutBundleInfo(version: "0.21.0-nightly.20261105.42+55e1f5d", build: "0.20.0.202611050731", os: "macOS 26.0 (arm64)")
+        let model = UpdatesModel(updater: FixtureUpdater(), channel: .nightly, info: info)
+        #expect(model.view.versionLine == "Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026")
+        #expect(UpdateState.notesURL(version: "0.21.0-nightly.20261105.42+55e1f5d")
+            == "https://github.com/trycua/cua/releases/tag/cua-spaces-nightly")
+        #expect(UpdateState.notesURL(version: "0.20.0") == "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.20.0")
     }
 
     // MARK: - The in-app update flow
@@ -206,41 +226,125 @@ struct UpdatesTests {
         #expect(driver.state.status == .idle)
     }
 
-    @Test func theSilentPathReachesDownloadedWithItsImmediateInstall() {
+    @Test func theSilentPathReachesDownloaded() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
         var events: [String] = []
-        var installs = 0
         driver.onEvent = { events.append($0) }
-        driver.silentlyDownloaded(version: "0.9.3") { installs += 1 }
+        driver.silentlyDownloaded(version: "0.9.3")
         #expect(driver.state.status == .downloaded && driver.state.version == "0.9.3")
         #expect(events == ["downloaded"])
-        #expect(installs == 0)
+    }
+
+    /// Sparkle ignores the install block unless the delegate takes the
+    /// install (returns true), and taking it loses the install on quit
+    /// (CUA-3065). So the delegate leaves it to Sparkle.
+    @Test func quitInstallStaysWithSparkle() {
+        #expect(SparkleUpdater.handlesQuitInstallItself == false)
+    }
+
+    /// 0.21.1: "Restart to update" did nothing on the silent path, since the
+    /// install block was dead. It must resume the update and install it.
+    @Test func restartToUpdateInstallsASilentlyDownloadedUpdate() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var resumes = 0
+        var choices: [SPUUserUpdateChoice] = []
+        driver.resumeSilentUpdate = { resumes += 1 }
+        // Nothing downloaded: nothing to do.
+        #expect(!driver.installNow() && resumes == 0)
+        driver.silentlyDownloaded(version: "0.9.3")
         #expect(driver.installNow())
-        #expect(installs == 1)
+        #expect(resumes == 1)
+        // The resumed session asks to install: answered at once.
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices == [.install])
+        // A later session's prompt is held again, not auto-answered.
+        driver.dismissUpdateInstallation()
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices == [.install])
+    }
+
+    /// 0.20.0 to 0.22.0: the click did nothing. When the app is still running
+    /// a few seconds after "Restart to update", it quits, so Sparkle's own
+    /// installer applies the staged update; if that does not end the app, the
+    /// page says to quit and reopen.
+    @Test func aRestartThatDoesNothingQuitsTheApp() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        #expect(quits == 0 && timers.count == 1)
+        timers.removeFirst()()
+        #expect(quits == 1 && driver.state.status != .error)
+        // Still running after the quit: say what to do.
+        timers.removeFirst()()
+        #expect(driver.state.status == .error)
+        #expect(driver.state.message == UpdateUserDriver.restartStuckMessage)
+    }
+
+    @Test func aNewerClickSupersedesAnOlderRestartTimer() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        #expect(driver.installNow())
+        timers.removeFirst()()
+        #expect(quits == 0)
+        timers.removeFirst()()
+        #expect(quits == 1)
+    }
+
+    @Test func aHeldReplyRestartIsWatchedToo() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        var choices: [SPUUserUpdateChoice] = []
+        driver.handleFound(version: "0.9.3", informationOnly: false) { _ in }
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(driver.installNow() && choices == [.install])
+        timers.removeFirst()()
+        #expect(quits == 1)
+    }
+
+    @Test func aFailedResumeDoesNotInstallALaterPrompt() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var choices: [SPUUserUpdateChoice] = []
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        driver.handleError("offline")
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices.isEmpty)
     }
 
     @Test func nothingFoundAndBackgroundErrorsStayQuiet() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
-        var alerts: [String] = []
-        driver.presentError = { alerts.append($0) }
         var acks = 0
         driver.showUpdateNotFoundWithError(NSError(domain: "t", code: 1)) { acks += 1 }
         #expect(acks == 1 && driver.state.status == .idle)
         driver.showUpdaterError(NSError(domain: "t", code: 2, userInfo: [NSLocalizedDescriptionKey: "offline"])) { acks += 1 }
-        #expect(acks == 2 && alerts.isEmpty)
+        #expect(acks == 2)
         #expect(driver.state.status == .error && driver.state.message == "offline")
         driver.dismissUpdateInstallation()
         #expect(driver.state.status == .error)
     }
 
-    @Test func aUserCheckErrorShowsAnAlert() {
+    /// A failed check is a plain line in the menus and Settings, never a dialog.
+    @Test func aUserCheckErrorStaysInTheState() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
-        var alerts: [String] = []
-        driver.presentError = { alerts.append($0) }
         driver.beginUserCheck()
         #expect(driver.state.status == .checking)
         driver.showUpdaterError(NSError(domain: "t", code: 2, userInfo: [NSLocalizedDescriptionKey: "offline"])) {}
-        #expect(alerts == ["offline"])
+        #expect(driver.state.status == .error && driver.state.message == "offline")
     }
 
     @Test func aUserCheckThatFindsNothingEndsQuietly() {
@@ -285,13 +389,13 @@ struct UpdatesTests {
         defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
         var s = appSettingsLoad(path: path)
         s.menuBar = true
-        s.updateChannel = .beta
+        s.updateChannel = .nightly
         try? appSettingsSave(path: path, settings: s)
         // A build from before the updater kept no record: after the first
         // run, that is an update.
         #expect(UpdateRefresh.record(settingsPath: path, version: "0.2.0", build: "0.2.0.2", onboarded: true))
         let after = appSettingsLoad(path: path)
-        #expect(after.menuBar && after.updateChannel == .beta)
+        #expect(after.menuBar && after.updateChannel == .nightly)
     }
 
     /// Answers `cua` the way the real CLI does, recording each call.
@@ -371,44 +475,6 @@ struct UpdatesTests {
             URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
         } == URL(fileURLWithPath: me!).resolvingSymlinksInPath().path)
     }
-
-    // MARK: - Acknowledgements
-
-    @Test func theNoticesParseIntoBlocks() {
-        let blocks = NoticeBlock.parse("""
-            # Third-party notices
-
-            Intro line one
-            line two.
-
-            | Project | Used in | What |
-            |---|---|---|
-            | [A](https://a) | `x.swift` | a thing |
-
-            ## Sparkle
-
-            ```
-            Copyright (c) 2006 Someone
-              indented
-            ```
-            """)
-        #expect(blocks == [
-            .heading(1, "Third-party notices"),
-            .paragraph("Intro line one line two."),
-            .row(["[A](https://a)", "`x.swift`", "a thing"]),
-            .heading(2, "Sparkle"),
-            .verbatim("Copyright (c) 2006 Someone\n  indented"),
-        ])
-    }
-
-    @Test func theBundledNoticesNameSparkle() throws {
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("THIRD_PARTY_NOTICES.md")
-        let blocks = NoticeBlock.parse(try String(contentsOf: file, encoding: .utf8))
-        #expect(blocks.contains(.heading(2, "Sparkle")))
-        #expect(blocks.contains { if case .verbatim(let t) = $0 { t.contains("Andy Matuschak") } else { false } })
-    }
 }
 
 /// A copy installed over the running app: Sparkle cannot authorize its
@@ -453,5 +519,107 @@ struct LaunchedBundleTests {
         let launched = LaunchedBundle(url: app, executable: exe)
         try FileManager.default.removeItem(at: app)
         #expect(launched.replacement() == LaunchedBundle.Replacement(version: nil))
+    }
+}
+
+/// "Check for Updates…" in the app menu and the menu bar menu, and the
+/// up-arrow badge: all from the one `UpdatesModel`.
+@Suite("Update menu")
+@MainActor
+struct UpdateMenuTests {
+    static let info = AboutBundleInfo(version: "0.2.0-staging.5", build: "0.2.0.105", os: "macOS 26.0 (arm64)")
+
+    func made() -> (UpdatesModel, FixtureUpdater) {
+        let updater = FixtureUpdater()
+        updater.state = .idle(currentVersion: Self.info.version)
+        return (UpdatesModel(updater: updater, channel: .stable, info: Self.info), updater)
+    }
+
+    @Test func upToDateOffersACheckAndNoBadge() throws {
+        let (model, _) = made()
+        let item = try #require(model.menuItem)
+        #expect(item.title == "Check for Updates\u{2026}" && item.detail == nil)
+        #expect(item.action == .check && item.enabled && !item.badge)
+        #expect(!item.title.contains("\u{00B7}"))
+    }
+
+    @Test func aFoundUpdateShowsTheBadgeAndTheVersionLine() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "0.17.0-beta.11")
+        var item = try #require(model.menuItem)
+        #expect(item.title == "Version 0.17.0-beta.11 available" && item.detail == "Click to install")
+        #expect(item.badge && item.action == .install)
+        updater.simulateProgress(percent: 40)
+        item = try #require(model.menuItem)
+        #expect(item.detail == "Downloading 40%" && item.badge && !item.enabled)
+        updater.simulateDownloaded()
+        item = try #require(model.menuItem)
+        #expect(item.title == "Version 0.17.0-beta.11 available" && item.detail == "Restart to update")
+        #expect(item.badge && item.action == .install)
+    }
+
+    @Test func installingClearsTheBadge() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "1.0.0")
+        updater.simulateDownloaded()
+        model.perform(try #require(model.menuItem).action)
+        #expect(updater.installs == 1)
+        let item = try #require(model.menuItem)
+        #expect(!item.badge && item.title == "Check for Updates\u{2026}")
+    }
+
+    @Test func aClickBeforeTheDownloadEndsInstallsWhenItEnds() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "1.0.0")
+        model.perform(.install)
+        #expect(updater.installs == 0)
+        updater.simulateDownloaded()
+        #expect(updater.installs == 1)
+    }
+
+    @Test func aFailedCheckIsAPlainLineWithNoBadge() throws {
+        let (model, updater) = made()
+        updater.simulateError("offline")
+        let item = try #require(model.menuItem)
+        #expect(item.title == "Check for Updates\u{2026}" && item.detail == "Could not check for updates")
+        #expect(!item.badge && item.action == .check)
+    }
+
+    @Test func aCheckInProgressIsNotClickable() throws {
+        let (model, updater) = made()
+        updater.state = UpdateState(status: .checking, currentVersion: Self.info.version)
+        let item = try #require(model.menuItem)
+        #expect(item.title == "Checking for Updates\u{2026}" && !item.enabled && !item.badge)
+    }
+
+    @Test func theMenuCheckIsTheSettingsCheck() throws {
+        let (model, updater) = made()
+        model.perform(try #require(model.menuItem).action)
+        #expect(updater.checks == 1)
+        model.checkNow()
+        #expect(updater.checks == 2)
+    }
+
+    @Test func noUpdaterNoMenuItem() {
+        #expect(UpdatesModel(updater: nil, info: Self.info).menuItem == nil)
+    }
+
+    /// Both menus and Settings read the AppModel's one `UpdatesModel`: the
+    /// state the menus show is the page's `update.get`.
+    @Test func bothMenusAndSettingsShareTheOneModel() throws {
+        let (model, updater) = made()
+        updater.simulateFound(version: "1.2.3")
+        updater.simulateDownloaded()
+        let menuBar = UpdateMenuButton(updates: model)
+        let appMenu = UpdateMenuButton(updates: model)
+        #expect(menuBar.updates === appMenu.updates)
+        #expect(menuBar.updates.menuItem == appMenu.updates.menuItem)
+        #expect(model.updateState.status == .downloaded && model.updateState.version == "1.2.3")
+        #expect(model.menuItem?.badge == true)
+    }
+
+    @Test func theBadgedIconStaysATemplate() throws {
+        let base = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in true }
+        #expect(MenuBarIcon.badge(base).isTemplate)
     }
 }

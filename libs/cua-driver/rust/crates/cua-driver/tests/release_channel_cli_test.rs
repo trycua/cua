@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::process::Command;
 
 fn run(home: &std::path::Path, args: &[&str]) -> std::process::Output {

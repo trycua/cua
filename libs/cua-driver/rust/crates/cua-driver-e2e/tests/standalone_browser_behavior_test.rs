@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional standalone Chrome/Edge browser-tool E2E coverage.
 //!
 //! These rows use real installed browsers with a fresh driver-owned profile.
@@ -456,7 +459,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
         select_browser_products(browsers, true)
     }
     #[cfg(target_os = "windows")]
-    let candidates = {
+    {
         let program_files = std::env::var_os("ProgramFiles")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
@@ -466,7 +469,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
         let local_app_data = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_default();
-        return select_browser_products(
+        select_browser_products(
             [
                 (
                     "chrome",
@@ -497,8 +500,8 @@ fn browser_specs() -> Vec<BrowserSpec> {
             })
             .collect(),
             false,
-        );
-    };
+        )
+    }
 }
 
 fn allocate_loopback_port() -> u16 {
@@ -733,9 +736,9 @@ fn harness_page_visibility(port: u16, url: &str) -> String {
 fn driver_profile_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        return PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"))
+        PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"))
             .join("CuaDriver")
-            .join("BrowserProfiles");
+            .join("BrowserProfiles")
     }
     #[cfg(target_os = "macos")]
     {
@@ -1878,7 +1881,19 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
+            assert_ne!(
+                click.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                click.raw
+            );
             assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(
+                click.structured()["evidence"][0]["kind"],
+                "value_readback",
+                "{}",
+                click.raw
+            );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let snapshot = fixture.driver.call(
@@ -1955,11 +1970,13 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 click.raw
             );
             assert!(
-                click.text().contains("application effect not verified")
-                    && click.text().contains("trust-gated controls"),
+                click.text().contains(
+                    "target state remained unchanged; application effect is unverifiable"
+                ),
                 "{}",
                 click.raw
             );
+            assert_eq!(click.structured()["evidence"][0]["kind"], "value_readback");
             wait_for_text(
                 &fixture.server,
                 "standalone-trust-gated-state",
@@ -2928,12 +2945,21 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.structured()["side_effects"]["created_profile"],
                 false
             );
-            let setup_port = devtools_active_port(fixture._profile.path()).unwrap_or_else(|| {
-                panic!(
-                    "existing-profile setup exposed no DevToolsActivePort in {}",
+            // The browser writes DevToolsActivePort when its listener comes up,
+            // which can trail the setup call's return (slow on Windows runners):
+            // poll for it instead of reading the file once.
+            let port_deadline = Instant::now() + Duration::from_secs(15);
+            let setup_port = loop {
+                if let Some(port) = devtools_active_port(fixture._profile.path()) {
+                    break port;
+                }
+                assert!(
+                    Instant::now() < port_deadline,
+                    "existing-profile setup exposed no DevToolsActivePort in {} within 15 s",
                     fixture._profile.path().display()
-                )
-            });
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            };
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
@@ -3858,53 +3884,106 @@ fn changed_pixel_count(before: &image::RgbaImage, after: &image::RgbaImage) -> u
         .count() as u64
 }
 
-fn browser_chrome_changed_pixel_center(
-    before: &image::RgbaImage,
-    after: &image::RgbaImage,
-    desktop: &ToolResponse,
+/// Screen-point centers of the top-chrome buttons that a permission request
+/// added or relabelled, read from two `get_window_state` trees of one window.
+///
+/// Edge 155 adds a "Notifications blocked" button right of the omnibox. Edge
+/// 156 turns the left site-information button into an unlabelled chip and
+/// shifts the URL text, so a pixel diff of the toolbar is dominated by the
+/// text shift rather than the indicator.
+fn quiet_permission_indicator_centers(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
     bounds: (f64, f64, f64, f64),
-) -> Option<(f64, f64)> {
-    assert_eq!(before.dimensions(), after.dimensions());
-    let screen_width = desktop.structured()["screen_width"].as_f64()?;
-    let screen_height = desktop.structured()["screen_height"].as_f64()?;
-    let scale_x = f64::from(before.width()) / screen_width;
-    let scale_y = f64::from(before.height()) / screen_height;
-    let left = (bounds.0 * scale_x).round().max(0.0) as u32;
-    let top = (bounds.1 * scale_y).round().max(0.0) as u32;
-    let right = ((bounds.0 + bounds.2) * scale_x)
-        .round()
-        .min(f64::from(before.width())) as u32;
-    // Browser permission indicators live in the top chrome. Limiting the
-    // search excludes any unrelated page repaint below the toolbar.
-    let bottom = ((bounds.1 + bounds.3.min(120.0)) * scale_y)
-        .round()
-        .min(f64::from(before.height())) as u32;
-    let mut changed = 0_u64;
-    let mut x_sum = 0_u64;
-    let mut y_sum = 0_u64;
-    for y in top..bottom {
-        for x in left..right {
-            let before = before.get_pixel(x, y);
-            let after = after.get_pixel(x, y);
-            if before
-                .0
-                .iter()
-                .zip(after.0.iter())
-                .take(3)
-                .any(|(before, after)| before.abs_diff(*after) >= 32)
-            {
-                changed += 1;
-                x_sum += u64::from(x);
-                y_sum += u64::from(y);
-            }
-        }
-    }
-    (changed > 0).then(|| {
-        (
-            (x_sum as f64 / changed as f64) / scale_x,
-            (y_sum as f64 / changed as f64) / scale_y,
-        )
-    })
+) -> Vec<(f64, f64)> {
+    let chrome_buttons = |tree: &serde_json::Value| -> Vec<(Option<String>, [f64; 4])> {
+        tree["elements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|element| element["role"] == "Button")
+            .filter_map(|element| {
+                let frame = &element["frame"];
+                let rect = [
+                    frame["x"].as_f64()?,
+                    frame["y"].as_f64()?,
+                    frame["w"].as_f64()?,
+                    frame["h"].as_f64()?,
+                ];
+                // Browser permission indicators live in the top chrome.
+                (rect[1] + rect[3] <= bounds.1 + bounds.3.min(120.0))
+                    .then(|| (element["label"].as_str().map(str::to_owned), rect))
+            })
+            .collect()
+    };
+    let unchanged = chrome_buttons(before);
+    chrome_buttons(after)
+        .into_iter()
+        .filter(|button| !unchanged.contains(button))
+        .map(|(_, [x, y, w, h])| (x + w / 2.0, y + h / 2.0))
+        .collect()
+}
+
+/// Toolbar trees from Windows CI recordings before and after
+/// `Notification.requestPermission()`: Edge 155 in run 41280330847 and Edge
+/// 156 in run 41332120340. Window bounds were (47, 40, 886, 633) in both.
+#[test]
+fn quiet_permission_indicator_follows_the_changed_toolbar_button() {
+    let button = |label: Option<&str>, x: f64, y: f64, w: f64, h: f64| {
+        serde_json::json!({
+            "role": "Button",
+            "label": label,
+            "frame": {"x": x, "y": y, "w": w, "h": h},
+        })
+    };
+    let tree = |site_information: serde_json::Value, extra: Option<serde_json::Value>| {
+        let mut elements = vec![
+            button(Some("Back"), 52.0, 84.0, 32.0, 32.0),
+            button(Some("Refresh"), 88.0, 84.0, 32.0, 32.0),
+            site_information,
+            serde_json::json!({
+                "role": "Edit",
+                "label": "Address and search bar",
+                "frame": {"x": 152.0, "y": 88.0, "w": 509.0, "h": 24.0},
+            }),
+            button(Some("Favorites"), 725.0, 84.0, 32.0, 32.0),
+            serde_json::json!({
+                "role": "Document",
+                "label": "cua-driver Web Harness",
+                "frame": {"x": 52.0, "y": 120.0, "w": 876.0, "h": 548.0},
+            }),
+        ];
+        elements.extend(extra);
+        serde_json::json!({ "elements": elements })
+    };
+    let bounds = (47.0, 40.0, 886.0, 633.0);
+    let before = tree(
+        button(Some("View site information"), 128.0, 88.0, 24.0, 24.0),
+        None,
+    );
+
+    let edge_155 = tree(
+        button(Some("View site information"), 128.0, 88.0, 24.0, 24.0),
+        Some(button(
+            Some("Notifications blocked"),
+            637.0,
+            88.0,
+            24.0,
+            24.0,
+        )),
+    );
+    assert_eq!(
+        quiet_permission_indicator_centers(&before, &edge_155, bounds),
+        [(649.0, 100.0)]
+    );
+
+    let edge_156 = tree(button(None, 128.0, 88.0, 24.0, 24.0), None);
+    assert_eq!(
+        quiet_permission_indicator_centers(&before, &edge_156, bounds),
+        [(140.0, 100.0)]
+    );
+
+    assert!(quiet_permission_indicator_centers(&before, &before, bounds).is_empty());
 }
 
 /// Screen-point center of the pixels that changed in the top browser chrome of
@@ -4143,28 +4222,38 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         let minimum_prompt_pixels = (compared_pixels / 1_000).max(1_000);
         let initial_desktop_changed_pixels =
             changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
+        let minimum_desktop_to_window_ratio = 2_u64;
         let mut quiet_prompt_expanded = false;
         let mut quiet_prompt_indicator = None;
 
         // Edge can collapse the notification request to a quiet indicator in
-        // browser chrome. Expand the region that actually changed, then assess
-        // the resulting browser-owned surface with the same pixel oracle.
+        // browser chrome. Expand it, then assess the resulting browser-owned
+        // surface with the same pixel oracle.
+        // On Windows the prompt is collapsed when the desktop shows no
+        // material change or nothing materially beyond the window: Edge 156's
+        // collapsed chip shifts the URL text by ~1650 px in both captures. The
+        // indicator is the toolbar button the request added or relabelled.
         // macOS locates the indicator in the window capture and gates on its
         // change count: a system notification banner can cover the toolbar in
         // the desktop capture.
         let quiet_indicator = if spec.name != "edge" {
             None
         } else if cfg!(target_os = "windows")
-            && initial_desktop_changed_pixels < minimum_prompt_pixels
+            && (initial_desktop_changed_pixels < minimum_prompt_pixels
+                || changed_pixel_count(&window_before, &window_after)
+                    .saturating_mul(minimum_desktop_to_window_ratio)
+                    >= initial_desktop_changed_pixels)
         {
-            let full_desktop_before = load_capture(&desktop_before_path);
-            let full_desktop_after = load_capture(&desktop_after_path);
-            Some(browser_chrome_changed_pixel_center(
-                &full_desktop_before,
-                &full_desktop_after,
-                &desktop,
+            let centers = quiet_permission_indicator_centers(
+                before.structured(),
+                window.structured(),
                 bounds,
-            ))
+            );
+            assert!(
+                centers.len() <= 1,
+                "permission request changed more than one browser chrome button: {centers:?}"
+            );
+            Some(centers.first().copied())
         } else if cfg!(target_os = "macos")
             && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
         {
@@ -4237,7 +4326,6 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
 
         let desktop_changed_pixels = changed_pixel_count(&desktop_crop_before, &desktop_crop_after);
         let window_changed_pixels = changed_pixel_count(&window_before, &window_after);
-        let minimum_desktop_to_window_ratio = 2_u64;
         let desktop_has_materially_more_prompt_pixels = window_changed_pixels
             .saturating_mul(minimum_desktop_to_window_ratio)
             < desktop_changed_pixels;
@@ -4561,22 +4649,148 @@ fn standalone_full_viewport_click_html() -> String {
     )
 }
 
-/// A capture-bound background pixel click on Chromium page content must not
-/// report success without an effect. Chromium's X11 renderer drops focus-free
-/// synthetic input and its AT-SPI hit test at the point resolves only to the
-/// top-level frame, so the canonical Xvfb lanes must return the structured
-/// `background_unavailable` refusal before admission. The refused capture then
-/// stays usable for the explicit foreground escalation, which must land.
+/// Chromium's X11 renderer drops focus-free synthetic pointer input, but the
+/// AT-SPI action of the control under a plain left click still lands (the
+/// driver tries it first and refuses only when no control covers the point; a
+/// web document's own `doDefault` is never a target). Wayland and the
+/// libei/inject lanes have no such route and keep the typed refusal.
 #[cfg(target_os = "linux")]
-fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
+fn linux_x11_background_atspi_click() -> bool {
+    std::env::var_os("CUA_INJECT_SOCKET").is_none()
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::X11
+}
+
+/// The fixture page with every control hidden from the accessibility tree and
+/// a transparent layer over it: no control covers any window pixel, so the
+/// accessibility hit test resolves only to the page document.
+#[cfg(target_os = "linux")]
+fn standalone_full_viewport_inert_cover_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+</body>"#,
+    )
+}
+
+/// The fixture page with every other control hidden from the accessibility
+/// tree and one button over the lower half of the viewport, where the pixel
+/// click lands: the smallest control covering the point is that button, which
+/// forwards its click to the fixture's journaled increment counter.
+#[cfg(target_os = "linux")]
+fn standalone_pixel_target_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+<button id="pixel-target" aria-label="pixel-target"
+        style="visibility:visible !important;position:fixed;left:0;right:0;top:40%;bottom:0;border:0"
+        onclick="document.getElementById('btn-increment').click()">pixel-target</button>
+</body>"#,
+    )
+}
+
+/// Capture id and the click arguments for a background pixel click below the
+/// browser toolbar, inside the page.
+#[cfg(target_os = "linux")]
+fn standalone_pixel_click_args(fixture: &mut BrowserFixture, session: &str) -> serde_json::Value {
+    let state = fixture.driver.call(
+        "get_window_state",
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.window_id,
+            "session": session,
+        }),
+    );
+    assert!(!state.is_error(), "window capture: {}", state.raw);
+    let capture_id = state.structured()["capture_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("window capture has no capture_id: {}", state.raw))
+        .to_owned();
+    let width = state.structured()["screenshot_width"]
+        .as_f64()
+        .expect("capture width");
+    let height = state.structured()["screenshot_height"]
+        .as_f64()
+        .expect("capture height");
+    serde_json::json!({
+        "session": session,
+        "pid": fixture.pid as i64,
+        "window_id": fixture.window_id,
+        "x": (width / 2.0).round(),
+        "y": (height * 0.65).round(),
+        "capture_id": capture_id,
+        "delivery_mode": "background",
+    })
+}
+
+/// X11: a capture-bound background pixel click on a Chromium control is
+/// delivered through its AT-SPI action, with no focus, z-order or input leak,
+/// and the page sees the click.
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_atspi(spec: &BrowserSpec) {
     let scenario = format!(
-        "{}-{}-standalone-capture-bound-pixel-click",
+        "{}-{}-standalone-capture-bound-pixel-click-atspi",
         std::env::consts::OS,
         spec.name
     );
     let case = CaseSpec::delivered(
         format!(
-            "{}-{}-standalone-capture-bound-pixel-click-px-background",
+            "{}-{}-standalone-capture-bound-pixel-click-atspi-px-background",
+            std::env::consts::OS,
+            spec.name
+        ),
+        spec.name.clone(),
+        "standalone-chromium",
+        "capture_bound_pixel_click",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::LinuxAtSpiAction,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    );
+    execute_case(case, |evidence| {
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_pixel_target_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+        let session = format!("standalone-pixel-click-atspi-{}", fixture.pid);
+        run_with_background_oracles(&mut fixture, |fixture| {
+            let args = standalone_pixel_click_args(fixture, &session);
+            let delivered = fixture.driver.call("click", args);
+            assert!(
+                !delivered.is_error(),
+                "background pixel click on a Chromium control was refused: {}",
+                delivered.raw
+            );
+            eprintln!("[standalone-browser] pixel click result: {}", delivered.raw);
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        })
+    });
+}
+
+/// A capture-bound background pixel click on Chromium page content with no
+/// control under the point must not report success without an effect. The
+/// structured `background_unavailable` refusal comes before admission, and the
+/// refused capture then stays usable for the explicit foreground escalation.
+/// `inert` hides every control from the accessibility tree (X11, where a control
+/// would be clicked through AT-SPI); otherwise the cover is a button and
+/// Wayland and the inject lanes refuse the click outright.
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_refusal(spec: &BrowserSpec, inert: bool) {
+    let suffix = if inert { "-inert" } else { "" };
+    let scenario = format!(
+        "{}-{}-standalone-capture-bound-pixel-click{suffix}",
+        std::env::consts::OS,
+        spec.name
+    );
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-{}-standalone-capture-bound-pixel-click{suffix}-px-background",
             std::env::consts::OS,
             spec.name
         ),
@@ -4596,42 +4810,18 @@ fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
     )
     .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     execute_case(case, |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_full_viewport_click_html());
+        let html = if inert {
+            standalone_full_viewport_inert_cover_html()
+        } else {
+            standalone_full_viewport_click_html()
+        };
+        let mut fixture = launch_browser_with_html(spec, &scenario, html);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         wait_for_text(&fixture.server, "lbl-counter", "counter=0");
         let session = format!("standalone-pixel-click-{}", fixture.pid);
         let mut click_args = None;
         let observation = run_with_background_oracles(&mut fixture, |fixture| {
-            let state = fixture.driver.call(
-                "get_window_state",
-                serde_json::json!({
-                    "pid": fixture.pid as i64,
-                    "window_id": fixture.window_id,
-                    "session": session,
-                }),
-            );
-            assert!(!state.is_error(), "window capture: {}", state.raw);
-            let capture_id = state.structured()["capture_id"]
-                .as_str()
-                .unwrap_or_else(|| panic!("window capture has no capture_id: {}", state.raw))
-                .to_owned();
-            let width = state.structured()["screenshot_width"]
-                .as_f64()
-                .expect("capture width");
-            let height = state.structured()["screenshot_height"]
-                .as_f64()
-                .expect("capture height");
-            // Below the browser toolbar, inside the full-viewport button.
-            let args = serde_json::json!({
-                "session": session,
-                "pid": fixture.pid as i64,
-                "window_id": fixture.window_id,
-                "x": (width / 2.0).round(),
-                "y": (height * 0.65).round(),
-                "capture_id": capture_id,
-                "delivery_mode": "background",
-            });
+            let args = standalone_pixel_click_args(fixture, &session);
             let refused = fixture.driver.call("click", args.clone());
             assert!(
                 refused.is_error(),
@@ -4669,7 +4859,9 @@ fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
             "foreground retry did not reuse the refused capture: {}",
             landed.raw
         );
-        wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+        if !inert {
+            wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+        }
         let reused = fixture.driver.call("click", foreground);
         assert!(
             reused.is_error(),
@@ -4678,6 +4870,28 @@ fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
         );
         observation
     });
+}
+
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
+    if linux_x11_background_atspi_click() {
+        // A control under the point is clicked through AT-SPI on X11; the
+        // refusal there is for a point no control covers.
+        run_capture_bound_pixel_click_refusal(spec, true);
+    } else {
+        run_capture_bound_pixel_click_refusal(spec, false);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_control(spec: &BrowserSpec) {
+    if linux_x11_background_atspi_click() {
+        run_capture_bound_pixel_click_background_atspi(spec);
+    } else {
+        // Wayland and the inject lanes have no AT-SPI pixel route: the row
+        // above covers their refusal.
+        eprintln!("[standalone-browser] AT-SPI pixel click is X11 only; skipped");
+    }
 }
 
 fn run_upload(spec: &BrowserSpec) {
@@ -4737,8 +4951,11 @@ fn run_upload(spec: &BrowserSpec) {
 fn run_pointer_actions(spec: &BrowserSpec) {
     let scenario = format!("{}-{}-standalone-pointer", std::env::consts::OS, spec.name);
     execute_case(case(&spec.name, "browser_pointer_actions"), |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        let html = standalone_browser_completeness_html().replace(
+            "</head>",
+            "<style>#scroll-tall { scroll-behavior: smooth; }</style></head>",
+        );
+        let mut fixture = launch_browser_with_html(spec, &scenario, html);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-pointer-{}", fixture.pid);
         prepare_same_space_attachment(&mut fixture, &session);
@@ -4806,12 +5023,41 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 "last_action=double_click",
             );
 
+            let scroll_ref = semantic_ref_by_name(&snapshot, "scroll-tall", "scroll");
+            let exhausted = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": scroll_ref,
+                    "action": "scroll",
+                    "input_route": "dom_event",
+                    "delta_y": -240,
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                exhausted.action_effect(),
+                Some("refused"),
+                "{}",
+                exhausted.raw
+            );
+            assert!(
+                exhausted.text().contains("browser_action_unavailable"),
+                "{}",
+                exhausted.raw
+            );
+            assert_eq!(
+                fixture.server.text("lbl-scroll-offset").as_deref(),
+                Some("scroll_offset=0")
+            );
+
             let scrolled = fixture.driver.call(
                 "browser_pointer",
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
-                    "ref": semantic_ref_by_name(&snapshot, "scroll-tall", "scroll"),
+                    "ref": scroll_ref,
                     "action": "scroll",
                     "input_route": "dom_event",
                     "delta_y": 240,
@@ -5224,6 +5470,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_capture_bound_pixel_click_background_refusal,
     run_capture_bound_pixel_click_background_refusal
+);
+#[cfg(target_os = "linux")]
+standalone_browser_test!(
+    standalone_browser_capture_bound_pixel_click_background_control,
+    run_capture_bound_pixel_click_background_control
 );
 standalone_browser_test!(standalone_browser_upload, run_upload);
 standalone_browser_test!(standalone_browser_pointer_actions, run_pointer_actions);

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS window enumeration via CGWindowList APIs.
 //!
 //! Uses the C-level CGWindowListCopyWindowInfo API which returns a CFArray
@@ -5,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowBounds {
     pub x: f64,
     pub y: f64,
@@ -62,6 +65,60 @@ extern "C" {
         option: u32,
         relativeToWindow: u32,
     ) -> core_foundation::array::CFArrayRef;
+    fn CGWindowListCreateDescriptionFromArray(
+        windowArray: core_foundation::array::CFArrayRef,
+    ) -> core_foundation::array::CFArrayRef;
+}
+
+/// `window_id` as an enumeration with `kCGWindowListExcludeDesktopElements`
+/// would list it, read without describing every window in the session.
+///
+/// Every enumeration describes all windows (over a thousand on a busy
+/// desktop, several milliseconds each time); a lookup by id asks WindowServer
+/// for the one window. Desktop elements (wallpaper, desktop icons and the
+/// layers around them) all sit far below the normal window level, so a window
+/// below it is checked against the enumeration to apply exactly the same
+/// exclusion.
+pub(crate) fn describe_window(window_id: u32) -> Option<WindowDescription> {
+    use core_foundation::{
+        array::{CFArray, CFArrayCreate},
+        base::{kCFAllocatorDefault, CFTypeRef, TCFType},
+    };
+    use std::os::raw::c_void;
+
+    if window_id == kCGNullWindowID {
+        return None;
+    }
+    // A CGWindowID array holds the ids themselves, not CFNumbers.
+    let mut ids = [window_id as usize as *const c_void];
+    let request =
+        unsafe { CFArrayCreate(kCFAllocatorDefault, ids.as_mut_ptr(), 1, std::ptr::null()) };
+    if request.is_null() {
+        return None;
+    }
+    let request: CFArray<*const c_void> = unsafe { CFArray::wrap_under_create_rule(request) };
+    let raw_ref = unsafe { CGWindowListCreateDescriptionFromArray(request.as_concrete_TypeRef()) };
+    if raw_ref.is_null() {
+        return None;
+    }
+    let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
+    let window = raw
+        .iter()
+        .filter_map(|item| parse_description(*item))
+        .find(|window| window.window_id == window_id)?;
+    if window.layer >= 0 {
+        return Some(window);
+    }
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        Some(window.pid),
+        false,
+    )
+    .windows
+    .iter()
+    .any(|listed| listed.window_id == window_id)
+    .then_some(window)
 }
 
 /// Enumerate all windows (including off-screen).
@@ -70,11 +127,21 @@ pub fn all_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
+    all_layer0(true)
+}
+
+/// [`all_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn all_windows_without_spaces() -> Vec<WindowInfo> {
+    all_layer0(false).windows
+}
+
+fn all_layer0(spaces: bool) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
         None,
-        true,
+        spaces,
     )
 }
 
@@ -84,11 +151,21 @@ pub fn visible_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
+    visible_layer0(true)
+}
+
+/// [`visible_windows`] without the Space snapshot, for callers that read only
+/// window ids, owners, titles, and bounds.
+pub(crate) fn visible_windows_without_spaces() -> Vec<WindowInfo> {
+    visible_layer0(false).windows
+}
+
+fn visible_layer0(spaces: bool) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
         None,
-        true,
+        spaces,
     )
 }
 
@@ -168,6 +245,131 @@ enum LayerFilter {
     AnyLayer,
 }
 
+/// One window as WindowServer describes it, before Space membership and
+/// stacking order are attached.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WindowDescription {
+    pub(crate) window_id: u32,
+    pub(crate) pid: i32,
+    pub(crate) app_name: String,
+    pub(crate) title: String,
+    pub(crate) bounds: WindowBounds,
+    pub(crate) layer: i32,
+    pub(crate) is_on_screen: bool,
+}
+
+/// Parse one CGWindowList description dictionary.
+fn parse_description(item: core_foundation::base::CFTypeRef) -> Option<WindowDescription> {
+    use core_foundation::{
+        base::{CFGetTypeID, TCFType},
+        boolean::CFBoolean,
+        dictionary::CFDictionary,
+        number::CFNumber,
+        string::CFString,
+    };
+    use std::os::raw::c_void;
+
+    // Each item should be a CFDictionary.
+    let dict_type = CFDictionary::<*const c_void, *const c_void>::type_id();
+    if unsafe { CFGetTypeID(item) } != dict_type {
+        return None;
+    }
+
+    let dict: CFDictionary<*const c_void, *const c_void> =
+        unsafe { CFDictionary::wrap_under_get_rule(item as _) };
+
+    // Helper: get number from dict by key string.
+    let get_num = |key: &str| -> i64 {
+        let k = CFString::new(key);
+        dict.find(k.as_concrete_TypeRef() as *const c_void)
+            .and_then(|v| unsafe {
+                let v = *v;
+                if CFGetTypeID(v) == CFNumber::type_id() {
+                    CFNumber::wrap_under_get_rule(v as _).to_i64()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+    };
+
+    let get_str = |key: &str| -> String {
+        let k = CFString::new(key);
+        dict.find(k.as_concrete_TypeRef() as *const c_void)
+            .and_then(|v| unsafe {
+                let v = *v;
+                if CFGetTypeID(v) == CFString::type_id() {
+                    Some(CFString::wrap_under_get_rule(v as _).to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
+    };
+
+    let get_bool = |key: &str| -> bool {
+        let k = CFString::new(key);
+        dict.find(k.as_concrete_TypeRef() as *const c_void)
+            .map(|v| unsafe {
+                let v = *v;
+                if CFGetTypeID(v) == CFBoolean::type_id() {
+                    bool::from(CFBoolean::wrap_under_get_rule(v as _))
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    };
+
+    let window_id = get_num("kCGWindowNumber") as u32;
+    let pid = get_num("kCGWindowOwnerPID") as i32;
+    let app_name = get_str("kCGWindowOwnerName");
+    let title = get_str("kCGWindowName");
+    let layer = get_num("kCGWindowLayer") as i32;
+    let is_on_screen = get_bool("kCGWindowIsOnscreen");
+
+    // Parse bounds dict.
+    let bounds = {
+        let bk = CFString::new("kCGWindowBounds");
+        dict.find(bk.as_concrete_TypeRef() as *const c_void)
+            .and_then(|v| unsafe {
+                let v = *v;
+                if CFGetTypeID(v) == CFDictionary::<*const c_void, *const c_void>::type_id() {
+                    let bd: CFDictionary<*const c_void, *const c_void> =
+                        CFDictionary::wrap_under_get_rule(v as _);
+                    let x = get_bounds_num(&bd, "X");
+                    let y = get_bounds_num(&bd, "Y");
+                    let w = get_bounds_num(&bd, "Width");
+                    let h = get_bounds_num(&bd, "Height");
+                    Some(WindowBounds {
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(WindowBounds {
+                x: 0.,
+                y: 0.,
+                width: 0.,
+                height: 0.,
+            })
+    };
+
+    Some(WindowDescription {
+        window_id,
+        pid,
+        app_name,
+        title,
+        bounds,
+        layer,
+        is_on_screen,
+    })
+}
+
 fn enumerate_windows(
     options: u32,
     layers: LayerFilter,
@@ -176,13 +378,8 @@ fn enumerate_windows(
 ) -> WindowEnumeration {
     use core_foundation::{
         array::CFArray,
-        base::{CFGetTypeID, CFTypeRef, TCFType},
-        boolean::CFBoolean,
-        dictionary::CFDictionary,
-        number::CFNumber,
-        string::CFString,
+        base::{CFTypeRef, TCFType},
     };
-    use std::os::raw::c_void;
 
     let space_query = spaces
         .then(crate::input::skylight::SpaceQuery::new)
@@ -200,69 +397,21 @@ fn enumerate_windows(
     }
 
     let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
-    let total = raw.len() as usize;
     let mut results = Vec::new();
 
-    for (idx, item) in raw.iter().enumerate() {
-        let item = *item;
-        // Each item should be a CFDictionary.
-        let dict_type = CFDictionary::<*const c_void, *const c_void>::type_id();
-        if unsafe { CFGetTypeID(item) } != dict_type {
+    for item in raw.iter() {
+        let Some(description) = parse_description(*item) else {
             continue;
-        }
-
-        let dict: CFDictionary<*const c_void, *const c_void> =
-            unsafe { CFDictionary::wrap_under_get_rule(item as _) };
-
-        // Helper: get number from dict by key string.
-        let get_num = |key: &str| -> i64 {
-            let k = CFString::new(key);
-            dict.find(k.as_concrete_TypeRef() as *const c_void)
-                .and_then(|v| unsafe {
-                    let v = *v;
-                    if CFGetTypeID(v) == CFNumber::type_id() {
-                        CFNumber::wrap_under_get_rule(v as _).to_i64()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0)
         };
-
-        let get_str = |key: &str| -> String {
-            let k = CFString::new(key);
-            dict.find(k.as_concrete_TypeRef() as *const c_void)
-                .and_then(|v| unsafe {
-                    let v = *v;
-                    if CFGetTypeID(v) == CFString::type_id() {
-                        Some(CFString::wrap_under_get_rule(v as _).to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default()
-        };
-
-        let get_bool = |key: &str| -> bool {
-            let k = CFString::new(key);
-            dict.find(k.as_concrete_TypeRef() as *const c_void)
-                .map(|v| unsafe {
-                    let v = *v;
-                    if CFGetTypeID(v) == CFBoolean::type_id() {
-                        bool::from(CFBoolean::wrap_under_get_rule(v as _))
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
-        };
-
-        let window_id = get_num("kCGWindowNumber") as u32;
-        let pid = get_num("kCGWindowOwnerPID") as i32;
-        let app_name = get_str("kCGWindowOwnerName");
-        let title = get_str("kCGWindowName");
-        let layer = get_num("kCGWindowLayer") as i32;
-        let is_on_screen = get_bool("kCGWindowIsOnscreen");
+        let WindowDescription {
+            window_id,
+            pid,
+            app_name,
+            title,
+            bounds,
+            layer,
+            is_on_screen,
+        } = description;
 
         // Only include layer-0 windows, unless the caller asked for every layer.
         if layer != 0 && layers == LayerFilter::ZeroOnly {
@@ -272,40 +421,6 @@ fn enumerate_windows(
             continue;
         }
 
-        // Parse bounds dict.
-        let bounds = {
-            let bk = CFString::new("kCGWindowBounds");
-            dict.find(bk.as_concrete_TypeRef() as *const c_void)
-                .and_then(|v| unsafe {
-                    let v = *v;
-                    if CFGetTypeID(v) == CFDictionary::<*const c_void, *const c_void>::type_id() {
-                        let bd: CFDictionary<*const c_void, *const c_void> =
-                            CFDictionary::wrap_under_get_rule(v as _);
-                        let x = get_bounds_num(&bd, "X");
-                        let y = get_bounds_num(&bd, "Y");
-                        let w = get_bounds_num(&bd, "Width");
-                        let h = get_bounds_num(&bd, "Height");
-                        Some(WindowBounds {
-                            x,
-                            y,
-                            width: w,
-                            height: h,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(WindowBounds {
-                    x: 0.,
-                    y: 0.,
-                    width: 0.,
-                    height: 0.,
-                })
-        };
-
-        // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = cua_driver_core::window_target::z_index_from_front_to_back(total, idx);
-
         results.push(WindowInfo {
             window_id,
             pid,
@@ -313,13 +428,15 @@ fn enumerate_windows(
             title,
             bounds,
             layer,
-            z_index,
+            z_index: 0,
             is_on_screen,
             current_space_id: None,
             on_current_space: None,
             space_ids: None,
         });
     }
+
+    normalize_z_indices(&mut results);
 
     if let Some(query) = &space_query {
         for window in &mut results {
@@ -334,6 +451,16 @@ fn enumerate_windows(
     WindowEnumeration {
         windows: results,
         current_space_id,
+    }
+}
+
+/// Number a front-to-back window list with the shared `z_index` contract.
+/// Run it after every filter so the returned values stay contiguous.
+pub(crate) fn normalize_z_indices(windows: &mut [WindowInfo]) {
+    let total = windows.len();
+    for (position, window) in windows.iter_mut().enumerate() {
+        window.z_index =
+            cua_driver_core::window_target::z_index_from_front_to_back(total, position);
     }
 }
 
@@ -441,10 +568,7 @@ pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
 /// Whether `window_id` is on the current Space of its display. `None` when
 /// WindowServer does not know the window or Space membership is unreadable.
 pub fn window_on_current_space_by_id(window_id: u32) -> Option<bool> {
-    all_windows()
-        .into_iter()
-        .find(|w| w.window_id == window_id)?
-        .on_current_space
+    window_space_view_by_id(window_id)?.on_current_space
 }
 
 /// WindowServer's Space and on-screen view of one layer-0 window.
@@ -459,13 +583,20 @@ pub(crate) struct WindowSpaceView {
 /// [`WindowSpaceView`] of `window_id`, or `None` when WindowServer does not
 /// list it as a layer-0 window.
 pub(crate) fn window_space_view_by_id(window_id: u32) -> Option<WindowSpaceView> {
-    all_windows()
-        .into_iter()
-        .find(|w| w.window_id == window_id)
-        .map(|w| WindowSpaceView {
-            on_current_space: w.on_current_space,
-            is_on_screen: w.is_on_screen,
-        })
+    // The same layer-0 window `all_windows` would list, with Space membership
+    // read for this window alone rather than for every window in the session.
+    let window = describe_window(window_id).filter(|window| window.layer == 0)?;
+    let on_current_space = crate::input::skylight::SpaceQuery::new().and_then(|query| {
+        let space_ids = query.window_space_ids(window_id);
+        let display_space_id = space_ids
+            .as_ref()
+            .and_then(|_| query.current_space_for_window(window_id));
+        window_on_current_space(space_ids.as_deref(), display_space_id)
+    });
+    Some(WindowSpaceView {
+        on_current_space,
+        is_on_screen: window.is_on_screen,
+    })
 }
 
 /// Look up a window's bounds by its CGWindowID.
@@ -473,7 +604,7 @@ pub(crate) fn window_space_view_by_id(window_id: u32) -> Option<WindowSpaceView>
 /// Returns `None` if the window is not currently known to WindowServer
 /// (e.g. it was closed or the window_id is stale).
 pub fn window_bounds_by_id(window_id: u32) -> Option<WindowBounds> {
-    window_info_by_id(window_id).map(|w| w.bounds)
+    describe_window(window_id).map(|w| w.bounds)
 }
 
 /// Who owns a requested CGWindowID, as seen by a caller that asked about `pid`.
@@ -507,10 +638,17 @@ pub fn resolve_window_owner_in(windows: &[WindowInfo], pid: i32, window_id: u32)
     }
 }
 
-/// Resolve whether `pid` really owns `window_id`. Blocking (one CGWindowList
-/// enumeration).
+/// Resolve whether `pid` really owns `window_id`. Blocking (one WindowServer
+/// lookup of that window).
 pub fn resolve_window_owner(pid: i32, window_id: u32) -> WindowOwner {
-    resolve_window_owner_in(&all_windows_any_layer(), pid, window_id)
+    match describe_window(window_id) {
+        None => WindowOwner::Unknown,
+        Some(w) if w.pid == pid => WindowOwner::SamePid,
+        Some(w) => WindowOwner::ForeignPid {
+            owner_pid: w.pid,
+            owner_app_name: w.app_name,
+        },
+    }
 }
 
 /// Select the best window_id for a pid.
@@ -592,6 +730,104 @@ fn poll_until_no_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every per-window lookup must agree with the enumeration it replaced,
+    /// for every window in the live session (desktop elements included).
+    #[test]
+    #[ignore = "reads the live WindowServer; run with --ignored on a macOS desktop"]
+    fn single_window_lookups_match_the_enumerations() {
+        let listed = all_windows_any_layer();
+        let with_spaces = all_windows();
+        let every = enumerate_windows(0, LayerFilter::AnyLayer, None, false).windows;
+        assert!(!every.is_empty());
+        let mut desktop_elements = 0;
+        for window in &every {
+            let enumerated = listed.iter().find(|w| w.window_id == window.window_id);
+            let described = describe_window(window.window_id);
+            match (enumerated, described.as_ref()) {
+                (None, None) => desktop_elements += 1,
+                (Some(enumerated), Some(described)) => {
+                    assert_eq!(described.pid, enumerated.pid);
+                    assert_eq!(described.app_name, enumerated.app_name);
+                    assert_eq!(described.title, enumerated.title);
+                    assert_eq!(described.bounds, enumerated.bounds);
+                    assert_eq!(described.layer, enumerated.layer);
+                    assert_eq!(described.is_on_screen, enumerated.is_on_screen);
+                }
+                (enumerated, described) => panic!(
+                    "window {} (layer {}) enumerated={} described={}",
+                    window.window_id,
+                    window.layer,
+                    enumerated.is_some(),
+                    described.is_some(),
+                ),
+            }
+            let layer0 = with_spaces.iter().find(|w| w.window_id == window.window_id);
+            assert_eq!(
+                window_space_view_by_id(window.window_id),
+                layer0.map(|w| WindowSpaceView {
+                    on_current_space: w.on_current_space,
+                    is_on_screen: w.is_on_screen,
+                }),
+                "window {}",
+                window.window_id
+            );
+            assert_eq!(
+                resolve_window_owner(window.pid, window.window_id),
+                resolve_window_owner_in(&listed, window.pid, window.window_id)
+            );
+        }
+        assert_eq!(describe_window(u32::MAX), None);
+        eprintln!(
+            "{} windows, {} desktop elements",
+            every.len(),
+            desktop_elements
+        );
+    }
+
+    /// Median of 50 lookups, enumeration against single-window description.
+    #[test]
+    #[ignore = "timing; reads the live WindowServer"]
+    fn single_window_lookup_timing() {
+        fn median_us(mut f: impl FnMut()) -> u128 {
+            let mut runs: Vec<u128> = (0..50)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    f();
+                    start.elapsed().as_micros()
+                })
+                .collect();
+            runs.sort_unstable();
+            runs[runs.len() / 2]
+        }
+        let windows = all_windows();
+        let target = windows
+            .iter()
+            .find(|w| w.is_on_screen)
+            .expect("a visible window")
+            .window_id;
+        let old_info = median_us(|| {
+            let _ = all_windows_any_layer()
+                .into_iter()
+                .find(|w| w.window_id == target);
+        });
+        let new_info = median_us(|| {
+            let _ = describe_window(target);
+        });
+        let old_space = median_us(|| {
+            let _ = all_windows()
+                .into_iter()
+                .find(|w| w.window_id == target)
+                .map(|w| w.on_current_space);
+        });
+        let new_space = median_us(|| {
+            let _ = window_on_current_space_by_id(target);
+        });
+        eprintln!(
+            "windows={} window_info_by_id old={}us new(describe_window)={}us; window_on_current_space_by_id old={}us new={}us",
+            windows.len(), old_info, new_info, old_space, new_space
+        );
+    }
 
     #[test]
     fn bounds_numbers_preserve_finite_values_and_default_non_finite_or_missing_values() {

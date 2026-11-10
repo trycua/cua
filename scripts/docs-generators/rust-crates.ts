@@ -94,10 +94,10 @@ export interface PageSpec {
 }
 
 /**
- * The public crate set: `cua-sdk` (the Rust host API, the same objects the
- * UniFFI bindings expose) plus the crates Rust hosts use directly next to it
- * (`cua-spacesd-client`, `cua-fleet`, `cua-sandbox-core`, `cua-spaces`; see
- * rust/index.mdx for the stability tiers).
+ * The stable crates: `cua-sdk` (the Rust host API, the same objects the
+ * UniFFI bindings expose) and `cua-spacesd-client`. The unstable crates
+ * (`cua-sandbox-core`, `cua-spaces`) have no pages; rust/index.mdx points at
+ * `cargo doc` for them (see its stability tiers).
  */
 export const PAGES: PageSpec[] = [
   {
@@ -115,44 +115,6 @@ export const PAGES: PageSpec[] = [
     description: 'The async cua-spacesd client crate (native gRPC or gRPC-Web).',
     sources: [],
     fallback: true,
-  },
-  {
-    slug: 'cua-fleet',
-    crate: 'cua-fleet',
-    title: 'cua-fleet',
-    description: 'The Fleet (cloud sandboxes) crate: pools, claims, builds and claim secrets.',
-    sources: [],
-    fallback: true,
-  },
-  {
-    slug: 'cua-sandbox-core',
-    crate: 'cua-sandbox-core',
-    title: 'cua-sandbox-core',
-    description: 'The daemon-agnostic Sandbox over the Fleet, local and direct providers.',
-    sources: [],
-    fallback: true,
-  },
-  {
-    slug: 'cua-spaces',
-    crate: 'cua-spaces',
-    title: 'cua-spaces: registry and primitives',
-    description: 'The Spaces registry and primitives (files, exec, streams, presence, services, teleport, hotspot, relay).',
-    sources: [],
-    fallback: true,
-  },
-  {
-    slug: 'cua-spaces-client',
-    crate: 'cua-spaces',
-    title: 'cua-spaces: client',
-    description: 'The Spaces client: transports, model, control and teleport.',
-    sources: ['src/client/'],
-  },
-  {
-    slug: 'cua-spaces-agents-mcp',
-    crate: 'cua-spaces',
-    title: 'cua-spaces: agents and MCP',
-    description: 'Agents in Spaces and the Spaces MCP server (stdio and HTTP).',
-    sources: ['src/agents/', 'src/mcp/'],
   },
 ];
 
@@ -323,7 +285,8 @@ export function cleanSignature(sig: string): string {
 /** A long constant value (an error message, a URL list) is elided. */
 export function shortValue(sig: string): string {
   const m = sig.match(/^(pub (?:const|static) [^=]+= )(.*);$/);
-  return m && m[2].length > 48 ? `${m[1]}/* ... */;` : sig;
+  // A semver literal is a release stamp: eliding it keeps the page the same after every release.
+  return m && (m[2].length > 48 || /^"\d+\.\d+\.\d+[^"]*"$/.test(m[2])) ? `${m[1]}/* ... */;` : sig;
 }
 
 /** A trailing `// summary` comment, for members inside a code block. */
@@ -405,7 +368,6 @@ export function renderCratePage(
   krate: CrateDoc,
   items: ItemDoc[],
   dump: Dump,
-  version: string,
   uniffi: Map<string, string> = new Map()
 ): string {
   const body: string[] = [];
@@ -469,7 +431,7 @@ export function renderCratePage(
     if (!group.length) continue;
     body.push(`## ${heading}`, freeItems(group, krate));
   }
-  // Re-exports of crates outside the public set (the Fleet SDK types, the
+  // Re-exports of crates outside the public set (the
   // protos): one line, since their own crates document them.
   const reexports = rest.filter((i) => i.kind === 'reexport');
   if (reexports.length) {
@@ -483,7 +445,6 @@ export function renderCratePage(
     description: spec.description,
     generator: GENERATOR,
     source: `rustdoc JSON (${dump.toolchain}, format ${dump.format_version}) of ${krate.name}`,
-    version,
     body: body.join('\n\n'),
   });
 }
@@ -504,7 +465,6 @@ function crateTable(dump: Dump): string {
 /** Every generated file, keyed by absolute path. */
 export function renderAll(
   dump: Dump,
-  version: string,
   outDir = OUTPUT_DIR,
   uniffi: Map<string, string> = uniffiAnchors()
 ): Map<string, string> {
@@ -513,7 +473,7 @@ export function renderAll(
   for (const spec of PAGES) {
     const krate = dump.crates.find((c) => c.name === spec.crate);
     if (!krate) throw new Error(`dump has no crate ${spec.crate}`);
-    files.set(path.join(outDir, `${spec.slug}.mdx`), renderCratePage(spec, krate, assigned.get(spec.slug)!, dump, version, uniffi));
+    files.set(path.join(outDir, `${spec.slug}.mdx`), renderCratePage(spec, krate, assigned.get(spec.slug)!, dump, uniffi));
   }
   files.set(
     path.join(outDir, 'index.mdx'),
@@ -522,11 +482,10 @@ export function renderAll(
       description: 'The public Rust crates of the Cua SDK, how to depend on them, and what is stable.',
       generator: GENERATOR,
       source: `rustdoc JSON (${dump.toolchain}, format ${dump.format_version})`,
-      version,
       body: [
         'Rust hosts (CLIs, Tauri apps, services) use the crates directly instead of a binding. The crates are not on crates.io, so there is no docs.rs page: each crate has one page here with every public item.',
         crateTable(dump),
-        readHeader('cua-sdk/rust/index.md', { version }),
+        readHeader('cua-sdk/rust/index.md'),
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -576,8 +535,7 @@ function main(): void {
   const dumpIndex = args.indexOf('--dump');
   const dump: Dump =
     dumpIndex >= 0 ? JSON.parse(fs.readFileSync(args[dumpIndex + 1], 'utf-8')) : buildDump();
-  const version = fs.readFileSync(path.join(REPO_ROOT, 'libs', 'cua', 'VERSION'), 'utf-8').trim();
-  const drift = syncFiles(renderAll(dump, version), checkOnly, [OUTPUT_DIR], GENERATOR);
+  const drift = syncFiles(renderAll(dump), checkOnly, [OUTPUT_DIR], GENERATOR);
   finish('Rust crate', drift, checkOnly, GENERATOR);
 }
 

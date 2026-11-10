@@ -33,7 +33,7 @@ export function Select<V extends string | number>({ value, options, onValueChang
       <SelectPrimitive.Trigger
         aria-label={rest["aria-label"]}
         className={cn(
-          "inline-flex h-7 min-w-36 items-center justify-between gap-2 rounded-md border border-input bg-card px-2.5 text-[13px] shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-disabled:opacity-50 dark:bg-input/30",
+          "inline-flex h-7 min-w-36 items-center justify-between gap-2 rounded-lg border border-input bg-card px-2.5 text-[13px] shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-disabled:opacity-50 dark:bg-input/30",
           className,
         )}
       >

@@ -216,9 +216,7 @@ try {
   </Tab>
 </Tabs>
 
-Version 0.25 does not expose these typed window methods (`ActionTarget`,
-`ClickPosition`); upgrade the bindings and native library together. Rules the
-example follows:
+Rules the example follows:
 
 - `click` returns `ActionResult` and raises `DriverError.Tool` on refusal. A
   returned action does not prove the UI changed; the second snapshot does.
@@ -312,6 +310,14 @@ Python exposes the same objects:
   environment to shorten it; `EmbeddedCuaDriverHost` admits both in its
   `environment` option. On macOS the wait also holds the focus-restore
   lease, so a shorter wait shortens that protection. Windows ignores both.
+
+- **Keep the full cursor glide inside batches.** On macOS a step of
+  `run_steps` or `run_script` waits at most 120 ms for the agent cursor and
+  100 ms for a window change, because another step follows at once. The last
+  step of a `run_steps` batch and every direct call keep the full waits. Set
+  `CUA_DRIVER_BATCH_PACING=full` in the daemon's launch environment to give
+  every step the full waits, for example when you record a demo;
+  `EmbeddedCuaDriverHost` admits it.
 
 - **Shorten macOS keystroke pacing.** The macOS adapter waits 8 ms between
   synthesized key events. Set `CUA_DRIVER_KEY_GAP_MS` (2 to 100) in the same

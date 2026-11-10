@@ -237,17 +237,20 @@ public struct LineSplitter {
         while let nl = rest.firstIndex(of: 0x0A) {
             if skipping {
                 skipping = false
-            } else {
+            } else if nl - rest.startIndex <= NotchProtocol.maxLine - buffer.count {
                 buffer.append(rest[rest.startIndex..<nl])
                 if !buffer.isEmpty { lines.append(buffer) }
             }
             buffer = Data()
             rest = rest[(nl + 1)...]
         }
-        if !skipping { buffer.append(rest) }
-        if buffer.count > NotchProtocol.maxLine {
-            buffer = Data()
-            skipping = true
+        if !skipping {
+            if rest.count <= NotchProtocol.maxLine - buffer.count {
+                buffer.append(rest)
+            } else {
+                buffer = Data()
+                skipping = true
+            }
         }
         return lines
     }

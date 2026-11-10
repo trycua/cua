@@ -30,9 +30,10 @@ impl std::fmt::Display for TokenError {
     }
 }
 
-/// The shared, refreshable user session. [`crate::core::AppTokens`] pulls
-/// the Fleet bearer from this one handle; the store is shared with the CLI
-/// and the daemon, so a sign-in or sign-out anywhere is seen everywhere.
+/// The shared, refreshable user session. The relay account and this
+/// device's enrollment draw their bearer from this one handle; the store is
+/// shared with the CLI and the daemon, so a sign-in or sign-out anywhere is
+/// seen everywhere.
 pub struct SessionHandle {
     session: cua_auth::Session,
 }
@@ -68,10 +69,13 @@ impl SessionHandle {
 
     /// Starts a sign-in (browser, else device code).
     pub async fn begin_login(&self) -> Result<PendingLogin, String> {
-        self.session
+        let mut pending = self
+            .session
             .begin_login(Flow::Auto)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        pending.return_to = Some(cua_auth::ReturnTo::App("Cua Spaces".into()));
+        Ok(pending)
     }
 
     /// Stores freshly issued credentials; returns the display identity.

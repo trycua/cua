@@ -15,7 +15,9 @@ name: "Nightly: Hyprland plugin requalification"
 #              against the exact headers, runs CTest, records the Hyprland
 #              binary, header-inventory, compiler and module hashes, then loads
 #              the module into a headless Hyprland on vkms and runs the
-#              window-targeted background input smoke.
+#              window-targeted background input smoke, then the latest
+#              released Cua Driver's list_windows, get_window_state
+#              (screenshot), click and type_text against a native window.
 #   report     merges the results into compatibility.json (Hyprland build ->
 #              plugin build -> status) and matrix.md, uploads both as an
 #              artifact, and on scheduled/dispatched main runs commits them to
@@ -27,8 +29,14 @@ name: "Nightly: Hyprland plugin requalification"
 
 on:
   schedule:
-    # Daily 06:41 UTC, after Omarchy edge's usual overnight package builds.
-    - cron: "41 6 * * *"
+    # Every four hours, the first after Omarchy edge's usual overnight package
+    # builds. A run with nothing new detects, finds an unchanged manifest and
+    # stops in about a minute.
+    - cron: "41 6,10,14,18,22,2 * * *"
+  # A new Hyprland build can also be announced from outside (for example by a
+  # packager): POST /repos/trycua/cua/dispatches {"event_type":"hyprland-build-published"}.
+  repository_dispatch:
+    types: [hyprland-build-published]
   workflow_dispatch:
     inputs:
       force:
@@ -129,6 +137,22 @@ jobs:
           mkdir -p "$RUNNER_TEMP/source" "$RUNNER_TEMP/out"
           git archive "$COMMIT" libs/cua-driver/hyprland-plugin | tar -x -C "$RUNNER_TEMP/source"
           printf '%s' "$JOB" >"$RUNNER_TEMP/job.json"
+      - name: Latest released Cua Driver (the smoke drives it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                  --jq '[.[] | select(.draft | not) | .tag_name | select(test("^cua-driver-rs-v[0-9]+[.][0-9]+[.][0-9]+$"))][0]')
+          version=${tag#cua-driver-rs-v}
+          echo "Cua Driver $version"
+          mkdir -p "$RUNNER_TEMP/driver-dl"
+          curl -fsSL -o "$RUNNER_TEMP/driver-dl/cua-driver-rs-${version}-linux-x86_64.tar.gz" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/cua-driver-rs-${version}-linux-x86_64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/driver-dl/cua-driver-rs-${version}-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/driver-dl"
+          mv "$RUNNER_TEMP/driver-dl/cua-driver-rs-${version}-linux-x86_64" "$RUNNER_TEMP/driver"
+          echo "$version" >"$RUNNER_TEMP/driver/VERSION"
+          test -x "$RUNNER_TEMP/driver/cua-driver"
       - name: Virtual DRM device (vkms) for the headless session
         run: |
           # Without it the build and CTest still run; load and smoke report n/a.
@@ -139,12 +163,15 @@ jobs:
           fi
           ls -l /dev/dri 2>/dev/null || true
       - name: Build and requalify in an Arch container
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           docker run --rm --privileged \
             -v "$GITHUB_WORKSPACE/libs/cua-driver/hyprland-plugin:/tooling:ro" \
             -v "$RUNNER_TEMP/source/libs/cua-driver/hyprland-plugin:/source:ro" \
             -v "$RUNNER_TEMP/job.json:/job.json:ro" \
+            -v "$RUNNER_TEMP/driver:/driver:ro" \
             -v "$RUNNER_TEMP/out:/out" \
             -v /run/udev:/run/udev:ro \
             "$ARCH_IMAGE" sh -euc '
@@ -155,7 +182,16 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out"
           status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RUNNER_TEMP/out/result.json")
           echo "status: $status"
-          [ "$status" != fail ] || { echo "::error::requalification failed; see result.json and the logs"; exit 1; }
+          if [ "$status" = fail ]; then
+            # A pull request is a dry run of the tooling: the matrix result is a fact about the
+            # packages that day (reported in the summary), so only a tooling crash fails the check.
+            if [ "$EVENT" = pull_request ] && ! jq -e '.error' "$RUNNER_TEMP/out/result.json" >/dev/null; then
+              echo "::warning::requalification status is fail for this combination; see result.json (dry run on a pull request)"
+            else
+              echo "::error::requalification failed; see result.json and the logs"
+              exit 1
+            fi
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -205,7 +241,7 @@ jobs:
       - name: Commit the manifest to the ${{ env.COMPAT_BRANCH }} branch
         if: >-
           github.repository == 'trycua/cua' && github.ref == 'refs/heads/main' &&
-          (github.event_name == 'schedule' ||
+          (github.event_name == 'schedule' || github.event_name == 'repository_dispatch' ||
            (github.event_name == 'workflow_dispatch' && inputs.publish_manifest))
         run: |
           set -euo pipefail
@@ -244,10 +280,15 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'pull_request' && '1' || '0' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REQUALIFY_RESULT: ${{ needs.requalify.result }}
+          EVENT: ${{ github.event_name }}
         run: |
           if [ ! -s compat/failures.md ]; then
             echo "- A requalify job ended $REQUALIFY_RESULT before writing a result; see the run logs." >compat/failures.md
           fi
           "$REQUALIFY/report_failure.sh" "$RUN_URL" compat/failures.md compat/matrix.md
+          if [ "$EVENT" = pull_request ]; then
+            echo "::warning::Hyprland plugin requalification has failing combinations (dry run on a pull request); see the matrix in the summary."
+            exit 0
+          fi
           echo "::error::Hyprland plugin requalification failed; see the matrix in the summary."
           exit 1

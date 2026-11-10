@@ -1,0 +1,79 @@
+{
+  "relay": {
+    "name": "relay",
+    "ip": "<relay address>",
+    "ssh": [
+      "ssh",
+      "-i",
+      "<key>",
+      "ubuntu@<address>"
+    ]
+  },
+  "nodes": [
+    {
+      "name": "aws-worker",
+      "os": "linux",
+      "role": "provider",
+      "w": "$HOME/pool",
+      "nic": "enp39s0",
+      "ssh": [
+        "ssh",
+        "-i",
+        "<key>",
+        "ubuntu@<address>"
+      ],
+      "prelude": ". ~/bin/env.sh &&",
+      "submits": true,
+      "local_runs": true,
+      "spaces": true,
+      "faults": [
+        "kill_daemon",
+        "kill_spacesd",
+        "stop",
+        "stale",
+        "signout",
+        "toggle",
+        "tunnel",
+        "partition",
+        "netem",
+        "clock",
+        "disk",
+        "mem"
+      ]
+    },
+    {
+      "name": "cua-local",
+      "os": "macos",
+      "role": "provider",
+      "w": "$HOME/pool-test",
+      "ssh": [
+        "ssh",
+        "<mac host>"
+      ],
+      "prelude": ". ~/pool-test/bin/env-mac.sh &&",
+      "spaces": true,
+      "faults": [
+        "kill_daemon",
+        "kill_spacesd",
+        "stop",
+        "stale",
+        "signout",
+        "toggle",
+        "tunnel"
+      ]
+    },
+    {
+      "name": "main-mac",
+      "os": "macos",
+      "role": "client",
+      "w": "$HOME/pool-client",
+      "ssh": null,
+      "prelude": ". $HOME/pool-client/env.sh &&",
+      "submits": true,
+      "faults": [
+        "kill_daemon",
+        "stop"
+      ]
+    }
+  ]
+}

@@ -26,11 +26,11 @@ def repo(tmp_path: Path) -> Path:
         "libs/c/uv.lock": uv_package("cua-sandbox", "0.4.1", 'editable = "."'),
         # The SDK's own lock is Release Please's.
         "libs/cua/typescript/package-lock.json": '{\n  "packages": {\n    "": {\n      "version": "0.4.1"\n    }\n  }\n}\n',
-        "samples/ts/package-lock.json": '{\n  "packages": {\n    "": {\n      "version": "1.0.0"\n    },\n'
+        "examples/ts/package-lock.json": '{\n  "packages": {\n    "": {\n      "version": "1.0.0"\n    },\n'
         + sdk_entry
         + '    "node_modules/x": {\n      "version": "0.4.1"\n    }\n  }\n}\n',
         # A registry install of the SDK is not a link to the checkout.
-        "samples/other/package-lock.json": json.dumps(
+        "examples/other/package-lock.json": json.dumps(
             {"packages": {"": {}, "node_modules/@trycua/cua": {"version": "0.4.1"}}}, indent=2
         ),
     }
@@ -48,21 +48,21 @@ def test_only_the_recorded_sdk_version_changes(repo: Path, capsys: pytest.Captur
 
     assert main(["--repo-root", str(repo)]) == 0
 
-    assert capsys.readouterr().out.split() == ["libs/a/uv.lock", "uv.lock", "samples/ts/package-lock.json"]
+    assert capsys.readouterr().out.split() == ["libs/a/uv.lock", "uv.lock", "examples/ts/package-lock.json"]
     changed = {p for p, text in before.items() if p.read_text() != text}
-    assert changed == {repo / "uv.lock", repo / "libs/a/uv.lock", repo / "samples/ts/package-lock.json"}
+    assert changed == {repo / "uv.lock", repo / "libs/a/uv.lock", repo / "examples/ts/package-lock.json"}
     for path in changed:
         assert path.read_text() == before[path].replace('"0.4.1"', '"0.5.0"', 1)
     # The lock revision is not rewritten, and a dependency at the old version stays.
     assert "revision = 3" in (repo / "uv.lock").read_text()
-    assert '"node_modules/x": {\n      "version": "0.4.1"' in (repo / "samples/ts/package-lock.json").read_text()
+    assert '"node_modules/x": {\n      "version": "0.4.1"' in (repo / "examples/ts/package-lock.json").read_text()
 
     assert main(["--repo-root", str(repo)]) == 0
     assert capsys.readouterr().out.strip() == ""
 
 
 def test_an_unrecognised_sdk_link_fails_loudly(repo: Path) -> None:
-    lock = repo / "samples/ts/package-lock.json"
+    lock = repo / "examples/ts/package-lock.json"
     data = json.loads(lock.read_text())
     lock.write_text(json.dumps(data, separators=(",", ":")))
     with pytest.raises(RuntimeError, match="expected one version"):
@@ -74,3 +74,42 @@ def test_release_please_runs_the_lock_sync_for_sdk_releases() -> None:
     sdk_branch = workflow.split('elif [[ "$SDK" == "true" ]]; then', 1)[1].split("else\n", 1)[0]
     assert "python3 .github/scripts/sync_sdk_release_locks.py" in sdk_branch
     assert 'git add -- "${SDK_LOCK_PATHS[@]}"' in sdk_branch
+
+
+def test_cargo_locks_follow_the_published_sdk_crates(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def crate(name: str, version: str, source: str | None = None) -> str:
+        entry = f'[[package]]\nname = "{name}"\nversion = "{version}"\n'
+        if source:
+            entry += f'source = "{source}"\n'
+        return entry + 'dependencies = [\n "prost",\n]\n'
+
+    registry = "registry+https://github.com/rust-lang/crates.io-index"
+    files = {
+        "libs/cua/VERSION": "0.6.0\n",
+        "libs/cua/crates/cua-proto/Cargo.toml": '[package]\nname = "cua-proto"\nversion.workspace = true\n',
+        "libs/cua/crates/cua-spacesd-client/Cargo.toml": '[package]\nname = "cua-spacesd-client"\nversion.workspace = true\n',
+        # Locked by path (the checkout): follow the release.
+        "libs/cua-spacesd/Cargo.lock": "version = 4\n\n"
+        + crate("cua-proto", "0.5.0")
+        + "\n"
+        + crate("cua-spacesd-client", "0.5.0"),
+        # The workspace's own lock: Release Please does not bump it.
+        "libs/cua/Cargo.lock": "version = 4\n\n" + crate("cua-proto", "0.5.0"),
+        # From crates.io, and another workspace crate: left alone.
+        "examples/x/Cargo.lock": "version = 4\n\n" + crate("cua-proto", "0.5.0", registry) + "\n" + crate("cua-sdk", "0.1.0"),
+    }
+    for rel, content in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    before = (tmp_path / "examples/x/Cargo.lock").read_text()
+
+    assert main(["--repo-root", str(tmp_path)]) == 0
+
+    assert capsys.readouterr().out.split() == ["libs/cua-spacesd/Cargo.lock", "libs/cua/Cargo.lock"]
+    assert '"0.5.0"' not in (tmp_path / "libs/cua/Cargo.lock").read_text()
+    spacesd = (tmp_path / "libs/cua-spacesd/Cargo.lock").read_text()
+    assert spacesd.count('version = "0.6.0"') == 2 and '"0.5.0"' not in spacesd
+    assert (tmp_path / "examples/x/Cargo.lock").read_text() == before

@@ -16,8 +16,12 @@ test survey recommends), no expected cell may be missing, and every language
 must record at least one result. Known bugs are `xfail`, never skips.
 
 After each language, a janitor removes docker containers named
-cua-e2e-<run>-* that a crashed test may have left behind. Fleet pools are
-cleaned by the tests themselves (finally) and carry a TTL as a backstop.
+cua-e2e-<run>-* that a crashed test may have left behind.
+
+Sharded CI (`--shard I/N`, see sharding.py): a shard runs only its units and
+checks only what it ran (failures, unexpected skips); the per-shard results
+are concatenated and `--matrix-only --strict` then applies the full-suite
+checks (every expected cell present, docs coverage) to the merged set.
 """
 
 from __future__ import annotations
@@ -36,32 +40,21 @@ from pathlib import Path
 
 SUITE = Path(__file__).resolve().parent
 REPO = SUITE.parents[2]
+sys.path.insert(0, str(SUITE))
+import sharding  # noqa: E402
+
 GATES = {
     "container": {"CUA_E2E_CONTAINER": "1"},
     "qemu": {"CUA_E2E_QEMU": "1"},
     "lume": {"CUA_E2E_LUME": "1"},
-    "fleet": {"CUA_E2E_FLEET": "1"},
-    "fleet-env": {"CUA_E2E_FLEET": "1"},
     "cua-sandbox": {"CUA_E2E_CUA_SANDBOX": "1"},
     "conformance": {"CUA_E2E_CONFORMANCE": "1", "CUA_E2E_CONTAINER": "1"},
 }
 # Skips that stay legitimate under --strict (a precondition the lane itself
 # cannot provide), matched as substrings of the recorded reason.
 ALLOWED_SKIPS = (
-    "CUA_E2E_FLEET_TAKEN_POOL",
-    "CUA_E2E_FLEET_ENV_IMAGE",
-    "needs a per-claim secret field (cloud PR)",
-    "CUA_E2E_FLEET_PUSH_REPO is unset",
-    "terraform (or tofu) is not installed",
-    "@trycua/fleet is not built",
     "playwright is not installed",
     "Lume runs on macOS hosts only",
-    # A guide input the reader supplies (e.g. OMARCHY_IMAGE) and CI does not.
-    "docs block input",
-    # The TypeScript Fleet guide page was removed upstream.
-    "no Fleet TypeScript docs block is tagged",
-    # Cua Cloud has ended: there is no live Fleet lane to run.
-    "Cua Cloud has ended (CUA-1854)",
 )
 STATUS_ICON = {
     "pass": "pass",
@@ -123,39 +116,123 @@ def janitor(run: str) -> None:
         subprocess.run(["docker", "rm", "-f", *ids], capture_output=True)
 
 
-def run_langs(langs: list[str], env: dict, timeout: int) -> dict[str, int]:
-    codes = {}
+def py_command() -> list[str]:
     uv = shutil.which("uv")
+    if not uv:
+        return [sys.executable, "-m", "pytest", "-q", "-rs"]
+    return [
+        uv,
+        "run",
+        "--no-project",
+        "--python",
+        "3.12",
+        "--with",
+        "pytest",
+        # The browse-the-web scenario is an MCP client.
+        "--with",
+        "mcp",
+        "pytest",
+        "-q",
+        "-rs",
+    ]
+
+
+def collect_py(env: dict, timeout: int) -> list[str]:
+    """The node ids pytest would run, in collection order."""
+    out = subprocess.run(
+        [*py_command(), "--collect-only"],
+        env=env,
+        cwd=SUITE / "python",
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    ids = []
+    for line in out.stdout.splitlines():
+        if not line.strip():
+            break  # the node ids end at the first blank line
+        if re.match(r"[\w./-]+\.py::", line):
+            ids.append(line.strip())
+    if out.returncode != 0 or not ids:
+        sys.stderr.write(out.stdout[-4000:] + out.stderr[-4000:])
+        raise SystemExit(f"cannot collect the Python tests (exit {out.returncode})")
+    return ids
+
+
+def ts_files() -> list[str]:
+    return sorted(p.name for p in (SUITE / "typescript").glob("*.test.mjs"))
+
+
+def rust_binaries(prebuilt: Path) -> dict[str, str]:
+    """Prebuilt integration-test binaries: name -> file, from the manifest
+    ci-setup.sh --only rust-tests writes next to them."""
+    manifest = prebuilt / "manifest.json"
+    if not manifest.exists():
+        raise SystemExit(f"no {manifest}: build the Rust tests with ci-setup.sh --only rust-tests")
+    return {m["name"]: m["file"] for m in json.loads(manifest.read_text())}
+
+
+def run_langs(
+    langs: list[str],
+    env: dict,
+    timeout: int,
+    *,
+    select: dict[str, list[str]] | None = None,
+    ts_concurrency: int = 1,
+    rust_threads: int = 2,
+    rust_prebuilt: Path | None = None,
+    unit_secs: dict[str, float] | None = None,
+) -> dict[str, int]:
+    """Runs each language half. `select` (a shard) limits a half to its units;
+    without it every test runs, as on a developer machine and in the nightly."""
+    codes = {}
+    unit_secs = {} if unit_secs is None else unit_secs
+    # The binaries run with the Rust half's directory as cwd: a relative
+    # --rust-prebuilt (the workflow passes one) must not be taken from there.
+    rust_prebuilt = rust_prebuilt.resolve() if rust_prebuilt is not None else None
     for lang in langs:
+        if select is not None and not select.get(lang):
+            continue  # nothing of this half in this shard
         if lang == "py":
-            cmd = (
-                [
-                    uv,
-                    "run",
-                    "--no-project",
-                    "--python",
-                    "3.12",
-                    "--with",
-                    "pytest",
-                    # The browse-the-web scenario is an MCP client.
-                    "--with",
-                    "mcp",
-                    "pytest",
-                    "-q",
-                    "-rs",
-                ]
-                if uv
-                else [sys.executable, "-m", "pytest", "-q", "-rs"]
-            )
-            codes[lang] = sh(cmd, env, SUITE / "python", timeout)
+            run_env = env
+            if select is not None:
+                chosen = Path(env["CUA_E2E_RESULTS"]) / "py-select.txt"
+                chosen.write_text("\n".join(select["py"]) + "\n")
+                run_env = dict(env, CUA_E2E_SELECT=str(chosen))
+            codes[lang] = sh(py_command(), run_env, SUITE / "python", timeout)
         elif lang == "ts":
-            tests = sorted(str(p) for p in (SUITE / "typescript").glob("*.test.mjs"))
-            codes[lang] = sh(
-                ["node", "--test", "--test-concurrency=1", *tests],
-                env,
-                SUITE / "typescript",
-                timeout,
-            )
+            names = select["ts"] if select is not None else ts_files()
+            code = 0
+            for name in names:
+                t0 = time.monotonic()
+                rc = sh(
+                    [
+                        "node",
+                        "--test",
+                        f"--test-concurrency={ts_concurrency}",
+                        str(SUITE / "typescript" / name),
+                    ],
+                    env,
+                    SUITE / "typescript",
+                    timeout,
+                )
+                unit_secs[f"ts:{name}"] = round(time.monotonic() - t0, 1)
+                code = code or rc
+            codes[lang] = code
+        elif lang == "rust" and rust_prebuilt is not None:
+            binaries = rust_binaries(rust_prebuilt)
+            code = 0
+            for name in select["rust"] if select is not None else sorted(binaries):
+                t0 = time.monotonic()
+                rc = sh(
+                    [str(rust_prebuilt / binaries[name]), f"--test-threads={rust_threads}"],
+                    env,
+                    SUITE / "rust",
+                    timeout,
+                )
+                unit_secs[f"rust:{name}"] = round(time.monotonic() - t0, 1)
+                code = code or rc
+            codes[lang] = code
         elif lang == "rust":
             codes[lang] = sh(
                 [
@@ -164,18 +241,36 @@ def run_langs(langs: list[str], env: dict, timeout: int) -> dict[str, int]:
                     "--manifest-path",
                     str(SUITE / "rust" / "Cargo.toml"),
                     "--",
-                    "--test-threads=2",
+                    f"--test-threads={rust_threads}",
                 ],
                 env,
                 SUITE / "rust",
                 timeout,
             )
-        elif lang == "go":
-            codes[lang] = sh([str(SUITE / "go" / "terraform-smoke.sh")], env, SUITE / "go", timeout)
         else:
             raise SystemExit(f"unknown language {lang}")
         janitor(env["CUA_E2E_RUN"])
     return codes
+
+
+def plan_shard(
+    langs: list[str], env: dict, timeout: int, spec: str, timings: dict, rust_prebuilt: Path | None
+) -> tuple[dict[str, list[str]], int, float]:
+    """This shard's units per language, the total unit count and the shard's
+    predicted seconds. Every shard computes the same plan."""
+    index, count = sharding.parse_shard(spec)
+    units: list[sharding.Unit] = []
+    if "py" in langs:
+        units += [("py", n) for n in collect_py(env, timeout)]
+    if "ts" in langs:
+        units += [("ts", n) for n in ts_files()]
+    if "rust" in langs:
+        if rust_prebuilt is None:
+            raise SystemExit("--shard needs --rust-prebuilt for the Rust half")
+        units += [("rust", n) for n in rust_binaries(rust_prebuilt)]
+    mine = sharding.assign(units, count, timings)[index - 1]
+    chosen = {lang: [u for lg, u in mine if lg == lang] for lang in ("py", "ts", "rust")}
+    return chosen, len(set(units)), sharding.predicted(mine, timings)
 
 
 def expected(sc: dict, lane: str, lang: str) -> bool:
@@ -212,7 +307,7 @@ def render(out: Path, lanes: list[str] | None) -> tuple[str, list[str]]:
     by = defaultdict(list)
     for r in rows:
         by[(r["scenario"], r["lane"], r["lang"])].append(r)
-    all_langs = ["py", "ts", "rust", "go"]
+    all_langs = ["py", "ts", "rust"]
     lines = [
         "| scenario (guide) | lane | " + " | ".join(all_langs) + " |",
         "|---|---|" + "---|" * len(all_langs),
@@ -257,19 +352,20 @@ def render(out: Path, lanes: list[str] | None) -> tuple[str, list[str]]:
     return md, problems
 
 
+def skip_problems(rows: list[dict], lanes: list[str]) -> list[str]:
+    return [
+        f"unexpected skip in requested lane: {r['scenario']}/{r['lane']}/{r['lang']}: {r['reason']}"
+        for r in rows
+        if r["lane"] in lanes
+        and r["status"] == "skip"
+        and not any(a in r.get("reason", "") for a in ALLOWED_SKIPS)
+    ]
+
+
 def strict_problems(out: Path, lanes: list[str], langs: list[str]) -> list[str]:
     reg = json.loads((SUITE / "scenarios.json").read_text())
     rows = load(out)
-    probs = []
-    for r in rows:
-        if (
-            r["lane"] in lanes
-            and r["status"] == "skip"
-            and not any(a in r.get("reason", "") for a in ALLOWED_SKIPS)
-        ):
-            probs.append(
-                f"unexpected skip in requested lane: {r['scenario']}/{r['lane']}/{r['lang']}: {r['reason']}"
-            )
+    probs = skip_problems(rows, lanes)
     seen = {(r["scenario"], r["lane"], r["lang"]) for r in rows}
     for sc in reg["scenarios"]:
         for lane in sc["lanes"]:
@@ -312,14 +408,73 @@ def docs_coverage(out: Path, lanes: list[str], langs: list[str]) -> list[str]:
     return problems
 
 
+def run_shard(
+    a: argparse.Namespace, lanes: list[str], langs: list[str], env: dict, out: Path
+) -> int:
+    """One shard of the suite. Only this shard's results exist here, so the
+    checks that need the whole matrix (missing cells, docs coverage) wait for
+    the merge; failures and unexpected skips are checked now."""
+    timings = sharding.load_timings(a.timings)
+    chosen, total, expect = plan_shard(langs, env, a.timeout, a.shard, timings, a.rust_prebuilt)
+    index, count = sharding.parse_shard(a.shard)
+    print(
+        f"\nshard {index}/{count}: "
+        + ", ".join(f"{len(chosen[lang])} {lang}" for lang in ("py", "ts", "rust"))
+        + f" of {total} units, predicted {expect:.0f}s",
+        flush=True,
+    )
+    unit_secs: dict[str, float] = {}
+    t0 = time.monotonic()
+    codes = run_langs(
+        langs,
+        env,
+        a.timeout,
+        select=chosen,
+        ts_concurrency=a.ts_concurrency,
+        rust_threads=a.rust_threads,
+        rust_prebuilt=a.rust_prebuilt,
+        unit_secs=unit_secs,
+    )
+    wall = time.monotonic() - t0
+    rows = load(out)
+    problems = [
+        f"{r['status']}: {r['scenario']}/{r['lane']}/{r['lang']}: {r['test']}"
+        for r in rows
+        if r["status"] in ("fail", "xpass")
+    ]
+    if a.strict:
+        problems += skip_problems(rows, lanes)
+    (out / "shard.json").write_text(
+        json.dumps(
+            {
+                "shard": index,
+                "of": count,
+                "total_units": total,
+                "units": chosen,
+                "predicted_secs": round(expect, 1),
+                "wall_secs": round(wall, 1),
+                "unit_secs": unit_secs,
+                "settings": {"ts_concurrency": a.ts_concurrency, "rust_threads": a.rust_threads},
+            },
+            indent=1,
+        )
+        + "\n"
+    )
+    print(f"\nshard {index}/{count} exit codes: {codes} in {wall:.0f}s (predicted {expect:.0f}s)")
+    if problems:
+        print("\n".join(["", "PROBLEMS:"] + problems))
+        return 1
+    return 1 if any(c != 0 for c in codes.values()) else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument(
         "--lanes",
         default="hermetic",
-        help="comma list: hermetic,container,qemu,lume,fleet,fleet-env,cua-sandbox,conformance",
+        help="comma list: hermetic,container,qemu,lume,cua-sandbox,conformance",
     )
-    ap.add_argument("--langs", default="py,ts,rust", help="comma list: py,ts,rust,go")
+    ap.add_argument("--langs", default="py,ts,rust", help="comma list: py,ts,rust")
     ap.add_argument(
         "--out", type=Path, default=None, help="results dir (default: a fresh temp dir)"
     )
@@ -327,7 +482,39 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=5400, help="per-language timeout (s)")
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--matrix-only", action="store_true")
+    ap.add_argument(
+        "--shard",
+        metavar="I/N",
+        help="run only shard I of N (sharding.py); merge the shards' results, then run "
+        "`--matrix-only --strict` on the merge for the full-suite checks",
+    )
+    ap.add_argument(
+        "--timings", type=Path, default=sharding.TIMINGS, help="unit weights for --shard"
+    )
+    ap.add_argument(
+        "--rust-prebuilt",
+        type=Path,
+        help="directory of prebuilt Rust test binaries + manifest.json (ci-setup.sh --only "
+        "rust-tests); run instead of `cargo test`",
+    )
+    ap.add_argument(
+        "--ts-concurrency",
+        type=int,
+        default=int(os.environ.get("CUA_E2E_TS_CONCURRENCY", "1")),
+        help="node --test-concurrency (files run one at a time by default)",
+    )
+    ap.add_argument(
+        "--rust-threads",
+        type=int,
+        default=int(os.environ.get("CUA_E2E_RUST_THREADS", "2")),
+        help="--test-threads of the Rust test binaries",
+    )
     a = ap.parse_args()
+    # Paths are used from other working directories (the halves run in their
+    # own), so fix them against the invocation directory now.
+    a.rust_prebuilt = a.rust_prebuilt.resolve() if a.rust_prebuilt else None
+    a.timings = a.timings.resolve()
+    a.out = a.out.resolve() if a.out else None
     lanes = [x for x in a.lanes.split(",") if x]
     langs = [x for x in a.langs.split(",") if x]
     out = (
@@ -340,12 +527,17 @@ def main() -> int:
         env = dict(os.environ, CUA_E2E_RUN=a.run, CUA_E2E_RESULTS=str(out))
         for lane in lanes:
             env.update(GATES.get(lane, {}))
-        if not {"fleet", "fleet-env"} & set(lanes):
-            # No live Fleet lane: never read a registry for the Fleet runtime
-            # rule. Unreadable manifests fall back to the image reference.
-            env.setdefault("CUA_FLEET_IMAGE_INSPECT", "0")
+        if a.shard:
+            return run_shard(a, lanes, langs, env, out)
         t0 = time.monotonic()
-        codes = run_langs(langs, env, a.timeout)
+        codes = run_langs(
+            langs,
+            env,
+            a.timeout,
+            ts_concurrency=a.ts_concurrency,
+            rust_threads=a.rust_threads,
+            rust_prebuilt=a.rust_prebuilt,
+        )
         print(f"\nexit codes: {codes} in {time.monotonic() - t0:.0f}s")
     md, problems = render(out, lanes)
     print(f"\n## cua SDK e2e matrix (run {a.run})\n\n{md}")

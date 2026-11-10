@@ -3,9 +3,9 @@
 
 /*
  * The main Cua Spaces window: a plain, opaque desktop app (sidebar, toolbar,
- * detail), styled after the Fleets dashboard: neutral greys, hairline
- * borders, a light-blue accent used sparingly, white-on-black (or
- * black-on-white) primary buttons. The platform system font throughout.
+ * detail): neutral greys, hairline borders, a light-blue accent used
+ * sparingly, white-on-black (or black-on-white) primary buttons. The
+ * platform system font throughout.
  *
  * Nothing here is translucent: no backdrop-filter, no rgba window
  * backgrounds. Screenshots of the window come out the same every time.
@@ -1593,7 +1593,6 @@ html.is-main body {
   }
 }
 
-
 /* Components shared with the notch (settings, window and agent lists, the
    drop zone) read the older token names; map them onto this window's
    opaque palette. */
@@ -2736,11 +2735,7 @@ html.is-teleport-picker .hp-panel {
   display: flex;
   border: 0.5px solid var(--obdp-edge);
   border-radius: 2px;
-  background: color-mix(
-    in srgb,
-    var(--dw-accent) calc(var(--obdp-checked) * 100%),
-    var(--obdp-window)
-  );
+  background: color-mix(in srgb, var(--dw-accent) calc(var(--obdp-checked) * 100%), var(--obdp-window));
 }
 .dw .obdp-checkbox svg {
   overflow: visible;
@@ -2940,6 +2935,26 @@ html.is-teleport-picker .hp-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.dw .ssr-origin {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dw-text-3);
+  font-size: 12px;
+}
+.dw .ssr-origin-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw .ssr-resolution {
+  flex: 0 0 auto;
+  color: var(--dw-text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .dw .ssr-status {
   margin: 0;
@@ -3151,7 +3166,11 @@ html.is-teleport-picker .hp-panel {
   padding: 8px 10px;
   max-height: 240px;
   overflow: auto;
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   white-space: pre-wrap;
 }
 /* The Volume page's head: Open in Finder, and where it is mounted. */
@@ -3298,4 +3317,36 @@ html.is-teleport-picker .hp-panel {
   margin: 8px 0 0;
   color: var(--dw-danger);
   font-size: 12px;
+}
+
+/* New Space's arrow: the other way to add, a machine by its address. */
+.dw-split-more {
+  position: relative;
+  display: inline-flex;
+}
+.dw-split-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  box-shadow: var(--dw-shadow-sheet);
+}
+.dw-split-item {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dw-text);
+  text-align: left;
+}
+.dw-split-item:hover {
+  background: var(--dw-accent);
+  color: #fff;
 }

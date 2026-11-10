@@ -1,7 +1,7 @@
 //! Channel construction: native gRPC (HTTP/2, h2c or TLS) through tonic, or
 //! gRPC-Web over HTTP/1.1 through `tonic-web`'s client layer and a hyper
 //! HTTP/1 connector. Both are wrapped in one boxed service that adds the
-//! endpoint's path prefix and the auth / principal / Fleet headers.
+//! endpoint's path prefix and the auth / principal headers.
 
 use crate::{
     endpoint::{Endpoint, EndpointKind},
@@ -50,19 +50,15 @@ impl std::error::Error for ChannelError {
     }
 }
 
-/// Header carrying the Fleet claim for gateway correlation (same as
-/// `cyclops-sdk`'s `service_request`).
-pub const FLEET_CLAIM_HEADER: &str = "x-cua-fleet-claim";
-
 /// Header carrying the spacesd token when `authorization` is taken by
-/// the Fleet gateway bearer.
+/// a gateway bearer (the relay's account session).
 pub const ENV_TOKEN_HEADER: &str = "x-cua-env-authorization";
 
 /// Wire protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TransportPreference {
     /// Probe native gRPC first and fall back to gRPC-Web (direct endpoints),
-    /// or use gRPC-Web directly (Fleet gateway, relay).
+    /// or use gRPC-Web directly (relay).
     #[default]
     Auto,
     /// Native gRPC over HTTP/2 only.
@@ -83,7 +79,7 @@ pub enum Transport {
 /// Extra request headers a [`BearerProvider`] adds (name, value).
 pub type ExtraHeaders = Vec<(String, String)>;
 
-/// Supplies the Fleet gateway bearer (for example `CyclopsClient::access_token`).
+/// Supplies the gateway bearer (the relay's account session).
 pub trait BearerProvider: Send + Sync {
     /// Returns the raw bearer token (without the `Bearer ` prefix).
     fn bearer(
@@ -128,20 +124,18 @@ where
     }
 }
 
-/// Fleet gateway credentials: the gateway bearer and the claim name.
+/// Gateway credentials: the bearer a relay-style gateway authenticates the
+/// account with. The spacesd token then travels in [`ENV_TOKEN_HEADER`].
 #[derive(Clone)]
 pub struct GatewayAuth {
     /// Bearer source (refreshing).
     pub bearer: Arc<dyn BearerProvider>,
-    /// Exact claim name returned by Fleet, sent as `X-Cua-Fleet-Claim`.
-    pub claim: Option<String>,
 }
 
 impl fmt::Debug for GatewayAuth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GatewayAuth")
             .field("bearer", &"<provider>")
-            .field("claim", &self.claim)
             .finish()
     }
 }
@@ -206,8 +200,6 @@ pub(crate) fn transport_order(pref: TransportPreference, endpoint: &Endpoint) ->
         TransportPreference::Native => vec![Transport::Native],
         TransportPreference::GrpcWeb => vec![Transport::GrpcWeb],
         TransportPreference::Auto => match endpoint.kind() {
-            // The gateway's `/api/svc` proxy is HTTP/1.1 upstream.
-            EndpointKind::FleetGateway { .. } => vec![Transport::GrpcWeb],
             EndpointKind::Relay { .. } | EndpointKind::Direct => {
                 vec![Transport::Native, Transport::GrpcWeb]
             }
@@ -243,6 +235,13 @@ pub(crate) fn build_channel(cfg: &ChannelConfig, transport: Transport) -> Result
     }))
 }
 
+/// HTTP/2 receive window per stream (native gRPC).
+pub const STREAM_WINDOW: u32 = 4 * 1024 * 1024;
+/// HTTP/2 receive window per connection (native gRPC).
+pub const CONNECTION_WINDOW: u32 = 16 * 1024 * 1024;
+/// Largest HTTP/2 frame this client accepts (native gRPC).
+pub const MAX_FRAME: u32 = 1024 * 1024;
+
 fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
     use tonic::transport::{Channel, ClientTlsConfig};
     let mut ep = Channel::from_shared(cfg.endpoint.origin())
@@ -253,7 +252,13 @@ fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
         .keep_alive_while_idle(true)
         .tcp_keepalive(Some(cfg.keepalive.interval))
         .tcp_nodelay(true)
-        .http2_adaptive_window(true);
+        // Bulk transfers (files, streamed output) at the link's speed: the
+        // driver advertises 4 MiB stream and 16 MiB connection windows and
+        // 1 MiB frames; receive the same way instead of starting at 64 KiB
+        // and 16 KiB frames.
+        .initial_stream_window_size(STREAM_WINDOW)
+        .initial_connection_window_size(CONNECTION_WINDOW)
+        .max_frame_size(MAX_FRAME);
     if cfg.endpoint.is_tls() {
         ep = ep
             .tls_config(
@@ -331,8 +336,8 @@ fn grpc_web_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
 /// the trailers frame arrive in the same body chunk: it returns the data,
 /// parks the trailers, and at end of stream reports "missing grpc-status
 /// trailer". Direct connections to cua-spacesd never hit it (hyper writes
-/// each frame as its own chunk), but a buffering proxy does: the Fleet
-/// gateway (nginx) coalesces a unary response into one chunk.
+/// each frame as its own chunk), but a buffering proxy does: nginx
+/// coalesces a unary response into one chunk.
 ///
 /// Frames larger than [`GrpcWebFrames::MAX_FRAME`] (never produced by the
 /// driver: messages are capped at 8 MiB) are passed through unbuffered.
@@ -429,7 +434,6 @@ pub(crate) struct HeaderInjector {
     env_token_header: Option<HeaderValue>,
     principal: Option<HeaderValue>,
     gateway: Option<GatewayAuth>,
-    claim: Option<HeaderValue>,
     extra: Vec<(http::header::HeaderName, HeaderValue)>,
 }
 
@@ -459,14 +463,6 @@ impl HeaderInjector {
             })
             .transpose()
             .map_err(|_| Error::InvalidEndpoint("principal".into()))?;
-        let claim = cfg
-            .gateway
-            .as_ref()
-            .and_then(|g| g.claim.as_deref())
-            .filter(|c| valid_claim(c))
-            .map(HeaderValue::from_str)
-            .transpose()
-            .map_err(|_| Error::InvalidEndpoint("claim".into()))?;
         let extra = cfg
             .headers
             .iter()
@@ -484,7 +480,6 @@ impl HeaderInjector {
             env_token_header,
             principal,
             gateway: cfg.gateway.clone(),
-            claim,
             extra,
         })
     }
@@ -496,9 +491,6 @@ impl HeaderInjector {
             let mut value = HeaderValue::from_str(&format!("Bearer {token}"))?;
             value.set_sensitive(true);
             headers.insert(AUTHORIZATION, value);
-            if let Some(claim) = &self.claim {
-                headers.insert(FLEET_CLAIM_HEADER, claim.clone());
-            }
             if let Some(env) = &self.env_token_header {
                 headers.insert(ENV_TOKEN_HEADER, env.clone());
             }
@@ -517,17 +509,11 @@ impl HeaderInjector {
         for (name, value) in &self.extra {
             headers.insert(name.clone(), value.clone());
         }
+        for (name, value) in &self.extra {
+            headers.insert(name.clone(), value.clone());
+        }
         Ok(())
     }
-}
-
-/// Same validation `cyclops-sdk` applies before sending `X-Cua-Fleet-Claim`.
-fn valid_claim(claim: &str) -> bool {
-    !claim.is_empty()
-        && claim.len() <= 128
-        && claim
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._~-".contains(&b))
 }
 
 #[derive(Clone)]
@@ -567,8 +553,190 @@ impl Service<Request<Body>> for Prefixed {
         let headers = Arc::clone(&self.headers);
         Box::pin(async move {
             headers.apply(&mut req).await.map_err(ChannelError)?;
-            inner.oneshot(req).await.map_err(ChannelError)
+            let res = inner.oneshot(req).await.map_err(ChannelError)?;
+            Ok(non_grpc_as_status(res).await)
         })
+    }
+}
+
+/// A response that is not gRPC (a proxy's or load balancer's HTTP error
+/// page, an HTML 500) as the gRPC error it stands for.
+///
+/// Without this, tonic reads the page's first byte as a gRPC frame header
+/// and fails with "protocol error: received message with invalid
+/// compression flag: 73 (valid flags are 0 and 1) while receiving response
+/// with status: 500", which hides what the server said. A gRPC server
+/// always answers HTTP 200 with a `application/grpc*` content type, or
+/// carries `grpc-status` in its headers (trailers-only); anything else is
+/// turned into a trailers-only response whose status names the HTTP status
+/// and the start of the body, with the code the gRPC HTTP mapping gives.
+pub(crate) async fn non_grpc_as_status(res: Response<Body>) -> Response<Body> {
+    if !is_non_grpc(&res) {
+        return res;
+    }
+    let (parts, body) = res.into_parts();
+    let text = http_body_util::Limited::new(body, NON_GRPC_BODY_MAX);
+    let text = tokio::time::timeout(
+        Duration::from_secs(5),
+        http_body_util::BodyExt::collect(text),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .map(|c| body_summary(&c.to_bytes()))
+    .unwrap_or_default();
+    let status = parts.status;
+    let reason = status.canonical_reason().unwrap_or("");
+    let mut message = format!("HTTP {} {reason}", status.as_u16())
+        .trim_end()
+        .to_string();
+    if status == http::StatusCode::OK {
+        let ct = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("none");
+        message.push_str(&format!(" with content type {ct}, not gRPC"));
+    }
+    if !text.is_empty() {
+        message.push_str(": ");
+        message.push_str(&text);
+    }
+    tonic::Status::new(http_status_code(status), message).into_http::<Body>()
+}
+
+/// How much of a non-gRPC body is read for its message.
+const NON_GRPC_BODY_MAX: usize = 16 * 1024;
+
+fn is_non_grpc<B>(res: &Response<B>) -> bool {
+    if res.headers().contains_key("grpc-status") {
+        return false;
+    }
+    let grpc_type = res
+        .headers()
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("application/grpc"));
+    res.status() != http::StatusCode::OK || !grpc_type
+}
+
+/// The gRPC code for an HTTP status without one
+/// (<https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md>).
+fn http_status_code(status: http::StatusCode) -> tonic::Code {
+    match status.as_u16() {
+        400 => tonic::Code::Internal,
+        401 => tonic::Code::Unauthenticated,
+        403 => tonic::Code::PermissionDenied,
+        404 => tonic::Code::Unimplemented,
+        429 | 502 | 503 | 504 => tonic::Code::Unavailable,
+        _ => tonic::Code::Unknown,
+    }
+}
+
+/// The readable start of an error body: the text of an HTML page (tags
+/// dropped), whitespace collapsed, at most 300 characters.
+fn body_summary(bytes: &[u8]) -> String {
+    let raw = String::from_utf8_lossy(bytes);
+    let mut text = String::with_capacity(raw.len().min(4096));
+    let mut in_tag = false;
+    for c in raw.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                text.push(' ');
+            }
+            _ if in_tag => {}
+            c if c.is_control() => text.push(' '),
+            c => text.push(c),
+        }
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut out = words.join(" ");
+    if out.chars().count() > 300 {
+        out = out.chars().take(300).collect::<String>() + "...";
+    }
+    out
+}
+
+#[cfg(test)]
+mod non_grpc_tests {
+    use super::*;
+
+    fn response(status: u16, ct: Option<&str>, body: &'static str) -> Response<Body> {
+        let mut b = Response::builder().status(status);
+        if let Some(ct) = ct {
+            b = b.header(http::header::CONTENT_TYPE, ct);
+        }
+        b.body(Body::new(http_body_util::Full::new(
+            bytes::Bytes::from_static(body.as_bytes()),
+        )))
+        .unwrap()
+    }
+
+    fn status_of(res: &Response<Body>) -> tonic::Status {
+        tonic::Status::from_header_map(res.headers()).expect("a grpc-status header")
+    }
+
+    /// An HTML 500 from a proxy becomes a readable gRPC error, never a
+    /// frame-parsing "invalid compression flag".
+    #[tokio::test]
+    async fn an_html_500_is_a_readable_error() {
+        let res = non_grpc_as_status(response(
+            500,
+            Some("text/html"),
+            "<html><body><h1>Internal Server Error</h1>\n<p>upstream failed</p></body></html>",
+        ))
+        .await;
+        let s = status_of(&res);
+        assert_eq!(s.code(), tonic::Code::Unknown);
+        assert_eq!(
+            s.message(),
+            "HTTP 500 Internal Server Error: Internal Server Error upstream failed"
+        );
+    }
+
+    /// A gateway's 502 keeps its status words (callers retry on them) and
+    /// maps to `Unavailable`.
+    #[tokio::test]
+    async fn a_502_is_unavailable() {
+        let res =
+            non_grpc_as_status(response(502, Some("text/plain"), "failed to reach host")).await;
+        let s = status_of(&res);
+        assert_eq!(s.code(), tonic::Code::Unavailable);
+        assert_eq!(s.message(), "HTTP 502 Bad Gateway: failed to reach host");
+    }
+
+    /// A 200 that is not gRPC (a captive portal, a web page) is an error too.
+    #[tokio::test]
+    async fn a_200_web_page_is_an_error() {
+        let res = non_grpc_as_status(response(200, Some("text/html"), "<p>hello</p>")).await;
+        let s = status_of(&res);
+        assert_eq!(
+            s.message(),
+            "HTTP 200 OK with content type text/html, not gRPC: hello"
+        );
+    }
+
+    /// gRPC answers pass through untouched: a normal one and a
+    /// trailers-only error (whatever its HTTP status).
+    #[tokio::test]
+    async fn grpc_responses_pass_through() {
+        let ok = non_grpc_as_status(response(200, Some("application/grpc"), "\0\0\0\0\0")).await;
+        assert!(!ok.headers().contains_key("grpc-status"));
+        let web = non_grpc_as_status(response(200, Some("application/grpc-web+proto"), "")).await;
+        assert!(!web.headers().contains_key("grpc-status"));
+        let mut err = tonic::Status::not_found("no such space").into_http::<Body>();
+        *err.status_mut() = http::StatusCode::OK;
+        let err = non_grpc_as_status(err).await;
+        assert_eq!(status_of(&err).message(), "no such space");
+    }
+
+    /// Long bodies are cut to a readable length.
+    #[test]
+    fn long_bodies_are_cut() {
+        let long = "x".repeat(1000);
+        assert_eq!(body_summary(long.as_bytes()).chars().count(), 303);
     }
 }
 
@@ -605,10 +773,7 @@ mod extra_header_tests {
             endpoint: Endpoint::parse("https://relay.example/m/abcd1234").unwrap(),
             token: Some("env".into()),
             principal: None,
-            gateway: Some(GatewayAuth {
-                bearer,
-                claim: None,
-            }),
+            gateway: Some(GatewayAuth { bearer }),
             connect_timeout: Duration::from_secs(1),
             keepalive: Keepalive::default(),
             headers: Vec::new(),

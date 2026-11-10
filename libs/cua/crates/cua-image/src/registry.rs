@@ -364,6 +364,24 @@ impl RegistryClient {
             tokio::fs::create_dir_all(p).await?;
         }
         let partial = dest.with_extension("partial");
+        // Two processes may fetch the same blob: one at a time continues
+        // the partial file (held until this pull ends), and one that waited
+        // finds the blob already in place.
+        let lock_path = dest.with_extension("partial.lock");
+        let _lock = tokio::task::spawn_blocking(move || {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&lock_path)?;
+            f.lock()?;
+            Ok::<_, std::io::Error>(f)
+        })
+        .await
+        .map_err(|e| ImageError::Registry(e.to_string()))??;
+        if tokio::fs::metadata(dest).await.is_ok() {
+            return Ok(());
+        }
         let layer = oci_client::manifest::OciDescriptor {
             media_type: desc.media_type.clone(),
             digest: desc.digest.clone(),

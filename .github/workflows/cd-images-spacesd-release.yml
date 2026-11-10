@@ -186,10 +186,6 @@ jobs:
         run: |
           scripts/images/install-release-tools.sh --push-only
           cd libs/cua && (rustup show active-toolchain || rustup toolchain install)
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: libs/cua
-          key: images-pins
       - name: Commit as the App's bot user (contributor-attribution resolves it)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

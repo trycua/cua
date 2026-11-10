@@ -1,0 +1,57 @@
+{
+  "checkpoint": {
+    "n": 10,
+    "ok": 10,
+    "p50_ms": 344.0,
+    "p95_ms": 363.3,
+    "max_ms": 366,
+    "mean_ms": 338.6
+  },
+  "fanout": {
+    "n": 1,
+    "ok": 1,
+    "p50_ms": 5861.0,
+    "p95_ms": 5861.0,
+    "max_ms": 5861,
+    "mean_ms": 5861
+  },
+  "fanout_each": {
+    "n": 4,
+    "ok": 4,
+    "p50_ms": 2909.5,
+    "p95_ms": 5301.0,
+    "max_ms": 5340,
+    "mean_ms": 2963.5
+  },
+  "fork_running": {
+    "n": 10,
+    "ok": 10,
+    "p50_ms": 4048.5,
+    "p95_ms": 4161.2,
+    "max_ms": 4181,
+    "mean_ms": 4066
+  },
+  "prepare": {
+    "n": 1,
+    "ok": 1,
+    "p50_ms": 4840.0,
+    "p95_ms": 4840.0,
+    "max_ms": 4840,
+    "mean_ms": 4840
+  },
+  "restore": {
+    "n": 10,
+    "ok": 10,
+    "p50_ms": 484.5,
+    "p95_ms": 4146.5,
+    "max_ms": 4151,
+    "mean_ms": 1668.1
+  },
+  "memory": {
+    "phase": "memory",
+    "forks": 4,
+    "host_used_delta_mib": 3259,
+    "per_fork_mib": 814,
+    "guest_used_mib": 344
+  }
+}

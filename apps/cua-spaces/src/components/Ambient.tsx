@@ -7,6 +7,7 @@ import type { Space } from "../model/types";
 import type { DisplayStyle } from "../native/types";
 import { HotspotGlyph, RemoteAccessGlyph } from "./HotspotGlyph";
 import { RadialProgress } from "./RadialProgress";
+import { useT } from "../i18n";
 
 interface AmbientProps {
   spaces: readonly Space[];
@@ -44,6 +45,7 @@ export function Ambient({
   hotspotActive = false,
   transfer,
 }: AmbientProps) {
+  const t = useT("spaces");
   const dots = ambientDots(spaces);
   const active = countActive(spaces);
   // The tab's rows and the left-of-notch indicator are the core's
@@ -81,9 +83,9 @@ export function Ambient({
       className="ambient-teleport-box"
       role="status"
       aria-hidden={!teleportOpen}
-      aria-label="Teleport to Cua"
+      aria-label={t("spaces.ambient.teleport")}
     >
-      <span className="ambient-teleport-label">Teleport to Cua</span>
+      <span className="ambient-teleport-label">{t("spaces.ambient.teleport")}</span>
     </div>
   );
 

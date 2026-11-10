@@ -157,7 +157,17 @@ export class LinuxAutostart implements LoginItemControlling {
    */
   static entry(exec: string): string {
     const quoted = /[\s"'\\$`]/.test(exec) ? `"${exec.replace(/(["\\$`])/g, "\\$1")}"` : exec;
-    return ["[Desktop Entry]", "Type=Application", "Name=Cua Spaces", `TryExec=${exec.replace(/\\/g, "\\\\")}`, `Exec=${quoted} --hidden`, "Icon=cua-spaces", "Terminal=false", "X-GNOME-Autostart-enabled=true", ""].join("\n");
+    return [
+      "[Desktop Entry]",
+      "Type=Application",
+      "Name=Cua Spaces",
+      `TryExec=${exec.replace(/\\/g, "\\\\")}`,
+      `Exec=${quoted} --hidden`,
+      "Icon=cua-spaces",
+      "Terminal=false",
+      "X-GNOME-Autostart-enabled=true",
+      "",
+    ].join("\n");
   }
 
   /** On while the entry exists and no desktop turned it off (`Hidden=true`, `X-GNOME-Autostart-enabled=false`). */

@@ -67,6 +67,11 @@ async fn world() -> World {
         .sandboxes(sandboxes.clone())
         .relay(RelayAccount::new(relay.url.clone(), token))
         .build();
+    // A machine of its own per Space (autoscale off): the elastic pool's
+    // hosts are covered by tests/hosts.rs and cua-spaces.
+    let mut policy = spaces.elastic_policy();
+    policy.autoscale = false;
+    spaces.set_elastic_policy(&policy).unwrap();
     World {
         _dir: dir,
         relay,

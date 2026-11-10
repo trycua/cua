@@ -1,16 +1,94 @@
 ---
-title: Add a Space
-description: 'Create a Space on your machine, from any image, follow or cancel the create, add a GPU, add an existing machine, then list, delete or remove it.'
+title: Create a Space
+description: 'Create a Space on a computer you own from the app, the CLI or code: any image, progress, cancel, GPUs, adding an existing computer by address, then list, delete or remove it.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-The [Quickstart](/spaces/quickstart#run) adds an existing machine by URL. The
-same `spaces` object also creates Spaces. Ids are the sandbox refs `cua sb ls`
-prints (`local:<name>`, `aws:<name>`, `direct:<host:port>`,
-`relay:<machine-id>`); a bare name works when it matches one Space.
+A Space is one desktop on one of your computers. Ids are the sandbox refs
+`cua sb ls` prints (`local:<name>`, `aws:<name>`, `direct:<host:port>`,
+`relay:<machine-id>`); a bare name works when it matches one Space. To connect a
+whole computer first, see [Add a computer](/spaces/guides/add-a-computer).
 
-## Create a Space
+## Create a Space in the app
+
+1. Press **New Space** in Cua Spaces.
+2. Walk through **Choose a system**, **Resources** and **Options**. **Summary**
+   shows what you picked.
+3. Press **Create Space**. The Space appears in your list with a progress bar and
+   is ready when the bar finishes.
+
+**Advanced** in **Choose a system** picks the kind (container, virtual machine or
+microVM) and the runtime. See [Space kinds](/spaces/concepts/space-kinds).
+
+If the create fails, see [Troubleshoot](/spaces/guides/troubleshoot).
+
+## Add an existing computer by address
+
+Choose **Connect by address** in New Space, or register a computer from code.
+This example starts the canonical Linux image with a token:
+
+```bash skip="no-runner"
+TOKEN=$(openssl rand -hex 24)
+docker run -d --name my-space -e CUA_ENV_TOKEN=$TOKEN -p 127.0.0.1:3211:3211 \
+  ghcr.io/trycua/linux:24.04
+```
+
+Register it and run a command in it (use `http://127.0.0.1:3211` and your
+`$TOKEN`):
+
+<Tabs items={['Python', 'TypeScript', 'Swift']}>
+  <Tab value="Python">
+    ```python test="docs" id="add-direct" session="add-direct" prelude="space-url"
+    import asyncio
+    import cua
+
+    async def main():
+        spaces = cua.embedded().spaces()      # or cua.connect().spaces()
+        info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
+        space = await spaces.space(info.id)
+        out = await space.bash("uname -a", None)
+        print(info.id, out.stdout)
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  <Tab value="TypeScript">
+    ```ts test="docs" id="add-direct-ts" prelude="space-url"
+    import { embedded } from "@trycua/cua"
+
+    const spaces = embedded().spaces()        // or connect().spaces()
+    const info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
+    const space = await spaces.space(info.id)
+    console.log(info.id, (await space.bash("uname -a", undefined)).stdout)
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="swift" id="add-direct-space"
+    import Cua
+
+    let spaces = try Cua.embedded().spaces()  // or Cua.connect(address: nil, token: nil)
+    let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")
+    let space = try await spaces.space(space: info.id)
+    print(try await space.bash(command: "uname -a", timeoutMs: nil).stdout)
+    ```
+  </Tab>
+</Tabs>
+
+The program prints the Space id (`direct:127.0.0.1:3211`) and the guest's
+`uname -a`. The Space is now in the shared registry, so the app and the CLI see
+it too:
+
+```bash test="cli-shape" id="cua"
+cua --version
+cua auth status
+cua spaces ls
+```
+
+Clean up the container with `docker rm -f my-space`.
+
+## Create a Space from code
 
 ```python skip="pseudo"
 created = await spaces.create(cua.SpaceCreateOptions(cpus=2, memory_mb=4096))
@@ -18,7 +96,8 @@ space = await spaces.space(created.space.id)
 ```
 
 Runs `ghcr.io/trycua/linux:24.04` (or `image`) with a fresh env token. `on`,
-`kind` and `runtime` work as for [sandboxes](/cua-sdk/concepts/how-sandboxes-work#where-what-kind-which-engine);
+`kind` and `runtime` work as for [sandboxes](/cua-sdk/concepts/how-sandboxes-work#where-what-kind-which-engine)
+(see [Space kinds](/spaces/concepts/space-kinds));
 without `on`, the Space runs where `cua config get default.on` says (local
 unless you changed it; the Spaces app sets it in Settings, Default location).
 `cua runtime doctor` shows what this host has.
@@ -48,7 +127,10 @@ result = await space.call_tool("add", '{"a": 2, "b": 3}', "mcp", None)
 | Lifecycle, declared services, tunnels, public URLs, `list_tools` / `call_tool` with `service` | `bash`, files, streaming, presence, teleport, agent runs, the `driver` tool registry |
 
 Spacesd features on an image without it fail with `CapabilityMissing`. The
-canonical images and machines set up with `cua host setup` run cua-spacesd.
+canonical images and computers set up with `cua host setup` run cua-spacesd, and
+so does any OCI image you create on this computer as a container or microVM
+(`alpine:3.20`, `node:20`): a static cua-spacesd is put into it and runs
+beside the image's own command.
 
 <Callout type="info">
   In the cloud, `command` and `env` work on container and VM images alike.
@@ -107,7 +189,7 @@ Sandboxes: `await sandboxes.cancel_create(name)` returns what was removed, or
 
 | Removed | Kept |
 |---|---|
-| The VM or container and its disks, the cloud claim, the relay machine, the registry entry, the create's journal | Anything that existed before the create |
+| The VM or container and its disks, the cloud claim, the relay computer, the registry entry, the create's journal | Anything that existed before the create |
 | Partial downloads | Finished image layers in the engine's cache (Docker's; Lume's when its cache is on), so the next create resumes |
 
 A Lume without `POST /lume/pull/cancel` cannot stop a pull: the create still
@@ -147,7 +229,7 @@ if cua set it. Metal apps in the guest may still need the per-workload shim:
 cua spaces ls
 ```
 
-Lists registered Spaces and, when you are signed in, your machines on the
+Lists registered Spaces and, when you are signed in, your computers on the
 relay (`relay:<machine-id>`, no `add` needed). Register or forget one from a
 shell:
 
@@ -159,15 +241,14 @@ cua spaces rm studio
 A [Tailscale](https://tailscale.com) address works here too (its IP or
 MagicDNS name as the host:port): `cua spaces add` reaches it like any other
 address and the Space registers as `direct:<addr>`. That only attaches one
-already-running Space; hosting Spaces for `on="host:<name>"` still goes
-through the cua.ai relay, set up with
-[`cua host setup`](/start-here/host-spaces-on-your-spare-mac).
+already-running Space. To host Spaces for `on="host:<name>"`, set the computer up
+with [`cua host setup`](/spaces/guides/add-a-computer#use-a-spare-mac-to-host-spaces).
 
- `spaces.delete(id)` deletes a
-Space's sandbox and forgets it (a Space added by address is only forgotten);
-`spaces.remove(id)` forgets a Space without touching it.
+`spaces.delete(id)` deletes a Space's sandbox and forgets it (a Space added by
+address is only forgotten). `spaces.remove(id)` forgets a Space without touching
+it.
 
 In TypeScript the methods are `create`, `delete_`, `add` and `remove`, with
 options from `@trycua/cua/spaces`. Agents use the MCP tools `create_space`,
 `delete_space`, `add_space` and `remove_space`
-([Use from an agent](/spaces/guides/use-from-an-agent)).
+([What your agent can do](/spaces/guides/connect-your-agent#what-your-agent-can-do)).

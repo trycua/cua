@@ -11,7 +11,10 @@ import type { CoreClient } from "@/bridge/core";
 import type { ShareInput, ShareSheetAction, ShareSheetState } from "@/bridge/contracts/share";
 import ShareSheet from "@/components/share-sheet";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const ACME = "0f1e2d3c-0000-4000-8000-0000000000a1";
 const TEAMS = {
@@ -58,7 +61,10 @@ function shareCore(): CoreClient {
           whoPlaceholder: "Email",
           hint: null,
           role: state.role,
-          roles: [{ id: "viewer", label: "Can view" }, { id: "editor", label: "Can use" }],
+          roles: [
+            { id: "viewer", label: "Can view" },
+            { id: "editor", label: "Can use" },
+          ],
           shareLabel: "Share",
           canShare: state.who !== "",
           removeLabel: "Remove",
@@ -72,15 +78,45 @@ function shareCore(): CoreClient {
         throw new Error(`no ${method}`);
     }
   };
-  return { status: "ready", methods: ["share.initial", "share.reduce", "share.view"], call, tryCall: () => undefined };
+  // The core's `share.gate`: closed only when the account is known to be in no team.
+  const tryCall = <T,>(method: string, args: Record<string, unknown> = {}): T | undefined =>
+    method === "share.gate"
+      ? ((args.hasTeam === false
+          ? {
+              reason: "Sharing is for teams. Start a team to share this Space.",
+              action: { label: "See Teams", url: "https://app.cua.ai/buy/teams?from=app_share" },
+            }
+          : null) as T)
+      : undefined;
+  return { status: "ready", methods: ["share.initial", "share.reduce", "share.view", "share.gate"], call, tryCall };
 }
 
-function host() {
+/** The share core, plus the core's `upsell.card` for an invite. */
+function cardCore(): CoreClient {
+  const core = shareCore();
+  const tryCall = core.tryCall;
+  return {
+    ...core,
+    tryCall: (<T,>(method: string, args: Record<string, unknown> = {}) =>
+      method === "upsell.card"
+        ? ({
+            reason: args.reason,
+            title: "Sharing is for teams",
+            body: "Teams lets you share a Space.",
+            price: "$30 a seat a month",
+            cta: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_card_invite" },
+            dismiss: "Not now",
+          } as T)
+        : tryCall<T>(method, args)) as CoreClient["tryCall"],
+  };
+}
+
+function host(teams: typeof TEAMS | Record<string, never> = TEAMS) {
   const base = createDemoAdapter({ latencyMs: 0, stepMs: 0, signedIn: true, onboarded: true });
   const shared: Record<string, unknown>[] = [];
   const adapter = Object.assign(Object.create(base) as DataAdapter, {
     call: ((op: string, args: Record<string, unknown>) => {
-      if (op === "teams.list") return Promise.resolve(TEAMS);
+      if (op === "teams.list") return Promise.resolve(teams);
       if (op === "sharing.list") return Promise.resolve([]);
       if (op === "sharing.share") {
         shared.push(args);
@@ -128,5 +164,31 @@ describe("Teams in Share and Add a machine", () => {
     await waitFor(() => expect(document.querySelector(`[data-share-row="team:${ACME}"]`)?.textContent).toContain("Acme (team)"));
     // Shared with Acme: only Beta is offered now.
     expect([...document.querySelectorAll("[data-share-team]")].map((b) => b.textContent)).toEqual(["Share with Beta"]);
+  });
+
+  it("an account with no team gets the card in place of the plain gate", async () => {
+    const opened: string[] = [];
+    const { adapter } = host({ teams: [], currentTeamId: null } as never);
+    const base = adapter.call as (o: string, a: unknown) => Promise<unknown>;
+    (adapter as { call: unknown }).call = (op: string, args: Record<string, unknown>) => {
+      if (op === "session.openExternal") {
+        opened.push(String(args.url));
+        return Promise.resolve(null);
+      }
+      return base(op, args);
+    };
+    render(
+      <BridgeProvider adapter={adapter} core={cardCore()}>
+        <Opener />
+        <ShareSheet />
+      </BridgeProvider>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    fireEvent.click(screen.getByText("open"));
+    await waitFor(() => expect(document.querySelector('[data-upgrade-card="invite"]')).toBeTruthy());
+    expect(document.querySelector("[data-share-disabled]")).toBeNull();
+    expect(document.querySelector("[data-share-action]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Start a team" }));
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_card_invite"]));
   });
 });

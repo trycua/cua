@@ -44,9 +44,20 @@ describe.skipIf(!built)("the refresh after an update", () => {
   });
 
   it("shows one notice for a failed agents update", async () => {
-    const output = JSON.stringify({ outcomes: [{ item: "cua", change: "updated", detail: "" }, { item: "cua-spaces", change: "failed", detail: "permission denied" }] }, null, 2);
+    const output = JSON.stringify(
+      {
+        outcomes: [
+          { item: "cua", change: "updated", detail: "" },
+          { item: "cua-spaces", change: "failed", detail: "permission denied" },
+        ],
+      },
+      null,
+      2,
+    );
     const notice = await refreshAfterUpdate(native, "/cua", null, runner({ status: 1, output, timedOut: false }));
-    expect(notice).toBe("Cua Spaces updated, but could not refresh the Cua skills in your AI agents (cua-spaces: permission denied). Run `cua agents update` to try again.");
+    expect(notice).toBe(
+      "Cua Spaces updated, but could not refresh the Cua skills in your AI agents (cua-spaces: permission denied). Run `cua agents update` to try again.",
+    );
   });
 
   it("says when the update timed out or exited without saying why", async () => {

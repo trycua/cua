@@ -25,7 +25,7 @@ export interface AgentRequest {
     provider_type?: string;
     [key: string]: unknown;
   };
-  /** Optional per-request environment variable overrides */
+  /** Per-request environment overrides. cua-agent's PlaygroundServer ignores these; set variables on the server process instead. */
   env?: Record<string, string>;
 }
 // #endregion

@@ -2,15 +2,16 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * "Join with a code": sets this computer up with a one-time pairing code
+ * "Enter a code" (Have a code? Enter it): sets this computer up with a one-time pairing code
  * (or the add-machine link) made on another device, the in-app way of
  * `cua host setup --pair <code>`. The host runs the bundled `cua`
  * (`host.joinWithCode`) and answers once the machine has joined.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useContext, useState } from "react";
 
 import { isUnsupported } from "./adapter";
+import { BridgeContext } from "./BridgeProvider";
 import { useBridge } from "./hooks";
 import { plainJoinError } from "./friendly-errors";
 import { normalizePairingCode, pairingLinkRelay } from "./pairing-code";
@@ -28,7 +29,7 @@ export interface JoinHook {
 
 /** What the page says for a failure: the host's own words, or a plain line. */
 export function joinFailureText(e: unknown): string {
-  if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this computer.";
+  if (isUnsupported(e)) return "This version of Cua Spaces can't join with a code. Update the app, or run the install command on this machine.";
   return plainJoinError(e);
 }
 
@@ -36,6 +37,7 @@ export function useJoinWithCode({ onJoined }: { onJoined?: () => void } = {}): J
   const { data: adapter } = useBridge();
   const [phase, setPhase] = useState<JoinPhase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const thisMachine = useContext(BridgeContext)?.store?.thisMachine;
 
   const join = useCallback(
     async (input: string, relay?: string | null) => {
@@ -51,6 +53,8 @@ export function useJoinWithCode({ onJoined }: { onJoined?: () => void } = {}): J
       try {
         await adapter.call("host.joinWithCode", { code, relay: relay ?? pairingLinkRelay(input) });
         setPhase("joined");
+        // A setup refused for want of proof ("Use a code from another computer") is answered.
+        thisMachine?.joinedWithCode();
         onJoined?.();
         return true;
       } catch (e) {
@@ -59,7 +63,7 @@ export function useJoinWithCode({ onJoined }: { onJoined?: () => void } = {}): J
         return false;
       }
     },
-    [adapter, onJoined],
+    [adapter, onJoined, thisMachine],
   );
 
   return { phase, error, join, reset: useCallback(() => (setPhase("idle"), setError(null)), []) };

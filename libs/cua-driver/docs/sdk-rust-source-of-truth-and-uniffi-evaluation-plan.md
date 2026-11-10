@@ -6,6 +6,10 @@ Applies to: PR #2341 and follow-up SDK/runtime work
 
 Primary objective: eliminate manual contract/runtime bookkeeping before publishing the Python and TypeScript SDKs
 
+> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026 and its source
+> was removed from this repository. The Fleet comparisons below are historical
+> evidence and refer to source that now exists only in git history.
+
 Decision rationale: [Cua Driver integration surfaces: MCP/CLI and SDK bindings](why-cua-driver-uses-mcp-instead-of-uniffi.md)
 
 > **Final decision update (2026-07-21):** the evaluation below records the

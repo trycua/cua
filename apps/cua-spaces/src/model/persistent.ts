@@ -7,7 +7,7 @@
  * SwiftUI app binds); this module only types it.
  */
 
-import { core } from '../core';
+import { core } from "../core";
 
 // ---------------------------------------------------------------- agents
 
@@ -74,8 +74,8 @@ export interface AgentsInput {
   thisMachine?: string | null;
 }
 
-export type AgentTab = 'memory' | 'routines' | 'access';
-export type RoutineScheduleKind = 'every' | 'daily' | 'weekly';
+export type AgentTab = "memory" | "routines" | "access";
+export type RoutineScheduleKind = "every" | "daily" | "weekly";
 
 export interface RoutineForm {
   title: string;
@@ -87,13 +87,13 @@ export interface RoutineForm {
 }
 
 export type AgentsRequest =
-  | { kind: 'pause'; name: string }
-  | { kind: 'resume'; name: string }
-  | { kind: 'load'; name: string }
-  | { kind: 'read-file'; path: string }
-  | { kind: 'restore'; path: string; version: string }
+  | { kind: "pause"; name: string }
+  | { kind: "resume"; name: string }
+  | { kind: "load"; name: string }
+  | { kind: "read-file"; path: string }
+  | { kind: "restore"; path: string; version: string }
   | {
-      kind: 'add-routine';
+      kind: "add-routine";
       agent: string;
       title: string;
       prompt: string;
@@ -101,10 +101,10 @@ export type AgentsRequest =
       daily_at: string | null;
       weekly_on: string | null;
     }
-  | { kind: 'set-routine'; id: string; enabled: boolean }
-  | { kind: 'remove-routine'; id: string }
-  | { kind: 'allow'; agent: string; machine: string }
-  | { kind: 'revoke'; agent: string; machine: string };
+  | { kind: "set-routine"; id: string; enabled: boolean }
+  | { kind: "remove-routine"; id: string }
+  | { kind: "allow"; agent: string; machine: string }
+  | { kind: "revoke"; agent: string; machine: string };
 
 export interface AgentsState {
   selected: string | null;
@@ -117,26 +117,26 @@ export interface AgentsState {
 }
 
 export type AgentsAction =
-  | { type: 'select'; name: string }
-  | { type: 'set-tab'; tab: AgentTab }
-  | { type: 'open-file'; path: string }
-  | { type: 'close-file' }
-  | { type: 'pause'; name: string }
-  | { type: 'resume'; name: string }
-  | { type: 'restore'; version: string }
-  | { type: 'set-title'; title: string }
-  | { type: 'set-prompt'; prompt: string }
-  | { type: 'set-schedule'; schedule: RoutineScheduleKind }
-  | { type: 'set-minutes'; minutes: number }
-  | { type: 'set-time'; time: string }
-  | { type: 'set-weekday'; weekday: string }
-  | { type: 'add-routine' }
-  | { type: 'toggle-routine'; id: string }
-  | { type: 'remove-routine'; id: string }
-  | { type: 'allow-computer'; machine: string }
-  | { type: 'revoke-computer'; machine: string }
-  | { type: 'done' }
-  | { type: 'failed'; error: string };
+  | { type: "select"; name: string }
+  | { type: "set-tab"; tab: AgentTab }
+  | { type: "open-file"; path: string }
+  | { type: "close-file" }
+  | { type: "pause"; name: string }
+  | { type: "resume"; name: string }
+  | { type: "restore"; version: string }
+  | { type: "set-title"; title: string }
+  | { type: "set-prompt"; prompt: string }
+  | { type: "set-schedule"; schedule: RoutineScheduleKind }
+  | { type: "set-minutes"; minutes: number }
+  | { type: "set-time"; time: string }
+  | { type: "set-weekday"; weekday: string }
+  | { type: "add-routine" }
+  | { type: "toggle-routine"; id: string }
+  | { type: "remove-routine"; id: string }
+  | { type: "allow-computer"; machine: string }
+  | { type: "revoke-computer"; machine: string }
+  | { type: "done" }
+  | { type: "failed"; error: string };
 
 /** One line: text, trailing text, an action, a second action, an on/off. */
 export interface LineView {
@@ -188,15 +188,15 @@ export interface AgentsView {
 }
 
 export function agentsInitial(): AgentsState {
-  return core('agents.pageInitial');
+  return core("agents.pageInitial");
 }
 
 export function reduceAgents(input: AgentsInput, state: AgentsState, action: AgentsAction): AgentsState {
-  return core('agents.pageReduce', { input, state, action });
+  return core("agents.pageReduce", { input, state, action });
 }
 
 export function agentsView(input: AgentsInput, state: AgentsState, nowMs: number): AgentsView {
-  return core('agents.pageView', { input, state, nowMs });
+  return core("agents.pageView", { input, state, nowMs });
 }
 
 // ---------------------------------------------------------------- drive
@@ -269,13 +269,13 @@ export interface DriveInput {
 }
 
 export type DriveRequest =
-  | { kind: 'load' }
-  | { kind: 'mount-and-reveal' }
-  | { kind: 'approve'; id: string }
-  | { kind: 'deny'; id: string }
-  | { kind: 'revoke'; id: string }
-  | { kind: 'reveal'; path: string }
-  | { kind: 'resolve'; path: string };
+  | { kind: "load" }
+  | { kind: "mount-and-reveal" }
+  | { kind: "approve"; id: string }
+  | { kind: "deny"; id: string }
+  | { kind: "revoke"; id: string }
+  | { kind: "reveal"; path: string }
+  | { kind: "resolve"; path: string };
 
 export interface DriveState {
   busy: boolean;
@@ -285,14 +285,14 @@ export interface DriveState {
 
 export type DriveAction =
   /** The main button: reveal the mount point, mounting first when needed. */
-  | { type: 'open-volume'; mounted: string | null }
-  | { type: 'approve'; id: string }
-  | { type: 'deny'; id: string }
-  | { type: 'revoke'; id: string }
-  | { type: 'reveal'; path: string }
-  | { type: 'resolve'; path: string }
-  | { type: 'done' }
-  | { type: 'failed'; error: string };
+  | { type: "open-volume"; mounted: string | null }
+  | { type: "approve"; id: string }
+  | { type: "deny"; id: string }
+  | { type: "revoke"; id: string }
+  | { type: "reveal"; path: string }
+  | { type: "resolve"; path: string }
+  | { type: "done" }
+  | { type: "failed"; error: string };
 
 export interface DriveView {
   title: string;
@@ -333,15 +333,15 @@ export interface ConflictView {
 }
 
 export function driveInitial(): DriveState {
-  return core('drive.initial');
+  return core("drive.initial");
 }
 
 export function reduceDrive(state: DriveState, action: DriveAction): DriveState {
-  return core('drive.reduce', { state, action });
+  return core("drive.reduce", { state, action });
 }
 
 export function driveView(input: DriveInput, state: DriveState): DriveView {
-  return core('drive.view', { input, state });
+  return core("drive.view", { input, state });
 }
 
 // ---------------------------------------------------------------- notifications
@@ -370,15 +370,25 @@ export interface NotificationsView {
 }
 
 export function notificationsPlan(feed: NotificationInput[], seenMs: number): NotificationsPlan {
-  return core('notifications.plan', { feed, seenMs });
+  return core("notifications.plan", { feed, seenMs });
 }
 
 export function notificationsView(feed: NotificationInput[], nowMs: number): NotificationsView {
-  return core('notifications.view', { feed, nowMs });
+  return core("notifications.view", { feed, nowMs });
 }
 
 /** The daemon's `notifications_list` rows as the core reads them. */
-export function feedFromTool(rows: { id: string; at_ms: number; agent?: string | null; kind: string; title: string; body: string; read?: boolean }[]): NotificationInput[] {
+export function feedFromTool(
+  rows: {
+    id: string;
+    at_ms: number;
+    agent?: string | null;
+    kind: string;
+    title: string;
+    body: string;
+    read?: boolean;
+  }[],
+): NotificationInput[] {
   return rows.map((r) => ({
     id: r.id,
     atMs: r.at_ms,

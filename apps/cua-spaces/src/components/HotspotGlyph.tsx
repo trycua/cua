@@ -22,13 +22,7 @@ function HotspotSvg({ className }: { className?: string }) {
         strokeWidth="1.3"
         strokeLinecap="round"
       />
-      <path
-        d="M2.4 7.2a8 8 0 0 1 11.2 0"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
+      <path d="M2.4 7.2a8 8 0 0 1 11.2 0" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   );
 }

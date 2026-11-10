@@ -3,7 +3,9 @@
  * lume and cb (the pages the shared renderers write):
  *
  * - every page carries the generator marker and has unique anchors;
- * - no page exceeds 5,000 words (docs.cua.ai eager-imports every page);
+ * - no page exceeds 12,000 words: pages hold several command groups or tool
+ *   categories, and docs/scripts/page-budget.test.ts (bytes, code blocks,
+ *   tabs) is what keeps each one renderable;
  * - no placeholder leaks (`undefined`, `[object Object]`) or em dashes;
  * - every visible command in the CLI spec has a section on its group page and
  *   at least one example (tagged for the cli-shape lane) somewhere on that page.
@@ -33,6 +35,8 @@ function walk(dir: string): string[] {
   });
 }
 
+const MAX_WORDS = 12_000;
+
 function words(page: string): number {
   return page.replace(/<span id="[^"]*"><\/span>/g, '').split(/\s+/).filter(Boolean).length;
 }
@@ -47,7 +51,7 @@ for (const [product, spec] of PRODUCTS) {
       const page = readFileSync(file, 'utf-8');
       const rel = file.slice(DOCS_CONTENT.length + 1);
       assert.ok(page.slice(0, 600).includes(GENERATED_MARKER), `${rel} lacks the marker`);
-      assert.ok(words(page) <= 5000, `${rel} has ${words(page)} words (limit 5000)`);
+      assert.ok(words(page) <= MAX_WORDS, `${rel} has ${words(page)} words (limit ${MAX_WORDS})`);
       assert.ok(!/\bundefined\b|\[object Object\]|—/.test(page), `${rel} leaks a placeholder or an em dash`);
       assertUniqueAnchors(rel, page);
     }

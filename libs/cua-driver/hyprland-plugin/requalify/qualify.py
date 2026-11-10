@@ -88,10 +88,16 @@ def setup_pacman(job, log):
         run(["pacman-key", "--populate", "omarchy"], log)
     for attempt in range(3):
         # -yy forces fresh databases; -uu lets an older channel downgrade the bootstrap.
-        code, _ = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
-                      log, check=False)
+        code, output = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
+                           log, check=False)
         if code == 0:
             return
+        # An older channel can downgrade a package whose files a newer bootstrap package (the base
+        # image's openssl-3 against the channel's openssl 3.x) already owns. The container is
+        # disposable, so drop the owner and retry; a network failure retries unchanged.
+        owners = sorted(set(re.findall(r"exists in filesystem \(owned by ([^)\s]+)\)", output)))
+        if owners:
+            run(["pacman", "-Rdd", "--noconfirm", *owners], log, check=False)
         time.sleep(10 * (attempt + 1))
     raise RuntimeError("pacman could not install the channel's packages")
 

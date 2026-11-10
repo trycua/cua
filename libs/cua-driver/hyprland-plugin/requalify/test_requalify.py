@@ -335,6 +335,26 @@ class InputLaneTest(unittest.TestCase):
         self.assertEqual(sent, ["TARGET 42 55aa 2", f"KEY 1 {'f' * 32} 1 46 0", f"KEY 2 {'f' * 32} 2 28 0"])
 
 
+class PacmanSetupTest(unittest.TestCase):
+    def test_file_conflict_owner_is_removed_and_the_install_retried(self):
+        conflict = ("error: failed to commit transaction (conflicting files)\n"
+                    "openssl: /usr/lib/libcrypto.so.3 exists in filesystem (owned by openssl-3)\n"
+                    "openssl: /usr/lib/libssl.so.3 exists in filesystem (owned by openssl-3)\n")
+        calls = []
+
+        def fake_run(command, log=None, check=True, **kwargs):
+            calls.append(command)
+            installs = [c for c in calls if c[:2] == ["pacman", "-Syyuu"]]
+            return (1, conflict) if command[:2] == ["pacman", "-Syyuu"] and len(installs) == 1 else (0, "")
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(qualify, "run", fake_run), \
+                mock.patch.object(qualify, "time"), mock.patch.object(qualify, "Path") as path:
+            path.return_value.glob.return_value = []
+            qualify.setup_pacman({"channel": "omarchy-stable"}, Path(directory) / "pacman.log")
+        self.assertIn(["pacman", "-Rdd", "--noconfirm", "openssl-3"], calls)
+        self.assertEqual(len([c for c in calls if c[:2] == ["pacman", "-Syyuu"]]), 2)
+
+
 class DriverSmokeTest(unittest.TestCase):
     def test_find_window_picks_the_innermost_entry_with_a_pid(self):
         reply = {"windows": [{"pid": 1, "title": "other"},

@@ -3230,6 +3230,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-sdk-native"
+version = "0.20.0"
+dependencies = [
+ "cua-sdk",
+]
+
+[[package]]
 name = "cua-share"
 version = "0.20.0"
 dependencies = [

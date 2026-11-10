@@ -10,9 +10,12 @@ repository.workspace = true
 
 [lib]
 name = "cua_sdk"
-# rlib: Rust hosts (cua-cli, Tauri apps). cdylib: Python/Node/Kotlin.
-# staticlib: the Swift XCFramework.
-crate-type = ["rlib", "cdylib", "staticlib"]
+# rlib only: Rust hosts (cua-cli, Tauri apps). The cdylib (Python, Node,
+# Kotlin) and the staticlib (Swift XCFramework) are cua-sdk-native. A crate
+# with a cdylib or staticlib target needs every dependency fully built before
+# it starts and its dependents wait for the whole crate, which put 100 s of
+# the Cua Spaces Local build in series (CUA-3971).
+crate-type = ["rlib"]
 
 [features]
 default = ["local", "spaces", "host", "media", "byoc", "aws"]

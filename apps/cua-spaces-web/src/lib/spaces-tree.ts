@@ -56,6 +56,8 @@ export interface TreeNode {
   children: TreeNode[];
   /** 0 for a computer (or a Space with no listed computer), 1 for a Space on a computer, 2 for its children, ... */
   depth: number;
+  /** A computer only: the Space page its row opens. Its own desktop's, while it shares it (or, for This Mac, while it can share it and does not: that page makes it one button to start or stop). Null: the computer's own page (its settings), for a computer that cannot share (a cloud computer, one set up to provide Spaces only, one not set up, one that is offline or not sharing). */
+  opens: string | null;
 }
 
 export interface SpacesTree {
@@ -87,6 +89,8 @@ export interface TreeInput {
   relayOnline?: ReadonlyMap<string, boolean>;
   /** Which Space made which (Child Spaces): child Space id to its parent's. A child whose parent isn't listed sits on its computer like any Space. */
   parents?: ReadonlyMap<string, string>;
+  /** Whether another computer says it shares its desktop (`sharesDesktop`); a computer set up to provide Spaces only does not. Unset: it does. */
+  shares?: (space: Space) => boolean;
 }
 
 /** A computer's own Space id: `relay:<machine>` (This Mac's once it is on the relay), else its list row's. */
@@ -175,6 +179,7 @@ export function buildSpacesTree({
   now = Date.now(),
   relayOnline,
   parents = new Map(),
+  shares = () => true,
 }: TreeInput): SpacesTree {
   const ghosts = ghostMachineIds(spaces, machines);
   const onGhost = (s: Space) => [...ghosts].some((g) => s.id === `relay:${g}` || s.id.startsWith(`relay:${g}/`) || s.host === g);
@@ -256,6 +261,7 @@ export function buildSpacesTree({
       people: peopleOf(s, me),
       parentKey: parent?.key ?? null,
       children: [],
+      opens: null,
       depth: parent ? depth : 0,
     };
     // Its child Spaces (Child Spaces) sit under it; their tasks count on it too, so a computer's total stays whole.
@@ -300,6 +306,8 @@ export function buildSpacesTree({
       people: peopleOf(own, me),
       parentKey: null,
       children: [],
+      // This Mac opens its desktop's page once it is set up (sharing or not: the page has the button); another computer, while it shares.
+      opens: own && (m.current ? Boolean(m.connection) : online && shares(own) && own.sdk?.reachable !== false) ? own.id : null,
       depth: 0,
     };
     // The Spaces no other Space made sit on the computer; the children nest under their parents.

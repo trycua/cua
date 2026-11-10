@@ -186,6 +186,7 @@
   "computers.page.renamed": "Renamed to {name}",
   "computers.page.rename_failed": "Couldn't rename {name}",
   "computers.page.open": "Open",
+  "computers.page.computer_settings": "Computer settings",
   "computers.page.rename": "Rename",
   "computers.page.make_default": "Make this my default",
   "computers.page.default_failed": "Couldn't change your default Space",

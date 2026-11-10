@@ -1086,6 +1086,28 @@ async fn set_up_host(w: &World, id: &str) {
     .unwrap();
 }
 
+/// This computer's own relay machine (its shared desktop, `relay:<id>`) stays
+/// in the list when Spaces on it are listed and shared: the machines a pass
+/// attaches are always the Spaces' own `space-` ones, never the host's.
+#[tokio::test]
+async fn the_hosts_own_desktop_row_stays_listed_beside_the_spaces_it_lists() {
+    let w = World::new().await;
+    set_up_host(&w, "studio-host").await;
+    w.create("home-claude-code", "linux", Kind::Container).await;
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert_eq!(r.published.len(), 1, "{r:?}");
+    w.spaces.relay_machines().await.unwrap();
+    let ids: Vec<String> = w.spaces.list().unwrap().into_iter().map(|i| i.id).collect();
+    assert!(ids.iter().any(|i| i == "relay:studio-host"), "{ids:?}");
+    assert_eq!(ids.iter().filter(|i| i.starts_with("relay:space-")).count(), 0, "{ids:?}");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(w.home.path().join("shared-spaces.json")).unwrap()).unwrap();
+    for a in saved.as_object().unwrap().values() {
+        let machine = a["machine"].as_str().unwrap();
+        assert!(machine.starts_with("space-"), "{machine}");
+    }
+}
+
 /// A Space this computer lists names this computer as its host, so the
 /// phone reads its thread through the computer's daemon; a row registered
 /// before that (by hand, without a host) gets the host on the next pass,

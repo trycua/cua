@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1831,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1862,14 +1862,14 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "async-trait",
  "core-foundation 0.10.1",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "cua-logging"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "cua-push"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2181,7 +2181,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2248,7 +2248,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "axum 0.8.9",
  "http",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.18.1"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "cua-home",
@@ -2567,7 +2567,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -5288,7 +5288,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "serde_json",
 ]
@@ -5318,7 +5318,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -5363,7 +5363,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5401,7 +5401,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.46.2"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",

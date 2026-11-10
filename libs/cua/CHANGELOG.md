@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.20.0](https://github.com/trycua/cua/compare/cua-sdk-v0.19.0...cua-sdk-v0.20.0) (2026-11-10)
+
+
+### Features
+
+* **cua-driver:** connect --replace switches an agent from another Cua Driver ([#7190](https://github.com/trycua/cua/issues/7190)) ([e15e9dd](https://github.com/trycua/cua/commit/e15e9dd47cdc970e7cbed5fec87e377c28ddae0f))
+
+
+### Bug Fixes
+
+* **cua-spaces:** hold Child Spaces on in the relay_publish opt-out test ([#7181](https://github.com/trycua/cua/issues/7181)) ([5b89d98](https://github.com/trycua/cua/commit/5b89d98fb55496c104ecac4221229bb2080ebdb9))
+
+## [0.19.0](https://github.com/trycua/cua/compare/cua-sdk-v0.18.1...cua-sdk-v0.19.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** report agent run and Space create status to the terminal (OSC 7501) ([#5155](https://github.com/trycua/cua/issues/5155)) ([f54ca3d](https://github.com/trycua/cua/commit/f54ca3de1cd7468a5ec2e74be571a80d9b2b532b))
+
 ## [0.18.1](https://github.com/trycua/cua/compare/cua-sdk-v0.18.0...cua-sdk-v0.18.1) (2026-11-10)
 
 

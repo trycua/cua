@@ -388,6 +388,18 @@ fn agent_instructions() -> String {
         ""
     };
 
+    // Script-only mode lists run_script alone, so name nothing else.
+    #[cfg(feature = "script")]
+    if crate::script_tool::script_only() {
+        return format!(
+            r#"cua-driver: background GUI automation through one tool, `run_script`: a sandboxed JavaScript async function body with the `cua` API (see its description). No shell.
+
+Look, then act: a short script that returns `(await app.getState()).tree_markdown` or `app.query({{role, name}})`, then one script per step of the task with loops, waits (`app.waitFor`) and checks, returning what you need to confirm the result. A failed call throws with the script line; fix the script and rerun from that step. Act by {{role, name}} ({tree_kind}) targets; pixels only for surfaces missing from the tree. Stay in the background.
+
+Guides: `cua.call("get_guide", {{topic}})`, `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{permission_line}"#
+        );
+    }
+
     // Only point at run_script when this driver offers it.
     #[cfg(feature = "script")]
     let script_enabled = crate::script_tool::enabled();

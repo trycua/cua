@@ -82,7 +82,7 @@ impl Harness {
             .iter()
             .copied()
             .chain(super::READ_TOOLS.iter().copied())
-            .chain(["kill_app"])
+            .chain(["check_permissions", "kill_app"])
         {
             registry.register(Box::new(Fake {
                 def: ToolDef {
@@ -590,4 +590,88 @@ async fn script_actions_are_paced_as_batched_steps_and_reads_are_not() {
         "reads keep their own timing: {:?}",
         of("get_window_state")
     );
+}
+
+#[test]
+fn script_only_mode_is_opt_in_and_yields_to_an_opt_out() {
+    use super::script_only_from as only;
+    assert!(!only(None, true), "off by default");
+    assert!(!only(Some("0"), true));
+    assert!(!only(Some("maybe"), true));
+    assert!(only(Some("1"), true));
+    assert!(only(Some(" On "), true));
+    assert!(!only(Some("1"), false), "an opt-out of run_script wins");
+}
+
+#[test]
+fn script_only_lists_run_script_alone_and_never_empties_the_list() {
+    let harness = Harness::new();
+    let names = |listed: Value| -> Vec<String> {
+        listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // The harness registers run_script twice (session tools, then explicitly); compare names as a set.
+    let only: std::collections::BTreeSet<String> = names(harness.registry.tools_list_for(true))
+        .into_iter()
+        .collect();
+    assert_eq!(only, ["run_script".to_owned()].into());
+    let all = names(harness.registry.tools_list_for(false));
+    assert!(all.len() > 1 && all.iter().any(|name| name == "click"));
+    // A registry without run_script keeps its tools in script-only mode.
+    let mut bare = ToolRegistry::new();
+    bare.register(Box::new(Fake {
+        def: ToolDef {
+            name: "click".into(),
+            description: "fake".into(),
+            input_schema: json!({"type": "object"}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        calls: Calls::default(),
+        pacings: Pacings::default(),
+    }));
+    assert_eq!(names(bare.tools_list_for(true)), ["click"]);
+}
+
+#[tokio::test]
+async fn script_only_mode_widens_the_allowlist_and_nothing_more() {
+    let harness = Harness::new();
+    let run = |script: &str, script_only: bool| {
+        let request = super::Request::parse(&json!({ "script": script })).unwrap();
+        let registry = harness.registry.clone();
+        async move { super::run(&registry, request, script_only).await }
+    };
+    // check_permissions is a fake read here; script-only mode admits it, the default does not.
+    let read = "return await cua.call('check_permissions', {})";
+    let refused = run(read, false).await;
+    assert_eq!(refused.is_error, Some(true));
+    assert_eq!(structured(&refused)["error"]["code"], "not_allowed");
+    assert!(harness.calls("check_permissions").is_empty());
+
+    let done = run(read, true).await;
+    assert_ne!(done.is_error, Some(true), "{}", text(&done));
+    assert_eq!(harness.calls("check_permissions").len(), 1);
+
+    for tool in [
+        "kill_app",
+        "run_steps",
+        "run_script",
+        "set_config",
+        "start_session",
+    ] {
+        let result = run(&format!("await cua.call('{tool}', {{}})"), true).await;
+        assert_eq!(result.is_error, Some(true), "{tool}");
+        assert_eq!(
+            structured(&result)["error"]["code"],
+            "not_allowed",
+            "{tool}"
+        );
+    }
+    assert!(harness.calls("kill_app").is_empty());
 }

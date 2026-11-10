@@ -1663,9 +1663,20 @@ impl ToolRegistry {
     }
 
     pub fn tools_list(&self) -> Value {
+        #[cfg(feature = "script")]
+        let script_only = crate::script_tool::script_only();
+        #[cfg(not(feature = "script"))]
+        let script_only = false;
+        self.tools_list_for(script_only)
+    }
+
+    /// `tools/list`; in script-only mode only `run_script`, when registered.
+    pub(crate) fn tools_list_for(&self, script_only: bool) -> Value {
+        let script_only = script_only && self.tools.contains_key("run_script");
         let list: Vec<Value> = self
             .order
             .iter()
+            .filter(|name| !script_only || name.as_str() == "run_script")
             .filter(|name| crate::policy::is_tool_listable(name))
             .filter_map(|name| self.tools.get(name))
             .map(|tool| tool.def().to_list_entry())

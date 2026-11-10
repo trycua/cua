@@ -52,6 +52,11 @@ pub const DISABLE_ENV: &str = "CUA_DRIVER_DISABLE_RUN_SCRIPT";
 /// Legacy opt-in switch from when the tool was off by default. `0` still
 /// turns the tool off; `1` changes nothing.
 pub const LEGACY_ENV: &str = "CUA_DRIVER_EXPERIMENTAL_SCRIPT";
+/// Experimental switch: when `1`, `tools/list` offers `run_script` alone and
+/// scripts may also call [`SCRIPT_ONLY_TOOLS`], so every read and action the
+/// agent needs goes through one script surface. Set by whoever runs the
+/// driver; an opt-out of `run_script` wins over it.
+pub const SCRIPT_ONLY_ENV: &str = "CUA_DRIVER_SCRIPT_ONLY";
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 120_000;
@@ -77,10 +82,64 @@ const READ_TOOLS: &[&str] = &[
     "zoom",
 ];
 
+/// Driver tools a script may also call in script-only mode: the reads and
+/// actions the agent would otherwise call directly. Session, config, process
+/// and nested-batch tools stay out, as in the default mode.
+const SCRIPT_ONLY_TOOLS: &[&str] = &[
+    "check_permissions",
+    "get_desktop_state",
+    "get_screen_size",
+    "get_cursor_position",
+    "bring_to_front",
+    "invoke_menu",
+    "set_window_frame",
+    "clipboard_read",
+    "clipboard_write",
+    "get_guide",
+    "get_browser_state",
+    "browser_prepare",
+    "browser_click",
+    "browser_type",
+    "browser_pointer",
+    "browser_navigate",
+    "browser_select",
+    "browser_dialog",
+];
+
+/// Appended to the description in script-only mode, where no other tool is
+/// listed: what else `cua.call` reaches.
+const SCRIPT_ONLY_NOTE: &str = "\n\nThis driver offers run_script as its only tool. `cua.call` \
+    also reaches check_permissions, get_desktop_state, get_screen_size, get_cursor_position, bring_to_front, \
+    invoke_menu, set_window_frame, clipboard_read, clipboard_write, get_guide({topic}), and the \
+    browser tools get_browser_state, browser_prepare, browser_click, browser_type, \
+    browser_pointer, browser_navigate, browser_select, browser_dialog. To look before acting, \
+    run a short script that returns `(await app.getState()).tree_markdown`, then act in the next.";
+
 /// Whether the tool is offered: yes, unless the person running the driver
 /// turned it off.
 pub fn enabled() -> bool {
     disabled_by().is_none()
+}
+
+/// Whether `run_script` is the only tool offered (see [`SCRIPT_ONLY_ENV`]).
+pub fn script_only() -> bool {
+    script_only_from(std::env::var(SCRIPT_ONLY_ENV).ok().as_deref(), enabled())
+}
+
+fn script_only_from(value: Option<&str>, script_enabled: bool) -> bool {
+    script_enabled
+        && value.is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+/// The tools a script may call besides the batchable actions.
+fn script_tools(script_only: bool) -> Vec<&'static str> {
+    let extra: &[&str] = if script_only { SCRIPT_ONLY_TOOLS } else { &[] };
+    READ_TOOLS.iter().chain(extra).copied().collect()
 }
 
 /// The setting that turned the tool off, if any.
@@ -201,7 +260,8 @@ impl Tool for RunScriptTool {
                 for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key});\n\
                 const [display] = await app.query({role: \"statictext\"});\n\
                 return display.value;"
-                .into(),
+                .to_owned()
+                + if script_only() { SCRIPT_ONLY_NOTE } else { "" },
             input_schema: json!({
                 "type": "object",
                 "required": ["script"],
@@ -252,7 +312,7 @@ impl Tool for RunScriptTool {
                     )
             }
         };
-        run(&registry, request).await
+        run(&registry, request, script_only()).await
     }
 }
 
@@ -332,7 +392,7 @@ struct CallRecord {
     detail: String,
 }
 
-async fn run(registry: &ToolRegistry, request: Request) -> ToolResult {
+async fn run(registry: &ToolRegistry, request: Request, script_only: bool) -> ToolResult {
     let started = Instant::now();
     let deadline = started + request.timeout;
     let cancel = Arc::new(AtomicBool::new(false));
@@ -359,7 +419,7 @@ async fn run(registry: &ToolRegistry, request: Request) -> ToolResult {
         return ToolResult::error(format!("run_script could not start its engine: {error}"));
     }
 
-    let mut api = Api::new(registry, request.session.clone(), deadline);
+    let mut api = Api::new(registry, request.session.clone(), deadline, script_only);
     let mut log: Vec<CallRecord> = Vec::new();
     let hard_stop = deadline + SHUTDOWN_GRACE;
     let outcome = loop {
@@ -408,16 +468,23 @@ struct Api<'a> {
     session: Option<String>,
     deadline: Instant,
     images: Vec<Content>,
+    tools: Vec<&'static str>,
 }
 
 impl<'a> Api<'a> {
-    fn new(registry: &'a ToolRegistry, session: Option<String>, deadline: Instant) -> Self {
+    fn new(
+        registry: &'a ToolRegistry,
+        session: Option<String>,
+        deadline: Instant,
+        script_only: bool,
+    ) -> Self {
         Self {
             registry,
             locator: Locator::new(registry, session.clone(), deadline),
             session,
             deadline,
             images: Vec::new(),
+            tools: script_tools(script_only),
         }
     }
 
@@ -466,12 +533,12 @@ impl<'a> Api<'a> {
             "find" => self.find(args).await,
             "wait_for" => self.wait_for(args).await,
             tool if BATCHABLE_TOOLS.contains(&tool) => self.act(tool, args).await,
-            tool if READ_TOOLS.contains(&tool) => self.invoke(tool, args).await,
+            tool if self.tools.contains(&tool) => self.invoke(tool, args).await,
             other => Err(HostError::new(
                 format!(
                     "`{other}` is not available to scripts; allowed: {}, {}",
                     BATCHABLE_TOOLS.join(", "),
-                    READ_TOOLS.join(", ")
+                    self.tools.join(", ")
                 ),
                 "not_allowed",
             )),

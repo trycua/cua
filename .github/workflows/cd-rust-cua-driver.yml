@@ -1825,8 +1825,7 @@ jobs:
             echo "Opened ${PR_URL}"
 
             # Queue the merge and stop. Repository auto-merge is on, so the PR
-            # merges itself once the required checks (including the local-ci
-            # sign-off, which can take 20-40 minutes) pass. Do not watch the
+            # merges itself once the required checks pass. Do not watch the
             # checks and do not close the PR on a timeout: the required checks
             # register a few seconds after the PR opens, and `gh pr checks
             # --required` fails at once with "no checks reported" until then,

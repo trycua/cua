@@ -32,8 +32,10 @@ def test_recheck_listens_to_every_workflow_the_gate_waits_on():
     assert listed - expected == set(), 'remove these names from ci-gate-recheck.yml'
 
 
-def test_recheck_also_listens_to_the_sign_off_and_never_checks_out_pull_request_code():
-    assert 'status' in RECHECK[True]
+def test_recheck_listens_only_to_workflow_runs_and_never_checks_out_pull_request_code():
+    # The sign-off is the CI: Quick workflow, so no commit status event is needed.
+    assert set(RECHECK[True]) == {'workflow_run'}
+    assert 'CI: Quick' in RECHECK[True]['workflow_run']['workflows']
     steps = RECHECK['jobs']['recheck']['steps']
     checkout = [s for s in steps if str(s.get('uses', '')).startswith('actions/checkout')]
     assert checkout and 'ref' not in checkout[0].get('with', {})

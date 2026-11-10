@@ -349,8 +349,8 @@ def test_quick_stage_decides_the_scope_from_the_base_commit_and_fails_closed():
 
 LOCAL_CI_FAST = STEPS['Check the sign-off on the pull request (fail fast)']['run']
 LOCAL_CI_WAIT = STEPS['Require the sign-off on the pull request']['run']
-# The stub answers every sign-off lookup with STATE: a commit status for a branch of this repository,
-# the newest CI: Quick run for a fork. SOURCE records which one the gate asked.
+# The stub answers every sign-off lookup with STATE (the newest CI: Quick run's verdict). SOURCE
+# records what the gate asked: a commit status lookup would show up as `statuses`.
 GH_STUB = """
 sleep() { :; }
 gh() {
@@ -386,8 +386,8 @@ def run_local_ci(head_repo='test/repo', state='', require='true', head_ref='feat
 
 
 def test_every_pull_request_needs_a_sign_off_whoever_opens_it():
-    # The author, the labels and the commit trailers are not read: a branch of this repository
-    # always needs the local-ci status, a fork always needs the CI: Quick run.
+    # The author, the labels and the commit trailers are not read, and neither is where the
+    # branch lives: a branch of this repository and a fork both need the CI: Quick run.
     assert 'author' not in LOCAL_CI_FAST.lower().replace('author:', '')
     for word in ('trailer', 'agent/'):
         assert word not in LOCAL_CI_FAST
@@ -407,22 +407,22 @@ def test_release_please_pull_request_is_exempt_from_the_sign_off():
         assert run_local_ci(**kwargs).returncode == 1, kwargs
 
 
-def test_branch_of_this_repo_needs_a_local_ci_status():
-    missing = run_local_ci()
-    assert missing.returncode == 1
-    assert 'Run bin/ci --quick and bin/ci --signoff on this head commit.' in missing.stdout
-    assert set(missing.source) == {'statuses'}
-    assert run_local_ci(state='failure').returncode == 1
-    assert run_local_ci(state='success').returncode == 0
-
-
-def test_fork_needs_a_successful_quick_run_in_github_actions():
-    missing = run_local_ci(head_repo='someone/fork')
+@pytest.mark.parametrize('head_repo', ['test/repo', 'someone/fork'])
+def test_the_sign_off_is_a_successful_quick_run_in_github_actions(head_repo):
+    missing = run_local_ci(head_repo=head_repo)
     assert missing.returncode == 1
     assert 'no successful run on this head commit' in missing.stdout
-    assert set(missing.source) == {'quick-run'}  # never the local-ci status, which only our Macs set
-    assert run_local_ci(head_repo='someone/fork', state='failure').returncode == 1
-    assert run_local_ci(head_repo='someone/fork', state='success').returncode == 0
+    # Never a commit status: a status is set by whoever holds a token, outside Actions, and
+    # waiting for one put a single Mac runner's queue on every member pull request.
+    assert set(missing.source) == {'quick-run'}
+    assert run_local_ci(head_repo=head_repo, state='failure').returncode == 1
+    assert run_local_ci(head_repo=head_repo, state='success').returncode == 0
+
+
+def test_the_gate_never_reads_the_local_ci_status():
+    for step in STEPS.values():
+        assert 'local-ci' not in step.get('run', ''), step.get('name')
+        assert '/statuses' not in step.get('run', ''), step.get('name')
 
 
 def test_sign_off_is_report_only_until_the_switch_is_on():
@@ -434,7 +434,7 @@ def test_sign_off_is_report_only_until_the_switch_is_on():
         assert run_local_ci(head_repo=head_repo, state='success', require='').returncode == 0
 
 
-def test_the_quick_workflow_a_fork_relies_on_is_safe_to_run_on_its_code():
+def test_the_quick_workflow_the_sign_off_relies_on_is_safe_to_run_on_fork_code():
     wf = yaml.safe_load((WORKFLOWS / 'ci-quick.yml').read_text())
     triggers = wf.get(True) or wf.get('on')
     assert 'pull_request' in triggers  # runs on fork PRs, GitHub-hosted

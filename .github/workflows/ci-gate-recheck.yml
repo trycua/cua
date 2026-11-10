@@ -3,7 +3,7 @@ name: "CI: gate recheck"
 # Reruns `ci-gate` when a result it failed on turns green (CUA-3856). Without this, rerunning a
 # failed job left the gate red until someone also reran the gate. The standard pattern: a
 # `workflow_run: completed` trigger on every workflow the gate waits for (first runs and reruns
-# alike), plus the `local-ci` sign-off status. .github/scripts/ci_gate_recheck.py decides; it reruns
+# alike; the sign-off is one of them, `CI: Quick`). .github/scripts/ci_gate_recheck.py decides; it reruns
 # the gate's own run, so the required check keeps its name (`ci-gate`), its event and its place in
 # branch protection and auto-merge. The gate then recomputes its verdict from every run, as always.
 #
@@ -119,7 +119,6 @@ on:
       - "CI: PR title"
       - "Smoke: Cua Driver live agent loop"
       - "Space egress (nightly)"
-  status:
 
 permissions:
   actions: write
@@ -128,17 +127,15 @@ permissions:
 
 concurrency:
   # One recheck per commit at a time; a later one sees the rerun already in progress and stops.
-  group: ci-gate-recheck-${{ github.event.workflow_run.head_sha || github.event.sha }}
+  group: ci-gate-recheck-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
   recheck:
     name: recheck
     if: >-
-      (github.event_name == 'workflow_run'
-        && (github.event.workflow_run.event == 'pull_request')
-        && contains(fromJSON('["success","neutral","skipped"]'), github.event.workflow_run.conclusion))
-      || (github.event_name == 'status' && github.event.context == 'local-ci' && github.event.state == 'success')
+      github.event.workflow_run.event == 'pull_request'
+      && contains(fromJSON('["success","neutral","skipped"]'), github.event.workflow_run.conclusion)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -150,4 +147,4 @@ jobs:
       - name: Rerun ci-gate if it failed before this result turned green
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/ci_gate_recheck.py --event "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME"
+        run: python3 .github/scripts/ci_gate_recheck.py --event "$GITHUB_EVENT_PATH"

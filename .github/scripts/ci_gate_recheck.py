@@ -4,11 +4,11 @@
 `ci-gate` is one long job that waits for every other workflow on the pull request head and
 then gives one verdict. When a job fails, the gate fails. Rerunning that job alone used to leave
 the gate red until someone also reran the gate. `.github/workflows/ci-gate-recheck.yml` calls
-this script whenever a workflow the gate waits on completes (first run or rerun), and when the
-`local-ci` sign-off status turns green. It reruns the newest gate run for that head commit when
-all of these hold:
+this script whenever a workflow the gate waits on completes (first run or rerun; the sign-off,
+`CI: Quick`, is one of them). It reruns the newest gate run for that head commit when all of
+these hold:
 
-* the trigger is green (a workflow run that succeeded, or a successful `local-ci` status);
+* the trigger is green (a workflow run that succeeded);
 * the newest `ci-gate` run for the commit came from a pull request, is completed and failed;
 * the gate finished before the green result arrived, so it has not seen it yet;
 * the commit is still the head of an open pull request that has no hold label.
@@ -94,28 +94,17 @@ def decide(repo: str, sha: str, trigger_ok: bool, trigger_at: float, why: str) -
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--event', required=True, help='path to the GitHub event payload')
-    ap.add_argument('--event-name', required=True, choices=('workflow_run', 'status'))
     ap.add_argument('--dry-run', action='store_true')
     args = ap.parse_args()
     repo = os.environ['GITHUB_REPOSITORY']
-    event = json.loads(open(args.event).read())
-    if args.event_name == 'workflow_run':
-        run = event['workflow_run']
-        if run.get('event') != 'pull_request':
-            print(f'{run.get("name")} ran for {run.get("event")}; the gate only reads pull request runs')
-            return 0
-        sha = run['head_sha']
-        ok = run.get('conclusion') in GREEN
-        at = ts(run.get('updated_at'))
-        why = f'{run.get("name")} (run {run.get("id")}, attempt {run.get("run_attempt")})'
-    else:
-        if event.get('context') != 'local-ci':
-            print(f'status {event.get("context")!r} is not the sign-off; ignoring')
-            return 0
-        sha = event['sha']
-        ok = event.get('state') == 'success'
-        at = ts(event.get('updated_at') or event.get('created_at'))
-        why = 'the local-ci sign-off'
+    run = json.loads(open(args.event).read())['workflow_run']
+    if run.get('event') != 'pull_request':
+        print(f'{run.get("name")} ran for {run.get("event")}; the gate only reads pull request runs')
+        return 0
+    sha = run['head_sha']
+    ok = run.get('conclusion') in GREEN
+    at = ts(run.get('updated_at'))
+    why = f'{run.get("name")} (run {run.get("id")}, attempt {run.get("run_attempt")})'
     reason, gate_id = decide(repo, sha, ok, at, why)
     print(reason)
     if gate_id is not None and not args.dry_run:

@@ -93,19 +93,15 @@ jobs:
           # The files API stops at 3000 entries; a PR that large waits on everything.
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
           python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
-      # Every pull request needs a sign-off on its head commit. Which one depends on where the code lives:
-      #  - A branch of this repository (members and agents, any author): a `local-ci` commit status, set
-      #    by `bin/ci --signoff` (or our Mac CI runner, which `ci-remote-sweep` starts for each such PR)
-      #    after a green quick run.
-      #  - A fork (community): untrusted code, which never runs on our Macs. Its sign-off is a successful
-      #    `CI: Quick` run (ci-quick.yml, `bin/ci --quick`) on the head commit in GitHub Actions: a
-      #    pull_request job with a read-only token and no secrets.
-      # Neither the author, the labels nor the commit trailers decide anything here.
+      # Every pull request needs a sign-off on its head commit: a successful `CI: Quick` run
+      # (ci-quick.yml, `bin/ci --quick`) in GitHub Actions, for a branch of this repository and a fork
+      # alike. It used to be a `local-ci` commit status from a Mac runner for branches of this
+      # repository; that ran the same `bin/ci --quick`, but in one queue whose wait was the gate's
+      # p90 tail. Neither the author, the labels nor the commit trailers decide anything here.
       # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
       # set to "true"; that variable is the one switch that makes a missing sign-off block the merge.
-      # A sign-off can take 20-40 minutes (a queued run on the Mac runner), so it is checked twice:
-      # here, once and without waiting, so a failure fails the gate at once; and after the other
-      # workflows have finished (the last step), where a still-missing sign-off is waited for.
+      # It is checked twice: here, once and without waiting, so a failure fails the gate at once; and
+      # after the other workflows (CI: Quick among them) have finished, in the last step.
       - name: Check the sign-off on the pull request (fail fast)
         id: signoff
         env:
@@ -123,18 +119,15 @@ jobs:
           fi
           info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // ""), .head.ref, ([.labels[].name] | join(","))] | @tsv')
           IFS=$'\t' read -r sha head_repo head_ref pr_labels <<<"$info"
-          # Release Please PRs are opened by the bot and have no local-ci sign-off: nobody runs bin/ci on
-          # them. They are exempt only when all three hold: a branch of this repository (so a fork cannot
+          # Release Please PRs are opened by the bot and need no sign-off. They are exempt only when all
+          # three hold: a branch of this repository (so a fork cannot
           # claim it), the release-please branch prefix and the `autorelease: pending` label. Every other
           # workflow is still waited on.
           if [[ "$head_repo" == "$GITHUB_REPOSITORY" && "$head_ref" == release-please--branches--* && ",$pr_labels," == *",autorelease: pending,"* ]]; then
             kind=release
             what="no sign-off (Release Please pull request)"
-          elif [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
-            kind=local
-            what="a successful local-ci status (bin/ci --quick, then bin/ci --signoff)"
           else
-            kind=fork
+            kind=quick
             what="a successful CI: Quick run (bin/ci --quick in GitHub Actions)"
           fi
           echo "Requiring $what on ${sha:0:10}."
@@ -143,13 +136,9 @@ jobs:
             echo "Release Please pull request: exempt from the sign-off."
             exit 0
           fi
-          if [[ "$kind" == local ]]; then
-            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
-          else
-            # The newest run only: an older one may have been cancelled by a newer push.
-            state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
-              --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
-          fi
+          # The newest run only: an older one may have been cancelled by a newer push.
+          state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
+            --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
           echo "sign-off on ${sha:0:10}: ${state:-not set yet}"
           if [[ "$state" == failure || "$state" == error ]]; then
             msg="The sign-off reported $state on ${sha:0:10}. Fix the failing checks and push."
@@ -327,9 +316,10 @@ jobs:
           done
           exit $failed
 
-      # Last step: the other workflows are done, so only the sign-off can still be missing. Wait for
-      # it (bounded, 75 minutes: a queued 20-40 minute run on the Mac runner plus slack). A failure
-      # fails at once. Report-only mode looks once and only warns.
+      # Last step: the other workflows are done, CI: Quick among them, so the sign-off is normally
+      # already there. It can still be missing when a first-time contributor's run awaits a
+      # maintainer's approval, so it is polled (bounded, 75 minutes). A failure fails at once.
+      # Report-only mode looks once and only warns.
       - name: Require the sign-off on the pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -346,21 +336,13 @@ jobs:
           # minute). Still bounded at 75 minutes.
           [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=300
           for i in $(seq 1 "$tries"); do
-            if [[ "$KIND" == local ]]; then
-              state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
-            else
-              state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
-                --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
-            fi
+            state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
+              --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
             if [[ "$state" == success ]]; then echo "sign-off: success"; exit 0; fi
             [[ "$state" == failure || "$state" == error ]] && break
             (( i < tries )) && sleep 15
           done
-          if [[ "$KIND" == local ]]; then
-            msg="Run bin/ci --quick and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
-          else
-            msg="The CI: Quick workflow has no successful run on this head commit. (${sha:0:10}: ${state:-not run yet}; a first-time contributor's run needs a maintainer to approve it)"
-          fi
+          msg="The CI: Quick workflow has no successful run on this head commit. (${sha:0:10}: ${state:-not run yet}; run bin/ci --quick locally to see the failure; a first-time contributor's run needs a maintainer to approve it)"
           if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
             echo "::error title=sign-off missing::$msg"
             exit 1

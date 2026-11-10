@@ -244,9 +244,7 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
 @Suite("Relay usage")
 struct RelayUsageTests {
     func model(_ fixture: FixtureDevices) -> (DevicesModel, UserDefaults) {
-        let suite = "cua-relay-usage-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
+        let defaults = TestDefaults.make("cua-relay-usage")
         let m = DevicesModel(devices: fixture, presence: FixturePresence(), defaults: defaults)
         m.signedIn = true
         return (m, defaults)

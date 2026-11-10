@@ -7,6 +7,7 @@ repository = "https://github.com/trycua/cua"
 description = "OCI images for the cua SDK: pull/push, containerDisk and rootfs formats, ImageSpec, local builder."
 
 [dependencies]
+cua-home.workspace = true
 async-trait = "0.1"
 base64 = "0.22"
 bytes = "1"

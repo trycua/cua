@@ -79,6 +79,16 @@ pub struct Volume {
 /// containers) and Lume's VM store. Only paths that exist.
 pub fn space_paths(home: &Path) -> Vec<PathBuf> {
     let mut paths = vec![home.to_path_buf()];
+    // Relocated folders live on their own volume: watch those too.
+    for kind in [
+        cua_home::storage::Kind::Runtimes,
+        cua_home::storage::Kind::Images,
+    ] {
+        let dir = cua_home::storage::dir_in(home, kind, |k| std::env::var(k).ok());
+        if !dir.starts_with(home) && !paths.contains(&dir) {
+            paths.push(dir);
+        }
+    }
     if let Some(lume) = lume_home() {
         paths.push(lume);
     }

@@ -311,11 +311,15 @@ impl Spaces {
                     image,
                     "base digest not resolved ({e}); using the local cache"
                 );
-                cua_image::ImageCache::new(self.home_dir().join("images"))
-                    .refs()
-                    .into_iter()
-                    .find(|(r, _)| r == image)
-                    .map(|(_, d)| d)
+                cua_image::ImageCache::new(cua_home::storage::dir_in(
+                    self.home_dir(),
+                    cua_home::storage::Kind::Images,
+                    |k| std::env::var(k).ok(),
+                ))
+                .refs()
+                .into_iter()
+                .find(|(r, _)| r == image)
+                .map(|(_, d)| d)
             }
         }
     }

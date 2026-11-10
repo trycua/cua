@@ -147,12 +147,15 @@ pub fn dir() -> PathBuf {
 
 /// `$CUA_HOME/runtimes/lume`: every built-in Lume version.
 pub fn root() -> PathBuf {
-    root_in(&host::cua_home())
+    cua_home::storage::dir(cua_home::storage::Kind::Runtimes).join("lume")
 }
 
 /// [`root`] under the cua home `home`.
 pub fn root_in(home: &Path) -> PathBuf {
-    home.join("runtimes").join("lume")
+    cua_home::storage::dir_in(home, cua_home::storage::Kind::Runtimes, |k| {
+        std::env::var(k).ok()
+    })
+    .join("lume")
 }
 
 /// The built-in Lume's executable, when it is installed and was verified.

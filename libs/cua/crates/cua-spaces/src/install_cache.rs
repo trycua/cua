@@ -35,9 +35,12 @@ const MAX_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// The host cache directory.
 pub fn cache_dir() -> PathBuf {
-    crate::registry::cua_home()
-        .join("cache")
-        .join("installables")
+    cua_home::storage::dir_in(
+        &crate::registry::cua_home(),
+        cua_home::storage::Kind::Cache,
+        |k| std::env::var(k).ok(),
+    )
+    .join("installables")
 }
 
 /// Whether to stage through the host for a spacesd at `url`:

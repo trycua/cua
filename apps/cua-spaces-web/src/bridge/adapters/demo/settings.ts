@@ -11,7 +11,7 @@ import { HostError } from "../../adapter";
 import type { DeviceInput, DevicesInput, PairingCode } from "../../contracts/devices";
 import type { MachineRow } from "../../contracts/host";
 import type { NotificationInput } from "../../contracts/notifications";
-import type { AboutInput, DriveCheckInput, Experiments, LoginItemReport, RepoCacheView, StorageInput, UpdateState } from "../../contracts/settings";
+import type { AboutInput, DiskView, DriveCheckInput, Experiments, LoginItemReport, RepoCacheView, StorageInput, UpdateState } from "../../contracts/settings";
 import { NO_EXPERIMENTS } from "../../contracts/volume";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./platform";
 import { DEMO_BROWSED, demoProbe } from "./runtimes";
@@ -245,6 +245,28 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
   // The repo cache: three repositories and a week of hits to show (the real
   // words come from the host, `cua_sdk::RepoCacheStatus`).
   const repoCache = { enabled: true, sizeGb: null as number | null, repos: 3, bytes: Math.round(1.2 * GIB) };
+  // Storage: the folders Cua keeps, with sizes to show (the real ones come from `cua storage`).
+  const disk: DiskView = {
+    home: "/Users/maya/.cua",
+    homeBytes: Math.round(14.2 * 1e9),
+    freeBytes: Math.round(412 * 1e9),
+    daemonRunning: false,
+    kinds: [
+      { kind: "runtimes", path: "/Users/maya/.cua/runtimes", source: "default", movable: true, bytes: Math.round(11.3 * 1e9) },
+      { kind: "images", path: "/Users/maya/.cua/images", source: "default", movable: true, bytes: Math.round(1.6 * 1e9) },
+      { kind: "cache", path: "/Users/maya/.cua/cache", source: "default", movable: true, bytes: Math.round(0.8 * 1e9) },
+      { kind: "logs", path: "/Users/maya/.cua/logs", source: "default", movable: true, bytes: Math.round(0.1 * 1e9) },
+      { kind: "trajectories", path: "/Users/maya/.cua/trajectories", source: "default", movable: true, bytes: Math.round(0.4 * 1e9) },
+    ],
+    items: [
+      { family: "lume", name: "1.4.0", path: "/Users/maya/.cua/runtimes/lume/1.4.0", bytes: Math.round(0.2 * 1e9) },
+      { family: "linux", name: "vm", path: "/Users/maya/.cua/runtimes/linux/vm", bytes: Math.round(11.1 * 1e9) },
+    ],
+    oldLocations: [],
+    trajectoriesMaxBytes: 2 * 1024 ** 3,
+    trajectoriesMaxDays: 30,
+    canUninstall: true,
+  };
   const sizeWords = (bytes: number) => (bytes >= GIB ? `${Math.round((bytes / GIB) * 10) / 10} GB` : `${Math.round(bytes / (1024 * 1024))} MB`);
   const repoCacheView = (): RepoCacheView => {
     const capBytes = Math.round((repoCache.sizeGb ?? 5) * GIB);
@@ -327,6 +349,43 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
       repoCache.repos = 0;
       repoCache.bytes = 0;
       return repoCacheView();
+    },
+
+    "disk.get": () => structuredClone(disk),
+    "disk.do": async (cmd) => {
+      await wait(stepMs);
+      const none = { ok: true, path: null, error: null, warnings: [], neededBytes: null, availableBytes: null, freedBytes: null };
+      switch (cmd.op) {
+        case "locate":
+          return { ...none, path: "/Volumes/Fast/Cua" };
+        case "check":
+          return { ...none, neededBytes: disk.kinds.find((k) => k.kind === cmd.kind)?.bytes ?? 0, availableBytes: 800 * 1e9 };
+        case "set": {
+          const k = disk.kinds.find((x) => x.kind === cmd.kind);
+          if (k) {
+            disk.oldLocations.push({ path: k.path, bytes: k.bytes });
+            k.path = cmd.path;
+            k.source = "settings";
+          }
+          return none;
+        }
+        case "reset": {
+          const k = disk.kinds.find((x) => x.kind === cmd.kind);
+          if (k) {
+            k.path = `/Users/maya/.cua/${cmd.kind}`;
+            k.source = "default";
+          }
+          return none;
+        }
+        case "remove": {
+          const i = disk.items.find((x) => x.path === cmd.path);
+          disk.items = disk.items.filter((x) => x.path !== cmd.path);
+          disk.oldLocations = disk.oldLocations.filter((x) => x.path !== cmd.path);
+          return { ...none, freedBytes: i?.bytes ?? 0 };
+        }
+        default:
+          return none;
+      }
     },
 
     "devices.get": () => {

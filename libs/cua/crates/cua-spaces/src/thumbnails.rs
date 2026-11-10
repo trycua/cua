@@ -173,7 +173,10 @@ impl ThumbnailCache {
 
     /// The cache under the cua home `home` (`cache/thumbnails`).
     pub fn in_home(home: &Path) -> Self {
-        Self::new(Some(home.join("cache").join("thumbnails")), DISK_BYTES)
+        let cache = cua_home::storage::dir_in(home, cua_home::storage::Kind::Cache, |k| {
+            std::env::var(k).ok()
+        });
+        Self::new(Some(cache.join("thumbnails")), DISK_BYTES)
     }
 
     /// Where it keeps its files.

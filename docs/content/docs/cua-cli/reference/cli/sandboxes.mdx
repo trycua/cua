@@ -66,6 +66,12 @@ description: "Create, reach and delete sandboxes; local runtimes, disk cleanup a
 | [`cua cache du`](#cua-cache-du) | Disk usage per category, the cache budget and free space. |
 | [`cua cache prune`](#cua-cache-prune) | Reap orphaned ephemeral sandboxes, remove orphans (abandoned downloads, unused layers) and evict least-recently-used cache down to the budget. |
 | [`cua cache config`](#cua-cache-config) | Show or set the cache settings (`$CUA_HOME/cache.json`; the CUA_CACHE_BUDGET, CUA_DISK_MIN_FREE, CUA_DISK_WARN_FREE and CUA_ORPHAN_REAP_MINUTES environment variables win). |
+| [`cua storage`](#cua-storage) | Where Cua keeps its files, how big each folder is, and moving the large ones (computers' disks, images, caches) to another drive. |
+| [`cua storage show`](#cua-storage-show) | Show every folder Cua uses, where it comes from and how big it is. |
+| [`cua storage check`](#cua-storage-check) | Check that a folder can hold a kind of data, without changing anything. |
+| [`cua storage set`](#cua-storage-set) | Use another folder for a kind of data. |
+| [`cua storage reset`](#cua-storage-reset) | Go back to the default folder for a kind. |
+| [`cua storage remove`](#cua-storage-remove) | Delete one computer image or runtime from `runtimes` (see `cua storage`), or an old folder left by `cua storage set --move`. |
 | [`cua viewer`](#cua-viewer) | Serve the HTML5 viewer for every sandbox on one loopback port. |
 
 Every command also accepts the [global options](/cua-cli/reference/cli#global-options).
@@ -1337,6 +1343,114 @@ cua cache config
 
 # Cap the cache at 20 GB and keep 10 GB free
 cua cache config --budget 20G --min-free 10G
+```
+
+## `cua storage`
+
+Where Cua keeps its files, how big each folder is, and moving the large ones (computers' disks, images, caches) to another drive.
+
+```text output
+cua storage [OPTIONS] [COMMAND]
+```
+
+### `cua storage show`
+
+Show every folder Cua uses, where it comes from and how big it is.
+
+```text output
+cua storage show [OPTIONS]
+```
+
+Alias: `cua storage ls`.
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-show"
+cua storage
+cua storage --json
+```
+
+### `cua storage check`
+
+Check that a folder can hold a kind of data, without changing anything.
+
+```text output
+cua storage check [OPTIONS] <KIND> <PATH>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<KIND>` | string | required | runtimes, images, cache, logs or trajectories. |
+| `<PATH>` | path | required | The new folder (a full path). |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-check"
+cua storage check runtimes /Volumes/Fast/cua-runtimes
+```
+
+### `cua storage set`
+
+Use another folder for a kind of data. With --move the existing data is copied there first; the old copy stays until `cua storage remove`.
+
+```text output
+cua storage set [OPTIONS] <KIND> <PATH>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<KIND>` | string | required | runtimes, images, cache, logs or trajectories. |
+| `<PATH>` | path | required | The new folder (a full path). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-storage-set--move"></span>`--move` | boolean | `false` | Copy the existing data to the new folder first. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-set"
+# Keep computers' disks on an external drive, copying what exists
+cua storage set runtimes /Volumes/Fast/cua-runtimes --move
+
+# Only point at a folder that already holds the data
+cua storage set images /Volumes/Fast/cua-images
+```
+
+### `cua storage reset`
+
+Go back to the default folder for a kind. Nothing is copied or deleted.
+
+```text output
+cua storage reset [OPTIONS] <KIND>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<KIND>` | string | required | runtimes, images, cache, logs or trajectories. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-reset"
+cua storage reset runtimes
+```
+
+### `cua storage remove`
+
+Delete one computer image or runtime from `runtimes` (see `cua storage`), or an old folder left by `cua storage set --move`. Asks nothing: the Settings page confirms first.
+
+```text output
+cua storage remove [OPTIONS] <PATH>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<PATH>` | path | required | A folder listed by `cua storage --json` (items) or a folder left behind by a move. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-storage-remove"
+# Delete the old copy after `cua storage set runtimes <path> --move`
+cua storage remove ~/.cua/runtimes
 ```
 
 ## `cua viewer`

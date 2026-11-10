@@ -91,9 +91,16 @@ async fn gather_with_virtualization(
     patience: Option<std::time::Duration>,
 ) -> Facts {
     let mut facts = Facts {
-        free_bytes: crate::disk::space(&crate::host::cua_home())
-            .ok()
-            .map(|s| s.available),
+        // The least free space on the volumes computers are kept on: the cua home and the
+        // (possibly relocated) runtimes and images folders.
+        free_bytes: [
+            crate::host::cua_home(),
+            cua_home::storage::dir(cua_home::storage::Kind::Runtimes),
+            cua_home::storage::dir(cua_home::storage::Kind::Images),
+        ]
+        .iter()
+        .filter_map(|p| crate::disk::space(p).ok().map(|s| s.available))
+        .min(),
         ..Default::default()
     };
     if req.runs == Runs::Container && engine_required() {

@@ -159,6 +159,8 @@ export const METHODS = [
   "repoCache.get",
   "repoCache.set",
   "repoCache.clear",
+  "disk.get",
+  "disk.do",
   "keyvault.get",
   "keyvault.lock",
   "keyvault.unlock",

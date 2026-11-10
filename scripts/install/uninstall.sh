@@ -33,6 +33,12 @@ Options:
                      (Space disks, the local Cua Volume files, the Keyvault).
                      Running Spaces are listed and stopped first. Cannot be
                      undone; asks you to type "delete" unless --yes is given
+  --wait-for-pid N   wait (up to 60 s) for process N to exit before removing
+                     anything: the Cua Spaces app's Uninstall starts this script
+                     and quits, so the app is gone when its folder is removed
+  --keep-keychain    leave every Keychain / Secret Service item alone (your
+                     sign-in, device key and Keyvault). The Cua Spaces app's
+                     Uninstall passes this unless you tick the box
   --keep-permissions keep the macOS permissions (Screen Recording,
                      Accessibility, ...) granted to the Cua Spaces app; by
                      default they are reset while the app is still installed
@@ -65,12 +71,15 @@ MARKER="# Added by the cua installer"
 # Settings and local state inside the cua home, removed unless --keep-data.
 # Spaces and their data (sandboxes, vmm, images, volume/data, the Keyvault,
 # trajectories, spaces.json) are not on this list: only --delete-spaces removes them.
-DISPOSABLE="cache cache.json cua.sock keyvault.sock x.sock daemon.json daemon.starting fleet-gc.lock config config.toml env-tokens.json do_target.json host_consented host spacesd telemetry skills bin runtimes spaces-install-mode volume/cache"
+# `runtimes` is not here: it holds the built-in Linux computers' disks, so only --delete-spaces removes it.
+DISPOSABLE="cache cache.json cua.sock keyvault.sock x.sock daemon.json daemon.starting fleet-gc.lock config config.toml env-tokens.json do_target.json host_consented host spacesd telemetry skills bin spaces-install-mode volume/cache logs storage.toml"
 # The sign-in goes with the uninstall even with --keep-data.
 SESSION_FILES="credentials.json spaces-session.json spaces-credentials.json"
 
 keep_data=0
 keep_permissions=0
+keep_keychain=0
+wait_pid=""
 delete_spaces=0
 all_tools=0
 prefix=""
@@ -104,6 +113,13 @@ parse_args() {
         case "$1" in
         --keep-data) keep_data=1 ;;
         --keep-permissions) keep_permissions=1 ;;
+        --keep-keychain) keep_keychain=1 ;;
+        --wait-for-pid)
+            [ $# -ge 2 ] || die "--wait-for-pid needs a process id"
+            wait_pid="$2"
+            shift
+            ;;
+        --wait-for-pid=*) wait_pid="${1#--wait-for-pid=}" ;;
         --delete-spaces) delete_spaces=1 ;;
         --all) all_tools=1 ;;
         --prefix)
@@ -126,6 +142,9 @@ parse_args() {
     if [ "$keep_data" = 1 ] && [ "$delete_spaces" = 1 ]; then
         die "--keep-data and --delete-spaces contradict each other"
     fi
+    case "$wait_pid" in
+    "" | *[!0-9]*) [ -z "$wait_pid" ] || die "--wait-for-pid needs a number" ;;
+    esac
     case "$prefix" in
     "" | /*) ;;
     *) prefix="$(pwd)/$prefix" ;;
@@ -386,6 +405,14 @@ library_dirs_removed_always() {
         "$HOME/Library/HTTPStorages/com.trycua.spaces.macos" \
         "$HOME/Library/HTTPStorages/com.trycua.spaces.macos.binarycookies" \
         "$HOME/Library/WebKit/com.trycua.spaces.macos"
+    # Sparkle's downloads and installer staging, and the preference files that
+    # test runs of the app used to leave (cua-ln-<uuid>, cua-relay-usage-<uuid>).
+    printf '%s\n' "$HOME/Library/Caches/com.trycua.spaces.macos.ShipIt"
+    for stray in "$HOME"/Library/Preferences/cua-ln-*.plist "$HOME"/Library/Preferences/cua-relay-usage-*.plist \
+        "$HOME"/Library/Preferences/cua-spaces-launch-*.plist "$HOME"/Library/Preferences/webui-video-*.plist; do
+        [ -e "$stray" ] && printf '%s\n' "$stray"
+    done
+    return 0
 }
 
 library_dirs_removed_unless_keep() {
@@ -445,7 +472,12 @@ EOF
     if [ -d "$cua_home" ]; then
         add_found "cua state: $cua_home"
     fi
-    if [ "$os" = darwin ] && { kc_has run.cua.ai || kc_has staging.run.cua.ai; }; then
+    while IFS=' ' read -r rk rp; do
+        [ -n "$rk" ] && [ -d "$rp" ] && add_found "relocated $rk folder: $rp"
+    done <<LIST
+$(relocated_folders)
+LIST
+    if [ "$os" = darwin ] && [ "$keep_keychain" = 0 ] && { kc_has run.cua.ai || kc_has staging.run.cua.ai; }; then
         add_found "macOS Keychain items: run.cua.ai (sign-in, device key)"
     fi
     while IFS= read -r lib; do
@@ -982,9 +1014,169 @@ clean_profiles() {
     done
 }
 
+# relocated_folders: "kind path" lines for the large folders Cua was told to keep
+# somewhere else: the CUA_<KIND>_DIR environment variables, else the [paths] table of
+# $CUA_HOME/storage.toml (the same order `cua storage` uses). Only folders outside the
+# cua home are listed.
+relocated_folders() {
+    for kind in runtimes images cache logs trajectories; do
+        var="CUA_$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')_DIR"
+        eval "val=\${$var:-}"
+        if [ -z "$val" ] && [ -f "$cua_home/storage.toml" ]; then
+            val="$(awk -v k="$kind" '
+                /^\[/ { in_paths = ($0 == "[paths]"); next }
+                in_paths {
+                    line = $0; sub(/^[ \t]+/, "", line)
+                    if (index(line, k) == 1) {
+                        rest = substr(line, length(k) + 1)
+                        if (sub(/^[ \t]*=[ \t]*"/, "", rest)) { sub(/"[ \t]*$/, "", rest); print rest; exit }
+                    }
+                }' "$cua_home/storage.toml" 2>/dev/null || true)"
+        fi
+        [ -n "$val" ] || continue
+        case "$val" in "$cua_home" | "$cua_home"/*) continue ;; esac
+        printf '%s %s\n' "$kind" "$val"
+    done
+}
+
+# cua_known_entry KIND PATH: whether PATH is one of the entries Cua itself writes for KIND
+# (the same list as `cua storage`): runtimes linux and lume; images blobs, disks, rootfs and
+# refs; cache icons, installables and thumbnails; logs *.log and *.log.N; trajectories a
+# machine folder holding only YYYYMMDD-HHMMSS sessions. Anything else is a person's own file.
+cua_known_entry() {
+    name="${2##*/}"
+    case "$1" in
+    runtimes) [ -d "$2" ] && case "$name" in linux | lume) return 0 ;; esac ;;
+    images) [ -d "$2" ] && case "$name" in blobs | disks | rootfs | refs) return 0 ;; esac ;;
+    cache) [ -d "$2" ] && case "$name" in icons | installables | thumbnails) return 0 ;; esac ;;
+    logs) [ -f "$2" ] && case "$name" in *.log | *.log.*) return 0 ;; esac ;;
+    trajectories)
+        [ -d "$2" ] || return 1
+        for session in "$2"/* "$2"/.[!.]*; do
+            [ -e "$session" ] || continue
+            case "${session##*/}" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+            *) return 1 ;;
+            esac
+        done
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+# Cua's own bookkeeping files in a storage folder.
+cua_bookkeeping() {
+    case "$1" in
+    .cua-storage | .cua-moved-to | .last-used | .DS_Store) return 0 ;;
+    .*.part) return 0 ;;
+    esac
+    return 1
+}
+
+# procs_using DIR: "pid command" lines of the other processes whose command line names DIR
+# (a running computer's host agent, QEMU, a program with the folder open by path).
+procs_using() {
+    has ps || return 0
+    # The folder goes in through the environment so no process of ours names it on its command line.
+    ps -axww -o pid=,command= 2>/dev/null | CUA_DIR="$1" awk -v me="$$" '
+        $1 != me && index($0, ENVIRON["CUA_DIR"]) > 0 { print }' | grep -v "uninstall" || true
+}
+
+# stop_cua_processes DIR: asks Cua's own runtime programs (Lima, Colima, QEMU, lume, cua) that
+# run from DIR to stop, then waits a little. Nothing else is touched.
+stop_cua_processes() {
+    ours="$(procs_using "$1" | grep -E 'limactl|lima|colima|qemu|/lume|/cua( |$)|cua-spacesd' || true)"
+    [ -n "$ours" ] || return 0
+    printf '%s\n' "$ours" | while IFS= read -r line; do
+        pid="${line%% *}"
+        pid="${pid# }"
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    waited=0
+    while [ "$waited" -lt 10 ] && [ -n "$(procs_using "$1")" ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
+# clean_relocated: what lives in relocated folders. cache and logs go like the rest of the
+# settings and caches (unless --keep-data); runtimes, images and trajectories hold Spaces'
+# disks and recordings, so only --delete-spaces removes them. Only the entries Cua itself
+# writes are removed (cua_known_entry); the folder goes only when nothing else is in it, and
+# a person's own files are named and left alone. The drive and the folder's other contents
+# are never touched.
+clean_relocated() {
+    list="$(relocated_folders)"
+    [ -n "$list" ] || return 0
+    while IFS=' ' read -r kind path; do
+        [ -n "$kind" ] || continue
+        [ -d "$path" ] || continue
+        case "$kind" in
+        cache | logs) removable=$([ "$keep_data" = 0 ] && echo 1 || echo 0); why="--keep-data" ;;
+        *) removable=$([ "$delete_spaces" = 1 ] && echo 1 || echo 0); why="--delete-spaces removes it" ;;
+        esac
+        if [ "$removable" = 0 ]; then
+            if [ "$keep_data" = 1 ]; then
+                note="storage.toml is kept, so a reinstall finds it again"
+            else
+                note="storage.toml is removed with the settings, so after a reinstall run: cua storage set $kind \"$path\""
+            fi
+            info "kept $kind in $path ($why); $note"
+            continue
+        fi
+        # A folder that Cua did not create (no owned marker: one the person pointed Cua at, an
+        # environment variable, or `cua storage set` without --move) is never emptied, because
+        # Cua cannot tell its own files from the person's. Its own entries are only listed.
+        owned=0
+        grep -q '^owned=1' "$path/.cua-storage" 2>/dev/null && owned=1
+        would=""
+        for entry in "$path"/* "$path"/.[!.]*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            ename="${entry##*/}"
+            if cua_known_entry "$kind" "$entry"; then would="$would$ename "; fi
+        done
+        if [ "$owned" = 0 ]; then
+            info "kept $path: Cua cannot tell it created this folder, so nothing in it is deleted. Cua's own $kind files there: ${would:-none}. Remove those by hand if you want them gone."
+            continue
+        fi
+        users="$(procs_using "$path")"
+        if [ -n "$users" ] && [ "$dry_run" = 0 ]; then
+            stop_cua_processes "$path"
+            users="$(procs_using "$path")"
+        fi
+        if [ -n "$users" ]; then
+            if [ "$dry_run" = 1 ]; then
+                say "[dry-run] stop the programs running from $path, then remove Cua's $kind files there"
+            else
+                warn "$path is still in use by: $(printf '%s' "$users" | head -3 | cut -c1-100 | tr '\n' ';'); not removing it. Stop those programs and run the uninstall again"
+                continue
+            fi
+        fi
+        left=""
+        for entry in "$path"/* "$path"/.[!.]*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            ename="${entry##*/}"
+            if cua_bookkeeping "$ename" || cua_known_entry "$kind" "$entry"; then
+                rm_path "$entry"
+            else
+                left="$left$ename "
+            fi
+        done
+        if [ -n "$left" ]; then
+            info "kept $path: it holds files Cua did not put there ($left); Cua's own $kind files are gone"
+        else
+            rmdir_quiet "$path"
+        fi
+    done <<LIST
+$list
+LIST
+}
+
 # clean_state: the cua home. Settings and local state go unless --keep-data;
 # Spaces and their data only with --delete-spaces.
 clean_state() {
+    clean_relocated
     [ -d "$cua_home" ] || return 0
     if [ "$delete_spaces" = 1 ]; then
         if [ "$volume_mounted" = 1 ]; then
@@ -1084,6 +1276,10 @@ kc_delete_account() { # service account
 }
 
 remove_secrets() {
+    if [ "$keep_keychain" = 1 ]; then
+        info "keeping the Keychain items (--keep-keychain)"
+        return 0
+    fi
     case "$os" in
     darwin)
         has security || return 0
@@ -1239,6 +1435,20 @@ confirm_plan() {
     fi
 }
 
+# Waits for the process that started this uninstall (the app) to exit.
+wait_for_pid() {
+    [ -n "$wait_pid" ] || return 0
+    [ "$dry_run" = 0 ] || return 0
+    waited=0
+    while kill -0 "$wait_pid" 2>/dev/null && [ "$waited" -lt 60 ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$wait_pid" 2>/dev/null; then
+        warn "process $wait_pid is still running after 60 s; continuing"
+    fi
+}
+
 main() {
     parse_args "$@"
     detect_platform
@@ -1255,6 +1465,7 @@ main() {
     recognise_home
     spaces="$(local_spaces)"
     confirm_plan
+    wait_for_pid
     quit_app
     stop_spaces
     delete_spaces_now

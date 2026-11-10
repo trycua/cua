@@ -124,9 +124,7 @@ struct PermissionGuideTests {
     @Test func picksTheGuideUpAgainAfterARelaunch() {
         let saved = PermissionGuide.resumeStore
         defer { PermissionGuide.resumeStore = saved }
-        let suite = "PermissionGuideTests.resume.\(UUID().uuidString)"
-        let store = UserDefaults(suiteName: suite)!
-        defer { store.removePersistentDomain(forName: suite) }
+        let store = TestDefaults.make("PermissionGuideTests.resume")
         PermissionGuide.resumeStore = store
         let t0 = Date(timeIntervalSince1970: 1_000_000)
         #expect(PermissionGuide.resumePane(now: t0, states: [:]) == nil)
@@ -177,9 +175,7 @@ struct PermissionGuideTests {
             (PermissionGuide.openPane, PermissionGuide.showsGuide, PermissionGuide.grantedHook,
              PermissionGuide.readStates, PermissionGuide.resumeStore) = (savedOpen, savedShows, savedHook, savedRead, savedStore)
         }
-        let suite = "PermissionGuideTests.bridge.\(UUID().uuidString)"
-        let store = UserDefaults(suiteName: suite)!
-        defer { store.removePersistentDomain(forName: suite) }
+        let store = TestDefaults.make("PermissionGuideTests.bridge")
         PermissionGuide.resumeStore = store
         var opened: [String] = []
         var granted: [PermissionFlowPane] = []

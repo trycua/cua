@@ -1952,6 +1952,174 @@
         }
       }
     },
+    "DiskResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "neededBytes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "availableBytes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "freedBytes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "path",
+        "error",
+        "warnings",
+        "neededBytes",
+        "availableBytes",
+        "freedBytes"
+      ]
+    },
+    "DiskView": {
+      "type": "object",
+      "properties": {
+        "home": {
+          "type": "string"
+        },
+        "homeBytes": {
+          "type": "number"
+        },
+        "freeBytes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "daemonRunning": {
+          "type": "boolean"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "movable": {
+                "type": "boolean"
+              },
+              "bytes": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "source",
+              "movable",
+              "bytes"
+            ]
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "family": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "family",
+              "name",
+              "path",
+              "bytes"
+            ]
+          }
+        },
+        "oldLocations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "path",
+              "bytes"
+            ]
+          }
+        },
+        "trajectoriesMaxBytes": {
+          "type": "number"
+        },
+        "trajectoriesMaxDays": {
+          "type": "number"
+        },
+        "canUninstall": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "home",
+        "homeBytes",
+        "freeBytes",
+        "daemonRunning",
+        "kinds",
+        "items",
+        "oldLocations",
+        "trajectoriesMaxBytes",
+        "trajectoriesMaxDays",
+        "canUninstall"
+      ]
+    },
     "DiskWarning": {
       "type": "object",
       "properties": {
@@ -9464,6 +9632,12 @@
     "devices.revokePairingCode": {
       "type": "null"
     },
+    "disk.do": {
+      "$ref": "#/$defs/DiskResult"
+    },
+    "disk.get": {
+      "$ref": "#/$defs/DiskView"
+    },
     "driver.config": {
       "type": "object",
       "additionalProperties": {}
@@ -13230,6 +13404,12 @@
     },
     "devices.revokePairingCode": {
       "type": "null"
+    },
+    "disk.do": {
+      "$ref": "#/$defs/DiskResult"
+    },
+    "disk.get": {
+      "$ref": "#/$defs/DiskView"
     },
     "driver.list": {
       "type": "array",

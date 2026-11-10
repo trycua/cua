@@ -61,8 +61,9 @@ $DriverUrl = if ($env:CUA_UNINSTALL_DRIVER_URL) { $env:CUA_UNINSTALL_DRIVER_URL 
 # Spaces and their data (sandboxes, vmm, images, volume\data, the Keyvault,
 # trajectories, spaces.json) are not on this list: only -DeleteSpaces removes them.
 $DisposableNames = @('cache', 'cache.json', 'daemon.json', 'daemon.starting', 'fleet-gc.lock', 'config', 'config.toml',
-    'env-tokens.json', 'do_target.json', 'host_consented', 'host', 'spacesd', 'telemetry', 'skills', 'bin', 'runtimes',
-    'spaces-install-mode', 'volume\cache')
+    'env-tokens.json', 'do_target.json', 'host_consented', 'host', 'spacesd', 'telemetry', 'skills', 'bin',
+    'spaces-install-mode', 'volume\cache', 'logs', 'storage.toml')
+# `runtimes` is not here: it holds the built-in Linux computers' disks, so only -DeleteSpaces removes it.
 # The sign-in goes with the uninstall even with -KeepData.
 $SessionFiles = @('credentials.json', 'spaces-session.json', 'spaces-credentials.json')
 $script:Failed = $false
@@ -424,7 +425,106 @@ function Remove-FromUserPath([string]$Dir) {
     Write-Info "removed $Dir from your user PATH (new terminals pick it up)"
 }
 
+# The large folders Cua was told to keep elsewhere: CUA_<KIND>_DIR, else the [paths] table of
+# <cua home>\storage.toml (the order `cua storage` uses). Only folders outside the cua home.
+function Get-RelocatedFolders([string]$CuaHome) {
+    $found = @()
+    $toml = Join-Path $CuaHome 'storage.toml'
+    foreach ($kind in @('runtimes', 'images', 'cache', 'logs', 'trajectories')) {
+        $val = [Environment]::GetEnvironmentVariable("CUA_$($kind.ToUpper())_DIR")
+        if (-not $val -and (Test-Path -LiteralPath $toml)) {
+            $inPaths = $false
+            foreach ($line in Get-Content -LiteralPath $toml -ErrorAction SilentlyContinue) {
+                $t = $line.Trim()
+                if ($t.StartsWith('[')) { $inPaths = ($t -eq '[paths]'); continue }
+                if ($inPaths -and $t -match "^$kind\s*=\s*""(.*)""\s*$") { $val = $Matches[1] -replace '\\\\', '\'; break }
+            }
+        }
+        if (-not $val) { continue }
+        if ($val -eq $CuaHome -or $val.StartsWith($CuaHome + '\')) { continue }
+        $found += [pscustomobject]@{ Kind = $kind; Path = $val }
+    }
+    return $found
+}
+
+# Whether an entry is one Cua itself writes for a kind (the list `cua storage` uses): runtimes
+# linux and lume; images blobs, disks, rootfs, refs; cache icons, installables, thumbnails;
+# logs *.log and *.log.N; trajectories a machine folder holding only YYYYMMDD-HHMMSS sessions.
+# Anything else is a person's own file.
+function Test-CuaKnownEntry([string]$Kind, [System.IO.FileSystemInfo]$Entry) {
+    $name = $Entry.Name
+    $isDir = $Entry.PSIsContainer
+    switch ($Kind) {
+        'runtimes' { return ($isDir -and $name -in @('linux', 'lume')) }
+        'images' { return ($isDir -and $name -in @('blobs', 'disks', 'rootfs', 'refs')) }
+        'cache' { return ($isDir -and $name -in @('icons', 'installables', 'thumbnails')) }
+        'logs' { return ((-not $isDir) -and ($name -like '*.log' -or $name -like '*.log.*')) }
+        'trajectories' {
+            if (-not $isDir) { return $false }
+            foreach ($c in Get-ChildItem -LiteralPath $Entry.FullName -Force -ErrorAction SilentlyContinue) {
+                if ($c.Name -notmatch '^\d{8}-\d{6}$') { return $false }
+            }
+            return $true
+        }
+    }
+    return $false
+}
+
+# cache and logs go like the other settings and caches (unless -KeepData); runtimes, images and
+# trajectories hold Spaces' disks and recordings, so only -DeleteSpaces removes them. Only the
+# entries Cua itself writes are removed; the folder goes only when nothing else is in it, and a
+# person's own files are named and left alone. The drive is never touched.
+function Remove-RelocatedFolders {
+    $cuaHome = Get-CuaHome
+    foreach ($f in Get-RelocatedFolders $cuaHome) {
+        if (-not (Test-Path -LiteralPath $f.Path -PathType Container)) { continue }
+        $removable = if ($f.Kind -in @('cache', 'logs')) { -not $KeepData } else { [bool]$DeleteSpaces }
+        if (-not $removable) {
+            $note = if ($KeepData) { 'storage.toml is kept, so a reinstall finds it again' }
+                    else { "storage.toml is removed with the settings, so after a reinstall run: cua storage set $($f.Kind) ""$($f.Path)""" }
+            Write-Info "kept $($f.Kind) in $($f.Path); $note"
+            continue
+        }
+        # A folder Cua did not create (no owned marker: one the person pointed Cua at, an environment
+        # variable, or `cua storage set` without --move) is never emptied: Cua cannot tell its own
+        # files from the person's. Its own entries are only listed.
+        $marker = Join-Path $f.Path '.cua-storage'
+        $owned = (Test-Path -LiteralPath $marker) -and (Select-String -LiteralPath $marker -Pattern '^owned=1' -Quiet)
+        if (-not $owned) {
+            $would = @(Get-ChildItem -LiteralPath $f.Path -Force -ErrorAction SilentlyContinue | Where-Object { Test-CuaKnownEntry $f.Kind $_ } | ForEach-Object { $_.Name })
+            $wouldText = if ($would.Count) { $would -join ', ' } else { 'none' }
+            Write-Info "kept $($f.Path): Cua cannot tell it created this folder, so nothing in it is deleted. Cua's own $($f.Kind) files there: $wouldText. Remove those by hand if you want them gone."
+            continue
+        }
+        # Stop Cua's own programs that run from the folder, then skip it if anything still uses it.
+        $users = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($f.Path) -and $_.ProcessId -ne $PID })
+        if ($users.Count -gt 0 -and -not $DryRun) {
+            $users | Where-Object { $_.Name -match 'limactl|lima|colima|qemu|lume|cua' } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds 3
+            $users = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($f.Path) -and $_.ProcessId -ne $PID })
+        }
+        if ($users.Count -gt 0) {
+            if ($DryRun) { Write-Host "[dry-run] stop the programs running from $($f.Path), then remove Cua's $($f.Kind) files there" }
+            else { Write-Warn "$($f.Path) is still in use by: $(($users | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ', '); not removing it. Stop those programs and run the uninstall again"; continue }
+        }
+        $left = @()
+        foreach ($e in Get-ChildItem -LiteralPath $f.Path -Force -ErrorAction SilentlyContinue) {
+            if ($e.Name -in @('.cua-storage', '.cua-moved-to', '.last-used') -or (Test-CuaKnownEntry $f.Kind $e)) {
+                Remove-CuaPath $e.FullName
+            } else {
+                $left += $e.Name
+            }
+        }
+        if ($left.Count -gt 0) {
+            Write-Info "kept $($f.Path): it holds files Cua did not put there ($($left -join ', ')); Cua's own $($f.Kind) files are gone"
+        } else {
+            Remove-EmptyDirectory $f.Path
+        }
+    }
+}
+
 function Remove-CuaState {
+    Remove-RelocatedFolders
     $cuaHome = Get-CuaHome
     if (-not (Test-Path -LiteralPath $cuaHome -PathType Container)) { return }
     if ($DeleteSpaces) {

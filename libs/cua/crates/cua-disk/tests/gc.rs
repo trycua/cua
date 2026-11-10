@@ -1037,3 +1037,58 @@ async fn an_explicit_prune_all_removes_kept_bases_no_space_uses() {
     assert!(g.removed.iter().all(|r| r.reason == "all"), "{g:?}");
     assert!(g.kept_bases.is_empty());
 }
+
+#[tokio::test]
+async fn runtimes_are_listed_per_version_and_linux_image_downloads_are_evictable_cache() {
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::new(d.path());
+    // A VM disk the person can remove, and the Lume runtime.
+    let vm = l.runtimes().join("linux").join("vm");
+    std::fs::create_dir_all(&vm).unwrap();
+    std::fs::write(vm.join("disk"), vec![1u8; 4096]).unwrap();
+    std::fs::create_dir_all(l.runtimes().join("lume").join("1.2.3")).unwrap();
+    std::fs::write(l.runtimes().join("lume/1.2.3/lume"), b"x").unwrap();
+    // Lima's download cache lives below the runtime's own home.
+    let dl = l.linux_image_downloads().join("abc");
+    std::fs::create_dir_all(&dl).unwrap();
+    std::fs::write(dl.join("data"), vec![2u8; 8192]).unwrap();
+
+    let s = Scanner::new(l.clone(), config(Budget::Off), None, None);
+    let r = s.scan_at(now()).await;
+    let rt: Vec<_> = r
+        .items
+        .iter()
+        .filter(|i| i.category == Category::Runtimes)
+        .map(|i| (i.kind.as_str(), i.name.as_str()))
+        .collect();
+    assert!(rt.contains(&("linux", "vm")), "{rt:?}");
+    assert!(rt.contains(&("lume", "1.2.3")), "{rt:?}");
+    assert!(!rt.iter().any(|(_, n)| *n == "home"), "{rt:?}");
+    assert!(!Category::Runtimes.is_cache(), "VM disks are never evicted");
+    let img = r.items.iter().find(|i| i.kind == "linux-image").unwrap();
+    assert!(img.evictable && Category::Images.is_cache());
+    // Nothing in runtimes is reported as unknown data.
+    assert!(
+        !r.items
+            .iter()
+            .any(|i| i.category == Category::Data && i.location.contains("runtimes"))
+    );
+}
+
+#[test]
+fn layout_follows_storage_toml_for_the_large_kinds() {
+    let d = tempfile::tempdir().unwrap();
+    let ext = d.path().join("ext");
+    cua_home::storage::set_override(d.path(), cua_home::storage::Kind::Runtimes, Some(&ext))
+        .unwrap();
+    cua_home::storage::set_override(
+        d.path(),
+        cua_home::storage::Kind::Images,
+        Some(&ext.join("img")),
+    )
+    .unwrap();
+    let l = Layout::new(d.path());
+    assert_eq!(l.runtimes(), ext);
+    assert_eq!(l.images(), ext.join("img"));
+    assert_eq!(l.logs(), d.path().join("logs"));
+}

@@ -666,9 +666,7 @@ struct LaunchTests {
     /// A normal launch opens the main window: saved window state (a quit
     /// from the menu bar with the window closed) is ignored.
     @Test func savedWindowStateIsIgnoredSoTheMainWindowOpens() throws {
-        let name = "cua-spaces-launch-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        let defaults = TestDefaults.make("cua-spaces-launch")
         #expect(!defaults.bool(forKey: "ApplePersistenceIgnoreState"))
         CuaSpacesMacApp.ignoreSavedWindowState(defaults)
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))

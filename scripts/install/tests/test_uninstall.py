@@ -23,6 +23,7 @@ SCRIPT = HERE / "uninstall.sh"
 
 # Real utilities the script needs; everything else is a fake or absent.
 REAL_TOOLS = (
+    "ps",
     "awk", "cat", "cmp", "curl", "cut", "dirname", "env", "grep", "head", "kill", "ls", "mkdir",
     "mktemp", "printf", "readlink", "rmdir", "sed", "sort", "tr", "wc", "bash",
 )
@@ -390,6 +391,150 @@ class UninstallMacTest(unittest.TestCase):
         self.assertFalse(box.exists("Applications/Cua Spaces.app"))
         dry = box.run("--dry-run", "--keep-permissions")
         self.assertNotIn("tccutil", dry.stdout)
+
+    def relocated(self, box):
+        """A cua home whose five large folders live on another drive (storage.toml), holding
+        only what Cua writes there."""
+        ext = box.home / "ext"
+        layout = {
+            "runtimes": ("rt", "linux/vm/disk"),
+            "images": ("img", "blobs/sha256/aa"),
+            "cache": ("ca", "icons/x.png"),
+            "logs": ("lg", "daemon.log"),
+            "trajectories": ("tr", "mac/20260101-120000/turn_001.json"),
+        }
+        for kind, (d, rel) in layout.items():
+            box.put(f"ext/{d}/{rel}", "data\n")
+            # Cua created these folders when it moved the data there.
+            box.put(f"ext/{d}/.cua-storage", f"kind={kind}\nowned=1\n")
+        lines = "".join(f'{kind} = "{ext}/{d}"\n' for kind, (d, _) in layout.items())
+        box.put(".cua/storage.toml", "[paths]\n" + lines)
+        box.put(".cua/config.toml", "x\n")
+        box.put(".cua/sandboxes/a.json", "{}\n")
+        box.put(".cua/runtimes/linux/vm/disk", "vm\n")
+        return ext
+
+    def test_a_plain_uninstall_lists_relocated_folders_and_keeps_computers_and_recordings(self):
+        box = self.box()
+        installed_mac(box)
+        self.relocated(box)
+        dry = box.run("--dry-run", "--prefix", str(box.home))
+        self.assertIn("relocated runtimes folder", dry.stdout)
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # cache and logs go; computers' disks, images and recordings stay, on and off the drive.
+        self.assertFalse(box.exists("ext/ca"))
+        self.assertFalse(box.exists("ext/lg"))
+        for kept in ("ext/rt/linux/vm/disk", "ext/img/blobs/sha256/aa",
+                     "ext/tr/mac/20260101-120000/turn_001.json",
+                     ".cua/runtimes/linux/vm/disk", ".cua/sandboxes/a.json"):
+            self.assertTrue(box.exists(kept), kept)
+        self.assertFalse(box.exists(".cua/storage.toml"))
+        self.assertIn("kept runtimes in", result.stdout)
+        self.assertIn("after a reinstall run: cua storage set runtimes", result.stdout)
+
+    def test_keep_data_keeps_storage_toml_and_says_so(self):
+        box = self.box()
+        installed_mac(box)
+        self.relocated(box)
+        result = box.run("--yes", "--keep-data", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists(".cua/storage.toml"))
+        self.assertTrue(box.exists("ext/ca/icons/x.png"))
+        self.assertIn("storage.toml is kept", result.stdout)
+
+    def test_delete_spaces_removes_only_cuas_own_entries_never_a_persons_files(self):
+        box = self.box()
+        installed_mac(box)
+        self.relocated(box)
+        # Files that were never Cua's: in a folder Cua created, and in one the person owns.
+        box.put("ext/rt/my-vacation-video.mov", "precious\n")
+        box.put("ext/tr/holiday.mov", "mine\n")
+        result = box.run("--yes", "--delete-spaces", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists("ext/rt/my-vacation-video.mov"))
+        self.assertTrue(box.exists("ext/tr/holiday.mov"))
+        self.assertFalse(box.exists("ext/rt/linux"))
+        self.assertFalse(box.exists("ext/tr/mac"))
+        self.assertFalse(box.exists("ext/img"), "a folder with only Cua's entries goes whole")
+        self.assertIn("did not put there", result.stdout)
+        self.assertTrue(box.exists("ext"), "the drive itself is never touched")
+
+    def test_a_folder_the_person_pointed_cua_at_is_never_emptied_even_if_it_has_cua_names(self):
+        box = self.box()
+        installed_mac(box)
+        box.put("pointed/blobs/family-photos/img1.jpg", "mine\n")
+        box.put("pointed/linux/notes.txt", "mine\n")
+        box.put(".cua/storage.toml", f'[paths]\nimages = "{box.home}/pointed"\n')
+        result = box.run("--yes", "--delete-spaces", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists("pointed/blobs/family-photos/img1.jpg"))
+        self.assertTrue(box.exists("pointed/linux/notes.txt"))
+        self.assertIn("Cua cannot tell it created this folder", result.stdout)
+        self.assertIn("blobs", result.stdout)
+
+    def test_a_relocated_folder_that_a_process_still_uses_is_skipped_and_says_why(self):
+        import subprocess
+        box = self.box()
+        installed_mac(box)
+        ext = self.relocated(box)
+        child = subprocess.Popen(["sh", "-c", "sleep 30; true", str(ext / "rt" / "linux" / "vm")])
+        try:
+            result = box.run("--yes", "--delete-spaces", "--prefix", str(box.home))
+        finally:
+            child.kill()
+            child.wait()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists("ext/rt/linux/vm/disk"))
+        self.assertIn("still in use by", result.stdout + result.stderr)
+        # The folders nothing runs from are still handled.
+        self.assertFalse(box.exists("ext/img"))
+
+    def test_keep_keychain_leaves_every_secret_alone(self):
+        box = self.box()
+        installed_mac(box)
+        result = box.run("--yes", "--keep-keychain", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(box.index("security: delete-generic-password"), -1)
+        self.assertIn("keeping the Keychain items", result.stdout)
+
+    def test_wait_for_pid_waits_for_the_process_to_exit(self):
+        import subprocess, time
+        box = self.box()
+        installed_mac(box)
+        sleeper = subprocess.Popen(["sleep", "3"])
+        started = time.time()
+        try:
+            result = box.run("--yes", "--wait-for-pid", str(sleeper.pid), "--prefix", str(box.home))
+        finally:
+            sleeper.kill()
+            sleeper.wait()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(time.time() - started, 2.0)
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+
+    def test_wait_for_pid_needs_a_number(self):
+        box = self.box()
+        installed_mac(box)
+        result = box.run("--yes", "--wait-for-pid", "abc")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("needs a number", result.stdout + result.stderr)
+
+    def test_stray_test_preferences_and_sparkle_staging_are_removed(self):
+        box = self.box()
+        installed_mac(box)
+        prefs = "Library/Preferences"
+        stray = [f"{prefs}/cua-ln-1B4E28BA-2FA1-11D2-883F-B9A761BDE3FB.plist",
+                 f"{prefs}/cua-relay-usage-1B4E28BA-2FA1-11D2-883F-B9A761BDE3FB.plist"]
+        keep = f"{prefs}/com.apple.finder.plist"
+        for f in stray + [keep, "Library/Caches/com.trycua.spaces.macos.ShipIt/x"]:
+            box.put(f, "x\n")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for f in stray:
+            self.assertFalse(box.exists(f), f)
+        self.assertFalse(box.exists("Library/Caches/com.trycua.spaces.macos.ShipIt"))
+        self.assertTrue(box.exists(keep))
 
     def test_permissions_are_reset_before_the_app_is_removed(self):
         box = self.box()

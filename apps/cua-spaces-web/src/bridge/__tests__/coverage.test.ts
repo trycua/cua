@@ -140,6 +140,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "repoCache.get": {},
   "repoCache.set": { enabled: true, sizeGb: 2 },
   "repoCache.clear": {},
+  "disk.get": {},
+  "disk.do": { op: "reset", kind: "cache" },
   "devices.get": {},
   "devices.enroll": {},
   "devices.checkEnrolled": {},

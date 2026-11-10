@@ -12902,6 +12902,168 @@
    "usage": "cua cache [OPTIONS] <COMMAND>"
   },
   {
+   "abstract": "Where Cua keeps its files, how big each folder is, and moving the large ones (computers' disks, images, caches) to another drive",
+   "aliases": [],
+   "arguments": [],
+   "flags": [],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "storage",
+   "options": [],
+   "subcommand_optional": true,
+   "subcommands": [
+    {
+     "abstract": "Show every folder Cua uses, where it comes from and how big it is",
+     "after_help": "Examples:\n  cua storage\n  cua storage --json",
+     "aliases": [
+      "ls"
+     ],
+     "arguments": [],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "show",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua storage show [OPTIONS]"
+    },
+    {
+     "abstract": "Check that a folder can hold a kind of data, without changing anything",
+     "after_help": "Examples:\n  cua storage check runtimes /Volumes/Fast/cua-runtimes",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "runtimes, images, cache, logs or trajectories",
+       "hidden": false,
+       "is_optional": false,
+       "name": "KIND",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "The new folder (a full path)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PATH",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "path"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "check",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua storage check [OPTIONS] <KIND> <PATH>"
+    },
+    {
+     "abstract": "Use another folder for a kind of data. With --move the existing data is copied there first; the old copy stays until `cua storage remove`",
+     "after_help": "Examples:\n  # Keep computers' disks on an external drive, copying what exists\n  cua storage set runtimes /Volumes/Fast/cua-runtimes --move\n  # Only point at a folder that already holds the data\n  cua storage set images /Volumes/Fast/cua-images",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "runtimes, images, cache, logs or trajectories",
+       "hidden": false,
+       "is_optional": false,
+       "name": "KIND",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "The new folder (a full path)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PATH",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "path"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Copy the existing data to the new folder first",
+       "hidden": false,
+       "name": "move",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "set",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua storage set [OPTIONS] <KIND> <PATH>"
+    },
+    {
+     "abstract": "Go back to the default folder for a kind. Nothing is copied or deleted",
+     "after_help": "Examples:\n  cua storage reset runtimes",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "runtimes, images, cache, logs or trajectories",
+       "hidden": false,
+       "is_optional": false,
+       "name": "KIND",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "reset",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua storage reset [OPTIONS] <KIND>"
+    },
+    {
+     "abstract": "Delete one computer image or runtime from `runtimes` (see `cua storage`), or an old folder left by `cua storage set --move`. Asks nothing: the Settings page confirms first",
+     "after_help": "Examples:\n  # Delete the old copy after `cua storage set runtimes <path> --move`\n  cua storage remove ~/.cua/runtimes",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "A folder listed by `cua storage --json` (items) or a folder left behind by a move",
+       "hidden": false,
+       "is_optional": false,
+       "name": "PATH",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "path"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "remove",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua storage remove [OPTIONS] <PATH>"
+    }
+   ],
+   "usage": "cua storage [OPTIONS] [COMMAND]"
+  },
+  {
    "abstract": "Check the host, an image and a sandbox's guest in one report (`cua doctor [REF]`), or eval parity between two variants (`cua doctor parity A B`)",
    "after_help": "Examples:\n  # Host checks only\n  cua doctor\n  # Host, image and guest checks for the sandbox dev\n  cua doctor dev\n  # CI: fail on warnings, write JUnit XML\n  cua doctor local:dev --strict --junit doctor.xml",
    "aliases": [],

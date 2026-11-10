@@ -14,6 +14,8 @@
 
 use std::path::{Path, PathBuf};
 
+use cua_home::storage::{self, Kind};
+
 /// The cua home and the paths under it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -51,9 +53,44 @@ impl Layout {
         &self.home
     }
 
+    /// The directory of `kind`: the environment and `storage.toml` apply to
+    /// the host's layout, `storage.toml` alone to a confined one.
+    fn kind(&self, kind: Kind) -> PathBuf {
+        let external = self.external;
+        storage::dir_in(&self.home, kind, |k| {
+            if external {
+                std::env::var(k).ok()
+            } else {
+                None
+            }
+        })
+    }
+
     /// Image cache (`images/{blobs,disks,rootfs,refs}`).
     pub fn images(&self) -> PathBuf {
-        self.home.join("images")
+        self.kind(Kind::Images)
+    }
+
+    /// Built-in runtimes and VM disks (`runtimes/{linux,lume}`).
+    pub fn runtimes(&self) -> PathBuf {
+        self.kind(Kind::Runtimes)
+    }
+
+    /// The cache folder (icons, install archives, thumbnails).
+    pub fn cache(&self) -> PathBuf {
+        self.kind(Kind::Cache)
+    }
+
+    /// Linux images the built-in runtime downloaded (Lima's download cache
+    /// below the runtime's own home).
+    pub fn linux_image_downloads(&self) -> PathBuf {
+        self.runtimes()
+            .join("linux")
+            .join("home")
+            .join(".cache")
+            .join("lima")
+            .join("download")
+            .join("by-url-sha256")
     }
 
     /// QEMU instances, bases, checkpoints and frozen layers.
@@ -85,13 +122,13 @@ impl Layout {
     /// The host install cache teleported apps use
     /// (`cache/installables/<sha256>.<ext>`, written by cua-spaces).
     pub fn installables(&self) -> PathBuf {
-        self.home.join("cache").join("installables")
+        self.kind(Kind::Cache).join("installables")
     }
 
     /// The app icon cache every UI shares (`cache/icons/<key>.png`, written
     /// by cua-icon-cache).
     pub fn icons(&self) -> PathBuf {
-        self.home.join("cache").join("icons")
+        self.kind(Kind::Cache).join("icons")
     }
 
     /// Sandbox state files (and `.ephemeral/` leases).
@@ -101,7 +138,7 @@ impl Layout {
 
     /// cua logs (`daemon.log`).
     pub fn logs(&self) -> PathBuf {
-        self.home.join("logs")
+        self.kind(Kind::Logs)
     }
 
     /// The daemon log.
@@ -116,7 +153,7 @@ impl Layout {
 
     /// `cua do` trajectories.
     pub fn trajectories(&self) -> PathBuf {
-        self.home.join("trajectories")
+        self.kind(Kind::Trajectories)
     }
 
     /// Screenshots `cua do` saves without `--save` (newest few kept).
@@ -213,6 +250,7 @@ impl Layout {
             "docker",
             "build",
             "cache",
+            "runtimes",
             "sandboxes",
             "logs",
             "host",

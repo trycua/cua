@@ -21,7 +21,7 @@ pub struct ImageCache {
 
 impl Default for ImageCache {
     fn default() -> Self {
-        Self::new(cua_vmm::host::cua_home().join("images"))
+        Self::new(cua_home::storage::dir(cua_home::storage::Kind::Images))
     }
 }
 

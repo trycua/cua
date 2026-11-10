@@ -697,3 +697,25 @@ cua-driver call click "{\"scope\":\"desktop\",\"x\":2505,\"y\":494,\"capture_id\
 Turn the output off when done (`niri msg output Virtual-1 off`). The module can
 stay loaded until the compositor releases it; a reboot clears it. This is a
 manual host check, not a CI lane: CI has no second output.
+
+## libxkbcommon compatibility (manual)
+
+niri keyboard planning resolves `xkb_utf32_to_keysym` and
+`xkb_keymap_key_get_mods_for_level` at run time, because the release binary
+must still load on systems with libxkbcommon older than 1.0 (Ubuntu 20.04 has
+0.10.0). Verify the release binary against that library without a container:
+
+```sh
+mkdir -p /tmp/libxkb-old && cd /tmp/libxkb-old
+curl -fsSLO http://archive.ubuntu.com/ubuntu/pool/main/libx/libxkbcommon/libxkbcommon0_0.10.0-1_amd64.deb
+ar x libxkbcommon0_0.10.0-1_amd64.deb
+tar xf data.tar.xz
+LD_LIBRARY_PATH=/tmp/libxkb-old/usr/lib/x86_64-linux-gnu \
+  ~/.local/share/cua-driver-patched/cua-driver --version
+LD_LIBRARY_PATH=/tmp/libxkb-old/usr/lib/x86_64-linux-gnu \
+  ~/.local/share/cua-driver-patched/cua-driver list-tools >/dev/null
+```
+
+`ldd` should resolve `libxkbcommon.so.0` from `/tmp/libxkb-old`; the driver
+must print its version and list tools. `readelf -V` on the binary must show no
+`V_1.0.0` requirement for `libxkbcommon.so.0`.

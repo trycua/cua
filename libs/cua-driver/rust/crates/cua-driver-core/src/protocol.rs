@@ -351,10 +351,46 @@ pub fn initialize_result() -> Value {
 /// script-only instructions exactly when `run_script` is the only tool, so a
 /// proxy describes the daemon's mode, not its own environment.
 pub fn initialize_result_for(tools_list: &Value) -> Value {
-    let script_only = tools_list["tools"]
-        .as_array()
-        .is_some_and(|tools| tools.len() == 1 && tools[0]["name"] == "run_script");
-    initialize_result_with(agent_instructions_for(script_only))
+    initialize_result_with(agent_instructions_for(ScriptTools::listed_in(tools_list)))
+}
+
+/// How a server offers `run_script`, which decides what the instructions say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptTools {
+    Absent,
+    Offered,
+    /// `run_script` is the only tool (script-only mode).
+    Only,
+}
+
+impl ScriptTools {
+    fn listed_in(tools_list: &Value) -> Self {
+        let names: Vec<&str> = tools_list["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        match names.as_slice() {
+            ["run_script"] => Self::Only,
+            names if names.contains(&"run_script") => Self::Offered,
+            _ => Self::Absent,
+        }
+    }
+
+    /// This process's own setting, for callers without a tool list.
+    fn configured() -> Self {
+        #[cfg(feature = "script")]
+        {
+            if crate::script_tool::script_only() {
+                return Self::Only;
+            }
+            if crate::script_tool::enabled() {
+                return Self::Offered;
+            }
+        }
+        Self::Absent
+    }
 }
 
 fn initialize_result_with(instructions: String) -> Value {
@@ -378,14 +414,10 @@ fn initialize_result_with(instructions: String) -> Value {
 /// Goose uses in its `ComputerController` extension and Open
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
-    #[cfg(feature = "script")]
-    let script_only = crate::script_tool::script_only();
-    #[cfg(not(feature = "script"))]
-    let script_only = false;
-    agent_instructions_for(script_only)
+    agent_instructions_for(ScriptTools::configured())
 }
 
-fn agent_instructions_for(script_only: bool) -> String {
+fn agent_instructions_for(script: ScriptTools) -> String {
     // macOS needs no platform pointer: its permission line below names MACOS.md.
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
         ("AX", "")
@@ -411,7 +443,7 @@ fn agent_instructions_for(script_only: bool) -> String {
     };
 
     // Script-only mode lists run_script alone, so name nothing else.
-    if script_only {
+    if script == ScriptTools::Only {
         return format!(
             r#"cua-driver: background GUI automation through one tool, `run_script`: a sandboxed JavaScript async function body with the `cua` API (see its description). No shell.
 
@@ -422,11 +454,7 @@ Guides: `cua.call("get_guide", {{topic}})`, `skill://cua-driver/SKILL.md`{platfo
     }
 
     // Only point at run_script when this driver offers it.
-    #[cfg(feature = "script")]
-    let script_enabled = crate::script_tool::enabled();
-    #[cfg(not(feature = "script"))]
-    let script_enabled = false;
-    let script_line = if script_enabled {
+    let script_line = if script == ScriptTools::Offered {
         " Loops, branches or retries: one `run_script` call."
     } else {
         ""
@@ -572,7 +600,8 @@ mod agent_instruction_tests {
 
     #[test]
     fn script_only_instructions_name_only_run_script_and_stay_in_budget() {
-        let instructions = super::agent_instructions_for(true);
+        use super::ScriptTools;
+        let instructions = super::agent_instructions_for(ScriptTools::Only);
         assert!(instructions.contains("one tool, `run_script`"));
         for direct in [
             "`run_steps(",
@@ -583,17 +612,30 @@ mod agent_instruction_tests {
             assert!(!instructions.contains(direct), "{direct}");
         }
         assert!(instructions.split_whitespace().count() <= 200);
-        assert_ne!(instructions, super::agent_instructions_for(false));
-        let only = serde_json::json!({"tools": [{"name": "run_script"}]});
-        let both = serde_json::json!({"tools": [{"name": "run_script"}, {"name": "click"}]});
-        assert_eq!(
-            super::initialize_result_for(&only)["instructions"],
-            instructions
-        );
-        assert_eq!(
-            super::initialize_result_for(&both)["instructions"],
-            super::agent_instructions_for(false)
-        );
+        let script_line = "one `run_script` call";
+        let offered = super::agent_instructions_for(ScriptTools::Offered);
+        let absent = super::agent_instructions_for(ScriptTools::Absent);
+        assert!(offered.contains(script_line));
+        assert!(!absent.contains(script_line));
+        // The instructions follow the advertised list, not this process's environment.
+        for (tools, want) in [
+            (
+                serde_json::json!({"tools": [{"name": "run_script"}]}),
+                &instructions,
+            ),
+            (
+                serde_json::json!({"tools": [{"name": "click"}, {"name": "run_script"}]}),
+                &offered,
+            ),
+            (serde_json::json!({"tools": [{"name": "click"}]}), &absent),
+            (serde_json::json!({"tools": []}), &absent),
+        ] {
+            assert_eq!(
+                super::initialize_result_for(&tools)["instructions"],
+                *want,
+                "{tools}"
+            );
+        }
     }
 
     #[test]

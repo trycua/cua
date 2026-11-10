@@ -723,14 +723,20 @@ impl ParallelSteps {
                 clear_program_record(&format!("space-{i}"));
             }
         }
-        match first_error {
-            None => program_status(ProgramState::Done, None, &format!("Created {n} Spaces")),
-            Some(e) => program_status(
-                ProgramState::Error,
-                None,
-                &format!("Created {} of {n} Spaces: {e}", s.created),
-            ),
-        }
+        let (state, msg) = created_many(n, s.created, first_error);
+        program_status(state, None, &msg);
+    }
+}
+
+/// How `n` creates ended, for the root record: `error` when any failed,
+/// even if others were created.
+fn created_many(n: usize, created: usize, first_error: Option<&str>) -> (ProgramState, String) {
+    match first_error {
+        None => (ProgramState::Done, format!("Created {n} Spaces")),
+        Some(e) => (
+            ProgramState::Error,
+            format!("Created {created} of {n} Spaces: {e}"),
+        ),
     }
 }
 
@@ -994,6 +1000,22 @@ mod parallel_step_tests {
             ("Creating 3 Spaces: 1 created, 1 failed".into(), 66)
         );
         assert_eq!(super::creating_many(3, 3, 0).1, 100);
+        // The root record ends `error` when any create failed, `done` only when none did.
+        assert_eq!(
+            super::created_many(3, 2, Some("no room")),
+            (
+                super::ProgramState::Error,
+                "Created 2 of 3 Spaces: no room".into()
+            )
+        );
+        assert_eq!(
+            super::created_many(3, 0, Some("no room")).0,
+            super::ProgramState::Error
+        );
+        assert_eq!(
+            super::created_many(3, 3, None),
+            (super::ProgramState::Done, "Created 3 Spaces".into())
+        );
         // An error's newline or escape cannot add a line or reach the terminal.
         assert_eq!(super::one_line("no room\n\x1b[2Jhere"), "no room  [2Jhere");
     }

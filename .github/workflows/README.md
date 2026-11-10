@@ -15,7 +15,7 @@ exclusive: a change that touches two areas runs both.
 | You changed | Workflows that run |
 |---|---|
 | `libs/cua/**` (Rust core: SDK, daemon, CLI, spaces crates) | CI: cua SDK (rust lint, rust test, spaces e2e, bindings drift, python/node/browser smoke, kotlin; macOS and Windows legs with the `ci:full` label), CI: Cua Spaces (frontend + Rust tests; installer bundles only with the `ci:full` label), CI: Test Python, CI: openkoalabot-example (TypeScript and Tauri; its Swift job only for the rows below), CI: cua contrib providers, CI: cua your-cloud providers, CI: Check Docs |
-| `libs/cua/swift/**`, `libs/spaces-sdk-swift/**`, `libs/spaces-app-swift/**`, `libs/cua/crates/cua-sdk/**`, `libs/cua/proto/**`, the Rust workspace manifest, lockfile and toolchain pin, `.github/actions/setup-protoc/**`, `.github/actions/rust-cache/**`, or the Swift samples (`examples/infinite-canvas-swift/**`, `examples/openkoalabot-example-swift/**` and the files its tests read) | CI: infinite-canvas (Swift) and the Swift job of CI: openkoalabot-example, each 28 to 33 macOS minutes. The full list is in `.github/scripts/ci_swift_samples_scope.py`. Other `libs/cua/**` changes skip them. Both workflows start a cheap scope job on every pull request and push; it decides, so main, the nightly schedule and the `ci:full` label build them every time. Release-please branches skip them as before |
+| `libs/cua/swift/**`, `libs/spaces-sdk-swift/**`, `libs/spaces-app-swift/**`, `libs/cua/crates/cua-sdk/**`, `libs/cua/crates/cua-sdk-native/**`, `libs/cua/proto/**`, the Rust workspace manifest, lockfile and toolchain pin, `.github/actions/setup-protoc/**`, `.github/actions/rust-cache/**`, or the Swift samples (`examples/infinite-canvas-swift/**`, `examples/openkoalabot-example-swift/**` and the files its tests read) | CI: infinite-canvas (Swift) and the Swift job of CI: openkoalabot-example, each 28 to 33 macOS minutes. The full list is in `.github/scripts/ci_swift_samples_scope.py`. Other `libs/cua/**` changes skip them. Both workflows start a cheap scope job on every pull request and push; it decides, so main, the nightly schedule and the `ci:full` label build them every time. Release-please branches skip them as before |
 | `libs/cua-spacesd/**` | CI: cua-spacesd (3 OS + relay e2e), CI: Image doctor, CD: Image linux (build and gates only), CI: Images on the current cua-spacesd, openkoalabot (Tauri) |
 | `libs/cua-driver/**` | CI: Rust Linux / macOS / Windows unit, CI: Nix Linux Rust source, CI: cua-driver contract clients, driver quick feedback, Image doctor, CI: cua-spacesd |
 | `apps/cua-spaces/src/**` (web frontend only) | CI: Cua Spaces: vitest + typecheck and the Rust command-layer tests. The installer bundles (a Tauri app that does not ship) are not built on pull requests; add the `ci:full` label to build them, and then the Windows and macOS bundles run only when something other than `src/`, `public/`, `e2e/`, `tests/`, `docs/` or markdown changed |
@@ -35,7 +35,7 @@ build on main pushes, manual runs and `ci:full` pull requests.
 
 ## Required checks
 
-Staging has no required status checks. trycua/cua requires `fleet-mirror-guard`,
+Staging has no required status checks. trycua/cua requires `ci-gate`,
 `contributor-attribution` and `validate`; none of those are renamed or removed
 here. `contributor-attribution` is informational: it always passes and reports
 unresolved attribution as a warning. A workflow skipped by `paths:` never reports, so do not add a path-gated
@@ -88,6 +88,16 @@ workflow.
 * When sccache cannot start, cargo compiles normally.
 * sccache hashes the rustc version into every object key, so a toolchain bump
   simply misses until main re-seeds, and the cap ages the old objects out.
+
+## Rust tests: build once, run in shards
+
+`CI: cua SDK` compiles the Linux test binaries once (`rust linux build`, a
+`cargo nextest archive` uploaded as the `rust-linux-tests` artifact) and the three
+`rust linux shard N/3` jobs run `cargo nextest run --archive-file ... --partition
+hash:N/3`. The three `pool_model` model checks (about 254, 112 and 62 s) are left out
+of pull request runs and run on every push to main, in the nightly schedule and on a
+pull request with the `ci:full` label. Linux links with rust-lld (rustc's default
+since 1.90); CI test builds already have debug info off, so the archive stays small.
 
 ## Known flaky tests and quarantine
 

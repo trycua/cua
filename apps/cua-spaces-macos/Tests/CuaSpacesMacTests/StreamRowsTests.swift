@@ -146,7 +146,7 @@ struct StreamRowsTests {
         await m.refresh()
         let s = m.section()
         #expect(s.rows.map(\.label) == ["Desktop"])
-        #expect(s.statusText == "No windows: the Space\u{2019}s window host is not up.")
+        #expect(s.statusText == "Can\u{2019}t see this Space\u{2019}s windows yet.")
     }
 
     @Test func fixtureBackendReportsADisplay() async {

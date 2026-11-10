@@ -14,6 +14,9 @@
 #   --require-signature  fail unless the release archive's Sigstore bundle
 #                        verifies with cosign (every archive is always checked
 #                        against the release's SHA256SUMS)
+#   --no-connect         do not connect Claude Code, Codex and Cursor, and skip
+#                        the permission guide
+#   --no-test            do not run `cua-driver test` at the end
 #   --backend=rust       explicit Rust backend (no-op; Rust is the only option)
 #   --experimental-rust  legacy alias for --backend=rust (no-op)
 #   --backend=swift      retired Swift backend (no-op; accepted for compat)
@@ -24,6 +27,8 @@
 #   CUA_DRIVER_RS_INSTALL_DIR=PATH same as --bin-dir
 #   CUA_DRIVER_BIN_DIR=PATH        legacy alias for --bin-dir
 #   CUA_DRIVER_NO_MODIFY_PATH=1    same as --no-modify-path
+#   CUA_DRIVER_NO_CONNECT=1        same as --no-connect
+#   CUA_DRIVER_NO_TEST=1           same as --no-test
 #   CUA_DRIVER_RS_HOME=PATH        package and release-channel state home
 #   CUA_DRIVER_RS_REQUIRE_SIGNATURE=1  same as --require-signature
 #

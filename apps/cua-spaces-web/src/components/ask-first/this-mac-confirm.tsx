@@ -5,6 +5,8 @@ import { useRef, useState, type ReactNode } from "react";
 
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { setThisMacConfirmed, thisMacConfirmed, thisMacConfirmText, type TaskWhere } from "@/lib/ask-first";
+import { useT } from "@/i18n";
+import { thisComputerText } from "@/lib/host-labels";
 
 /**
  * Picking where a task runs. This Mac asks once per device ("Use this Mac"
@@ -15,6 +17,7 @@ export function useWherePick(agent: string): {
   choose: (where: TaskWhere, onChosen: (w: TaskWhere) => void, onDeclined?: () => void) => void;
   dialog: ReactNode;
 } {
+  const t = useT();
   const [asking, setAsking] = useState<{ onChosen: (w: TaskWhere) => void; onDeclined?: () => void } | null>(null);
   // The dialog closes before its confirm runs: a close is a "Pick another" only if no confirm follows.
   const confirmed = useRef(false);
@@ -38,8 +41,8 @@ export function useWherePick(agent: string): {
         }}
         title={text.title}
         description={text.description}
-        confirmLabel="Use this Mac"
-        cancelLabel="Pick another"
+        confirmLabel={t("home.this_mac.use", { computer: thisComputerText() })}
+        cancelLabel={t("home.this_mac.pick_another")}
         onConfirm={() => {
           const chosen = asking?.onChosen;
           confirmed.current = true;

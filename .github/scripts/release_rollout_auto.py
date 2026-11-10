@@ -18,6 +18,11 @@ Decision (the Play Store / Firebase / Sentry release-health pattern):
   pause     a gate is past its threshold: the workflow pauses and alerts
   advance   old enough, every gate has enough data and passes: 10 -> 50 -> 100
 
+Soak (how old "old enough" is), thresholds in config/spaces-rollout-soak.json:
+  patch release   soak_hours_10 (2h) at 10%, soak_hours_50 (4h) at 50%, but only once the crash
+                  gate has passed on min_sessions sessions; until then it waits, up to soak_hours_full
+  x.y.0 release   soak_hours_full (24h) at every step, as before
+
 Gates, PostHog project 56041 (EU), spaces_app events of the new version versus the
 previous stable (the most active non-prerelease version in the week before the stage):
   adoption     at least --min-installs installs of the new version sent cua_app_active
@@ -66,7 +71,34 @@ import release_rollout as rr  # noqa: E402
 POSTHOG = "https://eu.posthog.com/api/projects/56041/query/"
 SENTRY_DEFAULT_HOST = "https://de.sentry.io"
 SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-crash-reporting.json"
+SOAK_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-rollout-soak.json"
 NEXT = {"10": "50", "50": "100"}
+
+
+def load_soak(path: Path = SOAK_CONFIG) -> dict:
+    """The named soak thresholds (config/spaces-rollout-soak.json); every one is also a flag."""
+    return json.loads(path.read_text())
+
+
+def is_minor_or_major(version: str | None) -> bool:
+    """x.y.0 (a minor or major release). Anything else, and anything unparsable, is a patch."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", version or "")
+    return bool(m) and m.group(3) == "0"
+
+
+def soak_hours(version: str | None, stage: str, a, crash_ready: bool) -> tuple[float, str]:
+    """(hours the stage must have run before it may advance, why that figure).
+
+    x.y.0 releases keep the full soak at every step. A patch release uses the short soak of its
+    stage, but only once the crash gate has passed on enough sessions; until then it waits, up to
+    the full soak (the old fixed 24h)."""
+    full = a.soak_hours_full
+    if is_minor_or_major(version):
+        return full, f"x.y.0 release keeps the {full:g}h soak"
+    short = min(a.soak_hours_10 if stage == "10" else a.soak_hours_50, full)
+    if not crash_ready:
+        return full, f"patch soak of {short:g}h needs the crash gate to pass on enough sessions; until then up to {full:g}h"
+    return short, f"patch soak of {short:g}h at {stage}%"
 
 
 def _num(text: str | None) -> int | None:
@@ -320,6 +352,9 @@ def decide(state: dict, now: datetime, a, q=None, incident=None, hold: str = "",
                   gate_update(q, prev, since, now, a), incident or gate_incident(os.environ.get("INCIDENT_IO_API_KEY")),
                   crash or gate_crash(os.environ.get("SENTRY_READ_TOKEN"), new, prev, since, now, a)]
     failed = [g for g in d["gates"] if g["status"] == "fail"]
+    crash_ready = any(g["gate"] == "crash" and g["status"] == "pass" for g in d["gates"])
+    need, soak_why = soak_hours(new, state["stage"], a, crash_ready)
+    d["soak_hours"] = need
     waiting = [g for g in d["gates"] if g["status"] == "wait"]
     if failed:
         d["action"] = "pause"
@@ -327,16 +362,16 @@ def decide(state: dict, now: datetime, a, q=None, incident=None, hold: str = "",
     elif hold:
         d["action"] = "hold"
         d["why"] = "hold is set (" + hold + "): not advancing"
-    elif age < a.min_age_hours:
+    elif age < need:
         d["action"] = "wait"
-        d["why"] = f"stage is {age:.1f}h old, needs {a.min_age_hours}h"
+        d["why"] = f"stage is {age:.1f}h old, needs {need:g}h ({soak_why})"
     elif waiting:
         d["action"] = "wait"
         d["why"] = "not enough data: " + "; ".join(g["detail"] for g in waiting)
     else:
         d["action"] = "advance"
         d["next"] = NEXT[state["stage"]]
-        d["why"] = f"{age:.1f}h at {state['stage']}%, every gate passes"
+        d["why"] = f"{age:.1f}h at {state['stage']}%, every gate passes ({soak_why})"
     return d
 
 
@@ -345,15 +380,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--feed-dir", required=True, type=Path)
     ap.add_argument("--now", help="ISO time (tests)")
     ap.add_argument("--hold", default=os.environ.get("ROLLOUT_HOLD", ""), help="non-empty: do not advance")
-    ap.add_argument("--min-age-hours", type=float, default=24)
-    ap.add_argument("--min-installs", type=int, default=15)
-    ap.add_argument("--min-create-events", type=int, default=30)
-    ap.add_argument("--max-create-error-delta", type=float, default=10.0)
-    ap.add_argument("--min-update-events", type=int, default=20)
-    ap.add_argument("--max-update-failure-delta", type=float, default=15.0)
-    ap.add_argument("--min-sessions", type=int, default=100)
-    ap.add_argument("--max-crash-free-drop", type=float, default=0.5)
-    ap.add_argument("--min-crash-free", type=float, default=99.0)
+    ap.add_argument("--soak-config", type=Path, default=SOAK_CONFIG, help="JSON with the soak and gate thresholds")
+    cfg = load_soak(ap.parse_known_args(argv)[0].soak_config)
+    # Every threshold is a named value in the config file; a flag overrides it for one run.
+    ap.add_argument("--soak-hours-10", type=float, default=cfg["soak_hours_10"])
+    ap.add_argument("--soak-hours-50", type=float, default=cfg["soak_hours_50"])
+    ap.add_argument("--soak-hours-full", type=float, default=cfg["soak_hours_full"])
+    ap.add_argument("--min-installs", type=int, default=cfg["min_installs"])
+    ap.add_argument("--min-create-events", type=int, default=cfg["min_create_events"])
+    ap.add_argument("--max-create-error-delta", type=float, default=cfg["max_create_error_delta"])
+    ap.add_argument("--min-update-events", type=int, default=cfg["min_update_events"])
+    ap.add_argument("--max-update-failure-delta", type=float, default=cfg["max_update_failure_delta"])
+    ap.add_argument("--min-sessions", type=int, default=cfg["min_sessions"])
+    ap.add_argument("--max-crash-free-drop", type=float, default=cfg["max_crash_free_drop"])
+    ap.add_argument("--min-crash-free", type=float, default=cfg["min_crash_free"])
     a = ap.parse_args(argv)
     now = datetime.fromisoformat(a.now) if a.now else datetime.now(timezone.utc)
     key = os.environ.get("POSTHOG_API_KEY", "")

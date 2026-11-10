@@ -88,6 +88,25 @@ pub struct Config {
     /// Runs a durable Space's `.cua/setup` after each placement (the first
     /// copy and every re-placement from scratch). `None`: no setup step.
     pub space_setup: Option<durable::SetupHook>,
+    /// What each machine says about its own reliability (a laptop on
+    /// battery, a desktop that is always on), by machine name. A durable
+    /// Space goes to the most reliable machine that has room
+    /// ([`Policy::Durable`]); a machine that says nothing scores as
+    /// unknown. `None`: nothing is known (capacity decides).
+    pub reliability: Option<ReliabilityHook>,
+}
+
+/// Looks up a machine's [`cua_cluster::reliability::Facts`] by name.
+#[derive(Clone)]
+pub struct ReliabilityHook(pub Arc<FactsOf>);
+
+/// Facts of a machine by name.
+pub type FactsOf = dyn Fn(&str) -> Option<cua_cluster::reliability::Facts> + Send + Sync;
+
+impl std::fmt::Debug for ReliabilityHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ReliabilityHook")
+    }
 }
 
 impl Config {
@@ -105,6 +124,7 @@ impl Config {
             default_max_attempts: 5,
             session_tick: Duration::from_secs(2),
             space_setup: None,
+            reliability: None,
         }
     }
 }
@@ -429,7 +449,7 @@ pub struct NodeView {
 }
 
 /// Where an interactive Space went.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PlacedSpace {
     /// The host.
     pub node: String,
@@ -442,6 +462,22 @@ pub struct PlacedSpace {
     pub local_space: String,
     /// Its kind.
     pub kind: String,
+    /// Machines that were not chosen and why, in plain words ("linux-box
+    /// cannot run microVM Spaces ...", "mac-studio is aarch64, not amd64").
+    pub skipped: Vec<String>,
+}
+
+impl std::fmt::Debug for PlacedSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlacedSpace")
+            .field("node", &self.node)
+            .field("id", &self.id)
+            .field("token", &"<redacted>")
+            .field("local_space", &self.local_space)
+            .field("kind", &self.kind)
+            .field("skipped", &self.skipped)
+            .finish()
+    }
 }
 
 /// What `place_space` needs.
@@ -468,6 +504,14 @@ pub struct SpaceRequest {
     /// No desktop (`CreateHostSpaceRequest.headless`).
     #[serde(default)]
     pub headless: bool,
+    /// A durable Space: placed on the most reliable machine that has room.
+    #[serde(default)]
+    pub durable: bool,
+    /// CPU architecture the Space must run on (`amd64`, `arm64`); empty: any
+    /// machine (a headless image is multi-arch; the workspace's built
+    /// programs are not, which a takeover across architectures says).
+    #[serde(default)]
+    pub arch: String,
 }
 
 /// The coordinator.
@@ -2680,7 +2724,7 @@ impl Coordinator {
             } else {
                 String::new()
             },
-            arch: String::new(),
+            arch: req.arch.clone(),
             on: String::new(),
             shape: cua_cluster::placement::warm_key(
                 &req.image,
@@ -2722,6 +2766,11 @@ impl Coordinator {
                             elastic: false,
                             pinned: n.row.state == "pinned",
                             provider: n.row.provider.clone(),
+                            reliability: self
+                                .cfg
+                                .reliability
+                                .as_ref()
+                                .and_then(|h| (h.0)(&n.row.name)),
                             ..Default::default()
                         },
                         (n.link.clone(), n.row.direct.clone()),
@@ -2729,7 +2778,12 @@ impl Coordinator {
                 })
                 .unzip()
         };
-        let order = placement::rank(&cands, &need, self.cfg.policy);
+        let policy = if req.durable {
+            Policy::Durable
+        } else {
+            self.cfg.policy
+        };
+        let order = placement::rank(&cands, &need, policy);
         if cands.is_empty() {
             let relayed = {
                 let g = self.sched.lock().expect("sched");
@@ -2750,6 +2804,7 @@ impl Coordinator {
                 placement::why_nothing_fits(&cands, &need)
             )));
         }
+        let skipped = placement::skipped(&cands, &need);
         let mut errors = Vec::new();
         for i in order {
             let (link, direct) = &links[i];
@@ -2782,6 +2837,7 @@ impl Coordinator {
                         token: String::new(),
                         local_space: space.local_space,
                         kind: space.kind,
+                        skipped: skipped.clone(),
                     });
                 }
                 Ok(_) if via_relay => {
@@ -2795,6 +2851,7 @@ impl Coordinator {
                         token: space.direct_token,
                         local_space: space.local_space,
                         kind: space.kind,
+                        skipped: skipped.clone(),
                     });
                 }
                 Ok(_) => errors.push(format!("{}: created no direct port", cands[i].name)),

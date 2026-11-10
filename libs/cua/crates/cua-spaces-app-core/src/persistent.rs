@@ -696,7 +696,7 @@ fn detail_view(
             line(
                 &g.machine,
                 if this {
-                    "This machine".into()
+                    "This computer".into()
                 } else {
                     g.machine.clone()
                 },

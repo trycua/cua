@@ -8,10 +8,13 @@ import PermissionFlow
 
 /// The app's own guide to a privacy pane of System Settings, so nobody
 /// meets macOS's bare "allow?" prompt first. PermissionFlow (MIT,
-/// github.com/jaywcjlove/PermissionFlow, pinned in Package.swift) opens the
-/// pane and floats a small panel beside System Settings with this app to
-/// drag into the list. The app's name and icon are this bundle's, so Cua
-/// Spaces Local shows as itself.
+/// github.com/jaywcjlove/PermissionFlow, vendored in Vendor/PermissionFlow)
+/// opens the pane and docks a panel under System Settings. The panel always
+/// shows, and says what the pane needs: drag the app into the list when it
+/// has no row, turn its switch on when it has one, then that it is on. It
+/// reads the pane every second, and picks up again after "Quit & Reopen".
+/// The app's name and icon are this bundle's, so Cua Spaces Local shows as
+/// itself.
 ///
 /// The first run's "Share this Mac's screen" and Settings' "Permissions"
 /// reach it through `host.openSettings`: Screen Recording and Accessibility
@@ -58,54 +61,90 @@ public enum PermissionGuide {
     nonisolated(unsafe) static var showsGuide = true
     nonisolated(unsafe) static var grantedHook: ((PermissionFlowPane) -> Void)?
 
-    // MARK: - Listed or not (CUA-2283)
+    // MARK: - Where a permission stands (CUA-2283, CUA-3551)
 
-    /// What the guide tells the person to do in a pane's list.
-    enum Instruction: Equatable {
-        /// The app is not in the list yet: drag it in (PermissionFlow's panel).
-        case drag
-        /// The app is already in the list: only its switch needs turning on.
-        case switchOn
+    /// Where one permission stands in System Settings' list for this copy of
+    /// the app. The guide's panel says something different for each, and the
+    /// pages show it on the permission's row.
+    public enum PaneState: String, Equatable, Sendable {
+        /// Granted.
+        case on
+        /// The app has a row in the list, with its switch off.
+        case off
+        /// No row for this copy of the app: drag it in. A row left by an
+        /// older build signed differently does not count (macOS ignores it).
+        case absent
+        /// This macOS doesn't say (the private check below is missing): off
+        /// or absent.
+        case unknown
     }
 
-    /// macOS has no public call that says whether an app has a row in a
-    /// privacy list, so the guide remembers it: the permission was seen
-    /// granted (a revoked grant keeps its row). An app dragged in but never
-    /// switched on is not noticed, and keeps the drag guide. An
-    /// uninstall that resets the permissions removes the app's preferences
-    /// with this note.
-    nonisolated(unsafe) static var listedStore: UserDefaults = .standard
-
-    nonisolated static func listedKey(_ pane: PermissionFlowPane) -> String { "permissionListed.\(pane.rawValue)" }
-
-    nonisolated static func isListed(_ pane: PermissionFlowPane) -> Bool {
-        listedStore.bool(forKey: listedKey(pane))
+    /// The four states from what macOS reports: the public preflight call
+    /// (`granted`) and TCC's own preflight (`tcc`: 0 allowed, 1 a row that
+    /// says no, 2 no row; nil when the call is missing). The public call wins
+    /// for "on": it is what the app's capture and input really use.
+    nonisolated static func paneState(granted: Bool, tcc: Int32?) -> PaneState {
+        if granted { return .on }
+        switch tcc {
+        // A row that says yes while the public call says no: its switch
+        // shows on but belongs to another build; turning it on again or
+        // dragging this copy in is the fix, as for a row that is off.
+        case 0, 1: return .off
+        case 2: return .absent
+        default: return .unknown
+        }
     }
 
-    nonisolated static func markListed(_ pane: PermissionFlowPane, _ listed: Bool = true) {
-        listedStore.set(listed, forKey: listedKey(pane))
+    /// TCC's preflight (`TCCAccessPreflight` in the private TCC framework):
+    /// the only call that tells "no row" from "a row switched off" without
+    /// reading TCC's database (which needs Full Disk Access). Looked up at
+    /// run time, so a macOS without it answers nil and the guide says both.
+    nonisolated static func tccPreflight(_ pane: PermissionFlowPane) -> Int32? {
+        let service: String
+        switch pane {
+        case .screenRecording: service = "kTCCServiceScreenCapture"
+        case .accessibility: service = "kTCCServiceAccessibility"
+        default: return nil
+        }
+        guard let preflight = tccPreflightCall else { return nil }
+        return preflight(service as CFString, nil)
     }
 
-    nonisolated static func instruction(for pane: PermissionFlowPane, listed: Bool) -> Instruction {
-        listed ? .switchOn : .drag
+    private typealias TCCPreflightFn = @convention(c) (CFString, CFDictionary?) -> Int32
+    private nonisolated static let tccPreflightCall: TCCPreflightFn? = {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/TCC.framework/TCC", RTLD_LAZY),
+              let symbol = dlsym(handle, "TCCAccessPreflight") else { return nil }
+        return unsafeBitCast(symbol, to: TCCPreflightFn.self)
+    }()
+
+    /// What the panel under System Settings says for `pane` in `state`:
+    /// drag the app in, turn its switch on, or done. The app's tile stays
+    /// while the switch is off too, for a row that belongs to an older build.
+    nonisolated static func guidance(for pane: PermissionFlowPane, state: PaneState, appName: String,
+                                     paneName: String) -> PermissionFlowGuidance {
+        switch state {
+        case .absent:
+            return .init(title: "Drag **\(appName)** into the list above to allow **\(paneName)**.",
+                         detail: "Then make sure its switch is on.", showsApp: true)
+        case .off:
+            return .init(title: "Turn on the switch next to **\(appName)** in the list above.",
+                         detail: "Already on, or not in the list? Drag this in.",
+                         symbol: "switch.2", showsApp: true)
+        case .unknown:
+            return .init(title: "Turn on **\(appName)** in the list above to allow **\(paneName)**.",
+                         detail: "Not in the list? Drag this in.", symbol: "switch.2", showsApp: true)
+        case .on:
+            return .init(title: "**\(paneName)** is on for **\(appName)**.",
+                         detail: needsReopen(after: pane) ? "If macOS asks, choose Quit & Reopen. \(appName) comes back where you were." : nil,
+                         symbol: "checkmark.circle.fill", showsApp: false)
+        }
     }
 
-    /// The line of the switch-on hint.
-    nonisolated static func switchOnText(appName: String) -> String {
-        "Turn on \(appName) in System Settings, then come back."
-    }
-
-    /// Where one permission stands. macOS never prompts again once it is
-    /// denied or switched off, so only the first ask may use its own prompt;
-    /// after that "Allow" means opening the pane.
-    enum State: Equatable {
-        case notDetermined, off, granted
-    }
-
-    /// Granted comes from the preflight call; the app having a row in the
-    /// list (seen granted once, see `isListed`) tells off from not asked.
-    nonisolated static func state(granted: Bool, listed: Bool) -> State {
-        granted ? .granted : (listed ? .off : .notDetermined)
+    /// The pane's name as System Settings shows it ("Screen & System Audio
+    /// Recording" is listed under Screen Recording; Accessibility is "Device
+    /// Control and Data Access" from macOS 27).
+    nonisolated static func paneName(_ pane: PermissionFlowPane) -> String {
+        pane.localizedTitle(localeIdentifier: nil)
     }
 
     /// Polls until `pane` reads as granted (true) or `deadline` passes (false),
@@ -122,98 +161,53 @@ public enum PermissionGuide {
         return false
     }
 
-    private static var hint: NSPanel?
+    // MARK: - Coming back after Quit & Reopen
 
-    private static func closeHint() {
-        hint?.close()
-        hint = nil
+    /// A short note that a guide is open, so a relaunch (macOS's "Quit &
+    /// Reopen", or the app's own) picks the guide up again instead of
+    /// leaving System Settings with no panel. Kept 15 minutes.
+    nonisolated(unsafe) static var resumeStore: UserDefaults = .standard
+    nonisolated static let resumeKey = "permissionGuide.resume"
+    nonisolated static let resumeFor: TimeInterval = 15 * 60
+
+    nonisolated static func noteGuiding(_ pane: PermissionFlowPane, at now: Date = Date()) {
+        resumeStore.set(["pane": pane.rawValue, "at": now.timeIntervalSince1970], forKey: resumeKey)
     }
 
-    /// A small panel over System Settings for a pane whose list already has
-    /// this app: no dragging, just the switch. "Not in the list?" falls back
-    /// to the drag guide.
-    private static func showSwitchOnHint(for pane: PermissionFlowPane, url: String) {
-        closeHint()
-        let name = FileManager.default.displayName(atPath: Bundle.main.bundlePath)
-        let label = NSTextField(labelWithString: switchOnText(appName: name))
-        label.font = .systemFont(ofSize: 14)
-        let fallback = NSButton(title: "Not in the list?", target: nil, action: nil)
-        fallback.bezelStyle = .inline
-        let close = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close") ?? NSImage(),
-                             target: nil, action: nil)
-        close.isBordered = false
-        let row = NSStackView(views: [label, fallback, close])
-        row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 12)
-        let box = NSVisualEffectView()
-        box.material = .hudWindow
-        box.state = .active
-        box.wantsLayer = true
-        box.layer?.cornerRadius = 12
-        row.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            row.topAnchor.constraint(equalTo: box.topAnchor),
-            row.bottomAnchor.constraint(equalTo: box.bottomAnchor),
-        ])
-        let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isReleasedWhenClosed = false
-        panel.contentView = box
-        let size = box.fittingSize
-        if let screen = NSScreen.main?.visibleFrame {
-            panel.setFrame(NSRect(x: screen.midX - size.width / 2, y: screen.maxY - size.height - 16,
-                                  width: size.width, height: size.height), display: true)
-        }
-        let actions = HintActions(
-            close: { closeHint() },
-            fallback: {
-                markListed(pane, false)
-                closeHint()
-                guide(url)
-            })
-        fallback.target = actions
-        fallback.action = #selector(HintActions.fallbackTapped)
-        close.target = actions
-        close.action = #selector(HintActions.closeTapped)
-        objc_setAssociatedObject(panel, &HintActions.key, actions, .OBJC_ASSOCIATION_RETAIN)
-        panel.orderFrontRegardless()
-        hint = panel
+    nonisolated static func clearGuiding() { resumeStore.removeObject(forKey: resumeKey) }
+
+    /// The pane to guide after a relaunch: the noted one while it is still
+    /// missing, else the other one still missing; nil when the note is old
+    /// or gone, or both are on.
+    nonisolated static func resumePane(now: Date = Date(), states: [PermissionFlowPane: PaneState]) -> PermissionFlowPane? {
+        guard let note = resumeStore.dictionary(forKey: resumeKey),
+              let raw = note["pane"] as? String, let pane = PermissionFlowPane(rawValue: raw),
+              let at = note["at"] as? TimeInterval,
+              now.timeIntervalSince1970 - at < resumeFor, now.timeIntervalSince1970 >= at else { return nil }
+        if states[pane] != .on { return pane }
+        return guided.first { states[$0] != .on }
     }
 
-    private final class HintActions: NSObject {
-        nonisolated(unsafe) static var key: UInt8 = 0
-        let close: () -> Void
-        let fallback: () -> Void
-        init(close: @escaping () -> Void, fallback: @escaping () -> Void) {
-            self.close = close
-            self.fallback = fallback
+    /// At launch: when a guide was open just before (and System Settings
+    /// still is), show it again on what is still missing.
+    public static func resumeAfterRelaunch() {
+        Task { @MainActor in
+            let states = await readStates()
+            guard let pane = resumePane(states: states) else { return clearGuiding() }
+            guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first != nil,
+                  let url = settingsURL(for: pane) else { return }
+            guide(url)
         }
-        @objc func closeTapped() { close() }
-        @objc func fallbackTapped() { fallback() }
     }
 
     /// Guides `url`'s pane: false when the guide doesn't know it (open it
-    /// plainly then).
+    /// plainly then). The panel docks under System Settings whatever the
+    /// pane shows, and its words follow the pane: drag the app in, turn its
+    /// switch on, done.
     @discardableResult
     public static func guide(_ url: String) -> Bool {
         guard let pane = pane(for: url) else { return false }
-        closeHint()
-        // Already in the list: say "switch on", not "drag".
-        if instruction(for: pane, listed: isListed(pane)) == .switchOn, let u = URL(string: url) {
-            controller?.closePanel()
-            openPane(u)
-            if showsGuide { showSwitchOnHint(for: pane, url: url) }
-            watch(pane)
-            return true
-        }
+        noteGuiding(pane)
         guard showsGuide else {
             if let u = URL(string: url) { openPane(u) }
             watch(pane)
@@ -222,6 +216,8 @@ public enum PermissionGuide {
         let app = Bundle.main.bundleURL
         let flow = controller ?? PermissionFlowController(configuration: .init(requiredAppURLs: [app]))
         controller = flow
+        // Words for the state last read, until the first read of this guide.
+        flow.setGuidance(guidance(for: pane, state: lastStates[pane] ?? .unknown, appName: appName(), paneName: paneName(pane)))
         // Where the click came from, for the panel's flight to System Settings.
         let from = NSApp.keyWindow.map { w -> CGRect in
             let mouse = NSEvent.mouseLocation
@@ -243,42 +239,66 @@ public enum PermissionGuide {
     /// are answered: a running process keeps the Screen Recording answer it
     /// had at launch until it reopens, so asking this process would never
     /// see the grant. Replaceable in tests.
-    nonisolated(unsafe) static var readGranted: () async -> Set<PermissionFlowPane> = {
-        await Task.detached { freshProcessGrants() }.value
+    nonisolated(unsafe) static var readStates: () async -> [PermissionFlowPane: PaneState] = {
+        await Task.detached { freshProcessStates() }.value
     }
 
-    /// `CuaSpacesMac preflight-permissions` in a new process: the guided
-    /// panes macOS has granted this app.
-    nonisolated static func freshProcessGrants() -> Set<PermissionFlowPane> {
-        guard let exe = Bundle.main.executableURL else { return [] }
+    /// The guided panes macOS has granted this app (from `readStates`).
+    static func readGranted() async -> Set<PermissionFlowPane> {
+        granted(in: await readStates())
+    }
+
+    nonisolated static func granted(in states: [PermissionFlowPane: PaneState]) -> Set<PermissionFlowPane> {
+        Set(states.filter { $0.value == .on }.keys)
+    }
+
+    /// The states read last, for the guide's first words before its own read.
+    private static var lastStates: [PermissionFlowPane: PaneState] = [:]
+
+    /// `CuaSpacesMac preflight-permissions` in a new process: where each
+    /// guided pane stands for this app.
+    nonisolated static func freshProcessStates() -> [PermissionFlowPane: PaneState] {
+        // Not running as an app (tests, `swift run`): this process is the
+        // one macOS answers for, and there is no app to start a copy of.
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return parseStates(preflightReport()) }
+        guard let exe = Bundle.main.executableURL else { return [:] }
         let p = Process()
         p.executableURL = exe
         p.arguments = ["preflight-permissions"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return [] }
+        guard (try? p.run()) != nil else { return [:] }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        return parseGrants(String(decoding: data, as: UTF8.self))
+        return parseStates(String(decoding: data, as: UTF8.self))
     }
 
-    /// What `preflight-permissions` prints: `screen-recording=1 accessibility=0`.
-    nonisolated static func parseGrants(_ line: String) -> Set<PermissionFlowPane> {
-        var granted = Set<PermissionFlowPane>()
-        for field in line.split(whereSeparator: \.isWhitespace) where field.hasSuffix("=1") {
-            switch field.dropLast(2) {
-            case "screen-recording": granted.insert(.screenRecording)
-            case "accessibility": granted.insert(.accessibility)
-            default: break
+    /// What `preflight-permissions` prints: `screen-recording=on
+    /// accessibility=absent` (`on`, `off`, `absent`, `unknown`; an older
+    /// build's `1` and `0` read as on and unknown). A pane it doesn't
+    /// mention is unknown.
+    nonisolated static func parseStates(_ line: String) -> [PermissionFlowPane: PaneState] {
+        var states: [PermissionFlowPane: PaneState] = [.screenRecording: .unknown, .accessibility: .unknown]
+        for field in line.split(whereSeparator: \.isWhitespace) {
+            let parts = field.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let pane: PermissionFlowPane
+            switch parts[0] {
+            case "screen-recording": pane = .screenRecording
+            case "accessibility": pane = .accessibility
+            default: continue
             }
+            states[pane] = parts[1] == "1" ? .on : PaneState(rawValue: parts[1]) ?? .unknown
         }
-        return granted
+        return states
     }
 
     /// The answer `preflight-permissions` gives (run by main.swift).
     public nonisolated static func preflightReport() -> String {
-        "screen-recording=\(PermissionRequester.screenRecordingGranted() ? 1 : 0) accessibility=\(PermissionRequester.accessibilityGranted() ? 1 : 0)"
+        let screen = paneState(granted: PermissionRequester.screenRecordingGranted(), tcc: tccPreflight(.screenRecording))
+        let ax = paneState(granted: PermissionRequester.accessibilityGranted(), tcc: tccPreflight(.accessibility))
+        return "screen-recording=\(screen.rawValue) accessibility=\(ax.rawValue)"
     }
 
     /// What follows a grant.
@@ -305,7 +325,9 @@ public enum PermissionGuide {
     nonisolated static func needsReopen(after granted: PermissionFlowPane) -> Bool { granted == .screenRecording }
 
     private static var watching: Task<Void, Never>?
-    nonisolated static let pollInterval: Duration = .milliseconds(500)
+    /// Checked every second, as Cua Driver's guide does: the panel's words
+    /// change as soon as the app shows up in the list or its switch turns on.
+    nonisolated static let pollInterval: Duration = .seconds(1)
     nonisolated static let giveUpAfter: Duration = .seconds(15 * 60)
 
     private static var reopening: Task<Void, Never>?
@@ -317,15 +339,23 @@ public enum PermissionGuide {
             let clock = ContinuousClock()
             let deadline = clock.now + giveUpAfter
             while !Task.isCancelled, clock.now < deadline {
-                let now = await readGranted()
+                let now = await readStates()
                 guard !Task.isCancelled else { return }
-                // A grant, even one revoked later, means the app has its row.
-                for p in now { markListed(p) }
-                if now.contains(pane) { granted(pane, others: now); return }
+                lastStates = now
+                let state = now[pane] ?? .unknown
+                controller?.setGuidance(guidance(for: pane, state: state, appName: appName(), paneName: paneName(pane)))
+                // Dock again under System Settings as it is now: after a switch
+                // out of a full-screen Cua Spaces, the screen's free area is
+                // only right once System Settings' Space is in front.
+                controller?.refit()
+                if state == .on { granted(pane, others: granted(in: now)); return }
                 try? await Task.sleep(for: pollInterval)
             }
-            // Gave up (a replaced or finished watch must not close a newer hint).
-            if !Task.isCancelled { closeHint() }
+            // Gave up (a replaced or finished watch must not close a newer panel).
+            if !Task.isCancelled {
+                controller?.closePanel()
+                clearGuiding()
+            }
         }
     }
 
@@ -333,9 +363,8 @@ public enum PermissionGuide {
         watching = nil
         reopening?.cancel()
         if let hook = grantedHook { return hook(pane) }
-        controller?.closePanel()
-        closeHint()
         let followUp = {
+            controller?.closePanel()
             switch next(after: pane, isGranted: others.contains) {
             case .guide(let other):
                 guard let url = settingsURL(for: other) else { return }
@@ -352,12 +381,21 @@ public enum PermissionGuide {
                     }
                 }
             case .finish:
+                clearGuiding()
                 bringAppForward()
             }
         }
-        guard needsReopen(after: pane) else { return followUp() }
+        // The panel says "on" for a moment before it moves on or closes.
+        guard needsReopen(after: pane) else {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1200))
+                followUp()
+            }
+            return
+        }
         // Give macOS's own "Quit & Reopen" a moment first: when it is
-        // answered, this app is already gone.
+        // answered, this app is already gone, and comes back through
+        // `resumeAfterRelaunch`.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
             bringAppForward()
@@ -384,6 +422,30 @@ public enum PermissionGuide {
         config.activates = true
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config)
         NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The name System Settings lists this app under: "Cua Spaces", or
+    /// "Cua Spaces Local" for the Local build, which has its own bundle id
+    /// and so its own grants.
+    nonisolated static func appName(info: [String: Any]? = Bundle.main.infoDictionary) -> String {
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let name = info?[key] as? String, !name.isEmpty { return name }
+        }
+        return "Cua Spaces"
+    }
+
+    /// The two guided permissions as the pages read them (`AppPermission`
+    /// in the web's `ops/driver.ts`): `screen` and `accessibility`, each
+    /// granted or not, with its System Settings pane.
+    /// `state` is where the switch stands (`on`, `off`, `absent`,
+    /// `unknown`), for the row's live status.
+    nonisolated static func rows(states: [PermissionFlowPane: PaneState]) -> [[String: Any]] {
+        let panes: [(String, PermissionFlowPane)] = [("screen", .screenRecording), ("accessibility", .accessibility)]
+        return panes.map { id, pane -> [String: Any] in
+            let url: Any = settingsURL(for: pane).map { $0 as Any } ?? NSNull()
+            let state = states[pane] ?? .unknown
+            return ["id": id, "granted": state == .on, "state": state.rawValue, "settingsUrl": url]
+        }
     }
 
     nonisolated static func settingsURL(for pane: PermissionFlowPane) -> String? {

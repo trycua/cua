@@ -181,7 +181,7 @@ const PAGES_FIXTURE: PageSpec[] = [
 ];
 
 const render = (api = fixture(), examples = new Map()) =>
-  renderAll(api, '1.2.3', {
+  renderAll(api, {
     renames: ctx.renames,
     outputDir: '/out',
     pages: PAGES_FIXTURE,
@@ -213,7 +213,7 @@ test('pages are deterministic, complete and use only the shimmed components', ()
   assert.deepEqual(JSON.parse(a.get('/out/sandbox/meta.json')!).pages, ['life']);
   const sandbox = a.get('/out/sandbox/index.mdx')!;
   assert.match(sandbox, /AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY/);
-  assert.match(sandbox, /Version: 1\.2\.3/);
+  assert.doesNotMatch(sandbox, /^\s*Version:/m);
   assert.match(sandbox, /^### `Sandbox\.exec`$/m);
   assert.match(sandbox, /<Tabs items=\{\['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust'\]\} groupId="sdk-lang" persist>/);
   assert.match(sandbox, /pub async fn exec\(&self, command: Vec<String>, timeout_ms: Option<u64>\) -> Result<ExecResult, CuaError>/);
@@ -303,7 +303,7 @@ test('nested folders get their own meta.json; a catalog page lists its subtree i
     { slug: 'sandbox/life/results', title: 'Results', description: 'Results.', intro: 'Intro.', items: [], prefixes: ['Exec'] },
     PAGES_FIXTURE[3],
   ];
-  const out = renderAll(fixture(), '1.2.3', {
+  const out = renderAll(fixture(), {
     renames: ctx.renames,
     outputDir: '/out',
     pages,
@@ -404,7 +404,7 @@ function spacesFixture(): SdkApi {
 const SPACES_PAGE: PageSpec = { slug: 'sandbox/porter', title: 'Porter', description: 'Porting.', intro: 'Intro.', items: [], modules: ['teleport'], spaces: true };
 
 test('app export pages: Swift and Rust only, the FSL note, linked into the SDK and off the Types list', () => {
-  const out = renderAll(fixture(), '1.2.3', {
+  const out = renderAll(fixture(), {
     renames: ctx.renames,
     outputDir: '/out',
     pages: [...PAGES_FIXTURE, SPACES_PAGE],

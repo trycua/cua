@@ -183,10 +183,6 @@ public final class AppModel {
     public let pageDropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
-    /// The running app's version: with it, the New UI's default follows
-    /// the update channel and the version (`appSettingsResolveNewUi`);
-    /// without it (tests, fixtures), the New UI is on only by choice.
-    let appVersion: String?
     /// Settings → About and the updater (none until `AppEnvironment`
     /// starts one).
     public var updates = UpdatesModel(updater: nil)
@@ -197,7 +193,7 @@ public final class AppModel {
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
                 devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
-                startup: StartupModel? = nil, appVersion: String? = nil) {
+                startup: StartupModel? = nil) {
         self.backend = backend
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
@@ -220,9 +216,7 @@ public final class AppModel {
         self.keyvault = keyvault
         self.onboarding = onboarding
         self.settingsPath = settingsPath
-        self.appVersion = appVersion
-        var settings = appSettingsLoad(path: settingsPath)
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
+        let settings = appSettingsLoad(path: settingsPath)
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
             defaultLocation: settings.defaultLocation,
@@ -253,11 +247,10 @@ public final class AppModel {
             self.saveSettings()
         }
         self.host.onChange = { [weak self] in self?.recompose() }
-        // Providing Spaces turned on: ask for Local Network access now, on
-        // this Mac's screen (the same steps as before a macOS Space is
-        // created here), so a macOS Space another device creates here
-        // connects instead of failing with "No route to host".
-        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting() }
+        // This Mac started accepting Spaces from your other computers: ask
+        // for Local Network now, while someone is here to answer, not when a
+        // peer's macOS create later meets macOS's bare prompt.
+        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting(bySetup: $0) }
         followChecklist()
         // No notification prompt before the first run is done.
         PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
@@ -373,13 +366,12 @@ public final class AppModel {
             access: detail.access))
     }
 
-    /// The detail without what Settings, Experiments hides (Share while
-    /// Sharing is off), as this Mac sees it: a machine reached through the
+    /// The detail as this Mac sees it: a machine reached through the
     /// relay has its Connect greyed out while this Mac is not enrolled, and
     /// one that does not share its desktop shows why in its place.
     public func detail(_ space: AppSpace) -> AppSpaceDetail {
         appSpaceDetailFor(space: space, usage: usage[space.id], hostArch: Self.hostArch,
-                          experiments: settings.experiments, access: devices.accessNotice)
+                          access: devices.accessNotice)
     }
 
     /// The Spaces one of your machines provides (its detail lists them).
@@ -488,6 +480,19 @@ public final class AppModel {
             }
             for (id, h) in results where wanted.contains(id) { machineHealth[id] = h }
         }
+        // This Mac's daemon blocked while this app is allowed: started again,
+        // then checked again, so the issue the person just fixed goes.
+        if let this = targets.first(where: { $0.target.isEmpty }),
+           let h = machineHealth[this.id], Self.localNetworkFails(h),
+           await restartDaemonIfLocalNetworkStale() {
+            let r = await withTimeout(seconds: Self.healthTimeout) { [backend = self.backend] in
+                try await backend.machineHealth(machine: nil)
+            }
+            if case .success(var fresh) = r {
+                fresh.id = this.id
+                machineHealth[this.id] = fresh
+            }
+        }
     }
 
     /// This Mac as the Machines page names it: its name, the app's
@@ -498,7 +503,7 @@ public final class AppModel {
         let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
             : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
         return AppMachinesViewAbout(
-            computerName: Foundation.Host.current().localizedName ?? "",
+            computerName: ComputerName.current ?? "",
             appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
             osVersion: os)
     }()
@@ -521,9 +526,16 @@ public final class AppModel {
 
     /// Remove from account: `machine` leaves the relay directory, then
     /// `device` is revoked. This Mac's own host setup is the host's
-    /// `remove` instead.
-    public func removeMachine(machine: String?, device: String?) async throws {
-        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+    /// `remove` instead. The Spaces made on the machine are detached (they
+    /// come back when it is added again), or with `deleteSpaces` deleted too.
+    public func removeMachine(machine: String?, device: String?, deleteSpaces: Bool = false) async throws {
+        if let machine {
+            if deleteSpaces {
+                try await backend.relayUnregisterComputer(id: "relay:\(machine)", deleteSpaces: true)
+            } else {
+                try await backend.relayUnregister(id: "relay:\(machine)")
+            }
+        }
         if let device {
             guard let relay = devices.devices else {
                 throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
@@ -557,12 +569,12 @@ public final class AppModel {
 
     /// Your Spaces: neither This machine nor one of your machines.
     var realSpaces: [AppSpace] {
-        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost && !$0.hidden }
     }
 
     /// Where "Add a computer" opens: the New UI's sheet (one row per way to
     /// add a computer, and Have a code? Enter it).
-    public static let addComputerRoute = MainUIRoute.path("/machines?add=1")
+    public static let addComputerRoute = MainUIRoute.path("/spaces?add=1")
     /// Agent runs seen in any Space (a Space's detail, the web UI's
     /// Agents page): the checklist's "Run an agent".
     public private(set) var agentRunsSeen = 0
@@ -781,6 +793,24 @@ public final class AppModel {
         }
     }
 
+    /// Keeps the notch's hotspot indicator on while a Space exits through
+    /// this computer ("Exit through: This computer"), as the hotspot's own
+    /// indicator is. Read every 15 seconds, as the Electron notch does.
+    public func startExitsPoll(every interval: Duration = .seconds(15)) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.syncNotchExits()
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    /// Reads the exits once and shows them on the notch.
+    func syncNotchExits() async {
+        notch.setExits(await backend.exitsThroughThisMachine())
+    }
+
     /// The daemon's push of list changes (`watchList`), while it is kept.
     private var listWatch: AnyObject?
     /// The read a push started, and whether another push came meanwhile.
@@ -919,6 +949,7 @@ public final class AppModel {
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: list.rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
+            reconcileAgentCreates()
             recompose()
             loaded = true
             listIncomplete = list.incomplete
@@ -1255,7 +1286,7 @@ public final class AppModel {
                           provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
-                          host: machine, hostName: machine.flatMap(machineName(of:))))
+                          host: machine, hostName: machine.flatMap(machineName(of:)), parent: nil))
         // The detail shows the live desktop inline: selecting the new Space
         // opens it (`plan.openDesktop`), starting with its progress.
         if open { select(pendingId) }
@@ -1273,20 +1304,23 @@ public final class AppModel {
     /// set one).
     public var localNetworkGate: LocalNetworkGate?
 
-    /// The Local Network steps run when this Mac started providing Spaces
-    /// (tests await it).
+    /// The Local Network steps run for hosting (tests await it).
     @ObservationIgnored var hostingLocalNetworkCheck: Task<Void, Never>?
 
-    /// Runs the Local Network steps for a Mac that just started providing
-    /// Spaces: the explanation, then macOS's own prompt (the person answers
-    /// it), or the fix when access was turned off. Setup already finished,
-    /// so Cancel or a refusal changes nothing else; the next local macOS
-    /// create asks again.
-    func askLocalNetworkForHosting() {
-        guard let gate = localNetworkGate,
+    /// The Local Network steps for a Mac that accepts Spaces from your other
+    /// computers: the explanation, then macOS's prompt, or the fix when access
+    /// was turned off. Never for a sign-in's setup, nor a setup during the
+    /// first run (its page sets this Mac up as it signs in): the first run's
+    /// permissions step asks instead, and finishing the first run asks
+    /// nothing (no dialog as Home opens). The switch and a join code always
+    /// ask. Cancel or a refusal changes nothing else; a local macOS create
+    /// asks again.
+    func askLocalNetworkForHosting(bySetup: Bool = false) {
+        guard onboarding.completed || !bySetup, hostingLocalNetworkCheck == nil, let gate = localNetworkGate,
               appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }
-        hostingLocalNetworkCheck = Task { @MainActor in
+        hostingLocalNetworkCheck = Task { @MainActor [weak self] in
             try? await gate.check()
+            self?.hostingLocalNetworkCheck = nil
         }
     }
 
@@ -1310,8 +1344,10 @@ public final class AppModel {
             daemonLocalNetworkBusy = false
             daemonLocalNetworkAt = Date()
         }
-        let backend = self.backend
-        let answer = await withTimeout(seconds: 20) { try await backend.machineHealth(machine: nil) }
+        var answer = await withTimeout(seconds: 20) { [backend] in try await backend.machineHealth(machine: nil) }
+        if case .success(let health) = answer, Self.localNetworkFails(health), await restartDaemonIfLocalNetworkStale() {
+            answer = await withTimeout(seconds: 20) { [backend] in try await backend.machineHealth(machine: nil) }
+        }
         guard case .success(let health) = answer,
               let check = health.checks.first(where: { $0.id == "machine.local_network" }) else { return }
         switch check.status {
@@ -1319,6 +1355,33 @@ public final class AppModel {
         case "fail": daemonLocalNetworkAllowed = false
         default: break
         }
+    }
+
+    /// Starts this app's daemon again (the supervisor's restart, then a new
+    /// connection); true when it runs afterwards. Set with the live services.
+    public var restartDaemon: (@MainActor () async -> Bool)?
+    @ObservationIgnored private var localNetworkRestartedAt: Date?
+    /// At most one restart for Local Network in this long.
+    static let localNetworkRestartEvery: TimeInterval = 600
+
+    static func localNetworkFails(_ health: AppMachinesViewHealth) -> Bool {
+        health.checks.contains { $0.id == "machine.local_network" && $0.status == "fail" }
+    }
+
+    /// The daemon says Local Network is off, but this app's own connect gets
+    /// out: macOS allows the app, and the daemon still runs with what macOS
+    /// decided for it before (access turned on while it ran, or a daemon an
+    /// earlier launch of the app started). It is started again, at most once
+    /// every `localNetworkRestartEvery`, so the issue clears once access is
+    /// on. True when it was started again.
+    func restartDaemonIfLocalNetworkStale() async -> Bool {
+        guard let restartDaemon, let gate = localNetworkGate else { return false }
+        let now = listClock()
+        if let at = localNetworkRestartedAt, now.timeIntervalSince(at) < Self.localNetworkRestartEvery { return false }
+        guard await gate.probe.access() == .allowed else { return false }
+        localNetworkRestartedAt = now
+        NSLog("Cua Spaces: Local Network is allowed for this app but the cua daemon is blocked; starting the daemon again")
+        return await restartDaemon()
     }
 
     /// How long the daemon may take to take a create (its first progress
@@ -1460,6 +1523,22 @@ public final class AppModel {
         }
     }
 
+    /// The Spaces agents asked this computer to make show as the same pending rows a New Space made
+    /// here has (its page with progress, Cancel, Try again, Remove): the daemon records each create
+    /// and the core turns the record into row actions, the same for every poll.
+    func reconcileAgentCreates() {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        for action in appAgentCreatesActions(state: creates, nowMs: now) {
+            creates = appCreatesReduce(state: creates, action: action)
+        }
+    }
+
+    /// The row goes; for an agent's create, its record is hidden too so the next poll does not draw it again.
+    func dismissPending(_ id: String) {
+        sendCreate(.dismiss(id: id))
+        if appAgentCreateIsAgents(id: id) { appAgentCreateRemove(pendingId: id) }
+    }
+
     /// Cancel on a Space still being created: the row shows Cancelling
     /// until the SDK stopped the create and removed what it made, then goes;
     /// a cancel that fails says why on the row.
@@ -1469,7 +1548,10 @@ public final class AppModel {
         sendCreate(.cancelStart(id: pendingId))
         Task {
             do {
-                try await backend.cancelCreate(createId: pendingId)
+                // An agent's create is cancelled by the name it is made under.
+                let createId = appAgentCreateIsAgents(id: pendingId)
+                    ? (creates.pending.first { $0.id == pendingId }?.name ?? pendingId) : pendingId
+                try await backend.cancelCreate(createId: createId)
                 sendCreate(.cancelDone(id: pendingId))
             } catch {
                 sendCreate(.cancelFail(id: pendingId, error: LiveSpacesBackend.words(error)))
@@ -1497,7 +1579,12 @@ public final class AppModel {
         confirmDeleteId = nil
         // A failed create is only removed from the list.
         if appCreatesIsPending(id: space.id) {
-            sendCreate(.dismiss(id: space.id))
+            // A create still going is stopped (and what it made removed); a failed one only leaves the list.
+            if creates.pending.contains(where: { $0.id == space.id && $0.error == nil && $0.spaceId == nil }) {
+                cancelCreate(space.id)
+            } else {
+                dismissPending(space.id)
+            }
             return
         }
         guard !isDeleting(space.id) else { return }
@@ -1949,6 +2036,19 @@ public final class AppModel {
 
     // MARK: - Experiments
 
+    /// The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as
+    /// the cua home keeps them: what `cua experiments enable` set shows here
+    /// the next time Settings is read.
+    public func refreshDaemonExperiments() {
+        let kept = appSettingsLoad(path: settingsPath).experiments
+        guard kept.ciRunners != settings.experiments.ciRunners
+            || kept.tcpShares != settings.experiments.tcpShares
+            || kept.mobile != settings.experiments.mobile else { return }
+        settings.experiments.ciRunners = kept.ciRunners
+        settings.experiments.tcpShares = kept.tcpShares
+        settings.experiments.mobile = kept.mobile
+    }
+
     /// Settings, Experiments: a switch and one line per experiment.
     public var experimentsPage: AppSettingsPage { appExperimentsPage(experiments: settings.experiments) }
 
@@ -1967,14 +2067,10 @@ public final class AppModel {
         applyExperiments(before: before, after: after)
     }
 
-    /// Settings → About's channel, saved; with no choice of the user's, the
-    /// New UI follows the channel's default at once.
+    /// Settings → About's channel, saved.
     public func setUpdateChannel(_ channel: AppUpdateChannel) {
         settings.updateChannel = channel
-        let before = settings.experiments
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         saveSettings()
-        if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
     /// What follows a change of the switches: an open New Space.

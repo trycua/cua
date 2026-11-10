@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window / display screenshot capture for macOS.
 //!
 //! ## Window capture (primary: ScreenCaptureKit)
@@ -45,7 +48,7 @@ use objc2::rc::autoreleasepool;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -348,7 +351,7 @@ impl WindowCaptureIdentity {
 }
 
 fn current_window_capture_identity(window_id: u32) -> anyhow::Result<WindowCaptureIdentity> {
-    let info = crate::windows::window_info_by_id(window_id)
+    let info = crate::windows::describe_window(window_id)
         .ok_or_else(|| anyhow::anyhow!("WindowServer no longer lists window id {window_id}"))?;
     Ok(WindowCaptureIdentity::new(
         info.pid,
@@ -369,33 +372,68 @@ const WINDOW_CAPTURE_NATIVE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Permit at most one ScreenCaptureKit worker. If an Apple completion callback
 /// never fires, the timed-out worker keeps this permit, and every later request
 /// goes straight to the compatibility fallback instead of leaking more
-/// blocked threads.
+/// blocked threads. The refusal says whether the holder is a live capture or a
+/// worker its caller already gave up on.
 struct NativeCaptureGate {
-    active: AtomicBool,
+    tickets: AtomicU64,
+    state: Mutex<NativeCaptureState>,
+}
+
+/// `ticket` identifies one permit, so a caller that times out after its worker
+/// released the gate cannot mark a newer caller's permit as stalled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeCaptureState {
+    Idle,
+    InFlight { ticket: u64 },
+    Stalled { ticket: u64, since: Instant },
 }
 
 impl NativeCaptureGate {
     const fn new() -> Self {
         Self {
-            active: AtomicBool::new(false),
+            tickets: AtomicU64::new(0),
+            state: Mutex::new(NativeCaptureState::Idle),
         }
     }
 
-    fn try_acquire(&'static self) -> Option<NativeCapturePermit> {
-        self.active
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .ok()
-            .map(|_| NativeCapturePermit { gate: self })
+    fn lock(&self) -> std::sync::MutexGuard<'_, NativeCaptureState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// On refusal, returns the state that holds the gate.
+    fn try_acquire(&'static self) -> Result<NativeCapturePermit, NativeCaptureState> {
+        let mut state = self.lock();
+        match *state {
+            NativeCaptureState::Idle => {
+                let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
+                *state = NativeCaptureState::InFlight { ticket };
+                Ok(NativeCapturePermit { gate: self, ticket })
+            }
+            held => Err(held),
+        }
+    }
+
+    fn mark_stalled(&self, ticket: u64) {
+        let mut state = self.lock();
+        if *state == (NativeCaptureState::InFlight { ticket }) {
+            *state = NativeCaptureState::Stalled {
+                ticket,
+                since: Instant::now(),
+            };
+        }
     }
 }
 
 struct NativeCapturePermit {
     gate: &'static NativeCaptureGate,
+    ticket: u64,
 }
 
 impl Drop for NativeCapturePermit {
     fn drop(&mut self) {
-        self.gate.active.store(false, Ordering::Release);
+        *self.gate.lock() = NativeCaptureState::Idle;
     }
 }
 
@@ -413,9 +451,14 @@ where
     T: Send + 'static,
     F: FnOnce() -> anyhow::Result<T> + Send + 'static,
 {
-    let permit = gate
-        .try_acquire()
-        .ok_or_else(|| anyhow::anyhow!("ScreenCaptureKit capture already in flight"))?;
+    let permit = gate.try_acquire().map_err(|held| match held {
+        NativeCaptureState::Stalled { since, .. } => anyhow::anyhow!(
+            "a timed-out ScreenCaptureKit worker is still blocked after {} ms",
+            since.elapsed().as_millis()
+        ),
+        _ => anyhow::anyhow!("ScreenCaptureKit capture already in flight"),
+    })?;
+    let ticket = permit.ticket;
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("cua-sck-window-capture".into())
@@ -429,6 +472,7 @@ where
     match receiver.recv_timeout(timeout) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
+            gate.mark_stalled(ticket);
             anyhow::bail!(
                 "ScreenCaptureKit capture timed out after {} ms",
                 timeout.as_millis()
@@ -1006,8 +1050,8 @@ impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for OverlayExclud
 /// Capture the main display for the agent with the Driver's cursor overlay
 /// window left out, and report how that went.
 ///
-/// `screencapture` cannot leave a window out, so it is only used when the
-/// overlay shows nothing, or as a fallback that reports `not_excluded`.
+/// `screencapture` cannot leave a window out and costs a process and a file,
+/// so it is only the fallback when ScreenCaptureKit fails.
 pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     Vec<u8>,
     cursor_overlay::capture_exclusion::AgentOverlayCapture,
@@ -1016,7 +1060,17 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     refuse_without_direct_capture_consent()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
         let Some(&overlay_window_id) = overlay else {
-            return Ok((screenshot_display_bytes()?, ResidualCheck::Clean));
+            return match run_native_capture_worker(
+                display_capture_gate(),
+                DISPLAY_CAPTURE_NATIVE_TIMEOUT,
+                screenshot_main_display_sck,
+            ) {
+                Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
+                Err(error) => {
+                    tracing::warn!("ScreenCaptureKit display capture failed: {error:#}");
+                    Ok((screenshot_display_bytes()?, ResidualCheck::Clean))
+                }
+            };
         };
         match run_native_capture_worker(
             display_capture_gate(),
@@ -1042,6 +1096,22 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
             }
         }
     })
+}
+
+/// Main display through `SCScreenshotManager.captureImage(in:)`, which needs
+/// macOS 15.2 and skips the shareable-content query and the content filter.
+fn screenshot_main_display_sck() -> anyhow::Result<Vec<u8>> {
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
+
+    let bounds = core_graphics::display::CGDisplay::main().bounds();
+    let image = SCScreenshotManager::capture_image_in_rect(screencapturekit::cg::CGRect::new(
+        bounds.origin.x,
+        bounds.origin.y,
+        bounds.size.width,
+        bounds.size.height,
+    ))
+    .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image_in_rect failed: {e}"))?;
+    cgimage_to_png(&image, "main display")
 }
 
 /// Main display at native pixel size through ScreenCaptureKit, with one
@@ -1565,14 +1635,29 @@ mod tests {
 
         let permit = GATE.try_acquire().expect("first worker acquires gate");
         assert!(
-            GATE.try_acquire().is_none(),
+            matches!(GATE.try_acquire(), Err(NativeCaptureState::InFlight { .. })),
             "a second worker must fall back while the first is active"
         );
 
         drop(permit);
         assert!(
-            GATE.try_acquire().is_some(),
+            GATE.try_acquire().is_ok(),
             "gate reopens only when the worker-owned permit drops"
+        );
+    }
+
+    #[test]
+    fn late_timeout_cannot_mark_a_newer_permit_stalled() {
+        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+
+        let stale_ticket = GATE.try_acquire().expect("first permit").ticket;
+        let current = GATE.try_acquire().expect("gate idle after drop");
+        GATE.mark_stalled(stale_ticket);
+        assert_eq!(
+            *GATE.lock(),
+            NativeCaptureState::InFlight {
+                ticket: current.ticket
+            }
         );
     }
 
@@ -1628,7 +1713,7 @@ mod tests {
         assert!(second
             .expect_err("replacement is refused while original remains blocked")
             .to_string()
-            .contains("already in flight"));
+            .contains("timed-out ScreenCaptureKit worker is still blocked"));
         assert_eq!(
             SPAWNED_WORK.load(AtomicOrdering::SeqCst),
             1,
@@ -1637,10 +1722,10 @@ mod tests {
 
         release_sender.send(()).expect("release original worker");
         let deadline = Instant::now() + Duration::from_secs(1);
-        while GATE.active.load(AtomicOrdering::Acquire) && Instant::now() < deadline {
+        while *GATE.lock() != NativeCaptureState::Idle && Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(!GATE.active.load(AtomicOrdering::Acquire));
+        assert_eq!(*GATE.lock(), NativeCaptureState::Idle);
 
         assert_eq!(
             run_native_capture_worker(&GATE, Duration::from_secs(1), || {

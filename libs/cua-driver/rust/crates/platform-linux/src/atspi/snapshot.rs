@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AT-SPI element cache for Linux.
 //!
 //! Two views of the same `get_window_state` snapshot live here:

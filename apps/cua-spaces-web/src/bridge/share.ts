@@ -23,13 +23,11 @@ import { telemetryShare, type TelemetrySignal } from "./telemetry";
 export const shareInitial = (core: CoreClient) => core.call<ShareSheetState>("share.initial", {});
 export const shareReduce = (core: CoreClient, input: ShareInput, state: ShareSheetState, action: ShareSheetAction) =>
   core.call<ShareSheetState>("share.reduce", { input, state, action });
-export const shareView = (core: CoreClient, input: ShareInput, state: ShareSheetState) =>
-  core.call<ShareSheetView>("share.view", { input, state });
+export const shareView = (core: CoreClient, input: ShareInput, state: ShareSheetState) => core.call<ShareSheetView>("share.view", { input, state });
 
 /** The Space can be shared: a relay host's, or a driver with `relay_attach`
  * (as the SwiftUI app decides it). */
-export const shareable = (space: Pick<Space, "id" | "sdk">): boolean =>
-  space.id.startsWith("relay:") || Boolean(space.sdk?.features.includes("relay_attach"));
+export const shareable = (space: Pick<Space, "id" | "sdk">): boolean => space.id.startsWith("relay:") || Boolean(space.sdk?.features.includes("relay_attach"));
 
 export interface ShareSession {
   input: ShareInput;
@@ -183,6 +181,10 @@ export function useShareSheet(): ShareHook {
   const ctx = useContext(BridgeContext);
   if (!ctx) throw new Error("useShareSheet needs a <BridgeProvider> above it");
   const s = ctx.store ? shareStore(ctx.store) : null;
-  const session = useSyncExternalStore(s ? s.subscribe : noop, () => s?.getSession() ?? null, () => null);
+  const session = useSyncExternalStore(
+    s ? s.subscribe : noop,
+    () => s?.getSession() ?? null,
+    () => null,
+  );
   return { session, sharing: s, open: (space, signedIn) => ctx.ready.then((b) => shareStore(b).open(space, signedIn)) };
 }

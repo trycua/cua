@@ -46,7 +46,7 @@ const PATHS: Record<ParityScreen, string> = {
   "settings/advanced": "/settings/advanced",
   "settings/connected-apps": "/settings/connections",
   notifications: "/notifications",
-  machines: "/machines",
+  machines: "/spaces/computer/this-mac",
   agents: "/agents/all",
   volume: "/volume",
   onboarding: "/onboarding",
@@ -167,9 +167,7 @@ async function checkKeyvault(page: Page, checkpoints: ParityCheckpoint[]): Promi
       // The list holds what the core's vault view holds: its items, under its apps.
       const apps = cp.vault.apps.map((a) => a.name).sort();
       await expect(page.locator("[data-vault-summary]")).toHaveText(`${cp.vault.total} items in ${apps.length} apps`);
-      await expect
-        .poll(() => page.locator("[data-vault-app]").evaluateAll((els) => els.map((el) => el.getAttribute("data-vault-app")).sort()))
-        .toEqual(apps);
+      await expect.poll(() => page.locator("[data-vault-app]").evaluateAll((els) => els.map((el) => el.getAttribute("data-vault-app")).sort())).toEqual(apps);
       checked++;
     }
   }
@@ -207,9 +205,11 @@ async function closeDetail(page: Page): Promise<void> {
 
 /** The rail's facts in the call layout: label and value, as the page draws them. */
 const readRailFacts = (page: Page) =>
-  page.locator("[data-rail-fact]").evaluateAll((els) =>
-    els.map((el) => ({ label: el.getAttribute("data-rail-fact"), value: el.querySelector("[data-rail-fact-value]")?.textContent ?? null })),
-  );
+  page
+    .locator("[data-rail-fact]")
+    .evaluateAll((els) =>
+      els.map((el) => ({ label: el.getAttribute("data-rail-fact"), value: el.querySelector("[data-rail-fact-value]")?.textContent ?? null })),
+    );
 
 /** Each fact as the page draws it: label, value, tooltip, warning, copy button. */
 const readFacts = (root: Page | Locator) =>
@@ -301,8 +301,7 @@ async function checkStream(page: Page, cp: Of<"stream">): Promise<void> {
 /* ---- This machine and its setup form -------------------------------------- */
 
 const texts = (page: Page, selector: string) => page.locator(selector).evaluateAll((els) => els.map((el) => el.textContent ?? ""));
-const attrs = (page: Page, selector: string, name: string) =>
-  page.locator(selector).evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
+const attrs = (page: Page, selector: string, name: string) => page.locator(selector).evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
 
 /** This machine on the Machines page for the core's host state: its two
  * switches (on or off, and whether they change here), the notice over them,
@@ -318,12 +317,8 @@ async function checkHostPanel(page: Page, cp: Of<"host-panel">): Promise<void> {
   // The notice's button (Sign In, Resume Sharing), when it has one.
   await expect.poll(() => texts(page, "[data-machine-notice] button")).toEqual(m.notice && m.noticeAction ? [m.noticeAction.label] : []);
   await expect.poll(() => attrs(page, "[data-machine-toggle]", "data-machine-toggle")).toEqual(m.toggles.map((t) => t.id));
-  await expect
-    .poll(() => attrs(page, "[data-machine-toggle] [role=switch]", "aria-checked"))
-    .toEqual(m.toggles.map((t) => String(t.on)));
-  await expect
-    .poll(() => attrs(page, "[data-host-permission]", "data-host-permission"))
-    .toEqual(p.permissionsTitle ? p.permissions.map((x) => x.id) : []);
+  await expect.poll(() => attrs(page, "[data-machine-toggle] [role=switch]", "aria-checked")).toEqual(m.toggles.map((t) => String(t.on)));
+  await expect.poll(() => attrs(page, "[data-host-permission]", "data-host-permission")).toEqual(p.permissionsTitle ? p.permissions.map((x) => x.id) : []);
   await expect(detail.locator("[data-machine-remove]")).toHaveCount(m.remove ? 1 : 0);
 }
 
@@ -382,19 +377,28 @@ async function checkAgents(page: Page, cp: Of<"agents">): Promise<void> {
   await expect.poll(read, { message: "the core's agent rows" }).toEqual(cp.rows.map((r) => ({ name: r.name, detail: r.detail, state: r.state })));
 }
 
-/* ---- The Machines page --------------------------------------------------------- */
+/* ---- Your computers ------------------------------------------------------------ */
 
+/** Each computer once, in the list of your computers (offline ones unfolded) or under the other signed-in devices. */
 async function checkMachines(page: Page, cp: Of<"machines">): Promise<void> {
   await page.evaluate(([rows, now]) => window.__cuaParity!.showMachines(rows, now), [cp.rows, cp.now] as const);
-  const read = () =>
-    page.locator("[data-machine-id]").evaluateAll((els) =>
-      els.map((el) => ({
-        id: el.getAttribute("data-machine-id"),
-        name: el.querySelector(".font-medium")?.textContent ?? null,
-        online: el.getAttribute("data-online") === "true",
-      })),
+  await navigate(page, "/spaces");
+  const unfold = page.locator('[data-tree-offline-toggle][aria-expanded="false"]');
+  const read = async () => {
+    if (await unfold.count()) await unfold.click();
+    return page.locator("[data-machine-id]").evaluateAll((els) =>
+      els
+        .map((el) => ({
+          id: el.getAttribute("data-machine-id"),
+          name: el.getAttribute("data-machine-name"),
+          online: el.getAttribute("data-online") === "true",
+        }))
+        .sort((a, b) => (a.id ?? "").localeCompare(b.id ?? "")),
     );
-  await expect.poll(read, { message: "the core's machine rows" }).toEqual(cp.merged.map((m) => ({ id: m.id, name: m.name, online: m.online })));
+  };
+  const want = cp.merged.map((m) => ({ id: m.id, name: m.name, online: m.online })).sort((a, b) => a.id.localeCompare(b.id));
+  await expect.poll(read, { message: "the core's machine rows" }).toEqual(want);
+  await navigate(page, "/spaces/computer/this-mac");
 }
 
 /* ---- Usage events ------------------------------------------------------------- */

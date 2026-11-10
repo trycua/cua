@@ -505,7 +505,41 @@ export const PAGES: PageSpec[] = [
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
-    items: ['Spaces', 'SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+    items: ['Spaces'],
+  },
+  {
+    slug: 'spaces/info',
+    title: 'Space records',
+    description: 'What a Space listing returns, and the Spaces tools `cua mcp` serves with the typed method that covers each.',
+    intro: '`SpaceInfo` is one row of a Spaces listing. `spaces_tool_methods` lists every Spaces tool with the method of `Spaces` or `Space` that covers it.',
+    items: ['SpaceInfo', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/network',
+    title: 'Network settings',
+    description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
+    intro:
+      '`Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+    items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
+    members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
+  },
+  {
+    slug: 'spaces/children',
+    title: 'Child Spaces',
+    description: 'Let a Space make Spaces of its own, set the budget of its tree and list orphans.',
+    intro:
+      '`set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
+    items: ['TreeBudget', 'TreeBudgetLimits', 'SpaceOrphan'],
+    members: [{ object: 'Spaces', title: 'Children', methods: ['set_children', 'tree_budget', 'set_tree_budget', 'orphans'] }],
+  },
+  {
+    slug: 'spaces/services',
+    title: 'Kept commands',
+    description: 'Keep a command running in a Space: restarts, health checks, start on boot and logs.',
+    intro:
+      'These calls keep a command running in a Space. See [Keep a command running](/spaces/guides/keep-a-command-running).',
+    items: ['SpaceServiceDef', 'SpaceServiceProbe', 'SpaceServiceInfo'],
+    members: [{ object: 'Space', title: 'Services', methods: ['put_service', 'kept_services', 'start_service', 'stop_service', 'restart_service', 'delete_service', 'service_logs'] }],
   },
   {
     slug: 'spaces/resize',
@@ -571,9 +605,9 @@ export const PAGES: PageSpec[] = [
     title: 'Relay registration',
     description: 'Register a Space with the relay so other devices reach it, and unregister it.',
     intro:
-      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that. `Spaces.relay_unregister_computer` takes one of your computers off the relay: its Spaces stay on it, detached, unless `delete_spaces` deletes them first.',
     items: ['SpaceRelayRegistration'],
-    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister', 'relay_unregister_computer'] }],
   },
   {
     slug: 'spaces/elastic',
@@ -714,12 +748,22 @@ export const PAGES: PageSpec[] = [
     ],
   },
   {
+    slug: 'spaces/presence',
+    title: 'Joining presence',
+    description: 'Join a Space\'s presence, or the presence of a window another Space shows, so each viewer is one avatar and one cursor.',
+    intro: '`join_presence` joins the Space\'s channel. `join_presence_for` takes the window being watched: a window another Space shows here, streamed straight from its origin, joins the origin\'s channel and this Space\'s and reads them as one. The types are on [Streams and presence](/cua-sdk/reference/spaces/streams).',
+    members: [
+      { object: 'Space', title: 'Joining presence', methods: ['join_presence', 'join_presence_for'] },
+    ],
+    items: [],
+  },
+  {
     slug: 'spaces/streams',
     title: 'Streams and presence',
     description: 'Media sessions of a Space and presence (who is connected, and their cursors).',
     intro: 'Open a media session for another client, stream frames to callbacks, and join presence. `PresenceView` and the `presence_cursor_art*` functions draw the cursors the same way in every Cua UI.',
     members: [
-      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows', 'join_presence'] },
+      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows'] },
     ],
     items: [
       'SpaceStreamSession',
@@ -883,6 +927,15 @@ export const PAGES: PageSpec[] = [
     items: ['Devices', 'DevicesSnapshot', 'RelayDevice', 'RelayAuditEvent', 'DeviceEnrollment'],
   },
   {
+    slug: 'spaces/default-space',
+    title: 'Default Space',
+    description: "The account's default Space, the order to try when it is offline, and where a new task runs now.",
+    intro:
+      'The relay keeps one default Space per account: where a new task runs unless you pick another. `Devices.spaces_settings` reads it, `set_spaces_settings` replaces it, and `resolve_default_space` says where a task goes now: the default when it is online, else the next online computer in `fallback` (while `fallback_on`), else this computer. A new computer is never made. `cua spaces default` is the same from the CLI.',
+    members: [{ object: 'Devices', title: 'Default Space', methods: ['spaces_settings', 'set_spaces_settings', 'resolve_default_space'] }],
+    items: ['SpacesSettings', 'DefaultSpace', 'DefaultSpaceStep'],
+  },
+  {
     slug: 'spaces/machine-health',
     title: 'Computer health',
     description: "A computer's health as its own cua daemon checks it: Local Network access, disk, virtualization, memory and permissions.",
@@ -903,8 +956,15 @@ export const PAGES: PageSpec[] = [
     slug: 'share',
     title: 'Shares',
     description: 'Links to a port, a file or a folder that open on your other signed-in devices.',
-    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
-    items: ['Share', 'ShareAccess', 'ShareCheck'],
+    intro: '`Cua.share(target, access, ttl_seconds, name)` makes a link the cua daemon owns and serves, `shares` lists them, `stop_share` and `stop_all_shares` end them and `check_share` opens a link once as its owner. `share_tcp` makes a public TCP address for a port in a Space (the `tcp-shares` experiment); `approve_share`, `deny_share`, `share_settings`, `set_share_settings` and `remove_share_edge` manage it. See [Share a link to anything you run](/cua-cli/guides/share-a-link).',
+    members: [
+      {
+        object: 'Cua',
+        title: 'Share methods',
+        methods: ['share', 'shares', 'stop_share', 'stop_all_shares', 'check_share', 'share_tcp', 'approve_share', 'deny_share', 'share_settings', 'set_share_settings', 'remove_share_edge'],
+      },
+    ],
+    items: ['Share', 'ShareAccess', 'ShareCheck', 'ShareLanding', 'ShareSettings'],
     modules: ['share'],
   },
   {
@@ -1900,10 +1960,10 @@ function catalogIndex(items: Array<Item & { href: string }>, page: string, rc: R
 }
 
 /** One section's body: intro, Python pointer, header, member sections, items. */
-function renderSection(p: Placed, rc: RenderContext, version: string, heading?: string): string[] {
+function renderSection(p: Placed, rc: RenderContext, heading?: string): string[] {
   const { spec } = p;
   const body: string[] = [...(spec.spaces ? ['<Callout title="Cua Spaces app export">', SPACES_NOTE, '</Callout>', ''] : []), spec.intro, '', ...pythonLine(spec)];
-  const header = readHeader(`cua-sdk/${spec.slug}.md`, { version });
+  const header = readHeader(`cua-sdk/${spec.slug}.md`);
   if (header) body.push(header, '');
   for (const m of p.members) {
     const home = rc.links.get(m.object.name);
@@ -1927,17 +1987,16 @@ function renderSection(p: Placed, rc: RenderContext, version: string, heading?: 
  * A page: its own section, then each section `MERGED` into it, under a `##`
  * heading of that section's title.
  */
-function renderObjectPage(parts: Array<[Placed, RenderContext]>, version: string): string {
+function renderObjectPage(parts: Array<[Placed, RenderContext]>): string {
   const [[home, homeRc], ...rest] = parts;
-  const body = renderSection(home, homeRc, version);
-  for (const [p, rc] of rest) body.push(`## ${p.spec.title}`, '', ...renderSection(p, rc, version, p.spec.title));
+  const body = renderSection(home, homeRc);
+  for (const [p, rc] of rest) body.push(`## ${p.spec.title}`, '', ...renderSection(p, rc, p.spec.title));
   const needsCallout = body.some((l) => l.includes('<Callout'));
   return renderPage({
     title: home.spec.title,
     description: home.spec.description,
     generator: GENERATOR,
     source: home.spec.spaces ? SPACES_SOURCE : SOURCE,
-    version,
     components: needsCallout ? ['Callout', 'Tabs'] : ['Tabs'],
     body: body.join('\n'),
   });
@@ -1996,13 +2055,13 @@ function raisedBy(variant: string, rc: RenderContext): string {
   return out.length && out.length <= 15 ? out.join(', ') : '';
 }
 
-function renderErrorsPage(api: SdkApi, rc: RenderContext, version: string, messages: Map<string, string>): string {
+function renderErrorsPage(api: SdkApi, rc: RenderContext, messages: Map<string, string>): string {
   const errors = api.enums.filter((e) => e.error);
   const body: string[] = [
     'Every fallible call raises (throws) one error type, `CuaError`. Its variant says what went wrong; its message carries the detail; its doc URL links to the variant\'s entry on this page (`https://cua.ai/docs/cua-sdk/reference/errors#<variant in lower case>`).',
     '',
   ];
-  const header = readHeader('cua-sdk/errors.md', { version });
+  const header = readHeader('cua-sdk/errors.md');
   if (header) body.push(header, '');
   for (const e of errors) {
     const first = e.variants[0]?.name ?? 'NotFound';
@@ -2039,7 +2098,6 @@ function renderErrorsPage(api: SdkApi, rc: RenderContext, version: string, messa
     description: 'Every error the Cua SDK raises: its variant, message, cause and fix.',
     generator: GENERATOR,
     source: SOURCE,
-    version,
     components: ['Tabs'],
     body: body.join('\n'),
   });
@@ -2049,7 +2107,7 @@ function renderErrorsPage(api: SdkApi, rc: RenderContext, version: string, messa
 // Types
 // ----------------------------------------------------------------------------
 
-function renderTypesPage(api: SdkApi, rc: RenderContext, version: string, renames: Renames): string {
+function renderTypesPage(api: SdkApi, rc: RenderContext, renames: Renames): string {
   const kotlinRenames = [...(renames.Kotlin ?? new Map())]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([from, to]) => `\`${from.split('.')[0]}.${to}\``)
@@ -2102,7 +2160,7 @@ function renderTypesPage(api: SdkApi, rc: RenderContext, version: string, rename
       '). In TypeScript, reserved words get a trailing underscore (`Sandbox.delete_()`). The signature tabs show the renamed form.',
     ''
   );
-  const header = readHeader('cua-sdk/types.md', { version });
+  const header = readHeader('cua-sdk/types.md');
   if (header) body.push(header, '');
   // Items a catalog page lists stay off this page; it links there instead.
   // So does the Cua Spaces app export: its pages list it.
@@ -2142,7 +2200,6 @@ function renderTypesPage(api: SdkApi, rc: RenderContext, version: string, rename
     description: 'How the SDK types map to each language, and every object, record, enum and function in one list.',
     generator: GENERATOR,
     source: SOURCE,
-    version,
     body: body.join('\n'),
   });
 }
@@ -2181,7 +2238,7 @@ export function navGroups(pages: PageSpec[]): Array<[string, string[]]> {
   return NAV.map(([label, slugs]): [string, string[]] => [label, slugs.filter(known)]).filter(([, slugs]) => slugs.length);
 }
 
-function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: SdkApi | null): string {
+function renderIndex(api: SdkApi, pages: PageSpec[], spaces?: SdkApi | null): string {
   const specs = new Map(pages.map((p) => [p.slug, p]));
   const body: string[] = [
     'The Cua SDK in Python, TypeScript, Swift, Kotlin and Rust, all generated from the Rust `cua-sdk` crate. Each page covers one module, with signatures in every language.',
@@ -2195,7 +2252,7 @@ function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: S
   }
   const row = (p: PageSpec) =>
     `| [${p.title}](${pageRoute(p.slug)}) | ${escapeTableCell(p.description)}${p.spaces ? ' *Cua Spaces app export.*' : ''} |`;
-  const header = readHeader('cua-sdk/index.md', { version });
+  const header = readHeader('cua-sdk/index.md');
   if (header) body.push(header, '');
   for (const [label, slugs] of navGroups(pages)) {
     body.push(`## ${label}`, '', '| Page | Covers |', '| --- | --- |');
@@ -2229,7 +2286,6 @@ function renderIndex(api: SdkApi, pages: PageSpec[], version: string, spaces?: S
     description: 'The Cua SDK reference: every object with its signature in Python, TypeScript, Swift, Kotlin and Rust.',
     generator: GENERATOR,
     source: SOURCE,
-    version,
     body: body.join('\n'),
   });
 }
@@ -2284,7 +2340,7 @@ export interface RenderOptions {
 }
 
 /** All generated files, keyed by absolute path. */
-export function renderAll(api: SdkApi, version: string, opts: RenderOptions = {}): Map<string, string> {
+export function renderAll(api: SdkApi, opts: RenderOptions = {}): Map<string, string> {
   const renames = opts.renames ?? loadRenames();
   const outputDir = opts.outputDir ?? REFERENCE_DIR;
   const pages = opts.pages ?? PAGES;
@@ -2315,14 +2371,14 @@ export function renderAll(api: SdkApi, version: string, opts: RenderOptions = {}
       .filter(([slugPath]) => (MERGED[slugPath] ?? slugPath) === out.slug)
       .sort(([a], [b]) => Number(a !== out.slug) - Number(b !== out.slug))
       .map(([slugPath, p]) => [p, rcFor(slugPath, p.spec.spaces)]);
-    files.set(pageFile(out.slug, outputs, outputDir), renderObjectPage(parts, version));
+    files.set(pageFile(out.slug, outputs, outputDir), renderObjectPage(parts));
   }
   for (const [from, to] of Object.entries(MERGED)) {
     if (pages.some((p) => p.slug === from) && !outputs.some((p) => p.slug === to)) throw new Error(`MERGED: ${from} joins ${to}, which is not a page`);
   }
-  files.set(path.join(outputDir, `${ERRORS_SLUG}.mdx`), renderErrorsPage(api, rcFor(ERRORS_SLUG), version, messages));
-  files.set(path.join(outputDir, `${TYPES_SLUG}.mdx`), renderTypesPage(api, rcFor(TYPES_SLUG), version, renames));
-  files.set(path.join(outputDir, 'index.mdx'), renderIndex(api, outputs, version, spaces));
+  files.set(path.join(outputDir, `${ERRORS_SLUG}.mdx`), renderErrorsPage(api, rcFor(ERRORS_SLUG), messages));
+  files.set(path.join(outputDir, `${TYPES_SLUG}.mdx`), renderTypesPage(api, rcFor(TYPES_SLUG), renames));
+  files.set(path.join(outputDir, 'index.mdx'), renderIndex(api, outputs, spaces));
   for (const [file, content] of navFiles(outputs, outputDir)) files.set(file, content);
   const unused = [...examples.keys()].filter((k) => !used.has(k));
   if (unused.length) {
@@ -2542,7 +2598,7 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
   if (api && spaces) return { api, spaces };
   const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
   const packages = [
-    ...(api || process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']),
+    ...(api || process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk-native']),
     ...(spaces || process.env.CUA_SPACES_FFI_LIBRARY ? [] : ['-p', 'cua-spaces-ffi']),
     ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen']),
   ];
@@ -2568,7 +2624,7 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
 export function loadApi(): SdkApi {
   if (process.env.CUA_SDK_API_JSON) return JSON.parse(fs.readFileSync(process.env.CUA_SDK_API_JSON, 'utf-8')) as SdkApi;
   const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
-  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
+  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk-native']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
   if (packages.length) {
     console.log(`Building ${packages.filter((p) => p !== '-p').join(', ')} (debug; UniFFI metadata is profile-independent)...`);
     execFileSync(cargo(), ['build', '--locked', ...packages], { cwd: CUA_ROOT, stdio: 'inherit' });
@@ -2605,8 +2661,7 @@ function main(): void {
     console.error('Regenerate the bindings (libs/cua/scripts/generate-uniffi-bindings.mjs) or fix the naming rules in cua-sdk.ts.');
     process.exit(1);
   }
-  const version = fs.readFileSync(path.join(CUA_ROOT, 'VERSION'), 'utf-8').trim();
-  const files = renderAll(api, version, { renames });
+  const files = renderAll(api, { renames });
   const pageIssues = pageProblems(files);
   if (pageIssues.length) {
     for (const p of pageIssues) console.error(`  ${p}`);

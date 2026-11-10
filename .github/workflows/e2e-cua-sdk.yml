@@ -6,11 +6,16 @@ name: "E2E: cua SDK"
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
 #                  the locally built reference images) + docs blocks: five
 #                  build jobs in parallel, then 4 test shards (see `jobs:`). A
-#                  docs edit that leaves every fenced code block as it was
-#                  skips the suite (the `changes` job,
+#                  docs edit that leaves every fenced code block as it was,
+#                  or a change to a crate outside the dependency closure of
+#                  what the suite builds (package graph, ci_graph.py), skips
+#                  the suite (the `changes` job,
 #                  .github/scripts/e2e_cua_sdk_scope.py).
 #   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
 #                  Cua Cloud has ended, so there is no live Fleet lane.
+#                  The five PR build jobs run too (no test shards): on main
+#                  they save their compiler caches, which every pull request
+#                  restores (see "Compiler caches" below).
 #   dispatch       any lane set.
 #
 # Lume needs a macOS host with nested virtualization, which hosted runners
@@ -53,11 +58,14 @@ on:
       - "docs/code-block-policy.json"
       # gVisor, the toolchain and cache steps, and the scope script the job runs.
       - "scripts/images/install-gvisor.sh"
+      - "scripts/ci/lib/docker-sccache.sh"
       - ".github/actions/linux-rust-prep/**"
       - ".github/actions/setup-protoc/**"
       - ".github/actions/rust-cache/**"
       - ".github/scripts/e2e_cua_sdk_scope.py"
+      - ".github/scripts/ci_graph.py"
       - ".github/workflows/e2e-cua-sdk.yml"
+  merge_group:
   schedule:
     - cron: "23 7 * * *"
   workflow_dispatch:
@@ -104,9 +112,15 @@ jobs:
   # job runs the suite when a block changed (or a tagged page came or went) and
   # skips it for prose. Every other trigger, and any doubt, runs it. When it is
   # skipped, the run still exists and succeeds, so `ci-gate` counts it as passed.
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   changes:
     name: "E2E: cua SDK / changes"
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -141,10 +155,19 @@ jobs:
   #
   # Before this, one job built everything in series (about 46 minutes of
   # builds) and then ran the three language halves in series (about 15).
+  #
+  # Compiler caches: each build job has its own sccache family (shared-key),
+  # because they compile different unit kinds (release SDK, debug CLI and
+  # wasm, static musl daemon plus fixtures, test binaries, the daemon inside
+  # the image builder's container). They used to share `libs-cua` with
+  # ci-cua-sdk.yml, whose entry held none of these units: 0 to 4% hits on
+  # three of the four jobs. This workflow does not run on main pushes, so the
+  # nightly runs the build jobs on main and saves the families; pull requests
+  # restore them (and never save).
   build-sdk:
     name: build / release SDK
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -166,7 +189,7 @@ jobs:
             libs/cua
             tests/e2e/cua-sdk/rust
             libs/cua-spacesd
-          key: cua-e2e
+          shared-key: cua-e2e-sdk
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -185,8 +208,8 @@ jobs:
 
   build-cli:
     name: build / debug CLI, TypeScript, wasm
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -212,7 +235,7 @@ jobs:
             libs/cua
             tests/e2e/cua-sdk/rust
             libs/cua-spacesd
-          key: cua-e2e
+          shared-key: cua-e2e-cli
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -233,8 +256,8 @@ jobs:
 
   build-fixtures:
     name: build / fixtures, static cua-spacesd
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -258,7 +281,8 @@ jobs:
             libs/cua
             tests/e2e/cua-sdk/rust
             libs/cua-spacesd
-          key: cua-e2e
+          shared-key: cua-e2e-fixtures
+          size: 6G
       # An image without cua-spacesd gets the static musl build injected, so
       # the suite tests this tree's daemon (same build as ci-cua-oci-spacesd).
       # The shards point CUA_SPACESD_STATIC at this file in their checkout.
@@ -285,8 +309,8 @@ jobs:
 
   build-rust-tests:
     name: build / Rust test binaries
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -308,7 +332,7 @@ jobs:
             libs/cua
             tests/e2e/cua-sdk/rust
             libs/cua-spacesd
-          key: cua-e2e
+          shared-key: cua-e2e-rust-tests
       # The Rust half's own build (its own target directory), done once here
       # instead of inside `cargo test` on every shard.
       - name: Build the Rust half's test binaries
@@ -326,8 +350,8 @@ jobs:
 
   build-images:
     name: build / reference images
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -343,7 +367,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       # cua-spacesd builds in a rust container and the three images on top,
-      # all in the runner's docker.
+      # all in the runner's docker. The container compiles through this
+      # job's sccache (scripts/ci/lib/docker-sccache.sh).
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+          shared-key: cua-e2e-images
       - name: Build the reference images
         run: tests/e2e/cua-sdk/ci-setup.sh --images --only images
       - name: Pack
@@ -358,9 +387,10 @@ jobs:
           if-no-files-found: error
 
   shard:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    # The nightly runs the build jobs only to save their caches; its suite is `live`.
+    if: ${{ !failure() && !cancelled() && needs.build-sdk.result == 'success' && needs.build-cli.result == 'success' && needs.build-fixtures.result == 'success' && needs.build-rust-tests.result == 'success' && needs.build-images.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name != 'schedule') && needs.quick.outputs.skip != 'true' }}
     name: tests (shard ${{ matrix.shard }})
-    needs: [build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
+    needs: [quick, build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -424,8 +454,8 @@ jobs:
   # unexpected skip, docs code-block coverage) and the matrix in the summary.
   matrix:
     name: matrix (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
-    needs: shard
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.shard.result != 'skipped' }}
+    needs: [quick, shard]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.shard.result != 'skipped' && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -477,7 +507,8 @@ jobs:
 
   live:
     name: nightly (cua-sandbox, qemu)
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'schedule') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'schedule')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -498,11 +529,16 @@ jobs:
             libs/cua
             tests/e2e/cua-sdk/rust
             libs/cua-spacesd
-          key: cua-e2e
+          # Restores the CLI build family; never saves, so it cannot replace
+          # the entry the PR build job needs with its own mix.
+          shared-key: cua-e2e-cli
+          save-if: "false"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
       # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::bindings::AXUIElementRef;
 use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};

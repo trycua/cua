@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

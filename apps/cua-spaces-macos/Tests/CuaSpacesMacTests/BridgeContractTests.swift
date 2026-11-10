@@ -115,10 +115,12 @@ struct BridgeContractTests {
         let agents = FakeAgentsTools()
         let drive = FakeDriveTools()
         let keys = FakeAgentKeysTools()
+        let github = FakeGithubTools()
         init(_ inner: FixtureSpacesBackend) { self.inner = inner }
 
         func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
             if tool.hasPrefix("agent_keys.") { return try await keys.agentsTool(tool, args) }
+            if tool.hasPrefix("github.") { return try await github.agentsTool(tool, args) }
             // An agent's home and its files: the Agents fake.
             let home = ["volume_read", "volume_history", "volume_restore"].contains(tool)
                 || (tool == "volume_ls" && (args["path"] as? String ?? "").hasPrefix("agents/"))
@@ -147,6 +149,30 @@ struct BridgeContractTests {
             try await inner.createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
         }
         func stopLink(id: String) async throws -> [String] { try await inner.stopLink(id: id) }
+        func approveLink(id: String, always: Bool) async throws -> ShareLink { try await inner.approveLink(id: id, always: always) }
+        func denyLink(id: String) async throws { try await inner.denyLink(id: id) }
+        func shareSettings() async throws -> ShareSettingsRow { try await inner.shareSettings() }
+        func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow { try await inner.setShareSettings(settings) }
+        func removeShareEdge() async throws -> [String] { try await inner.removeShareEdge() }
+        func network(id: String) async throws -> [String: Any] { try await inner.network(id: id) }
+        func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+            try await inner.setNetwork(id: id, word: word, allow: allow, deny: deny, widen: widen, tree: tree, via: via)
+        }
+        func networkLog(id: String) async throws -> [[String: Any]] { try await inner.networkLog(id: id) }
+        func ackNetworkNotice(id: String) async throws { try await inner.ackNetworkNotice(id: id) }
+        func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+            try await inner.setAccess(id: id, clipboard: clipboard, volume: volume)
+        }
+        func spaceTree() async throws -> [[String: Any]] { try await inner.spaceTree() }
+        func setChildren(id: String, enabled: Bool) async throws { try await inner.setChildren(id: id, enabled: enabled) }
+        func treeBudget(id: String) async throws -> [String: Any] { try await inner.treeBudget(id: id) }
+        func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+            try await inner.setTreeBudget(id: id, limits: limits)
+        }
+        func services(id: String) async throws -> [[String: Any]] { try await inner.services(id: id) }
+        func controlService(id: String, name: String, action: String) async throws {
+            try await inner.controlService(id: id, name: name, action: action)
+        }
         func hosts() async -> [AppSpaceHost] { await inner.hosts() }
         func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
         func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
@@ -232,10 +258,23 @@ struct BridgeContractTests {
             // The relay allowance before the sign-out below (signed out, it is null).
             // No request is waiting on the fixtures: an answer to none is left alone.
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]),
+            // The default Space reads from the fixture account (before the sign-out: signed out, each is null).
+            ("spaces.settings", [:]), ("spaces.setSettings", ["defaultSpace": NSNull(), "fallback": [String](), "fallbackOn": true]),
+            ("spaces.resolveDefault", [:]), ("session.signOut", [:]),
             ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
-            ("cli.plan", [:]),
+            ("links.approve", ["id": "share-pending"]), ("links.deny", ["id": "share-pending"]),
+            ("shares.settings.get", [:]), ("shares.edge.remove", [:]),
+            ("network.get", ["spaceId": space]),
+            ("network.set", ["spaceId": space, "network": "internet", "allow": [String](), "deny": [String]()]),
+            ("network.log", ["spaceId": space]), ("network.ackNotice", ["spaceId": space]),
+            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]), ("spaces.tree", [:]),
+            ("children.set", ["spaceId": space, "enabled": true]),
+            ("budget.get", ["spaceId": space]), ("budget.set", ["spaceId": space, "limits": ["maxSpaces": 4]]),
+            ("services.list", ["spaceId": space]), ("services.control", ["spaceId": space, "name": "web", "action": "restart"]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
+            ("shares.settings.set", ["settings": ["landing": "auto", "relayFallback": true, "dailyCapMib": 2048, "defaultAllow": [String](), "approveAgentShares": true, "alwaysAllowSpaces": [String](), "edgeConsent": [String](), "usedToday": 0]]),
+            ("cli.plan", [:]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
             ("spaces.setPower", ["id": space, "on": true]),
@@ -257,7 +296,11 @@ struct BridgeContractTests {
             ("agentKeys.list", [:]), ("agentKeys.check", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
             ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.rename", ["env": "ANTHROPIC_API_KEY", "label": "Work key"]),
             ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.copySignIn", ["on": false]),
+            ("github.status", [:]), ("github.rescan", [:]), ("github.use", ["host": "github.com", "login": "ada"]),
+            ("github.enable", ["host": "github.com", "enabled": false]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
             ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
             ("clouds.disconnect", ["provider": "aws", "deleteResources": false]),
@@ -267,7 +310,7 @@ struct BridgeContractTests {
             ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
-            ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
+            ("about.get", [:]), ("about.set", ["channel": "nightly"]), ("about.checkNow", [:]),
             ("update.get", [:]), ("update.install", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
@@ -278,7 +321,7 @@ struct BridgeContractTests {
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
             ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
-            ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
+            ("spaces.usage", ["spaceId": space]), ("spaces.reach", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
             ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
@@ -297,6 +340,10 @@ struct BridgeContractTests {
             ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 48]]]),
             ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
             ("startup.get", [:]),
+            // A test runner carries no Cua Driver: null and an empty list.
+            ("driver.status", [:]),
+            ("driver.permissions", [:]),
+            ("driver.list", [:]),
         ]
     }
 
@@ -306,6 +353,7 @@ struct BridgeContractTests {
         "session.signIn": "starts a device sign-in that waits for the browser",
         "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
         "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
+        "onboarding.reset": "FirstRunTests covers it (removes the state file)",
         "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
         "spaces.delete": "removes the fixture Space the later cases use",
         "spaces.deleteMany": "removes fixture Spaces the later cases use; BulkDeleteTests covers it",
@@ -317,6 +365,9 @@ struct BridgeContractTests {
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
         "agents.message": "as agents.start (the daemon's agent_message)",
+        "agents.recentThreads": "needs the daemon's agent_threads; WebUIHostTests checks it is unsupported without it",
+        "agents.threadHistory": "as agents.recentThreads (the daemon's agent_thread_read)",
+        "agents.computerSignIn": "needs the daemon's agent_sign_in and a Space to sign in on; ops/agent-sign-in.ts and the Rust remote_login tests cover it",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers
@@ -340,6 +391,13 @@ struct BridgeContractTests {
         "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
         "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
         "cli.install": "writes the CLI into a bin folder and a shell profile; CliBridgeTests covers it on temp folders",
+        "ci.overview": "runs the bundled cua ci app; CiRunnersTests covers the arguments and answers with a fake cua",
+        "ci.connect": "as ci.overview (it starts a GitHub install)",
+        "ci.connectToken": "as ci.overview (it makes a pool from a GitHub token)",
+        "ci.connectCancel": "as ci.overview",
+        "ci.repositories": "as ci.overview (it changes which repositories may run jobs)",
+        "ci.goal": "as ci.overview (it changes a cloud's goal)",
+        "ci.log": "as ci.overview",
         "thread.read": "answers the daemon's thread_read as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.post": "answers the daemon's thread_post as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.members": "answers the daemon's agent_members as-is (the page maps it); ThreadBridgeTests covers the arguments",
@@ -350,6 +408,12 @@ struct BridgeContractTests {
         "thread.joinCodeList": "answers the daemon's thread_join_code_list as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.joinCodeCancel": "answers the daemon's thread_join_code_cancel as-is (the page ignores it); ThreadBridgeTests covers the arguments",
         "thread.settings": "answers the daemon's thread_settings as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "driver.config": "needs the bundled Cua Driver running (embedded-driver-vm-check.sh); EmbeddedDriverTests covers the socket",
+        "driver.setConfig": "as driver.config",
+        "driver.test": "as driver.config (it moves the agent pointer)",
+        "driver.pause": "as driver.config (it stops the driver); EmbeddedDriverTests covers the marker path",
+        "driver.setup": "writes the coding agents' configs and restarts the driver",
+        "driver.setApp": "as driver.setup, for one agent",
     ]
 
     static func shapes() throws -> [String: Any] {
@@ -437,7 +501,7 @@ struct BridgeContractTests {
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
-                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil)
+                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil, origin: nil)
         let png = WebUIBridge.dataURL(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]))
         return try [
             ("teleport.catalog", [BridgeValue.encode(entry)]),
@@ -571,5 +635,18 @@ enum JSONShape {
             }
         }
         return errors
+    }
+}
+
+/// The core reads a failed create's fix action in kebab case; the page gets it that way.
+@Suite("Bridge values")
+struct BridgeValueFixTests {
+    @Test("a fix action crosses the bridge in the case the core reads")
+    func fixActionIsKebabCase() {
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let out = BridgeValue.encode(fix) as? [String: Any]
+        #expect(out?["action"] as? String == "copy-command")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
     }
 }

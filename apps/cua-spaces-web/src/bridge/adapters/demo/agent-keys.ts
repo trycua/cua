@@ -23,6 +23,8 @@ export interface DemoKeyStore {
   uses: Record<string, AgentKeyUse>;
   /** Variables the provider refuses: a check marks them `expired` (needs a reconnect). `?demo=rejected-key`. */
   rejected: string[];
+  /** "Copy my sign-in to my other computers" (off unless turned on). */
+  copySignIn?: boolean;
 }
 
 const DAY = 24 * 3600_000;
@@ -32,15 +34,44 @@ const SEVERAL = (now: () => number): AgentKeyInfo[] => [
   { provider: "anthropic", env: "ANTHROPIC_API_KEY", last4: "a91c", addedMs: now() - 9 * DAY },
   { provider: "openrouter", env: "OPENROUTER_API_KEY", last4: "cdef", addedMs: now() - 4 * DAY },
   { provider: "deepseek", env: "DEEPSEEK_API_KEY", last4: "9c2e", addedMs: now() - 2 * DAY },
-  { provider: "custom", env: "CUSTOM_ENDPOINT_API_KEY", last4: "", addedMs: now() - DAY, fields: { base_url: "http://192.168.1.20:1234/v1", model: "qwen3-coder", wire: "openai-chat" } },
+  {
+    provider: "custom",
+    env: "CUSTOM_ENDPOINT_API_KEY",
+    last4: "",
+    addedMs: now() - DAY,
+    fields: { base_url: "http://192.168.1.20:1234/v1", model: "qwen3-coder", wire: "openai-chat" },
+  },
 ];
 
-export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none", keys?: "none" | "several", chatgpt?: boolean): DemoKeyStore => ({
+/** `?demo=accounts`: three Claude sign-ins and one ChatGPT sign-in, and nothing for Hermes or OpenCode. */
+export const demoAccountKeys = (now: () => number): AgentKeyInfo[] => [
+  { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() - 9 * DAY, label: "Signed in as ada@example.com (Claude Max)" },
+  { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "kwork", last4: "", addedMs: now() - 5 * DAY, label: "work Max" },
+  { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "kside", last4: "", addedMs: now() - 2 * DAY, label: "side project Max" },
+  { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() - 3 * DAY, label: "Signed in with ChatGPT" },
+];
+
+export const demoKeyStore = (
+  now: () => number,
+  rejected: string[] = [],
+  claude?: "signed-in" | "expired" | "none",
+  keys?: "none" | "several",
+  chatgpt?: boolean,
+): DemoKeyStore => ({
   keys: [
     ...(keys === "none" ? [] : keys === "several" ? SEVERAL(now) : [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * DAY }]),
     // The sign-in imported from Claude Code (`?demo=claude-signed-in`), or one that ran out (`?demo=claude-expired`).
     ...(claude === "signed-in" || claude === "expired"
-      ? [{ provider: "other" as const, env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() - 26 * 3600_000, label: "Signed in as ada@example.com (Claude Max)", ...(claude === "expired" ? { expired: true } : {}) }]
+      ? [
+          {
+            provider: "other" as const,
+            env: "CLAUDE_CODE_OAUTH_TOKEN",
+            last4: "",
+            addedMs: now() - 26 * 3600_000,
+            label: "Signed in as ada@example.com (Claude Max)",
+            ...(claude === "expired" ? { expired: true } : {}),
+          },
+        ]
       : []),
     // The ChatGPT sign-in made for Codex (`?demo=chatgpt-signed-in`): Codex's alone, never an API key.
     ...(chatgpt ? [{ provider: "other" as const, env: "CODEX_AUTH_JSON", last4: "", addedMs: now() - 3 * 3600_000, label: "Signed in with ChatGPT" }] : []),
@@ -59,9 +90,26 @@ export function demoAgentKeysHandlers({
   stepMs: number;
   now: () => number;
   store?: DemoKeyStore;
-}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.use" | "agentKeys.shell" | "agentKeys.fromShell"> {
+}): DemoHandlers<
+  | "agentKeys.list"
+  | "agentKeys.check"
+  | "agentKeys.set"
+  | "agentKeys.remove"
+  | "agentKeys.use"
+  | "agentKeys.rename"
+  | "agentKeys.shell"
+  | "agentKeys.fromShell"
+  | "agentKeys.copySignIn"
+> {
   const keys = () => store.keys;
-  const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}), providers: PROVIDERS, available: true, unavailable: null });
+  const report = (): AgentKeysReport => ({
+    keys: keys().map((k) => ({ ...k })),
+    ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}),
+    providers: PROVIDERS,
+    available: true,
+    unavailable: null,
+    copySignIn: store.copySignIn ?? false,
+  });
   return {
     "agentKeys.list": () => report(),
     // The providers answer: the keys they refuse need a reconnect, and a key saved again is not refused.
@@ -87,14 +135,37 @@ export function demoAgentKeysHandlers({
       if (label && (label.length > 40 || /[\u0000-\u001f]/.test(label))) throw new HostError("a key's name must be one line of at most 40 characters");
       store.keys = [
         ...keys().filter((k) => !(k.env === name && !k.slot && !slot)),
-        { provider: providerOf(name), env: name, ...(slot ? { slot } : {}), last4: v.length >= 12 ? v.slice(-4) : "", addedMs: now(), ...(label?.trim() ? { label: label.trim() } : {}), ...(region ? { region } : {}), ...(fields && Object.keys(fields).length ? { fields } : {}) },
+        {
+          provider: providerOf(name),
+          env: name,
+          ...(slot ? { slot } : {}),
+          last4: v.length >= 12 ? v.slice(-4) : "",
+          addedMs: now(),
+          ...(label?.trim() ? { label: label.trim() } : {}),
+          ...(region ? { region } : {}),
+          ...(fields && Object.keys(fields).length ? { fields } : {}),
+        },
       ].sort((a, b) => a.env.localeCompare(b.env) || (a.slot ?? "").localeCompare(b.slot ?? ""));
+      return report();
+    },
+    "agentKeys.rename": async ({ env, slot, label }) => {
+      await wait(stepMs / 2);
+      const name = label.trim();
+      if (!name || name.length > 40 || /[\u0000-\u001f]/.test(name)) throw new HostError("a key's name must be one line of at most 40 characters");
+      const k = keys().find((x) => x.env === env && (x.slot ?? undefined) === (slot ?? undefined));
+      if (!k) throw new HostError("that key isn't saved");
+      store.keys = keys().map((x) => (x === k ? { ...x, label: name } : x));
       return report();
     },
     // The demo's shell exports an Anthropic key (`?demo=…` none needed): Use it saves a copy.
     "agentKeys.shell": async () => {
       await wait(stepMs);
       return { names: ["ANTHROPIC_API_KEY"] };
+    },
+    "agentKeys.copySignIn": async ({ on }) => {
+      await wait(stepMs / 2);
+      store.copySignIn = on;
+      return report();
     },
     "agentKeys.fromShell": async ({ env }) => {
       if (env !== "ANTHROPIC_API_KEY") throw new HostError(`${env} isn't set in your shell`);
@@ -117,14 +188,22 @@ export function demoAgentKeysHandlers({
     // Which credential an app uses: one that is saved and that the app can read (the demo knows the apps that take any provider).
     "agentKeys.use": async ({ app, env, slot }) => {
       await wait(stepMs / 2);
-      if (!["hermes", "opencode", "goose", "pi", "openclaw"].includes(app)) throw new HostError(`${app} reads one fixed sign-in; there is nothing to choose`);
+      const anyProvider = ["hermes", "opencode", "goose", "pi", "openclaw"].includes(app);
+      if (!anyProvider && !["claude-code", "codex", "openai-codex"].includes(app))
+        throw new HostError(`${app} reads one fixed sign-in; there is nothing to choose`);
       if (!env) {
         delete store.uses[app];
         return report();
       }
       const k = keys().find((x) => x.env === env && (x.slot ?? undefined) === (slot ?? undefined) && !x.expired);
-      if (!k || env === "CLAUDE_CODE_OAUTH_TOKEN" || env === "CODEX_AUTH_JSON") throw new HostError("that key isn't saved, or has stopped working");
-      store.uses[app] = { provider: k.provider, env: k.env, ...(k.slot ? { slot: k.slot } : {}) };
+      const reads: Record<string, string[]> = {
+        "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        codex: ["CODEX_AUTH_JSON", "OPENAI_API_KEY"],
+        "openai-codex": ["CODEX_AUTH_JSON", "OPENAI_API_KEY"],
+      };
+      if (!k || (anyProvider ? env === "CLAUDE_CODE_OAUTH_TOKEN" || env === "CODEX_AUTH_JSON" : !reads[app]!.includes(env)))
+        throw new HostError("that key isn't saved, or has stopped working");
+      store.uses[app === "openai-codex" ? "codex" : app] = { provider: k.provider, env: k.env, ...(k.slot ? { slot: k.slot } : {}) };
       return report();
     },
   };

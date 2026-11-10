@@ -4,7 +4,16 @@
 import { AppWindowIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { useDesktopCover, useSettings, useSpaces, useSpaceThumbnail, type DesktopCover, type MachineAccessNotice, type SpaceOs, type StreamPhase } from "@/bridge";
+import {
+  useDesktopCover,
+  useSettings,
+  useSpaces,
+  useSpaceThumbnail,
+  type DesktopCover,
+  type MachineAccessNotice,
+  type SpaceOs,
+  type StreamPhase,
+} from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -66,6 +75,8 @@ export interface StreamSurfaceProps {
   windowName?: string | null;
   /** Pointer and keys go to the Space (default). False only shows it (Watch). */
   interactive?: boolean;
+  /** The person may only watch this Space (shared as Can view): it says so instead of offering control. */
+  viewOnly?: boolean;
 }
 
 /** How long the desktop may take to send its first picture. After that the
@@ -102,7 +113,21 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
 const SURFACE_RADIUS = 8;
 const SURFACE_BORDER = 0;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true }: StreamSurfaceProps) {
+export function StreamSurface({
+  spaceId,
+  os,
+  aspectRatio = 16 / 10,
+  canStream,
+  previewText,
+  access,
+  onAccessAction,
+  children,
+  className,
+  windowId,
+  windowName,
+  interactive = true,
+  viewOnly = false,
+}: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -123,7 +148,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     attempt,
     spaceId,
     tier: "full",
-    interactive,
+    interactive: interactive && !viewOnly,
     radius: SURFACE_RADIUS,
     inset: SURFACE_BORDER,
     os,
@@ -192,7 +217,9 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
               <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
               {canStream ? (
                 <>
-                  <p className="text-[13px] text-muted-foreground">{windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}</p>
+                  <p className="text-[13px] text-muted-foreground">
+                    {windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}
+                  </p>
                   <Button className="mt-4" onClick={() => void open()}>
                     <AppWindowIcon /> Open window
                   </Button>
@@ -206,7 +233,15 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
           )}
         </div>
       )}
-      {slot?.phase === "live" && slot.focused ? (
+      {slot?.phase === "live" && viewOnly ? (
+        <p
+          data-view-only=""
+          data-video-hole=""
+          className="glass absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-lg px-3 py-1 text-xs text-muted-foreground shadow-float"
+        >
+          View only
+        </p>
+      ) : slot?.phase === "live" && slot.focused ? (
         // While the desktop has the keyboard: how to give it back, over the
         // video's bottom edge. The host cuts the video out under it
         // (`data-video-hole`), so no strip under the stream is needed.
@@ -268,7 +303,10 @@ function DesktopCoverView({
 }) {
   const dark = Boolean(thumbnail) || cover.kind !== "status";
   return (
-    <div data-desktop-cover={cover.kind} className={cn("absolute inset-0 flex flex-col items-center justify-center px-6 text-center", dark && "dark text-white")}>
+    <div
+      data-desktop-cover={cover.kind}
+      className={cn("absolute inset-0 flex flex-col items-center justify-center px-6 text-center", dark && "dark text-white")}
+    >
       {thumbnail ? (
         <>
           <img data-cover-thumbnail="" src={thumbnail} alt="" aria-hidden className="absolute inset-0 size-full scale-110 object-cover blur-2xl" />

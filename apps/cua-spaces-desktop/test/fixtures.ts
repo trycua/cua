@@ -21,7 +21,21 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { BulkResult, LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type {
+  BulkResult,
+  LocalRuntimes,
+  MachineHealthReport,
+  NetworkEventJson,
+  ServiceJson,
+  ShareLinkRow,
+  ShareSettingsRow,
+  SpaceNetworkJson,
+  SpaceThumbnailData,
+  SpacesBackend,
+  TreeBudgetJson,
+  TreeBudgetLimitsJson,
+  TreeNodeJson,
+} from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -38,6 +52,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
     imageDigest: undefined,
     kind: undefined,
     arch: undefined,
+    hidden: false,
     reachable: true,
     error: undefined,
     host: undefined,
@@ -65,8 +80,25 @@ export function sampleRows(n: Native): AppSpaceRow[] {
       power: "suspend",
       powerState: "running",
     }),
-    row({ id: "direct:builder", name: "builder", provider: "direct", features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z", os: n.AppSpaceOs.Linux, osName: "Arch Linux", reachable: false, error: "timed out" }),
-    row({ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", addedAt: "2026-09-23T08:00:00Z", os: n.AppSpaceOs.Windows, osName: "Windows" }),
+    row({
+      id: "direct:builder",
+      name: "builder",
+      provider: "direct",
+      features: ["desktop_stream"],
+      addedAt: "2026-09-24T08:00:00Z",
+      os: n.AppSpaceOs.Linux,
+      osName: "Arch Linux",
+      reachable: false,
+      error: "timed out",
+    }),
+    row({
+      id: "direct:10.0.0.5:3211",
+      name: "10.0.0.5:3211",
+      provider: "direct",
+      addedAt: "2026-09-23T08:00:00Z",
+      os: n.AppSpaceOs.Windows,
+      osName: "Windows",
+    }),
   ];
 }
 
@@ -177,13 +209,18 @@ export class FixtureSpacesBackend implements SpacesBackend {
     return h ?? { cuaVersion: "0.4.1", checks: [] };
   }
   readonly unregistered: string[] = [];
-  async relayUnregister(machineId: string) {
+  /** The machines taken off the relay with the Spaces made on them deleted too. */
+  readonly unregisteredWithSpaces: string[] = [];
+  async relayUnregister(machineId: string, deleteSpaces = false) {
     this.unregistered.push(machineId);
+    if (deleteSpaces) this.unregisteredWithSpaces.push(machineId);
     this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
   }
   async setPower(id: string, on: boolean) {
     this.power.push({ id, on });
-    this.rowsNow = this.rowsNow.map((r) => (r.id === id ? { ...r, powerState: on ? "running" : r.power === "stop" ? "stopped" : "suspended", reachable: on } : r));
+    this.rowsNow = this.rowsNow.map((r) =>
+      r.id === id ? { ...r, powerState: on ? "running" : r.power === "stop" ? "stopped" : "suspended", reachable: on } : r,
+    );
   }
   async localRuntimes(): Promise<LocalRuntimes> {
     return { ready: ["docker"], details: new Map([["lume", "not installed"]]) };
@@ -209,7 +246,17 @@ export class FixtureSpacesBackend implements SpacesBackend {
   }
   async runtimeCheckPath(kind: string, path: string) {
     const docker = kind === "container" && path === "/usr/local/bin/docker";
-    return { path, exists: docker, executable: docker, tool: docker ? "docker" : undefined, name: docker ? "Docker" : undefined, version: docker ? "27.3.1" : undefined, minVersion: undefined, expected: ["Docker", "Podman"], guests: undefined };
+    return {
+      path,
+      exists: docker,
+      executable: docker,
+      tool: docker ? "docker" : undefined,
+      name: docker ? "Docker" : undefined,
+      version: docker ? "27.3.1" : undefined,
+      minVersion: undefined,
+      expected: ["Docker", "Podman"],
+      guests: undefined,
+    };
   }
   async setRuntimeSetting(key: string, value: string | null) {
     if (value === null) this.runtimeSettings.delete(key);
@@ -314,17 +361,137 @@ export class FixtureSpacesBackend implements SpacesBackend {
       owner: "ada@example.com",
       createdAtUnix: 1_000,
       expiresAtUnix: ttlSeconds ? 1_000 + ttlSeconds : null,
+      tcpConnectWith: null,
+      tcpAddress: null,
+      route: null,
+      routeLine: null,
+      allow: [],
+      waiting: null,
+      waitingText: null,
     };
     this.linksNow = [row, ...this.linksNow];
     return row;
   }
+  async approveLink(id: string, _always: boolean) {
+    const row: ShareLinkRow = this.linksNow.find((l) => l.id === id) ?? {
+      id,
+      url: "tcp://tcp.m.relay.example:26001",
+      name: null,
+      access: "public",
+      kind: "space_port",
+      target: "space:dev:25565",
+      owner: "ada@example.com",
+      createdAtUnix: 1_000,
+      expiresAtUnix: 1_000 + 86_400,
+      tcpConnectWith: "tcp.m.relay.example:26001",
+      tcpAddress: "tcp.m.relay.example:26001",
+      route: "relay",
+      routeLine: "Through Cua",
+      allow: [],
+      waiting: null,
+      waitingText: null,
+    };
+    return { ...row, waiting: null, waitingText: null };
+  }
+  async denyLink(_id: string) {}
+  shareSettingsNow: ShareSettingsRow = {
+    landing: "auto",
+    relayFallback: true,
+    dailyCapMib: 2048,
+    defaultAllow: [],
+    approveAgentShares: true,
+    alwaysAllowSpaces: [],
+    edgeConsent: [],
+    usedToday: 0,
+    edgeCloud: null,
+    edgeHost: null,
+    edgeMonthlyUsd: null,
+  };
+  async shareSettings() {
+    return { ...this.shareSettingsNow };
+  }
+  async setShareSettings(s: ShareSettingsRow) {
+    const cur = this.shareSettingsNow;
+    this.shareSettingsNow = { ...s, usedToday: cur.usedToday, edgeCloud: cur.edgeCloud, edgeHost: cur.edgeHost, edgeMonthlyUsd: cur.edgeMonthlyUsd };
+    return { ...this.shareSettingsNow };
+  }
+  async removeShareEdge() {
+    return [] as string[];
+  }
+  async network(_id: string): Promise<SpaceNetworkJson> {
+    return {
+      preset: "internet",
+      localhostPorts: [],
+      allLocalhostPorts: false,
+      allow: [],
+      deny: [],
+      customBase: "",
+      widenedBy: null,
+      summary: "Internet only",
+      widenings: [],
+      enforcement: "enforced",
+      point: "the host firewall",
+      note: null,
+      parent: null,
+      root: null,
+      alwaysBlocked: [],
+      noticePending: false,
+      via: null,
+      topologyJson: "",
+      clipboard: "viewing",
+      volume: "own",
+    };
+  }
+  async setNetwork(_id: string, _word: string, _allow: string[], _deny: string[], _widen: boolean, _tree: boolean) {
+    return "now" as const;
+  }
+  async networkLog(_id: string): Promise<NetworkEventJson[]> {
+    return [];
+  }
+  async ackNetworkNotice(_id: string) {}
+  /** The Spaces whose exit is this computer, as `exitsThroughThisMachine` reports them. */
+  exitsNow: string[] = [];
+  async exitsThroughThisMachine() {
+    return [...this.exitsNow];
+  }
+  async setAccess(_id: string, _clipboard: string | null, _volume: string | null) {}
+  async spaceTree(): Promise<TreeNodeJson[]> {
+    return [{ id: "local:aurora", parent: null, depth: 0, children: false, home: null }];
+  }
+  async setChildren(_id: string, _enabled: boolean) {}
+  async treeBudget(id: string): Promise<TreeBudgetJson> {
+    return {
+      root: id,
+      set: {},
+      maxSpaces: 8,
+      maxVcpus: 16,
+      maxMemoryMb: 32768,
+      usdPerHour: 5,
+      usdTotal: null,
+      spaces: 1,
+      vcpus: 2,
+      memoryMb: 4096,
+      usdPerHourUsed: 0,
+      usdSpent: 0,
+    };
+  }
+  async setTreeBudget(id: string, limits: TreeBudgetLimitsJson): Promise<TreeBudgetJson> {
+    return { ...(await this.treeBudget(id)), set: limits };
+  }
+  async services(_id: string): Promise<ServiceJson[]> {
+    return [];
+  }
+  async controlService(_id: string, _name: string, _action: string) {}
   async stopLink(id: string) {
     const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
     this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));
     return gone;
   }
   async unshare(id: string, who: string) {
-    this.sharesNow.set(id, (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who));
+    this.sharesNow.set(
+      id,
+      (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who),
+    );
     return this.shares(id);
   }
   /** The daemon's tool calls, in order. */
@@ -348,6 +515,7 @@ export class FixtureSpacesBackend implements SpacesBackend {
         { image: "windows", kind: "vm", supported: false, reason: "Windows on AWS is not offered yet." },
       ],
     });
+    if (tool === "spaces.reach") return { space: args.space, reachable: true, listed_offline: false, reason: null };
     if (tool === "cloud_status") return { default_on: this.cloudConnected ? "aws" : "local", providers: [aws(this.cloudConnected)] };
     if (tool === "cloud_test") return { provider: "aws", ok: true, account: "1", checks: [{ name: "credentials", ok: true, detail: "account 1" }] };
     if (tool === "cloud_connect") {
@@ -459,15 +627,26 @@ export function fixtureDevices(now = BigInt(Math.floor(Date.now() / 1000))): Dev
   });
   const snapshot: DevicesSnapshot = {
     localDeviceId: "dev_mac",
-    devices: [
-      device("dev_mac", "MacBook Pro", "enrolled", "macos", now + 24n * day, now - 60n, true),
-      device("dev_work", "Work laptop", "pending", "windows"),
-    ],
+    devices: [device("dev_mac", "MacBook Pro", "enrolled", "macos", now + 24n * day, now - 60n, true), device("dev_work", "Work laptop", "pending", "windows")],
     enforceAfter: now - day,
     audit: [{ ts: now - 600n, kind: "machine_access", device: "dev_mac", machine: "m1", subject: undefined, detail: "owner" }],
     machineNames: new Map([["m1", "studio-mac"]]),
     machines: [
-      { id: "m1", spaceId: "relay:m1", name: "studio-mac", ownerId: "me", ownerEmail: undefined, role: "owner", online: true, sharing: true, version: "0.5.0", url: "", allow: [], clients: [], confirmed: true },
+      {
+        id: "m1",
+        spaceId: "relay:m1",
+        name: "studio-mac",
+        ownerId: "me",
+        ownerEmail: undefined,
+        role: "owner",
+        online: true,
+        sharing: true,
+        version: "0.5.0",
+        url: "",
+        allow: [],
+        clients: [],
+        confirmed: true,
+      },
     ],
   };
   return { snapshot: async () => snapshot } as unknown as DevicesLike;

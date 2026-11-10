@@ -86,13 +86,17 @@ fi
 icons="$here/../cua-spaces/src-tauri/icons"
 # CUA_VZ_BIN, CUA_MICROVM_INIT_BIN: the microVM monitor (cua-vz) and the
 # static aarch64 guest init to bundle (build-release.sh builds both).
+# CUA_NETGW_BIN: the microVMs' network gateway (cua-netgw) to bundle
+# (libs/cua/netgw/build.sh).
 # CUA_SPACESD_STATIC_DIR: a directory of static Linux cua-spacesd builds
 # (cua-spacesd-linux-aarch64, cua-spacesd-linux-x86_64) to bundle: the
 # daemon injects one into OCI images that carry none (the release workflow
 # fetches them from the pinned cua-spacesd release).
 # CUA_CLI_BIN: the `cua` to bundle (default: the Cua Spaces build of `cua`,
 # `cargo build --release -p cua-spaces-cli`, when present).
-cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/release/cua-spaces-cli}"
+cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/${CUA_CARGO_PROFILE_DIR:-release}/cua-spaces-cli}"
+# CUA_CARGO_PROFILE_DIR: the Cargo profile directory of that build (default
+# release; dev-fast for install-local.sh --development).
 # CUA_SDK_DYLIB: another build of the library (a debug build for the
 # development Keyvault path, which a release library refuses).
 dylib="${CUA_SDK_DYLIB:-$here/../../libs/cua/swift/lib/libcua_sdk.dylib}"
@@ -247,6 +251,18 @@ if [ "$channel" = local ]; then
   /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$helper_plist"
   plutil -lint "$helper_plist" >/dev/null
 fi
+# Cua Driver's own login item (CUA-3638): `CuaSpacesMac --driver-helper run`
+# keeps Contents/Helpers/cua-driver running for this Mac's coding agents,
+# whether or not this Mac is set up or shared. Named after the helper's label
+# (com.trycua.spaces.driver, com.trycua.spaces.local.driver).
+driver_label="${helper_label%.helper}.driver"
+driver_plist="$app/Contents/Library/LaunchAgents/$driver_label.plist"
+cp "$here/Support/Helper/com.trycua.spaces.driver.plist" "$driver_plist"
+if [ "$channel" = local ]; then
+  /usr/libexec/PlistBuddy -c "Set :Label $driver_label" "$driver_plist"
+  /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$driver_plist"
+  plutil -lint "$driver_plist" >/dev/null
+fi
 [ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
 
 # Release: symbols go to dSYMs, not into the download (about 40% of each
@@ -284,6 +300,11 @@ if [ -n "${CUA_VZ_BIN:-}" ] && [ -n "${CUA_MICROVM_INIT_BIN:-}" ]; then
   codesign -s - -f -i ai.cua.vz --entitlements "$here/../../libs/cua/vz/cua-vz.entitlements" \
     "$app/Contents/MacOS/cua-vz"
   cp "$CUA_MICROVM_INIT_BIN" "$app/Contents/Resources/cua-microvm-init"
+fi
+# The network gateway among the executables (found next to `cua`).
+if [ -n "${CUA_NETGW_BIN:-}" ]; then
+  cp "$CUA_NETGW_BIN" "$app/Contents/MacOS/cua-netgw"
+  codesign -s - -f -i ai.cua.netgw "$app/Contents/MacOS/cua-netgw"
 fi
 # The static cua-spacesd builds among the resources (Linux executables, data
 # to the bundle).

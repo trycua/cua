@@ -47,10 +47,7 @@ import { useT } from "../i18n";
  *  finished agent stops saying "Running" while you are looking at it. */
 const POLL_MS = 4000;
 
-type Load =
-  | { kind: "loading" }
-  | { kind: "ready"; runs: SpaceAgentRun[] }
-  | { kind: "failed"; message: string };
+type Load = { kind: "loading" } | { kind: "ready"; runs: SpaceAgentRun[] } | { kind: "failed"; message: string };
 
 export function SpaceAgentList({
   spaceId,

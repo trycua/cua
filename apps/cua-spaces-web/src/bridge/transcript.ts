@@ -48,7 +48,10 @@ const SUMMARY_MAX = 160;
 export function oneLine(text: string, max = SUMMARY_MAX): string {
   const flat = text.split(/\s+/).filter(Boolean).join(" ");
   if ([...flat].length <= max) return flat;
-  return `${[...flat].slice(0, max - 1).join("").trimEnd()}…`;
+  return `${[...flat]
+    .slice(0, max - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 function stepsLabel(steps: number, errors: number): string {
@@ -56,7 +59,11 @@ function stepsLabel(steps: number, errors: number): string {
   return errors === 0 ? s : errors === 1 ? `${s}, 1 error` : `${s}, ${errors} errors`;
 }
 
-const firstLine = (t?: string) => t?.split("\n").map((l) => l.trim()).find(Boolean);
+const firstLine = (t?: string) =>
+  t
+    ?.split("\n")
+    .map((l) => l.trim())
+    .find(Boolean);
 
 /** The event's one line when the writer gave none (`AgentEvent::summary`). */
 export function eventSummary(e: AgentEvent): string | undefined {

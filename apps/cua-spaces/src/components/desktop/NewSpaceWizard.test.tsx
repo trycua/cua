@@ -39,7 +39,14 @@ const AWS: ConnectedCloud = {
   ttlHours: 8,
   offers: [
     { image: "linux", kind: "container", supported: true, reason: "", machineType: "t4g.medium", usdPerHour: 0.0368 },
-    { image: "windows", kind: "vm", supported: false, reason: "Windows on AWS is not offered yet.", machineType: "", usdPerHour: 0 },
+    {
+      image: "windows",
+      kind: "vm",
+      supported: false,
+      reason: "Windows on AWS is not offered yet.",
+      machineType: "",
+      usdPerHour: 0,
+    },
   ],
 };
 
@@ -51,8 +58,6 @@ const entries = () =>
   within(runOnMenu())
     .getAllByRole("option")
     .map((o) => `${o.textContent}${(o as HTMLOptionElement).disabled ? " (disabled)" : ""}`);
-const YOUR_CLOUD = { cuaVolume: false, yourCloud: true, sharing: false };
-const NO_CLOUD = { cuaVolume: false, yourCloud: false, sharing: false };
 const MINI: SpaceHost = { id: "m-mini", name: "Mac mini", via: "relay", online: true, os: "macos", limits: [] };
 const STUDIO: SpaceHost = { id: "m-studio", name: "Studio", via: "relay", online: false, os: "", limits: [] };
 const suggestionRefs = () =>
@@ -107,9 +112,7 @@ describe("the image field", () => {
     renderWizard();
     fireEvent.change(imageField(), { target: { value: "macos" } });
     // Every published macOS image in the catalog, in catalog order (tiers appear once published).
-    expect(suggestionRefs()).toEqual(
-      list.images.filter((i) => i.published && i.os === "macos").map((i) => i.ref),
-    );
+    expect(suggestionRefs()).toEqual(list.images.filter((i) => i.published && i.os === "macos").map((i) => i.ref));
     fireEvent.keyDown(imageField(), { key: "ArrowDown" });
     fireEvent.keyDown(imageField(), { key: "ArrowDown" });
     fireEvent.keyDown(imageField(), { key: "ArrowUp" });
@@ -159,16 +162,14 @@ describe("the image field", () => {
 describe("New Space wizard", () => {
   it("walks System, Resources, Options, Summary and creates a local VM with its resources", () => {
     const { onCreate } = renderWizard({ localBackends: ["docker", "lume", "qemu"] });
-    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent(
-      "1System2Resources3Options4Summary",
-    );
+    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("1System2Resources3Options4Summary");
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
     fireEvent.change(screen.getByRole("slider", { name: "CPU cores" }), { target: { value: "3" } });
     fireEvent.change(screen.getByRole("slider", { name: "Memory" }), { target: { value: "6" } });
     next();
-    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), {
+    fireEvent.change(screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/), {
       target: { value: "cua-e2e-vm" },
     });
     next();
@@ -189,17 +190,18 @@ describe("New Space wizard", () => {
     );
   });
 
-  it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
+  it("lists This Mac, your machines, your clouds and Connect a cloud", () => {
     const onConnectCloud = vi.fn();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)"]);
-    expect(runOnMenu()).toHaveValue("local");
+    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-    expect(screen.queryByText(/Add your cloud account/)).toBeNull();
-    expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
-    cleanup();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…"]);
+    expect(entries()).toEqual([
+      "Auto",
+      "This Mac",
+      "Mac mini",
+      "Studio (offline) (disabled)",
+      "AWS \u00b7 us-west-2",
+      "Add your cloud account…",
+    ]);
     runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
   });
@@ -219,7 +221,7 @@ describe("New Space wizard", () => {
   });
 
   it("creates in a connected cloud with its machine, cost and lifetime", () => {
-    const props = renderWizard({ clouds: [AWS], experiments: YOUR_CLOUD });
+    const props = renderWizard({ clouds: [AWS] });
     runOn("aws");
     expect(runOnMenu()).toHaveValue("aws");
     // Windows cannot run there: its tile is greyed out.
@@ -281,7 +283,7 @@ describe("New Space wizard", () => {
     renderWizard();
     next();
     next();
-    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), { target: { value: "Bad Name" } });
+    fireEvent.change(screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/), { target: { value: "Bad Name" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
@@ -321,7 +323,12 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual([
+      "Container",
+      "ARM",
+      `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`,
+      "40 GB on Colima",
+    ]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
@@ -357,7 +364,11 @@ describe("the Resources step", () => {
   });
 
   it("grows a Linux VM's disk with a slider and creates with it", () => {
-    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
+    const { onCreate } = renderWizard({
+      hostArch: "arm64",
+      storage: storage(),
+      localBackends: ["docker", "lume", "qemu"],
+    });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -438,7 +449,7 @@ describe("Connect by address", () => {
 describe("friendlyAddError", () => {
   it("names a rejected token and keeps the raw detail", () => {
     const text = friendlyAddError("unauthenticated: missing or invalid bearer token (Unauthenticated)");
-    expect(text).toMatch(/^The Space rejected the token/);
+    expect(text).toMatch(/^This Space didn’t accept the access token/);
     expect(text).toContain("invalid bearer token");
   });
   it("passes other errors through", () => {
@@ -493,6 +504,16 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeEnabled();
+  });
+
+  it("go on to the next step on a Windows PC when Continue is enabled (it did nothing)", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    renderWizard({ localBackends: ["docker", "qemu"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeEnabled();
+    next();
+    expect(screen.getByRole("slider", { name: "CPU cores" })).toBeInTheDocument();
   });
 });
 

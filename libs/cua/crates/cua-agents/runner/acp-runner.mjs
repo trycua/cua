@@ -289,7 +289,9 @@ try {
 const state = {
   status: "starting",
   turn: prev.turn ?? 0,
-  sessionId: prev.sessionId ?? null,
+  // A run that continues the agent's own earlier session (`resume`, from agent_start's
+  // resume_session) reloads it like a restarted run reloads its own.
+  sessionId: prev.sessionId ?? (!cfg.durable && typeof cfg.resume?.sessionId === "string" ? cfg.resume.sessionId : null),
   runnerPid: process.pid,
   agentPid: null,
   stopReason: prev.stopReason ?? null,
@@ -307,12 +309,34 @@ function redact(s) {
   return out;
 }
 
+// A journal line stays small. A tool that reads an image returns it as base64 (hundreds of
+// KB, twice in one event); a command can print megabytes. The transcript keeps what the
+// person and a resumed turn read: the text, cut at JOURNAL_STRING_MAX with a note of how
+// much was left out, and a short note in place of image data. The full output is the
+// tool's own (its file or the Space), not the journal's (Pi Durable keeps the retained
+// tail of a tool's output in the transcript and the whole of it in a file the same way).
+export const JOURNAL_STRING_MAX = 32 * 1024;
+const BASE64_RUN = /^[A-Za-z0-9+/=\r\n]{2048,}$/;
+export function shrink(v, depth = 0) {
+  if (typeof v === "string") {
+    if (v.length > 2048 && BASE64_RUN.test(v)) return `[image or binary data, ${v.length} characters, not kept in the log]`;
+    if (v.length > JOURNAL_STRING_MAX) return `${v.slice(0, JOURNAL_STRING_MAX)}
+[${v.length - JOURNAL_STRING_MAX} more characters not kept in the log]`;
+    return v;
+  }
+  if (depth > 12 || v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => shrink(x, depth + 1));
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = shrink(x, depth + 1);
+  return out;
+}
+
 const SYNC_EVENTS = new Set(["turn_started", "turn_ended", "session", "run_exited", "driver_start", "degraded"]);
 function emit(type, fields = {}) {
   checkFence();
   seq += 1;
   const line = redact(
-    JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...fields }),
+    JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...shrink(fields) }),
   );
   appendJournal("events.jsonl", line, Boolean(durable) && SYNC_EVENTS.has(type));
   if (durable) logActivity({ turn: state.turn, epoch: durable.epoch, type, ...fields });
@@ -649,8 +673,10 @@ function onUpdate(update) {
   }
   flush();
   if (durable) ledgerUpdate(update);
+  if (Array.isArray(update.configOptions)) onConfigOptions?.(update.configOptions);
   emit("update", { update });
 }
+let onConfigOptions = null;
 
 // ---- the agent -------------------------------------------------------------
 
@@ -663,8 +689,7 @@ const env = { ...process.env, ...(cfg.env ?? {}), ...secrets };
 // (cfg.keyCheck: url, headers with ${NAME} references into the run's env,
 // keyEnv), ask the provider once, in parallel with the agent's start. Only
 // a definitive "this key is invalid" (HTTP 401, or a 403 that says so, with
-// the provider's JSON error body) counts: no key, a base-URL or sign-in
-// override, a network error, a timeout, a 429 or a 5xx all resolve to null
+// the provider's JSON error body) counts: no key, a sign-in override, a network error, a timeout, a 429 or a 5xx all resolve to null
 // and the run goes on exactly as before, so the check can never block one.
 const KEY_CHECK_TIMEOUT_MS = 3000;
 
@@ -696,7 +721,12 @@ async function checkKey(spec) {
     if (res.status !== 401 && res.status !== 403) return null;
     const error = JSON.parse(await res.text())?.error;
     if (!error || typeof error !== "object") return null;
-    const invalid = error.type === "authentication_error" || error.code === "invalid_api_key";
+    // A custom endpoint (a gateway) words its 401 in its own shape: any 401
+    // with a JSON error is a rejection there.
+    const invalid =
+      error.type === "authentication_error" ||
+      error.code === "invalid_api_key" ||
+      (spec.anyAuthError === true && res.status === 401);
     if (res.status === 403 && !invalid) return null;
     const why = providerMessage(error) || "the API key was rejected.";
     return { status: res.status, message: `Failed to authenticate. ${spec.provider ?? "Provider"} API Error: ${res.status} ${why}` };
@@ -975,7 +1005,13 @@ if (durable) {
   for (const q of plan.unstarted) first.push({ op: "prompt", text: q.text, files: q.files ?? [], msgId: q.msgId });
   queue.push(...first);
 } else if (cfg.prompt && !prev.sessionId) {
-  queue.push({ op: "prompt", text: cfg.prompt, files: cfg.files ?? [] });
+  queue.push({ op: "prompt", text: cfg.prompt, files: cfg.files ?? [], first: true });
+}
+
+/** The first prompt of a run whose earlier session could not be reloaded: the earlier conversation goes first. */
+export function withResumeContext(text, context) {
+  if (typeof context !== "string" || !context.trim()) return text;
+  return `[cua] The agent could not reload this chat's earlier session, so here is what was said in it so far. This note is automatic; it is not from the user.\n\n${context.trim()}\n\n[cua] The user's next message:\n\n${text}`;
 }
 
 function drainInbox() {
@@ -1121,6 +1157,11 @@ async function drive(a) {
     let sessionId = null;
     let resumed = false;
     let modes = null;
+    // The agent's session options (the model among them), kept current from its responses and updates.
+    let configOptions = null;
+    onConfigOptions = (o) => {
+      configOptions = o;
+    };
     let degraded = false;
     if (wantSession && loadSession) {
       try {
@@ -1136,6 +1177,7 @@ async function drive(a) {
         // The agent's mode comes back to its default on a resume (measured on codex-acp: "Approve for me",
         // whatever the first drive selected), so the runner picks the mode again from this response.
         modes = res?.modes ?? null;
+        configOptions = res?.configOptions ?? null;
       } catch (e) {
         if (fatal(e)) throw e;
         emit("notice", { message: `could not resume session ${wantSession}: ${e?.message ?? e}; starting a new one` });
@@ -1155,8 +1197,14 @@ async function drive(a) {
       const res = await openNewSession();
       sessionId = res.sessionId;
       modes = res.modes ?? null;
+      configOptions = res.configOptions ?? null;
     }
     if (stale()) return;
+    // The earlier session of a `resume` run is gone: the first prompt carries the earlier conversation instead.
+    if (!resumed && !durable && cfg.resume?.sessionId && wantSession === cfg.resume.sessionId) {
+      const first = queue.find((q) => q.first);
+      if (first) first.text = withResumeContext(first.text, cfg.resume.context);
+    }
     save({ sessionId, status: "idle", ...(durable ? { degraded: state.degraded || degraded } : {}) });
     emit("session", { sessionId, resumed, modes });
 
@@ -1198,6 +1246,34 @@ async function drive(a) {
     // Set once the agent has answered a prompt of this session with anything but a refusal.
     let sessionProven = false;
 
+    // The model a message asks for, applied to the open session just before its turn (no restart):
+    // the agent's own `model` option, set through ACP's `session/set_config_option`. A harness with
+    // no such option, or one that does not list the model, keeps the one it has (said once).
+    const modelOption = () => (configOptions ?? []).find((o) => o?.category === "model" || o?.id === "model");
+    const optionValues = (o) => (o?.options ?? []).flatMap((v) => (Array.isArray(v?.options) ? v.options : [v])).map((v) => v?.value ?? v?.id);
+    let modelNoticed = false;
+    async function applyModel(want) {
+      if (!want) return;
+      const opt = modelOption();
+      if (!opt) {
+        if (!modelNoticed) emit("notice", { message: `this agent has no model option; keeping its model (asked for ${want})` });
+        modelNoticed = true;
+        return;
+      }
+      if (opt.currentValue === want) return;
+      if (!optionValues(opt).includes(want)) {
+        emit("notice", { message: `this agent does not offer the model ${want}; keeping ${opt.currentValue}` });
+        return;
+      }
+      try {
+        const res = await ctx.request(acp.methods.agent.session.setConfigOption, { sessionId, configId: opt.id, value: want });
+        configOptions = res?.configOptions ?? configOptions.map((o) => (o === opt ? { ...o, currentValue: want } : o));
+        emit("model", { modelId: want });
+      } catch (e) {
+        emit("notice", { message: `could not switch to the model ${want}: ${e?.message ?? e}` });
+      }
+    }
+
     const promptTurn = async (msg) => {
       state.turn += 1;
       let text = msg.text;
@@ -1217,6 +1293,8 @@ async function drive(a) {
       }
       save({ status: "running", queued: queue.length });
       emit("turn_started", { prompt: text, files: msg.files ?? [], ...(msg.msgId ? { msgId: msg.msgId } : {}), ...extra });
+      await applyModel(msg.model);
+      if (stale()) return;
       const rejected = await keyCheck;
       if (stale()) return;
       if (rejected) {

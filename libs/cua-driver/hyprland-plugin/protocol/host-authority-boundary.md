@@ -32,13 +32,13 @@ connection. These checks prevent cross-account access and accidental routing
 to another compositor; they do not prove human consent or sandbox arbitrary
 native code running as the same user.
 
-The Linux adapter checks the qualified application package on every action
-before allocating or using a lane. Eligibility is a compatibility check, not
-an authorization boundary. The initial candidate scope is native Calc
-`libreoffice-fresh 26.2.5-3` and Inkscape `1.4.4-6`, subject to per-operation
-native qualification. Unknown packages refuse. The plugin separately checks
-the live native surface, geometry, primary/other-agent conflicts, desktop
-availability, and canonical US keymap.
+The Linux adapter checks the target on every action
+before allocating or using a lane: a native Wayland window of the exact
+process, not XWayland, and not an input its toolkit is known to drop.
+Eligibility is a compatibility check, not an authorization boundary. The
+plugin separately checks that the client bound the lane seat, the live native
+surface, geometry, primary/other-agent conflicts, desktop availability, and
+canonical US keymap.
 
 Production [input v3](cua-input-v3.md) has separate endpoints from discovery v2
 and signed experiment 0. Each private connection claims one compositor-owned

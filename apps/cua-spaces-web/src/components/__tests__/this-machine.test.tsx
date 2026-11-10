@@ -15,9 +15,9 @@ afterEach(cleanup);
 
 const rows = (n: number, what: string): HostAccessRow[] => Array.from({ length: n }, (_, i) => ({ text: `${what} ${i + 1}`, atMs: Date.now() - i * 60_000 }));
 
-/** The core's "This machine" page for a machine sharing over the relay, with long logs. */
+/** The core's "This computer" page for a machine sharing over the relay, with long logs. */
 const sharing: HostPanelView = {
-  title: "This machine",
+  title: "This computer",
   summary: "Sharing · Relay",
   configured: true,
   facts: [{ label: "Name", value: "Studio" }],
@@ -128,7 +128,6 @@ describe("This machine's logs", () => {
     expect(within(activity).getAllByText(/Created QA/)).toHaveLength(7);
     expect(activity.querySelector("[data-host-log-background]")).toBeNull();
   });
-
 });
 
 describe("what a running setup or Sign In waits for", () => {
@@ -174,6 +173,82 @@ describe("a failed This machine button", () => {
   });
 });
 
+describe("a new computer the account wants proof for", () => {
+  /** The relay refused this Mac (no enrolled device, no sign-in with a second factor, no code). */
+  const refused = () =>
+    new HostError(
+      "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Computers and click Add a computer.",
+      "failed",
+      {
+        title: "Confirm it’s you",
+        details: "permission denied: relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]",
+        actionLabel: "Use a code from another computer",
+        kind: "needsProof",
+        refusalCode: "new_computer_needs_proof",
+      },
+    );
+
+  it("says confirm it's you in plain words and offers a code from another computer, not Retry", async () => {
+    const { adapter, actions } = host(refused);
+    const useCode = vi.fn();
+    render(
+      <BridgeProvider adapter={adapter} core={unavailableCore("test: no core")}>
+        <Press action="stop-sharing" />
+        <ThisMachineExtras panel={sharing} part="alerts" onUseCode={useCode} />
+      </BridgeProvider>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    fireEvent.click(document.querySelector('[data-press="stop-sharing"]')!);
+    const failure = await waitFor(() => {
+      const f = document.querySelector<HTMLElement>('[data-host-failure="needs-proof"]');
+      if (!f) throw new Error("no failure");
+      return f;
+    });
+    expect(failure.querySelector("[data-host-failure-title]")?.textContent).toBe("Confirm it’s you");
+    const message = failure.querySelector("[data-host-failure-message]")?.textContent ?? "";
+    expect(message).toMatch(/enter a code from a computer you already added/);
+    for (const word of ["relay", "enrol", "MFA", "token"]) expect(message).not.toContain(word);
+    expect(failure.querySelector("[data-host-retry]")).toBeNull();
+    const button = failure.querySelector<HTMLButtonElement>("[data-host-use-code]")!;
+    expect(button.textContent).toBe("Use a code from another computer");
+    fireEvent.click(button);
+    expect(useCode).toHaveBeenCalledTimes(1);
+    expect(actions).toEqual(["stop-sharing"]);
+    // The raw refusal stays under Details.
+    fireEvent.click(failure.querySelector("[data-host-details]")!);
+    expect(failure.querySelector("[data-host-details-text]")?.textContent).toContain("[code: new_computer_needs_proof]");
+  });
+
+  it("a code that joined answers it, so it no longer shows", async () => {
+    const { adapter } = host(refused);
+    const store = new ThisMachineStore(adapter, unavailableCore("test"), async () => {});
+    await store.run("stop-sharing");
+    expect(store.get().error?.kind).toBe("needsProof");
+    expect(store.get().error?.refusalCode).toBe("new_computer_needs_proof");
+    store.joinedWithCode();
+    expect(store.get().error).toBeNull();
+  });
+
+  it("without a way to enter a code, falls back to Retry", () => {
+    render(
+      <HostSetupForm
+        view={form}
+        host={{ send: () => {}, submit: async () => false, closeForm: () => {} }}
+        failure={{
+          title: "Confirm it’s you",
+          message: "To add this Mac…",
+          details: "x [code: new_computer_needs_proof]",
+          actionLabel: "Use a code from another computer",
+          kind: "needsProof",
+        }}
+        onRetry={() => {}}
+      />,
+    );
+    expect(document.querySelector("[data-host-use-code]")).toBeNull();
+    expect(document.querySelector("[data-host-retry]")?.textContent).toBe("Retry");
+  });
+});
+
 /* ---- Host setup --------------------------------------------------------------------- */
 
 const form: HostSetupFormView = {
@@ -195,7 +270,12 @@ describe("a failed host setup", () => {
       <HostSetupForm
         view={form}
         host={{ send: () => {}, submit: async () => false, closeForm: () => {} }}
-        failure={{ title: "Sign in to Cua", message: "Your Cua account isn’t signed in on this Mac. Sign in, then try again.", details: "Not signed in to Cua", actionLabel: "Sign In" }}
+        failure={{
+          title: "Sign in to Cua",
+          message: "Your Cua account isn’t signed in on this Mac. Sign in, then try again.",
+          details: "Not signed in to Cua",
+          actionLabel: "Sign In",
+        }}
         onRetry={retry}
       />,
     );
@@ -258,14 +338,24 @@ describe("Retry on a failed setup", () => {
       call: async (op: string, args: { request: unknown }) => {
         if (op !== "host.setUp") return null;
         sent.push(args.request);
-        if (fail) throw new HostError("Cua Spaces couldn’t reach the internet.", "failed", { title: "Couldn’t connect", details: "connection refused", actionLabel: "Retry" });
+        if (fail)
+          throw new HostError("Cua Spaces couldn’t reach the internet.", "failed", {
+            title: "Couldn’t connect",
+            details: "connection refused",
+            actionLabel: "Retry",
+          });
         return null;
       },
     } as unknown as DataAdapter;
     const store = new ThisMachineStore(adapter, formCore(), async () => {});
     store.openForm();
     expect(await store.submit(null)).toBe(false);
-    expect(store.get().setupError).toEqual({ title: "Couldn’t connect", message: "Cua Spaces couldn’t reach the internet.", details: "connection refused", actionLabel: "Retry" });
+    expect(store.get().setupError).toEqual({
+      title: "Couldn’t connect",
+      message: "Cua Spaces couldn’t reach the internet.",
+      details: "connection refused",
+      actionLabel: "Retry",
+    });
     // The form keeps the raw error.
     expect(store.get().form?.error).toBe("connection refused");
 
@@ -298,7 +388,16 @@ describe("a long log line", () => {
   });
 
   it("keeps the Spaces activity's action and Space whole instead", async () => {
-    await mount({ ...sharing, recent: [], recentMore: null, activity: [{ text: "Deleted space-e0a1 · Ada Lovelace (5a1c7e02-3b4d-4e6f)", atMs: Date.now() }], activityMore: null }, host().adapter);
+    await mount(
+      {
+        ...sharing,
+        recent: [],
+        recentMore: null,
+        activity: [{ text: "Deleted space-e0a1 · Ada Lovelace (5a1c7e02-3b4d-4e6f)", atMs: Date.now() }],
+        activityMore: null,
+      },
+      host().adapter,
+    );
     const row = document.querySelector<HTMLElement>("[data-host-log-row]")!;
     expect(row.querySelector("[data-host-log-head]")?.textContent).toBe("Deleted space-e0a1 · ");
     expect(row.querySelector("[data-host-log-head]")?.className).toContain("shrink-0");

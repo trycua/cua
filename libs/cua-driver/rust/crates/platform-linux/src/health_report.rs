@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux `health_report` provider.
 //!
 //! Implements [`cua_driver_core::health_report::HealthCheckProvider`]
@@ -155,7 +158,7 @@ async fn check_ax_capability() -> CheckEntry {
          cookie isn't discoverable, so X11 connects fail 'Authorization required'. \
          Point XAUTHORITY at the Xwayland '-auth' cookie file, or restart the \
          cua-driver daemon — it auto-discovers the cookie from /proc at startup."
-    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    } else if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {
@@ -177,6 +180,14 @@ async fn check_screen_capture_capability() -> CheckEntry {
     // misleading "screen capture will fail" just because wlroots isn't
     // present.
     if is_wayland_session() {
+        // Tier order follows `screenshot_display_dispatch`: the KWin adapter,
+        // when the operator switched it on, comes before the native tiers.
+        let kwin = tokio::task::spawn_blocking(kwin_switch)
+            .await
+            .unwrap_or(KwinSwitch::Off);
+        if let Some(entry) = kwin_capture_first(&kwin) {
+            return entry;
+        }
         let snap = tokio::task::spawn_blocking(probe_wayland_managers)
             .await
             .ok()
@@ -239,7 +250,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
             "X11 reachable; screen capture path is functional.",
         );
     }
-    let hint = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    let hint = if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {
@@ -252,12 +263,87 @@ async fn check_screen_capture_capability() -> CheckEntry {
     )
 }
 
+/// The KWin adapter's switch, as the capture dispatch reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum KwinSwitch {
+    /// Off, kept off by a saved portal Deny, or not a KWin session: the native
+    /// tiers decide.
+    Off,
+    On(KwinEntry),
+}
+
+/// What the desktop entry KWin 6.7 and older grant from says about this executable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum KwinEntry {
+    Current,
+    Missing,
+    Other(String),
+    Ungranted(String),
+}
+
+#[cfg(target_os = "linux")]
+fn kwin_switch() -> KwinSwitch {
+    use crate::wayland::{kwin_access, kwin_capture};
+    if !kwin_capture::may_be_session() {
+        return KwinSwitch::Off;
+    }
+    let status = kwin_access::status();
+    if !status.on() {
+        return KwinSwitch::Off;
+    }
+    KwinSwitch::On(kwin_entry(status.entry))
+}
+
+#[cfg(target_os = "linux")]
+fn kwin_entry(entry: crate::wayland::kwin_access::Entry) -> KwinEntry {
+    use crate::wayland::kwin_access::Entry;
+    match entry {
+        Entry::Current(_) => KwinEntry::Current,
+        Entry::None => KwinEntry::Missing,
+        Entry::Other(path) => KwinEntry::Other(path.display().to_string()),
+        Entry::Ungranted(path) => KwinEntry::Ungranted(path.display().to_string()),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kwin_switch() -> KwinSwitch {
+    KwinSwitch::Off
+}
+
+/// With the KWin adapter on, desktop capture asks KWin's ScreenShot2 first.
+fn kwin_capture_first(kwin: &KwinSwitch) -> Option<CheckEntry> {
+    let KwinSwitch::On(entry) = kwin else {
+        return None;
+    };
+    let mut message = "KWin capture is on (`cua-driver kwin-capture on`): screenshots go \
+         through KWin ScreenShot2 first, with no portal request; the native tiers \
+         and the Screenshot portal are the fallback."
+        .to_owned();
+    let problem = match entry {
+        KwinEntry::Current => None,
+        KwinEntry::Missing => Some("There is no desktop entry for it".to_owned()),
+        KwinEntry::Other(path) => {
+            Some(format!("The desktop entry {path} names another executable"))
+        }
+        KwinEntry::Ungranted(path) => Some(format!(
+            "The desktop entry {path} doesn't grant window management and ScreenShot2"
+        )),
+    };
+    if let Some(problem) = problem {
+        message.push_str(&format!(
+            " {problem}, so KWin 6.7 and older refuse this executable and capture \
+             falls back; run `cua-driver kwin-capture on` again."
+        ));
+    }
+    Some(CheckEntry::pass(NAME_SCREEN_CAPTURE_CAPABILITY, message))
+}
+
 /// `wayland_backend` doctor entry — surfaces which wlroots manager globals
 /// the running compositor advertises. Skipped on non-Wayland sessions and
 /// when the experimental Wayland backend isn't opted into, so X11 users see
 /// a neutral skip rather than a confusing failure.
 async fn check_wayland_backend() -> CheckEntry {
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+    if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
         return CheckEntry::skip(
             NAME_WAYLAND_BACKEND.to_owned(),
             "No WAYLAND_DISPLAY in the environment — not a Wayland session.",
@@ -658,6 +744,80 @@ mod tests {
     use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
+
+    fn kwin_message(entry: KwinEntry) -> String {
+        let entry = kwin_capture_first(&KwinSwitch::On(entry)).unwrap();
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(
+            entry.message.contains("KWin ScreenShot2 first"),
+            "{}",
+            entry.message
+        );
+        entry.message
+    }
+
+    const TURN_ON_AGAIN: &str = "KWin 6.7 and older refuse this executable and capture \
+         falls back; run `cua-driver kwin-capture on` again.";
+
+    #[test]
+    fn kwin_capture_on_is_reported_as_the_first_capture_tier() {
+        let message = kwin_message(KwinEntry::Current);
+        assert!(!message.contains("6.7 and older"), "{message}");
+    }
+
+    #[test]
+    fn kwin_capture_on_with_another_executables_entry_says_to_turn_it_on_again() {
+        let path = "/home/u/.local/share/applications/ai.cua.driver.desktop";
+        let message = kwin_message(KwinEntry::Other(path.into()));
+        assert!(
+            message.ends_with(&format!(
+                " The desktop entry {path} names another executable, so {TURN_ON_AGAIN}"
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn kwin_capture_on_without_a_desktop_entry_says_to_turn_it_on_again() {
+        let message = kwin_message(KwinEntry::Missing);
+        assert!(
+            message.ends_with(&format!(
+                " There is no desktop entry for it, so {TURN_ON_AGAIN}"
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn kwin_capture_on_with_an_entry_missing_the_grants_says_to_turn_it_on_again() {
+        let path = "/home/u/.local/share/applications/ai.cua.driver.desktop";
+        let message = kwin_message(KwinEntry::Ungranted(path.into()));
+        assert!(
+            message.ends_with(&format!(
+                " The desktop entry {path} doesn't grant window management \
+                 and ScreenShot2, so {TURN_ON_AGAIN}"
+            )),
+            "{message}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn kwin_capture_on_with_an_edited_but_granting_entry_reports_no_problem() {
+        use crate::wayland::kwin_access::{classify, desktop_entry};
+        let exe = std::path::Path::new("/opt/cua/cua-driver");
+        let edited = desktop_entry(exe)
+            .unwrap()
+            .replace("Name=Cua Driver", "Name=My Driver\nComment=mine");
+        let path = std::path::PathBuf::from("/home/u/ai.cua.driver.desktop");
+        let message = kwin_message(kwin_entry(classify(path, &edited, exe)));
+        assert!(!message.contains("6.7 and older"), "{message}");
+    }
+
+    #[test]
+    fn kwin_capture_off_leaves_capture_to_the_native_tiers() {
+        assert!(kwin_capture_first(&KwinSwitch::Off).is_none());
+    }
 
     #[test]
     fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {

@@ -35,7 +35,7 @@ Simulator) the loopback address works.
 The package (`CuaBotsRemote`, `CuaBotsPhone`) builds and tests on macOS:
 
 ```sh
-(cd ../../libs/cua && cargo build --locked --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+(cd ../../libs/cua && cargo build --locked --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift)
 swift build && scripts/test.sh
 ```
 

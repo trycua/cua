@@ -74,6 +74,15 @@ writeFileSync(
     "",
   ].join("\n"),
 )
+// ubrn reads its bindings from the host library target/debug/libcua_sdk.<ext>.
+// cua-sdk is rlib-only, so ubrn's own `cargo build` of it no longer writes that
+// file, and a stale one (any other feature set, e.g. a cached full-feature
+// build) would be read instead. Build it here, with the web feature set.
+run(
+  "cargo",
+  ["build", "--locked", "-p", "cua-sdk-native", "--no-default-features", "--features", "web"],
+  cuaRoot,
+)
 const ubrn = join(typescriptRoot, "node_modules", ".bin", "ubrn")
 run(
   ubrn,

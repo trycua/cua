@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/host_egress.proto.
  */
 export const file_cua_env_v1_host_egress: GenFile = /*@__PURE__*/
-  fileDesc("ChxjdWEvZW52L3YxL2hvc3RfZWdyZXNzLnByb3RvEgpjdWEuZW52LnYxIi8KEEhvc3RFZ3Jlc3NQb2xpY3kSDQoFYWxsb3cYASADKAkSDAoEZGVueRgCIAMoCSJYChlTZXRIb3N0U3BhY2VFZ3Jlc3NSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJEiwKBmVncmVzcxgCIAEoCzIcLmN1YS5lbnYudjEuSG9zdEVncmVzc1BvbGljeSIuChpTZXRIb3N0U3BhY2VFZ3Jlc3NSZXNwb25zZRIQCghlbmZvcmNlZBgBIAEoCWIGcHJvdG8z");
+  fileDesc("ChxjdWEvZW52L3YxL2hvc3RfZWdyZXNzLnByb3RvEgpjdWEuZW52LnYxIi8KEEhvc3RFZ3Jlc3NQb2xpY3kSDQoFYWxsb3cYASADKAkSDAoEZGVueRgCIAMoCSJYChlTZXRIb3N0U3BhY2VFZ3Jlc3NSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJEiwKBmVncmVzcxgCIAEoCzIcLmN1YS5lbnYudjEuSG9zdEVncmVzc1BvbGljeSIuChpTZXRIb3N0U3BhY2VFZ3Jlc3NSZXNwb25zZRIQCghlbmZvcmNlZBgBIAEoCSKuAQoTSG9zdE5ldHdvcmtTZXR0aW5ncxIOCgZwcmVzZXQYASABKAkSFwoPbG9jYWxob3N0X3BvcnRzGAIgAygNEhsKE2FsbF9sb2NhbGhvc3RfcG9ydHMYAyABKAgSDQoFYWxsb3cYBCADKAkSDAoEZGVueRgFIAMoCRITCgtjdXN0b21fYmFzZRgGIAEoCRISCgp3aWRlbmVkX2J5GAcgASgJEgsKA3ZpYRgIIAEoCWIGcHJvdG8z");
 
 /**
  * Which destinations a Space may open connections to: every `deny` entry
@@ -95,4 +95,76 @@ export type SetHostSpaceEgressResponse = Message<"cua.env.v1.SetHostSpaceEgressR
  */
 export const SetHostSpaceEgressResponseSchema: GenMessage<SetHostSpaceEgressResponse> = /*@__PURE__*/
   messageDesc(file_cua_env_v1_host_egress, 2);
+
+/**
+ * A Space's network settings (`cua.daemon.v1.NetworkSettings`), as
+ * `CreateHostSpaceRequest.network_settings` carries them to the host that
+ * creates the Space and enforces them.
+ *
+ * @generated from message cua.env.v1.HostNetworkSettings
+ */
+export type HostNetworkSettings = Message<"cua.env.v1.HostNetworkSettings"> & {
+  /**
+   * The preset word; empty is "internet".
+   *
+   * @generated from field: string preset = 1;
+   */
+  preset: string;
+
+  /**
+   * "localhost": the host loopback ports the Space may reach.
+   *
+   * @generated from field: repeated uint32 localhost_ports = 2;
+   */
+  localhostPorts: number[];
+
+  /**
+   * "localhost": every port.
+   *
+   * @generated from field: bool all_localhost_ports = 3;
+   */
+  allLocalhostPorts: boolean;
+
+  /**
+   * Destinations that stay reachable.
+   *
+   * @generated from field: repeated string allow = 4;
+   */
+  allow: string[];
+
+  /**
+   * Destinations that are blocked.
+   *
+   * @generated from field: repeated string deny = 5;
+   */
+  deny: string[];
+
+  /**
+   * "custom": "internet" (empty) or "none".
+   *
+   * @generated from field: string custom_base = 6;
+   */
+  customBase: string;
+
+  /**
+   * Set when the Space was allowed more than its parent.
+   *
+   * @generated from field: string widened_by = 7;
+   */
+  widenedBy: string;
+
+  /**
+   * Where its internet traffic leaves (see the daemon's NetworkSettings.via).
+   *
+   * @generated from field: string via = 8;
+   */
+  via: string;
+};
+
+/**
+ * Describes the message cua.env.v1.HostNetworkSettings.
+ * Use `create(HostNetworkSettingsSchema)` to create a new message.
+ */
+export const HostNetworkSettingsSchema: GenMessage<HostNetworkSettings> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host_egress, 3);
 

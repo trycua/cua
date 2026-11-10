@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure exact-target decisions for macOS-style background input (v1).
 //!
 //! Background mutation must carry one exact `(pid, CGWindowID)` target from

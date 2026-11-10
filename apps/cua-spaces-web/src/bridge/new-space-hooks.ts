@@ -3,11 +3,21 @@
 
 /** New Space and "Connect a cloud" for components (see `new-space.ts`). */
 
-import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectWire, CloudSheetAction, CloudSheetView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type {
+  CloudConnectWire,
+  CloudSheetAction,
+  CloudSheetView,
+  CloudTarget,
+  RuntimeFix,
+  RuntimeSwitch,
+  WizardAction,
+  WizardEnv,
+  WizardView,
+} from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
 import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
@@ -17,6 +27,7 @@ import {
   cloudSheetInput,
   cloudSheetReduce,
   cloudSheetView,
+  firstPrompts,
   firstSpaceOffers,
   localBlocked,
   loadNewSpaceHostData as loadHostData,
@@ -30,6 +41,7 @@ import {
   wizardOffered,
   wizardReduce,
   wizardView,
+  type FirstPrompts,
   type FirstSpaceOffer,
   type NewSpaceSession,
 } from "./new-space";
@@ -125,7 +137,13 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
     create() {
       if (!view) return null;
       const plan = view.plan;
-      const args = wizardCreateArgs(core, plan);
+      let args: ReturnType<typeof wizardCreateArgs> & { network?: string } = wizardCreateArgs(core, plan);
+      // The Network choice under Advanced (Internet only unless changed).
+      const net = ctx.adapter?.network;
+      if (net && net.wizardPreset !== "internet") {
+        args = { ...args, network: net.wizardPreset === "localhost" || net.wizardPreset === "localhost+lan" ? `${net.wizardPreset}:all` : net.wizardPreset };
+      }
+      net?.setWizardPreset("internet");
       update((x) => ({ ...x, open: false, state: null, pinnedEnv: null }));
       const pendingId = newPendingId();
       return { pendingId, done: createSpace({ ...args, os: plan.image.os }, pendingId) };
@@ -207,6 +225,12 @@ export function useFirstSpaceOffers(): FirstSpaceHook {
   };
 }
 
+/** The example jobs for this machine, the core's choice from what it can do now; null until the core is ready. */
+export function useFirstPrompts(): FirstPrompts | null {
+  const { core, env } = useNewSpaceEnv();
+  return useMemo(() => firstPrompts(core, env), [core, env]);
+}
+
 /**
  * The host's requests for New Space (the SwiftUI app's menu items and
  * notch, `spaces.newRequested`): opens the wizard once the core is ready,
@@ -225,9 +249,7 @@ export function useNewSpaceRequests(): void {
   }, [s.requested, ready, wizard.offered]);
   // The machine is offered once the host's options and machines are in:
   // until then the request waits (the wizard opens on the default).
-  const offeredNow = Boolean(
-    ready && s.open && s.state && s.placeOn && wizardView(core, s.state, env).placements.some((p) => p.id === s.placeOn && p.enabled),
-  );
+  const offeredNow = Boolean(ready && s.open && s.state && s.placeOn && wizardView(core, s.state, env).placements.some((p) => p.id === s.placeOn && p.enabled));
   useEffect(() => {
     if (!offeredNow || !s.placeOn) return;
     const on = s.placeOn;
@@ -437,4 +459,3 @@ export function useRuntimeFix(): RuntimeFixHook {
     },
   };
 }
-

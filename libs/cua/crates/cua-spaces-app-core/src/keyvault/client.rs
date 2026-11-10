@@ -120,8 +120,9 @@ impl KvTransport for SocketTransport {
                 .map_err(|e| match e {
                     ConnectError::NotRunning(_) => KvFailure {
                         code: "not_running".into(),
-                        message: "The Cua daemon is not running, so the Keyvault is unavailable."
-                            .into(),
+                        message:
+                            "Cua\u{2019}s background service isn\u{2019}t running. Reopen Cua Spaces."
+                                .into(),
                     },
                     ConnectError::Impostor { who, .. } => KvFailure {
                         code: "impostor".into(),

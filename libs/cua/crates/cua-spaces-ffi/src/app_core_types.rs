@@ -353,6 +353,15 @@ pub struct AppSpace {
     /// Who it belongs to, who else has it and what you may do with it
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     pub access: Option<AppSpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    pub parent: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -390,6 +399,9 @@ pub struct AppSpaceRow {
     /// The guest's CPU architecture, when known (any spelling: `arm64`,
     /// `aarch64`, `amd64`, `x86_64`).
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.
@@ -417,6 +429,8 @@ pub struct AppSpaceRow {
     pub stop_reason: Option<String>,
     /// A relay Space: who owns it and who else has it.
     pub sharing: Option<AppSpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    pub parent: Option<String>,
 }
 
 /// Where new Spaces can be created.
@@ -522,7 +536,7 @@ pub struct AppListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 machines…"), below what is known so far.
+    /// ("Reaching 6 computers…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
@@ -672,6 +686,8 @@ pub struct AppPendingCreate {
     pub host: Option<String>,
     /// That machine's name, for the row and for a failure that names it.
     pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    pub parent: Option<String>,
     /// How many times the app ran this create again by itself: 0, or 1
     /// after a failure that usually passes ([`fail_decision`]).
     pub attempt: u32,
@@ -779,6 +795,8 @@ pub enum AppCreateAction {
         host: Option<String>,
         /// That machine's name.
         host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -1383,6 +1401,18 @@ pub struct AppStreamRowAction {
     pub active: bool,
 }
 
+/// The Space a window row comes from.
+pub type AppStreamRowOrigin = core::spaces::stream::StreamRowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppStreamRowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+    pub os_icon: String,
+}
+
 /// One row of the Stream section: one line.
 pub type AppStreamRow = core::spaces::stream::StreamRow;
 #[uniffi::remote(Record)]
@@ -1399,6 +1429,10 @@ pub struct AppStreamRow {
     pub resolution: Option<String>,
     /// The icon.
     pub icon: AppStreamRowIcon,
+    /// For a window another Space shows here: the Space it lives in, drawn
+    /// as its OS mark and name beside the label. Absent on a Space's own
+    /// rows (older shells ignore it).
+    pub origin: Option<AppStreamRowOrigin>,
     /// Icon buttons, in order.
     pub actions: Vec<AppStreamRowAction>,
 }
@@ -2259,6 +2293,18 @@ pub struct AppOpenApp {
     pub supported: bool,
 }
 
+/// Where a shown window lives.
+pub type AppRemoteWindowOrigin = core::teleport::windows::RemoteWindowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppRemoteWindowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`), when known.
+    pub os: String,
+}
+
 /// One of a Space's windows.
 pub type AppRemoteWindow = core::teleport::windows::RemoteWindow;
 #[uniffi::remote(Record)]
@@ -2282,6 +2328,9 @@ pub struct AppRemoteWindow {
     /// The owning process (what the SDK's `Space.app_icon` looks a macOS
     /// app up by), when the window list reports one.
     pub pid: Option<u32>,
+    /// The Space the picture comes from, when another Space shows this
+    /// window here (`stream_space_window`); absent on a Space's own windows.
+    pub origin: Option<AppRemoteWindowOrigin>,
 }
 
 /// One app's remote windows.
@@ -3589,11 +3638,11 @@ pub struct AppWizardEnv {
     /// when known.
     pub storage: Option<AppLocalStorage>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
-    /// (offered only while its experiment is on: [`offered_clouds`]).
+    /// ([`offered_clouds`]).
     pub clouds: Vec<AppConnectedCloud>,
     /// The user's machines that provide Spaces (`Spaces.hosts()`).
     pub hosts: Vec<AppSpaceHost>,
-    /// Settings, Experiments ("Your cloud" decides whether clouds show).
+    /// Settings, Experiments (the daemon-enforced switches the wizard reads).
     pub experiments: AppExperiments,
     /// The GPU option of each runtime that has one (the SDK's
     /// `gpu_support`), when known. A runtime not listed has none: the
@@ -6574,14 +6623,17 @@ pub struct AppDriveMountFrame {
     pub arrived: Vec<f64>,
 }
 
-/// Which releases the updater offers.
+/// Which builds the updater offers.
 pub type AppUpdateChannel = core::about::UpdateChannel;
 #[uniffi::remote(Enum)]
 pub enum AppUpdateChannel {
     /// Releases (the default).
     Stable,
-    /// Releases and prereleases (`X.Y.Z-suffix`).
-    Beta,
+    /// A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+    /// its own feed. It replaced the Beta channel, so `beta` (an older
+    /// build's word, and what the settings file still stores, see
+    /// [`crate::settings::save`]) reads as Nightly.
+    Nightly,
 }
 
 /// What the About pane shows.
@@ -6653,12 +6705,21 @@ pub struct AppAboutUpdates {
     pub auto_install: bool,
     /// It can be used (only with automatic checks).
     pub auto_install_enabled: bool,
-    /// "Update to:".
+    /// "Updates".
     pub channel_label: String,
-    /// Stable, Beta.
+    /// Stable, Nightly.
     pub channels: Vec<AppSettingsOption>,
-    /// The channel picker's tooltip.
+    /// What the chosen channel gets, in a line.
     pub channel_help: String,
+    /// A word about the version running on this channel: a nightly build
+    /// back on Stable stays until the next stable release passes it;
+    /// `None`: nothing to say.
+    pub channel_note: Option<String>,
+    /// "Download Stable": the way back to Stable right now
+    /// ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+    pub download_label: Option<String>,
+    /// Where [`AboutUpdates::download_label`] goes.
+    pub download_url: Option<String>,
     /// "Check Now" (or "Checking…").
     pub check_label: String,
     /// Check Now can be used.
@@ -6760,6 +6821,10 @@ pub struct AppAgentKeysInput {
     pub keys: Vec<AppAgentKeyInput>,
     /// Why this machine can't keep keys (the daemon's words), when it can't.
     pub unavailable: Option<String>,
+    /// Keys can be saved but only in an unencrypted file (a Local
+    /// development build without the Keychain): the daemon's warning, shown
+    /// in the notice while the buttons stay on.
+    pub warning: Option<String>,
     /// The keys could not be read (no daemon, a refused Keychain).
     pub error: Option<String>,
 }
@@ -6960,14 +7025,18 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Your own clouds in the New Space wizard.
-    pub your_cloud: bool,
-    /// Sharing a Space with other accounts. On unless turned off: a missing
-    /// key reads as on (the plans on cua.ai/pricing list sharing).
-    pub sharing: bool,
-    /// The shared web UI is the main window. Always on in the macOS shell
-    /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-    pub web_ui: bool,
+    /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
+    /// and the CI Runners page). Off unless turned on; the daemon and the
+    /// `cua` command enforce it (the switch is kept in the cua home).
+    pub ci_runners: bool,
+    /// Public TCP shares: a raw TCP service in a Space (a game server) at a
+    /// public address. Off unless turned on; the daemon enforces it (the
+    /// switch is kept in the cua home).
+    pub tcp_shares: bool,
+    /// Mobile: the computer answers the Cua Spaces phone app (its tools and
+    /// push events). Off unless turned on; the daemon enforces it (the switch
+    /// is kept in the cua home).
+    pub mobile: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).
@@ -7096,15 +7165,8 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]). Its `webUi` is always on in the macOS
-    /// shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-    /// "on" there, the value older builds read.
+    /// ([`crate::experiments`]).
     pub experiments: AppExperiments,
-    /// The New UI as an older build's "Use classic UI" saved it. Read and
-    /// kept for those builds, never acted on: the web UI is the only UI
-    /// ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-    /// `Some(true)`; its `false` was only the saved default ([`load`]).
-    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
@@ -7132,6 +7194,18 @@ pub struct AppSettings {
     /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
     /// older settings file without it reads as tips on, none done.
     pub tips: AppTipsState,
+    /// Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+    /// Home's agent menu shows although the default hides them (an app
+    /// outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+    pub agent_menu_shown: Vec<String>,
+    /// The apps the menu hides although the default shows them. Nothing is
+    /// signed out: a hidden app keeps its sign-ins and stays on the Agents
+    /// page and available by name.
+    pub agent_menu_hidden: Vec<String>,
+    /// The working accounts the menu last saw (`app|variable|slot`): a new
+    /// one is a connect, which shows its app again
+    /// ([`crate::agent_menu::sync`]).
+    pub agent_menu_seen: Vec<String>,
 }
 
 /// A pressed key combination.
@@ -7680,7 +7754,7 @@ pub struct AppHostSpacesAudit {
     pub detail: String,
 }
 
-/// The host's state as the "This machine" page reads it (the cua SDK's
+/// The host's state as the "This computer" page reads it (the cua SDK's
 /// `HostStatus`, flattened).
 pub type AppHostState = core::host::HostState;
 #[uniffi::remote(Record)]
@@ -7757,7 +7831,7 @@ pub struct AppHostState {
     pub account: Option<AppHostAccount>,
 }
 
-/// The account signed in to Cua in the app, as far as "This machine"
+/// The account signed in to Cua in the app, as far as "This computer"
 /// needs it.
 pub type AppHostAccount = core::host::HostAccount;
 #[uniffi::remote(Record)]
@@ -7783,7 +7857,7 @@ pub enum AppHostAccountStep {
     Resume,
 }
 
-/// What a "This machine" button does.
+/// What a "This computer" button does.
 pub type AppHostActionId = core::host::HostActionId;
 #[uniffi::remote(Enum)]
 pub enum AppHostActionId {
@@ -7878,7 +7952,7 @@ pub struct AppHostConfirm {
     pub cancel_label: String,
 }
 
-/// A "This machine" button.
+/// A "This computer" button.
 pub type AppHostAction = core::host::HostAction;
 #[uniffi::remote(Record)]
 pub struct AppHostAction {
@@ -7933,11 +8007,11 @@ pub struct AppHostSetupChoice {
     pub button_label: String,
 }
 
-/// The "This machine" page.
+/// The "This computer" page.
 pub type AppHostPanelView = core::host::HostPanelView;
 #[uniffi::remote(Record)]
 pub struct AppHostPanelView {
-    /// "This machine".
+    /// "This computer".
     pub title: String,
     /// One line: how it is shared, or that it is not.
     pub summary: String,
@@ -8118,7 +8192,7 @@ pub struct AppHostFormField {
 pub type AppHostFormView = core::host::HostFormView;
 #[uniffi::remote(Record)]
 pub struct AppHostFormView {
-    /// "Set up this machine".
+    /// "Set up this computer".
     pub title: String,
     /// One line: what setting up does.
     pub lede: String,
@@ -8388,7 +8462,7 @@ pub struct AppDevicesInput {
     pub enforce_after: Option<u64>,
     /// Machine ids to display names.
     pub machine_names: std::collections::HashMap<String, String>,
-    /// The account's relay machines, for the "New machine" confirm badge
+    /// The account's relay machines, for the "New computer" confirm badge
     /// (S5). Empty on a relay that predates it, or when this device cannot
     /// list them, same as `machine_names`.
     pub machines: Vec<AppMachineInput>,
@@ -10292,7 +10366,7 @@ pub enum AppTelemetrySignal {
     Experiment {
         /// `experiment_on` or `experiment_off`.
         action: String,
-        /// `cua_volume`, `your_cloud` or `sharing`.
+        /// `cua_volume`, `mobile`, ...
         experiment: String,
     },
     /// Which experiments are on now (no event of its own: the daily
@@ -10525,7 +10599,7 @@ pub type AppMachinesViewToggle = core::machines_view::MachinesViewToggle;
 pub struct AppMachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Let other machines create Spaces here", "Let other machines control
+    /// "Let other computers create Spaces here", "Let other computers control
     /// this desktop".
     pub label: String,
     /// One line under it.
@@ -10559,7 +10633,7 @@ pub struct AppMachinesViewSpace {
     pub running: bool,
 }
 
-/// A machine's own desktop, listed first under "Spaces on this machine"
+/// A machine's own desktop, listed first under "Spaces on this computer"
 /// when it shares it, as any Space row (its name, system, status), with a
 /// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
 /// and the machine's line leave it out).
@@ -10666,7 +10740,8 @@ pub struct AppMachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline").
+    /// The page's status line ("Online", "Offline"; "Online, 1 thing to
+    /// fix" when it has issues, so the words agree with the dot).
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     pub shared_by: Option<String>,
@@ -10686,7 +10761,7 @@ pub struct AppMachinesViewMachine {
     pub toggles: Vec<AppMachinesViewToggle>,
     /// Under read-only switches: where they change.
     pub toggles_note: Option<String>,
-    /// "Spaces on this machine".
+    /// "Spaces on this computer".
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<AppMachinesViewSpace>,
@@ -10704,11 +10779,11 @@ pub struct AppMachinesViewMachine {
     pub remove: Option<AppMachinesViewRemove>,
 }
 
-/// "Remove old machines": every machine of the group that can go.
+/// "Remove old computers": every machine of the group that can go.
 pub type AppMachinesViewRemoveAll = core::machines_view::MachinesViewRemoveAll;
 #[uniffi::remote(Record)]
 pub struct AppMachinesViewRemoveAll {
-    /// "Remove old machines".
+    /// "Remove old computers".
     pub label: String,
     /// Asked first.
     pub confirm: AppHostConfirm,
@@ -10722,7 +10797,7 @@ pub type AppMachinesViewGroup = core::machines_view::MachinesViewGroup;
 pub struct AppMachinesViewGroup {
     /// `yours`, `old` or `team`.
     pub id: String,
-    /// "Your machines", "Offline for 30+ days (2)", "Team machines".
+    /// "Your computers", "Offline for 30+ days (2)", "Team computers".
     pub title: String,
     /// Collapsed until opened (the old machines).
     pub collapsed: bool,
@@ -10736,7 +10811,7 @@ pub struct AppMachinesViewGroup {
 pub type AppMachinesView = core::machines_view::MachinesView;
 #[uniffi::remote(Record)]
 pub struct AppMachinesView {
-    /// "3 machines, 2 online".
+    /// "3 computers, 2 online".
     pub summary: String,
     /// The list's groups (only those with machines).
     pub groups: Vec<AppMachinesViewGroup>,
@@ -10851,7 +10926,7 @@ pub type AppChecklistRow = core::checklist::ChecklistRow;
 pub struct AppChecklistRow {
     /// The step.
     pub step: AppChecklistStep,
-    /// "Add a machine".
+    /// "Add a computer".
     pub title: String,
     /// One line under the title.
     pub detail: String,
@@ -10996,9 +11071,9 @@ pub struct AppRelayUsage {
     pub plan: String,
     /// The team whose allowance is pooled.
     pub team: Option<AppRelayUsageTeam>,
-    /// Live sessions now.
+    /// Computers in use now.
     pub live_sessions: u32,
-    /// Live sessions allowed at once (none: no limit).
+    /// Computers in use allowed at once (none: no limit).
     pub live_sessions_limit: Option<u32>,
     /// Relay hours used this month (the team's, when pooled).
     pub hours_used: f64,
@@ -11018,7 +11093,7 @@ pub struct AppRelayUsage {
 pub type AppRelayAllowanceNotice = core::relay_usage::RelayAllowanceNotice;
 #[uniffi::remote(Record)]
 pub struct AppRelayAllowanceNotice {
-    /// On Free: "You're using 2 of 2 live sessions on the free plan. ..."
+    /// On Free: "You have 2 of 2 computers in use at once on the free plan. ..."
     pub text: String,
     /// [`UPGRADE`].
     pub upgrade: String,
@@ -11073,7 +11148,7 @@ pub type AppRelayUsageView = core::relay_usage::RelayUsageView;
 pub struct AppRelayUsageView {
     /// [`ROW_LABEL`].
     pub label: String,
-    /// "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+    /// "Computers in use 1 of 2 · Relay hours 6.5 of 20 this month", then the
     /// team pool when there is one.
     pub line: String,
     /// "Free plan" (empty when the relay names none).
@@ -11082,6 +11157,21 @@ pub struct AppRelayUsageView {
     pub notice: Option<AppRelayAllowanceNotice>,
     /// Settings' plan card.
     pub plan_card: AppPlanCard,
+}
+
+/// Which build and deployment the app runs as, resolved by the host
+/// (`cua_home::channel::CuaChannel`, `cua_home::env::CuaEnv`).
+pub type AppTarget = core::environment_tag::Target;
+#[uniffi::remote(Record)]
+pub struct AppTarget {
+    /// `stable` or `local` (`CuaChannel`); anything else is Stable.
+    pub channel: String,
+    /// `prod` or `staging` (`CuaEnv::name`).
+    pub env: String,
+    /// The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+    /// OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+    /// Empty: the environment's default.
+    pub auth_host: String,
 }
 
 /// Whose Space it is.

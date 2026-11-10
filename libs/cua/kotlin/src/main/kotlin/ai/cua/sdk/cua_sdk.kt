@@ -1033,9 +1033,21 @@ external fun uniffi_cua_sdk_checksum_method_cua_spaces(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_cua_spacesd(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_cua_approve_share(
+): Short
 external fun uniffi_cua_sdk_checksum_method_cua_check_share(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_cua_deny_share(
+): Short
+external fun uniffi_cua_sdk_checksum_method_cua_remove_share_edge(
+): Short
+external fun uniffi_cua_sdk_checksum_method_cua_set_share_settings(
+): Short
 external fun uniffi_cua_sdk_checksum_method_cua_share(
+): Short
+external fun uniffi_cua_sdk_checksum_method_cua_share_settings(
+): Short
+external fun uniffi_cua_sdk_checksum_method_cua_share_tcp(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_cua_shares(
 ): Short
@@ -1063,11 +1075,17 @@ external fun uniffi_cua_sdk_checksum_method_devices_rename(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_rename_machine(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_resolve_default_space(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_set_spaces_settings(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_snapshot(
+): Short
+external fun uniffi_cua_sdk_checksum_method_devices_spaces_settings(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_host_configure(
 ): Short
@@ -1361,6 +1379,8 @@ external fun uniffi_cua_sdk_checksum_method_space_checkpoint(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_close_stream(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_delete_service(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_displays(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_download(
@@ -1379,17 +1399,27 @@ external fun uniffi_cua_sdk_checksum_method_space_info(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_join_presence(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_join_presence_for(
+): Short
+external fun uniffi_cua_sdk_checksum_method_space_kept_services(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_list_tools(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_open_stream(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_put_service(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_request_site_login(
+): Short
+external fun uniffi_cua_sdk_checksum_method_space_restart_service(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_route(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_screenshot(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_send_file(
+): Short
+external fun uniffi_cua_sdk_checksum_method_space_service_logs(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_services(
 ): Short
@@ -1403,7 +1433,11 @@ external fun uniffi_cua_sdk_checksum_method_space_spacesd(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_start_hotspot(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_start_service(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_stop_hotspot(
+): Short
+external fun uniffi_cua_sdk_checksum_method_space_stop_service(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_stream_session(
 ): Short
@@ -1529,6 +1563,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_routine_set_enabled(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_routines(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_ack_network_notice(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_add(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_add_with_service(
@@ -1549,6 +1585,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_delete(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_delete_many(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_delete_tree(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_delete_volume(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_fork(
@@ -1567,9 +1605,17 @@ external fun uniffi_cua_sdk_checksum_method_spaces_list_tools_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_machine_health(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_network(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_network_log(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_orphans(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_register(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_remove(
 ): Short
@@ -1581,9 +1627,19 @@ external fun uniffi_cua_sdk_checksum_method_spaces_resolve(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_resources(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_children(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_clipboard(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_set_egress(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_set_lifetime(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_network(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_tree_budget(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_volume(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_space(
 ): Short
@@ -1592,6 +1648,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_start(
 external fun uniffi_cua_sdk_checksum_method_spaces_stop(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_suspend(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_tree_budget(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_volume_approve(
 ): Short
@@ -1982,9 +2040,21 @@ external fun uniffi_cua_sdk_fn_method_cua_spaces(`ptr`: Long,uniffi_out_err: Uni
 ): Long
 external fun uniffi_cua_sdk_fn_method_cua_spacesd(`ptr`: Long,`url`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_cua_approve_share(`ptr`: Long,`id`: RustBuffer.ByValue,`always`: Byte,
+): Long
 external fun uniffi_cua_sdk_fn_method_cua_check_share(`ptr`: Long,`id`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_cua_deny_share(`ptr`: Long,`id`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_cua_remove_share_edge(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_cua_set_share_settings(`ptr`: Long,`settings`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_cua_share(`ptr`: Long,`target`: RustBuffer.ByValue,`access`: RustBuffer.ByValue,`ttlSeconds`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_cua_share_settings(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_cua_share_tcp(`ptr`: Long,`target`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`ttlSeconds`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`route`: RustBuffer.ByValue,`allow`: RustBuffer.ByValue,`checkHost`: Byte,`consent`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_cua_shares(`ptr`: Long,
 ): Long
@@ -2016,11 +2086,17 @@ external fun uniffi_cua_sdk_fn_method_devices_rename(`ptr`: Long,`id`: RustBuffe
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_rename_machine(`ptr`: Long,`machineId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_devices_resolve_default_space(`ptr`: Long,
+): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_devices_set_spaces_settings(`ptr`: Long,`settings`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_devices_snapshot(`ptr`: Long,`auditLimit`: Int,
+): Long
+external fun uniffi_cua_sdk_fn_method_devices_spaces_settings(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_clone_host(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -2394,6 +2470,8 @@ external fun uniffi_cua_sdk_fn_method_space_checkpoint(`ptr`: Long,`checkpoint`:
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_close_stream(`ptr`: Long,`mediaSessionId`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_space_delete_service(`ptr`: Long,`name`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_space_displays(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_download(`ptr`: Long,`remotePath`: RustBuffer.ByValue,`destDir`: RustBuffer.ByValue,
@@ -2412,17 +2490,27 @@ external fun uniffi_cua_sdk_fn_method_space_info(`ptr`: Long,uniffi_out_err: Uni
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_space_join_presence(`ptr`: Long,`identity`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_space_join_presence_for(`ptr`: Long,`windowId`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_kept_services(`ptr`: Long,
+): Long
 external fun uniffi_cua_sdk_fn_method_space_list_tools(`ptr`: Long,`service`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_open_stream(`ptr`: Long,`options`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_space_put_service(`ptr`: Long,`def`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_space_request_site_login(`ptr`: Long,`url`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_restart_service(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_route(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_screenshot(`ptr`: Long,`options`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_send_file(`ptr`: Long,`localPath`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_service_logs(`ptr`: Long,`name`: RustBuffer.ByValue,`tailBytes`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_services(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -2436,7 +2524,11 @@ external fun uniffi_cua_sdk_fn_method_space_spacesd(`ptr`: Long,uniffi_out_err: 
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_start_hotspot(`ptr`: Long,`setSystemProxy`: RustBuffer.ByValue,`bypass`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_space_start_service(`ptr`: Long,`name`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_space_stop_hotspot(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_stop_service(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_stream_session(`ptr`: Long,`options`: RustBuffer.ByValue,`frames`: Long,`audio`: RustBuffer.ByValue,
 ): Long
@@ -2580,6 +2672,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_routine_set_enabled(`ptr`: Long,`id
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_routines(`ptr`: Long,`agent`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_ack_network_notice(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_add(`ptr`: Long,`url`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_add_with_service(`ptr`: Long,`url`: RustBuffer.ByValue,`token`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,
@@ -2600,6 +2694,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_delete(`ptr`: Long,`space`: RustBuf
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_delete_many(`ptr`: Long,`ids`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_delete_tree(`ptr`: Long,`space`: RustBuffer.ByValue,`keepChildren`: Byte,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_delete_volume(`ptr`: Long,`name`: RustBuffer.ByValue,`force`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_fork(`ptr`: Long,`source`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
@@ -2618,9 +2714,17 @@ external fun uniffi_cua_sdk_fn_method_spaces_list_tools_json(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_machine_health(`ptr`: Long,`machine`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_network(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_network_log(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_orphans(`ptr`: Long,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_relay_register(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_relay_unregister(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(`ptr`: Long,`space`: RustBuffer.ByValue,`deleteSpaces`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_remove(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
@@ -2632,9 +2736,19 @@ external fun uniffi_cua_sdk_fn_method_spaces_resolve(`ptr`: Long,`space`: RustBu
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_resources(`ptr`: Long,`visible`: Byte,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_children(`ptr`: Long,`space`: RustBuffer.ByValue,`enabled`: Byte,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_clipboard(`ptr`: Long,`space`: RustBuffer.ByValue,`clipboard`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_set_egress(`ptr`: Long,`space`: RustBuffer.ByValue,`policy`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_set_lifetime(`ptr`: Long,`space`: RustBuffer.ByValue,`seconds`: Long,`onExpire`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_network(`ptr`: Long,`space`: RustBuffer.ByValue,`settings`: RustBuffer.ByValue,`widen`: Byte,`tree`: Byte,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_tree_budget(`ptr`: Long,`space`: RustBuffer.ByValue,`limits`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_volume(`ptr`: Long,`space`: RustBuffer.ByValue,`volume`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_space(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
@@ -2643,6 +2757,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_start(`ptr`: Long,`space`: RustBuff
 external fun uniffi_cua_sdk_fn_method_spaces_stop(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_suspend(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_tree_budget(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_volume_approve(`ptr`: Long,`requestId`: RustBuffer.ByValue,`expiresInSecs`: RustBuffer.ByValue,
 ): Long
@@ -3454,10 +3570,28 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_cua_approve_share() != 32419.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_cua_check_share() != 37820.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_cua_deny_share() != 53987.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_cua_remove_share_edge() != 8456.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_cua_set_share_settings() != 40470.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_cua_share() != 50100.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_cua_share_settings() != 39281.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_cua_share_tcp() != 49424.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_cua_shares() != 39646.toShort()) {
@@ -3499,13 +3633,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_resolve_default_space() != 5493.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_set_spaces_settings() != 38780.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_spaces_settings() != 1866.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828.toShort()) {
@@ -3946,6 +4089,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_close_stream() != 64912.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_space_delete_service() != 14460.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_space_displays() != 30039.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -3973,13 +4119,25 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_kept_services() != 50248.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_space_list_tools() != 19376.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_open_stream() != 19577.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_space_put_service() != 55111.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_restart_service() != 63778.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_route() != 9790.toShort()) {
@@ -3989,6 +4147,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_send_file() != 29056.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_service_logs() != 48773.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_services() != 32496.toShort()) {
@@ -4009,7 +4170,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_space_start_service() != 13576.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_space_stop_hotspot() != 18254.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_stop_service() != 14671.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_stream_session() != 61326.toShort()) {
@@ -4198,6 +4365,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_routines() != 22768.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_ack_network_notice() != 32926.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_add() != 56308.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -4222,10 +4392,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_create_with_progress() != 28676.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_spaces_delete() != 39986.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_delete() != 4316.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_delete_many() != 9087.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_delete_tree() != 29454.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_delete_volume() != 11412.toShort()) {
@@ -4255,10 +4428,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_network() != 41208.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_network_log() != 25916.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_orphans() != 23539.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_register() != 31691.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_unregister() != 53366.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer() != 32336.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_remove() != 23086.toShort()) {
@@ -4276,10 +4461,25 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_resources() != 12146.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_children() != 63927.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_clipboard() != 38931.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_egress() != 12366.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_volume() != 17976.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_space() != 26355.toShort()) {
@@ -4292,6 +4492,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_tree_budget() != 58333.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640.toShort()) {
@@ -8322,10 +8525,33 @@ public interface CuaInterface {
     suspend fun `spacesd`(`url`: kotlin.String, `token`: kotlin.String?): SpacesdClient
 
     /**
+     * Lets a waiting share go live (an agent's public share, or the first
+     * through a share edge). `always`: its Space may share without asking
+     * from now on.
+     */
+    suspend fun `approveShare`(`id`: kotlin.String, `always`: kotlin.Boolean = false): Share
+
+    /**
      * Opens a share's link once, as its owner, so a link is known to work
      * before it is handed to anyone. `path` is below the link.
      */
     suspend fun `checkShare`(`id`: kotlin.String, `path`: kotlin.String? = null): ShareCheck
+
+    /**
+     * Turns down a waiting share.
+     */
+    suspend fun `denyShare`(`id`: kotlin.String)
+
+    /**
+     * Removes the share edge from your cloud now. Returns the ids of the
+     * shares that ended with it.
+     */
+    suspend fun `removeShareEdge`(): List<kotlin.String>
+
+    /**
+     * Saves the share settings (the read-only fields are ignored).
+     */
+    suspend fun `setShareSettings`(`settings`: ShareSettings): ShareSettings
 
     /**
      * Shares `target` and returns a link that opens on the owner's other
@@ -8337,6 +8563,32 @@ public interface CuaInterface {
      * share, so it keeps working after this process exits.
      */
     suspend fun `share`(`target`: kotlin.String, `access`: ShareAccess? = null, `ttlSeconds`: kotlin.UInt? = null, `name`: kotlin.String? = null): Share
+
+    /**
+     * The share settings, with today's data and the share edge.
+     */
+    suspend fun `shareSettings`(): ShareSettings
+
+    /**
+     * Shares a raw TCP service in a Space (a game server, for example) at a
+     * public address anyone can connect to, and returns it
+     * (`tcp_connect_with`). `target` is a port in a Space
+     * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+     * own. `service` (`"minecraft"`) adds a name people can type instead of
+     * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+     * less. It reaches only that one port of that Space; admin and
+     * remote-access ports are refused. An experiment (Public TCP shares),
+     * off unless turned on.
+     *
+     * `route` is `auto` (default: the Space's own host in your cloud,
+     * else a share edge in your linked cloud, else Cua's relay), `host`,
+     * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+     * `check_host` (Minecraft) drops connections that did not dial this
+     * address. `consent` agrees to a share edge's cost now; without it the
+     * first share through a new edge comes back `waiting` until
+     * `approve_share`.
+     */
+    suspend fun `shareTcp`(`target`: kotlin.String, `service`: kotlin.String? = null, `ttlSeconds`: kotlin.UInt? = null, `name`: kotlin.String? = null, `route`: kotlin.String? = null, `allow`: List<kotlin.String>? = null, `checkHost`: kotlin.Boolean = false, `consent`: kotlin.Boolean = false): Share
 
     /**
      * The active shares, newest first.
@@ -8633,6 +8885,32 @@ open class Cua: Disposable, AutoCloseable, CuaInterface
 
 
     /**
+     * Lets a waiting share go live (an agent's public share, or the first
+     * through a share edge). `always`: its Space may share without asking
+     * from now on.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `approveShare`(`id`: kotlin.String, `always`: kotlin.Boolean) : Share {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_cua_approve_share(
+                uniffiHandle,
+                FfiConverterString.lower(`id`),FfiConverterBoolean.lower(`always`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeShare.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Opens a share's link once, as its owner, so a link is known to work
      * before it is handed to anyone. `path` is below the link.
      */
@@ -8658,6 +8936,80 @@ open class Cua: Disposable, AutoCloseable, CuaInterface
 
 
     /**
+     * Turns down a waiting share.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `denyShare`(`id`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_cua_deny_share(
+                uniffiHandle,
+                FfiConverterString.lower(`id`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Removes the share edge from your cloud now. Returns the ids of the
+     * shares that ended with it.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `removeShareEdge`() : List<kotlin.String> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_cua_remove_share_edge(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Saves the share settings (the read-only fields are ignored).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setShareSettings`(`settings`: ShareSettings) : ShareSettings {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_cua_set_share_settings(
+                uniffiHandle,
+                FfiConverterTypeShareSettings.lower(`settings`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeShareSettings.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Shares `target` and returns a link that opens on the owner's other
      * signed-in devices, never a localhost link: a port (`"3000"`), a port in
      * a Space (`"space:dev:3000"`), or a file or folder (`"./report.html"`,
@@ -8674,6 +9026,70 @@ open class Cua: Disposable, AutoCloseable, CuaInterface
             UniffiLib.uniffi_cua_sdk_fn_method_cua_share(
                 uniffiHandle,
                 FfiConverterString.lower(`target`),FfiConverterOptionalTypeShareAccess.lower(`access`),FfiConverterOptionalUInt.lower(`ttlSeconds`),FfiConverterOptionalString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeShare.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The share settings, with today's data and the share edge.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `shareSettings`() : ShareSettings {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_cua_share_settings(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeShareSettings.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Shares a raw TCP service in a Space (a game server, for example) at a
+     * public address anyone can connect to, and returns it
+     * (`tcp_connect_with`). `target` is a port in a Space
+     * (`"space:mc:25565"`); inside a Space, a bare port (`"25565"`) is its
+     * own. `service` (`"minecraft"`) adds a name people can type instead of
+     * the address. Lasts 24 hours unless `ttl_seconds` (60 to 86400) says
+     * less. It reaches only that one port of that Space; admin and
+     * remote-access ports are refused. An experiment (Public TCP shares),
+     * off unless turned on.
+     *
+     * `route` is `auto` (default: the Space's own host in your cloud,
+     * else a share edge in your linked cloud, else Cua's relay), `host`,
+     * `edge` or `relay`. `allow` limits who may connect (CIDRs).
+     * `check_host` (Minecraft) drops connections that did not dial this
+     * address. `consent` agrees to a share edge's cost now; without it the
+     * first share through a new edge comes back `waiting` until
+     * `approve_share`.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `shareTcp`(`target`: kotlin.String, `service`: kotlin.String?, `ttlSeconds`: kotlin.UInt?, `name`: kotlin.String?, `route`: kotlin.String?, `allow`: List<kotlin.String>?, `checkHost`: kotlin.Boolean, `consent`: kotlin.Boolean) : Share {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_cua_share_tcp(
+                uniffiHandle,
+                FfiConverterString.lower(`target`),FfiConverterOptionalString.lower(`service`),FfiConverterOptionalUInt.lower(`ttlSeconds`),FfiConverterOptionalString.lower(`name`),FfiConverterOptionalString.lower(`route`),FfiConverterOptionalSequenceString.lower(`allow`),FfiConverterBoolean.lower(`checkHost`),FfiConverterBoolean.lower(`consent`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
@@ -9028,6 +9444,13 @@ public interface DevicesInterface {
     suspend fun `renameMachine`(`machineId`: kotlin.String, `name`: kotlin.String): RelayMachine
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+    suspend fun `resolveDefaultSpace`(): DefaultSpace
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -9039,11 +9462,23 @@ public interface DevicesInterface {
     suspend fun `revokePairingCode`(`id`: kotlin.String)
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+    suspend fun `setSpacesSettings`(`settings`: SpacesSettings): SpacesSettings
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
      */
     suspend fun `snapshot`(`auditLimit`: kotlin.UInt): DevicesSnapshot
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+    suspend fun `spacesSettings`(): SpacesSettings
 
     companion object
 }
@@ -9388,6 +9823,32 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
 
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resolveDefaultSpace`() : DefaultSpace {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_resolve_default_space(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeDefaultSpace.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -9438,6 +9899,31 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
 
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setSpacesSettings`(`settings`: SpacesSettings) : SpacesSettings {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_set_spaces_settings(
+                uniffiHandle,
+                FfiConverterTypeSpacesSettings.lower(`settings`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpacesSettings.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
@@ -9457,6 +9943,31 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeDevicesSnapshot.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spacesSettings`() : SpacesSettings {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_spaces_settings(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpacesSettings.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -17664,6 +18175,11 @@ public interface SpaceInterface {
     suspend fun `closeStream`(`mediaSessionId`: kotlin.String)
 
     /**
+     * Stops a service and forgets it (its logs go too).
+     */
+    suspend fun `deleteService`(`name`: kotlin.String)
+
+    /**
      * The Space's displays, primary first, with their resolution in
      * physical pixels.
      */
@@ -17727,6 +18243,22 @@ public interface SpaceInterface {
     suspend fun `joinPresence`(`identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?): SpacePresence
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    suspend fun `joinPresenceFor`(`windowId`: kotlin.String?, `identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?): SpacePresence
+
+    /**
+     * This Space's services.
+     */
+    suspend fun `keptServices`(): List<SpaceServiceInfo>
+
+    /**
      * Tools of the Space's MCP service (`driver`, the default).
      */
     suspend fun `listTools`(`service`: kotlin.String?): List<SpaceToolInfo>
@@ -17738,6 +18270,13 @@ public interface SpaceInterface {
     suspend fun `openStream`(`options`: SpaceStreamOptions): SpaceStreamTicket
 
     /**
+     * Keeps a command running in this Space (replacing a service of that
+     * name): restarted by its policy when it ends or fails its health
+     * check, started when the Space boots, its output kept in a log file.
+     */
+    suspend fun `putService`(`def`: SpaceServiceDef): SpaceServiceInfo
+
+    /**
      * Signs in to a site in this Space's browser with a password the user
      * saved in the Cua Keyvault. The first call files a request
      * (`status == "pending"` with a `request_id`); the user approves it in
@@ -17746,6 +18285,11 @@ public interface SpaceInterface {
      * declined request is an error. The password never reaches the caller.
      */
     suspend fun `requestSiteLogin`(`url`: kotlin.String, `options`: SiteLoginOptions?): SiteLoginReport
+
+    /**
+     * Restarts a service.
+     */
+    suspend fun `restartService`(`name`: kotlin.String): SpaceServiceInfo
 
     /**
      * Which way this Space's calls go now (see [`super::spacesd::SpacesdClient::route`]):
@@ -17768,6 +18312,11 @@ public interface SpaceInterface {
      * (TeleportService.ReceiveFiles, per-file SHA-256).
      */
     suspend fun `sendFile`(`localPath`: kotlin.String, `options`: SpaceSendFileOptions): SpaceSendFileReport
+
+    /**
+     * The end of a service's log (`tail_bytes` `None`: 64 KiB).
+     */
+    suspend fun `serviceLogs`(`name`: kotlin.String, `tailBytes`: kotlin.ULong?): kotlin.String
 
     /**
      * The MCP services this Space exposes: `driver` when its spacesd has
@@ -17809,9 +18358,19 @@ public interface SpaceInterface {
     suspend fun `startHotspot`(`setSystemProxy`: kotlin.Boolean?, `bypass`: List<kotlin.String>?): SpaceHotspotStatus
 
     /**
+     * Starts a stopped service.
+     */
+    suspend fun `startService`(`name`: kotlin.String): SpaceServiceInfo
+
+    /**
      * Stops this Space's hotspot. Returns the stopped Space ids.
      */
     suspend fun `stopHotspot`(): List<kotlin.String>
+
+    /**
+     * Stops a service and keeps it stopped (also across a reboot).
+     */
+    suspend fun `stopService`(`name`: kotlin.String): SpaceServiceInfo
 
     /**
      * Opens a media session and delivers keyframe-gated encoded frames
@@ -18389,6 +18948,31 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
+     * Stops a service and forgets it (its logs go too).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteService`(`name`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_delete_service(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * The Space's displays, primary first, with their resolution in
      * physical pixels.
      */
@@ -18607,6 +19191,60 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinPresenceFor`(`windowId`: kotlin.String?, `identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?) : SpacePresence {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for(
+                uniffiHandle,
+                FfiConverterOptionalString.lower(`windowId`),FfiConverterTypePresenceIdentity.lower(`identity`),FfiConverterOptionalULong.lower(`timeoutMs`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypeSpacePresence.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * This Space's services.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `keptServices`() : List<SpaceServiceInfo> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_kept_services(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeSpaceServiceInfo.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Tools of the Space's MCP service (`driver`, the default).
      */
     @Throws(CuaException::class)
@@ -18656,6 +19294,32 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
+     * Keeps a command running in this Space (replacing a service of that
+     * name): restarted by its policy when it ends or fails its health
+     * check, started when the Space boots, its output kept in a log file.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `putService`(`def`: SpaceServiceDef) : SpaceServiceInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_put_service(
+                uniffiHandle,
+                FfiConverterTypeSpaceServiceDef.lower(`def`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceServiceInfo.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Signs in to a site in this Space's browser with a password the user
      * saved in the Cua Keyvault. The first call files a request
      * (`status == "pending"` with a `request_id`); the user approves it in
@@ -18678,6 +19342,30 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSiteLoginReport.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Restarts a service.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `restartService`(`name`: kotlin.String) : SpaceServiceInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_restart_service(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceServiceInfo.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -18757,6 +19445,30 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSpaceSendFileReport.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The end of a service's log (`tail_bytes` `None`: 64 KiB).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `serviceLogs`(`name`: kotlin.String, `tailBytes`: kotlin.ULong?) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_service_logs(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),FfiConverterOptionalULong.lower(`tailBytes`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -18903,6 +19615,30 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
+     * Starts a stopped service.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `startService`(`name`: kotlin.String) : SpaceServiceInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_start_service(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceServiceInfo.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Stops this Space's hotspot. Returns the stopped Space ids.
      */
     @Throws(CuaException::class)
@@ -18920,6 +19656,30 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceString.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Stops a service and keeps it stopped (also across a reboot).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `stopService`(`name`: kotlin.String) : SpaceServiceInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_stop_service(
+                uniffiHandle,
+                FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceServiceInfo.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -20759,6 +21519,12 @@ public interface SpacesInterface {
     suspend fun `routines`(`agent`: kotlin.String?): List<RoutineInfo>
 
     /**
+     * Marks the one-time notice about the new network defaults as shown
+     * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+     */
+    suspend fun `ackNetworkNotice`(`space`: kotlin.String)
+
+    /**
      * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
      * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
      * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -20823,7 +21589,8 @@ public interface SpacesInterface {
 
     /**
      * Deletes a Space's sandbox and forgets it (a Space added by address
-     * is only forgotten). Returns what happened.
+     * is only forgotten). Its child Spaces are deleted first. Returns what
+     * happened.
      */
     suspend fun `delete`(`space`: kotlin.String): kotlin.String
 
@@ -20833,6 +21600,12 @@ public interface SpacesInterface {
      * order; one failure never stops the rest.
      */
     suspend fun `deleteMany`(`ids`: List<kotlin.String>): List<BulkResult>
+
+    /**
+     * [`Spaces::delete`], with `keep_children`: its child Spaces become
+     * top-level Spaces and keep running instead of being deleted first.
+     */
+    suspend fun `deleteTree`(`space`: kotlin.String, `keepChildren`: kotlin.Boolean): kotlin.String
 
     /**
      * Deletes the named volume `name` and its files (their history stays
@@ -20909,6 +21682,25 @@ public interface SpacesInterface {
     suspend fun `machineHealth`(`machine`: kotlin.String?): MachineHealth
 
     /**
+     * A Space's network: its settings, what they open, where they are
+     * enforced (or why its network is cut), and what is always blocked.
+     */
+    suspend fun `network`(`space`: kotlin.String): SpaceNetworkInfo
+
+    /**
+     * What a Space on the daemon's computer tried to reach and its network
+     * refused, most recent first (`cua network log`).
+     */
+    suspend fun `networkLog`(`space`: kotlin.String): List<NetworkEvent>
+
+    /**
+     * Child Spaces whose parent is gone or out of reach. The cua daemon
+     * ends a child only on proof its parent is gone (after a grace period);
+     * the rest are listed here and never ended by it.
+     */
+    suspend fun `orphans`(): List<SpaceOrphan>
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -20922,6 +21714,17 @@ public interface SpacesInterface {
      * Returns false when it was not on the relay.
      */
     suspend fun `relayUnregister`(`space`: kotlin.String): kotlin.Boolean
+
+    /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+    suspend fun `relayUnregisterComputer`(`space`: kotlin.String, `deleteSpaces`: kotlin.Boolean): kotlin.Boolean
 
     /**
      * Unregisters a Space (the sandbox is not touched).
@@ -20968,6 +21771,19 @@ public interface SpacesInterface {
     suspend fun `resources`(`visible`: kotlin.Boolean): ResourcesSnapshot
 
     /**
+     * Lets a Space make child Spaces of its own, or stops it. While on,
+     * `cua`, the SDKs and the agent's tools in that Space create, list and
+     * delete Spaces that belong to it (on the same computer, never wider
+     * than it, ending no later than it), through a channel only it can
+     * reach. Off ends its capability at once; children it made keep running
+     * until deleted or their lifetime ends. Only for a Space the machine of
+     * this runtime runs itself.
+     */
+    suspend fun `setChildren`(`space`: kotlin.String, `enabled`: kotlin.Boolean)
+
+    suspend fun `setClipboard`(`space`: kotlin.String, `clipboard`: kotlin.String)
+
+    /**
      * Replaces a Space's egress policy; an empty one removes it (see
      * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
      * `InvalidArgument`, a Space that cannot take one `Unsupported`.
@@ -20983,6 +21799,34 @@ public interface SpacesInterface {
      * Embedded: recorded; the cua daemon on this machine enforces it.
      */
     suspend fun `setLifetime`(`space`: kotlin.String, `seconds`: kotlin.ULong, `onExpire`: kotlin.String?): kotlin.Long
+
+    /**
+     * Replaces a Space's network settings (see [`NetworkSettings`]). A
+     * child stays within its parent's unless `widen`; `tree` gives its
+     * children the same settings. They hold at once where the runtime can
+     * change a running guest's network, else from its next start
+     * (`applied`). A Space another computer runs is `Unsupported`.
+     */
+    suspend fun `setNetwork`(`space`: kotlin.String, `settings`: NetworkSettings, `widen`: kotlin.Boolean, `tree`: kotlin.Boolean): SetNetworkResult
+
+    /**
+     * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+     * memory its children may hold at once, and what they may cost. A child
+     * that does not fit is refused with what is left. All `None` removes it.
+     */
+    suspend fun `setTreeBudget`(`space`: kotlin.String, `limits`: TreeBudgetLimits): TreeBudget
+
+    /**
+     * Sets when a Space's viewers may move the clipboard between this
+     * computer and the Space: `viewing` (only while you're viewing, the
+     * default), `ask` or `off`. It applies to viewers opened afterwards.
+     * The agent tools `computer_clipboard_*` act inside the Space and are
+     * not affected. Another word is `InvalidArgument`.
+     * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+     * `off`. Applies now: `off` unmounts the Volume (named volumes it
+     * mounted stay).
+     */
+    suspend fun `setVolume`(`space`: kotlin.String, `volume`: kotlin.String)
 
     /**
      * A connected handle to a registered Space.
@@ -21013,6 +21857,12 @@ public interface SpacesInterface {
      * then. [`Spaces::stop`] stops it instead and frees its memory.
      */
     suspend fun `suspend`(`space`: kotlin.String): SpacePowerReport
+
+    /**
+     * The budget of `space`'s tree (any Space of it) and what its
+     * children use now. Kept by the cua daemon.
+     */
+    suspend fun `treeBudget`(`space`: kotlin.String): TreeBudget
 
     /**
      * `volume_approve`: the request becomes a grant (with presence).
@@ -22155,6 +23005,32 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * Marks the one-time notice about the new network defaults as shown
+     * for `space` ([`SpaceNetworkInfo::notice_pending`]).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `ackNetworkNotice`(`space`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_ack_network_notice(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
      * Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
      * endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
@@ -22371,7 +23247,8 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
     /**
      * Deletes a Space's sandbox and forgets it (a Space added by address
-     * is only forgotten). Returns what happened.
+     * is only forgotten). Its child Spaces are deleted first. Returns what
+     * happened.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -22414,6 +23291,31 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypeBulkResult.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * [`Spaces::delete`], with `keep_children`: its child Spaces become
+     * top-level Spaces and keep running instead of being deleted first.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteTree`(`space`: kotlin.String, `keepChildren`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_delete_tree(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterBoolean.lower(`keepChildren`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -22666,6 +23568,82 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * A Space's network: its settings, what they open, where they are
+     * enforced (or why its network is cut), and what is always blocked.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `network`(`space`: kotlin.String) : SpaceNetworkInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_network(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceNetworkInfo.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * What a Space on the daemon's computer tried to reach and its network
+     * refused, most recent first (`cua network log`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `networkLog`(`space`: kotlin.String) : List<NetworkEvent> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_network_log(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeNetworkEvent.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Child Spaces whose parent is gone or out of reach. The cua daemon
+     * ends a child only on proof its parent is gone (after a grace period);
+     * the rest are listed here and never ended by it.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `orphans`() : List<SpaceOrphan> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_orphans(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeSpaceOrphan.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Publishes `space` on the cua.ai relay as a machine of the signed-in
      * account, the way `cua host setup` publishes this computer: the
      * Space's own driver dials out, so the account's other devices (a
@@ -22705,6 +23683,36 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
             UniffiLib.uniffi_cua_sdk_fn_method_spaces_relay_unregister(
                 uniffiHandle,
                 FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_i8(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_i8(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_i8(future) },
+        // lift function
+        { FfiConverterBoolean.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `relayUnregisterComputer`(`space`: kotlin.String, `deleteSpaces`: kotlin.Boolean) : kotlin.Boolean {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterBoolean.lower(`deleteSpaces`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_i8(future, callback, continuation) },
@@ -22859,6 +23867,59 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * Lets a Space make child Spaces of its own, or stops it. While on,
+     * `cua`, the SDKs and the agent's tools in that Space create, list and
+     * delete Spaces that belong to it (on the same computer, never wider
+     * than it, ending no later than it), through a channel only it can
+     * reach. Off ends its capability at once; children it made keep running
+     * until deleted or their lifetime ends. Only for a Space the machine of
+     * this runtime runs itself.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setChildren`(`space`: kotlin.String, `enabled`: kotlin.Boolean) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_children(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterBoolean.lower(`enabled`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setClipboard`(`space`: kotlin.String, `clipboard`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_clipboard(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterString.lower(`clipboard`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Replaces a Space's egress policy; an empty one removes it (see
      * [`EgressPolicy`]). Its host enforces it at once. A bad entry is
      * `InvalidArgument`, a Space that cannot take one `Unsupported`.
@@ -22908,6 +23969,92 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_i64(future) },
         // lift function
         { FfiConverterLong.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Replaces a Space's network settings (see [`NetworkSettings`]). A
+     * child stays within its parent's unless `widen`; `tree` gives its
+     * children the same settings. They hold at once where the runtime can
+     * change a running guest's network, else from its next start
+     * (`applied`). A Space another computer runs is `Unsupported`.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setNetwork`(`space`: kotlin.String, `settings`: NetworkSettings, `widen`: kotlin.Boolean, `tree`: kotlin.Boolean) : SetNetworkResult {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterTypeNetworkSettings.lower(`settings`),FfiConverterBoolean.lower(`widen`),FfiConverterBoolean.lower(`tree`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSetNetworkResult.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+     * memory its children may hold at once, and what they may cost. A child
+     * that does not fit is refused with what is left. All `None` removes it.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setTreeBudget`(`space`: kotlin.String, `limits`: TreeBudgetLimits) : TreeBudget {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterTypeTreeBudgetLimits.lower(`limits`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTreeBudget.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Sets when a Space's viewers may move the clipboard between this
+     * computer and the Space: `viewing` (only while you're viewing, the
+     * default), `ask` or `off`. It applies to viewers opened afterwards.
+     * The agent tools `computer_clipboard_*` act inside the Space and are
+     * not affected. Another word is `InvalidArgument`.
+     * Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+     * `off`. Applies now: `off` unmounts the Volume (named volumes it
+     * mounted stay).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setVolume`(`space`: kotlin.String, `volume`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_volume(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterString.lower(`volume`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -23014,6 +24161,31 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSpacePowerReport.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The budget of `space`'s tree (any Space of it) and what its
+     * children use now. Kept by the cua daemon.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `treeBudget`(`space`: kotlin.String) : TreeBudget {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_tree_budget(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeTreeBudget.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -32532,6 +33704,141 @@ public object FfiConverterTypeCursorArt: FfiConverterRustBuffer<CursorArt> {
 
 
 /**
+ * Where the default Space resolves now.
+ */
+data class DefaultSpace (
+    /**
+     * The first online entry; none when this device is the answer
+     * (`reason` `here`).
+     */
+    var `space`: kotlin.String?
+    ,
+    /**
+     * `default`, `fallback`, `here` or `unset`.
+     */
+    var `reason`: kotlin.String
+    ,
+    /**
+     * The chosen default, online or not.
+     */
+    var `defaultSpace`: kotlin.String?
+    ,
+    /**
+     * Whether the default is online; none when unset.
+     */
+    var `defaultOnline`: kotlin.Boolean?
+    ,
+    /**
+     * The order the relay tried.
+     */
+    var `order`: List<DefaultSpaceStep>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDefaultSpace: FfiConverterRustBuffer<DefaultSpace> {
+    override fun read(buf: ByteBuffer): DefaultSpace {
+        return DefaultSpace(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
+            FfiConverterSequenceTypeDefaultSpaceStep.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DefaultSpace) = (
+            FfiConverterOptionalString.allocationSize(value.`space`) +
+            FfiConverterString.allocationSize(value.`reason`) +
+            FfiConverterOptionalString.allocationSize(value.`defaultSpace`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`defaultOnline`) +
+            FfiConverterSequenceTypeDefaultSpaceStep.allocationSize(value.`order`)
+    )
+
+    override fun write(value: DefaultSpace, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`space`, buf)
+            FfiConverterString.write(value.`reason`, buf)
+            FfiConverterOptionalString.write(value.`defaultSpace`, buf)
+            FfiConverterOptionalBoolean.write(value.`defaultOnline`, buf)
+            FfiConverterSequenceTypeDefaultSpaceStep.write(value.`order`, buf)
+    }
+}
+
+
+
+/**
+ * One entry of the order [`Devices::resolve_default_space`] tried.
+ */
+data class DefaultSpaceStep (
+    /**
+     * The Space id.
+     */
+    var `space`: kotlin.String
+    ,
+    /**
+     * Its display name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Connected and sharing now.
+     */
+    var `online`: kotlin.Boolean
+    ,
+    /**
+     * `default`, `fallback` or `here`.
+     */
+    var `role`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDefaultSpaceStep: FfiConverterRustBuffer<DefaultSpaceStep> {
+    override fun read(buf: ByteBuffer): DefaultSpaceStep {
+        return DefaultSpaceStep(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DefaultSpaceStep) = (
+            FfiConverterString.allocationSize(value.`space`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterBoolean.allocationSize(value.`online`) +
+            FfiConverterString.allocationSize(value.`role`)
+    )
+
+    override fun write(value: DefaultSpaceStep, buf: ByteBuffer) {
+            FfiConverterString.write(value.`space`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterBoolean.write(value.`online`, buf)
+            FfiConverterString.write(value.`role`, buf)
+    }
+}
+
+
+
+/**
  * `Devices.enroll`'s result.
  */
 data class DeviceEnrollment (
@@ -38182,6 +39489,199 @@ public object FfiConverterTypeNamedVolume: FfiConverterRustBuffer<NamedVolume> {
 
 
 /**
+ * One kind of connection a Space tried and its network refused
+ * ([`Spaces::network_log`]).
+ */
+data class NetworkEvent (
+    /**
+     * Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+     * `user:deny`, `default:none`, ...
+     */
+    var `reason`: kotlin.String
+    ,
+    /**
+     * Where to (`169.254.169.254:80`, or the rule's network where only the
+     * host's firewall counted it).
+     */
+    var `dst`: kotlin.String
+    ,
+    /**
+     * `tcp` or `udp` when known.
+     */
+    var `proto`: kotlin.String?
+    ,
+    /**
+     * How many times.
+     */
+    var `count`: kotlin.ULong
+    ,
+    /**
+     * When the last one was refused (Unix seconds), when known.
+     */
+    var `lastUnix`: kotlin.ULong?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNetworkEvent: FfiConverterRustBuffer<NetworkEvent> {
+    override fun read(buf: ByteBuffer): NetworkEvent {
+        return NetworkEvent(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: NetworkEvent) = (
+            FfiConverterString.allocationSize(value.`reason`) +
+            FfiConverterString.allocationSize(value.`dst`) +
+            FfiConverterOptionalString.allocationSize(value.`proto`) +
+            FfiConverterULong.allocationSize(value.`count`) +
+            FfiConverterOptionalULong.allocationSize(value.`lastUnix`)
+    )
+
+    override fun write(value: NetworkEvent, buf: ByteBuffer) {
+            FfiConverterString.write(value.`reason`, buf)
+            FfiConverterString.write(value.`dst`, buf)
+            FfiConverterOptionalString.write(value.`proto`, buf)
+            FfiConverterULong.write(value.`count`, buf)
+            FfiConverterOptionalULong.write(value.`lastUnix`, buf)
+    }
+}
+
+
+
+/**
+ * A Space's network settings: a preset and the user's own lists. The host
+ * the Space runs on compiles them to rules it enforces outside the guest.
+ *
+ * - `internet` (the default): the public internet and the Space's own
+ * tree; this computer, your local network, cloud metadata, other trees
+ * and the cua daemon are blocked;
+ * - `none`: no network;
+ * - `localhost`: `internet`, plus this computer's localhost on
+ * `localhost_ports` (every port only with `all_localhost_ports`);
+ * - `lan`: `internet`, plus your local network (not this computer);
+ * - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+ * `lan` are independent extras; this is the one preset with both);
+ * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
+ * - `unprotected`: everything but cloud metadata, other trees and the
+ * daemon.
+ *
+ * A runtime that can't protect a Space yet starts it without network and
+ * says so (`SpaceInfo.network_note`); it never starts it open unless the
+ * preset is `unprotected`.
+ */
+data class NetworkSettings (
+    /**
+     * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+     * `unprotected`; empty is `internet`.
+     */
+    var `preset`: kotlin.String = ""
+    ,
+    /**
+     * `localhost` and `localhost+lan`: the ports of this computer's
+     * localhost the Space may reach.
+     */
+    var `localhostPorts`: List<kotlin.UShort> = listOf()
+    ,
+    /**
+     * `localhost` and `localhost+lan`: every port (the daemon's stay
+     * blocked).
+     */
+    var `allLocalhostPorts`: kotlin.Boolean = false
+    ,
+    /**
+     * Destinations that stay reachable (addresses or CIDRs).
+     */
+    var `allow`: List<kotlin.String> = listOf()
+    ,
+    /**
+     * Destinations that are blocked (addresses, CIDRs or `all`).
+     */
+    var `deny`: List<kotlin.String> = listOf()
+    ,
+    /**
+     * `custom`: what it starts from, `internet` (empty) or `none`.
+     */
+    var `customBase`: kotlin.String = ""
+    ,
+    /**
+     * Set when the Space was allowed more than its parent: who and when.
+     */
+    var `widenedBy`: kotlin.String? = null
+    ,
+    /**
+     * Where its internet traffic leaves ("Exit through"): `None` or
+     * `internet` for its own network, `this-computer` (the hotspot),
+     * `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+     * child keeps its parent's.
+     */
+    var `via`: kotlin.String? = null
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNetworkSettings: FfiConverterRustBuffer<NetworkSettings> {
+    override fun read(buf: ByteBuffer): NetworkSettings {
+        return NetworkSettings(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceUShort.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: NetworkSettings) = (
+            FfiConverterString.allocationSize(value.`preset`) +
+            FfiConverterSequenceUShort.allocationSize(value.`localhostPorts`) +
+            FfiConverterBoolean.allocationSize(value.`allLocalhostPorts`) +
+            FfiConverterSequenceString.allocationSize(value.`allow`) +
+            FfiConverterSequenceString.allocationSize(value.`deny`) +
+            FfiConverterString.allocationSize(value.`customBase`) +
+            FfiConverterOptionalString.allocationSize(value.`widenedBy`) +
+            FfiConverterOptionalString.allocationSize(value.`via`)
+    )
+
+    override fun write(value: NetworkSettings, buf: ByteBuffer) {
+            FfiConverterString.write(value.`preset`, buf)
+            FfiConverterSequenceUShort.write(value.`localhostPorts`, buf)
+            FfiConverterBoolean.write(value.`allLocalhostPorts`, buf)
+            FfiConverterSequenceString.write(value.`allow`, buf)
+            FfiConverterSequenceString.write(value.`deny`, buf)
+            FfiConverterString.write(value.`customBase`, buf)
+            FfiConverterOptionalString.write(value.`widenedBy`, buf)
+            FfiConverterOptionalString.write(value.`via`, buf)
+    }
+}
+
+
+
+/**
  * One entry of the notifications feed.
  */
 data class NotificationInfo (
@@ -42098,6 +43598,53 @@ public object FfiConverterTypeServiceEndpoint: FfiConverterRustBuffer<ServiceEnd
 
 
 /**
+ * What [`Spaces::set_network`] did.
+ */
+data class SetNetworkResult (
+    /**
+     * `now` (the running guest is under them) or `next_start`.
+     */
+    var `applied`: kotlin.String
+    ,
+    /**
+     * The Space's network after the change.
+     */
+    var `network`: SpaceNetworkInfo
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSetNetworkResult: FfiConverterRustBuffer<SetNetworkResult> {
+    override fun read(buf: ByteBuffer): SetNetworkResult {
+        return SetNetworkResult(
+            FfiConverterString.read(buf),
+            FfiConverterTypeSpaceNetworkInfo.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SetNetworkResult) = (
+            FfiConverterString.allocationSize(value.`applied`) +
+            FfiConverterTypeSpaceNetworkInfo.allocationSize(value.`network`)
+    )
+
+    override fun write(value: SetNetworkResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`applied`, buf)
+            FfiConverterTypeSpaceNetworkInfo.write(value.`network`, buf)
+    }
+}
+
+
+
+/**
  * One setup step.
  */
 data class SetupStep (
@@ -42206,6 +43753,44 @@ data class Share (
      * browsers cannot open it yet).
      */
     var `notices`: List<kotlin.String>
+    ,
+    /**
+     * A public TCP share: what people connect to (a name they can type,
+     * or `host:port`). `None`: an HTTP link.
+     */
+    var `tcpConnectWith`: kotlin.String?
+    ,
+    /**
+     * A public TCP share: its `host:port`.
+     */
+    var `tcpAddress`: kotlin.String?
+    ,
+    /**
+     * A public TCP share: how people reach it, `host` (the Space's own
+     * host in your cloud), `edge` (a share edge in your cloud) or
+     * `relay` (Cua).
+     */
+    var `route`: kotlin.String?
+    ,
+    /**
+     * The plain line for that route ("Through your AWS account").
+     */
+    var `routeLine`: kotlin.String?
+    ,
+    /**
+     * Who may connect (CIDRs); empty: anyone.
+     */
+    var `allow`: List<kotlin.String>
+    ,
+    /**
+     * Set while the share waits for its owner: `approval` or `consent`.
+     */
+    var `waiting`: kotlin.String?
+    ,
+    /**
+     * What to show the owner while it waits.
+     */
+    var `waitingText`: kotlin.String?
 
 ){
 
@@ -42232,6 +43817,13 @@ public object FfiConverterTypeShare: FfiConverterRustBuffer<Share> {
             FfiConverterOptionalLong.read(buf),
             FfiConverterOptionalLong.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -42245,7 +43837,14 @@ public object FfiConverterTypeShare: FfiConverterRustBuffer<Share> {
             FfiConverterString.allocationSize(value.`owner`) +
             FfiConverterOptionalLong.allocationSize(value.`createdAtUnix`) +
             FfiConverterOptionalLong.allocationSize(value.`expiresAtUnix`) +
-            FfiConverterSequenceString.allocationSize(value.`notices`)
+            FfiConverterSequenceString.allocationSize(value.`notices`) +
+            FfiConverterOptionalString.allocationSize(value.`tcpConnectWith`) +
+            FfiConverterOptionalString.allocationSize(value.`tcpAddress`) +
+            FfiConverterOptionalString.allocationSize(value.`route`) +
+            FfiConverterOptionalString.allocationSize(value.`routeLine`) +
+            FfiConverterSequenceString.allocationSize(value.`allow`) +
+            FfiConverterOptionalString.allocationSize(value.`waiting`) +
+            FfiConverterOptionalString.allocationSize(value.`waitingText`)
     )
 
     override fun write(value: Share, buf: ByteBuffer) {
@@ -42259,6 +43858,13 @@ public object FfiConverterTypeShare: FfiConverterRustBuffer<Share> {
             FfiConverterOptionalLong.write(value.`createdAtUnix`, buf)
             FfiConverterOptionalLong.write(value.`expiresAtUnix`, buf)
             FfiConverterSequenceString.write(value.`notices`, buf)
+            FfiConverterOptionalString.write(value.`tcpConnectWith`, buf)
+            FfiConverterOptionalString.write(value.`tcpAddress`, buf)
+            FfiConverterOptionalString.write(value.`route`, buf)
+            FfiConverterOptionalString.write(value.`routeLine`, buf)
+            FfiConverterSequenceString.write(value.`allow`, buf)
+            FfiConverterOptionalString.write(value.`waiting`, buf)
+            FfiConverterOptionalString.write(value.`waitingText`, buf)
     }
 }
 
@@ -42322,6 +43928,125 @@ public object FfiConverterTypeShareCheck: FfiConverterRustBuffer<ShareCheck> {
             FfiConverterUInt.write(value.`status`, buf)
             FfiConverterString.write(value.`via`, buf)
             FfiConverterString.write(value.`detail`, buf)
+    }
+}
+
+
+
+/**
+ * The share settings.
+ */
+data class ShareSettings (
+    /**
+     * Where public TCP shares land.
+     */
+    var `landing`: ShareLanding
+    ,
+    /**
+     * Whether Cua's relay may carry public TCP shares at all.
+     */
+    var `relayFallback`: kotlin.Boolean
+    ,
+    /**
+     * The most data public TCP shares move in a day, in MiB (0: no cap).
+     */
+    var `dailyCapMib`: kotlin.ULong
+    ,
+    /**
+     * The allowlist new shares start with (CIDRs; empty: anyone).
+     */
+    var `defaultAllow`: List<kotlin.String>
+    ,
+    /**
+     * Ask before an agent's share goes public.
+     */
+    var `approveAgentShares`: kotlin.Boolean
+    ,
+    /**
+     * Spaces whose agents may share without asking.
+     */
+    var `alwaysAllowSpaces`: List<kotlin.String>
+    ,
+    /**
+     * Clouds you agreed may hold a share edge.
+     */
+    var `edgeConsent`: List<kotlin.String>
+    ,
+    /**
+     * Bytes public TCP shares moved today (read only).
+     */
+    var `usedToday`: kotlin.ULong
+    ,
+    /**
+     * The share edge's cloud and host, when there is one (read only).
+     */
+    var `edgeCloud`: kotlin.String?
+    ,
+    /**
+     * The share edge's address (read only).
+     */
+    var `edgeHost`: kotlin.String?
+    ,
+    /**
+     * About what the edge costs a month, in US dollars (read only).
+     */
+    var `edgeMonthlyUsd`: kotlin.Double?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeShareSettings: FfiConverterRustBuffer<ShareSettings> {
+    override fun read(buf: ByteBuffer): ShareSettings {
+        return ShareSettings(
+            FfiConverterTypeShareLanding.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ShareSettings) = (
+            FfiConverterTypeShareLanding.allocationSize(value.`landing`) +
+            FfiConverterBoolean.allocationSize(value.`relayFallback`) +
+            FfiConverterULong.allocationSize(value.`dailyCapMib`) +
+            FfiConverterSequenceString.allocationSize(value.`defaultAllow`) +
+            FfiConverterBoolean.allocationSize(value.`approveAgentShares`) +
+            FfiConverterSequenceString.allocationSize(value.`alwaysAllowSpaces`) +
+            FfiConverterSequenceString.allocationSize(value.`edgeConsent`) +
+            FfiConverterULong.allocationSize(value.`usedToday`) +
+            FfiConverterOptionalString.allocationSize(value.`edgeCloud`) +
+            FfiConverterOptionalString.allocationSize(value.`edgeHost`) +
+            FfiConverterOptionalDouble.allocationSize(value.`edgeMonthlyUsd`)
+    )
+
+    override fun write(value: ShareSettings, buf: ByteBuffer) {
+            FfiConverterTypeShareLanding.write(value.`landing`, buf)
+            FfiConverterBoolean.write(value.`relayFallback`, buf)
+            FfiConverterULong.write(value.`dailyCapMib`, buf)
+            FfiConverterSequenceString.write(value.`defaultAllow`, buf)
+            FfiConverterBoolean.write(value.`approveAgentShares`, buf)
+            FfiConverterSequenceString.write(value.`alwaysAllowSpaces`, buf)
+            FfiConverterSequenceString.write(value.`edgeConsent`, buf)
+            FfiConverterULong.write(value.`usedToday`, buf)
+            FfiConverterOptionalString.write(value.`edgeCloud`, buf)
+            FfiConverterOptionalString.write(value.`edgeHost`, buf)
+            FfiConverterOptionalDouble.write(value.`edgeMonthlyUsd`, buf)
     }
 }
 
@@ -43293,6 +45018,25 @@ data class SpaceCreateOptions (
     var `egress`: EgressPolicy? = null
     ,
     /**
+     * Network settings (see [`NetworkSettings`]). `None`: what `network`
+     * and `egress` say (`internet` when neither says anything). A daemon
+     * too old to keep them makes the create fail.
+     */
+    var `networkSettings`: NetworkSettings? = null
+    ,
+    /**
+     * Create it as a child of this Space (id or name): its network is no
+     * more open than its parent's, and it joins the parent's tree.
+     */
+    var `parent`: kotlin.String? = null
+    ,
+    /**
+     * With `parent`: let its network be more open than its parent's
+     * (recorded on the Space).
+     */
+    var `widen`: kotlin.Boolean? = null
+    ,
+    /**
      * With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
      * its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
      * pool's solve. `None`: the pool picks the cheapest that fits.
@@ -43303,6 +45047,12 @@ data class SpaceCreateOptions (
      * With `on` a linked cloud: the region its host must be in.
      */
     var `region`: kotlin.String? = null
+    ,
+    /**
+     * Lets the Space make child Spaces of its own ([`Spaces::set_children`]).
+     * `None`: off. Only a Space the machine of the runtime runs itself.
+     */
+    var `children`: kotlin.Boolean? = null
 
 ){
 
@@ -43345,8 +45095,12 @@ public object FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer<SpaceCr
             FfiConverterOptionalString.read(buf),
             FfiConverterMapStringString.read(buf),
             FfiConverterOptionalTypeEgressPolicy.read(buf),
+            FfiConverterOptionalTypeNetworkSettings.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
         )
     }
 
@@ -43377,8 +45131,12 @@ public object FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer<SpaceCr
             FfiConverterOptionalString.allocationSize(value.`network`) +
             FfiConverterMapStringString.allocationSize(value.`labels`) +
             FfiConverterOptionalTypeEgressPolicy.allocationSize(value.`egress`) +
+            FfiConverterOptionalTypeNetworkSettings.allocationSize(value.`networkSettings`) +
+            FfiConverterOptionalString.allocationSize(value.`parent`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`widen`) +
             FfiConverterOptionalString.allocationSize(value.`instanceType`) +
-            FfiConverterOptionalString.allocationSize(value.`region`)
+            FfiConverterOptionalString.allocationSize(value.`region`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`children`)
     )
 
     override fun write(value: SpaceCreateOptions, buf: ByteBuffer) {
@@ -43408,8 +45166,12 @@ public object FfiConverterTypeSpaceCreateOptions: FfiConverterRustBuffer<SpaceCr
             FfiConverterOptionalString.write(value.`network`, buf)
             FfiConverterMapStringString.write(value.`labels`, buf)
             FfiConverterOptionalTypeEgressPolicy.write(value.`egress`, buf)
+            FfiConverterOptionalTypeNetworkSettings.write(value.`networkSettings`, buf)
+            FfiConverterOptionalString.write(value.`parent`, buf)
+            FfiConverterOptionalBoolean.write(value.`widen`, buf)
             FfiConverterOptionalString.write(value.`instanceType`, buf)
             FfiConverterOptionalString.write(value.`region`, buf)
+            FfiConverterOptionalBoolean.write(value.`children`, buf)
     }
 }
 
@@ -44004,6 +45766,66 @@ data class SpaceInfo (
     var `egressEnforced`: EgressEnforcement?
     ,
     /**
+     * Its network settings; `None` for a Space this computer keeps no
+     * record of, or one created before they existed (it gets them on its
+     * next start).
+     */
+    var `network`: NetworkSettings?
+    ,
+    /**
+     * Why its network is not what was asked, in plain words (a runtime
+     * that can't protect it yet started it without network); `None`
+     * otherwise.
+     */
+    var `networkNote`: kotlin.String?
+    ,
+    /**
+     * An update changed its network settings (an old Space moved to the
+     * new defaults): say so once.
+     */
+    var `networkNoticePending`: kotlin.Boolean
+    ,
+    /**
+     * The Space it was created from, by id; `None` for a top-level Space.
+     */
+    var `parent`: kotlin.String?
+    ,
+    /**
+     * The top-level Space of its tree, by id; `None` for a top-level
+     * Space.
+     */
+    var `root`: kotlin.String?
+    ,
+    /**
+     * How far below its tree's top-level Space it is (0: top-level).
+     */
+    var `depth`: kotlin.UInt
+    ,
+    /**
+     * It may make child Spaces of its own ([`Spaces::set_children`]).
+     */
+    var `children`: kotlin.Boolean = false
+    ,
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` otherwise.
+     */
+    var `treeAddress`: kotlin.String? = null
+    ,
+    /**
+     * When viewers may move the clipboard between this computer and the
+     * Space: `viewing` (only while you're viewing, the default), `ask` or
+     * `off`. See [`Spaces::set_clipboard`].
+     */
+    var `clipboard`: kotlin.String
+    ,
+    /**
+     * What it sees of the Cua Volume: `own` (its own folder, the default)
+     * or `off`. See [`Spaces::set_volume`].
+     */
+    var `volume`: kotlin.String
+    ,
+    /**
      * Named volumes mounted in the Space (see
      * [`SpaceCreateOptions::volumes`]).
      */
@@ -44060,6 +45882,16 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterLong.read(buf),
             FfiConverterTypeEgressPolicy.read(buf),
             FfiConverterOptionalTypeEgressEnforcement.read(buf),
+            FfiConverterOptionalTypeNetworkSettings.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
             FfiConverterSequenceTypeVolumeMount.read(buf),
             FfiConverterOptionalTypeSpaceSharing.read(buf),
         )
@@ -44096,6 +45928,16 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterLong.allocationSize(value.`createdAtUnix`) +
             FfiConverterTypeEgressPolicy.allocationSize(value.`egress`) +
             FfiConverterOptionalTypeEgressEnforcement.allocationSize(value.`egressEnforced`) +
+            FfiConverterOptionalTypeNetworkSettings.allocationSize(value.`network`) +
+            FfiConverterOptionalString.allocationSize(value.`networkNote`) +
+            FfiConverterBoolean.allocationSize(value.`networkNoticePending`) +
+            FfiConverterOptionalString.allocationSize(value.`parent`) +
+            FfiConverterOptionalString.allocationSize(value.`root`) +
+            FfiConverterUInt.allocationSize(value.`depth`) +
+            FfiConverterBoolean.allocationSize(value.`children`) +
+            FfiConverterOptionalString.allocationSize(value.`treeAddress`) +
+            FfiConverterString.allocationSize(value.`clipboard`) +
+            FfiConverterString.allocationSize(value.`volume`) +
             FfiConverterSequenceTypeVolumeMount.allocationSize(value.`volumes`) +
             FfiConverterOptionalTypeSpaceSharing.allocationSize(value.`sharing`)
     )
@@ -44131,6 +45973,16 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterLong.write(value.`createdAtUnix`, buf)
             FfiConverterTypeEgressPolicy.write(value.`egress`, buf)
             FfiConverterOptionalTypeEgressEnforcement.write(value.`egressEnforced`, buf)
+            FfiConverterOptionalTypeNetworkSettings.write(value.`network`, buf)
+            FfiConverterOptionalString.write(value.`networkNote`, buf)
+            FfiConverterBoolean.write(value.`networkNoticePending`, buf)
+            FfiConverterOptionalString.write(value.`parent`, buf)
+            FfiConverterOptionalString.write(value.`root`, buf)
+            FfiConverterUInt.write(value.`depth`, buf)
+            FfiConverterBoolean.write(value.`children`, buf)
+            FfiConverterOptionalString.write(value.`treeAddress`, buf)
+            FfiConverterString.write(value.`clipboard`, buf)
+            FfiConverterString.write(value.`volume`, buf)
             FfiConverterSequenceTypeVolumeMount.write(value.`volumes`, buf)
             FfiConverterOptionalTypeSpaceSharing.write(value.`sharing`, buf)
     }
@@ -44217,6 +46069,211 @@ public object FfiConverterTypeSpaceList: FfiConverterRustBuffer<SpaceList> {
             FfiConverterBoolean.write(value.`stale`, buf)
             FfiConverterString.write(value.`notice`, buf)
             FfiConverterSequenceTypeSpaceCreatingElsewhere.write(value.`creating`, buf)
+    }
+}
+
+
+
+/**
+ * A Space's network as `cua network show` says it ([`Spaces::network`]).
+ */
+data class SpaceNetworkInfo (
+    /**
+     * Its settings.
+     */
+    var `settings`: NetworkSettings
+    ,
+    /**
+     * One plain line ("Internet only").
+     */
+    var `summary`: kotlin.String
+    ,
+    /**
+     * What the settings open beyond `internet`, one plain line each.
+     */
+    var `widenings`: List<kotlin.String>
+    ,
+    /**
+     * `enforced` (rules on the host, outside the guest), `no_network`
+     * (its runtime can't protect it yet), `open` (No protection) or
+     * `refused`; empty when unknown (a Space another computer runs).
+     */
+    var `enforcement`: kotlin.String
+    ,
+    /**
+     * Where the rules are enforced, or why its network is cut.
+     */
+    var `point`: kotlin.String
+    ,
+    /**
+     * Why its network is not what was asked; `None` otherwise.
+     */
+    var `note`: kotlin.String?
+    ,
+    /**
+     * Its parent and its tree's top-level Space; `None` for a top-level
+     * Space.
+     */
+    var `parent`: kotlin.String?
+    ,
+    var `root`: kotlin.String?
+    ,
+    /**
+     * What no setting opens, in plain words.
+     */
+    var `alwaysBlocked`: List<kotlin.String>
+    ,
+    /**
+     * An update changed its settings: say so once.
+     */
+    var `noticePending`: kotlin.Boolean
+    ,
+    /**
+     * A VM's address in its tree (`198.19.0.0/16`), where the other
+     * members of its tree reach it; `None` for a container or a Space
+     * another computer runs.
+     */
+    var `treeAddress`: kotlin.String? = null
+    ,
+    /**
+     * Its topology as JSON text (`cua network show --json`'s `topology`):
+     * its name and address, its tree's members, the host and the ports it
+     * may reach there, its policy, its exit and the exit's state, and the
+     * path to the other computers of its tree. Empty from an older daemon.
+     */
+    var `topologyJson`: kotlin.String = ""
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceNetworkInfo: FfiConverterRustBuffer<SpaceNetworkInfo> {
+    override fun read(buf: ByteBuffer): SpaceNetworkInfo {
+        return SpaceNetworkInfo(
+            FfiConverterTypeNetworkSettings.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceNetworkInfo) = (
+            FfiConverterTypeNetworkSettings.allocationSize(value.`settings`) +
+            FfiConverterString.allocationSize(value.`summary`) +
+            FfiConverterSequenceString.allocationSize(value.`widenings`) +
+            FfiConverterString.allocationSize(value.`enforcement`) +
+            FfiConverterString.allocationSize(value.`point`) +
+            FfiConverterOptionalString.allocationSize(value.`note`) +
+            FfiConverterOptionalString.allocationSize(value.`parent`) +
+            FfiConverterOptionalString.allocationSize(value.`root`) +
+            FfiConverterSequenceString.allocationSize(value.`alwaysBlocked`) +
+            FfiConverterBoolean.allocationSize(value.`noticePending`) +
+            FfiConverterOptionalString.allocationSize(value.`treeAddress`) +
+            FfiConverterString.allocationSize(value.`topologyJson`)
+    )
+
+    override fun write(value: SpaceNetworkInfo, buf: ByteBuffer) {
+            FfiConverterTypeNetworkSettings.write(value.`settings`, buf)
+            FfiConverterString.write(value.`summary`, buf)
+            FfiConverterSequenceString.write(value.`widenings`, buf)
+            FfiConverterString.write(value.`enforcement`, buf)
+            FfiConverterString.write(value.`point`, buf)
+            FfiConverterOptionalString.write(value.`note`, buf)
+            FfiConverterOptionalString.write(value.`parent`, buf)
+            FfiConverterOptionalString.write(value.`root`, buf)
+            FfiConverterSequenceString.write(value.`alwaysBlocked`, buf)
+            FfiConverterBoolean.write(value.`noticePending`, buf)
+            FfiConverterOptionalString.write(value.`treeAddress`, buf)
+            FfiConverterString.write(value.`topologyJson`, buf)
+    }
+}
+
+
+
+/**
+ * A child Space whose parent is gone or out of reach ([`Spaces::orphans`]).
+ */
+data class SpaceOrphan (
+    /**
+     * The child.
+     */
+    var `space`: kotlin.String
+    ,
+    /**
+     * Its parent's id.
+     */
+    var `parent`: kotlin.String
+    ,
+    /**
+     * `ending` (its parent is provably gone: it ends after the grace) or
+     * `listed` (not this computer's to judge: it stays until deleted or its
+     * own lifetime ends).
+     */
+    var `state`: kotlin.String
+    ,
+    /**
+     * Why.
+     */
+    var `why`: kotlin.String
+    ,
+    /**
+     * Seconds until it ends (`ending` only).
+     */
+    var `endsInSecs`: kotlin.Long
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceOrphan: FfiConverterRustBuffer<SpaceOrphan> {
+    override fun read(buf: ByteBuffer): SpaceOrphan {
+        return SpaceOrphan(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceOrphan) = (
+            FfiConverterString.allocationSize(value.`space`) +
+            FfiConverterString.allocationSize(value.`parent`) +
+            FfiConverterString.allocationSize(value.`state`) +
+            FfiConverterString.allocationSize(value.`why`) +
+            FfiConverterLong.allocationSize(value.`endsInSecs`)
+    )
+
+    override fun write(value: SpaceOrphan, buf: ByteBuffer) {
+            FfiConverterString.write(value.`space`, buf)
+            FfiConverterString.write(value.`parent`, buf)
+            FfiConverterString.write(value.`state`, buf)
+            FfiConverterString.write(value.`why`, buf)
+            FfiConverterLong.write(value.`endsInSecs`, buf)
     }
 }
 
@@ -44736,6 +46793,277 @@ public object FfiConverterTypeSpaceSentFile: FfiConverterRustBuffer<SpaceSentFil
             FfiConverterString.write(value.`path`, buf)
             FfiConverterULong.write(value.`size`, buf)
             FfiConverterString.write(value.`sha256`, buf)
+    }
+}
+
+
+
+/**
+ * A command a Space keeps running ([`Space::put_service`]).
+ */
+data class SpaceServiceDef (
+    /**
+     * Name: lowercase letters, digits, `-`, `_`, `.` (1 to 63).
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * The shell command line it runs.
+     */
+    var `command`: kotlin.String
+    ,
+    /**
+     * Extra environment.
+     */
+    var `env`: Map<kotlin.String, kotlin.String> = mapOf()
+    ,
+    /**
+     * Working directory.
+     */
+    var `cwd`: kotlin.String? = null
+    ,
+    /**
+     * When it is started again: `always` (default), `on-failure` or
+     * `never`.
+     */
+    var `restart`: kotlin.String? = null
+    ,
+    /**
+     * A health check; failing it restarts the service.
+     */
+    var `probe`: SpaceServiceProbe? = null
+    ,
+    /**
+     * Start it when the Space boots. `None`: yes.
+     */
+    var `startOnBoot`: kotlin.Boolean? = null
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceServiceDef: FfiConverterRustBuffer<SpaceServiceDef> {
+    override fun read(buf: ByteBuffer): SpaceServiceDef {
+        return SpaceServiceDef(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterMapStringString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeSpaceServiceProbe.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceServiceDef) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`command`) +
+            FfiConverterMapStringString.allocationSize(value.`env`) +
+            FfiConverterOptionalString.allocationSize(value.`cwd`) +
+            FfiConverterOptionalString.allocationSize(value.`restart`) +
+            FfiConverterOptionalTypeSpaceServiceProbe.allocationSize(value.`probe`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`startOnBoot`)
+    )
+
+    override fun write(value: SpaceServiceDef, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`command`, buf)
+            FfiConverterMapStringString.write(value.`env`, buf)
+            FfiConverterOptionalString.write(value.`cwd`, buf)
+            FfiConverterOptionalString.write(value.`restart`, buf)
+            FfiConverterOptionalTypeSpaceServiceProbe.write(value.`probe`, buf)
+            FfiConverterOptionalBoolean.write(value.`startOnBoot`, buf)
+    }
+}
+
+
+
+/**
+ * A service and how it is doing ([`Space::services`]).
+ */
+data class SpaceServiceInfo (
+    /**
+     * Name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * The command line.
+     */
+    var `command`: kotlin.String
+    ,
+    /**
+     * `starting`, `running`, `unhealthy`, `backoff`, `stopped`, `exited`
+     * or `failed`.
+     */
+    var `state`: kotlin.String
+    ,
+    /**
+     * Its process, while it runs.
+     */
+    var `pid`: kotlin.UInt
+    ,
+    /**
+     * Starts after the first.
+     */
+    var `restarts`: kotlin.UInt
+    ,
+    /**
+     * How the last process ended, if one did.
+     */
+    var `lastEnd`: kotlin.String
+    ,
+    /**
+     * The last failed health check, if the last one failed.
+     */
+    var `probeError`: kotlin.String
+    ,
+    /**
+     * `always`, `on-failure` or `never`.
+     */
+    var `restart`: kotlin.String
+    ,
+    /**
+     * Starts when the Space boots.
+     */
+    var `startOnBoot`: kotlin.Boolean
+    ,
+    /**
+     * Its log file in the Space.
+     */
+    var `logPath`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceServiceInfo: FfiConverterRustBuffer<SpaceServiceInfo> {
+    override fun read(buf: ByteBuffer): SpaceServiceInfo {
+        return SpaceServiceInfo(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceServiceInfo) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`command`) +
+            FfiConverterString.allocationSize(value.`state`) +
+            FfiConverterUInt.allocationSize(value.`pid`) +
+            FfiConverterUInt.allocationSize(value.`restarts`) +
+            FfiConverterString.allocationSize(value.`lastEnd`) +
+            FfiConverterString.allocationSize(value.`probeError`) +
+            FfiConverterString.allocationSize(value.`restart`) +
+            FfiConverterBoolean.allocationSize(value.`startOnBoot`) +
+            FfiConverterString.allocationSize(value.`logPath`)
+    )
+
+    override fun write(value: SpaceServiceInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`command`, buf)
+            FfiConverterString.write(value.`state`, buf)
+            FfiConverterUInt.write(value.`pid`, buf)
+            FfiConverterUInt.write(value.`restarts`, buf)
+            FfiConverterString.write(value.`lastEnd`, buf)
+            FfiConverterString.write(value.`probeError`, buf)
+            FfiConverterString.write(value.`restart`, buf)
+            FfiConverterBoolean.write(value.`startOnBoot`, buf)
+            FfiConverterString.write(value.`logPath`, buf)
+    }
+}
+
+
+
+/**
+ * A health check: exactly one of `http`, `tcp`, `command`.
+ */
+data class SpaceServiceProbe (
+    /**
+     * A URL that answers 2xx or 3xx.
+     */
+    var `http`: kotlin.String? = null
+    ,
+    /**
+     * `host:port` that accepts a TCP connection.
+     */
+    var `tcp`: kotlin.String? = null
+    ,
+    /**
+     * A shell command that exits 0 when healthy.
+     */
+    var `command`: kotlin.String? = null
+    ,
+    /**
+     * Seconds between checks (default 10).
+     */
+    var `intervalSecs`: kotlin.ULong? = null
+    ,
+    /**
+     * Failed checks in a row that restart it (default 3).
+     */
+    var `failures`: kotlin.UInt? = null
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceServiceProbe: FfiConverterRustBuffer<SpaceServiceProbe> {
+    override fun read(buf: ByteBuffer): SpaceServiceProbe {
+        return SpaceServiceProbe(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceServiceProbe) = (
+            FfiConverterOptionalString.allocationSize(value.`http`) +
+            FfiConverterOptionalString.allocationSize(value.`tcp`) +
+            FfiConverterOptionalString.allocationSize(value.`command`) +
+            FfiConverterOptionalULong.allocationSize(value.`intervalSecs`) +
+            FfiConverterOptionalUInt.allocationSize(value.`failures`)
+    )
+
+    override fun write(value: SpaceServiceProbe, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`http`, buf)
+            FfiConverterOptionalString.write(value.`tcp`, buf)
+            FfiConverterOptionalString.write(value.`command`, buf)
+            FfiConverterOptionalULong.write(value.`intervalSecs`, buf)
+            FfiConverterOptionalUInt.write(value.`failures`, buf)
     }
 }
 
@@ -45879,6 +48207,14 @@ data class SpaceWindow (
      * Why not.
      */
     var `limitation`: kotlin.String
+    ,
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    var `origin`: SpaceWindowOrigin? = null
 
 ){
 
@@ -45906,6 +48242,7 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeSpaceWindowOrigin.read(buf),
         )
     }
 
@@ -45920,7 +48257,8 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.allocationSize(value.`onScreen`) +
             FfiConverterBoolean.allocationSize(value.`focused`) +
             FfiConverterBoolean.allocationSize(value.`available`) +
-            FfiConverterString.allocationSize(value.`limitation`)
+            FfiConverterString.allocationSize(value.`limitation`) +
+            FfiConverterOptionalTypeSpaceWindowOrigin.allocationSize(value.`origin`)
     )
 
     override fun write(value: SpaceWindow, buf: ByteBuffer) {
@@ -45935,6 +48273,70 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.write(value.`focused`, buf)
             FfiConverterBoolean.write(value.`available`, buf)
             FfiConverterString.write(value.`limitation`, buf)
+            FfiConverterOptionalTypeSpaceWindowOrigin.write(value.`origin`, buf)
+    }
+}
+
+
+
+/**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+data class SpaceWindowOrigin (
+    /**
+     * The origin Space (canonical id).
+     */
+    var `spaceId`: kotlin.String
+    ,
+    /**
+     * Its name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    var `os`: kotlin.String
+    ,
+    /**
+     * The window's handle in the origin.
+     */
+    var `windowId`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceWindowOrigin: FfiConverterRustBuffer<SpaceWindowOrigin> {
+    override fun read(buf: ByteBuffer): SpaceWindowOrigin {
+        return SpaceWindowOrigin(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceWindowOrigin) = (
+            FfiConverterString.allocationSize(value.`spaceId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`os`) +
+            FfiConverterString.allocationSize(value.`windowId`)
+    )
+
+    override fun write(value: SpaceWindowOrigin, buf: ByteBuffer) {
+            FfiConverterString.write(value.`spaceId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`os`, buf)
+            FfiConverterString.write(value.`windowId`, buf)
     }
 }
 
@@ -46229,6 +48631,70 @@ public object FfiConverterTypeSpacesHostLoad: FfiConverterRustBuffer<SpacesHostL
             FfiConverterUInt.write(value.`spaces`, buf)
             FfiConverterString.write(value.`problem`, buf)
             FfiConverterSequenceString.write(value.`kinds`, buf)
+    }
+}
+
+
+
+/**
+ * The account's default Space and the order to try when it is offline.
+ */
+data class SpacesSettings (
+    /**
+     * `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+     */
+    var `defaultSpace`: kotlin.String?
+    ,
+    /**
+     * The order to try when the default is offline; empty means every
+     * online computer you can use, oldest first.
+     */
+    var `fallback`: List<kotlin.String>
+    ,
+    /**
+     * false: only the default, then this device.
+     */
+    var `fallbackOn`: kotlin.Boolean
+    ,
+    /**
+     * Unix seconds the relay saved it (ignored when writing).
+     */
+    var `updatedAt`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpacesSettings: FfiConverterRustBuffer<SpacesSettings> {
+    override fun read(buf: ByteBuffer): SpacesSettings {
+        return SpacesSettings(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpacesSettings) = (
+            FfiConverterOptionalString.allocationSize(value.`defaultSpace`) +
+            FfiConverterSequenceString.allocationSize(value.`fallback`) +
+            FfiConverterBoolean.allocationSize(value.`fallbackOn`) +
+            FfiConverterULong.allocationSize(value.`updatedAt`)
+    )
+
+    override fun write(value: SpacesSettings, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`defaultSpace`, buf)
+            FfiConverterSequenceString.write(value.`fallback`, buf)
+            FfiConverterBoolean.write(value.`fallbackOn`, buf)
+            FfiConverterULong.write(value.`updatedAt`, buf)
     }
 }
 
@@ -47565,6 +50031,205 @@ public object FfiConverterTypeTransferResult: FfiConverterRustBuffer<TransferRes
             FfiConverterULong.write(value.`size`, buf)
             FfiConverterString.write(value.`sha256`, buf)
             FfiConverterUInt.write(value.`resumes`, buf)
+    }
+}
+
+
+
+/**
+ * A tree's budget and what its children use ([`Spaces::tree_budget`]).
+ */
+data class TreeBudget (
+    /**
+     * The tree's top-level Space.
+     */
+    var `root`: kotlin.String
+    ,
+    /**
+     * What the owner set.
+     */
+    var `set`: TreeBudgetLimits
+    ,
+    /**
+     * Child Spaces it may hold at once.
+     */
+    var `maxSpaces`: kotlin.UInt
+    ,
+    /**
+     * vCPUs it may hold at once.
+     */
+    var `maxVcpus`: kotlin.UInt
+    ,
+    /**
+     * Memory it may hold at once (MiB).
+     */
+    var `maxMemoryMb`: kotlin.ULong
+    ,
+    /**
+     * Cost per hour it may run at.
+     */
+    var `usdPerHour`: kotlin.Double
+    ,
+    /**
+     * Cost in total it may reach, when capped.
+     */
+    var `usdTotal`: kotlin.Double?
+    ,
+    /**
+     * Child Spaces now.
+     */
+    var `spaces`: kotlin.UInt
+    ,
+    /**
+     * vCPUs they hold.
+     */
+    var `vcpus`: kotlin.UInt
+    ,
+    /**
+     * Memory they hold (MiB).
+     */
+    var `memoryMb`: kotlin.ULong
+    ,
+    /**
+     * Cost per hour they run at.
+     */
+    var `usdPerHourUsed`: kotlin.Double
+    ,
+    /**
+     * What they have cost so far.
+     */
+    var `usdSpent`: kotlin.Double
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTreeBudget: FfiConverterRustBuffer<TreeBudget> {
+    override fun read(buf: ByteBuffer): TreeBudget {
+        return TreeBudget(
+            FfiConverterString.read(buf),
+            FfiConverterTypeTreeBudgetLimits.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TreeBudget) = (
+            FfiConverterString.allocationSize(value.`root`) +
+            FfiConverterTypeTreeBudgetLimits.allocationSize(value.`set`) +
+            FfiConverterUInt.allocationSize(value.`maxSpaces`) +
+            FfiConverterUInt.allocationSize(value.`maxVcpus`) +
+            FfiConverterULong.allocationSize(value.`maxMemoryMb`) +
+            FfiConverterDouble.allocationSize(value.`usdPerHour`) +
+            FfiConverterOptionalDouble.allocationSize(value.`usdTotal`) +
+            FfiConverterUInt.allocationSize(value.`spaces`) +
+            FfiConverterUInt.allocationSize(value.`vcpus`) +
+            FfiConverterULong.allocationSize(value.`memoryMb`) +
+            FfiConverterDouble.allocationSize(value.`usdPerHourUsed`) +
+            FfiConverterDouble.allocationSize(value.`usdSpent`)
+    )
+
+    override fun write(value: TreeBudget, buf: ByteBuffer) {
+            FfiConverterString.write(value.`root`, buf)
+            FfiConverterTypeTreeBudgetLimits.write(value.`set`, buf)
+            FfiConverterUInt.write(value.`maxSpaces`, buf)
+            FfiConverterUInt.write(value.`maxVcpus`, buf)
+            FfiConverterULong.write(value.`maxMemoryMb`, buf)
+            FfiConverterDouble.write(value.`usdPerHour`, buf)
+            FfiConverterOptionalDouble.write(value.`usdTotal`, buf)
+            FfiConverterUInt.write(value.`spaces`, buf)
+            FfiConverterUInt.write(value.`vcpus`, buf)
+            FfiConverterULong.write(value.`memoryMb`, buf)
+            FfiConverterDouble.write(value.`usdPerHourUsed`, buf)
+            FfiConverterDouble.write(value.`usdSpent`, buf)
+    }
+}
+
+
+
+/**
+ * What a tree's children may hold and cost ([`Spaces::set_tree_budget`]).
+ * `None`: the default.
+ */
+data class TreeBudgetLimits (
+    /**
+     * Child Spaces at once (default 16).
+     */
+    var `maxSpaces`: kotlin.UInt? = null
+    ,
+    /**
+     * vCPUs at once (default 16).
+     */
+    var `maxVcpus`: kotlin.UInt? = null
+    ,
+    /**
+     * Memory at once, MiB (default 32768).
+     */
+    var `maxMemoryMb`: kotlin.ULong? = null
+    ,
+    /**
+     * Cost per hour, in linked clouds (default 2.0).
+     */
+    var `usdPerHour`: kotlin.Double? = null
+    ,
+    /**
+     * Cost in total (default: none).
+     */
+    var `usdTotal`: kotlin.Double? = null
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTreeBudgetLimits: FfiConverterRustBuffer<TreeBudgetLimits> {
+    override fun read(buf: ByteBuffer): TreeBudgetLimits {
+        return TreeBudgetLimits(
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TreeBudgetLimits) = (
+            FfiConverterOptionalUInt.allocationSize(value.`maxSpaces`) +
+            FfiConverterOptionalUInt.allocationSize(value.`maxVcpus`) +
+            FfiConverterOptionalULong.allocationSize(value.`maxMemoryMb`) +
+            FfiConverterOptionalDouble.allocationSize(value.`usdPerHour`) +
+            FfiConverterOptionalDouble.allocationSize(value.`usdTotal`)
+    )
+
+    override fun write(value: TreeBudgetLimits, buf: ByteBuffer) {
+            FfiConverterOptionalUInt.write(value.`maxSpaces`, buf)
+            FfiConverterOptionalUInt.write(value.`maxVcpus`, buf)
+            FfiConverterOptionalULong.write(value.`maxMemoryMb`, buf)
+            FfiConverterOptionalDouble.write(value.`usdPerHour`, buf)
+            FfiConverterOptionalDouble.write(value.`usdTotal`, buf)
     }
 }
 
@@ -50174,6 +52839,53 @@ public object FfiConverterTypeShareAccess: FfiConverterRustBuffer<ShareAccess> {
 
 
 
+/**
+ * Where public TCP shares land.
+ */
+
+enum class ShareLanding {
+
+    /**
+     * The Space's own cloud host, else a share edge, else Cua's relay.
+     */
+    AUTO,
+    /**
+     * Only through your own clouds.
+     */
+    ONLY_MY_CLOUD,
+    /**
+     * Cua's relay unless the Space runs on its own cloud host.
+     */
+    ALLOW_RELAY;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeShareLanding: FfiConverterRustBuffer<ShareLanding> {
+    override fun read(buf: ByteBuffer) = try {
+        ShareLanding.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: ShareLanding) = 4UL
+
+    override fun write(value: ShareLanding, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 /**
  * @suppress
@@ -51138,6 +53850,38 @@ public object FfiConverterOptionalTypeImageInfo: FfiConverterRustBuffer<ImageInf
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeNetworkSettings: FfiConverterRustBuffer<NetworkSettings?> {
+    override fun read(buf: ByteBuffer): NetworkSettings? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeNetworkSettings.read(buf)
+    }
+
+    override fun allocationSize(value: NetworkSettings?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeNetworkSettings.allocationSize(value)
+        }
+    }
+
+    override fun write(value: NetworkSettings?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeNetworkSettings.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypePersistentAgentOptions: FfiConverterRustBuffer<PersistentAgentOptions?> {
     override fun read(buf: ByteBuffer): PersistentAgentOptions? {
         if (buf.get().toInt() == 0) {
@@ -51618,6 +54362,38 @@ public object FfiConverterOptionalTypeSpaceInfo: FfiConverterRustBuffer<SpaceInf
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeSpaceServiceProbe: FfiConverterRustBuffer<SpaceServiceProbe?> {
+    override fun read(buf: ByteBuffer): SpaceServiceProbe? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSpaceServiceProbe.read(buf)
+    }
+
+    override fun allocationSize(value: SpaceServiceProbe?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSpaceServiceProbe.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SpaceServiceProbe?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSpaceServiceProbe.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeSpaceSharing: FfiConverterRustBuffer<SpaceSharing?> {
     override fun read(buf: ByteBuffer): SpaceSharing? {
         if (buf.get().toInt() == 0) {
@@ -51640,6 +54416,38 @@ public object FfiConverterOptionalTypeSpaceSharing: FfiConverterRustBuffer<Space
         } else {
             buf.put(1)
             FfiConverterTypeSpaceSharing.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSpaceWindowOrigin: FfiConverterRustBuffer<SpaceWindowOrigin?> {
+    override fun read(buf: ByteBuffer): SpaceWindowOrigin? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSpaceWindowOrigin.read(buf)
+    }
+
+    override fun allocationSize(value: SpaceWindowOrigin?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSpaceWindowOrigin.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SpaceWindowOrigin?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSpaceWindowOrigin.write(value, buf)
         }
     }
 }
@@ -52970,6 +55778,34 @@ public object FfiConverterSequenceTypeCursorArt: FfiConverterRustBuffer<List<Cur
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeDefaultSpaceStep: FfiConverterRustBuffer<List<DefaultSpaceStep>> {
+    override fun read(buf: ByteBuffer): List<DefaultSpaceStep> {
+        val len = buf.getInt()
+        return List<DefaultSpaceStep>(len) {
+            FfiConverterTypeDefaultSpaceStep.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<DefaultSpaceStep>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeDefaultSpaceStep.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<DefaultSpaceStep>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeDefaultSpaceStep.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeDriveAccessRequest: FfiConverterRustBuffer<List<DriveAccessRequest>> {
     override fun read(buf: ByteBuffer): List<DriveAccessRequest> {
         val len = buf.getInt()
@@ -53754,6 +56590,34 @@ public object FfiConverterSequenceTypeNamedVolume: FfiConverterRustBuffer<List<N
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeNetworkEvent: FfiConverterRustBuffer<List<NetworkEvent>> {
+    override fun read(buf: ByteBuffer): List<NetworkEvent> {
+        val len = buf.getInt()
+        return List<NetworkEvent>(len) {
+            FfiConverterTypeNetworkEvent.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<NetworkEvent>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeNetworkEvent.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<NetworkEvent>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeNetworkEvent.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeNotificationInfo: FfiConverterRustBuffer<List<NotificationInfo>> {
     override fun read(buf: ByteBuffer): List<NotificationInfo> {
         val len = buf.getInt()
@@ -54510,6 +57374,34 @@ public object FfiConverterSequenceTypeSpaceInfo: FfiConverterRustBuffer<List<Spa
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeSpaceOrphan: FfiConverterRustBuffer<List<SpaceOrphan>> {
+    override fun read(buf: ByteBuffer): List<SpaceOrphan> {
+        val len = buf.getInt()
+        return List<SpaceOrphan>(len) {
+            FfiConverterTypeSpaceOrphan.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SpaceOrphan>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSpaceOrphan.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SpaceOrphan>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSpaceOrphan.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeSpaceResources: FfiConverterRustBuffer<List<SpaceResources>> {
     override fun read(buf: ByteBuffer): List<SpaceResources> {
         val len = buf.getInt()
@@ -54556,6 +57448,34 @@ public object FfiConverterSequenceTypeSpaceSentFile: FfiConverterRustBuffer<List
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeSpaceSentFile.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSpaceServiceInfo: FfiConverterRustBuffer<List<SpaceServiceInfo>> {
+    override fun read(buf: ByteBuffer): List<SpaceServiceInfo> {
+        val len = buf.getInt()
+        return List<SpaceServiceInfo>(len) {
+            FfiConverterTypeSpaceServiceInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SpaceServiceInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSpaceServiceInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SpaceServiceInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSpaceServiceInfo.write(it, buf)
         }
     }
 }

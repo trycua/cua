@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_guide`: read-only, on-demand sections of the compiled-in skill pack.
 //!
 //! Most MCP clients hand the model only the server instructions and the tool
@@ -309,6 +312,9 @@ pub fn description_hint(tool: &str) -> Option<&'static str> {
         "check_permissions" => "How to get them granted: `get_guide({topic:\"permissions\"})`.",
         "run_steps" | "run_script" => "Batching rules: `get_guide({topic:\"batching\"})`.",
         "invoke_menu" => "Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
+        "click" | "type_text" | "press_key" => {
+            "Several known actions: one `run_steps` (`get_guide({topic:\"batching\"})`)."
+        }
         _ => return None,
     })
 }
@@ -587,6 +593,9 @@ mod tests {
             "run_steps",
             "run_script",
             "invoke_menu",
+            "click",
+            "type_text",
+            "press_key",
         ] {
             let hint = description_hint(tool).unwrap_or_else(|| panic!("{tool} has no hint"));
             let topic = hint
@@ -596,6 +605,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("{hint}"));
             assert!(topic_names().contains(&topic), "{tool}: {hint}");
         }
-        assert_eq!(description_hint("click"), None);
+        assert_eq!(description_hint("zoom"), None);
     }
 }

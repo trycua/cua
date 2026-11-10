@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/trycua/cua/compare/cua-spaces-v0.26.2...cua-spaces-v0.27.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** report agent run and Space create status to the terminal (OSC 7501) ([#5155](https://github.com/trycua/cua/issues/5155)) ([f54ca3d](https://github.com/trycua/cua/commit/f54ca3de1cd7468a5ec2e74be571a80d9b2b532b))
+
 ## [0.26.2](https://github.com/trycua/cua/compare/cua-spaces-v0.26.1...cua-spaces-v0.26.2) (2026-11-10)
 
 

@@ -4270,6 +4270,211 @@ mod tests {
         assert_x11_frames_are_never_seen_half_presented(true)
     }
 
+    /// #6415: a compositing manager that starts after the overlay (xfwm4 in
+    /// the Linux image claims `_NET_WM_CM_S0` a few hundred ms after
+    /// cua-spacesd's overlay is up) must not leave a resting cursor holding
+    /// the pixels that were under it. The desktop under the cursor turns from
+    /// red to blue once the manager is running; nothing red may remain around
+    /// the cursor on screen.
+    #[test]
+    #[ignore = "requires a live X11 server without a compositing manager and picom on PATH (run under xvfb-run)"]
+    fn x11_overlay_follows_a_compositor_that_starts_after_it() -> anyhow::Result<()> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
+        use x11rb::protocol::xproto::{
+            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateGCAux, CreateWindowAux,
+            ImageFormat, Rectangle, WindowClass,
+        };
+
+        const AREA: u16 = 480;
+        const CURSOR: (i16, i16) = (200, 200);
+        const PROBE_HALF: i16 = 40;
+        const RED: u32 = 0x00ff_0000;
+        const BLUE: u32 = 0x0000_00ff;
+
+        struct Picom(std::process::Child);
+        impl Drop for Picom {
+            fn drop(&mut self) {
+                self.0.kill().ok();
+                self.0.wait().ok();
+            }
+        }
+
+        let (conn, screen_num) = x11rb::connect(None)?;
+        anyhow::ensure!(
+            !x11_compositor_present(&conn, screen_num),
+            "this test needs a display with no compositing manager yet"
+        );
+        let screen = conn.setup().roots[screen_num].clone();
+        let root = screen.root;
+
+        // A desktop window with no background, so the server never repaints
+        // it on its own: only the fills below change its pixels.
+        let desktop = conn.generate_id()?;
+        conn.create_window(
+            screen.root_depth,
+            desktop,
+            root,
+            0,
+            0,
+            AREA,
+            AREA,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new()
+                .background_pixmap(x11rb::NONE)
+                .override_redirect(1),
+        )?
+        .check()?;
+        conn.map_window(desktop)?.check()?;
+        let fill = |pixel: u32| -> anyhow::Result<()> {
+            let gc = conn.generate_id()?;
+            conn.create_gc(gc, desktop, &CreateGCAux::new().foreground(pixel))?
+                .check()?;
+            conn.poly_fill_rectangle(
+                desktop,
+                gc,
+                &[Rectangle {
+                    x: 0,
+                    y: 0,
+                    width: AREA,
+                    height: AREA,
+                }],
+            )?
+            .check()?;
+            conn.free_gc(gc)?;
+            conn.flush()?;
+            Ok(())
+        };
+        // Reddish/bluish pixel counts in the probe box around the cursor. A
+        // stale save-under is the old red blended under the cursor's bloom,
+        // so it is reddish rather than exactly red.
+        let probe = || -> anyhow::Result<(usize, usize, usize)> {
+            let image = conn
+                .get_image(
+                    ImageFormat::Z_PIXMAP,
+                    root,
+                    CURSOR.0 - PROBE_HALF,
+                    CURSOR.1 - PROBE_HALF,
+                    (2 * PROBE_HALF) as u16,
+                    (2 * PROBE_HALF) as u16,
+                    !0,
+                )?
+                .reply()?;
+            let (mut red, mut blue, mut other) = (0, 0, 0);
+            for px in image.data.chunks_exact(4) {
+                let (r, g, b) = (px[2], px[1], px[0]);
+                if r > 180 && g < 80 && b < 80 {
+                    red += 1;
+                } else if b > 180 && r < 80 && g < 80 {
+                    blue += 1;
+                } else {
+                    other += 1;
+                }
+            }
+            Ok((red, blue, other))
+        };
+        fill(RED)?;
+
+        let cursor_id = "cua-6415-late-compositor-probe";
+        init(CursorConfig {
+            cursor_id: cursor_id.to_owned(),
+            ..CursorConfig::default()
+        });
+        run_on_thread();
+        let title = format!("Cua.AgentCursorOverlay.{cursor_id}");
+        let find_overlay = || -> anyhow::Result<Option<u32>> {
+            for window in conn.query_tree(root)?.reply()?.children {
+                let Ok(cookie) = conn.get_property(
+                    false,
+                    window,
+                    AtomEnum::WM_NAME,
+                    AtomEnum::STRING,
+                    0,
+                    u32::MAX,
+                ) else {
+                    continue;
+                };
+                // Windows can vanish between the tree query and this read.
+                if cookie
+                    .reply()
+                    .is_ok_and(|name| name.value == title.as_bytes())
+                {
+                    return Ok(Some(window));
+                }
+            }
+            Ok(None)
+        };
+        let wait_for_painted_overlay = |phase: &str| -> anyhow::Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Some(overlay) = find_overlay()? {
+                    if conn
+                        .shape_get_rectangles(overlay, SK::BOUNDING)
+                        .ok()
+                        .and_then(|cookie| cookie.reply().ok())
+                        .is_some_and(|shape| !shape.rectangles.is_empty())
+                    {
+                        return Ok(());
+                    }
+                }
+                anyhow::ensure!(
+                    Instant::now() < deadline,
+                    "the overlay never painted during {phase}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+
+        send_command(OverlayCommand::SetEnabled(true));
+        send_command(OverlayCommand::SnapTo {
+            x: f64::from(CURSOR.0),
+            y: f64::from(CURSOR.1),
+            heading_radians: None,
+        });
+        wait_for_painted_overlay("the bare-X11 show")?;
+        std::thread::sleep(Duration::from_millis(400));
+
+        let _picom = Picom(
+            std::process::Command::new("picom")
+                .args(["--backend", "xrender"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("cannot start picom: {e}"))?,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !x11_compositor_present(&conn, screen_num) {
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "picom never claimed _NET_WM_CM_S{screen_num}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // The overlay samples the compositor once a second, then blanks for
+        // its resync grace before painting again.
+        std::thread::sleep(X11_COMPOSITOR_POLL_INTERVAL + Duration::from_millis(500));
+        wait_for_painted_overlay("the compositor's arrival")?;
+        std::thread::sleep(Duration::from_millis(300));
+
+        // The page under the resting cursor changes, as a navigation does.
+        fill(BLUE)?;
+        std::thread::sleep(Duration::from_millis(1500));
+        let (red, blue, other) = probe()?;
+        eprintln!("around the cursor: red={red} blue={blue} other={other}");
+        anyhow::ensure!(
+            other > 0,
+            "the cursor is not on screen around {CURSOR:?} after the compositor started"
+        );
+        anyhow::ensure!(blue > 0, "the new desktop never reached the screen");
+        anyhow::ensure!(
+            red == 0,
+            "{red} pixels around the resting cursor still show the old desktop"
+        );
+        Ok(())
+    }
+
     fn assert_x11_frames_are_never_seen_half_presented(
         with_compositor: bool,
     ) -> anyhow::Result<()> {

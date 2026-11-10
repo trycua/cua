@@ -159,7 +159,7 @@ jobs:
       - name: Build the cua SDK library and the spacesd MockServer fixture
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           node scripts/stage-uniffi-library.mjs --only=python
 

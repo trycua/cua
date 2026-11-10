@@ -68,7 +68,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
   it("a creating run and a not-connected run show on both, the same way", async () => {
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, hold });
+    const { router } = await mountApp("/home/ask", { failsCreates: false, listsGhost: false, hold });
     await start("fix the build");
     // While its Space is being made: on the Agents page, waiting for its Space…
     await act(async () => void router.navigate({ to: "/agents" }));
@@ -78,7 +78,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     // The list fills in as the host answers: wait for it to be whole (the demo's other agents and this run).
     await waitFor(() => expect(qa("[data-agent-list] [data-chat]").length).toBeGreaterThan(1));
     // …and Home counts the same list: its count is the Agents page's own, once both have settled.
-    await act(async () => void router.navigate({ to: "/home" }));
+    await act(async () => void router.navigate({ to: "/home/ask" }));
     await waitFor(
       async () => {
         const shown = q("[data-home-see-all='/agents']")?.textContent?.trim();
@@ -89,7 +89,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
           expect(n).toBeGreaterThan(1);
           return n;
         });
-        await act(async () => void router.navigate({ to: "/home" }));
+        await act(async () => void router.navigate({ to: "/home/ask" }));
         expect(shown).toBe(`See all ${total}`);
       },
       { timeout: 15000 },
@@ -107,7 +107,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     const nc = await found("[data-chat-run][data-chat-tone='not-connected']", 15000);
     expect(nc.querySelector("[data-chat-line]")?.textContent).toBe("Claude Code isn't connected yet");
     expect(nc.querySelector("[data-chat-action='connect']")).not.toBeNull();
-    await act(async () => void router.navigate({ to: "/home" }));
+    await act(async () => void router.navigate({ to: "/home/ask" }));
     const home = await found("[data-home-agent][data-chat-tone='not-connected']");
     expect(home.querySelector("[data-home-agent-line]")?.textContent).toBe("Claude Code isn't connected yet");
     expect(home.querySelector("[data-home-agent-action='connect']")?.textContent).toBe("Connect Claude Code");
@@ -121,10 +121,10 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
   });
 
   it("Home: the composer, then Your agents, then Your Spaces; See all links; Spaces say running", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false });
+    const { router } = await mountApp("/home/ask", { failsCreates: false, listsGhost: false });
     await start("tidy the repo");
     // Back on Home.
-    fireEvent.click(await found("a[href='/home']"));
+    await act(async () => void router.navigate({ to: "/home/ask" }));
     await found("[data-home-agents]");
     await found("[data-home-spaces]");
     const order = qa("[data-ask-first-home] section, [data-ask-first-home] [aria-label='What should it do?']").map((el) =>
@@ -144,7 +144,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
 
   it("a task whose Space is gone leaves nothing to list: Home is the welcome, not a bare box", async () => {
     addAskTask({ prompt: "an old job", agent: "claude-code", os: "linux", spaceId: "gone-space" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, answer: (op, out) => (op === "spaces.list" ? [] : out) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, answer: (op, out) => (op === "spaces.list" ? [] : out) });
     expect(await waitFor(() => q("[data-home-card]") ?? Promise.reject(new Error("no welcome cards")))).toBeTruthy();
     expect(q("[data-home-agents]")).toBeNull();
     expect(q("[data-home-spaces]")).toBeNull();

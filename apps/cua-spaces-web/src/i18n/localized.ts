@@ -16,6 +16,8 @@ export const LOCALIZED: readonly string[] = [
   "lib/commands.ts",
   // Home.
   "components/ask-first",
+  "components/home",
+  "lib/pool.ts",
   "routes/home",
   // Computers.
   "components/spaces",

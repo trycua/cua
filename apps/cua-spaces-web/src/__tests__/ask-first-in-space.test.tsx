@@ -46,7 +46,7 @@ const found = (s: string, timeout = 8000) =>
 
 /** A Space the person's own job made (no agent in it yet): Home, a job, then its page. */
 async function inAFreshSpace(host: Parameters<typeof mountApp>[1]) {
-  const { router } = await mountApp("/home", host);
+  const { router } = await mountApp("/home/ask", host);
   await screen.findByLabelText("What should it do?");
   await pickNewLinux();
   fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "look around" } });
@@ -75,7 +75,7 @@ async function compose(text: string) {
 describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
   it("lands on the Space being made and posts the job to the agent the model runs on", { timeout: 40000 }, async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", {
+    const { router } = await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
@@ -100,7 +100,7 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
 
 describe.skipIf(!wasmBuilt)("Ask first: nothing connected", () => {
   it("has no agent to start with: the box says to sign in and Start waits", { timeout: 40000 }, async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
     expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent");
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
@@ -193,7 +193,7 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
     // The create waits until the queued line has been looked at.
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    await mountApp("/home", { failsCreates: false, listsGhost: false, hold, intercept: (op, args) => (calls.push({ op, args }), undefined) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, hold, intercept: (op, args) => (calls.push({ op, args }), undefined) });
     await screen.findByLabelText("What should it do?");
     await pickNewLinux();
     fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });

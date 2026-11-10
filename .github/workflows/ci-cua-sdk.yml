@@ -657,7 +657,7 @@ jobs:
           workspaces: libs/cua
           shared-key: libs-cua-build-sdk
       - name: Build
-        run: cargo build --locked --release -p cua-sdk
+        run: cargo build --locked --release -p cua-sdk-native
       - run: tar -C target -cf "$RUNNER_TEMP/sdk-linux.tar" release/libcua_sdk.so
       - uses: actions/upload-artifact@v4
         with:
@@ -774,7 +774,7 @@ jobs:
         if: runner.os != 'Linux'
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli
           if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
@@ -845,7 +845,7 @@ jobs:
       - name: Build (macOS; Linux uses the shared build)
         if: runner.os != 'Linux'
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli -p cua-spaces-cli
       - name: Stage
@@ -932,7 +932,7 @@ jobs:
           save-always: "true"
       - name: Dev dylib
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           node scripts/stage-uniffi-library.mjs --only=swift
           swift/scripts/test.sh

@@ -174,7 +174,7 @@ jobs:
           echo "ASSUME=$assume" >>"$GITHUB_ENV"
       - name: cua CLI and the SDK binding for the smoke
         run: |
-          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
+          (cd libs/cua && cargo build --release -p cua-sdk-native -p cua-cli --features cua-cli/byoc)
           cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
           install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
           # The later jobs (index, verify, promote) reuse these instead of
@@ -307,7 +307,7 @@ jobs:
             cp "$RUNNER_TEMP/bench-cli/libcua_sdk.so" libs/cua/python/src/cua/
             install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
           else
-            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli --features cua-cli/byoc)
+            (cd libs/cua && cargo build --release -p cua-sdk-native -p cua-cli --features cua-cli/byoc)
             cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
             install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
             rm -rf libs/cua/target

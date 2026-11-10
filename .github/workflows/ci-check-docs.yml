@@ -86,7 +86,7 @@ jobs:
       - name: Test generator routing and ownership
         run: |
           node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
-          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts scripts/docs-generators/prose-style.test.ts scripts/docs-generators/lume.test.ts scripts/docs-generators/cua-cli.test.ts scripts/docs-generators/cli-mdx.test.ts scripts/docs-generators/cua-bench.test.ts scripts/docs-generators/reference-quality.test.ts scripts/docs-generators/cua-sdk.test.ts scripts/docs-generators/python-sdk.test.ts scripts/docs-generators/typescript-sdk.test.ts scripts/docs-generators/rust-crates.test.ts scripts/docs-generators/proto.test.ts scripts/docs-generators/spaces.test.ts
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/docs-version-stamp.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts scripts/docs-generators/prose-style.test.ts scripts/docs-generators/lume.test.ts scripts/docs-generators/cua-cli.test.ts scripts/docs-generators/cli-mdx.test.ts scripts/docs-generators/cua-bench.test.ts scripts/docs-generators/reference-quality.test.ts scripts/docs-generators/cua-sdk.test.ts scripts/docs-generators/python-sdk.test.ts scripts/docs-generators/typescript-sdk.test.ts scripts/docs-generators/rust-crates.test.ts scripts/docs-generators/proto.test.ts scripts/docs-generators/spaces.test.ts
       - name: Select affected generator rows
         id: scope
         env:
@@ -163,7 +163,7 @@ jobs:
       # row re-checks only the ownership and routing tests (the rest assume
       # POSIX paths and line endings).
       - name: Test generator ownership
-        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
+        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/docs-version-stamp.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
       # Restore the release build that CI: cua-driver contract clients saves
       # from main. Its MCP discovery job installs the same toolchain, so the
       # cache key matches. Pull requests never save.

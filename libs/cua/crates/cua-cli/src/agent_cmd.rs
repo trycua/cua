@@ -457,6 +457,9 @@ async fn follow(
     out: &mut dyn Write,
 ) -> Result<u64, CuaError> {
     let label = format!("{} {}", run.harness(), run.run_id());
+    if until_turn_end && !json && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        crate::util::exit_on_ctrl_c();
+    }
     let mut reported = None;
     let mut report = |shown: &(ProgramState, String)| {
         if until_turn_end && !json && reported.replace(shown.clone()).as_ref() != Some(shown) {

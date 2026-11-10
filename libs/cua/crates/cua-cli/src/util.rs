@@ -395,14 +395,17 @@ const REPORTED: u8 = 1;
 const CLEARED: u8 = 2;
 
 pub fn program_status(state: ProgramState, progress: Option<u8>, msg: &str) {
-    if std::io::stderr().is_terminal() && program_status_may_write(&PROGRAM_STATUS, REPORTED) {
-        eprint!("{}", program_status_report(state, progress, msg));
+    // The stderr lock spans the check and the write, so no report lands after a clear.
+    let mut err = std::io::stderr().lock();
+    if err.is_terminal() && program_status_may_write(&PROGRAM_STATUS, REPORTED) {
+        let _ = write!(err, "{}", program_status_report(state, progress, msg));
     }
 }
 
 pub fn clear_program_status() {
+    let mut err = std::io::stderr().lock();
     if program_status_may_write(&PROGRAM_STATUS, CLEARED) {
-        eprint!("\x1b]7501;state=clear\x1b\\");
+        let _ = write!(err, "\x1b]7501;state=clear\x1b\\");
     }
 }
 
@@ -682,7 +685,8 @@ pub mod test_env {
 }
 
 /// After a command caught Ctrl-C itself (to cancel a create), the rest of
-/// it quits on Ctrl-C again, as a command does by default.
+/// it quits on Ctrl-C again, as a command does by default. A command that
+/// reports its status calls this so Ctrl-C clears the report first.
 pub fn exit_on_ctrl_c() {
     tokio::spawn(async {
         if tokio::signal::ctrl_c().await.is_ok() {

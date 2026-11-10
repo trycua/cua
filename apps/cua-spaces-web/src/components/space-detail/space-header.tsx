@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { ArrowDownCircleIcon, EllipsisIcon, LoaderCircleIcon, PictureInPicture2Icon, PowerIcon, UserPlusIcon } from "lucide-react";
+import { ArrowDownCircleIcon, EllipsisIcon, LoaderCircleIcon, PictureInPicture2Icon, PowerIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SpaceOs } from "@/bridge";
@@ -41,6 +41,10 @@ export interface SpaceHeaderProps {
   teleport?: HeaderAction;
   share?: HeaderAction;
   remove?: HeaderAction;
+  /** A computer's desktop page: its own page (switches, rename, details), in the menu. */
+  computerSettings?: HeaderAction;
+  /** A computer's desktop page: remove the computer (the trash); disabled with its help while it cannot be. */
+  removeComputer?: HeaderAction;
   /** A failed create: take it off the list. */
   dismiss?: HeaderAction;
 }
@@ -77,6 +81,7 @@ function PowerButton({ power }: { power: HeaderPower }) {
  * Share. A hairline under it spans the page. */
 export function SpaceHeader(p: SpaceHeaderProps) {
   const more: MenuItem[] = [
+    ...(p.computerSettings ? [{ label: p.computerSettings.label, onSelect: p.computerSettings.onClick }] : []),
     ...(p.dismiss ? [{ label: p.dismiss.label, onSelect: p.dismiss.onClick, destructive: true }] : []),
     ...(p.remove ? [{ label: `${p.remove.label}…`, onSelect: p.remove.onClick, destructive: true }] : []),
   ];
@@ -118,6 +123,21 @@ export function SpaceHeader(p: SpaceHeaderProps) {
                 className={cn(bare, p.pip.active && "text-brand-strong")}
               >
                 <PictureInPicture2Icon />
+              </Button>
+            </Tooltip>
+          ) : null}
+          {p.removeComputer ? (
+            <Tooltip content={p.removeComputer.help ?? p.removeComputer.label}>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-header-remove-computer=""
+                aria-label={p.removeComputer.label}
+                aria-disabled={!p.removeComputer.enabled || undefined}
+                onClick={p.removeComputer.enabled ? p.removeComputer.onClick : undefined}
+                className={cn(bare, !p.removeComputer.enabled && "opacity-50")}
+              >
+                <Trash2Icon />
               </Button>
             </Tooltip>
           ) : null}

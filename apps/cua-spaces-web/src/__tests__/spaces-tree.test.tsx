@@ -129,7 +129,15 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     // Folding a computer hides its Spaces.
     fireEvent.click(q('[data-tree-fold="relay:linux-box"]')!);
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')).toBeNull();
-    // A computer opens its own page.
+    // A computer that shares its desktop opens that desktop's Space page.
+    fireEvent.click(q('[data-tree-name="relay:linux-box"]')!, { detail: 0 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/relay%3Alinux-box"));
+  });
+
+  it("opens the computer's own page for a computer that cannot be opened as a desktop (offline)", { timeout: 30000 }, async () => {
+    const { router } = await mountApp("/spaces", host([], { offline: ["linux-box"] }));
+    await router.load();
+    await waitFor(() => expect(q('[data-tree-name="relay:linux-box"]')).not.toBeNull());
     fireEvent.click(q('[data-tree-name="relay:linux-box"]')!, { detail: 0 });
     await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/linux-box"));
   });

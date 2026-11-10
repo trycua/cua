@@ -2479,7 +2479,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "cua-home",
- "cua-sdk",
  "cua-vmm",
  "hex",
  "humantime",

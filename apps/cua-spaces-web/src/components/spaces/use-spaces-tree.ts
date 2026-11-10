@@ -3,7 +3,7 @@
 
 import { useMemo } from "react";
 
-import { useAgents, useBridge, useSession, useSpaces, type SpacesDefaultHook } from "@/bridge";
+import { sharesDesktop, useAgents, useBridge, useSession, useSpaces, type SpacesDefaultHook } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { useMachinesLive } from "@/hooks/use-machines-live";
 import { currentLocale, useT } from "@/i18n";
@@ -57,10 +57,11 @@ export function useSpacesTreeData(running: ReadonlyMap<string, number> = NO_RUNS
             running,
             me: session?.identity ?? null,
             relayOnline,
+            shares: (s) => sharesDesktop(core, s) !== false,
             parents: new Map(parentsKey ? parentsKey.split("\n\n").map((p) => p.split("\n") as [string, string]) : []),
           })
         : null,
-    [spaces, machines, warming, defaultSpace, running, session?.identity, relayOnline, lng, parentsKey],
+    [spaces, machines, warming, defaultSpace, running, session?.identity, relayOnline, lng, parentsKey, core],
   );
   return { tree, loaded: Boolean(spaces && machines && listStatus.loaded), defaults };
 }

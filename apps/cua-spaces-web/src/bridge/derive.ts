@@ -53,7 +53,8 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
   // Not reported: unknown, never guessed (the core's `row_to_space`).
   const os = row.os ?? "unknown";
   const off = row.powerState === "suspended" || row.powerState === "stopped";
-  const status: SpaceStatus = row.reachable && !(row.power && off) ? "running" : "suspended";
+  // This Mac's own desktop is `local` while it is shared (the host says so), else off.
+  const status: SpaceStatus = row.id === "this-mac" ? (row.reachable ? "local" : "suspended") : row.reachable && !(row.power && off) ? "running" : "suspended";
   const added = row.addedAt ? Date.parse(row.addedAt) : NaN;
   return {
     id: row.id,

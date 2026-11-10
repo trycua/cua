@@ -731,6 +731,7 @@ pub struct ActionResult {
     /// Present only with `effect: refused`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ActionError>,
+    /// End-of-edit verdict, currently published by macOS text actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed: Option<ActionCommit>,
     /// What to do next, in one short sentence. Present when the effect is

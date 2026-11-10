@@ -812,6 +812,7 @@ mod tests {
 
     /// What Cua Spaces' Set up writes: the driver it carries, by absolute
     /// path, under the same server name.
+    #[cfg(unix)]
     const SPACES_DRIVER: &str = "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver";
 
     #[cfg(unix)]

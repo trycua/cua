@@ -267,6 +267,34 @@ fn press_error_may_have_acted(err: crate::ax::bindings::AXError) -> bool {
         || err == kAXErrorActionUnsupported
 }
 
+/// Whether WindowServer's description of a pressed window says it closed.
+///
+/// Only a missing record is a close. A window that is merely hidden (an
+/// ordered-out panel, a minimized window, one made fully transparent) still
+/// has a record, off screen or at alpha 0, and can come back, so it counts as
+/// open: reporting it closed would hide a dialog that is still there.
+fn window_closed(description: Option<&crate::windows::WindowDescription>) -> bool {
+    description.is_none()
+}
+
+/// Whether a window `exists` no longer within `timeout`, polled every `poll`.
+fn window_closes_within(
+    mut exists: impl FnMut() -> bool,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !exists() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 /// Whether a toggle's value moving from `before` to `now` is what pressing it
 /// does: a checkbox changes state; a radio button becomes selected (a radio
 /// turning off was another radio's press).
@@ -2356,6 +2384,28 @@ fn perform_ax_click(
                 ));
             }
         }
+        // A button that closes its own window (a dialog's OK, an open panel's
+        // Open) can return an error because the window is gone before the app
+        // answers. The press ran; reporting it as failed invites a retry.
+        if window_closes_within(
+            || !window_closed(crate::windows::describe_window(window_id).as_ref()),
+            SELECTION_READBACK_TIMEOUT,
+            SELECTION_READBACK_POLL,
+        ) {
+            return Ok(AxClickOutcome {
+                summary: format!(
+                    "Performed {ax_action} on [{idx}] {role} \"{title}\"; its window {window_id} \
+                     closed, although the app returned AX error {err}. Read the app's windows \
+                     before acting again."
+                ),
+                needs_webkit_delay: false,
+                unadvertised: false,
+                selection_verified: false,
+                selection_via_pixel: false,
+                page: None,
+                pressed_at,
+            });
+        }
         anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
     }
 
@@ -2847,6 +2897,57 @@ mod tests {
         for refused in [-25201, -25202, -25204, -25211] {
             assert!(!press_error_may_have_acted(refused), "{refused}");
         }
+    }
+
+    #[test]
+    fn a_hidden_window_is_still_open_and_only_a_missing_one_is_closed() {
+        let open = crate::windows::WindowDescription {
+            window_id: 7,
+            pid: 42,
+            app_name: "App".into(),
+            title: "Open".into(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.,
+                y: 0.,
+                width: 400.,
+                height: 300.,
+            },
+            layer: 8,
+            is_on_screen: true,
+            alpha: 1.0,
+        };
+        assert!(!window_closed(Some(&open)));
+        let ordered_out = crate::windows::WindowDescription {
+            is_on_screen: false,
+            ..open.clone()
+        };
+        assert!(!window_closed(Some(&ordered_out)));
+        let transparent = crate::windows::WindowDescription {
+            is_on_screen: false,
+            alpha: 0.0,
+            ..open
+        };
+        assert!(!window_closed(Some(&transparent)));
+        assert!(window_closed(None));
+    }
+
+    #[test]
+    fn a_window_that_closes_late_still_counts_and_one_that_stays_does_not() {
+        let tick = std::time::Duration::from_millis(1);
+        let mut reads = 0;
+        assert!(window_closes_within(
+            || {
+                reads += 1;
+                reads < 3
+            },
+            std::time::Duration::from_millis(200),
+            tick,
+        ));
+        assert!(!window_closes_within(
+            || true,
+            std::time::Duration::from_millis(5),
+            tick
+        ));
     }
 
     /// A checkbox press shows as any state change; a radio press only as the

@@ -179,6 +179,10 @@ describe("a start that failed", () => {
     expect(startErrorView("Cua Cloud has ended; use a local sandbox or your own computer.", "Codex").action).toBe("change-computer");
     expect(startErrorView("OPENAI_API_KEY is not set", "Codex")).toMatchObject({ title: "Codex needs your key", action: "add-key", retry: true });
     expect(startErrorView("aurora is not running", "Codex")).toMatchObject({ title: "Couldn't reach that computer", action: "retry" });
+    // This Mac is plainly on: no "Check it's on" (CUA-3974).
+    const onHost = startErrorView("transport error: http2 error (operation timed out)", "Codex", true);
+    expect(onHost).toMatchObject({ title: "This Mac didn't answer in time", action: "retry", retry: true });
+    expect(onHost.body).not.toMatch(/check it's on/i);
     expect(startErrorView("Not enough disk space left", "Codex").action).toBe("retry");
     expect(startErrorView("boom", "Codex")).toMatchObject({ title: "Codex couldn't start", action: "retry", retry: true });
   });

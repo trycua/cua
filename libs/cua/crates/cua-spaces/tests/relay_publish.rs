@@ -368,6 +368,39 @@ async fn every_kind_of_running_space_is_listed_and_unlisted_alike() {
     assert_eq!(w.rows().await.len(), 2);
 }
 
+/// A Space of this computer whose relay row stays (shared with other people,
+/// or listed by hand: no longer "listed by Cua") is still the one local row,
+/// not a second top-level row beside it.
+#[tokio::test]
+async fn a_space_kept_on_the_account_by_hand_or_by_sharing_is_not_listed_twice() {
+    let w = World::new().await;
+    w.create("home-claude-code", "linux", Kind::Container).await;
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert_eq!(r.published.len(), 1, "{r:?}");
+    // What an unpublish of a shared Space (or a hand registration) leaves:
+    // the attach record without the automatic mark.
+    let path = w.home.path().join("shared-spaces.json");
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for a in v.as_object_mut().unwrap().values_mut() {
+        a.as_object_mut().unwrap().remove("auto");
+    }
+    std::fs::write(&path, v.to_string()).unwrap();
+    w.spaces.relay_machines().await.unwrap();
+    let listed = w.spaces.list().unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .filter(|i| i.name == "home-claude-code")
+            .count(),
+        1,
+        "{listed:#?}"
+    );
+    assert!(
+        listed.iter().all(|i| !i.id.starts_with("relay:")),
+        "{listed:#?}"
+    );
+}
+
 /// Only what Cua made is listed, and only if it did not opt out.
 #[tokio::test]
 async fn spaces_added_by_address_and_opted_out_ones_stay_off() {

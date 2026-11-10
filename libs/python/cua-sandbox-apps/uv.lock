@@ -397,7 +397,7 @@ wheels = [
 
 [[package]]
 name = "cua-sandbox"
-version = "0.9.1"
+version = "0.10.0"
 source = { editable = "../cua-sandbox" }
 dependencies = [
     { name = "cua" },

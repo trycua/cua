@@ -6985,9 +6985,6 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
-    /// on; the daemon enforces it (the switch is kept in the cua home).
-    pub child_spaces: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).
@@ -7000,10 +6997,6 @@ pub struct AppExperiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
-    /// Warm pools: one Linux Space kept ready, with its coding apps
-    /// installed, so the next Create from Home starts at once. Off unless
-    /// turned on; the daemon enforces it (the switch is kept in the cua home).
-    pub warm_pools: bool,
 }
 
 /// A runtime the host found for one kind (the SDK's `RuntimeDetected`).

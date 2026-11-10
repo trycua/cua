@@ -2010,21 +2010,17 @@ public final class AppModel {
 
     // MARK: - Experiments
 
-    /// The experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
+    /// The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as
     /// the cua home keeps them: what `cua experiments enable` set shows here
     /// the next time Settings is read.
     public func refreshDaemonExperiments() {
         let kept = appSettingsLoad(path: settingsPath).experiments
-        guard kept.childSpaces != settings.experiments.childSpaces
-            || kept.ciRunners != settings.experiments.ciRunners
+        guard kept.ciRunners != settings.experiments.ciRunners
             || kept.tcpShares != settings.experiments.tcpShares
-            || kept.mobile != settings.experiments.mobile
-            || kept.warmPools != settings.experiments.warmPools else { return }
-        settings.experiments.childSpaces = kept.childSpaces
+            || kept.mobile != settings.experiments.mobile else { return }
         settings.experiments.ciRunners = kept.ciRunners
         settings.experiments.tcpShares = kept.tcpShares
         settings.experiments.mobile = kept.mobile
-        settings.experiments.warmPools = kept.warmPools
     }
 
     /// Settings, Experiments: a switch and one line per experiment.

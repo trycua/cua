@@ -154,7 +154,11 @@ impl Scoped {
             .list()
             .map_err(|e| Status::internal(e.to_string()))?
             .into_iter()
-            .filter(|r| !seen.iter().any(|s| s.id == r.id) && scope.may_list(&r.id, &r.name))
+            .filter(|r| {
+                !seen.iter().any(|s| s.id == r.id)
+                    && !super::home::is_warming_home(&r.labels)
+                    && scope.may_list(&r.id, &r.name)
+            })
             .collect();
         self.fill(&mut records);
         Ok(records)

@@ -363,6 +363,7 @@ const SpaceRowShape = ref(
     imageDigest: opt(str),
     kind: opt(oneOf("container", "vm")),
     arch: opt(str),
+    hidden: opt(bool),
     reachable: bool,
     error: opt(str),
     host: opt(str),
@@ -554,10 +555,7 @@ const SettingsShape = ref(
   }),
 );
 
-const ExperimentsShape = ref(
-  "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), childSpaces: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
-);
+const ExperimentsShape = ref("Experiments", obj<Experiments>()({ cuaVolume: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool) }));
 
 const RepoCacheShape = ref(
   "RepoCacheView",

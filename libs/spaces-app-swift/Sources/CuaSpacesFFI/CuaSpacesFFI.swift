@@ -17107,11 +17107,6 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var cuaVolume: Bool
     /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned
-     * on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    public var childSpaces: Bool
-    /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
      * `cua` command enforce it (the switch is kept in the cua home).
@@ -17129,12 +17124,6 @@ public struct AppExperiments: Equatable, Hashable {
      * is kept in the cua home).
      */
     public var mobile: Bool
-    /**
-     * Warm pools: one Linux Space kept ready, with its coding apps
-     * installed, so the next Create from Home starts at once. Off unless
-     * turned on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    public var warmPools: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17142,10 +17131,6 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * Cua Volume in the first run and Settings, Storage.
          */cuaVolume: Bool,
-        /**
-         * Child Spaces: a Space may make Spaces of its own. Off unless turned
-         * on; the daemon enforces it (the switch is kept in the cua home).
-         */childSpaces: Bool,
         /**
          * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
          * and the CI Runners page). Off unless turned on; the daemon and the
@@ -17160,18 +17145,11 @@ public struct AppExperiments: Equatable, Hashable {
          * Mobile: the computer answers the Cua Spaces phone app (its tools and
          * push events). Off unless turned on; the daemon enforces it (the switch
          * is kept in the cua home).
-         */mobile: Bool,
-        /**
-         * Warm pools: one Linux Space kept ready, with its coding apps
-         * installed, so the next Create from Home starts at once. Off unless
-         * turned on; the daemon enforces it (the switch is kept in the cua home).
-         */warmPools: Bool) {
+         */mobile: Bool) {
         self.cuaVolume = cuaVolume
-        self.childSpaces = childSpaces
         self.ciRunners = ciRunners
         self.tcpShares = tcpShares
         self.mobile = mobile
-        self.warmPools = warmPools
     }
 
 
@@ -17191,21 +17169,17 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         return
             try AppExperiments(
                 cuaVolume: FfiConverterBool.read(from: &buf),
-                childSpaces: FfiConverterBool.read(from: &buf),
                 ciRunners: FfiConverterBool.read(from: &buf),
                 tcpShares: FfiConverterBool.read(from: &buf),
-                mobile: FfiConverterBool.read(from: &buf),
-                warmPools: FfiConverterBool.read(from: &buf)
+                mobile: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppExperiments, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.cuaVolume, into: &buf)
-        FfiConverterBool.write(value.childSpaces, into: &buf)
         FfiConverterBool.write(value.ciRunners, into: &buf)
         FfiConverterBool.write(value.tcpShares, into: &buf)
         FfiConverterBool.write(value.mobile, into: &buf)
-        FfiConverterBool.write(value.warmPools, into: &buf)
     }
 }
 
@@ -80919,7 +80893,7 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 }
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
@@ -83027,7 +83001,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 17320) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 62088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {

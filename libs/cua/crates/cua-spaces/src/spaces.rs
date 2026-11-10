@@ -2446,13 +2446,6 @@ impl Spaces {
         // Under the operator override that turns the secure default off, a create asks for no
         // more than the old lists. Child Spaces is an experiment: until it is on, no parent.
         crate::network::require_secure_spaces(opts.network_settings.as_ref())?;
-        if opts.parent.is_some()
-            && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
-        {
-            return Err(Error::invalid(
-                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-            ));
-        }
         // The network it gets: what it asks, no more open than its parent.
         // Every path below carries the resolved settings.
         let network = self.create_network(&opts)?;

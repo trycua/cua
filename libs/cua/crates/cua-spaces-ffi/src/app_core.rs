@@ -2191,7 +2191,7 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
 }
 
 /// Reads the settings file (defaults when missing or damaged). The
-/// experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
+/// experiments the daemon enforces (CI runners, Public TCP shares, Phone app) are what
 /// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -2208,9 +2208,6 @@ fn sync_experiments_from_home(
     home: &std::path::Path,
 ) -> AppExperiments {
     use cua_spaces::experiments::{Gate, switch};
-    if let Some(on) = switch(home, Gate::ChildSpaces) {
-        experiments.child_spaces = on;
-    }
     if let Some(on) = switch(home, Gate::CiRunners) {
         experiments.ci_runners = on;
     }
@@ -2219,9 +2216,6 @@ fn sync_experiments_from_home(
     }
     if let Some(on) = switch(home, Gate::Mobile) {
         experiments.mobile = on;
-    }
-    if let Some(on) = switch(home, Gate::WarmPools) {
-        experiments.warm_pools = on;
     }
     experiments
 }
@@ -2233,11 +2227,9 @@ fn sync_experiments_to_home(
     home: &std::path::Path,
 ) -> std::io::Result<()> {
     use cua_spaces::experiments::{Gate, set_switch};
-    set_switch(home, Gate::ChildSpaces, experiments.child_spaces)?;
     set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
     set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
-    set_switch(home, Gate::Mobile, experiments.mobile)?;
-    set_switch(home, Gate::WarmPools, experiments.warm_pools)
+    set_switch(home, Gate::Mobile, experiments.mobile)
 }
 
 /// Writes the settings file, and keeps the experiments the daemon enforces
@@ -2259,7 +2251,7 @@ mod experiment_sync_tests {
         let home = tempfile::tempdir().unwrap();
         let dir = home.path().join("experiments");
         std::fs::create_dir_all(&dir).unwrap();
-        for n in ["secure-spaces", "ask-first"] {
+        for n in ["secure-spaces", "ask-first", "child-spaces", "warm-pools"] {
             std::fs::write(dir.join(n), "off\n").unwrap();
         }
         // Reading ignores them.
@@ -2267,7 +2259,9 @@ mod experiment_sync_tests {
         assert_eq!(seen, AppExperiments::default());
         // Writing removes them.
         sync_experiments_to_home(&seen, home.path()).unwrap();
-        assert!(!dir.join("secure-spaces").exists() && !dir.join("ask-first").exists());
+        for n in ["secure-spaces", "ask-first", "child-spaces", "warm-pools"] {
+            assert!(!dir.join(n).exists(), "{n}");
+        }
     }
 
     #[test]
@@ -2275,7 +2269,6 @@ mod experiment_sync_tests {
         let home = tempfile::tempdir().unwrap();
         // Nothing kept: the app's own file decides.
         let mine = AppExperiments {
-            child_spaces: true,
             ci_runners: true,
             ..Default::default()
         };
@@ -2288,14 +2281,11 @@ mod experiment_sync_tests {
         )
         .unwrap();
         let seen = sync_experiments_from_home(mine, home.path());
-        assert!(seen.mobile && seen.child_spaces && seen.ci_runners);
+        assert!(seen.mobile && seen.ci_runners);
         // The app's switches land in the home for the daemon.
         sync_experiments_to_home(&seen, home.path()).unwrap();
         assert_eq!(
-            cua_spaces::experiments::switch(
-                home.path(),
-                cua_spaces::experiments::Gate::ChildSpaces
-            ),
+            cua_spaces::experiments::switch(home.path(), cua_spaces::experiments::Gate::CiRunners),
             Some(true)
         );
         // Only the daemon's experiments are kept there.
@@ -2305,11 +2295,8 @@ mod experiment_sync_tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
-            kept.iter().all(|n| n == "child-spaces"
-                || n == "ci-runners"
-                || n == "tcp-shares"
-                || n == "mobile"
-                || n == "warm-pools"),
+            kept.iter()
+                .all(|n| n == "ci-runners" || n == "tcp-shares" || n == "mobile"),
             "{kept:?}"
         );
     }

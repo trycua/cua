@@ -246,8 +246,9 @@ fn describe_health(version: &str, outputs: Result<usize>) -> String {
     match outputs {
         Ok(1) => format!("niri {version}: IPC attested to WAYLAND_DISPLAY."),
         Ok(count) => format!(
-            "niri {version}: IPC attested to WAYLAND_DISPLAY; window capture and desktop \
-             input refuse because {count} outputs are enabled (one is supported)."
+            "niri {version}: IPC attested to WAYLAND_DISPLAY; window-coordinate input \
+             refuses because {count} outputs are enabled (window capture and desktop scope \
+             are supported)."
         ),
         Err(error) => format!(
             "niri {version}: IPC attested to WAYLAND_DISPLAY; the output layout is \
@@ -359,7 +360,8 @@ mod tests {
             describe_health("26.04 (8ed0da4)", Ok(1)),
             "niri 26.04 (8ed0da4): IPC attested to WAYLAND_DISPLAY."
         );
-        assert!(describe_health("26.04", Ok(2)).contains("refuse because 2 outputs are enabled"));
+        assert!(describe_health("26.04", Ok(2))
+            .contains("window-coordinate input refuses because 2 outputs are enabled"));
         assert_eq!(
             inactive_health(Attestation::Unrelated(
                 "NIRI_SOCKET is served by pid 1 but WAYLAND_DISPLAY by pid 2".into()

@@ -354,19 +354,6 @@ impl Scene {
     pub(super) fn pointer_space(&self) -> Result<(i32, i32, u32, u32)> {
         pointer_space_of(&self.outputs)
     }
-
-    /// The one laid-out output. Display capture copies a single output, so
-    /// output-pixel routes need a layout where that output is the only one.
-    pub(super) fn single_output(&self) -> Result<(&IpcOutput, &IpcLogical)> {
-        match self.laid_out().as_slice() {
-            [(output, logical)] => Ok((*output, logical.checked()?)),
-            [] => bail!("niri has no enabled output"),
-            outputs => bail!(
-                "niri window capture and desktop input support a single output; this layout has {}",
-                outputs.len()
-            ),
-        }
-    }
 }
 
 pub(super) fn pointer_space_of(

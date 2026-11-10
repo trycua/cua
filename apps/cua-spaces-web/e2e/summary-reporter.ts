@@ -41,8 +41,7 @@ export default class ParitySummary implements Reporter {
     if (test.parent.title !== "parity flows") return;
     const note = (type: string) => test.annotations.find((a) => a.type === type)?.description ?? "";
     const native = test.annotations.some((a) => a.type === "native");
-    const status: Row["status"] =
-      result.status === "skipped" ? (native ? "native" : "skipped") : result.status === "passed" ? "passed" : "failed";
+    const status: Row["status"] = result.status === "skipped" ? (native ? "native" : "skipped") : result.status === "passed" ? "passed" : "failed";
     const reason =
       status === "native"
         ? `${note("native")} (covered by the Swift parity runner)`

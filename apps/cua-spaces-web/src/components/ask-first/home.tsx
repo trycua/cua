@@ -2,34 +2,35 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
+import { agentsView, useAgentChats, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
-import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { useAgentMenu } from "@/hooks/use-agent-menu";
-import { useConnectors } from "@/hooks/use-connectors";
+import { toast } from "@/components/ui/toast";
+import { connectFailureLine, useConnectors } from "@/hooks/use-connectors";
 import { OsIcon } from "@/components/os-icon";
-import { currentWhere, SUGGESTIONS, thisMacConfirmed, useAskTasks, type AskTask, type TaskState } from "@/lib/ask-first";
+import { currentWhere, SUGGESTIONS, thisMacConfirmed, useAskTasks, withoutStaleTasks, type AskTask, type TaskState } from "@/lib/ask-first";
 import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from "@/lib/ask-first-model";
 import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
+import { BringTheRest } from "./bring-the-rest";
 import { agentName } from "./task-agents";
 import { AgentStatus } from "./agent-status";
-import type { AccountActions } from "./agent-picker";
 import { useAgentReadiness } from "./use-agent-readiness";
 import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
+import { useThisMacTarget } from "./use-this-mac-target";
 import { useWhereOptions } from "./where-options";
-import { FallbackLine, useTreeWhere } from "./tree-where";
-import { currentTreeWhere } from "@/lib/default-where";
+import { homeDefaultWhere } from "@/lib/this-mac-target";
 import { PrepareLine } from "@/components/prepare/prepare-line";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { usePrepare } from "@/lib/prepare/store";
@@ -41,7 +42,15 @@ export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskT
 
 export function StateDot({ state }: { state: TaskState }) {
   const tone =
-    state === "working" ? "bg-success" : state === "needs-you" || state === "stuck" ? "bg-warning" : state === "failed" || state === "didnt-start" ? "bg-destructive" : state === "done" ? "bg-success" : "bg-muted-foreground/40";
+    state === "working"
+      ? "bg-success"
+      : state === "needs-you" || state === "stuck"
+        ? "bg-warning"
+        : state === "failed" || state === "didnt-start"
+          ? "bg-destructive"
+          : state === "done"
+            ? "bg-success"
+            : "bg-muted-foreground/40";
   return (
     <span className={cn("relative inline-flex size-2 shrink-0 rounded-full", tone)}>
       {state === "working" ? <span className="absolute inset-0 animate-ping rounded-full bg-success/60" /> : null}
@@ -55,16 +64,19 @@ export function StateDot({ state }: { state: TaskState }) {
  * conversations (the one that needs you first), and your Spaces underneath.
  */
 export function AskFirstHome() {
-  const tasks = useAskTasks();
+  const t = useT();
+  const allTasks = useAskTasks();
+  const tasks = useMemo(() => withoutStaleTasks(allTasks), [allTasks]);
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
-  const { kinds, spaces: pickable } = useWhereOptions();
+  const { kinds, spaces: pickable, computers } = useWhereOptions();
+  // This computer, once it's in the account, is where a job goes unless you pick (no Space needed first).
+  const thisMac = useThisMacTarget();
   const { start } = useStartTask();
   const { core } = useBridge();
   // The agent: the last app, account and model picked while they are still there, else the first connected app. The
   // account is the app's own choice (kept by the host), so a run uses the one shown.
   const connectors = useConnectors();
-  const keys = useAgentKeys();
   // Which apps the menu lists is the person's choice (Settings, Connections); an app they connect shows again.
   const menu = useAgentMenu(connectors);
   const navigate = useNavigate();
@@ -82,56 +94,66 @@ export function AskFirstHome() {
   const machines = useMemo(() => (machineRows ?? []).map((m) => ({ id: m.id, name: m.name, current: m.current, online: m.online })), [machineRows]);
   useKeepHomeWarm(chosenAgent, agentHome);
   const readiness = useAgentReadiness(chosenAgent, agentHome, agents, selected);
-  // A new Linux computer unless you pick; a pick that's no longer offered falls back to it.
+  // This computer once it's in the account, else a new Linux computer, unless you pick; a pick that's no longer
+  // offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
-  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  // The first Space being prepared after the first run: silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
   const pick = useWherePick(agentName(chosenAgent));
-  // Spaces as a tree (Labs): your default Space unless you pick, or the next online computer; never a new one.
-  // With agent homes the agent decides where, so the tree's default doesn't apply.
-  const treeWhere = useTreeWhere();
-  const tw = agentHome ? null : treeWhere;
-  const where = tw ? currentTreeWhere(pickedWhere, tw.def.where, kinds, tw.tree) : currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : null), kinds, pickable);
+  const where = currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : homeDefaultWhere(thisMac.readiness, kinds)), kinds, [...pickable, ...computers]);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim() || !selected) return;
     // The default can be This Mac itself: it asks once, as picking it does.
-    if (tw && w.kind === "this-mac" && !thisMacConfirmed()) {
-      pick.choose(w, (ok) => submit(prompt, ok), () => setWhereOpen(true));
+    if (w.kind === "this-mac" && thisMac.readiness === "needs-setup") return;
+    if (w.kind === "this-mac" && !thisMacConfirmed()) {
+      pick.choose(
+        w,
+        (ok) => submit(prompt, ok),
+        () => setWhereOpen(true),
+      );
       return;
     }
     // The run uses the app's own choice of account: make it the one shown.
     if (!selected.account.selected) void connectors.useCredential(selected.group.app, { env: selected.account.env, slot: selected.account.slot });
-    start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, repo });
+    start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, ...(selected.effort ? { effort: selected.effort } : {}), repo });
     setText("");
+  };
+  // A sign-in that did not work says so, in plain words, where the person clicked.
+  const signInTo = async (app: string, label: string) => {
+    if ((await connectors.connectApp(app)) === "failed") {
+      toast(t("home.ask_box.sign_in_failed", { label }), {
+        description: connectFailureLine(app) || t("home.ask_box.sign_in_failed_hint"),
+        type: "error",
+        group: `sign-in:${app}`,
+      });
+    }
   };
   const useAccount = (group: AgentGroup, account: AgentAccount) => {
     rememberAgent(pickAccount(group, account, picked));
     if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
   };
-  const accountActions: AccountActions = {
-    onUse: useAccount,
-    onRemove: (_g, a) => void (a.slot ? keys.remove(a.env, { slot: a.slot }) : keys.remove(a.env, { keepOthers: true })).catch(() => {}),
-    onRename: (_g, a, name) => void keys.rename(a.env, a.slot, name).catch(() => {}),
-    // Another sign-in or key beside the others: Claude Code's takes a token, the others the key of their provider.
-    onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
-  };
-  const fallback = tw && pickedWhere === null ? tw.def.fallback : null;
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
-  const { chats } = useAgentChats(attempts);
+  const { chats, loading: chatsLoading } = useAgentChats(attempts);
   // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
   // is asked for, the welcome and its suggestions stay.
   const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
   const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
+  // Nothing is drawn until the Spaces have loaded and, when there are some, their agents have answered (at most
+  // 0.8 s): otherwise the welcome turns into the lists, or the agents push the Spaces down, as the page loads.
+  // Once drawn, it stays drawn: a later read of the agents never blanks the page again.
+  const waited = useElapsed(800);
+  const shown = useRef(false);
+  shown.current ||= spaces !== undefined && (waited || listed.counted.length === 0 || (chats !== null && chatsLoading === 0));
+  if (!shown.current) return <div className="h-full" data-ask-first-home="" aria-busy="true" />;
 
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]" data-ask-first-home="">
+    <div className="h-full scroll-y-stable" data-ask-first-home="">
       <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
-        {first ? <h1 className="font-heading text-[40px] font-semibold tracking-tight">What do you want to do?</h1> : null}
         <AskBox
           text={text}
           onText={setText}
@@ -139,9 +161,9 @@ export function AskFirstHome() {
           selected={selected}
           onPickAccount={useAccount}
           onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
-          onSignIn={(g) => void connectors.connectApp(g.app)}
+          onEffort={(effort) => selected && rememberAgent({ ...pickOf(selected), effort })}
+          onSignIn={(g) => void signInTo(g.app, g.label)}
           onConfigure={() => void navigate({ to: "/settings/connections" })}
-          accounts={accountActions}
           repo={repo}
           where={where}
           onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}
@@ -149,6 +171,8 @@ export function AskFirstHome() {
           onWhereOpen={setWhereOpen}
           kinds={kinds}
           spaces={pickable}
+          computers={computers}
+          thisMac={{ readiness: thisMac.readiness, busy: thisMac.busy, onSetUp: thisMac.setUp }}
           machines={machines}
           agentHome={agentHome}
           hasHome={agentHome && reusableHome(chosenAgent, spaces, false, children?.homesOf(chosenAgent)) !== null}
@@ -156,12 +180,12 @@ export function AskFirstHome() {
           onSubmit={() => submit()}
           compact={!first}
           autoFocus
-          tree={tw}
         />
-        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void connectors.connectApp(selected.group.app)} />
-        {fallback ? <FallbackLine fallback={fallback} /> : null}
+        <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void signInTo(selected.group.app, selected.group.label)} />
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
+        {/* After the first job: the rest of setup, once (CUA-3150, idea C). On a Mac with a permission missing, the apps row at every launch (CUA-3551). */}
+        <BringTheRest />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -179,16 +203,10 @@ export function AskFirstHome() {
                 >
                   <OsIcon os={s.os} className="size-4 text-muted-foreground" />
                   <span className="text-[14px] leading-snug font-medium">{s.title}</span>
-                  <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span>
+                  {s.detail ? <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span> : null}
                 </button>
               ))}
             </div>
-            <p className="flex items-center gap-3 text-[13px] text-muted-foreground">
-              <CuaKey size={24} />
-              {agentHome
-                ? "The agent works in Spaces of its own, so your computer stays untouched. Watch it live, step in any time, and throw them away when you're done."
-                : "A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done."}
-            </p>
           </>
         ) : null}
         {/* The Agents page's own list, then the Spaces page's tiles. */}
@@ -198,4 +216,14 @@ export function AskFirstHome() {
       {pick.dialog}
     </div>
   );
+}
+
+/** True once `ms` have passed since the first render. */
+function useElapsed(ms: number): boolean {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(timer);
+  }, [ms]);
+  return done;
 }

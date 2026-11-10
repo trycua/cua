@@ -383,10 +383,14 @@
    {
     "id": "disabled_control",
     "kind": "toggle",
-    "description": "Opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled NSButton checkbox. Tests that get_window_state publishes it with enabled: false and that pressing it is refused without changing it (#3949). disabled_checked= label.",
+    "description": "Opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled NSButton checkbox. Tests that get_window_state publishes it with enabled: false and that pressing it is refused without changing it (#3949). disabled_checked= label. Also a button and a text field enabled only while the app is active, for foreground calls that activation enables. active_only= label, and activations= counts the app's activations.",
     "controls": {
      "checkbox_aid": "chk-disabled",
-     "state_label_aid": "lbl-disabled-state"
+     "state_label_aid": "lbl-disabled-state",
+     "active_only_button_aid": "btn-active-only",
+     "active_only_field_aid": "txt-active-only",
+     "active_only_label_aid": "lbl-active-only",
+     "activations_label_aid": "lbl-activations"
     }
    },
    {

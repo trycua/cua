@@ -30,6 +30,5 @@ Preconditions:
 
 ## Gotchas
 
-- `cua sb ls` reads the sandbox state files, not the Spaces registry. On current main a Space added only with `cua spaces add` is missing from `cua sb ls`, `cua sb view verify` says `not found: sandbox verify`, and the `cua viewer` index says "No sandboxes", until something connects to it by id (`cua sb view <id>`, `cua do switch <id>` plus an action) and writes the state file. Check `sb-ls` on a fresh cua home, before any other journey, or the earlier journeys mask it.
 - On Linux the table header reads `DISK ON THIS MAC` and the low-disk line reads "This Mac is almost out of space". That is the current wording, not a failure of the journey.
-- `--name` is the Space's display name; `cua sb` addresses the same Space by its id or its sandbox name (the host, `127.0.0.1`), not by the display name.
+- `--name` is the Space's display name; `cua do switch` takes it as well as the id.

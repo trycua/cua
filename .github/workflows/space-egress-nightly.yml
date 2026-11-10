@@ -118,25 +118,22 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-qemu-tests
-      - name: QEMU, pasta, and user namespaces for pasta
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
+      - name: QEMU and build tools
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            qemu-utils qemu-system-x86 ovmf passt musl-tools e2fsprogs squashfs-tools
+            qemu-utils qemu-system-x86 ovmf musl-tools e2fsprogs squashfs-tools
           # Installing QEMU re-applies the udev rules to /dev/kvm; open it again.
           sudo chmod 666 /dev/kvm
-          # Ubuntu 24.04 lets only profiled programs create user namespaces.
-          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cua-pasta /usr/bin/pasta flags=(unconfined) {\n  userns,\n}\n' \
-            | sudo tee /etc/apparmor.d/cua-pasta >/dev/null
-          sudo apparmor_parser -r /etc/apparmor.d/cua-pasta
-          pasta --config-net -q -- true
       - name: A Linux cloud image and the microVM init
         working-directory: libs/cua
         run: |
           set -euo pipefail
           mkdir -p "$HOME/egress"
-          curl -fsSL -o "$HOME/egress/noble.qcow2" \
+          curl -fsSL --fail --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$HOME/egress/noble.qcow2" \
             https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
           cargo build --locked --release -p cua-microvm-init --target x86_64-unknown-linux-musl
       - name: Egress policies of QEMU and Firecracker VMs

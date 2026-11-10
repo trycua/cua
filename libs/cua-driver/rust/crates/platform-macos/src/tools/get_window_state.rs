@@ -830,16 +830,16 @@ impl Tool for GetWindowStateTool {
                                you cannot wait."
                 });
             }
-            Degradation::AxWindowUnresolved { ax_window_count } => {
+            Degradation::AxWindowUnresolved {
+                ax_window_count,
+                ax_windows_error,
+            } => {
                 structured["degraded"] = serde_json::json!(true);
-                structured["degraded_reason"] = serde_json::json!(format!(
-                    "ax_window_unresolved: window_id {window_id} exists and is owned by \
-                     pid {pid}, but none of the {ax_window_count} AXWindow element(s) \
-                     under that pid reports this CGWindowID. The tree is returned EMPTY \
-                     on purpose: the accessibility elements reachable under this pid \
-                     belong to other surfaces (the menu bar, other windows), not to the \
-                     requested window, so presenting them would misground the next \
-                     action."
+                structured["degraded_reason"] = serde_json::json!(ax_window_unresolved_reason(
+                    window_id,
+                    pid,
+                    ax_window_count,
+                    ax_windows_error,
                 ));
                 structured["escalation"] = serde_json::json!({
                     "recommended": "foreground",
@@ -907,7 +907,7 @@ impl Tool for GetWindowStateTool {
         // names the surface even on the capture-only path, where no AX tree is
         // present to identify it. Omitted per-field when WindowServer reports an
         // empty string.
-        if let Some(info) = crate::windows::window_info_by_id(window_id) {
+        if let Some(info) = crate::windows::describe_window(window_id) {
             if !info.app_name.is_empty() {
                 structured["app_name"] = serde_json::json!(info.app_name);
             }
@@ -919,14 +919,14 @@ impl Tool for GetWindowStateTool {
         if on_current_space == Some(false) {
             structured["on_current_space"] = serde_json::json!(false);
         }
-        if let Some(note) = off_space_staleness_note(on_current_space, chromium_browser_window(pid))
-        {
+        let chromium = chromium_browser_window(pid);
+        if let Some(note) = off_space_staleness_note(on_current_space, chromium) {
             structured["off_space_staleness"] = serde_json::json!(note);
             content.push(Content::text(note));
         }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
-            chromium_browser_window(pid).then_some(
+            chromium.then_some(
                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
             ),
         );
@@ -1079,7 +1079,10 @@ enum Degradation {
     AxTreeEmpty,
     /// The requested window is live and owned by this pid, but no AXWindow
     /// claims its CGWindowID, so the walk deliberately covered nothing.
-    AxWindowUnresolved { ax_window_count: usize },
+    AxWindowUnresolved {
+        ax_window_count: usize,
+        ax_windows_error: Option<crate::ax::bindings::AXError>,
+    },
     /// The window scope is unresolved because the app is still launching and
     /// did not answer accessibility within the caller's budget.
     AxAppLaunching,
@@ -1112,18 +1115,47 @@ fn degradation_for(
     if !walk_attempted {
         return Degradation::None;
     }
-    if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+    if let Some(crate::ax::WindowScope::AxUnresolved {
+        ax_window_count,
+        ax_windows_error,
+    }) = scope
+    {
         if app_lookup_timed_out {
             return Degradation::AxAppLaunching;
         }
         return Degradation::AxWindowUnresolved {
             ax_window_count: *ax_window_count,
+            ax_windows_error: *ax_windows_error,
         };
     }
     if element_count == 0 {
         return Degradation::AxTreeEmpty;
     }
     Degradation::None
+}
+
+fn ax_window_unresolved_reason(
+    window_id: u32,
+    pid: i32,
+    ax_window_count: usize,
+    ax_windows_error: Option<crate::ax::bindings::AXError>,
+) -> String {
+    let evidence = match ax_windows_error {
+        Some(error) => format!(
+            "reading that pid's AXWindows failed with AXError {error} ({})",
+            crate::ax::bindings::ax_error_name(error)
+        ),
+        None => format!(
+            "none of the {ax_window_count} AXWindow element(s) under that pid reports this \
+             CGWindowID"
+        ),
+    };
+    format!(
+        "ax_window_unresolved: window_id {window_id} exists and is owned by pid {pid}, but \
+         {evidence}. The tree is returned EMPTY on purpose: the accessibility elements \
+         reachable under this pid belong to other surfaces (the menu bar, other windows), \
+         not to the requested window, so presenting them would misground the next action."
+    )
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -1195,6 +1227,16 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     }
     if let Some(label) = label {
         entry["label"] = serde_json::Value::String(label);
+    }
+    for (key, value) in [
+        ("title", node.title.as_deref()),
+        ("description", node.description.as_deref()),
+        ("placeholder", node.placeholder.as_deref()),
+        ("subrole", node.subrole.as_deref()),
+    ] {
+        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+            entry[key] = serde_json::Value::String(value.to_owned());
+        }
     }
     // Surface the element's AXValue separately from `label`. `label`
     // collapses title→description→value→identifier into one display
@@ -1327,8 +1369,15 @@ mod window_scope_contract_tests {
     fn resolvable_scopes_are_not_refused() {
         assert!(window_scope_refusal(800, 11, &WindowScope::Matched).is_none());
         assert!(
-            window_scope_refusal(800, 11, &WindowScope::AxUnresolved { ax_window_count: 2 })
-                .is_none(),
+            window_scope_refusal(
+                800,
+                11,
+                &WindowScope::AxUnresolved {
+                    ax_window_count: 2,
+                    ax_windows_error: None
+                }
+            )
+            .is_none(),
             "a live same-pid window degrades; it does not error"
         );
     }
@@ -1342,11 +1391,42 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 3 }),
+                Some(&WindowScope::AxUnresolved {
+                    ax_window_count: 3,
+                    ax_windows_error: None
+                }),
                 false
             ),
-            Degradation::AxWindowUnresolved { ax_window_count: 3 }
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 3,
+                ax_windows_error: None
+            }
         );
+    }
+
+    #[test]
+    fn an_ax_windows_read_error_is_named_instead_of_a_zero_window_count() {
+        let error = Some(crate::ax::bindings::kAXErrorCannotComplete);
+        let degradation = degradation_for(
+            true,
+            0,
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error,
+            }),
+            false,
+        );
+        assert_eq!(
+            degradation,
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error
+            }
+        );
+        let reason = ax_window_unresolved_reason(800, 11, 0, error);
+        assert!(reason.contains("AXError -25204 (kAXErrorCannotComplete)"));
+        assert!(!reason.contains("none of the 0 AXWindow"));
+        assert!(ax_window_unresolved_reason(800, 11, 2, None).contains("none of the 2 AXWindow"));
     }
 
     /// A window that exists before its app answers accessibility is not an
@@ -1357,7 +1437,10 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+                Some(&WindowScope::AxUnresolved {
+                    ax_window_count: 0,
+                    ax_windows_error: None
+                }),
                 true
             ),
             Degradation::AxAppLaunching
@@ -1377,7 +1460,10 @@ mod window_scope_contract_tests {
         let unresolved = degradation_for(
             true,
             0,
-            Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: None,
+            }),
             false,
         );
         assert_eq!(
@@ -1691,6 +1777,8 @@ mod tests {
             title: title.map(|s| s.to_string()),
             value: None,
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions,
@@ -1926,6 +2014,120 @@ mod tests {
         let entry = &build_elements_array_with_token(&nodes, None)[0];
         for key in ["value_description", "min", "max", "enabled", "selected"] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
+        }
+    }
+
+    #[test]
+    fn search_field_identities_survive_protocol_conformance() {
+        let mut search = node(Some(0), "AXTextField", None, 1, None, None, vec![]);
+        search.title = Some("  Search title  ".into());
+        search.description = Some("\nSearch description\t".into());
+        search.placeholder = Some("  Search chatrooms, participants\n".into());
+        search.subrole = Some("\tAXSearchField  ".into());
+        search.value = Some("Search-like AXValue".into());
+        search.value_state = search.value.clone();
+
+        let entry = element_entry(&search, None);
+        let wire = cua_driver_core::mcp_result::conforming_tool_result(
+            "get_window_state",
+            serde_json::json!({
+                "content": [],
+                "isError": false,
+                "structuredContent": {
+                    "pid": 7,
+                    "window_id": 9,
+                    "elements": [entry],
+                }
+            }),
+        );
+        assert_eq!(wire["isError"], false, "{wire}");
+        let element = &wire["structuredContent"]["elements"][0];
+        assert_eq!(element["title"], "Search title");
+        assert_eq!(element["description"], "Search description");
+        assert_eq!(element["placeholder"], "Search chatrooms, participants");
+        assert_eq!(element["subrole"], "AXSearchField");
+        assert_eq!(element["value"], "Search-like AXValue");
+    }
+
+    #[test]
+    fn search_field_names_and_send_guard_negatives_keep_distinct_identities() {
+        let placeholder_only = {
+            let mut field = node(Some(0), "AXTextField", None, 1, None, None, vec![]);
+            field.placeholder = Some(" Search chatrooms, participants ".into());
+            element_entry(&field, None)
+        };
+        assert_eq!(
+            placeholder_only["placeholder"],
+            "Search chatrooms, participants"
+        );
+        assert!(placeholder_only.get("title").is_none());
+        assert!(placeholder_only.get("description").is_none());
+        assert!(placeholder_only.get("subrole").is_none());
+
+        let subrole_only = {
+            let mut field = node(Some(1), "AXTextField", None, 1, None, None, vec![]);
+            field.subrole = Some(" AXSearchField ".into());
+            element_entry(&field, None)
+        };
+        assert_eq!(subrole_only["subrole"], "AXSearchField");
+        assert!(subrole_only.get("placeholder").is_none());
+
+        let composer = {
+            let mut field = node(
+                Some(2),
+                "AXTextArea",
+                Some("Enter public message"),
+                1,
+                None,
+                None,
+                vec![],
+            );
+            field.placeholder = Some(" Message ".into());
+            field.value = Some("Search chatrooms, participants".into());
+            field.value_state = field.value.clone();
+            element_entry(&field, None)
+        };
+        assert_eq!(composer["label"], "Enter public message");
+        assert_eq!(composer["title"], "Enter public message");
+        assert_eq!(composer["placeholder"], "Message");
+        assert_eq!(composer["value"], "Search chatrooms, participants");
+        assert!(composer.get("subrole").is_none());
+
+        let unnamed = {
+            let mut field = node(Some(3), "AXTextField", None, 1, None, None, vec![]);
+            field.value = Some("Search chatrooms, participants".into());
+            field.value_state = field.value.clone();
+            element_entry(&field, None)
+        };
+        assert_eq!(unnamed["label"], "Search chatrooms, participants");
+        assert_eq!(unnamed["value"], "Search chatrooms, participants");
+        for key in ["title", "description", "placeholder", "subrole"] {
+            assert!(
+                unnamed.get(key).is_none(),
+                "{key} must not come from AXValue"
+            );
+        }
+
+        let send_button = element_entry(
+            &node(
+                Some(4),
+                "AXButton",
+                Some("Send"),
+                1,
+                None,
+                Some([600.0, 800.0, 44.0, 32.0]),
+                vec!["AXPress".into()],
+            ),
+            None,
+        );
+        assert_eq!(send_button["role"], "AXButton");
+        assert_eq!(send_button["title"], "Send");
+        assert_eq!(
+            send_button["frame"],
+            serde_json::json!({"x":600.0,"y":800.0,"w":44.0,"h":32.0})
+        );
+        for key in ["description", "placeholder", "subrole"] {
+            assert!(send_button.get(key).is_none());
         }
     }
 

@@ -19,7 +19,7 @@ truth.
 | Cua Spaces app               | Vitest, Tauri Rust tests                                   | **CI: Cua Spaces**                                                                |
 | Installers                   | `scripts/install/tests`                                    | **CI: Installers** smoke jobs on Linux, macOS, and Windows                        |
 | Public docs                  | Generator drift, hygiene, links, and production build      | Rendered Fumadocs site                                                            |
-| Images and sandboxes         | Component build and schema tests; **CI: Check Image Refs** (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, image smoke tests  |
+| Images and sandboxes         | Component build and schema tests; the image-refs check in `bin/ci --quick` (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, image smoke tests  |
 
 Path-filtered CI avoids running unrelated operating systems, so a green job for
 one component does not validate another component.
@@ -89,7 +89,7 @@ Run from `libs/cua-spacesd`:
 
 ```bash
 cargo test --workspace --locked
-scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams
+scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams (shards: core, hosted, teleport)
 scripts/ci/relay-e2e.sh          # driver with no published ports behind cua-relay
 ```
 

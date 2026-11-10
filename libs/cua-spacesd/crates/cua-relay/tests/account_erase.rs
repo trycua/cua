@@ -429,6 +429,7 @@ async fn an_unknown_account_is_a_200_with_zero_counts() {
         "mesh_nodes",
         "teams",
         "grants",
+        "pending_deletions",
     ] {
         assert_eq!(v[k], 0, "{k}: {v}");
     }
@@ -716,6 +717,7 @@ async fn it_erases_one_account_everywhere_and_nobody_elses_and_survives_a_restar
         "mesh_nodes",
         "teams",
         "grants",
+        "pending_deletions",
     ] {
         assert_eq!(again[k], 0, "{k}: {again}");
     }
@@ -758,6 +760,62 @@ async fn it_erases_one_account_everywhere_and_nobody_elses_and_survives_a_restar
 }
 
 #[cfg(unix)]
+#[tokio::test]
+async fn erasing_an_account_drops_its_removed_computers_pending_deletions() {
+    let env = Env::start().await;
+    let ada = env.enroll(ADA).await;
+    let register = |id: String, host: Option<String>| {
+        let http = env.http.clone();
+        let base = env.base.clone();
+        let ada = ada.clone();
+        async move {
+            let r = http
+                .post(format!("{base}/v1/machines"))
+                .bearer_auth(&ada.token)
+                .header(SESSION, &ada.session)
+                .json(&json!({"id": id, "name": id, "host": host}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::CREATED);
+            r.json::<Value>().await.unwrap()["machine_token"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let host = format!("host-{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+    let token = register(host.clone(), None).await;
+    register(format!("{host}-kid"), Some(host.clone())).await;
+    let r = env
+        .http
+        .delete(format!("{}/v1/machines/{host}?spaces=delete", env.base))
+        .bearer_auth(&ada.token)
+        .header(SESSION, &ada.session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    let pending = || {
+        env.http
+            .get(format!("{}/v1/machines/{host}/pending-deletions", env.base))
+            .bearer_auth(&token)
+            .send()
+    };
+    assert_eq!(pending().await.unwrap().status(), StatusCode::OK);
+
+    let (s, v) = env.erase(ADA, &[]).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["pending_deletions"], 1, "{v}");
+    assert_eq!(
+        pending().await.unwrap().status(),
+        StatusCode::UNAUTHORIZED,
+        "nothing of hers is left"
+    );
+    let (_, again) = env.erase(ADA, &[]).await;
+    assert_eq!(again["pending_deletions"], 0, "{again}");
+}
+
 #[tokio::test]
 async fn a_failed_write_answers_500_and_the_same_call_again_finishes() {
     let env = Env::start().await;

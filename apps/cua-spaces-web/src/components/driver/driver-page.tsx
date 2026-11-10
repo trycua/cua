@@ -3,10 +3,24 @@
 
 import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MousePointer2Icon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { pointerChange, pointerSettings, POINTER_STYLES, useBridge, useDriver, useDriverMachines, type DriverApp, type DriverHook, type DriverPermission, type DriverStatus, type PointerSettings } from "@/bridge";
+import {
+  pointerChange,
+  pointerSettings,
+  POINTER_STYLES,
+  useBridge,
+  useDriver,
+  useDriverMachines,
+  type DriverApp,
+  type DriverHook,
+  type DriverStatus,
+  type PointerSettings,
+} from "@/bridge";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
+import { AppPermissionList } from "@/components/app-permissions";
+import { BackLink } from "@/components/back-link";
 import { CuaKey } from "@/components/cua-key";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -16,8 +30,11 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
+import { repairOutcome } from "@/lib/app-permissions";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
+import { THIS_COMPUTER } from "@/lib/machines";
 import { cn } from "@/lib/utils";
-import { DRIVER_LINE, markFor, stateText, testText, versionText } from "./copy";
+import { driverLine, markFor, stateText, testText, versionText } from "./copy";
 import { PointerPreview } from "./pointer-preview";
 
 /**
@@ -33,6 +50,7 @@ export function DriverPage({ machine }: { machine: string | null }) {
   if (!driver.available || !driver.status) {
     return (
       <Page className="max-w-3xl">
+        {machine ? <BackLink /> : <BackLink computerId={THIS_COMPUTER} label={thisComputerLabel()} />}
         <EmptyState icon={<MousePointer2Icon />} title="Cua Driver isn't on this computer yet">
           It comes with Cua Spaces for Mac.
         </EmptyState>
@@ -49,13 +67,14 @@ function DriverBody({ driver, status }: { driver: DriverHook; status: DriverStat
   return (
     <Page className="max-w-5xl">
       <div data-driver-page={status.machineId} />
+      <BackLink computerId={status.thisMachine ? THIS_COMPUTER : status.machineId} label={status.thisMachine ? thisComputerLabel() : status.machineName} />
       <Hero driver={driver} status={status} settings={settings} />
       {status.thisMachine && status.canPause ? <AllowSection driver={driver} status={status} /> : null}
       <div className="grid gap-x-6 [@media(min-width:900px)]:grid-cols-2">
         {hasPointer ? <PointerSection driver={driver} settings={settings} /> : null}
         <div className="min-w-0">
           {apps ? <AppsSection apps={apps} /> : null}
-          {status.permissions.length > 0 ? <PermissionsSection permissions={status.permissions} /> : null}
+          {status.thisMachine ? <PermissionsSection driver={driver} /> : null}
           {!status.thisMachine ? (
             <GroupedSection title="On that computer" className="mb-8">
               <SettingRow label="Pointer and coding apps" help={`Open Cua Spaces on ${status.machineName} to change them.`} />
@@ -71,6 +90,7 @@ function DriverBody({ driver, status }: { driver: DriverHook; status: DriverStat
 /* ---- The top: keycap, the line, state, version, actions, preview ---------------- */
 
 function Hero({ driver, status, settings }: { driver: DriverHook; status: DriverStatus; settings: PointerSettings }) {
+  const bridge = useBridge();
   const [busy, setBusy] = useState<"test" | "setup" | null>(null);
   const run = async (what: "test" | "setup", work: () => Promise<void>) => {
     setBusy(what);
@@ -96,9 +116,13 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
         return undefined;
       });
       if (after === undefined) return;
-      const t = after?.lastTest;
-      if (t && !t.passed) toast("Set up, but the test didn't pass", { description: t.failure ?? undefined, type: "error" });
-      else toast("Cua Driver is ready", { description: "Start a new Claude Code or Codex session to use it." });
+      if (!after) return;
+      const outcome = repairOutcome(after);
+      if (outcome.kind === "ok") toast(outcome.title, { description: outcome.description });
+      else toast(outcome.title, { description: outcome.description, type: "error" });
+      // A switch that's off: open its guide now, so Repair leaves one thing to do.
+      if (outcome.kind === "permission" && outcome.settingsUrl)
+        await bridge.data?.call("host.openSettings", { url: outcome.settingsUrl }).catch(toastError("Couldn't open System Settings"));
     });
   const ok = status.state === "ready";
   const tested = testText(status);
@@ -110,7 +134,9 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
         <CuaKey size={56} className="mt-1 size-14 self-start" />
         <div className="min-w-0">
           <h1 className="font-display text-[28px] leading-tight font-semibold tracking-[-0.02em]">Cua Driver</h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">{status.thisMachine ? DRIVER_LINE : `Lets agents see and use the apps on ${status.machineName}.`}</p>
+          <p className="mt-1 text-[14px] text-muted-foreground">
+            {status.thisMachine ? driverLine() : `Lets agents see and use the apps on ${status.machineName}.`}
+          </p>
           <p className="mt-4 flex items-start gap-2 text-[13px]" data-driver-state={status.state}>
             {ok ? (
               <span className="mt-px flex size-4 shrink-0 items-center justify-center rounded-full bg-[#1f9d55] text-white" aria-hidden>
@@ -119,7 +145,11 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
             ) : null}
             <span>
               <span className="font-medium">{stateText(status)}</span>
-              {busy === "test" ? <span className="text-muted-foreground"> Testing now.</span> : tested ? <span className="text-muted-foreground"> {tested}</span> : null}
+              {busy === "test" ? (
+                <span className="text-muted-foreground"> Testing now.</span>
+              ) : tested ? (
+                <span className="text-muted-foreground"> {tested}</span>
+              ) : null}
             </span>
           </p>
           {problem ? (
@@ -134,7 +164,16 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
           ) : null}
           {status.thisMachine ? (
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              <Button disabled={busy !== null} onClick={() => void setup()} data-driver-setup={connected ? "repair" : "setup"}>
+              <Button
+                disabled={busy !== null}
+                onClick={() => void setup()}
+                data-driver-setup={connected ? "repair" : "setup"}
+                title={
+                  connected
+                    ? "Connects your coding agents again, restarts Cua Driver and tests it."
+                    : "Connects Claude Code and Codex to Cua Driver and tests it."
+                }
+              >
                 {busy === "setup" ? (connected ? "Repairing…" : "Setting up…") : connected ? "Repair" : "Set up"}
               </Button>
               <Button variant="outline" disabled={busy !== null || status.state === "paused"} onClick={() => void test()} data-driver-test="">
@@ -142,26 +181,33 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
               </Button>
             </div>
           ) : null}
-          {status.thisMachine ? (
-            <p className="mt-2 text-xs text-muted-foreground">{connected ? "Repair connects your coding agents again, restarts Cua Driver and tests it." : "Set up connects Claude Code and Codex to Cua Driver and tests it."}</p>
-          ) : null}
         </div>
       </div>
-      {status.thisMachine ? <PointerPreview settings={settings} caption="Live: the agent pointer as it looks on this Mac" /> : null}
+      {status.thisMachine ? <PointerPreview settings={settings} /> : null}
     </section>
   );
 }
 
-/* ---- Let agents use this Mac ---------------------------------------------------- */
+/* ---- Let agents use this computer ---------------------------------------------------- */
 
 function AllowSection({ driver, status }: { driver: DriverHook; status: DriverStatus }) {
   const on = status.state !== "paused";
   return (
     <GroupedSection title="Agents" className="mt-8 mb-8" data-driver-allow="">
       <SettingRow
-        label="Let agents use apps on this Mac"
-        help={on ? "Coding agents you connect can see your screen and use your apps. Your own pointer never moves." : "Off. Agents can't see your screen or use your apps until you turn this on."}
-        control={<Switch checked={on} onCheckedChange={(next) => void driver.pause(!next).catch(toastError(next ? "Couldn't turn agents on" : "Couldn't turn agents off"))} aria-label="Let agents use apps on this Mac" />}
+        label={`Let agents use apps on ${thisComputerText()}`}
+        help={
+          on
+            ? "Coding agents you connect can see your screen and use your apps. Your own pointer never moves."
+            : "Off. Agents can't see your screen or use your apps until you turn this on."
+        }
+        control={
+          <Switch
+            checked={on}
+            onCheckedChange={(next) => void driver.pause(!next).catch(toastError(next ? "Couldn't turn agents on" : "Couldn't turn agents off"))}
+            aria-label={`Let agents use apps on ${thisComputerText()}`}
+          />
+        }
       />
     </GroupedSection>
   );
@@ -174,35 +220,55 @@ function PointerSection({ driver, settings }: { driver: DriverHook; settings: Po
     void driver.setConfig(pointerChange(key, value)).catch(toastError("Couldn't change the pointer"));
   const off = settings.show === false;
   return (
-    <GroupedSection title="Agent pointer" className="mb-8 min-w-0" data-driver-pointer="" footer="Applies to every agent on this Mac.">
+    <GroupedSection title="Agent pointer" className="mb-8 min-w-0" data-driver-pointer="">
       {settings.show !== null ? (
         <SettingRow
           label="Show the agent's pointer"
-          help="A second pointer shows where an agent is working. Yours never moves."
+          help="Shows where an agent is working."
           control={<Switch checked={settings.show} onCheckedChange={(on) => change("show", on)} aria-label="Show the agent's pointer" />}
         />
       ) : null}
       {settings.style !== null ? (
         <SettingRow
           label="Style"
-          help="How it travels between clicks."
           dim={off}
-          control={<Select aria-label="Pointer style" value={settings.style} options={POINTER_STYLES.some((s) => s.value === settings.style) ? POINTER_STYLES : [...POINTER_STYLES, { value: settings.style, label: settings.style }]} onValueChange={(v) => change("style", v)} disabled={off} />}
+          control={
+            <Select
+              aria-label="Pointer style"
+              value={settings.style}
+              options={
+                POINTER_STYLES.some((s) => s.value === settings.style) ? POINTER_STYLES : [...POINTER_STYLES, { value: settings.style, label: settings.style }]
+              }
+              onValueChange={(v) => change("style", v)}
+              disabled={off}
+            />
+          }
         />
       ) : null}
       {settings.float !== null ? (
-        <SettingRow label="Float while it thinks" help="A slow bob while the agent pauses." dim={off} control={<Switch checked={settings.float} disabled={off} onCheckedChange={(on) => change("float", on)} aria-label="Float while it thinks" />} />
+        <SettingRow
+          label="Float while it thinks"
+          dim={off}
+          control={<Switch checked={settings.float} disabled={off} onCheckedChange={(on) => change("float", on)} aria-label="Float while it thinks" />}
+        />
       ) : null}
       {settings.marks !== null ? (
-        <SettingRow label="Show what it's doing" help="A small sign next to it: moving, clicking, typing." dim={off} control={<Switch checked={settings.marks} disabled={off} onCheckedChange={(on) => change("marks", on)} aria-label="Show what it's doing" />} />
+        <SettingRow
+          label="Show what it's doing"
+          dim={off}
+          control={<Switch checked={settings.marks} disabled={off} onCheckedChange={(on) => change("marks", on)} aria-label="Show what it's doing" />}
+        />
       ) : null}
       {settings.rotate !== null ? (
-        <SettingRow label="Tilt while moving" help="The arrow leans the way it's going." dim={off} control={<Switch checked={settings.rotate} disabled={off} onCheckedChange={(on) => change("rotate", on)} aria-label="Tilt while moving" />} />
+        <SettingRow
+          label="Tilt while moving"
+          dim={off}
+          control={<Switch checked={settings.rotate} disabled={off} onCheckedChange={(on) => change("rotate", on)} aria-label="Tilt while moving" />}
+        />
       ) : null}
       {settings.nameTag !== null ? (
         <SettingRow
           label="Name tag"
-          help="Which app is moving it."
           dim={off}
           control={
             <Segmented
@@ -255,34 +321,17 @@ function AppsSection({ apps }: { apps: DriverApp[] }) {
   );
 }
 
-const PERMISSION_WORDS: Record<DriverPermission["id"], { label: string; help: string }> = {
-  screen: { label: "See the screen", help: "Screen Recording, given to Cua Spaces." },
-  accessibility: { label: "Use the mouse and keyboard", help: "Accessibility, given to Cua Spaces." },
-};
-
-function PermissionsSection({ permissions }: { permissions: DriverPermission[] }) {
-  const { data: adapter } = useBridge();
-  return (
-    <GroupedSection title="Permissions" className="mb-8" data-driver-permissions="" footer="Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.">
-      {permissions.map((p) => (
-        <SettingRow
-          key={p.id}
-          data-driver-permission={p.id}
-          data-driver-permission-granted={p.granted ? "" : undefined}
-          label={PERMISSION_WORDS[p.id].label}
-          help={PERMISSION_WORDS[p.id].help}
-          value={p.granted ? "On" : "Missing"}
-          control={
-            p.granted || !p.settingsUrl ? undefined : (
-              <Button variant="outline" size="sm" onClick={() => void adapter?.call("host.openSettings", { url: p.settingsUrl! }).catch(toastError("Couldn't open System Settings"))}>
-                Allow
-              </Button>
-            )
-          }
-        />
-      ))}
-    </GroupedSection>
-  );
+/** Cua Spaces' own two permissions, live (the first run's step shows the same rows); when both come on, the driver's state is read again. */
+function PermissionsSection({ driver }: { driver: DriverHook }) {
+  const perms = useAppPermissions();
+  const { allGranted } = perms;
+  const refresh = useRef(driver.refresh);
+  refresh.current = driver.refresh;
+  useEffect(() => {
+    if (allGranted) void refresh.current().catch(() => {});
+  }, [allGranted]);
+  if (!perms.data) return null;
+  return <AppPermissionList perms={perms} variant="settings" />;
 }
 
 /* ---- The account's other computers -------------------------------------------- */
@@ -299,13 +348,13 @@ function Computers({ current }: { current: string }) {
             return (
               <Link
                 key={m.machineId}
-                to="/driver"
-                search={m.thisMachine ? {} : { machine: m.machineId }}
+                to="/spaces/computer/$computerId/driver"
+                params={{ computerId: m.thisMachine ? THIS_COMPUTER : m.machineId }}
                 className={cn(plainRowClass(m.machineId === current))}
                 data-driver-computer={m.machineId}
               >
                 <OsIcon os={m.os} className="size-4 text-muted-foreground" />
-                <span className="flex-1 truncate">{m.thisMachine ? "This Mac" : m.name}</span>
+                <span className="flex-1 truncate">{m.thisMachine ? thisComputerLabel() : m.name}</span>
                 <span className="truncate text-xs text-muted-foreground">{line}</span>
                 <ChevronRightIcon className="size-3.5 text-muted-foreground" />
               </Link>

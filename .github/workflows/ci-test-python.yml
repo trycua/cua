@@ -12,6 +12,7 @@ on:
       # cua-test-fixtures links a real driver core.
       - "libs/cua-spacesd/tests/spaces-e2e/**"
       - ".github/workflows/ci-test-python.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -50,12 +51,12 @@ concurrency:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   test:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Test ${{ matrix.package }}
     runs-on: ubuntu-latest
 
@@ -103,27 +104,29 @@ jobs:
         run: |
           cd libs/python/${{ matrix.package }}
           if [ -d tests ]; then
-            python -m pytest tests/ -v --tb=short --cov --cov-report=term --cov-report=xml
+            python -m pytest tests/ -v --tb=short --cov --cov-report=term --cov-report=xml \
+              --durations=25 --durations-min=1.0 --junitxml="$RUNNER_TEMP/pytest-${{ matrix.package }}.xml"
           else
             echo "No tests directory found, skipping tests"
           fi
         shell: bash
+      - name: Per-file test times
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" junit --suite "pytest-${{ matrix.package }}" "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml"
+          fi
+        shell: bash
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: pytest-${{ matrix.package }}
         env:
           CUA_TELEMETRY_ENABLED: "false" # Disable telemetry during tests
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
-        if: always()
-        with:
-          file: ./libs/python/${{ matrix.package }}/coverage.xml
-          flags: ${{ matrix.package }}
-          name: codecov-${{ matrix.package }}
-          fail_ci_if_error: false
-        continue-on-error: true
-
   cua-sandbox:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     # cua-sandbox drives sandboxes through the cua SDK (UniFFI over cua-sdk),
     # so the native library and the MockServer fixture are built first. The
     # hermetic suite never touches the host or a cloud;
@@ -170,17 +173,28 @@ jobs:
           CUA_TELEMETRY_ENABLED: "false"
         run: >
           uv run --frozen pytest tests -p no:cacheprovider --timeout=120 -ra
+          --durations=25 --durations-min=1.0 --junitxml="$RUNNER_TEMP/pytest-cua-sandbox.xml"
           --ignore=tests/live
           --ignore=tests/test_runtime.py
           --ignore=tests/test_snapshots.py
           --ignore=tests/test_windows_timing.py
           --deselect tests/test_oci.py::TestLiveRegistry
+      - name: Per-file test times
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/pytest-cua-sandbox.xml" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" junit --suite pytest-cua-sandbox "$RUNNER_TEMP/pytest-cua-sandbox.xml"
+          fi
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: pytest-cua-sandbox
 
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test, cua-sandbox]
-    if: ${{ !cancelled() }}
+    needs: [quick, test, cua-sandbox]
+    if: ${{ !cancelled() && needs.quick.outputs.skip != 'true' }}
 
     steps:
       - name: Check test results

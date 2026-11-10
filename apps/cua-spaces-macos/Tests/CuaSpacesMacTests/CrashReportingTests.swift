@@ -61,6 +61,18 @@ struct CrashReportingTests {
         #expect(CrashReporting.scrubURL("https://x.test/a?token=1#frag", home: home) == "https://x.test/a")
     }
 
+    @Test func redactsTokens() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlX2J5dGVz"
+        let b64 = "dGhpcyBpcyBhIHNlY3JldCB2YWx1ZQ=="
+        #expect(CrashReporting.scrub("auth \(jwt) failed") == "auth [redacted] failed")
+        #expect(CrashReporting.scrub("Authorization: Bearer abc123DEF456ghi789") == "Authorization: Bearer [redacted]")
+        #expect(CrashReporting.scrub("id AKIAIOSFODNN7EXAMPLE.") == "id [redacted].")
+        #expect(CrashReporting.scrub("?api_key=\(b64)&x=1") == "?api_key=[redacted]&x=1")
+        #expect(CrashReporting.scrub("client_secret: 0123456789abcdef0123456789abcdef") == "client_secret: [redacted]")
+        #expect(CrashReporting.scrub("password=hunter2hunter2") == "password=[redacted]")
+        #expect(CrashReporting.scrub("key=abc and keyboard=layout") == "key=abc and keyboard=layout")
+    }
+
     private func event() -> Event {
         let e = Event(level: .fatal)
         let frame = Frame()

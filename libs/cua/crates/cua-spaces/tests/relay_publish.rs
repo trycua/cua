@@ -368,6 +368,39 @@ async fn every_kind_of_running_space_is_listed_and_unlisted_alike() {
     assert_eq!(w.rows().await.len(), 2);
 }
 
+/// A Space of this computer whose relay row stays (shared with other people,
+/// or listed by hand: no longer "listed by Cua") is still the one local row,
+/// not a second top-level row beside it.
+#[tokio::test]
+async fn a_space_kept_on_the_account_by_hand_or_by_sharing_is_not_listed_twice() {
+    let w = World::new().await;
+    w.create("home-claude-code", "linux", Kind::Container).await;
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert_eq!(r.published.len(), 1, "{r:?}");
+    // What an unpublish of a shared Space (or a hand registration) leaves:
+    // the attach record without the automatic mark.
+    let path = w.home.path().join("shared-spaces.json");
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for a in v.as_object_mut().unwrap().values_mut() {
+        a.as_object_mut().unwrap().remove("auto");
+    }
+    std::fs::write(&path, v.to_string()).unwrap();
+    w.spaces.relay_machines().await.unwrap();
+    let listed = w.spaces.list().unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .filter(|i| i.name == "home-claude-code")
+            .count(),
+        1,
+        "{listed:#?}"
+    );
+    assert!(
+        listed.iter().all(|i| !i.id.starts_with("relay:")),
+        "{listed:#?}"
+    );
+}
+
 /// Only what Cua made is listed, and only if it did not opt out.
 #[tokio::test]
 async fn spaces_added_by_address_and_opted_out_ones_stay_off() {
@@ -847,4 +880,274 @@ async fn a_throttled_relay_is_left_alone() {
         w.spaces.publish_to_relay().await.unwrap();
     }
     assert_eq!(w.relay.requests(), 1, "asked again while paused");
+}
+
+/// A running Space that is not on the account is never a mystery: the
+/// status says how many and why (an old driver, a relay that fails, signed
+/// out, the switch, sharing stopped), and stopped Spaces are counted as
+/// waiting until they run.
+#[tokio::test]
+async fn running_spaces_that_are_not_on_the_account_say_why() {
+    let w = World::new().await;
+    w.create("good", "linux", Kind::Container).await;
+    // A driver that cannot join the relay (it predates `relay_attach`).
+    let old = MockServer::start(MockAuth::default()).await;
+    let port: u16 = old.url().rsplit(':').next().unwrap().parse().unwrap();
+    w.rt.spacesd.lock().unwrap().insert("old".into(), port);
+    let old_id = w
+        .spaces
+        .create(SpaceCreate {
+            on: Some(On::Local),
+            image: Some("linux".into()),
+            name: Some("old".into()),
+            timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .ready()
+        .unwrap()
+        .id;
+    w.age(&old_id);
+    w.create("sleeper", "linux", Kind::Container).await;
+    w.power("sleeper", "stopped");
+
+    w.spaces.publish_to_relay().await.unwrap();
+    let st = w
+        .spaces
+        .relay_publish_status(&w.spaces.list().unwrap())
+        .await;
+    assert_eq!(st.off, None);
+    assert_eq!((st.running, st.listed, st.stopped), (2, 1, 1), "{st:?}");
+    assert_eq!(st.not_listed.len(), 1, "{st:?}");
+    assert_eq!(st.not_listed[0].0, "old");
+    let notes = st.notes().join("\n");
+    assert!(
+        notes.contains("1 running Space is not on your account: old (")
+            && notes.contains("1 stopped Space shows"),
+        "{notes}"
+    );
+
+    // Signed out: one plain reason for all of them.
+    *w.account.0.lock().unwrap() = None;
+    let st = w
+        .spaces
+        .relay_publish_status(&w.spaces.list().unwrap())
+        .await;
+    assert_eq!(st.off, Some(cua_spaces::share::Off::SignedOut));
+    assert!(st.notes()[0].contains("2 running Spaces are not on your account: you are signed out"));
+
+    // The switch.
+    *w.account.0.lock().unwrap() = Some("ada-token".into());
+    std::fs::write(
+        w.home.path().join("config.toml"),
+        "[relay]\nspaces = \"off\"\n",
+    )
+    .unwrap();
+    let st = w
+        .spaces
+        .relay_publish_status(&w.spaces.list().unwrap())
+        .await;
+    assert_eq!(st.off, Some(cua_spaces::share::Off::Setting));
+    std::fs::remove_file(w.home.path().join("config.toml")).unwrap();
+}
+
+/// A relay that fails is told, from another process too (`cua spaces ls`
+/// reads what the daemon's pass recorded), and the note goes once listing
+/// works again.
+#[tokio::test]
+async fn a_failing_relay_is_told_and_forgotten_when_listing_works() {
+    let w = World::new().await;
+    w.create("a", "linux", Kind::Container).await;
+    w.relay.set_reads_down(true);
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert!(!r.failed.is_empty(), "{r:?}");
+    let infos = w.spaces.list().unwrap();
+    // Another process: same home, no shared memory.
+    let other = Spaces::builder()
+        .home(w.home.path())
+        .sandboxes(
+            Sandboxes::builder()
+                .local(w.rt.clone())
+                .state_dir(w.state.path())
+                .build(),
+        )
+        .relay(RelayAccount::new(&w.relay.url, w.account.clone()))
+        .build();
+    let st = other.relay_publish_status(&infos).await;
+    assert_eq!(st.not_listed.len(), 1, "{st:?}");
+    assert!(
+        st.not_listed[0].1.contains("relay did not answer")
+            || st.not_listed[0].1.contains("not listed yet"),
+        "{st:?}"
+    );
+
+    w.relay.set_reads_down(false);
+    let started = std::time::Instant::now();
+    loop {
+        let r = w.spaces.publish_to_relay().await.unwrap();
+        if !r.published.is_empty() {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(20), "never resumed");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let st = other.relay_publish_status(&w.spaces.list().unwrap()).await;
+    assert_eq!((st.listed, st.not_listed.len()), (1, 0), "{st:?}");
+}
+
+impl World {
+    /// The runtime publishes no port for `name`'s cua-spacesd (a restarted
+    /// runtime brings the ports back a moment after the Space), or again.
+    fn ports(&self, name: &str, port: Option<u16>) {
+        let mut m = self.rt.spacesd.lock().unwrap();
+        match port {
+            Some(p) => m.insert(name.into(), p),
+            None => m.remove(name),
+        };
+    }
+
+    fn port_of(&self, name: &str) -> u16 {
+        self.rt.spacesd.lock().unwrap()[name]
+    }
+
+    /// A daemon restart: a new `Spaces` over the same home and state, with
+    /// no connection cached.
+    fn restarted(&self) -> Spaces {
+        Spaces::builder()
+            .home(self.home.path())
+            .sandboxes(
+                Sandboxes::builder()
+                    .local(self.rt.clone())
+                    .state_dir(self.state.path())
+                    .build(),
+            )
+            .relay(RelayAccount::new(&self.relay.url, self.account.clone()))
+            .build()
+    }
+}
+
+/// A Space that comes back after a runtime restart before its cua-spacesd
+/// answers is not "unsupported": it is listed once the driver answers, with
+/// no help, and the retries are paced, not a hot loop.
+#[tokio::test]
+async fn a_space_whose_spacesd_wakes_late_is_listed_when_it_does() {
+    let w = World::new().await;
+    cua_spaces::share::set_waking_retry_ms(100);
+    w.create("late", "linux", Kind::Container).await;
+    let port = w.port_of("late");
+    // The runtime and the daemon restarted; the port is not back yet.
+    w.ports("late", None);
+    let spaces = w.restarted();
+
+    let r = spaces.publish_to_relay().await.unwrap();
+    assert!(r.published.is_empty(), "{r:?}");
+    assert_eq!(r.failed.len(), 1, "{r:?}");
+    assert!(
+        r.failed[0].1.contains("not answering yet"),
+        "waking, not unsupported: {r:?}"
+    );
+    assert!(!r.failed[0].1.contains("runs no cua-spacesd"), "{r:?}");
+    // Bounded: an immediate second pass leaves it alone (paced retry).
+    let again = spaces.publish_to_relay().await.unwrap();
+    assert!(
+        again.failed.is_empty() && again.published.is_empty(),
+        "{again:?}"
+    );
+
+    // The driver answers: a later pass lists it.
+    w.ports("late", Some(port));
+    let mut listed = false;
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let r = spaces.publish_to_relay().await.unwrap();
+        if !r.published.is_empty() {
+            listed = true;
+            break;
+        }
+    }
+    assert!(listed, "never listed");
+    assert_eq!(w.rows().await.len(), 1);
+    assert!(w.attached("late"));
+}
+
+/// Registering a Space whose cua-spacesd is not up yet says it is waking
+/// (not that its image has none), and works as soon as it answers.
+#[tokio::test]
+async fn registering_a_waking_space_is_not_an_unsupported_one() {
+    let w = World::new().await;
+    cua_spaces::share::set_waking_retry_ms(100);
+    let id = w.create("wake", "linux", Kind::Container).await;
+    let port = w.port_of("wake");
+    w.ports("wake", None);
+    let spaces = w.restarted();
+    let e = spaces.relay_register(&id).await.unwrap_err();
+    assert!(
+        matches!(e, cua_spaces::Error::SpacesdNotAvailable { .. }),
+        "{e:?}"
+    );
+    w.ports("wake", Some(port));
+    spaces.relay_register(&id).await.unwrap();
+    assert!(w.attached("wake"));
+}
+
+/// A computer set up as a host: its relay machine exists on the account and
+/// its config names it.
+async fn set_up_host(w: &World, id: &str) {
+    cua_host::RelayClient::new(&w.relay.url)
+        .unwrap()
+        .register(
+            "ada-token",
+            &cua_host::relay::RegisterRequest {
+                id: id.into(),
+                name: "Studio".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let dir = w.home.path().join("host");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("config.json"),
+        serde_json::json!({
+            "mode": "relay", "name": "Studio", "runner": "process",
+            "driver_bin": "/nonexistent", "sharing": true, "machine_id": id,
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// A Space this computer lists names this computer as its host, so the
+/// phone reads its thread through the computer's daemon; a row registered
+/// before that (by hand, without a host) gets the host on the next pass,
+/// and a Space re-registered after a restart keeps it.
+#[tokio::test]
+async fn a_listed_space_names_this_computer_as_its_host() {
+    let w = World::new().await;
+    let id = w.create("hosted", "linux", Kind::Container).await;
+    let old = w.create("old", "linux", Kind::Container).await;
+    // Registered by hand before the computer was a host: no host on the row.
+    w.spaces.relay_register(&old).await.unwrap();
+    assert!(w.rows().await[0].host.is_none());
+    set_up_host(&w, "host-mac").await;
+
+    w.spaces.publish_to_relay().await.unwrap();
+    let rows = w.rows().await;
+    assert_eq!(rows.len(), 2, "{rows:#?}");
+    for m in &rows {
+        assert_eq!(m.host.as_deref(), Some("host-mac"), "{m:#?}");
+    }
+    assert!(w.attached("old"), "repaired in place, driver on the relay");
+
+    // A restart re-registers the same machine: the host stays.
+    let manual = w.spaces.relay_register(&id).await.unwrap();
+    let row = w
+        .rows()
+        .await
+        .into_iter()
+        .find(|m| m.id == manual.machine)
+        .unwrap();
+    assert_eq!(row.host.as_deref(), Some("host-mac"));
 }

@@ -24,6 +24,7 @@ Run coding agents inside a Space.
 | [`agent_stop`](#agent_stop) | Stop an agent run. |
 | [`agent_list`](#agent_list) | List agent runs in the Space. |
 | [`agent_capabilities`](#agent_capabilities) | Report what the agent harnesses support. |
+| [`agent_sign_in`](#agent_sign_in) | Sign a coding agent in on the Space's computer, the agent's own way. |
 | [`agent_threads`](#agent_threads) | List the recent Claude Code, Codex and Hermes chats on this computer. For a person only. |
 | [`agent_thread_read`](#agent_thread_read) | Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only. |
 
@@ -50,6 +51,7 @@ Installs the harness if needed (pinned, checksum-verified), gives it the Space's
 | `base_url` | `string` | none | A custom model endpoint base URL (a proxy or compatible server). |
 | `branch` | `string` | none | Branch or tag for `repo`. |
 | `cwd` | `string` | none | Working directory in the Space. Default: the run's own. |
+| `effort` | `string` | none | Reasoning level: `low`, `medium`, `high`, `xhigh` or `max`. Taken by Claude Code and Codex; other agents ignore it. |
 | `env` | `map of string` | `{}` | More environment for the agent, for example `{"HERMES_HOME": "/home/cua/bot"}`. Stored 0600 in the run and redacted from its output; name provider keys in `env_from_host` instead, so their values never pass through the conversation. |
 | `env_from_host` | `string[]` | `[]` | Provider key variables to forward from this server's environment (or from the keys saved in Cua Spaces, Settings → Connections), for example ["ANTHROPIC_API_KEY"]. Names only; values never pass through the conversation. Saved keys the harness reads are added without being named. |
 | `exit_when_idle` | `boolean` | `false` | Stop (resumably) once the prompt is answered. Default false. |
@@ -302,6 +304,39 @@ JSON: `protocol`, `statuses`, `event_kinds`, `harnesses` (each `id`, `name`, `re
 
 [`invalid_argument`](/spaces/reference#invalid_argument)
 
+### agent_sign_in
+
+Sign a coding agent in on the Space's computer, the agent's own way.
+
+Only for a person, never for an agent: no MCP server lists or runs it. Signs Claude Code or Codex in on the Space's own computer with the agent's official sign-in (`claude auth login`, `codex login --device-auth`), so the sign-in stays in that computer's agent config and Cua never holds it. `start` shows a link (and Codex's code) for the person to open in their own browser; the person finishes it in their own browser.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | none: for a person only, never served over MCP; read-only, idempotent |
+| Swift SDK | `spaces.callTool("agent_sign_in")` |
+| Rust | `Agents::sign_in` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `action` | `string` | none | `status` (default), `start`, `code` (hand over the pasted `code`) or `cancel`. |
+| `after_refusal` | `boolean` | `false` | The agent's last run there was refused its sign-in: a sign-in that is there has run out (`expired`). |
+| `agent` | `string` | required | Harness id: `claude-code` or `openai-codex`. |
+| `code` | `string` | none | For `code`: the code the sign-in page showed (Claude Code). |
+| `space` | `string` | required | Space id or name. |
+
+#### Result
+
+JSON: `{"space", "agent", "state"}`; `state` is `not_signed_in`, `signing_in` (with `url`, `code` (Codex: type it on that page) and `paste_code` (Claude Code: the person pastes the page's code back with action `code`)), `signed_in`, `failed` (with `reason`) or `expired`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`agent`](/spaces/reference#agent)
+
 ### agent_threads
 
 List the recent Claude Code, Codex and Hermes chats on this computer. For a person only.
@@ -411,6 +446,7 @@ A persistent agent is an agent member of the Space it works in, with its memory 
 | `brief` | `string` | none | Standing instructions: the first message each run takes carries them in front of its text (the thread shows only the message). |
 | `daily_at` | `string` | none | A schedule: every day at `HH:MM` local time (with `prompt`). |
 | `durable` | `boolean` | `false` | Re-drive the agent's runs after a crash. Default false. |
+| `effort` | `string` | none | Reasoning level (see `agent_start`'s `effort`). |
 | `env` | `map of string` | `{}` | More environment for every run (not secrets; see `env_from_host`). |
 | `env_from_host` | `string[]` | `[]` | Provider key variables forwarded from this server's environment (or the keys saved in Cua Spaces) at every start, for example ["ANTHROPIC_API_KEY"]. Names only. |
 | `every_minutes` | `integer` | none | A schedule: every N minutes (with `prompt`). |

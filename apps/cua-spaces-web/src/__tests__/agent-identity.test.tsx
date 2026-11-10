@@ -45,7 +45,17 @@ const identity = (over: Partial<MemberIdentity> = {}): MemberIdentity => ({
   lastSeenMs: null,
   ...over,
 });
-const member = (name: string, i: MemberIdentity | null): AgentMember => ({ name, harness: i?.harness.id ?? "claude-code", status: "idle", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: i });
+const member = (name: string, i: MemberIdentity | null): AgentMember => ({
+  name,
+  harness: i?.harness.id ?? "claude-code",
+  status: "idle",
+  activity: null,
+  sessions: 1,
+  rights: null,
+  youCan: null,
+  heldBy: null,
+  identity: i,
+});
 const roster = (members: AgentMember[], opts: { me?: string; role?: "owner" | "admin" | "member" | "guest" | null; entries?: ThreadEntry[] } = {}) =>
   buildRoster({ members, shares: [], entries: opts.entries ?? [], me: opts.me ?? ADA.id, identity: null, role: opts.role ?? null, harnessName: (h) => h });
 
@@ -71,7 +81,9 @@ async function details(card: HTMLElement): Promise<Record<string, string>> {
   await act(async () => {
     fireEvent.click(card.querySelector("[data-card-details]")!);
   });
-  return Object.fromEntries([...card.querySelectorAll<HTMLElement>("[data-card-details-open] dt")].map((dt) => [dt.textContent!, dt.nextElementSibling!.textContent!]));
+  return Object.fromEntries(
+    [...card.querySelectorAll<HTMLElement>("[data-card-details-open] dt")].map((dt) => [dt.textContent!, dt.nextElementSibling!.textContent!]),
+  );
 }
 const line = (card: HTMLElement) => card.querySelector("[data-card-line='who']")?.textContent;
 
@@ -97,7 +109,11 @@ describe("an agent's identity", () => {
     expect(q("[data-member='agent:hermes'] [data-agent-tile]")?.className).toContain("opacity-45");
     expect(q("[data-member='agent:hermes'] [data-owner-badge]")?.closest(".opacity-45")).toBeNull();
     // People get no tag.
-    expect(qa("[data-members] [data-member]").filter((m) => !m.dataset.member!.startsWith("agent:")).some((m) => m.querySelector("[data-ai-tag]"))).toBe(false);
+    expect(
+      qa("[data-members] [data-member]")
+        .filter((m) => !m.dataset.member!.startsWith("agent:"))
+        .some((m) => m.querySelector("[data-ai-tag]")),
+    ).toBe(false);
     const post = qa("[data-entry]").find((e) => e.querySelector("[data-author-name='claude']"))!;
     expect(post.querySelector("[data-owner-badge]")?.getAttribute("data-owner-badge")).toBe("acct_grace");
     expect(post.querySelector("[data-ai-tag]")?.textContent).toBe("AI");

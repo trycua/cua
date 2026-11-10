@@ -25,7 +25,10 @@ name: "CD: Cua Spaces"
 # item is the notarized DMG of a release, EdDSA-signed by Sparkle's
 # generate_appcast (apps/cua-spaces-macos/scripts/make-appcast.sh, checked
 # by verify-appcast.sh). X.Y.Z-suffix versions go to the `beta` channel
-# (apps set to "Update to: Beta"). A beta is a production build with a
+# (apps set to "Update to: Beta"). Betas are retired (CUA-3503): the first
+# job refuses a -beta version unless the repository variable
+# ALLOW_SPACES_BETA is `true`; pre-release builds come from
+# nightly-cua-spaces.yml (the Nightly channel, its own release and feeds). A beta is a production build with a
 # prerelease version, not a staging build: it is built exactly like a stable
 # release, so it talks to production (CUA_ENV=staging at launch selects
 # staging for any build). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
@@ -94,7 +97,14 @@ name: "CD: Cua Spaces"
 # apps/cua-spaces shares it as extra files but never triggers a release) and
 # creates a draft release plus the `cua-spaces-v<version>` tag; this
 # workflow fills that release and publishes it. It can also run manually with
-# an explicit version. The macOS app takes the tag's version:
+# an explicit version. A tag whose run never published (the workflow itself was
+# broken) is rebuilt by a dispatch from main with rebuild_tag and rebuild_sha:
+# it builds the tagged commit with main's workflow files, refuses a release
+# that is already published, and runs every gate (signing, notarization,
+# staging smoke, verify-release, staged rollout) exactly as the tag push does.
+# Its Sigstore identity is this workflow at refs/heads/main, which names no
+# tag, so it also signs rebuild-claim.txt (the tag and every asset's sha256);
+# the installers accept that identity only with the claim. The macOS app takes the tag's version:
 # CFBundleShortVersionString X.Y.Z, CFBundleVersion X.Y.Z.<run number>, and
 # the full version (with any -suffix) as CuaVersion.
 #
@@ -186,7 +196,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (without the v prefix, e.g. 0.1.0)"
+        description: "Version to release (without the v prefix, e.g. 0.1.0). Ignored with rebuild_tag, which carries its own version."
         required: true
         default: "0.1.0"
       electron_dry_run:
@@ -213,6 +223,14 @@ on:
         description: "Why the staging gate is skipped (required with skip_staging_gate)"
         required: false
         default: ""
+      rebuild_tag:
+        description: "Rebuild and publish the existing unpublished release of this stable tag (e.g. cua-spaces-v0.21.0) with THIS ref's workflow files. Run from main. Leave empty for a normal manual run."
+        required: false
+        default: ""
+      rebuild_sha:
+        description: "Commit SHA the tag points to (required with rebuild_tag; checked against the tag)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -221,8 +239,8 @@ permissions:
 # whatever the group (a second run of the same tag waits its turn). Manual
 # runs (tests and dry runs) share a group per branch and replace each other.
 concurrency:
-  group: cd-cua-spaces-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: cd-cua-spaces-${{ inputs.rebuild_tag && format('refs/tags/{0}', inputs.rebuild_tag) || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.rebuild_tag }}
 
 defaults:
   run:
@@ -238,14 +256,94 @@ env:
   # The CLI sidecar downloads cua-spacesd from this repository's releases.
   CUA_RELEASE_REPOSITORY: ${{ github.repository }}
   # Fail closed on the canonical repository only (see the header).
-  REQUIRE_SIGNING: ${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}
+  REQUIRE_SIGNING: ${{ github.repository == 'trycua/cua' && (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}
+  # The release this run is about: the pushed tag or, for a rebuild dispatch
+  # (run from main so fixed workflow files apply to an existing tag), the
+  # requested tag. Shell steps read these instead of GITHUB_REF, GITHUB_REF_NAME
+  # and GITHUB_SHA. Build jobs check out RELEASE_SHA; the publishing and gate
+  # jobs keep main's tooling.
+  REBUILD_TAG: ${{ inputs.rebuild_tag }}
+  RELEASE_REF: ${{ inputs.rebuild_tag && format('refs/tags/{0}', inputs.rebuild_tag) || github.ref }}
+  RELEASE_REF_NAME: ${{ inputs.rebuild_tag || github.ref_name }}
+  RELEASE_SHA: ${{ inputs.rebuild_sha || github.sha }}
 
 jobs:
+  # No betas (CUA-3503): pre-release testing is the Nightly channel
+  # (nightly-cua-spaces.yml). A -beta version stops here, before anything is
+  # built, a staging smoke is asked for or a draft release exists, unless the
+  # repository variable ALLOW_SPACES_BETA is `true`
+  # (docs/contributing/releasing-cua-spaces.md). Every other job needs it.
+  refuse-beta:
+    name: Refuse beta versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # contents: write so the rebuild guard can see draft releases.
+    permissions:
+      contents: write
+    # This job has no checkout, so the workflow-wide apps/cua-spaces default
+    # does not exist on the runner and the step cannot start.
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Refuse beta versions
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          ALLOW_SPACES_BETA: ${{ vars.ALLOW_SPACES_BETA }}
+        run: |
+          version="$INPUT_VERSION"
+          { [ "$GITHUB_EVENT_NAME" = push ] || [ -n "$REBUILD_TAG" ]; } && version="${RELEASE_REF_NAME#cua-spaces-v}"
+          case "$version" in
+            *-beta*)
+              if [ "$ALLOW_SPACES_BETA" = true ]; then
+                echo "::warning::$version is a beta; ALLOW_SPACES_BETA=true lets it through"
+              else
+                echo "::error::Cua Spaces has no betas any more: $version is refused. For pre-release testing use the Nightly channel (Settings, Advanced) or run the 'Nightly: Cua Spaces' workflow. Delete this tag: git push origin :refs/tags/cua-spaces-v$version"
+                exit 1
+              fi ;;
+          esac
+
+      # Rebuild dispatch guard: only main's workflow files, only a stable tag,
+      # only the exact tagged commit, and never a release that is already
+      # published, so a rebuild can never duplicate or replace one. Nothing here
+      # moves or re-creates a tag.
+      - name: Validate rebuild request
+        if: ${{ inputs.rebuild_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REBUILD_SHA: ${{ inputs.rebuild_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.electron_dry_run }}
+          SPARKLE_INPUT: ${{ inputs.sparkle_electron }}
+          PLATFORMS: ${{ inputs.platforms }}
+          SKIP_STAGING_GATE: ${{ inputs.skip_staging_gate }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] \
+            || { echo "::error::rebuild_tag is only allowed on a workflow_dispatch from main"; exit 1; }
+          [[ "$REBUILD_TAG" =~ ^cua-spaces-v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::rebuild_tag must be a stable cua-spaces-vX.Y.Z tag"; exit 1; }
+          [[ "$REBUILD_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::rebuild_sha must be a full lowercase commit SHA"; exit 1; }
+          # A rebuild runs every gate exactly as a tag push does: none of the
+          # manual-run switches apply.
+          [[ "$DRY_RUN" != "true" && "$SPARKLE_INPUT" != "true" && "$SKIP_STAGING_GATE" != "true" && "$PLATFORMS" == "all" ]] \
+            || { echo "::error::a rebuild takes no electron_dry_run, sparkle_electron, skip_staging_gate or platforms"; exit 1; }
+          TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${REBUILD_TAG}" --jq .sha)
+          [[ "$TAG_SHA" == "$REBUILD_SHA" ]] \
+            || { echo "::error::$REBUILD_TAG resolves to $TAG_SHA, not $REBUILD_SHA"; exit 1; }
+          PUBLISHED=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"${REBUILD_TAG}\" and .draft == false) | .id")
+          [[ -z "$PUBLISHED" ]] \
+            || { echo "::error::$REBUILD_TAG is already published; refusing to rebuild"; exit 1; }
+          echo "Rebuilding $REBUILD_TAG at $REBUILD_SHA from main's workflow files." >> "$GITHUB_STEP_SUMMARY"
+
   # The bundled `cua` CLI bakes libs/cua-spacesd/VERSION and "Set up for
   # access" downloads that release: refuse to build an app whose pinned
   # cua-spacesd is not published (Cua Spaces 0.3.0 pinned a draft).
   spacesd-published:
     name: cua-spacesd pin is published
+    needs: refuse-beta
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -255,6 +353,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - name: Check the baked cua-spacesd release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -287,6 +387,8 @@ jobs:
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       # One definition with the main-branch producer
       # (ci-cua-spaces-rust-slice.yml): same key, restore or build.
       - uses: ./.github/actions/spaces-rust-slice
@@ -341,14 +443,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
 
       - name: Resolve version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -z "${REBUILD_TAG:-}" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION="${GITHUB_REF_NAME#cua-spaces-v}"
+            VERSION="${RELEASE_REF_NAME#cua-spaces-v}"
           fi
           # A semver prerelease, or any build off the canonical repository,
           # becomes a GitHub prerelease (never "latest").
@@ -412,7 +516,7 @@ jobs:
       # staging prerelease, a recovery) gets one here. Every job uploads to it
       # and the final job publishes it.
       - name: Find or create the draft release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -493,6 +597,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
 
+      # GitHub's release CDN answers 504 for minutes (Sparkle, Sentry binary
+      # targets): resolve with retries before the build that follows the
+      # long Rust compile, so one blip does not cost a whole run.
+      - uses: ./.github/actions/swiftpm-resolve
       - name: Build and sign Cua Spaces.app (universal)
         env:
           CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd
@@ -629,7 +737,7 @@ jobs:
             echo "darwin-universal: UNSIGNED (ad-hoc signed app, unsigned DMG and PKG, not notarized)" > signing-darwin-universal.txt
           fi
           shasum -a 256 installer-assets/*
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          if [[ "$RELEASE_REF" == refs/tags/* ]]; then
             gh release upload "cua-spaces-v${VERSION}" installer-assets/* --clobber --repo "${GITHUB_REPOSITORY}"
           fi
 
@@ -720,9 +828,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 4
-      TAGGED: ${{ startsWith(github.ref, 'refs/tags/') }}
+      TAGGED: ${{ (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@v4
         with:
@@ -740,22 +850,19 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libssl-dev file \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-            libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential cmake pkg-config libssl-dev file libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - run: pnpm install --frozen-lockfile
       - name: Resolve version
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -z "${REBUILD_TAG:-}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_REF_NAME#cua-spaces-v}" >> "$GITHUB_OUTPUT"
+            echo "version=${RELEASE_REF_NAME#cua-spaces-v}" >> "$GITHUB_OUTPUT"
           fi
       - name: Tauri release config (version, updater feed on this repository)
         shell: bash
@@ -959,13 +1066,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
           # The path diff against the previous release tag.
           fetch-depth: 0
       - name: Plan
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
+          EVENT: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_tag == '' && 'workflow_dispatch' || 'push' }}
           INPUT_PLATFORMS: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms || 'all' }}
           INPUT_PLATFORMS_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms_reason || '' }}
           INPUT_VERSION: ${{ inputs.version }}
@@ -974,7 +1082,7 @@ jobs:
           SPARKLE_VERSION: ${{ vars.CUA_SPACES_SPARKLE_ELECTRON_VERSION }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = workflow_dispatch ]; then VERSION="$INPUT_VERSION"; else VERSION="${GITHUB_REF_NAME#cua-spaces-v}"; fi
+          if [ "$EVENT" = workflow_dispatch ]; then VERSION="$INPUT_VERSION"; else VERSION="${RELEASE_REF_NAME#cua-spaces-v}"; fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version: $VERSION"; exit 1; }
           beta=false; [[ "$VERSION" == *-* ]] && beta=true
           # The Sparkle cutover: one release, named by the variable or the input.
@@ -991,10 +1099,10 @@ jobs:
           # Windows and Linux Electron: every release tag (stable too), the
           # cutover and a dry run. `build` above is the macOS Electron app only.
           desktop=false
-          { [ "$build" = true ] || [[ "$GITHUB_REF" == refs/tags/cua-spaces-v* ]]; } && desktop=true
+          { [ "$build" = true ] || [[ "$RELEASE_REF" == refs/tags/cua-spaces-v* ]]; } && desktop=true
           # Any release tag publishes; a dry run never does.
           publish=false
-          if [ "$DRY_RUN" != true ] && [[ "$GITHUB_REF" == refs/tags/cua-spaces-v* ]]; then publish=true; fi
+          if [ "$DRY_RUN" != true ] && [[ "$RELEASE_REF" == refs/tags/cua-spaces-v* ]]; then publish=true; fi
           # A semver prerelease, or any build off the canonical repository,
           # is a GitHub prerelease (never "latest").
           prerelease=false
@@ -1088,6 +1196,7 @@ jobs:
   # for every job that bundles it: the SwiftUI app, the Electron apps.
   electron-web:
     name: Web UI
+    needs: refuse-beta
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     defaults:
@@ -1097,6 +1206,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
@@ -1132,7 +1243,7 @@ jobs:
       - name: Resolve version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then VERSION="${{ github.event.inputs.version }}"; else VERSION="${GITHUB_REF_NAME#cua-spaces-v}"; fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -z "${REBUILD_TAG:-}" ]; then VERSION="${{ github.event.inputs.version }}"; else VERSION="${RELEASE_REF_NAME#cua-spaces-v}"; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Upload the web UI source maps to Sentry
         uses: ./.github/actions/sentry-upload
@@ -1173,6 +1284,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: ./.github/actions/spaces-native
         with:
           label: ${{ matrix.label }}
@@ -1204,6 +1317,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: ./.github/actions/spaces-native
         with:
           label: ${{ matrix.label }}
@@ -1241,6 +1356,8 @@ jobs:
       VERSION: ${{ needs.electron-plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - name: Signing configuration
         id: signing
         env:
@@ -1520,6 +1637,8 @@ jobs:
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - name: Signing configuration
         id: signing
         env:
@@ -1665,6 +1784,8 @@ jobs:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1720,6 +1841,8 @@ jobs:
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: apps/cua-spaces-desktop/package.json
@@ -1818,6 +1941,8 @@ jobs:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1920,7 +2045,8 @@ jobs:
   # the gate times out and the smoke is started by hand as before.
   request-staging-smoke:
     name: Request the staging smoke
-    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    needs: refuse-beta
+    if: (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -1943,7 +2069,7 @@ jobs:
       - name: Send the cua-release-candidate dispatch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: .github/scripts/request_staging_smoke.sh cua-spaces "$GITHUB_SHA"
+        run: .github/scripts/request_staging_smoke.sh cua-spaces "$RELEASE_SHA"
 
   # Promote check (CUA-2067, phase 2 of CUA-1991). Looks for the signed set the
   # main build made for this tag's commit and verifies it the way a promotion
@@ -1954,7 +2080,8 @@ jobs:
   # CUA_SPACES_PROMOTE_CHECK is "true". Never fails the run.
   promote-check:
     name: Promote check (report only)
-    if: startsWith(github.ref, 'refs/tags/cua-spaces-v') && vars.CUA_SPACES_PROMOTE_CHECK == 'true'
+    needs: refuse-beta
+    if: (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) && vars.CUA_SPACES_PROMOTE_CHECK == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     continue-on-error: true
@@ -1976,18 +2103,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          version="${GITHUB_REF_NAME#cua-spaces-v}"
+          version="${RELEASE_REF_NAME#cua-spaces-v}"
           report() { echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"; }
           echo "promotable=false" >> "$GITHUB_OUTPUT"
-          run_id="$(gh run list --workflow cd-cua-spaces-build.yml --branch main --commit "$GITHUB_SHA" \
+          run_id="$(gh run list --workflow cd-cua-spaces-build.yml --branch main --commit "$RELEASE_SHA" \
             --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
-          if [ -z "$run_id" ]; then report "No successful main build for $GITHUB_SHA: this tag would fall back to the full build."; exit 0; fi
-          if ! gh run download "$run_id" --name "spaces-build-$GITHUB_SHA" --dir set; then
-            report "Main build run $run_id has no spaces-build-$GITHUB_SHA artifact (expired, or the build was a no-op): this tag would fall back to the full build."; exit 0
+          if [ -z "$run_id" ]; then report "No successful main build for $RELEASE_SHA: this tag would fall back to the full build."; exit 0; fi
+          if ! gh run download "$run_id" --name "spaces-build-$RELEASE_SHA" --dir set; then
+            report "Main build run $run_id has no spaces-build-$RELEASE_SHA artifact (expired, or the build was a no-op): this tag would fall back to the full build."; exit 0
           fi
-          out="$(python3 -I .github/scripts/spaces_verify_build_set.py set --tag-version "$version" --tag-sha "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY")"
+          out="$(python3 -I .github/scripts/spaces_verify_build_set.py set --tag-version "$version" --tag-sha "$RELEASE_SHA" --repository "$GITHUB_REPOSITORY")"
           rc=$?
-          report "### Promote check for $GITHUB_REF_NAME (main build run $run_id)"
+          report "### Promote check for $RELEASE_REF_NAME (main build run $run_id)"
           report '```'
           report "$out"
           report '```'
@@ -2005,7 +2132,8 @@ jobs:
   # tag publishes, so only a tag run is gated. Break-glass: skip_staging_gate.
   staging-gate:
     name: Staging smoke is green
-    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    needs: refuse-beta
+    if: (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
     runs-on: ubuntu-latest
     # Waits up to 2 hours for the smoke that request-staging-smoke starts:
     # the smoke can sit in trycua/cloud's queue for half an hour before it
@@ -2026,7 +2154,7 @@ jobs:
           SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
           SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
           WAIT_MINUTES: "120"
-        run: .github/scripts/require_staging_smoke.sh cua-spaces "$GITHUB_SHA"
+        run: .github/scripts/require_staging_smoke.sh cua-spaces "$RELEASE_SHA"
 
   verify-release:
     name: Verify the signed release
@@ -2034,7 +2162,7 @@ jobs:
     # Each platform that is in this release must have built (build-macos is
     # skipped, not failed, when a patch release has no macOS).
     if: >-
-      !cancelled()
+      !cancelled() && needs.electron-plan.result == 'success'
       && (needs.electron-plan.outputs.macos != 'true' || needs.build-macos.result == 'success')
       && (needs.electron-plan.outputs.windows != 'true' || needs.electron-windows.result == 'success')
       && (needs.electron-plan.outputs.build != 'true' || needs.electron-mac.result == 'success')
@@ -2058,6 +2186,8 @@ jobs:
       APPCAST: ${{ needs.build-macos.outputs.appcast == 'true' || needs.electron-mac.outputs.appcast == 'true' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.rebuild_sha || github.sha }}
       - if: needs.electron-plan.outputs.macos == 'true'
         uses: actions/download-artifact@v4
         with:
@@ -2131,20 +2261,53 @@ jobs:
           kinds="$(IFS=,; echo "${expect[*]}")"
           apps/cua-spaces-macos/scripts/verify-release.sh --dir release --version "$VERSION" \
             --repo "$GITHUB_REPOSITORY" --expect "$kinds"
+      # The upgrade test: the previous stable release downloads this build
+      # from a local appcast, "Restart to update" is pressed, and the new
+      # version must be the one running (CUA-3964). Not blocking yet: it
+      # drives the menu with System Events, so it is proven on a few releases
+      # before it can hold one back.
+      - name: Upgrade test (previous release to this build)
+        if: env.SWIFT == 'true' && env.SWIFT_SIGNED == 'true' && !contains(env.VERSION, '-')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prev="$(gh release list -R "$GITHUB_REPOSITORY" --limit 40 --json tagName,isDraft,isPrerelease \
+            -q '[.[] | select(.isDraft == false and .isPrerelease == false) | .tagName | select(test("^cua-spaces-v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0]')"
+          prev_version="${prev#cua-spaces-v}"
+          if [ -z "$prev" ] || [ "$prev_version" = "$VERSION" ]; then
+            echo "::notice::no earlier stable release to upgrade from"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/prev"
+          gh release download "$prev" -R "$GITHUB_REPOSITORY" -p '*-darwin-universal.dmg' -D "$RUNNER_TEMP/prev"
+          # 0.20.0 to 0.22.0 have a dead button; the test then checks that quitting installs.
+          legacy=()
+          if [ "$(printf '%s\n' 0.22.1 "$prev_version" | sort -V | head -1)" != 0.22.1 ]; then legacy=(--legacy); fi
+          status=0
+          apps/cua-spaces-macos/scripts/test-update-restart.sh ${legacy[@]+"${legacy[@]}"} \
+            --old-dmg "$RUNNER_TEMP"/prev/*.dmg --new-dmg release/cua-spaces-"$VERSION"-darwin-universal.dmg || status=$?
+          if [ "$status" = 77 ]; then
+            echo "::warning::upgrade test skipped: this runner may not drive menus (Accessibility)"
+            exit 0
+          fi
+          exit "$status"
 
   installer-manifest:
     name: release-artifacts.json, latest.json, publish
     needs: [build-macos, build-linux-windows, electron-plan, electron-mac, electron-publish, verify-release, staging-gate]
     # Only a release tag publishes: the Sigstore identity the installers and
-    # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*.
-    # A manual run from a tag re-publishes; from a branch it only builds.
+    # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*,
+    # or at refs/heads/main for a rebuild of an existing tag (rebuild_tag).
+    # A manual run from a branch without rebuild_tag only builds.
     # build-linux-windows (Tauri) may be skipped, never failed; electron-mac is
     # skipped on a stable release. A release tag waits for its Electron
     # installers (electron-publish).
     # Nothing is published unless verify-release passed.
     # build-macos is skipped (not failed) in a patch release without macOS.
     if: >-
-      !cancelled() && startsWith(github.ref, 'refs/tags/cua-spaces-v')
+      !cancelled() && (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
       && (needs.electron-plan.outputs.macos != 'true' || needs.build-macos.result == 'success')
       && needs.verify-release.result == 'success'
       && needs.staging-gate.result == 'success'
@@ -2180,6 +2343,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           TAURI: ${{ needs.build-linux-windows.result }}
           PARTIAL: ${{ needs.electron-plan.outputs.partial }}
+          REBUILD_SHA: ${{ inputs.rebuild_sha }}
         run: |
           set -euo pipefail
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
@@ -2187,14 +2351,33 @@ jobs:
           # Every asset: the SwiftUI app's, and the Electron installers
           # (Windows and Linux always, macOS for a prerelease) with their
           # installer-named copies (electron-publish).
-          gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
-          rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
+          rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json assets/rebuild-claim.txt
           # Keyless Sigstore bundles next to each installer (install.sh and
           # install.ps1 verify them with cosign when it is installed).
           for f in assets/*; do
             case "$f" in *.sig|*.blockmap) continue ;; esac
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
           done
+          # A rebuild is signed by this workflow at refs/heads/main, which does
+          # not name the tag. The claim does, under the same signature: the tag
+          # and the sha256 of every signed asset. The installers require it.
+          # It stays out of assets/ so the manifest never lists it.
+          claim=()
+          if [ -n "${REBUILD_TAG:-}" ]; then
+            {
+              echo "tag $TAG"
+              echo "sha $REBUILD_SHA"
+              for f in assets/*; do
+                case "$f" in *.sig|*.blockmap|*.sigstore.json) continue ;; esac
+                (cd assets && sha256sum -- "${f#assets/}")
+              done
+            } > "$RUNNER_TEMP/rebuild-claim.txt"
+            cosign sign-blob --yes --bundle "$RUNNER_TEMP/rebuild-claim.txt.sigstore.json" \
+              "$RUNNER_TEMP/rebuild-claim.txt" >/dev/null
+            claim=("$RUNNER_TEMP/rebuild-claim.txt" "$RUNNER_TEMP/rebuild-claim.txt.sigstore.json")
+          fi
           # Every asset of the release, signatures included.
           (cd assets && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort \
             | xargs -d '\n' sha256sum > "$RUNNER_TEMP/checksums.txt")
@@ -2228,7 +2411,7 @@ jobs:
           else
             echo "::notice::no Tauri build in this release, so no latest.json"
           fi
-          gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" "${upload[@]}" ${claim[@]+"${claim[@]}"} --clobber --repo "$GITHUB_REPOSITORY"
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2244,7 +2427,10 @@ jobs:
           if [ "$PRERELEASE" = true ]; then
             flags+=(--prerelease --latest=false)
           else
+            # Cua Spaces is the one package allowed to be the repo-wide "Latest".
+            # Every other release workflow passes --latest=false (release-latest-policy test).
             flags+=(--prerelease=false)
+            [ "$GITHUB_REPOSITORY" = trycua/cua ] && flags+=(--latest)
           fi
           if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"
@@ -2272,6 +2458,13 @@ jobs:
             fi
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-spaces: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
       # Say which platforms a patch release contains (CUA-2068). A full release
       # keeps its notes as they are.
       - name: Name the platforms in the release notes
@@ -2395,19 +2588,24 @@ jobs:
             --clobber --repo "$GITHUB_REPOSITORY"
 
   # CUA-3128: a stable release must never ship without cua.ai following it.
-  # Waits up to 15 minutes for the download page, the three download links
-  # and the in-app updater feeds to serve this version; fails loudly if not.
+  # The download page's HTML carries the version from trycua/cloud's release
+  # snapshot, which only changes when that repo's snapshot PR merges and the
+  # site redeploys. So this first sends `cua-spaces-released` to trycua/cloud
+  # (else the snapshot waits for its half-hourly cron), then waits up to 40
+  # minutes (PR checks, auto-merge, deploy) for the download page, the three
+  # download links and the in-app updater feeds to serve this version; fails
+  # loudly if not. The 15-minute wait it replaces failed for 0.21.0 and 0.21.1.
   # A feed for a platform a patch release skipped keeps its previous version.
   site-follows-release:
     name: cua.ai serves the new release
     needs: [installer-manifest, electron-plan]
     if: >-
       !cancelled() && needs.installer-manifest.result == 'success'
-      && startsWith(github.ref, 'refs/tags/cua-spaces-v')
+      && (startsWith(github.ref, 'refs/tags/cua-spaces-v') || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
       && github.repository == 'trycua/cua'
       && needs.electron-plan.outputs.prerelease != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 50
     permissions:
       contents: read
     defaults:
@@ -2415,6 +2613,25 @@ jobs:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
+      - name: Mint a token to dispatch on trycua/cloud
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: trycua
+          repositories: cloud
+          permission-contents: write
+      - name: Ask trycua/cloud to refresh its release snapshot now
+        # Best effort: without it the snapshot still follows on its cron.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.electron-plan.outputs.version }}
+        run: |
+          gh api repos/trycua/cloud/dispatches -f event_type=cua-spaces-released \
+            -F "client_payload[version]=$VERSION"
       - name: Check cua.ai/download, the download links and the updater feeds
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2429,4 +2646,34 @@ jobs:
           [ "$WINDOWS" = true ] && feeds+=(electron-win)
           [ "$LINUX" = true ] && feeds+=(electron-linux)
           python3 .github/scripts/check_spaces_site_follows_release.py \
-            --version "$VERSION" --timeout 900 --feeds "$(IFS=,; echo "${feeds[*]}")"
+            --version "$VERSION" --timeout 2400 --feeds "$(IFS=,; echo "${feeds[*]}")"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [installer-manifest, electron-plan]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.installer-manifest.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-spaces-v${{ needs.electron-plan.outputs.version }}
+            cua-spaces-latest
+            cua-install-latest

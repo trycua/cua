@@ -91,7 +91,6 @@ on:
       - "libs/cua/crates/cua-vmm/src/density.rs"
       - "libs/cua/crates/cua-vmm/src/qemu/**"
       - ".github/workflows/cd-image-linux.yml"
-      - ".github/workflows/image-doctor.yml"
   workflow_dispatch:
     inputs:
       publish:
@@ -255,7 +254,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            protobuf-compiler libprotobuf-dev
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
         with:
@@ -306,6 +308,8 @@ jobs:
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, gVisor, crane)
         run: |
           set -euo pipefail
@@ -369,6 +373,8 @@ jobs:
           name: artifacts-linux-docker-amd64
           path: ${{ runner.temp }}/docker-tier
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, KVM)
         run: |
           set -euo pipefail
@@ -420,6 +426,8 @@ jobs:
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Install QEMU, firmware and gVisor
         run: |
           set -euo pipefail
@@ -741,6 +749,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools
         run: scripts/images/install-release-tools.sh --free-disk
       - name: The published disk

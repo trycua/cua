@@ -6,6 +6,7 @@ on:
       - .cursor/skills/verify-cua-driver/**
       - libs/cua-driver/**
       - .github/workflows/e2e-rust-linux.yml
+  merge_group:
   # Stable Cua Driver tag runs call this matrix as a release gate. Keep the
   # inputs in sync with workflow_dispatch; only `inputs.*` is read below.
   workflow_call:
@@ -21,6 +22,11 @@ on:
         default: all
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
+        required: false
+        type: string
+        default: ""
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (the PR quick lane passes electron); empty runs them all"
         required: false
         type: string
         default: ""
@@ -44,6 +50,10 @@ on:
           - verify
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
+        required: false
+        default: ""
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (for example electron); empty runs them all"
         required: false
         default: ""
 
@@ -71,12 +81,12 @@ concurrency:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   source:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: "Resolve exact source"
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -98,9 +108,9 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   verify-skill:
-    if: inputs.lane == '' || inputs.lane == 'verify'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') && needs.quick.outputs.skip != 'true' }}
     name: "Linux / verification skill proof"
-    needs: source
+    needs: [quick, source]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -124,13 +134,13 @@ jobs:
           cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && 'npm' || '' }}
           cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Install GUI and Rust build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
-            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev
             libayatana-appindicator3-dev librsvg2-dev ffmpeg jq x11-utils
       - name: Verify real Electron background clicks
         run: .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
@@ -145,9 +155,9 @@ jobs:
           retention-days: 14
 
   shared:
-    if: inputs.lane == 'all' || inputs.lane == 'shared'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'shared') && needs.quick.outputs.skip != 'true' }}
     name: "Linux / shared Electron + Tauri"
-    needs: source
+    needs: [quick, source]
     runs-on: ubuntu-latest
     # About 30 minutes warm. The headroom covers a run with neither the
     # sccache nor the apt package cache warm while the Ubuntu mirror is slow.
@@ -155,6 +165,7 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
       CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.harness_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -200,9 +211,9 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.lane == 'all' || inputs.lane == 'native'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'native') && needs.quick.outputs.skip != 'true' }}
     name: "Linux / GTK3 + GTK4 native harnesses"
-    needs: source
+    needs: [quick, source]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -250,9 +261,9 @@ jobs:
           retention-days: 14
 
   capture:
-    if: inputs.lane == 'all' || inputs.lane == 'capture'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'capture') && needs.quick.outputs.skip != 'true' }}
     name: "Linux / capture and desktop scope"
-    needs: source
+    needs: [quick, source]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -300,9 +311,9 @@ jobs:
           retention-days: 14
 
   installer:
-    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'installer') && needs.quick.outputs.skip != 'true' }}
     name: "Linux / install-local.sh smoke"
-    needs: source
+    needs: [quick, source]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -364,8 +375,8 @@ jobs:
           retention-days: 14
 
   summary:
-    if: always() && inputs.lane != '' && inputs.lane != 'verify'
-    needs: [source, shared, native, capture, installer]
+    if: ${{ always() && inputs.lane != '' && inputs.lane != 'verify' && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, source, shared, native, capture, installer]
     name: "Linux / matrix summary"
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -460,8 +471,8 @@ jobs:
     # combined with the lane=='all' check this keeps certification fail-closed
     # against both lane failures and diagnostic-lane dispatches. Manual
     # dispatches and release-gate calls certify the same complete matrix.
-    if: success() && inputs.lane == 'all'
-    needs: [source, shared, native, capture, installer]
+    if: ${{ !failure() && !cancelled() && inputs.lane == 'all' && needs.source.result == 'success' && needs.shared.result == 'success' && needs.native.result == 'success' && needs.capture.result == 'success' && needs.installer.result == 'success' && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, source, shared, native, capture, installer]
     name: "Linux / canonical certification"
     runs-on: ubuntu-latest
     timeout-minutes: 10

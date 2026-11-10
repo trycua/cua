@@ -13,8 +13,10 @@ rev="${1:-HEAD}"
 inputs=(
   apps/cua-spaces-macos apps/cua-spaces apps/cua-spaces-desktop apps/cua-spaces-web
   libs/cua libs/cua-spacesd/VERSION
+  libs/images/sandbox-images.json .cargo .github/scripts/spaces_rust_slice_inputs.py
   .github/actions/spaces-native .github/actions/spaces-rust-slice .github/actions/setup-protoc
   .github/workflows/cd-cua-spaces-build.yml
+  .github/workflows/ci-cua-spaces-rust-slice.yml .github/workflows/cd-cua-spaces-natives-main.yml
 )
 args=()
 for p in "${inputs[@]}"; do args+=("$rev:$p"); done

@@ -871,6 +871,16 @@ async fn a_spare_machine_provides_spaces_without_its_desktop() {
             spec.args
         );
     }
+    // Keeping the screen private never turns off the Cua Driver this Mac's
+    // own coding agents use (cua-spacesd runs it whatever the flags say).
+    assert!(
+        !spec
+            .env
+            .iter()
+            .any(|(k, _)| k == "CUA_SPACESD_EMBEDDED_DRIVER"),
+        "{:?}",
+        spec.env
+    );
     let policy = host.policy().unwrap().unwrap();
     assert!(!policy.share_desktop && policy.provide_spaces);
     let daemon = policy.spaces_daemon.clone().unwrap();
@@ -1808,6 +1818,51 @@ fn jwt(user: &str) -> String {
     format!("{}.{}.sig", b("{}"), b(&format!(r#"{{"sub":"{user}"}}"#)))
 }
 
+/// A computer paused for another account joins the account that made a
+/// pairing code (the app's "Use a code from another computer"): it is
+/// registered again for that account, keeping its setup. A computer that
+/// is not paused like that is left to a plain setup.
+#[tokio::test]
+async fn a_pairing_code_moves_a_paused_computer_to_the_codes_account() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    // Made on a computer already in user-2's account.
+    let minted = RelayClient::new(&relay.url)
+        .unwrap()
+        .create_pairing_code(
+            &jwt("user-2"),
+            &crate::pairing::PairingCodeRequest::default(),
+        )
+        .await
+        .unwrap()
+        .code
+        .unwrap();
+    let code = crate::pairing::PairingCodeToken::parse(&minted).unwrap();
+    let f = fixture();
+    let host = f.host();
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    let old_id = before.machine_id.clone().unwrap();
+
+    // Sharing (not paused): nothing to move, a plain setup applies.
+    assert!(host.rejoin_with_code(&code).await.unwrap().is_none());
+
+    host.pause_signed_out().await.unwrap();
+    let moved = host.rejoin_with_code(&code).await.unwrap().expect("moved");
+    assert!(!moved.paused_signed_out);
+    assert!(moved.service.installed && moved.service.running);
+    assert_eq!(moved.owner.as_deref(), Some("user-2"));
+    assert_ne!(moved.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(moved.name.as_deref(), Some("mini"));
+    let on_relay = relay
+        .machine(moved.machine_id.as_deref().unwrap())
+        .expect("registered");
+    assert_eq!(on_relay.owner.id, "user-2");
+}
+
 /// Signing in as another account re-registers this computer for it: a new
 /// machine id and mesh key, while the name and the Provide Spaces setting
 /// stay.
@@ -2559,7 +2614,7 @@ fn a_host_moved_off_the_channels_ports_is_told_its_own() {
     assert!(spec.env.contains(&var("CUA_ENV_PORT", "3231")));
     assert!(spec.env.contains(&var("CUA_ENV_QUIC_PORT", "3232")));
     assert!(spec.env.iter().all(|(k, _)| k != "CUA_CHANNEL"));
-    let plist = crate::service::launchd_plist(&spec);
+    let plist = crate::service::launchd_plist(&spec, "com.trycua.spacesd.host");
     assert!(
         plist.contains("<key>CUA_ENV_PORT</key>\n    <string>3231</string>"),
         "{plist}"
@@ -2613,7 +2668,7 @@ fn the_service_keeps_the_credential_store_and_home_setup_ran_with() {
     let var = |k: &str, v: &str| (k.to_string(), v.to_string());
     assert!(spec.env.contains(&var("CUA_CREDENTIAL_STORE", "file")));
     assert!(spec.env.contains(&var("CUA_HOME", "/Users/ada/.cua-spare")));
-    let plist = crate::service::launchd_plist(&spec);
+    let plist = crate::service::launchd_plist(&spec, "com.trycua.spacesd.host");
     assert!(
         plist.contains("<key>CUA_CREDENTIAL_STORE</key>\n    <string>file</string>"),
         "{plist}"
@@ -3008,4 +3063,100 @@ async fn the_saved_registration_is_found_by_email_when_the_account_id_is_not_the
         .unwrap();
     assert_eq!(back.machine_id.as_deref(), Some(id_a.as_str()));
     assert_eq!(listed(&relay, &a).await, vec![id_a]);
+}
+
+fn quick_verify() -> VerifyTiming {
+    VerifyTiming {
+        timeout: std::time::Duration::from_millis(1500),
+        stable: std::time::Duration::from_millis(10),
+        offline_grace: std::time::Duration::from_millis(10),
+        poll: std::time::Duration::from_millis(20),
+    }
+}
+
+/// CUA-3513: "Added" means online. Setup waits until the relay sees the
+/// machine's session before it reports success.
+#[tokio::test]
+async fn setup_waits_until_the_relay_sees_the_machine_online() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f
+        .host()
+        .with_online_check(true)
+        .with_verify_timing(VerifyTiming {
+            timeout: std::time::Duration::from_secs(20),
+            ..quick_verify()
+        });
+    let id_file = host.paths().machine_id.clone();
+    let joined = async {
+        // The driver joins a moment after it starts.
+        let id = loop {
+            if let Ok(id) = std::fs::read_to_string(&id_file)
+                && relay.machine(id.trim()).is_some()
+            {
+                break id.trim().to_string();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        relay.set_online(&id, true, "test");
+        std::time::Instant::now()
+    };
+    let token = StaticToken("acct-token".into());
+    let (status, online_at) = tokio::join!(host.setup(f.relay_opts(&relay.url), &token), joined);
+    let status = status.unwrap();
+    assert!(online_at.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(status.online, Some(true));
+}
+
+/// CUA-3513: a service that runs but never reaches the relay fails setup
+/// with the reason, so the app never says "Added" for a computer that
+/// stays offline.
+#[tokio::test]
+async fn setup_fails_when_the_machine_never_comes_online() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f
+        .host()
+        .with_online_check(true)
+        .with_verify_timing(quick_verify());
+    std::fs::create_dir_all(host.paths().dir.clone()).unwrap();
+    std::fs::write(host.paths().log(), "joining relay\nrelay refused: 503\n").unwrap();
+    let err = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("did not come online"), "{err}");
+    assert!(err.contains("the relay does not see it yet"), "{err}");
+    assert!(err.contains("relay refused: 503"), "{err}");
+}
+
+/// CUA-3512: a service an older build left under another home's names
+/// moves to this home's own on the next setup, even when nothing else
+/// changes (`migrate_service_names`), and not at all when there is none.
+#[tokio::test]
+async fn an_old_service_name_moves_to_the_home_own_one() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    f.manager.calls.lock().unwrap().clear();
+    assert!(host.migrate_service_names().unwrap().is_empty());
+    assert!(f.manager.calls.lock().unwrap().is_empty());
+
+    *f.manager.legacy_names.lock().unwrap() = vec!["cua-spacesd-host-e9140ee2".into()];
+    assert_eq!(
+        host.migrate_service_names().unwrap(),
+        vec!["cua-spacesd-host-e9140ee2".to_string()]
+    );
+    assert_eq!(
+        *f.manager.calls.lock().unwrap(),
+        ["retire", "install", "start"]
+    );
 }

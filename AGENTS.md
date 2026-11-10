@@ -175,7 +175,19 @@ heading (`## [x.y.z](...)`), never above it. Release Please reads the version
 from that heading; with text above it, it tags every component with the PR's
 version (#6350). `CI: Release metadata` and the release workflow both check this.
 
+## Cua Spaces: no betas
+
+Never tag a Cua Spaces beta (`cua-spaces-vX.Y.Z-beta.N`): the release workflow
+refuses it unless the repository variable `ALLOW_SPACES_BETA` is `true`. For
+pre-release testing, use the Nightly channel (Settings, Advanced, Nightly), or
+run the **Nightly: Cua Spaces** workflow (`nightly-cua-spaces.yml`) to build
+main now. Stable stays Release Please plus the canary gate. Details:
+[docs/contributing/releasing-cua-spaces.md](docs/contributing/releasing-cua-spaces.md).
+
 ## Monorepo component release resolution
+
+Follow [`docs/component-release-workflow.md`](docs/component-release-workflow.md)
+for the normal Release Please preparation, publication, and verification path.
 
 Cua is a monorepo with independent component release streams. Never use
 GitHub's repository-wide "Latest" release badge, the `/releases/latest`
@@ -188,6 +200,14 @@ release-managed baked version. Their API fallback selects the highest semantic
 version whose tag matches `cua-driver-rs-v*`. Both download assets from the
 exact component tag; neither depends on GitHub's repository-wide "Latest"
 release.
+
+Nothing may depend on "Latest" at all (decided 5 Nov 2026). Installers,
+update checks, the download page, docs and CI read an explicit per-product
+source: a release-managed baked version, a release list filtered by the
+product's tag prefix, or a fixed-tag rolling release that holds a feed or
+manifest (`cua-install-latest`, `cua-spaces-latest`). Which release GitHub
+marks Latest is cosmetic, for people browsing the repository.
+`.github/scripts/tests/test_no_latest_consumers.py` fails on any new lookup.
 
 Before making a release-status or installation-version claim:
 

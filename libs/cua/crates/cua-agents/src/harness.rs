@@ -626,7 +626,22 @@ pub fn memory_dir(h: &Harness) -> Option<&'static str> {
 /// state is `<guest home>/.cua/agents/codex-state/<name>`; a home elsewhere
 /// (an explicit `home_dir`) keeps it in its own `.codex-sqlite` sibling.
 pub fn codex_sqlite_dir(home: &str) -> String {
+    codex_sqlite_dir_in(home, "")
+}
+
+/// [`codex_sqlite_dir`] for a run whose directory is `run_dir`
+/// (`<guest home>/.cua/agents/<run>`). A home on a Space's mounted Volume
+/// (`/volume/agents/<name>`, where `volume_for_agent` puts it) names no
+/// guest home of its own; the run directory does.
+pub fn codex_sqlite_dir_in(home: &str, run_dir: &str) -> String {
     let home = home.trim_end_matches('/');
+    if let Some(name) = home.strip_prefix("/volume/agents/")
+        && !name.contains('/')
+        && !name.is_empty()
+        && let Some((guest_home, _)) = run_dir.trim_end_matches('/').rsplit_once("/.cua/agents/")
+    {
+        return format!("{guest_home}/.cua/agents/codex-state/{name}");
+    }
     // `cua-volume` in a Space; on a Mac the Volume is mounted at
     // `~/Cua Volume`.
     for marker in ["/cua-volume/agents/", "/Cua Volume/agents/"] {
@@ -670,6 +685,25 @@ pub fn launch_with_home(
     home: Option<&str>,
 ) -> crate::Result<Launch> {
     launch_with_config(h, endpoint, model, run_dir, cwd, home, None)
+}
+
+/// Sets the reasoning level of a run on the harnesses that take one: Claude Code
+/// reads `CLAUDE_CODE_EFFORT_LEVEL`, Codex a `-c model_reasoning_effort=` override.
+/// Any other harness (or an unknown level) is left as it was.
+pub fn apply_effort(h: &Harness, l: &mut Launch, effort: Option<&str>) {
+    let Some(e) = effort.filter(|e| ["low", "medium", "high", "xhigh", "max"].contains(e)) else {
+        return;
+    };
+    match h.id {
+        "claude-code" => l.env.push(("CLAUDE_CODE_EFFORT_LEVEL".into(), e.into())),
+        // Codex has no `max`; its top level is `xhigh`.
+        "openai-codex" | "codex" => {
+            let e = if e == "max" { "xhigh" } else { e };
+            l.args
+                .extend(["-c".into(), format!("model_reasoning_effort={e:?}")]);
+        }
+        _ => {}
+    }
 }
 
 /// [`launch_with_home`] with `hermes_config`: the `config.yaml` Cua generated
@@ -771,7 +805,7 @@ pub fn launch_with_config(
             // config and memories stay on the Volume. `sqlite_home` is a
             // top-level key, so it goes before any table, and it is written on
             // every start with the rest of the generated config.
-            if let Some(dir) = home.map(codex_sqlite_dir) {
+            if let Some(dir) = home.map(|h| codex_sqlite_dir_in(h, run_dir)) {
                 toml.insert_str(0, &format!("sqlite_home = {dir:?}\n\n"));
                 l.prelude.push(format!("mkdir -p {}", crate::quote(&dir)));
                 env(&mut l, "CODEX_SQLITE_HOME", dir);
@@ -1054,6 +1088,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_reasoning_level_reaches_only_the_apps_that_take_one() {
+        let mut c = launch(harness("claude-code").unwrap(), None, None, "/r", "/w").unwrap();
+        apply_effort(harness("claude-code").unwrap(), &mut c, Some("low"));
+        assert!(
+            c.env
+                .contains(&("CLAUDE_CODE_EFFORT_LEVEL".into(), "low".into()))
+        );
+        let mut x = launch(harness("openai-codex").unwrap(), None, None, "/r", "/w").unwrap();
+        apply_effort(harness("openai-codex").unwrap(), &mut x, Some("max"));
+        assert!(
+            x.args
+                .windows(2)
+                .any(|w| w[0] == "-c" && w[1] == "model_reasoning_effort=\"xhigh\"")
+        );
+        let mut o = launch(harness("opencode").unwrap(), None, None, "/r", "/w").unwrap();
+        let before = (o.env.clone(), o.args.clone());
+        apply_effort(harness("opencode").unwrap(), &mut o, Some("high"));
+        apply_effort(harness("claude-code").unwrap(), &mut c, Some("bogus; rm"));
+        assert_eq!((o.env, o.args), before);
+        assert_eq!(
+            c.env
+                .iter()
+                .filter(|(k, _)| k == "CLAUDE_CODE_EFFORT_LEVEL")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn short_names_resolve_to_the_registry_id() {
         assert_eq!(harness("codex").unwrap().id, "openai-codex");
         assert_eq!(harness("claude").unwrap().id, "claude-code");
@@ -1215,6 +1278,26 @@ mod tests {
             codex_sqlite_dir("/Users/ada/Cua Volume/agents/codex"),
             "/Users/ada/.cua/agents/codex-state/codex"
         );
+        // A home on the Space's mounted Volume (`/volume/agents/<name>`) keeps
+        // the state in the guest home the run directory names, never on the
+        // Volume (SQLite cannot map shared memory there).
+        assert_eq!(
+            codex_sqlite_dir_in("/volume/agents/ada", "/home/cua/.cua/agents/run-1"),
+            "/home/cua/.cua/agents/codex-state/ada"
+        );
+        let x = launch_with_home(
+            harness("openai-codex").unwrap(),
+            None,
+            None,
+            "/home/cua/.cua/agents/run-1",
+            "/w",
+            Some("/volume/agents/ada"),
+        )
+        .unwrap();
+        assert!(x.env.contains(&(
+            "CODEX_SQLITE_HOME".to_string(),
+            "/home/cua/.cua/agents/codex-state/ada".to_string()
+        )));
         // Not the home's own `codex/` (CODEX_HOME), which is on the Volume.
         let home = "/home/cua/cua-volume/agents/ada";
         assert!(!codex_sqlite_dir(home).starts_with(home));

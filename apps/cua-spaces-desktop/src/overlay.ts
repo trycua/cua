@@ -13,6 +13,19 @@ export const DIM_ATTRIBUTE = "data-window-dim";
 /** Preload -> main: `true` while any backdrop is on the page. */
 export const DIM_CHANNEL = "cua-desktop:dim";
 
+/** The marker a full-page dark screen puts on its root, valued with its
+ * `#rrggbb` background (the dark first run). While it is on the page the
+ * overlay takes that colour with light symbols, whatever the app theme. */
+export const SURFACE_ATTRIBUTE = "data-window-surface";
+
+/** Preload -> main: the marked surface's `#rrggbb`, or `null` when none is on the page. */
+export const SURFACE_CHANNEL = "cua-desktop:surface";
+
+/** `value` when it is a `#rrggbb` colour, else null. */
+export function parseSurface(value: unknown): string | null {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+}
+
 // The web UI's `--background` and `--foreground` (index.css), in sRGB.
 export const BACKGROUND = { dark: "#16181c", light: "#f7f8fa" } as const;
 export const SYMBOL = { dark: "#e9ebef", light: "#181b1f" } as const;
@@ -37,6 +50,13 @@ export function overlayColors(theme: Theme, dimmed: boolean): { color: string; s
   if (!dimmed) return { color: BACKGROUND[theme], symbolColor: SYMBOL[theme] };
   const a = BACKDROP_ALPHA[theme];
   return { color: darken(BACKGROUND[theme], a), symbolColor: darken(SYMBOL[theme], a) };
+}
+
+/** The overlay over a dark `surface` (see {@link SURFACE_ATTRIBUTE}) or, with none, the theme's. */
+export function overlayColorsFor(theme: Theme, dimmed: boolean, surface: string | null | undefined): { color: string; symbolColor: string } {
+  if (!surface) return overlayColors(theme, dimmed);
+  const a = BACKDROP_ALPHA.dark;
+  return dimmed ? { color: darken(surface, a), symbolColor: darken(SYMBOL.dark, a) } : { color: surface, symbolColor: SYMBOL.dark };
 }
 
 export interface OverlayStyle {

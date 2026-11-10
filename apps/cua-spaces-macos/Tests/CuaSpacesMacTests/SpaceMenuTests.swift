@@ -21,7 +21,7 @@ struct SpaceMenuTests {
                     osName: "Ubuntu", osPrettyName: nil, image: nil, imageDigest: nil, kind: .container,
                     arch: "arm64", hidden: false, reachable: running, error: nil, host: nil, hostName: hostName,
                     power: "stop", powerState: running ? "running" : "stopped", cloud: nil, cloudPlace: nil,
-                    cloudDelete: nil, stopReason: nil, sharing: sharing)
+                    cloudDelete: nil, stopReason: nil, sharing: sharing, parent: nil)
     }
 
     static func facts(role: String, owner: String = "sam", editors: [String] = [], team: String? = nil)
@@ -46,7 +46,6 @@ struct SpaceMenuTests {
     func makeModel(_ backend: FixtureSpacesBackend = FixtureSpacesBackend(rows: SpaceMenuTests.rows)) async
         -> AppModel {
         let m = ViewModelTests().makeModel(backend)
-        m.settings.experiments.sharing = true
         await m.refresh()
         return m
     }
@@ -98,12 +97,6 @@ struct SpaceMenuTests {
         #expect(items.map(\.id) == [.open, .power, .share, .teleport, .delete])
         #expect(items.first { $0.id == .power }?.label == "Turn on")
         #expect(items.first { $0.id == .teleport }?.enabled == false, "Teleport needs a running desktop")
-    }
-
-    @Test func sharingOffLeavesShareOut() async throws {
-        let m = await makeModel()
-        m.settings.experiments.sharing = false
-        #expect(!m.spaceMenu(try space(m, "local:onb-new")).contains { $0.id == .share })
     }
 
     @Test func someoneElsesOffersLeaveNotDelete() async throws {

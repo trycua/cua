@@ -14,6 +14,7 @@ use tonic::{Code, Status};
 use crate::error::{io_status, status, StatusBuilder};
 use crate::util::{hex_digest, random_id};
 
+use super::offworker::OffWorker;
 use super::paths::entry_info;
 use super::xattr::{self, Attributes};
 
@@ -54,7 +55,7 @@ impl WriteTarget {
 pub struct AtomicWriter {
     target: WriteTarget,
     tmp: Option<PathBuf>,
-    file: tokio::fs::File,
+    file: OffWorker<tokio::fs::File>,
     hasher: Sha256,
     written: u64,
 }
@@ -162,20 +163,25 @@ impl AtomicWriter {
         } else {
             target.permissions
         });
-        let file = options
-            .open(&path)
-            .await
-            .map_err(|e| io_status(&e, &path))?;
+        let file = OffWorker::new(
+            options
+                .open(&path)
+                .await
+                .map_err(|e| io_status(&e, &path))?,
+        );
         if !target.attributes.values.is_empty() {
             #[cfg(unix)]
             let stored = {
                 use std::os::fd::AsRawFd as _;
-                xattr::set_on_fd(file.as_raw_fd(), &target.attributes)
+                let (fd, attributes) = (file.as_raw_fd(), target.attributes.clone());
+                tokio::task::spawn_blocking(move || xattr::set_on_fd(fd, &attributes))
+                    .await
+                    .unwrap_or_else(|e| Err(crate::error::internal(e.to_string())))
             };
             #[cfg(not(unix))]
             let stored = xattr::set_on_fd(0, &target.attributes);
             if let Err(error) = stored {
-                drop(file);
+                file.close().await;
                 if let Some(tmp) = &tmp {
                     let _ = tokio::fs::remove_file(tmp).await;
                 }
@@ -251,8 +257,10 @@ impl AtomicWriter {
         // The open file's own metadata, taken before it is renamed: what the
         // entry reports if the destination cannot be looked up right after.
         let published_meta = self.file.metadata().await.ok();
+        // Closed on a blocking thread (the destination can be on the Cua
+        // Volume), before the rename.
+        self.file.close_in_place().await;
         if let Some(tmp) = self.tmp.take() {
-            drop(self.file);
             let published = match self.target.mode {
                 WriteMode::CreateNew => {
                     // link(2) fails if the destination appeared meanwhile.
@@ -286,13 +294,17 @@ impl AtomicWriter {
         .await
         .map_err(|e| io_status(&e, &dest))?;
         let mut entry = entry_info(&dest, &meta);
-        entry.metadata = xattr::read(&dest, &self.target.attributes.namespace, true);
+        let (read_path, namespace) = (dest.clone(), self.target.attributes.namespace.clone());
+        entry.metadata =
+            tokio::task::spawn_blocking(move || xattr::read(&read_path, &namespace, true))
+                .await
+                .unwrap_or_default();
         Ok((entry, digest))
     }
 
     /// Discards the temporary file.
-    pub async fn abort(self) {
-        drop(self.file);
+    pub async fn abort(mut self) {
+        self.file.close_in_place().await;
         if let Some(tmp) = self.tmp {
             let _ = tokio::fs::remove_file(tmp).await;
         }

@@ -39,6 +39,23 @@ see the extension contract for the stable codes.
 
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
+## Get Cua Driver
+
+**Get Cua Driver with Cua Spaces (recommended on a Mac).** Cua Spaces for Mac
+(macOS 26 or later) carries Cua Driver, runs it in the background, keeps it up
+to date and connects Claude Code and Codex to it. Download it from
+[cua.ai/download](https://cua.ai/download). Permissions are granted to Cua Spaces,
+and its Cua Driver page shows whether Cua Driver is running, with **Repair** and
+**Test now**. See [how the install works](https://cua.ai/docs/cua-driver/guides/cua-spaces).
+
+**Install Cua Driver on its own.** For Windows, Linux, older macOS, or if you
+don't want Cua Spaces:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"   # macOS and Linux
+irm https://cua.ai/driver/install.ps1 | iex                       # Windows (PowerShell)
+```
+
 ## Integration surfaces
 
 - **Cua as an agent MCP or CLI:** MCP-capable agents connect directly to
@@ -241,7 +258,7 @@ ClawHub CLI. A real release is available only through the
 all of the following:
 
 1. Dispatch the workflow from `main`.
-2. Enter a version that matches both `rust/Cargo.toml` and the `version` field
+2. Enter a version that matches both `rust/Cargo.toml` and the `metadata.version` field
    in `rust/Skills/cua-driver/SKILL.md`.
 3. Confirm the MIT-0 rights check in the workflow form.
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher

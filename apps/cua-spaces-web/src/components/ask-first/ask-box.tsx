@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { ArrowUpIcon, CheckIcon, ChevronDownIcon, EllipsisIcon, LaptopIcon, MonitorIcon, SparklesIcon } from "lucide-react";
+import { ArrowUpIcon, CheckIcon, ChevronDownIcon, EllipsisIcon, LaptopIcon, LoaderCircleIcon, MonitorIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
 
 import type { AgentAccount, AgentGroup, AgentsView, Space, SpaceOs } from "@/bridge";
@@ -11,12 +11,13 @@ import { OsIcon } from "@/components/os-icon";
 import type { NewKind, TaskWhere } from "@/lib/ask-first";
 import type { AgentSelection } from "@/lib/ask-first-model";
 import type { AskRepo } from "@/lib/ask-first-repo";
+import { useT, t } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-import { AgentPicker, type AccountActions } from "./agent-picker";
+import { AgentPicker } from "./agent-picker";
 import { RepoChip } from "./repo-chip";
-import { TreeWherePicker, whereNode, type TreeWhere } from "./tree-where";
-import { TreeIcon } from "@/components/spaces/tree-parts";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
+import { thisMacChipText, type ThisMacReadiness } from "@/lib/this-mac-target";
 
 export type { TaskWhere } from "@/lib/ask-first";
 
@@ -26,10 +27,14 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 
 /** Where it runs is a Space: "New Space", then quieter "Linux on This Mac". */
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
-  if (where.kind === "agent") return { title: where.fresh ? "Agent decides, new Home" : "Agent decides", detail: null };
+  if (where.kind === "agent") return { title: where.reuse ? t("home.ask_box.agent_decides_same_home") : t("home.ask_box.agent_decides"), detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
-  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? "This Mac"}` };
-  return { title: where.kind === "this-mac" ? "This Mac" : where.space.name, detail: null };
+  if (where.kind === "new")
+    return {
+      title: t("home.ask_box.new_space"),
+      detail: t("home.ask_box.new_space_detail", { os: OS_WORD[where.os], computer: where.on?.name ?? thisComputerLabel() }),
+    };
+  return { title: where.kind === "this-mac" ? thisComputerLabel() : where.space.name, detail: null };
 }
 
 export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) {
@@ -40,11 +45,8 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
   );
 }
 
-/** The trade-off, under the list. */
-export const WHERE_FOOTER = "A new computer keeps yours untouched. This Mac works on your own files and apps.";
-
-/** With agent homes: what the footer adds (the agent can also be told in the text with @). */
-export const WHERE_FOOTER_HOME = "You can also name a Space or computer in the text with @.";
+/** A new Space's row: just its system ("Linux", "macOS"); the section label says it's new, on this computer. */
+const NEW_KIND_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "macOS", windows: "Windows", unknown: "" };
 
 /** A computer the person can name for the agent to use (agent homes). */
 export interface NameableMachine {
@@ -85,23 +87,31 @@ function Picker({
   );
 }
 
-function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode; title: string; note: string; selected: boolean; onSelect: () => void }) {
+function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode; title: string; note?: string; selected: boolean; onSelect: () => void }) {
   return (
     <MenuPrimitive.Item
       onClick={onSelect}
-      className={cn("flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 outline-none data-highlighted:bg-foreground/[0.06]", selected && "bg-foreground/[0.06]")}
+      className={cn(
+        "flex min-h-12 cursor-default items-center gap-3 rounded-lg px-3 py-2 outline-none data-highlighted:bg-foreground/[0.06]",
+        selected && "bg-foreground/[0.06]",
+      )}
     >
       {icon}
       <div className="min-w-0 flex-1">
         <div className="text-[14px] font-medium">{title}</div>
-        <div className="text-[12px] text-muted-foreground">{note}</div>
+        {note ? <div className="text-[12px] text-muted-foreground">{note}</div> : null}
       </div>
       {selected ? <CheckIcon className="size-4" /> : null}
     </MenuPrimitive.Item>
   );
 }
 
-const whereButton = "flex h-9 items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]";
+/** Where it runs, as a chip like the repo's: the place, then a switcher for your other computers and Spaces. */
+const whereChip = "flex h-9 min-w-0 items-center rounded-lg bg-foreground/[0.06]";
+const SectionLabel = ({ children }: { children: ReactNode }) => <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">{children}</p>;
+
+const whereButton =
+  "flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/[0.05] focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]";
 
 /**
  * Home's box, like the first prompt of a chat app: the job in your own words,
@@ -115,9 +125,9 @@ export function AskBox({
   selected,
   onPickAccount,
   onModel,
+  onEffort,
   onSignIn,
   onConfigure,
-  accounts,
   repo,
   onRepo,
   where,
@@ -126,14 +136,15 @@ export function AskBox({
   onWhereOpen,
   kinds,
   spaces,
+  computers = [],
   machines,
+  thisMac = null,
   agentHome,
   hasHome,
   busy,
   onSubmit,
   compact,
   autoFocus,
-  tree = null,
 }: {
   text: string;
   onText: (t: string) => void;
@@ -143,12 +154,11 @@ export function AskBox({
   selected: AgentSelection | null;
   onPickAccount: (group: AgentGroup, account: AgentAccount) => void;
   onModel: (model: string) => void;
+  onEffort?: (level: string) => void;
   /** Starts the sign-in of an app that has no account. */
   onSignIn: (group: AgentGroup) => void;
-  /** Opens Settings, Connections, where the menu's apps are chosen. */
+  /** Opens Settings, Connections, where the agents and their sign-ins are managed. */
   onConfigure?: () => void;
-  /** What the menu does with an app's accounts (default, rename, remove, add). */
-  accounts: AccountActions;
   repo: AskRepo | null;
   onRepo?: (r: AskRepo | null) => void;
   where: TaskWhere;
@@ -160,29 +170,34 @@ export function AskBox({
   kinds: NewKind[];
   /** Running Spaces to use instead (never this Mac's own desktop: `pickableSpaces`). */
   spaces: Space[];
+  /** Your other computers that are online and share their desktop (`otherComputerDesktops`). */
+  computers?: Space[];
+  /** How this computer stands as a place to run, and its one Set up action (`useThisMacTarget`). */
+  thisMac?: { readiness: ThisMacReadiness; busy: boolean; onSetUp: () => void } | null;
   /** With agent homes (Child Spaces on): the computers the person can name, this one first. */
   machines?: NameableMachine[];
   /** The job goes to the agent's Home Space, which makes the Spaces it needs: no where picker until a place is named. */
   agentHome?: boolean;
-  /** The person already has a Home Space: the picker offers a fresh one. */
+  /** The person already has a Home Space: the picker offers to continue in it. */
   hasHome?: boolean;
   busy: boolean;
   onSubmit: () => void;
   compact?: boolean;
   autoFocus?: boolean;
-  /** Spaces as a tree (Labs): the tree picker, starting on your default Space. */
-  tree?: TreeWhere | null;
 }) {
+  const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
-  const treeNode = tree ? whereNode(tree.tree, where) : undefined;
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
-  const ready = text.trim().length > 0 && !busy && selected !== null;
+  // This computer picked but not set up yet: the chip says so, with Set up; the job can't start on it until then.
+  const needsSetUp = where.kind === "this-mac" && thisMac?.readiness === "needs-setup";
+  const ready = text.trim().length > 0 && !busy && selected !== null && !needsSetUp;
+  const chip = thisMacChipText(thisComputerLabel());
   const label = whereSpaceLabel(where);
   // With agent homes the agent decides where, so nothing about it shows until the person names a place: with @ in the
   // text, or by picking one (the "..." button then shows).
-  const placed = where.kind !== "agent" || Boolean(where.fresh);
+  const placed = where.kind !== "agent" || Boolean(where.reuse);
   const naming = placed || /(^|\s)@/.test(text);
   return (
     <div data-ask-box="" className="rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
@@ -197,51 +212,84 @@ export function AskBox({
           }
         }}
         rows={compact ? 1 : 3}
-        aria-label="What should it do?"
-        placeholder="What should it do?"
-        className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
+        aria-label={t("home.ask_box.label")}
+        placeholder={agentHome ? t("home.ask_box.placeholder_home") : t("home.ask_box.label")}
+        className={cn(
+          "block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground",
+          compact ? "min-h-14" : "min-h-24",
+        )}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} onConfigure={onConfigure} accounts={accounts} />
+        <AgentPicker
+          view={view}
+          selected={selected}
+          onPick={onPickAccount}
+          onModel={onModel}
+          onEffort={onEffort}
+          onSignIn={onSignIn}
+          onConfigure={onConfigure}
+        />
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
           <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">
-            in {label.title}
+            {t("home.ask_box.in_place", { place: label.title })}
           </span>
         ) : null}
         {agentHome ? null : (
-          <WherePicker
-            where={where}
-            onWhere={onWhere}
-            open={whereOpen}
-            onOpenChange={onWhereOpen}
-            kinds={kinds}
-            spaces={spaces}
-            tree={tree}
-            trigger={
-              <button type="button" className={whereButton} data-picker="where">
-                {treeNode ? (
-                  <TreeIcon node={treeNode} />
-                ) : where.kind === "new" ? (
-                  <OsIcon os={where.os} className="size-3.5" />
-                ) : where.kind === "this-mac" ? (
-                  <LaptopIcon className="size-3.5" />
-                ) : (
-                  <MonitorIcon className="size-3.5" />
-                )}
-                <span className="max-w-64 truncate" data-ask-where="">
-                  {treeNode?.name ?? label.title}
-                  {treeNode ? null : label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
-                  {treeNode?.isDefault ? (
-                    <span className="ml-2 text-[13px] text-muted-foreground" data-ask-where-default="">
-                      Default
-                    </span>
-                  ) : null}
-                </span>
-                <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+          <span className={whereChip} data-ask-where-chip={needsSetUp ? "needs-setup" : where.kind}>
+            <WherePicker
+              where={where}
+              onWhere={onWhere}
+              open={whereOpen}
+              onOpenChange={onWhereOpen}
+              kinds={kinds}
+              spaces={spaces}
+              computers={computers}
+              trigger={
+                <button
+                  type="button"
+                  className={whereButton}
+                  data-picker="where"
+                  aria-label={
+                    needsSetUp
+                      ? t("home.ask_box.where_label_note", { place: label.title, note: chip.note })
+                      : t("home.ask_box.where_label", { place: label.title })
+                  }
+                >
+                  {where.kind === "new" ? (
+                    <OsIcon os={where.os} className="size-3.5" />
+                  ) : where.kind === "this-mac" ? (
+                    <LaptopIcon className="size-3.5" />
+                  ) : (
+                    <MonitorIcon className="size-3.5" />
+                  )}
+                  <span className="max-w-64 truncate" data-ask-where="">
+                    {label.title}
+                    {label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
+                    {needsSetUp ? (
+                      <span className="ml-1.5 text-muted-foreground" data-ask-where-note="">
+                        {chip.note}
+                      </span>
+                    ) : null}
+                  </span>
+                  <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              }
+            />
+            {needsSetUp && thisMac ? (
+              <button
+                type="button"
+                onClick={thisMac.onSetUp}
+                disabled={thisMac.busy}
+                aria-label={chip.actionLabel}
+                className="mr-1 flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-background px-2.5 text-[12.5px] font-medium shadow-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-70 dark:bg-white/10 dark:hover:bg-white/15"
+                data-ask-where-setup=""
+              >
+                {thisMac.busy ? <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin motion-reduce:animate-none" /> : null}
+                {thisMac.busy ? chip.busy : chip.action}
               </button>
-            }
-          />
+            ) : null}
+          </span>
         )}
         <div className="flex-1" />
         {agentHome && naming ? (
@@ -259,7 +307,7 @@ export function AskBox({
               <button
                 type="button"
                 data-picker="where"
-                aria-label="Where it runs"
+                aria-label={t("home.ask_box.where")}
                 className="flex size-9 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]"
               >
                 <EllipsisIcon className="size-4" />
@@ -271,8 +319,11 @@ export function AskBox({
           type="button"
           disabled={!ready}
           onClick={onSubmit}
-          aria-label="Start"
-          className={cn("flex size-10 items-center justify-center rounded-full transition-colors", ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground")}
+          aria-label={t("home.ask_box.start")}
+          className={cn(
+            "flex size-10 items-center justify-center rounded-full transition-colors",
+            ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground",
+          )}
         >
           <ArrowUpIcon className="size-5" />
         </button>
@@ -291,33 +342,77 @@ export function WherePicker({
   onWhere,
   kinds,
   spaces,
+  computers = [],
   machines,
   agentHome,
   hasHome,
   trigger,
   open,
   onOpenChange,
-  tree = null,
 }: {
   where: TaskWhere | null;
   onWhere: (w: TaskWhere) => void;
   kinds: NewKind[];
   spaces: Space[];
+  /** Your other computers that are online and share their desktop (without agent homes, which name `machines`). */
+  computers?: Space[];
   /** With agent homes: the computers the person can name (other than this one, which has its own row). */
   machines?: NameableMachine[];
   /** Leads with "Let the agent decide". */
   agentHome?: boolean;
-  /** The person already has a Home Space (the next request reuses it): offers a fresh one. */
+  /** The person already has a Home Space: offers to continue in it (a request starts a new Home otherwise). */
   hasHome?: boolean;
   trigger: ReactElement;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** Spaces as a tree (Labs): the tree in place of this list. */
-  tree?: TreeWhere | null;
 }) {
-  if (tree) return <TreeWherePicker tw={tree} where={where} onWhere={onWhere} kinds={kinds} trigger={trigger} open={open} onOpenChange={onOpenChange} />;
+  const t = useT();
+  const newRows = kinds.map((k) => (
+    <PickerRow
+      key={k.os}
+      icon={
+        <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+          <OsIcon os={k.os} className="size-4" />
+        </span>
+      }
+      title={NEW_KIND_WORD[k.os]}
+      note={k.blocked ?? k.note}
+      selected={where?.kind === "new" && where.os === k.os}
+      onSelect={() => onWhere({ kind: "new", os: k.os })}
+    />
+  ));
+  const newSpaceLabel = t("home.ask_box.new_space_on", { computer: thisComputerText() });
+  const thisRow = (
+    <PickerRow
+      icon={
+        <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+          <LaptopIcon className="size-4" />
+        </span>
+      }
+      title={thisComputerLabel()}
+      note={t("home.ask_box.this_computer_note")}
+      selected={where?.kind === "this-mac"}
+      onSelect={() => onWhere({ kind: "this-mac" })}
+    />
+  );
+  const spaceRows = spaces
+    .slice(0, 5)
+    .map((s) => (
+      <PickerRow
+        key={s.id}
+        icon={
+          <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
+            {s.provider === "local" ? <LaptopIcon className="size-4" /> : <OsIcon os={s.os} className="size-4" />}
+          </span>
+        }
+        title={s.name}
+        note={t("home.ask_box.on_now")}
+        selected={where?.kind === "space" && where.space.id === s.id}
+        onSelect={() => onWhere({ kind: "space", space: s })}
+      />
+    ));
   return (
-    <Picker title="Where it runs" trigger={trigger} footer={agentHome ? `${WHERE_FOOTER} ${WHERE_FOOTER_HOME}` : WHERE_FOOTER} open={open} onOpenChange={onOpenChange}>
+    <Picker title={t("home.ask_box.where")} trigger={trigger} open={open} onOpenChange={onOpenChange}>
       {agentHome ? (
         <PickerRow
           icon={
@@ -325,9 +420,8 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Let the agent decide"
-          note="It picks what the job needs, within your budget"
-          selected={where?.kind === "agent" && !where.fresh}
+          title={t("home.ask_box.agent_decides")}
+          selected={where?.kind === "agent" && !where.reuse}
           onSelect={() => onWhere({ kind: "agent" })}
         />
       ) : null}
@@ -338,41 +432,18 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Let the agent decide, in a new Home"
-          note="Starts a fresh Home Space instead of reusing yours"
-          selected={where?.kind === "agent" && Boolean(where.fresh)}
-          onSelect={() => onWhere({ kind: "agent", fresh: true })}
+          title={t("home.ask_box.agent_decides_same_home")}
+          selected={where?.kind === "agent" && Boolean(where.reuse)}
+          onSelect={() => onWhere({ kind: "agent", reuse: true })}
         />
       ) : null}
-      {kinds.map((k) => (
-        <PickerRow
-          key={k.os}
-          icon={
-            <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
-              <OsIcon os={k.os} className="size-4" />
-            </span>
-          }
-          title={`A new ${OS_WORD[k.os]} computer on this Mac`}
-          note={k.blocked ?? k.note}
-          selected={where?.kind === "new" && where.os === k.os}
-          onSelect={() => onWhere({ kind: "new", os: k.os })}
-        />
-      ))}
-      <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">Or use a computer you already have</p>
-      <PickerRow
-        icon={
-          <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
-            <LaptopIcon className="size-4" />
-          </span>
-        }
-        title="This Mac"
-        note="Works on your own files and apps"
-        selected={where?.kind === "this-mac"}
-        onSelect={() => onWhere({ kind: "this-mac" })}
-      />
-      {agentHome && machines?.some((m) => !m.current) ? <p className="px-3 pt-3 pb-1 text-[12px] font-medium text-muted-foreground">Your computers</p> : null}
-      {agentHome
-        ? machines
+      {agentHome ? (
+        <>
+          <SectionLabel>{newSpaceLabel}</SectionLabel>
+          {newRows}
+          <SectionLabel>{t("home.ask_box.your_computers")}</SectionLabel>
+          {thisRow}
+          {machines
             ?.filter((m) => !m.current)
             .slice(0, 5)
             .map((m) => (
@@ -384,26 +455,38 @@ export function WherePicker({
                   </span>
                 }
                 title={m.name}
-                note={m.online ? "Online" : "Off"}
+                note={m.online ? t("home.ask_box.online") : t("home.ask_box.off")}
                 selected={where?.kind === "machine" && where.machine.id === m.id}
                 onSelect={() => onWhere({ kind: "machine", machine: { id: m.id, name: m.name } })}
               />
-            ))
-        : null}
-      {spaces.slice(0, 5).map((s) => (
-        <PickerRow
-          key={s.id}
-          icon={
-            <span className="flex size-7 items-center justify-center rounded-md border text-muted-foreground">
-              {s.provider === "local" ? <LaptopIcon className="size-4" /> : <OsIcon os={s.os} className="size-4" />}
-            </span>
-          }
-          title={s.name}
-          note="On now"
-          selected={where?.kind === "space" && where.space.id === s.id}
-          onSelect={() => onWhere({ kind: "space", space: s })}
-        />
-      ))}
+            ))}
+          {spaceRows}
+        </>
+      ) : (
+        <>
+          {/* This computer already counts: your computers first, then your Spaces; a new computer is optional. */}
+          <SectionLabel>{t("home.ask_box.your_computers")}</SectionLabel>
+          {thisRow}
+          {computers.slice(0, 5).map((c) => (
+            <PickerRow
+              key={c.id}
+              icon={
+                <span className="flex size-7 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <OsIcon os={c.os} className="size-4" />
+                </span>
+              }
+              title={c.name}
+              note={t("home.ask_box.online")}
+              selected={where?.kind === "space" && where.space.id === c.id}
+              onSelect={() => onWhere({ kind: "space", space: c })}
+            />
+          ))}
+          {spaces.length > 0 ? <SectionLabel>{t("home.ask_box.your_spaces")}</SectionLabel> : null}
+          {spaceRows}
+          <SectionLabel>{newSpaceLabel}</SectionLabel>
+          {newRows}
+        </>
+      )}
     </Picker>
   );
 }

@@ -3,11 +3,10 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { flagOn, setFlagOverride } from "@/bridge";
-
 import type { Space } from "@/bridge";
 
 import {
+  withoutStaleTasks,
   addAskTask,
   askTasks,
   currentWhere,
@@ -36,16 +35,6 @@ import {
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-});
-
-describe("the spaces_ask_first_home flag", () => {
-  it("is off unless this device turns it on", () => {
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-    setFlagOverride("spaces_ask_first_home", true);
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-    setFlagOverride("spaces_ask_first_home", null);
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-  });
 });
 
 describe("Ask-first tasks", () => {
@@ -92,8 +81,17 @@ describe("Ask-first tasks", () => {
   });
 });
 
-const row = (id: string, more: Partial<Space> = {}): Space => ({ id, name: id, os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "linux-terminal", ...more });
-const thisMac = row("this-mac", { name: "This machine", os: "macos", status: "local", provider: "local" });
+const row = (id: string, more: Partial<Space> = {}): Space => ({
+  id,
+  name: id,
+  os: "linux",
+  status: "running",
+  detail: "",
+  lastUsedAt: 0,
+  scene: "linux-terminal",
+  ...more,
+});
+const thisMac = row("this-mac", { name: "This computer", os: "macos", status: "local", provider: "local" });
 const LINUX: NewKind = { os: "linux", note: "Free.", blocked: null };
 const MAC: NewKind = { os: "macos", note: "Free.", blocked: null };
 const shared = { configured: true, mode: "relay" as const, machineId: "m-ada-mbp", sharing: true, shareDesktop: true };
@@ -159,8 +157,8 @@ describe("where a task runs", () => {
   });
 
   it("says plainly what working on this Mac means", () => {
-    expect(thisMacConfirmText("Codex").description).toContain("Codex will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away.");
-    expect(thisMacConfirmText("Codex").description).toContain("doesn't ask before each step");
+    expect(thisMacConfirmText("Codex").description).toContain("Codex will use your own files and apps, without asking before each step.");
+    expect(thisMacConfirmText("Codex").description).toContain("You can't throw this computer away afterwards.");
   });
 });
 
@@ -191,5 +189,19 @@ describe("a start that failed", () => {
       const v = startErrorView(raw, "Codex");
       expect(`${v.title} ${v.body}`).not.toMatch(/add_space|local:<|cloud:<|this-mac|API_KEY|host service/);
     }
+  });
+});
+
+describe("stale tasks", () => {
+  it("clears a task that never got a run once it is half an hour old, and keeps the rest", () => {
+    const now = 10_000_000;
+    const old = now - 31 * 60_000;
+    const fresh = now - 60_000;
+    const rows = [
+      { runId: null, createdMs: old, ending: null },
+      { runId: null, createdMs: fresh, ending: null },
+      { runId: "run-1", createdMs: old, ending: null },
+    ] as never[];
+    expect(withoutStaleTasks(rows, now)).toEqual([rows[1], rows[2]]);
   });
 });

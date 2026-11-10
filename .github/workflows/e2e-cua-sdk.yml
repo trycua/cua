@@ -6,8 +6,10 @@ name: "E2E: cua SDK"
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
 #                  the locally built reference images) + docs blocks: five
 #                  build jobs in parallel, then 4 test shards (see `jobs:`). A
-#                  docs edit that leaves every fenced code block as it was
-#                  skips the suite (the `changes` job,
+#                  docs edit that leaves every fenced code block as it was,
+#                  or a change to a crate outside the dependency closure of
+#                  what the suite builds (package graph, ci_graph.py), skips
+#                  the suite (the `changes` job,
 #                  .github/scripts/e2e_cua_sdk_scope.py).
 #   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
 #                  Cua Cloud has ended, so there is no live Fleet lane.
@@ -61,7 +63,9 @@ on:
       - ".github/actions/setup-protoc/**"
       - ".github/actions/rust-cache/**"
       - ".github/scripts/e2e_cua_sdk_scope.py"
+      - ".github/scripts/ci_graph.py"
       - ".github/workflows/e2e-cua-sdk.yml"
+  merge_group:
   schedule:
     - cron: "23 7 * * *"
   workflow_dispatch:
@@ -110,13 +114,13 @@ jobs:
   # skipped, the run still exists and succeeds, so `ci-gate` counts it as passed.
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   changes:
     name: "E2E: cua SDK / changes"
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -162,8 +166,8 @@ jobs:
   # restore them (and never save).
   build-sdk:
     name: build / release SDK
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -204,8 +208,8 @@ jobs:
 
   build-cli:
     name: build / debug CLI, TypeScript, wasm
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -252,8 +256,8 @@ jobs:
 
   build-fixtures:
     name: build / fixtures, static cua-spacesd
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -305,8 +309,8 @@ jobs:
 
   build-rust-tests:
     name: build / Rust test binaries
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -346,8 +350,8 @@ jobs:
 
   build-images:
     name: build / reference images
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -384,9 +388,9 @@ jobs:
 
   shard:
     # The nightly runs the build jobs only to save their caches; its suite is `live`.
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name != 'schedule' }}
+    if: ${{ !failure() && !cancelled() && needs.build-sdk.result == 'success' && needs.build-cli.result == 'success' && needs.build-fixtures.result == 'success' && needs.build-rust-tests.result == 'success' && needs.build-images.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name != 'schedule') && needs.quick.outputs.skip != 'true' }}
     name: tests (shard ${{ matrix.shard }})
-    needs: [build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
+    needs: [quick, build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -450,8 +454,8 @@ jobs:
   # unexpected skip, docs code-block coverage) and the matrix in the summary.
   matrix:
     name: matrix (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
-    needs: shard
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.shard.result != 'skipped' }}
+    needs: [quick, shard]
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.shard.result != 'skipped' && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -504,7 +508,7 @@ jobs:
   live:
     name: nightly (cua-sandbox, qemu)
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'schedule')) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'schedule')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -533,6 +537,8 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
       # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so

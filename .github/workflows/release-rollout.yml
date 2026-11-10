@@ -109,6 +109,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
           shopt -s nullglob
           files=(out/*.yml out/*.xml)
           if [ ${#files[@]} -gt 0 ]; then
@@ -120,7 +121,7 @@ jobs:
           # Read back what is live.
           mkdir -p live
           for f in "${files[@]}"; do
-            gh release download "$TAG" --pattern "$(basename "$f")" --dir live --clobber --repo "$GITHUB_REPOSITORY"
+            retry gh release download "$TAG" --pattern "$(basename "$f")" --dir live --clobber --repo "$GITHUB_REPOSITORY"
             cmp "$f" "live/$(basename "$f")"
           done
           echo "Uploaded: ${files[*]:-nothing}" >> "$GITHUB_STEP_SUMMARY"
@@ -128,3 +129,31 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           echo "Dry run, nothing was uploaded. Run again with dry_run off to apply this diff." >> "$GITHUB_STEP_SUMMARY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [rollout]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.rollout.result == 'success' && !inputs.dry_run
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-spaces-latest

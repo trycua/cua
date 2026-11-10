@@ -16,6 +16,8 @@
 //! are derived from.
 
 pub mod inputs;
+pub mod names;
+pub mod presence;
 
 use serde::Serialize;
 
@@ -1006,7 +1008,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::StreamsAndDisplay,
             result: "JSON: an array of windows (`window_id`, `epoch`, `title`, `app_name`, `app_id`, `pid`, `bounds`, `on_screen`, `focused`, `available`, `limitation`).",
-            instructions: "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds.",
+            instructions: "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds. Windows another Space shows here (stream_space_window) are listed too, with an `origin` (space_id, name, os, window_id); their handle opens with stream_endpoint like any other.",
             capabilities: &["space.windows.list"],
             requires: &["windows"],
             sdk_symbol: "Space.windows()",
@@ -1016,9 +1018,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::ListSpaceWindows>(),
         Spec {
             category: Category::StreamsAndDisplay,
-            result: "Text: `Streaming <window> of <space> to your desktop (bidirectional).`",
+            result: "Text: `Showing <window> of <space> in <parent>'s Stream section.` (into a Space) or `Streaming <window> of <space> to your desktop (bidirectional).` (into=desktop).",
             errors: &["stream"],
-            instructions: "FOR THE HUMAN. Opens a bidirectional window on the operator's desktop showing one Space window (the Cua Spaces app draws it from a media ticket). Pass app_name to auto-pick that app's largest visible window, or an exact window_id.",
+            instructions: "FOR THE HUMAN. Shows one window of a Space where the person watches. The usual use: you made a child Space, drive it with the same tools by passing space=<child> (space_bash, space_write, and the computer-use tools through call_tool(space=<child>, tool=\"computer_launch\" or \"computer_click\" or \"computer_screenshot\"; list_tools(space=<child>) lists them)), then call stream_space_window(space=<child>, app_name=\"Safari\") and the window appears in your own Space's Stream section, which the person clicks to watch. Anyone who may use the child streams it straight from the child; others get it relayed. Pass app_name to auto-pick that app's largest visible window, or an exact window_id; the entry ends when the window closes or either Space stops. into=desktop opens a bidirectional window on the operator's desktop instead (the Cua Spaces app draws it from a media ticket).",
             platforms: &OPERATOR_PLATFORMS,
             capabilities: &["operator.display", "operator.display.window"],
             requires: &["window_stream"],
@@ -1027,7 +1029,7 @@ pub fn tools() -> Vec<Tool> {
             sdk_symbol: "space.operatorDisplay.streamWindowToOperatorDesktop(_:)",
             rust_symbol: "OperatorDisplay::stream_window",
             notes: &["Operator-side: the pixels land on the human's computer, so the platform axis is the operator's OS and not the Space's."],
-            ..Spec::new("stream_space_window", "Draw one Space window on the operator's desktop.")
+            ..Spec::new("stream_space_window", "Show one Space window in another Space's Stream section (into=<your Space>; default the parent of space) or on the operator's desktop (into=desktop).")
         }
         .with::<i::StreamSpaceWindow>(),
         Spec {
@@ -1200,6 +1202,17 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("agent_capabilities", "Report what the agent harnesses support.")
         }
         .with::<i::AgentCapabilities>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `{\"space\", \"agent\", \"state\"}`; `state` is `not_signed_in`, `signing_in` (with `url`, `code` (Codex: type it on that page) and `paste_code` (Claude Code: the person pastes the page's code back with action `code`)), `signed_in`, `failed` (with `reason`) or `expired`.",
+            errors: &["agent"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it. Signs Claude Code or Codex in on the Space's own computer with the agent's official sign-in (`claude auth login`, `codex login --device-auth`), so the sign-in stays in that computer's agent config and Cua never holds it. `start` shows a link (and Codex's code) for the person to open in their own browser; the person finishes it in their own browser.",
+            capabilities: &["agent.signin"],
+            sdk_symbol: "spaces.callTool(\"agent_sign_in\")",
+            rust_symbol: "Agents::sign_in",
+            ..Spec::new("agent_sign_in", "Sign a coding agent in on the Space's computer, the agent's own way.")
+        }
+        .with::<i::AgentSignIn>(),
         Spec {
             category: Category::Agents,
             result: "JSON: `threads`, newest first, each `agent` (harness id), `id`, `title` (the chat's name, or its first prompt cut to 80 characters), `cwd` (its folder, or null), `last_active_ms` and `resume` (the agent's own command that continues it in a terminal, as argv).",
@@ -1460,7 +1473,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Thread,
             result: "JSON: `reply` (the reply entry) and `update` (the `task_update` entry).",
             errors: &["forbidden"],
-            instructions: "Replies under a task and sets its state (`done` by default). When an agent ends a turn without replying, the daemon posts the turn's answer as its reply.",
+            instructions: "Replies under a task and sets its state (`done` by default). An agent does not need it for plain text: every message an agent writes between tool calls is posted to the thread as it is written, in order, and none is replaced. Use it to attach files, to mark a task `failed`, or to say something under a task that is already closed (the message is appended and the task keeps its state). A turn that says nothing ends with `Finished.`",
             capabilities: &["thread.post"],
             annotations: Annotations::mutating(),
             sdk_symbol: "space.thread().reply(_:text:)",
@@ -2281,7 +2294,12 @@ pub fn canonical(name: &str) -> &str {
 /// Tools only a person may call: no MCP server lists or runs them for an
 /// agent (the apps, the CLI and the SDK call them through the daemon).
 /// Their capabilities are never granted to an agent.
-pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve", "agent_threads", "agent_thread_read"];
+pub const PERSON_ONLY_TOOLS: &[&str] = &[
+    "cloud_approve",
+    "agent_threads",
+    "agent_thread_read",
+    "agent_sign_in",
+];
 
 /// Whether `name` is a tool only a person may call ([`PERSON_ONLY_TOOLS`]).
 pub fn person_only(name: &str) -> bool {
@@ -2388,7 +2406,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 121);
+        assert_eq!(tools().len(), 122);
     }
 
     #[test]

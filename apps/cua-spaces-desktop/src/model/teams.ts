@@ -38,7 +38,10 @@ export class TeamsModel {
   private generation = 0;
   onChange: () => void = () => {};
 
-  constructor(private readonly deps: TeamsDeps, private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly deps: TeamsDeps,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   /** Settings' Teams input: the read, or "loading" / "signed out" before it. */
   input(): AppTeamsInput {

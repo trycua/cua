@@ -31,8 +31,7 @@ const BULLET = /^ {0,3}[-*+]\s+(.*)$/;
 const ORDERED = /^ {0,3}(\d{1,9})[.)]\s+(.*)$/;
 const QUOTE = /^ {0,3}>\s?(.*)$/;
 
-const startsBlock = (line: string) =>
-  FENCE.test(line) || HEADING.test(line) || RULE.test(line) || BULLET.test(line) || ORDERED.test(line) || QUOTE.test(line);
+const startsBlock = (line: string) => FENCE.test(line) || HEADING.test(line) || RULE.test(line) || BULLET.test(line) || ORDERED.test(line) || QUOTE.test(line);
 
 export function parseBlocks(markdown: string): SourceBlock[] {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");

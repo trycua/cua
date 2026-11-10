@@ -32,6 +32,8 @@ extension WebUIBridge {
             throw Failure.unsupported("Open Cua Spaces on that computer to see its Cua Driver")
         }
         switch method {
+        case "driver.permissions":
+            return await appPermissions()
         case "driver.status":
             guard let driver = EmbeddedDriver.current() else { return NSNull() }
             return await driverStatus(driver)
@@ -57,9 +59,15 @@ extension WebUIBridge {
             let driver = try needDriver()
             guard let paused = args["paused"] as? Bool else { throw Failure.badArgs("paused: boolean") }
             try setDriverPaused(driver, paused)
+            // Switched on: a driver that isn't running starts now, whatever
+            // this Mac shares.
+            if !paused { await startDriverIfNeeded(driver) }
             return NSNull()
         case "driver.setup":
             let driver = try needDriver()
+            // A driver that isn't running starts first, so the page answers
+            // even when connecting the agents fails below.
+            await startDriverIfNeeded(driver)
             try await setUpDriverAgents(driver, agents: driverAgents)
             // A driver whose permission answer is stale starts again.
             await restartDriverIfStale(driver, force: true)
@@ -95,26 +103,40 @@ extension WebUIBridge {
         }
     }
 
+    /// `AppPermissions`: Cua Spaces' own Screen Recording and Accessibility,
+    /// the grants Cua Driver uses (it runs as Cua Spaces' child, so macOS
+    /// never lists it on its own). Answered on any Mac, with or without a
+    /// driver, for the first run's permissions step, the Driver page and
+    /// This Mac. Once both are on, a running driver that still says no (it
+    /// keeps the Screen Recording answer it had at launch) starts again,
+    /// once.
+    func appPermissions() async -> [String: Any] {
+        let states = await PermissionGuide.readStates()
+        let granted = PermissionGuide.granted(in: states)
+        if granted.contains(.screenRecording), granted.contains(.accessibility), let driver = EmbeddedDriver.current() {
+            await restartDriverIfStale(driver, force: false)
+        }
+        return ["appName": PermissionGuide.appName(), "permissions": PermissionGuide.rows(states: states)]
+    }
+
     /// `DriverStatus`.
     func driverStatus(_ driver: EmbeddedDriver) async -> [String: Any] {
         let paused = FileManager.default.fileExists(atPath: driver.pausedMarker)
         let meta = await Task.detached { driver.metadata() }.value
-        let granted = await PermissionGuide.readGranted()
+        let states = await PermissionGuide.readStates()
+        let granted = PermissionGuide.granted(in: states)
         let screen = granted.contains(.screenRecording), accessibility = granted.contains(.accessibility)
         var lastError: String?
         let state: String
         if paused {
             state = "paused"
         } else if meta == nil {
-            let spec = HelperService.specPath(info: Bundle.main.infoDictionary, home: NSHomeDirectory())
-            if spec.map({ !FileManager.default.fileExists(atPath: $0) }) ?? true {
-                state = "stopped"
-                lastError = "Cua Driver starts once this Mac is set up in Cua Spaces. Open Machines and set up this Mac."
-            } else if Date().timeIntervalSince(DriverPageState.shared.since) < 30 {
+            let why = await Task.detached { Self.notRunningReason(driver) }.value
+            if why == nil, Date().timeIntervalSince(DriverPageState.shared.since) < 30 {
                 state = "starting"
             } else {
                 state = "failed"
-                lastError = "Cua Driver isn't answering. Repair starts it again."
+                lastError = why ?? "Cua Driver isn't answering. Repair starts it again."
             }
         } else if !screen || !accessibility {
             state = "needs-permission"
@@ -131,10 +153,8 @@ extension WebUIBridge {
             "update": NSNull(),
             "lastTest": orNull(DriverPageState.shared.lastTest),
             "lastError": orNull(lastError),
-            "permissions": [
-                ["id": "screen", "granted": screen, "settingsUrl": orNull(PermissionGuide.settingsURL(for: .screenRecording))],
-                ["id": "accessibility", "granted": accessibility, "settingsUrl": orNull(PermissionGuide.settingsURL(for: .accessibility))],
-            ],
+            "permissions": PermissionGuide.rows(states: states),
+            "appName": PermissionGuide.appName(),
             "activity": [Any](),
             "canPause": true,
         ]
@@ -171,6 +191,8 @@ extension WebUIBridge {
                 _ = try driver.call("get_screen_size")
                 _ = try driver.call("move_cursor", ["x": 200, "y": 200, "cursor_id": "cua-spaces-setup-test", "session": "cua-spaces-setup-test"])
                 return nil
+            } catch let error as EmbeddedDriver.CallError where error.message == "Cua Driver isn't running" {
+                return Self.notRunningReason(driver).map { "Cua Driver isn't running. \($0)" } ?? error.message
             } catch {
                 return "\(error)"
             }
@@ -193,8 +215,8 @@ extension WebUIBridge {
 
     /// The driver keeps the Screen Recording answer it had when it started:
     /// granted to Cua Spaces since, it still says no until it starts again.
-    /// cua-spacesd starts it again within a second when it exits.
-    private func restartDriverIfStale(_ driver: EmbeddedDriver, force: Bool) async {
+    /// Its login item starts it again within a second when it exits.
+    func restartDriverIfStale(_ driver: EmbeddedDriver, force: Bool) async {
         let state = DriverPageState.shared
         if !force, let last = state.lastRestart, Date().timeIntervalSince(last) < 60 { return }
         let stale: Int32? = await Task.detached { () -> Int32? in
@@ -207,14 +229,78 @@ extension WebUIBridge {
         guard granted.contains(.screenRecording), granted.contains(.accessibility) else { return }
         state.lastRestart = Date()
         kill(pid, SIGTERM)
-        // Wait for cua-spacesd to bring it back (1 s backoff, then startup).
+        // Wait for its login item to bring it back (1 s backoff, then startup).
         for _ in 0..<20 {
             try? await Task.sleep(for: .milliseconds(500))
             if let meta = await Task.detached(operation: { driver.metadata(timeout: 1) }).value, meta.pid != pid { return }
         }
     }
 
-    /// "Let agents use apps on this Mac": off writes the file cua-spacesd
+    /// Why the driver isn't answering, in plain words, or nil when its
+    /// login item is (or may still be) starting it: macOS holds the login
+    /// item back, the login item isn't running, or the driver's last start
+    /// failed (`DriverSupervisorReport`). Blocks briefly: call off the main
+    /// thread.
+    nonisolated static func notRunningReason(_ driver: EmbeddedDriver) -> String? {
+        guard DriverService.isBundled() else {
+            return "This build of Cua Spaces has no Cua Driver login item; install the latest Cua Spaces."
+        }
+        let item = DriverService.status()
+        if item == .requiresApproval { return DriverService.needsApproval }
+        let report = DriverSupervisorReport.read(driver.statusFile)
+        if item != .enabled || report.map({ !$0.supervisorAlive }) == true {
+            return "Cua Driver's background item isn't running. Repair starts it again."
+        }
+        guard let report else { return nil }
+        if let error = report.lastError, report.state != "ready" {
+            return "Cua Driver didn't start: \(error)"
+        }
+        return nil
+    }
+
+    /// Gets a driver that isn't answering running, unless the person paused
+    /// agents: registers and starts Cua Driver's login item and asks it for
+    /// a driver now, then restarts the login item when that didn't work.
+    /// Never depends on whether this Mac is set up, shared or signed in
+    /// (CUA-3638). Returns once the driver answers or each step had its
+    /// time; why it didn't is what `notRunningReason` says.
+    func startDriverIfNeeded(_ driver: EmbeddedDriver) async {
+        var asked = false
+        while true {
+            let paused = FileManager.default.fileExists(atPath: driver.pausedMarker)
+            let answering = await Task.detached { driver.metadata(timeout: 1) != nil }.value
+            switch EmbeddedDriver.startStep(paused: paused, answering: answering, askedLoginItem: asked) {
+            case .none:
+                return
+            case .startLoginItem:
+                asked = true
+                let request = driver.startRequest
+                try? FileManager.default.createDirectory(atPath: (request as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: request, contents: Data())
+                if let why = await Task.detached(operation: { DriverService.start(restart: false) }).value {
+                    NSLog("cua-spaces: %@", why)
+                    return
+                }
+                if await waitForDriver(driver, seconds: 15) { return }
+            case .restartLoginItem:
+                NSLog("cua-spaces: Cua Driver didn't start; restarting its login item")
+                _ = await Task.detached { DriverService.start(restart: true) }.value
+                _ = await waitForDriver(driver, seconds: 25)
+                return
+            }
+        }
+    }
+
+    /// Whether the driver answers within `seconds`.
+    private func waitForDriver(_ driver: EmbeddedDriver, seconds: Int) async -> Bool {
+        for _ in 0..<(seconds * 2) {
+            if await Task.detached(operation: { driver.metadata(timeout: 1) != nil }).value { return true }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return false
+    }
+
+    /// "Let agents use apps on this Mac": off writes the file the driver login item
     /// watches, which stops the driver; on removes it.
     private func setDriverPaused(_ driver: EmbeddedDriver, _ paused: Bool) throws {
         let marker = driver.pausedMarker

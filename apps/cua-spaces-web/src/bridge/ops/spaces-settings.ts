@@ -68,7 +68,11 @@ export interface SpacesSettingsOps {
   "spaces.resolveDefault": { args: Record<string, never>; result: DefaultSpace | null };
 }
 
-export const SPACES_SETTINGS_OPERATIONS = ["spaces.settings", "spaces.setSettings", "spaces.resolveDefault"] as const satisfies readonly (keyof SpacesSettingsOps)[];
+export const SPACES_SETTINGS_OPERATIONS = [
+  "spaces.settings",
+  "spaces.setSettings",
+  "spaces.resolveDefault",
+] as const satisfies readonly (keyof SpacesSettingsOps)[];
 
 /** The native hosts' methods: the operations' own names and arguments. */
 export const SPACES_SETTINGS_WEBKIT_METHODS = SPACES_SETTINGS_OPERATIONS;
@@ -103,7 +107,9 @@ export interface DefaultCandidate {
  * demo that has no relay to ask: the default, then the fallback list
  * (explicit, or every other computer when empty; never `here` or the
  * default again), then this computer. The first online one wins. It never
- * makes anything: with nothing online, the answer is this computer.
+ * makes anything: with nothing online, the answer is this computer. A
+ * default that isn't among the candidates any more (the computer was
+ * removed) is treated as unset.
  */
 export function resolveDefaultSpace(settings: SpacesSettingsInput | null, candidates: readonly DefaultCandidate[]): DefaultSpace {
   const here = candidates.find((c) => c.here) ?? null;
@@ -120,9 +126,23 @@ export function resolveDefaultSpace(settings: SpacesSettingsInput | null, candid
   }
   if (here) order.push({ space: here.space, name: here.name, online: true, role: "here" });
   const first = order.find((o) => o.online && o.role !== "here");
-  const defaultSpace = settings?.defaultSpace ?? null;
+  // A saved default that is no longer among the computers (removed since) counts as unset.
+  const defaultSpace = def ? (settings?.defaultSpace ?? null) : null;
   const defaultOnline = defaultSpace === null ? null : def?.here ? true : (def?.online ?? false);
   if (def?.here) return { space: here!.space, reason: "default", defaultSpace, defaultOnline, order };
-  if (!first) return { space: here?.space ?? null, reason: defaultSpace === null && order.length <= (here ? 1 : 0) ? "unset" : "here", defaultSpace, defaultOnline, order };
-  return { space: first.space, reason: first.role === "default" ? "default" : defaultSpace === null ? "unset" : "fallback", defaultSpace, defaultOnline, order };
+  if (!first)
+    return {
+      space: here?.space ?? null,
+      reason: defaultSpace === null && order.length <= (here ? 1 : 0) ? "unset" : "here",
+      defaultSpace,
+      defaultOnline,
+      order,
+    };
+  return {
+    space: first.space,
+    reason: first.role === "default" ? "default" : defaultSpace === null ? "unset" : "fallback",
+    defaultSpace,
+    defaultOnline,
+    order,
+  };
 }

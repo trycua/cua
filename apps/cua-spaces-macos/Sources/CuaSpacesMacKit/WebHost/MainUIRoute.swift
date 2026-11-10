@@ -19,10 +19,11 @@ public enum MainUIRoute: Equatable, Sendable {
     case access
     /// Cua Volume.
     case drive
-    case machines
+    /// This Mac's page under Computers: its switches, its setup and Cua Driver.
+    case thisMac
     case agents
     case keyvault
-    /// A page path as given (`/machines?join=<CODE>` from a `cua://add` link).
+    /// A page path as given (`/spaces?join=<CODE>` from a `cua://add` link).
     case path(String)
 
     /// The first run, asked for by a person (Settings, Welcome): the shared
@@ -46,7 +47,7 @@ public enum MainUIRoute: Equatable, Sendable {
         case .settings: return "/settings"
         case .access: return "/keyvault?view=access"
         case .drive: return "/volume"
-        case .machines: return "/machines"
+        case .thisMac: return "/spaces/computer/this-mac"
         case .agents: return "/agents"
         case .keyvault: return "/keyvault"
         case let .path(path): return path
@@ -120,11 +121,11 @@ struct MainUIRouter {
     }
 
     /// The page a click on one of the app's notifications opens: a Space that
-    /// came up (its page), a machine asking to be added (Machines, where
-    /// it waits with Add machine and Not me), an agent's answer or request (Agents), else Spaces.
+    /// came up (its page), a computer asking to be added (Computers, where
+    /// it waits with Add computer and Not me), an agent's answer or request (Agents), else Computers.
     static func route(forNotification id: String) -> MainUIRoute {
         if let spaceId = SpaceReadyNote.spaceId(fromIdentifier: id) { return .space(spaceId) }
-        if id.hasPrefix("device-") { return .path("/machines") }
+        if id.hasPrefix("device-") { return .home }
         if id.hasPrefix("agent-") { return .agents }
         return .home
     }
@@ -141,7 +142,6 @@ struct MainUIRouter {
     static func route(forNav command: String) -> MainUIRoute? {
         switch command {
         case "nav.spaces": return .home
-        case "nav.machines": return .machines
         case "nav.agents": return .agents
         case "nav.keyvault": return .keyvault
         case "nav.settings": return .settings

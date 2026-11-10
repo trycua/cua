@@ -1,6 +1,6 @@
 """Every libs/cua crate that has tests runs them in GitHub CI, or says why not.
 
-The Linux Rust lane (ci-cua-sdk.yml, `rust-linux`) lists its crates by hand
+The Linux Rust lane (ci-cua-sdk.yml, `rust-linux-build`) lists its crates by hand
 with `-p`. A crate missing from the list is never tested there, and a path
 filter cannot see that: cua-auth's tests were skipped this way, so three
 broken flows tests merged green (CUA-3363). This test makes the list and the
@@ -33,6 +33,7 @@ ELSEWHERE = {
     "cua-host": "launchd service tests; run by bin/ci on macOS, not yet checked on Linux",
     "cua-ci": "experiment (`cua ci`); no CI lane yet",
     "cua-replica-lab": "chaos rig, not shipped; run by hand",
+    "cua-chaos": "chaos tooling, not shipped; its only lane (chaos-cua-compat.yml) was removed with the dead compat lanes (CUA-3571); run by hand with `cargo test -p cua-chaos`",
 }
 
 
@@ -65,18 +66,19 @@ def tested_packages():
             for step in job.get("steps") or []:
                 run = (step.get("run") or "").replace("\\\n", " ")
                 for cmd in re.split(r"\n|&&|;", run):
-                    if re.search(r"cargo (nextest run|test)\b", cmd):
+                    if re.search(r"cargo (nextest (run|archive)|test)\b", cmd):
                         found |= set(re.findall(r"(?:^|\s)(?:-p|--package)[ =](\S+)", cmd))
     return frozenset(found)
 
 
 def nextest_packages():
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
-    for step in jobs["rust-linux"]["steps"]:
-        run = step.get("run", "")
-        if "cargo nextest run" in run:
+    # The test binaries are built once, by `cargo nextest archive`, and the shards run the archive.
+    for step in jobs["rust-linux-build"]["steps"]:
+        run = step.get("run", "").replace("\\\n", " ")
+        if "cargo nextest archive" in run:
             return set(re.findall(r"(?:^|\s)-p\s+(\S+)", run))
-    raise AssertionError("rust-linux has no cargo nextest step")
+    raise AssertionError("rust-linux-build has no cargo nextest archive step")
 
 
 TESTED = sorted(package_name(m) for m in members() if has_tests(m))
@@ -86,7 +88,7 @@ TESTED = sorted(package_name(m) for m in members() if has_tests(m))
 def test_a_crate_with_tests_runs_them_in_the_linux_lane_or_says_why_not(name):
     assert name in tested_packages() or name in ELSEWHERE, (
         f"{name} has tests but is not named with `-p` on any `cargo test` or `cargo nextest` step in "
-        f".github/workflows: its tests never run on GitHub. Add it to the rust-linux nextest list in ci-cua-sdk.yml, or to ELSEWHERE with the reason."
+        f".github/workflows: its tests never run on GitHub. Add it to the rust-linux-build nextest archive list in ci-cua-sdk.yml, or to ELSEWHERE with the reason."
     )
 
 

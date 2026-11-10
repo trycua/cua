@@ -10284,7 +10284,7 @@
    "usage": "cua build [OPTIONS] [CONTEXT]"
   },
   {
-   "abstract": "What a Space can reach on the network, and changing it: `show`, `set`, `log`. An experiment: see `cua experiments`",
+   "abstract": "What a Space can reach on the network, and changing it: `show`, `set`, `log`",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -10367,7 +10367,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `custom`, `custom:none` or `unprotected` (No protection). Left out: the preset it has (to change only `--via`)",
+       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `localhost+lan:<ports>` (both), `custom`, `custom:none` or `unprotected` (No protection). Left out: the preset it has (to change only `--via`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -10461,7 +10461,7 @@
    "usage": "cua network [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Send a Space's internet traffic out through this computer for a while: `start`, `stop`, `status`. (`cua network set --via this-computer` keeps it.) Part of the Secure Spaces experiment",
+   "abstract": "Send a Space's internet traffic out through this computer for a while: `start`, `stop`, `status`. (`cua network set --via this-computer` keeps it.)",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -10579,7 +10579,7 @@
    "usage": "cua hotspot [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "How traffic reaches your other computers: `status` (and `--prefer`). Part of the Secure Spaces experiment",
+   "abstract": "How traffic reaches your other computers: `status` (and `--prefer`)",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -10650,7 +10650,7 @@
     },
     {
      "abstract": "Turn an experiment on",
-     "after_help": "Examples:\n  cua experiments enable secure-spaces",
+     "after_help": "Examples:\n  cua experiments enable ci-runners",
      "aliases": [],
      "arguments": [
       {
@@ -10675,7 +10675,7 @@
     },
     {
      "abstract": "Turn an experiment off. Nothing it made is deleted",
-     "after_help": "Examples:\n  cua experiments disable secure-spaces",
+     "after_help": "Examples:\n  cua experiments disable ci-runners",
      "aliases": [],
      "arguments": [
       {
@@ -14639,7 +14639,7 @@
    "subcommands": [
     {
      "abstract": "Registered Spaces and your computers on the relay",
-     "after_help": "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json\n  # Only the Spaces created with these labels\n  cua spaces ls --label team=research --label run=7",
+     "after_help": "CPU, MEMORY and the DISK column (on this computer) show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json\n  # Only the Spaces created with these labels\n  cua spaces ls --label team=research --label run=7",
      "aliases": [
       "list"
      ],
@@ -20778,7 +20778,7 @@
    "usage": "cua ci [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Your remote use this month: live sessions, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
+   "abstract": "Your remote use this month: computers in use at once, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
    "after_help": "Examples:\n  cua usage\n  cua usage --json",
    "aliases": [],
    "arguments": [],
@@ -23314,5 +23314,5 @@
  ],
  "name": "cua",
  "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.10.1"
+ "version": "0.21.0"
 }

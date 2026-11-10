@@ -17,25 +17,8 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, '.release-please-man
 
 // path -> [legacy tag prefix, a source file inside it, files the release PR must update]
 const PACKAGES = {
-  'libs/python/agent': ['agent-v', 'cua_agent/__init__.py',
-    ['libs/python/agent/CHANGELOG.md', 'libs/python/agent/pyproject.toml', 'uv.lock', 'libs/cua-bench/uv.lock']],
-  'libs/python/core': ['core-v', 'cua_core/__init__.py',
-    ['libs/python/core/CHANGELOG.md', 'libs/python/core/pyproject.toml', 'uv.lock', 'libs/cua-bench/uv.lock']],
   'libs/cua-bench': ['bench-v', 'cua_bench/__init__.py',
     ['libs/cua-bench/CHANGELOG.md', 'libs/cua-bench/pyproject.toml', 'libs/cua-bench/uv.lock']],
-  'libs/python/bench-ui': ['bench-ui-v', 'bench_ui/__init__.py',
-    ['libs/python/bench-ui/CHANGELOG.md', 'libs/python/bench-ui/pyproject.toml', 'uv.lock']],
-  'libs/python/som': ['som-v', 'som/__init__.py',
-    ['libs/python/som/CHANGELOG.md', 'libs/python/som/pyproject.toml', 'uv.lock']],
-  'libs/python/cua-sandbox-apps': ['sandbox-apps-v', 'cua_sandbox_apps/__init__.py',
-    ['libs/python/cua-sandbox-apps/CHANGELOG.md', 'libs/python/cua-sandbox-apps/pyproject.toml',
-      'libs/python/cua-sandbox-apps/uv.lock']],
-  'libs/typescript/core': ['npm-core-v', 'src/index.ts',
-    ['libs/typescript/core/CHANGELOG.md', 'libs/typescript/core/package.json']],
-  'libs/typescript/playground': ['npm-playground-v', 'src/index.ts',
-    ['libs/typescript/playground/CHANGELOG.md', 'libs/typescript/playground/package.json']],
-  'libs/cuabot': ['cuabot-v', 'src/index.ts',
-    ['libs/cuabot/CHANGELOG.md', 'libs/cuabot/package.json']],
 };
 
 function optionsFor(packagePath) {
@@ -115,8 +98,6 @@ async function main() {
     { sha: 'd'.repeat(40), message: 'fix: y', files: ['libs/python/cua-sandbox/z.py'] },
   ]);
   assert.equal(leaked['libs/cua-bench'], undefined, 'libs/cua-bench-rl must not bump cua-bench');
-  assert.equal(leaked['libs/python/cua-sandbox-apps'], undefined,
-    'libs/python/cua-sandbox must not bump sandbox-apps');
 
   for (const packagePath of Object.keys(PACKAGES)) {
     assert.ok(config.packages[packagePath], `${packagePath} is enrolled`);

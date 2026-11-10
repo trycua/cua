@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { GroupedAction, GroupedRow } from "@/components/ui/grouped";
 import { Switch } from "@/components/ui/switch";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -60,11 +61,12 @@ export function GithubGroup({ onPaste, saved }: { onPaste: () => void; saved: bo
 
 /** A host: the whole row opens its page (hover, chevron). */
 function HostRow({ row, onOpen }: { row: GithubRow; onOpen: () => void }) {
+  const t = useT();
   return (
     <div
       role="link"
       tabIndex={0}
-      aria-label={`${row.title} settings`}
+      aria-label={t("settings.connections.github.row_aria", { title: row.title })}
       data-github-host={row.host}
       data-tone={row.tone}
       onClick={onOpen}
@@ -84,7 +86,9 @@ function HostRow({ row, onOpen }: { row: GithubRow; onOpen: () => void }) {
         </p>
       </div>
       {row.tone === "ok" ? <CheckIcon aria-hidden className="size-3.5 text-success" data-github-ok="" /> : null}
-      {row.warning ? <TriangleAlertIcon aria-label="Broader than needed" className="size-4 text-warning" data-github-warning-mark="" /> : null}
+      {row.warning ? (
+        <TriangleAlertIcon aria-label={t("settings.connections.github.broader")} className="size-4 text-warning" data-github-warning-mark="" />
+      ) : null}
       <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground/70" />
     </div>
   );

@@ -181,11 +181,13 @@ struct ServeArgs {
     #[arg(long, env = "CUA_SPACESD_NO_ACCESS_LOG")]
     no_access_log: bool,
     /// Do not link the cua-driver tool registry (Driver service and /mcp
-    /// report unsupported).
+    /// report unsupported). Remote callers only: the Cua Driver this Mac's
+    /// coding agents use (`embedded_driver`) runs either way.
     #[arg(long, env = "CUA_ENV_NO_DRIVER")]
     no_driver: bool,
     /// Do not serve the desktop services (Computer, Windows, Accessibility,
-    /// Stream, Presence, /media).
+    /// Stream, Presence, /media). The embedded Cua Driver for this Mac's
+    /// coding agents still runs.
     #[arg(long, env = "CUA_ENV_NO_DESKTOP")]
     no_desktop: bool,
     /// Teleport destination (default ~/Downloads).
@@ -481,7 +483,12 @@ fn main() {
 
 /// Runs a daemon command on a fresh multi-threaded runtime.
 fn run(command: Command) -> Result<Exit, BoxError> {
+    // At least two workers: a Space with one vCPU would otherwise run the
+    // whole server on one thread, and any blocking call that waits on this
+    // process itself (the Cua Volume is served from here) would stop it.
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get().max(2));
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
         .enable_all()
         .build()
         .expect("tokio runtime");
@@ -957,12 +964,13 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
     cua_spacesd::vsock_agent::start();
     // Cua Driver for the coding agents on this Mac, as this process's own
     // child (on unless CUA_SPACESD_EMBEDDED_DRIVER=0; see embedded_driver).
+    // It follows only the person's "Let agents use apps on this Mac"
+    // switch, never `--no-desktop` or `--no-driver`: those are about
+    // remote callers (sharing this desktop, the Driver service and /mcp),
+    // and a Mac that keeps its screen private still lets its own coding
+    // agents use its apps.
     #[cfg(all(target_os = "macos", not(cua_headless)))]
-    let _embedded_driver = if no_desktop {
-        None
-    } else {
-        embedded_driver::spawn(shutdown.clone())
-    };
+    let _embedded_driver = embedded_driver::spawn(shutdown.clone());
     // A direct host starts its cua daemon, which reopens the ports it
     // forwards to the Spaces it provides.
     if let Some(policy) = direct_host_policy {
@@ -1037,6 +1045,27 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
                 .account
                 .pin_jwks_json(json)
                 .map_err(|e| format!("CUA_RELAY_JWKS_JSON: {e}"))?;
+        }
+        // A host deletes the Spaces its owner deleted while it was removed
+        // from the account, each time it dials the relay
+        // (cua_spacesd_server::pending_deletions).
+        if let Some(policy) = host_policy.clone() {
+            let dialing = Arc::new(tokio::sync::Notify::new());
+            join_config.dialing = Some(dialing.clone());
+            let mut pending = cua_spacesd_server::pending_deletions::PendingDeletionsConfig::new(
+                join.relay.clone(),
+                machine_id.clone(),
+                join.relay_token.clone().unwrap_or_default(),
+                dialing,
+            );
+            pending.relay_token_file = join.relay_token_file.clone();
+            tokio::spawn(cua_spacesd_server::pending_deletions::run(
+                pending,
+                Arc::new(cua_spacesd_server::pending_deletions::DaemonDeleter::new(
+                    policy,
+                )),
+                shutdown.clone(),
+            ));
         }
         // Account mode: relay-signed principal assertions authorize
         // callers (in addition to the local token).

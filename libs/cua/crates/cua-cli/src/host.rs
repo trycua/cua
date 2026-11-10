@@ -3,7 +3,7 @@
 //! machines; `add` / `rm`: register or forget a Space).
 
 use crate::auth;
-use crate::util::{hint_line, line};
+use crate::util::{ProgramState, hint_line, line, program_status};
 use clap::Subcommand;
 use cua_host::{
     AccountTokens, DeviceAuth, Host, HostStatus, MachinePatch, RelayClient, RunnerKind,
@@ -348,7 +348,7 @@ pub enum SpacesCmd {
     /// Registered Spaces and your computers on the relay.
     #[command(
         visible_alias = "list",
-        after_help = "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it
+        after_help = "CPU, MEMORY and the DISK column (on this computer) show what each Space was given and what it
 uses now (the numbers the Cua Spaces app shows); for another of your
 computers they show what it last reported. Numbers only: no file names.
 
@@ -1805,29 +1805,43 @@ pub async fn run_spaces_sdk(
                 })
                 .collect();
             use std::io::IsTerminal as _;
-            // What each create is doing, on one updating line of the
-            // terminal (never in --json output).
-            let show = !json && std::io::stderr().is_terminal() && count == 1;
-            let steps = Arc::new(crate::util::StepLines::new(
-                crate::util::CreateWords::for_image(
-                    image.as_deref().unwrap_or_default(),
-                    kind.as_deref().unwrap_or_default(),
-                    true,
-                ),
-            ));
+            // What each create is doing on the terminal (never in --json
+            // output): one Space's steps a line each, or a line per Space.
+            let show = !json && std::io::stderr().is_terminal();
+            let words = crate::util::CreateWords::for_image(
+                image.as_deref().unwrap_or_default(),
+                kind.as_deref().unwrap_or_default(),
+                true,
+            );
+            let steps = Arc::new(crate::util::StepLines::new(words));
+            let many = Arc::new(crate::util::ParallelSteps::new(words, names.clone()));
             let creates = names.into_iter().enumerate().map(|(i, n)| {
                 let options = one(i as u32 + 1, n);
                 let spaces = spaces.clone();
-                let steps = steps.clone();
+                let listener: Option<Arc<dyn cua_sdk::SpaceCreateListener>> = match (show, count) {
+                    (false, _) => None,
+                    (true, 1) => Some(Arc::new(StepListener(steps.clone()))),
+                    (true, _) => Some(Arc::new(SpaceLine(many.clone(), i))),
+                };
+                let many = (show && count > 1).then(|| many.clone());
                 async move {
-                    if show {
-                        Box::pin(
-                            spaces.create_with_progress(options, Arc::new(StepListener(steps))),
-                        )
-                        .await
-                    } else {
-                        Box::pin(spaces.create(options)).await
+                    let r = match listener {
+                        Some(l) => Box::pin(spaces.create_with_progress(options, l)).await,
+                        None => Box::pin(spaces.create(options)).await,
+                    };
+                    if let Some(many) = many {
+                        if let Ok(Some(info)) = r.as_ref().map(|c| c.space.as_ref()) {
+                            many.name(i, &info.name, true);
+                        }
+                        many.ended(
+                            i,
+                            match &r {
+                                Ok(c) => Ok(c.space.as_ref().map(created_text).unwrap_or_default()),
+                                Err(e) => Err(e.to_string()),
+                            },
+                        );
                     }
+                    r
                 }
             });
             let mut all = Box::pin(futures_util::future::join_all(creates));
@@ -1835,6 +1849,8 @@ pub async fn run_spaces_sdk(
                 r = &mut all => r,
                 _ = tokio::signal::ctrl_c() => {
                     // Ctrl-C: stop every create and remove what it made.
+                    many.stop();
+                    crate::util::clear_program_status();
                     eprintln!("\nCancelling...");
                     let mut messages = Vec::new();
                     for n in 1..=count {
@@ -1854,8 +1870,11 @@ pub async fn run_spaces_sdk(
                 }
             };
             crate::util::exit_on_ctrl_c();
-            if show {
+            if show && count == 1 {
                 steps.finish();
+            } else if show {
+                let first_error = results.iter().find_map(|r| r.as_ref().err());
+                many.finish(first_error.map(|e| e.to_string()).as_deref());
             }
             let mut failed = 0;
             let mut first_failure = 1;
@@ -1870,20 +1889,12 @@ pub async fn run_spaces_sdk(
                         if !info.cloud.is_empty() {
                             in_cloud.push((info.cloud.clone(), info.cloud_place.clone()));
                         }
+                        let text = created_text(&info);
+                        if show && count == 1 {
+                            program_status(ProgramState::Done, None, &text);
+                        }
                         if !json {
-                            line(
-                                out,
-                                format!(
-                                    "Created {} ({}{})",
-                                    info.id,
-                                    info.name,
-                                    if info.host_name.is_empty() {
-                                        String::new()
-                                    } else {
-                                        format!(", on {}", info.host_name)
-                                    }
-                                ),
-                            );
+                            line(out, text);
                         }
                         rows.push(space_json(&info));
                     }
@@ -1891,6 +1902,9 @@ pub async fn run_spaces_sdk(
                         failed += 1;
                         if failed == 1 {
                             first_failure = crate::exit_code(&e);
+                        }
+                        if show && count == 1 {
+                            program_status(ProgramState::Error, None, &e.to_string());
                         }
                         if !json {
                             eprintln!("cua: {e}");
@@ -2156,9 +2170,14 @@ pub async fn remove_machine(
         String::new()
     } else if delete_spaces {
         format!(
-            " Its {} Space{} and their files will be deleted (the files only if the computer answers).",
-            children.len(),
-            if children.len() == 1 { "" } else { "s" }
+            " Its {} leave{} your account now, and the computer deletes {}, files included, the next time it comes online.",
+            if children.len() == 1 {
+                "Space".to_string()
+            } else {
+                format!("{} Spaces", children.len())
+            },
+            if children.len() == 1 { "s" } else { "" },
+            if children.len() == 1 { "it" } else { "them" }
         )
     } else {
         format!(
@@ -2986,6 +3005,17 @@ pub async fn run_host_to(
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
             opts.dedicated = dedicated;
+            // A computer paused because it was set up for another account
+            // (the app's "Use a code from another computer"): the code
+            // moves it to the code's account, keeping its setup. A plain
+            // setup would resume the old account's registration instead.
+            if let Some(code) = pair.as_deref() {
+                let code = cua_host::PairingCodeToken::parse(code).map_err(host_err)?;
+                if let Some(s) = host.rejoin_with_code(&code).await.map_err(host_err)? {
+                    emit(&s, json, out)?;
+                    return Ok(0);
+                }
+            }
             let spaces_only = !opts.share_desktop && host.resolve_provide_spaces(&opts);
             // Running it again changes nothing when this machine already
             // is that host; a host whose service stopped is started again
@@ -3190,6 +3220,20 @@ pub async fn run_host_to(
                 );
             } else {
                 render(&s, out);
+                if s.configured {
+                    let spaces = cua_spaces::Spaces::builder()
+                        .home(home)
+                        .relay(cua_spaces::RelayAccount::new(
+                            relay_url(None, home),
+                            Arc::new(SessionTokens),
+                        ))
+                        .build();
+                    if let Ok(list) = spaces.list() {
+                        for l in spaces.relay_publish_status(&list).await.notes() {
+                            line(out, format!("  {l}"));
+                        }
+                    }
+                }
                 for l in crate::resources_view::this_mac_lines(&resources) {
                     line(out, l);
                 }
@@ -3366,6 +3410,19 @@ async fn setup_unchanged(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    // A service a build before CUA-3512 left under another home's names
+    // moves to this home's own, even when nothing else changes.
+    match host.migrate_service_names() {
+        Ok(moved) if !moved.is_empty() && !json => line(
+            out,
+            format!(
+                "Moved this computer's host service off an old name ({}); it now has its own.",
+                moved.join(", ")
+            ),
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("warning: could not move the host service to its own name: {e}"),
+    }
     let started = !state.is_up(want);
     let state = if started {
         let status = host.start_sharing().await.map_err(host_err)?;
@@ -4276,6 +4333,11 @@ pub async fn run_spaces(
         own_machine: spaces.this_relay_machine_id(),
     };
     let on_account = spaces.relay_states(&list);
+    let publish_notes = if spaces.relay_account().is_some() {
+        spaces.relay_publish_status(&list).await.notes()
+    } else {
+        Vec::new()
+    };
     if json {
         let mut rows = ls_json(&list);
         // Never holds the list up: signed out or a relay that does not
@@ -4294,7 +4356,8 @@ pub async fn run_spaces(
             }
         }
         let mut body = serde_json::json!({ "spaces": rows, "machines": hosts, "durable": durable,
-                                          "relay_error": relay_error });
+                                          "relay_error": relay_error,
+                                          "account_notes": publish_notes });
         if let (Some(o), Some(extra)) = (
             body.as_object_mut(),
             crate::resources_view::ls_extras(&resources)
@@ -4337,6 +4400,9 @@ pub async fn run_spaces(
     }
     for line_text in hidden_notes(&list) {
         line(out, line_text);
+    }
+    for line_text in publish_notes {
+        line(out, format!("({line_text})"));
     }
     let stay_off: Vec<&str> = list
         .iter()
@@ -4396,27 +4462,57 @@ async fn durable_spaces() -> Vec<serde_json::Value> {
     }
 }
 
+/// The line for a created Space: `Created <id> (<name>[, on <host>])`.
+fn created_text(info: &cua_sdk::SpaceInfo) -> String {
+    let on = if info.host_name.is_empty() {
+        String::new()
+    } else {
+        format!(", on {}", info.host_name)
+    };
+    format!("Created {} ({}{on})", info.id, info.name)
+}
+
+/// The SDK's create progress as the CLI's.
+fn progress_of(p: cua_sdk::SpaceCreateProgress) -> Option<cua_sandbox_core::progress::Progress> {
+    use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+    let mut out = Progress::phase(Phase::parse(&p.phase)?).detail(p.detail);
+    if let Some(f) = p.fraction {
+        out = out.fraction(f);
+    }
+    if let Some(done) = p.bytes_done {
+        out = out.bytes(Transfer {
+            done,
+            total: p.bytes_total.unwrap_or(0),
+            per_second: p.bytes_per_second,
+        });
+    }
+    Some(out)
+}
+
+/// Passes one of several Space creates' progress to its line.
+struct SpaceLine(Arc<crate::util::ParallelSteps>, usize);
+
+impl cua_sdk::SpaceCreateListener for SpaceLine {
+    fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
+        self.0.name(self.1, &p.space, false);
+        if let Some(p) = progress_of(p) {
+            self.0.show(self.1, &p);
+        }
+    }
+}
+
 /// Passes a Space create's progress to the terminal's step lines.
 struct StepListener(Arc<crate::util::StepLines>);
 
 impl cua_sdk::SpaceCreateListener for StepListener {
     fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
-        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
-        let Some(phase) = Phase::parse(&p.phase) else {
+        let Some(out) = progress_of(p) else {
             return;
         };
-        let mut out = Progress::phase(phase).detail(p.detail);
-        if let Some(f) = p.fraction {
-            out = out.fraction(f);
+        if let Some(text) = self.0.show(&out) {
+            let progress = out.fraction.map(|f| (f * 100.0) as u8);
+            program_status(ProgramState::Working, progress, &text);
         }
-        if let Some(done) = p.bytes_done {
-            out = out.bytes(Transfer {
-                done,
-                total: p.bytes_total.unwrap_or(0),
-                per_second: p.bytes_per_second,
-            });
-        }
-        self.0.show(&out);
     }
 }
 
@@ -5477,7 +5573,14 @@ mod tests {
         assert!(text.contains("lab-box") && text.contains("relay"), "{text}");
         // The new columns, and this machine's own row shows this Mac.
         assert!(text.starts_with("ID "), "{text}");
-        for column in ["CPU", "MEMORY", "DISK ON THIS MAC"] {
+        for column in [
+            "CPU",
+            "MEMORY",
+            &format!(
+                "DISK ON {}",
+                cua_spaces::resources::words::Host::current().this_upper()
+            ),
+        ] {
             assert!(text.lines().next().unwrap().contains(column), "{text}");
         }
         let row = text.lines().find(|l| l.contains("lab-box")).unwrap();
@@ -7050,6 +7153,7 @@ pub async fn run_children_ls(
                     "parent": parent_of(s),
                     "tree_address": s.tree_address,
                     "power": s.power,
+                    "state": s.power_state,
                     "image": s.image,
                     "expires_at_unix": s.expires_at_unix,
                 })
@@ -7075,10 +7179,12 @@ pub async fn run_children_ls(
         } else {
             &s.display_name
         };
-        let state = if s.power.is_empty() {
+        // The state (`running`, `stopped`), not how it turns off (`power`:
+        // `stop` or `suspend`), which reads as "stopped" for a running VM.
+        let state = if s.power_state.is_empty() {
             "-"
         } else {
-            s.power.as_str()
+            s.power_state.as_str()
         };
         // A VM's tree address; a container is reached by name on its
         // tree's network.

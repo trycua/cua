@@ -19,6 +19,7 @@ on:
       - ".github/workflows/ci-cua-sdk.yml"
       - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_reuse_pr_result.py"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -72,12 +73,12 @@ jobs:
   # variable CI_REUSE_PR_RESULTS to "off".
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   reuse:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: reuse PR results
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -109,20 +110,21 @@ jobs:
           python3 .github/scripts/ci_reuse_pr_result.py run \
             --stamp-job "reuse PR results" \
             --float node-22 --float uv --float python-standalone \
-            --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
+            --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (macos-26)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
 
   rust-lint:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: rust lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: reuse
-    # Windows clippy runs on every pull request: Windows-only compile errors
-    # used to surface only on release PRs.
+    needs: [quick, reuse]
+    # Windows and macOS clippy run on every pull request: platform-only compile
+    # errors (cfg gaps) used to surface only on release PRs or after merging to
+    # main. Standard runners are free here; this job is lint only, no tests.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest","windows-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest","macos-26","windows-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua
@@ -143,10 +145,10 @@ jobs:
           shared-key: libs-cua-lint
       - name: Format
         if: runner.os == 'Linux'
-        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-cluster -p cua-spaces-cluster -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
+        run: cargo fmt -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-cluster -p cua-spaces-cluster -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
       - name: Clippy (native)
         run: >
-          cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
+          cargo clippy --locked -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster -p cua-agent-setup
           -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
@@ -191,20 +193,28 @@ jobs:
             exit 1
           fi
 
-  # The Linux leg of `rust`, in three shards. Each shard builds (one cache
-  # family, saved by shard 1 only) and runs a third of the tests with
-  # cargo-nextest partitions. Doctests (not run by nextest) and the budget
-  # tests that need to run alone stay in cargo test on shards 1 and 2.
-  rust-linux:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') }}
-    name: rust linux shard ${{ matrix.shard }}/3
+  # The Linux leg of `rust`: build the test binaries once, run them in three
+  # shards. Compiling and linking the workspace's 176 test binaries took 11 to
+  # 19 minutes, and every shard did it again for 2 to 5 minutes of tests.
+  # `rust-linux-build` compiles them once into a cargo-nextest archive (and
+  # warms the sccache entries the shards' own `cargo test` steps use); each
+  # shard downloads the archive and runs a third of the tests from it with
+  # nextest partitions. Doctests (not run by nextest) and the budget tests that
+  # need to run alone stay in cargo test on shards 1 and 2.
+  #
+  # Linker: x86_64 Linux builds link with rust-lld, the default of every rustc
+  # since 1.90 (the toolchain is pinned to 1.97.1), so there is no mold or
+  # apt lld to install. Debug info is already off for CI tests
+  # (CARGO_PROFILE_DEV_DEBUG=0 above, lighter than `line-tables-only`, which
+  # libs/cua/Cargo.toml keeps for local builds): that keeps the archive small.
+  # macOS and Windows keep their platform linkers; swapping them is not safe
+  # without a run on each OS.
+  rust-linux-build:
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' }}
+    name: rust linux build
     runs-on: ubuntu-latest
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
     defaults:
       run:
         working-directory: libs/cua
@@ -222,12 +232,80 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
+      # This job saves the family; the shards only restore it.
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           shared-key: libs-cua-test
-          save-if: ${{ matrix.shard != 1 && 'false' || '' }}
       - uses: ./.github/actions/nextest
+      - name: Build the test binaries once (cargo-nextest archive)
+        run: >-
+          cargo nextest archive --locked --archive-file "$RUNNER_TEMP/rust-tests.tar.zst"
+          -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
+          -p cua-cluster -p cua-spaces-cluster
+          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
+          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
+          -p cua-auth -p cua-bindgen -p cua-connections -p cua-crash -p cua-create-failure -p cua-disk -p cua-home
+          -p cua-hotspot -p cua-machine-seal -p cua-mock-llm -p cua-push -p cua-repo-cache -p cua-share
+          -p cua-snapshot-sync -p cua-spaces-contract -p cua-spaces-transcript -p cua-agent-threads
+      # The cargo test steps of shards 1 and 2 build other test binaries. Compile
+      # them here so the shards find every unit in the sccache entry this job saves.
+      - name: Compile the other test binaries (warms the cache for shards 1 and 2)
+        run: |
+          cargo test --locked --no-run -p cua-spaces -p cua-mesh -p cua-agent-setup -p cua-telemetry -p cua-agents
+          cargo test --locked --no-run -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging \
+            --features cua-media-client/media-decode,cua-media-transport/quic
+          cargo test --locked --no-run -p cua-media-codec
+      - name: Size of the archive
+        run: ls -lh "$RUNNER_TEMP/rust-tests.tar.zst" && df -h / | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-linux-tests
+          path: ${{ runner.temp }}/rust-tests.tar.zst
+          if-no-files-found: error
+          # The archive is already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+
+  rust-linux:
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' }}
+    name: rust linux shard ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    needs: [quick, reuse, rust-linux-build]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    defaults:
+      run:
+        working-directory: libs/cua
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The archive is prebuilt, but shards 1 and 2 still compile their cargo test steps.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-test
+          # rust-linux-build saves the family.
+          save-if: "false"
+      - uses: ./.github/actions/nextest
+      - name: Download the test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-linux-tests
+          path: ${{ runner.temp }}
       - name: Test Spaces discovery and post-create directory failures
         if: matrix.shard == 1
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
@@ -237,6 +315,7 @@ jobs:
         # asserts wall-clock budgets.
         run: |
           cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-spaces --lib -- --test-threads=4
           cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
       - name: Test the Space list at scale and under chaos (budgets)
         if: matrix.shard == 1
@@ -244,6 +323,12 @@ jobs:
         # half-open: each scenario asserts wall-clock budgets, so they run
         # one at a time.
         run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
+      # The archive is unpacked into libs/cua/target, the path the build job compiled in:
+      # integration tests bake env!("CARGO_BIN_EXE_cua") and env!("CARGO_TARGET_TMPDIR") in at
+      # compile time, so a run from a temporary directory fails with "No such file" (spawn cua,
+      # tempdir_in). cargo creates target/tmp during a build; the archive does not carry it.
+      - name: Prepare the archive's target directory
+        run: mkdir -p target/tmp
       # One retry; a test that passes only on the retry is reported and gets a
       # `flaky` issue (.github/flaky/). The packages below are split by test
       # name hash, so a shard runs about a third of every crate's tests.
@@ -251,15 +336,10 @@ jobs:
         run: >-
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "sdk-rust-ubuntu-shard-${{ matrix.shard }}" --format junit
           --results target/nextest/ci/junit.xml --
-          cargo nextest run --locked --no-fail-fast --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
-          --partition hash:${{ matrix.shard }}/3
-          -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
-          -p cua-cluster -p cua-spaces-cluster
-          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
-          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
-          -p cua-auth -p cua-bindgen -p cua-connections -p cua-crash -p cua-create-failure -p cua-disk -p cua-home
-          -p cua-hotspot -p cua-machine-seal -p cua-mock-llm -p cua-push -p cua-repo-cache -p cua-share
-          -p cua-snapshot-sync -p cua-spaces-contract -p cua-spaces-transcript -p cua-agent-threads --test-threads 4
+          cargo nextest run --no-fail-fast --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
+          --archive-file "$RUNNER_TEMP/rust-tests.tar.zst" --workspace-remap . --extract-to . --extract-overwrite
+          --partition hash:${{ matrix.shard }}/3 --test-threads 4
+          ${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full')) && '-E "not (binary(pool_model) & (test(=pool_protocol_is_safe) | test(=mutation_no_epoch_check_breaks_single_writer) | test(=finding_stale_holder_cancels_current_attempt)))"' || '' }}
         env:
           # Teleport send acts only on fake hosts in tests; anything that
           # reaches the real host fails closed.
@@ -274,7 +354,7 @@ jobs:
       - name: Doctests (the packages above)
         if: matrix.shard == 2
         run: >
-          cargo test --locked --no-fail-fast --doc -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
+          cargo test --locked --no-fail-fast --doc -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
@@ -307,10 +387,10 @@ jobs:
   # The check that stood for the whole Linux leg before it was sharded
   # (named in the reuse subset above).
   rust-linux-result:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && !((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.reuse.outputs.pr_subset == 'true') && needs.quick.outputs.skip != 'true' }}
     name: rust (ubuntu-latest)
     runs-on: ubuntu-latest
-    needs: [reuse, rust-linux]
+    needs: [quick, reuse, rust-linux]
     timeout-minutes: 5
     steps:
       - name: All shards passed
@@ -320,15 +400,38 @@ jobs:
           echo "shards: $RESULT"
           test "$RESULT" = success
 
+  # The pool_model checks no longer run on pull requests, so a night or main run
+  # that fails on them must be heard: one issue, updated on every failure.
+  rust-linux-nightly-report:
+    if: ${{ failure() && github.event_name == 'schedule' && needs.quick.outputs.skip != 'true' }}
+    name: open or update the nightly issue
+    needs: [quick, rust-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/nightly-issue
+      - uses: ./.github/actions/nightly-issue
+        with:
+          title: "Nightly: cua SDK Rust tests are failing"
+          detail: >-
+            The nightly run of CI: cua SDK failed in the Linux Rust shards. Pull requests skip the
+            pool_model model checks (about 7 minutes), so a protocol change that breaks them first
+            shows up here or on main.
+
   # macOS and Windows legs (full runs only). The Linux leg is sharded: see
   # rust-linux and the `rust (ubuntu-latest)` job below.
   rust:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && needs.quick.outputs.skip != 'true' }}
     name: rust (${{ matrix.os }})
     # The matrix keeps the standard labels (they name the job); the larger
     # runners are mapped here.
     runs-on: ${{ matrix.os }}
-    needs: reuse
+    needs: [quick, reuse]
     # Tests only: lint runs in rust-lint, in parallel.
     timeout-minutes: 60
     strategy:
@@ -363,6 +466,7 @@ jobs:
         # asserts wall-clock budgets.
         run: |
           cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-spaces --lib -- --test-threads=4
           cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
       - name: Test the Space list at scale and under chaos (budgets)
         # 20 computers x 10 Spaces with computers off, slow, lossy, hung or
@@ -371,7 +475,7 @@ jobs:
         run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         run: >
-          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
+          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
@@ -416,10 +520,10 @@ jobs:
   # (a path dependency without a version, a file embedded from outside the
   # crate, a dependency on an unpublished crate).
   crates-dry-run:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
     name: crates.io dry run
     runs-on: ubuntu-latest
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -439,10 +543,10 @@ jobs:
   # cua-spacesd server core in process. A standalone workspace so libs/cua
   # never depends on the driver workspace (see the boundary check above).
   spaces-e2e:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: spaces e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -479,10 +583,10 @@ jobs:
           RUST_MIN_STACK: "8388608"
 
   bindings:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: bindings drift (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -515,12 +619,12 @@ jobs:
           cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check
 
   kotlin:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
     # The generated binding must compile (an exported `close` once clashed
     # with AutoCloseable.close; uniffi.toml renames such methods).
     name: kotlin compile
     runs-on: ubuntu-latest
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 20
     container: gradle:8.10.2-jdk17
     steps:
@@ -533,10 +637,10 @@ jobs:
   # compile all of them: 45-55 minutes cold on a 2-vCPU runner). macOS and
   # Windows legs (ci:full) still build their own.
   build-sdk:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
     name: build SDK (linux, release)
     runs-on: ubuntu-latest
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 60
     defaults:
       run:
@@ -563,10 +667,10 @@ jobs:
           compression-level: 1
 
   build-fixtures:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
     name: build test fixtures (linux)
     runs-on: ubuntu-latest
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 60
     defaults:
       run:
@@ -593,10 +697,10 @@ jobs:
           compression-level: 1
 
   build-cli:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
     name: build cua and cua-spaces CLIs (linux)
     runs-on: ubuntu-latest
-    needs: reuse
+    needs: [quick, reuse]
     timeout-minutes: 60
     defaults:
       run:
@@ -623,13 +727,10 @@ jobs:
           compression-level: 1
 
   python:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--')
-      && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled'
-      && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled'
-      && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' }}
     name: python smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [reuse, build-sdk, build-fixtures, build-cli]
+    needs: [quick, reuse, build-sdk, build-fixtures, build-cli]
     # A cold Windows run builds cua-sdk (release), the fixtures and the CLI:
     # it passed 45 minutes still compiling.
     timeout-minutes: 60
@@ -700,13 +801,10 @@ jobs:
             --with "$WHEEL" --with "$CLI_WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
 
   node:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--')
-      && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled'
-      && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled'
-      && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled' && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled' && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' && needs.quick.outputs.skip != 'true' }}
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [reuse, build-sdk, build-fixtures, build-cli]
+    needs: [quick, reuse, build-sdk, build-fixtures, build-cli]
     # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
     # minutes still compiling, as python smoke did on Windows.
     timeout-minutes: 60
@@ -764,10 +862,10 @@ jobs:
           npm --prefix typescript/integrations/pi-durable test
 
   browser:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' && needs.quick.outputs.skip != 'true' }}
     name: browser (wasm32) build + smoke
     runs-on: ubuntu-latest
-    needs: [reuse, build-fixtures]
+    needs: [quick, reuse, build-fixtures]
     timeout-minutes: 45
     defaults:
       run:
@@ -809,7 +907,7 @@ jobs:
   swift:
     name: swift smoke (macOS)
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) && needs.quick.outputs.skip != 'true' }}
     runs-on: macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 60
@@ -826,10 +924,12 @@ jobs:
       # XCFramework, hence the cap). Main's runs save it; PRs restore it. In
       # the macOS `libs-cua` family it shared with jobs of other shapes it hit 22%.
       - uses: ./.github/actions/rust-cache
+        id: cache
         with:
           workspaces: libs/cua
           shared-key: cua-sdk-swift
           size: 8G
+          save-always: "true"
       - name: Dev dylib
         run: |
           cargo build --locked --release -p cua-sdk
@@ -842,8 +942,24 @@ jobs:
           CUA_REQUIRE_FIXTURES: "1"
         run: |
           ../cua/swift/scripts/fresh-abi.sh . debug
-          swift test
+          # Per-file times (timings.py) from the XCTest suite summaries; the exit code is swift test's.
+          rc=0
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test-spaces-sdk.log"
+          rc=${PIPESTATUS[0]}
+          python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" swift-log --suite swift-spaces-sdk "$RUNNER_TEMP/swift-test-spaces-sdk.log"
+          exit "$rc"
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: swift-spaces-sdk
       - name: XCFramework (static) binary target
         run: |
           swift/scripts/build-xcframework.sh
           cd swift && rm -rf .build && CUA_SWIFT_XCFRAMEWORK=build/CuaSDKFFI.xcframework scripts/test.sh
+      # Keep the warm compile even when a test step above fails.
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}

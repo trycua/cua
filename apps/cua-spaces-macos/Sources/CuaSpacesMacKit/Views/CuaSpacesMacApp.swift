@@ -280,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// session with the main window closed).
     static let model = AppEnvironment.makeModel()
     private var notch: NotchController?
+    private var control: SpacesControlServer?
     private var started = false
 
     /// The system opened the app at login (read as the launch begins): no
@@ -301,7 +302,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The host service still running from before an update: onto this build (CUA-2457).
         HelperService.restartIfStale()
+        // Cua Driver for this Mac's coding agents: its own login item,
+        // registered and started here whatever this Mac shares (CUA-3638).
+        if DriverService.isBundled(), EmbeddedDriver.current() != nil {
+            DispatchQueue.global(qos: .utility).async {
+                if let why = DriverService.start(restart: false) { NSLog("cua-spaces: %@", why) }
+            }
+        }
         start(Self.model)
+        // Back from "Quit & Reopen" in System Settings: the permission guide
+        // picks up where it was.
+        PermissionGuide.resumeAfterRelaunch()
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()
     }
@@ -322,6 +333,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let route = urls.lazy.compactMap(JoinWithCode.route(for:)).first else { return }
         NSApp.activate()
         WebUIWindowController.show(model: Self.model, at: .path(route))
+    }
+
+    /// The loopback control server agents reach this app through (the MCP
+    /// `open_space_viewer`): `<cua home>/spaces-control.json` says where it
+    /// listens. Not started in an offscreen run, which shows no windows.
+    private func startControlServer(_ model: AppModel, router: MainUIRouter) {
+        guard !OffscreenRun.isOn else { return }
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+        guard let file = SpacesControlServer.controlFile(
+            info: Bundle.main.infoDictionary, environment: ProcessInfo.processInfo.environment, home: home) else { return }
+        let server = SpacesControlServer(file: file, actions: .init(
+            resolve: { requested in
+                let spaces = model.spaces
+                return (spaces.first { $0.id == requested }
+                    ?? spaces.first { $0.id.split(separator: ":", maxSplits: 1).last.map(String.init) == requested }
+                    ?? spaces.first { $0.name == requested })?.id
+            },
+            openViewer: { id in
+                NSApp.activate()
+                model.select(id)
+                router.open(.space(id))
+            }))
+        server.start()
+        control = server
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        control?.stop()
     }
 
     func start(_ model: AppModel) {
@@ -360,6 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.select(spaceId)
             router.open(.space(spaceId, dropped: urls))
         }
+        startControlServer(model, router: router)
         // "Spaces tab in the notch": applied now and on every change (an
         // offscreen run never puts the notch up).
         if !OffscreenRun.isOn { Self.followNotchSetting(model, controller) }

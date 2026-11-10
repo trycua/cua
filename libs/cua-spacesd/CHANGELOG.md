@@ -1,5 +1,110 @@
 # Changelog
 
+## [0.15.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.14.0...cua-spacesd-v0.15.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** show a child Space's window in the parent's Stream section and stream it directly from the child ([#6819](https://github.com/trycua/cua/issues/6819)) ([5f09d89](https://github.com/trycua/cua/commit/5f09d890ad10a68c02de0cfd4e3fe24096537059))
+
+
+### Bug Fixes
+
+* **cua-spacesd:** remove the agent sandbox even when its setup fails ([#7232](https://github.com/trycua/cua/issues/7232)) ([7b8de09](https://github.com/trycua/cua/commit/7b8de092587a04926919b52e2dcb472a4e9e947a))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.13.0...cua-spacesd-v0.14.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+
+## [0.13.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.8...cua-spacesd-v0.13.0) (2026-11-09)
+
+
+### Features
+
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+## [0.12.8](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.7...cua-spacesd-v0.12.8) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+
+## [0.12.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.6...cua-spacesd-v0.12.7) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** give KWin windows exact bounds, stacking, capture and bring_to_front ([#6820](https://github.com/trycua/cua/issues/6820)) ([5ee57ab](https://github.com/trycua/cua/commit/5ee57ab5bba333f33e48df787b77d997cc1e8019))
+
+## [0.12.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.5...cua-spacesd-v0.12.6) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+
+## [0.12.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.4...cua-spacesd-v0.12.5) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** say computers in use at once for the plan limit (CUA-3690) ([#6790](https://github.com/trycua/cua/issues/6790)) ([891ccb7](https://github.com/trycua/cua/commit/891ccb7153dde86f6219da719c583d2de0b88b14))
+
+## [0.12.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.3...cua-spacesd-v0.12.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a session's last use on its lifecycle record ([#6773](https://github.com/trycua/cua/issues/6773)) ([94e3d18](https://github.com/trycua/cua/commit/94e3d186262431c30cdf0891231eeee55909398e))
+
+## [0.12.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.2...cua-spacesd-v0.12.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit any native Wayland app to Hyprland background input ([#6706](https://github.com/trycua/cua/issues/6706)) ([895aec7](https://github.com/trycua/cua/commit/895aec7e51b0409b2b22c958920d52c22b0d2b03))
+* **spaces:** explain a refused new computer and offer a code from another computer ([#6710](https://github.com/trycua/cua/issues/6710)) ([327f41c](https://github.com/trycua/cua/commit/327f41c89be3e8209a4bfc3b5785cb423f97de9c))
+
+## [0.12.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.1...cua-spacesd-v0.12.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** find a macOS app by any name it ships, without guessing ([#6657](https://github.com/trycua/cua/issues/6657)) ([22d8c1b](https://github.com/trycua/cua/commit/22d8c1b9867fa2cf1dff32e28d577f953144266f))
+* **cua-spacesd:** wait for each VideoToolbox frame on macOS so encoder surfaces do not pile up ([#6621](https://github.com/trycua/cua/issues/6621)) ([d81ab3e](https://github.com/trycua/cua/commit/d81ab3e3b291029100f83b9273f49ca03c6dad25))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.0...cua-spacesd-v0.12.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **spacesd:** volume attach no longer deadlocks a 1 vCPU Space ([#6565](https://github.com/trycua/cua/issues/6565)) ([8a708ab](https://github.com/trycua/cua/commit/8a708abf6a60b76894df8d95ff94450436a3032f))
+* **windows:** no firewall prompt for cua and cua-spacesd, and a real publisher name ([#6558](https://github.com/trycua/cua/issues/6558)) ([0d196ad](https://github.com/trycua/cua/commit/0d196ad7669848951b7f5fa336af01e3f571d1f8))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.11.0...cua-spacesd-v0.12.0) (2026-11-05)
+
+
+### Features
+
+* **relay,spacesd:** a removed computer deletes its Spaces when it next comes online (CUA-3479) ([#6532](https://github.com/trycua/cua/issues/6532)) ([e7e78c8](https://github.com/trycua/cua/commit/e7e78c8217b126e4bd02ff67ef7d733d11ec243f))
+
+
+### Bug Fixes
+
+* **cua-driver:** initialize recording hooks for embedded platform registries ([#5785](https://github.com/trycua/cua/issues/5785)) ([0a05cd4](https://github.com/trycua/cua/commit/0a05cd40069594f02738bc2f4ac6f6bc0dc6390d))
+* **cua-mesh:** a failed dial no longer answers for a peer that came online since ([#6479](https://github.com/trycua/cua/issues/6479)) ([ebf96e5](https://github.com/trycua/cua/commit/ebf96e5ff17a12d92f67f7d32a740662a1bc435c))
+* **spaces:** Cua Driver runs after the new first run, whatever the Mac shares (CUA-3485) ([#6534](https://github.com/trycua/cua/issues/6534)) ([97eabde](https://github.com/trycua/cua/commit/97eabde88dd1fdf4548dbe2d12af8396211ff4ff))
+
 ## [0.11.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.10.1...cua-spacesd-v0.11.0) (2026-11-05)
 
 

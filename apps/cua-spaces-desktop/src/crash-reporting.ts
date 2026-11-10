@@ -58,9 +58,19 @@ type Env = Readonly<Record<string, string | undefined>>;
 /** `0/false/no/off/disable(d)` is false, `1/true/yes/on/enable(d)` true (config.rs `parse_bool`). */
 export function parseBool(value: string): boolean | null {
   switch (value.trim().toLowerCase()) {
-    case "0": case "false": case "no": case "off": case "disable": case "disabled":
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+    case "disable":
+    case "disabled":
       return false;
-    case "1": case "true": case "yes": case "on": case "enable": case "enabled":
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+    case "enable":
+    case "enabled":
       return true;
     default:
       return null;
@@ -97,8 +107,21 @@ export function configTelemetryEnabled(toml: string): boolean | null {
 }
 
 const CI_VARIABLES = [
-  "CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "CIRCLECI", "BUILDKITE", "TF_BUILD",
-  "TEAMCITY_VERSION", "TRAVIS", "APPVEYOR", "BITBUCKET_BUILD_NUMBER", "CODEBUILD_BUILD_ID", "DRONE", "HUDSON_URL",
+  "CI",
+  "CONTINUOUS_INTEGRATION",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "JENKINS_URL",
+  "CIRCLECI",
+  "BUILDKITE",
+  "TF_BUILD",
+  "TEAMCITY_VERSION",
+  "TRAVIS",
+  "APPVEYOR",
+  "BITBUCKET_BUILD_NUMBER",
+  "CODEBUILD_BUILD_ID",
+  "DRONE",
+  "HUDSON_URL",
 ];
 
 /** What the consent check reads from the machine. */
@@ -195,11 +218,28 @@ const EMAIL = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const HOME_UNIX = /(?:\/Users|\/home)\/[^/\\\s"'`:;,)\]}]+/g;
 const HOME_WIN = /[A-Za-z]:[\\/]+Users[\\/]+[^\\/"'`:;,)\]}]+/gi;
 
+const REDACTED = "[redacted]";
+const JWT = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/g;
+const BEARER = /\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
+const AWS_KEY_ID = /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA|ABIA|ACCA)[A-Z0-9]{16}\b/g;
+const KEYED_SECRET = /\b([a-z0-9_.-]*(?:token|key|secret)[a-z0-9_-]*["']?\s*[=:]\s*["']?)[A-Za-z0-9+/_~.=-]{16,}/gi;
+const KEYED_PASSWORD = /\b([a-z0-9_.-]*(?:password|passwd)[a-z0-9_-]*["']?\s*[=:]\s*["']?)[^\s"'&,;)}\]]{8,}/gi;
+
+/** JWTs, `Bearer` credentials, AWS key ids and long secrets after token=, key=, secret=, password= become `[redacted]`. */
+export function scrubSecrets(value: string): string {
+  return value
+    .replace(JWT, REDACTED)
+    .replace(BEARER, `$1${REDACTED}`)
+    .replace(AWS_KEY_ID, REDACTED)
+    .replace(KEYED_SECRET, `$1${REDACTED}`)
+    .replace(KEYED_PASSWORD, `$1${REDACTED}`);
+}
+
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Home folders (`/Users/x`, `/home/x`, `C:\Users\x`, the real $HOME) become `~`, emails `[email]`. */
+/** Home folders (`/Users/x`, `/home/x`, `C:\Users\x`, the real $HOME) become `~`, emails `[email]`, tokens `[redacted]`. */
 export function scrubString(value: string, home?: string): string {
-  let out = value.replace(HOME_WIN, "~");
+  let out = scrubSecrets(value).replace(HOME_WIN, "~");
   for (const h of new Set([home, home?.replace(/\\/g, "/")])) {
     if (h && h.length > 1) out = out.replace(new RegExp(escapeRegExp(h.replace(/[\\/]+$/, "")), "gi"), "~");
   }

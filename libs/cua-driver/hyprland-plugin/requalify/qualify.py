@@ -34,7 +34,9 @@ BUILD_OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "
 BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binutils", "python", "openssl",
                   "libxkbcommon", "xkeyboard-config")
 # The headless session's native Wayland clients and font.
-SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa")
+# The released cua-driver links the X libraries and reads the AT-SPI bus.
+SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa", "at-spi2-core", "libx11", "libxcb", "libxext", "libxi")
+DRIVER_BINARY = Path("/driver/cua-driver")
 USER, UID = "cua", 1000
 
 
@@ -86,10 +88,16 @@ def setup_pacman(job, log):
         run(["pacman-key", "--populate", "omarchy"], log)
     for attempt in range(3):
         # -yy forces fresh databases; -uu lets an older channel downgrade the bootstrap.
-        code, _ = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
-                      log, check=False)
+        code, output = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
+                           log, check=False)
         if code == 0:
             return
+        # An older channel can downgrade a package whose files a newer bootstrap package (the base
+        # image's openssl-3 against the channel's openssl 3.x) already owns. The container is
+        # disposable, so drop the owner and retry; a network failure retries unchanged.
+        owners = sorted(set(re.findall(r"exists in filesystem \(owned by ([^)\s]+)\)", output)))
+        if owners:
+            run(["pacman", "-Rdd", "--noconfirm", *owners], log, check=False)
         time.sleep(10 * (attempt + 1))
     raise RuntimeError("pacman could not install the channel's packages")
 
@@ -183,6 +191,8 @@ def session(module, out):
            "LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": cards[0], "LANG": "C.UTF-8"}
     command = ["runuser", "-u", USER, "--", "env", *[f"{k}={v}" for k, v in env.items()],
                sys.executable, str(HERE / "headless.py"), "--module", str(plugin), "--out", str(session_dir)]
+    if DRIVER_BINARY.is_file():
+        command += ["--driver", str(DRIVER_BINARY)]
     code, _ = run(command, out / "session.log", check=False, timeout=600)
     result_path = session_dir / "result.json"
     if not result_path.is_file():

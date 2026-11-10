@@ -15,8 +15,9 @@ use async_trait::async_trait;
 use core_graphics::display::CGDisplay;
 use cua_driver_core::{
     protocol::ToolResult,
-    tool::{Tool, ToolDef},
+    tool::{DesktopLease, Tool, ToolDef},
 };
+use objc2::rc::Retained;
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
@@ -30,6 +31,85 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 const VERIFY_TIMEOUT: Duration = Duration::from_millis(900);
 const VERIFY_POLL: Duration = Duration::from_millis(20);
 const VERIFY_STABLE: Duration = Duration::from_millis(100);
+
+/// How long AppKit may lag the kernel before a live pid counts as not an
+/// application. On the macOS E2E guest the lookup missed a live, frontmost
+/// app for under 200 ms; the bound leaves room for a loaded machine.
+const APP_LOOKUP_GRACE: Duration = Duration::from_secs(1);
+const APP_LOOKUP_POLL: Duration = Duration::from_millis(20);
+
+/// Why no `NSRunningApplication` could be had for a pid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMissing {
+    /// The kernel has no such process.
+    Exited,
+    /// The process lives, but AppKit never reported it as an application.
+    NotAnApplication,
+}
+
+impl AppMissing {
+    fn result(self, pid: i32) -> ToolResult {
+        let (code, message) = match self {
+            Self::Exited => (
+                "bring_to_front_pid_not_found",
+                format!("bring_to_front: no running application for pid {pid} (process not found or exited)."),
+            ),
+            Self::NotAnApplication => (
+                "bring_to_front_pid_not_application",
+                format!("bring_to_front: pid {pid} is running but is not a registered application."),
+            ),
+        };
+        ToolResult::error(message).with_structured(json!({
+            "code": code,
+            "pid": pid,
+            "activated": false,
+            "request_accepted": false,
+        }))
+    }
+}
+
+/// Whether the kernel has `pid`. `EPERM` still proves the process exists.
+fn process_exists(pid: i32) -> bool {
+    pid > 0
+        && (unsafe { libc::kill(pid, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+}
+
+/// The running application for `pid`.
+///
+/// `runningApplicationWithProcessIdentifier` answers from AppKit's cache of
+/// running applications, which can briefly miss a live app (seen right after
+/// another app took activation). A nil there is not proof the process exited,
+/// so ask the kernel, and wait for AppKit only while the process is alive.
+fn running_application(pid: i32) -> Result<Retained<NSRunningApplication>, AppMissing> {
+    await_application(
+        || unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) },
+        || process_exists(pid),
+        APP_LOOKUP_GRACE,
+        APP_LOOKUP_POLL,
+    )
+}
+
+fn await_application<T>(
+    mut lookup: impl FnMut() -> Option<T>,
+    mut alive: impl FnMut() -> bool,
+    grace: Duration,
+    poll: Duration,
+) -> Result<T, AppMissing> {
+    let deadline = Instant::now() + grace;
+    loop {
+        if let Some(app) = lookup() {
+            return Ok(app);
+        }
+        if !alive() {
+            return Err(AppMissing::Exited);
+        }
+        if Instant::now() >= deadline {
+            return Err(AppMissing::NotAnApplication);
+        }
+        std::thread::sleep(poll);
+    }
+}
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -205,7 +285,8 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
-        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid)
+            .map(|window| window.own),
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
@@ -242,8 +323,7 @@ fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
 /// make the app active for AppKit, so a window the typing opens (Chrome's
 /// omnibox suggestions) hands the front back to the previous app mid-string.
 pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
-    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-    else {
+    let Ok(app) = running_application(pid) else {
         return false;
     };
     crate::input::skylight::set_front_process_persistently(pid, window_id);
@@ -260,8 +340,7 @@ pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
 /// the app's own key window comes forward. Best effort: macOS may refuse an
 /// activation requested by a background process.
 pub(crate) fn reactivate_application(pid: i32) -> bool {
-    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-    else {
+    let Ok(app) = running_application(pid) else {
         return false;
     };
     unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) }
@@ -336,8 +415,7 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        crate::window_change_detector::end_tail();
-        crate::window_change_detector::note_intentional_activation();
+        crate::focus_arbiter::note_intentional();
         let pid = match args.get("pid").and_then(Value::as_i64) {
             Some(p) => match libc::pid_t::try_from(p) {
                 Ok(pid) => pid,
@@ -370,18 +448,26 @@ impl Tool for BringToFrontTool {
             None => None,
         };
 
-        let Some(app) =
-            (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
-        else {
-            return ToolResult::error(format!(
-                "bring_to_front: no running application for pid {pid} (process not found or exited)."
-            ))
-            .with_structured(json!({
-                "code": "bring_to_front_pid_not_found",
-                "pid": pid,
-                "activated": false,
-                "request_accepted": false,
-            }));
+        // Activation, the own-process main-queue raise and the verification
+        // poll all block; keep them off the async worker. The worker keeps the
+        // desktop lease, so a cancelled call cannot hand the lane on early.
+        let lease = DesktopLease::current();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            Self::activate_blocking(pid, window_id)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            ToolResult::error(format!("bring_to_front: activation worker failed: {error}"))
+        })
+    }
+}
+
+impl BringToFrontTool {
+    fn activate_blocking(pid: i32, window_id: Option<u32>) -> ToolResult {
+        let app = match running_application(pid) {
+            Ok(app) => app,
+            Err(missing) => return missing.result(pid),
         };
 
         if let Some(window_id) = window_id {
@@ -511,6 +597,71 @@ impl Tool for BringToFrontTool {
 mod tests {
     use super::*;
 
+    const NO_WAIT: Duration = Duration::ZERO;
+
+    #[test]
+    fn a_live_app_that_appkit_reports_late_is_found() {
+        let mut lookups = 0;
+        let found = await_application(
+            || {
+                lookups += 1;
+                (lookups == 3).then_some("app")
+            },
+            || true,
+            Duration::from_secs(5),
+            NO_WAIT,
+        );
+        assert_eq!(found, Ok("app"));
+        assert_eq!(lookups, 3);
+    }
+
+    #[test]
+    fn an_exited_process_fails_without_waiting() {
+        let started = Instant::now();
+        let found = await_application(
+            || None::<()>,
+            || false,
+            Duration::from_secs(5),
+            Duration::from_secs(1),
+        );
+        assert_eq!(found, Err(AppMissing::Exited));
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn a_live_process_appkit_never_reports_is_not_an_application() {
+        let found = await_application(
+            || None::<()>,
+            || true,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+        );
+        assert_eq!(found, Err(AppMissing::NotAnApplication));
+    }
+
+    #[test]
+    fn the_kernel_oracle_tells_a_live_pid_from_a_reaped_one() {
+        assert!(process_exists(std::process::id() as i32));
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        assert!(!process_exists(pid));
+        assert!(!process_exists(0));
+        assert!(!process_exists(-1));
+    }
+
+    #[test]
+    fn a_reaped_pid_is_reported_as_exited() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let pid = child.id() as i32;
+        child.wait().unwrap();
+        let result = BringToFrontTool::activate_blocking(pid, None);
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "bring_to_front_pid_not_found");
+        assert_eq!(structured["activated"], false);
+    }
+
     fn observation(
         workspace_frontmost_pid: Option<i32>,
         front_process_matches_target: Option<bool>,
@@ -579,6 +730,101 @@ mod tests {
             on_current_space: Some(true),
             space_ids: None,
         }
+    }
+
+    const OWN_PROCESS_CHILD: &str = "CUA_TEST_BRING_TO_FRONT_OWN_PROCESS_CHILD";
+
+    /// Runs in a child process: registering this process with AppKit would
+    /// send every other test's input-source call to a main queue the test
+    /// harness never drains.
+    #[test]
+    fn own_process_activation_does_not_block_the_async_worker() {
+        if !crate::session::has_graphic_access() {
+            eprintln!("skipped: no window server session");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tools::bring_to_front::tests::own_process_activation_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(OWN_PROCESS_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    #[test]
+    #[ignore = "child of own_process_activation_does_not_block_the_async_worker"]
+    fn own_process_activation_child() {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        assert!(
+            std::env::var_os(OWN_PROCESS_CHILD).is_some(),
+            "run through own_process_activation_does_not_block_the_async_worker"
+        );
+        // A Prohibited app never activates, so the process check polls for
+        // the whole VERIFY_TIMEOUT.
+        unsafe {
+            let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let _: bool = msg_send![app, setActivationPolicy: 2i64];
+        }
+        let pid = std::process::id() as i32;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let ticks = Arc::new(AtomicU32::new(0));
+        let (result, elapsed, ticks_during) = runtime.block_on(async {
+            let counter = Arc::clone(&ticks);
+            let ticker = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+            let started = Instant::now();
+            let result = BringToFrontTool.invoke(json!({ "pid": pid })).await;
+            let elapsed = started.elapsed();
+            let ticks_during = ticks.load(Ordering::Relaxed);
+            ticker.abort();
+            (result, elapsed, ticks_during)
+        });
+        let structured = result.structured_content.expect("structured result");
+        assert_eq!(structured["code"], "bring_to_front_process_unverified");
+        assert!(elapsed >= VERIFY_TIMEOUT, "poll ended early: {elapsed:?}");
+        // One worker thread: a blocked invoke lets the ticker run zero times.
+        assert!(
+            ticks_during >= 20,
+            "async worker stalled: {ticks_during} ticks in {elapsed:?}"
+        );
+        // A call cancelled mid-activation keeps the desktop lane until its
+        // worker stops.
+        let lane_wait = runtime.block_on(async {
+            let call = cua_driver_core::tool::DesktopCall::acquire().await.unwrap();
+            let invoke = call.scope(BringToFrontTool.invoke(json!({ "pid": pid })));
+            assert!(tokio::time::timeout(Duration::from_millis(100), invoke)
+                .await
+                .is_err());
+            drop(call);
+            let started = Instant::now();
+            let next = cua_driver_core::tool::DesktopCall::acquire().await;
+            assert!(next.is_ok(), "the lane refused instead of waiting");
+            started.elapsed()
+        });
+        assert!(
+            lane_wait >= VERIFY_TIMEOUT / 2,
+            "lane handed on while the worker still ran: {lane_wait:?}"
+        );
     }
 
     #[test]

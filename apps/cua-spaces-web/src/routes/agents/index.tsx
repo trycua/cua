@@ -60,7 +60,11 @@ function AgentsChatPage() {
   const chat = chats?.find((c) => c.key === search.agent && c.kind === "agent") ?? (search.agent ? null : (chats?.find((c) => c.kind === "agent") ?? null));
   const space = chat && search.space && chat.spaces.some((s) => s.spaceId === search.space) ? search.space : null;
   const select = (agent: string, sp?: string) => void navigate({ search: { agent, space: sp }, replace: true });
-  const taken = (spaceId: string) => (chats ?? []).flatMap((c) => c.spaces).filter((s) => s.spaceId === spaceId).map((s) => s.handle);
+  const taken = (spaceId: string) =>
+    (chats ?? [])
+      .flatMap((c) => c.spaces)
+      .filter((s) => s.spaceId === spaceId)
+      .map((s) => s.handle);
   return (
     <div data-agents-chat="" className="flex h-full min-h-0">
       <AgentList
@@ -78,7 +82,15 @@ function AgentsChatPage() {
         <div className="flex-1" />
       ) : chat ? (
         <>
-          <AgentDmView key={chat.key} chat={chat} space={space} onSpace={(sp) => select(chat.key, sp ?? undefined)} identity={identity} onInfo={() => setInfo(true)} me={me} />
+          <AgentDmView
+            key={chat.key}
+            chat={chat}
+            space={space}
+            onSpace={(sp) => select(chat.key, sp ?? undefined)}
+            identity={identity}
+            onInfo={() => setInfo(true)}
+            me={me}
+          />
           <AgentPage chat={chat} open={info} onOpenChange={setInfo} me={me} identity={identity} />
         </>
       ) : chats.every((c) => c.kind !== "agent") ? (
@@ -95,7 +107,7 @@ function AgentsChatPage() {
             refresh();
           }
         }}
-        spaces={spaces.map((s) => ({ id: s.id, name: s.name }))}
+        spaces={spaces}
         taken={taken}
       />
     </div>

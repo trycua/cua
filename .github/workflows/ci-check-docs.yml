@@ -32,6 +32,7 @@ on:
       - "docs/content/docs/cua-sdk/guides/images.mdx"
       - ".github/workflows/ci-check-docs.yml"
       - ".gitattributes"
+  merge_group:
   # Run every native check on demand, e.g. to produce the native Windows Driver
   # MCP snapshot (artifact cua-driver-mcp-snapshot-windows) without a PR.
   workflow_dispatch:
@@ -57,12 +58,12 @@ jobs:
   # decide to skip.
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   scope:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Select affected generators
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -126,8 +127,8 @@ jobs:
 
   native-reference:
     name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
-    needs: scope
-    if: needs.scope.outputs.selected == 'true'
+    needs: [quick, scope]
+    if: ${{ !failure() && !cancelled() && needs.scope.result == 'success' && (needs.scope.outputs.selected == 'true') && needs.quick.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
@@ -176,11 +177,10 @@ jobs:
           save-if: false
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux' && matrix.library == 'cua-driver'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Install protoc (cua SDK generators)
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         uses: ./.github/actions/setup-protoc
@@ -199,12 +199,10 @@ jobs:
           key: docs-${{ matrix.library }}
       - name: Install Linux build dependencies (cua SDK)
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
-            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libxrandr-dev libxi-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
         if: contains(fromJSON('["cua-sdk-python","cua-bench"]'), matrix.library)
       - name: Install the TypeScript SDK's dependencies (typedoc input)
@@ -254,8 +252,8 @@ jobs:
 
   check-docs-sync:
     name: Check Documentation Sync
-    if: always()
-    needs: [scope, native-reference]
+    if: ${{ always() && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, scope, native-reference]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

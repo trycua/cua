@@ -40,6 +40,16 @@ on:
         required: false
         default: true
         type: boolean
+      rebuild_tag:
+        description: "Unused by callers; declared so the inputs context matches workflow_dispatch"
+        required: false
+        default: ""
+        type: string
+      rebuild_sha:
+        description: "Unused by callers; declared so the inputs context matches workflow_dispatch"
+        required: false
+        default: ""
+        type: string
     secrets:
       APPLICATION_CERT_BASE64:
         required: false
@@ -73,6 +83,14 @@ on:
         required: false
         type: boolean
         default: true
+      rebuild_tag:
+        description: "Rebuild and publish the existing draft release of this tag (e.g. cua-driver-rs-v0.39.0) with THIS ref's workflow files. Run from main. Leave empty for a build-only candidate."
+        required: false
+        default: ""
+      rebuild_sha:
+        description: "Commit SHA the tag points to (required with rebuild_tag; checked against the tag)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -81,10 +99,16 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: cd-cua-driver-${{ github.ref }}
+  group: cd-cua-driver-${{ inputs.rebuild_tag && format('refs/tags/{0}', inputs.rebuild_tag) || github.ref }}
   cancel-in-progress: false
 
 env:
+  # The release ref this run is about: the pushed tag or, for a rebuild
+  # dispatch (run from main so fixed workflow files apply to an existing tag),
+  # the requested tag. Shell steps read RELEASE_REF instead of GITHUB_REF and
+  # CERTIFIED_SHA instead of GITHUB_SHA.
+  RELEASE_REF: ${{ inputs.rebuild_tag && format('refs/tags/{0}', inputs.rebuild_tag) || github.ref }}
+  CERTIFIED_SHA: ${{ inputs.rebuild_sha || github.sha }}
   CARGO_NET_RETRY: "10"
   CARGO_HTTP_TIMEOUT: "120"
   CARGO_HTTP_MULTIPLEXING: "false"
@@ -108,14 +132,45 @@ jobs:
       # install. Fail before any build instead of discovering it afterwards.
       - name: Refuse to publish without macOS notarization
         env:
-          CAN_PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v') }}
-          DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
+          CAN_PUBLISH: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}
+          DO_NOTARIZE: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.notarize == true }}
         run: |
           echo "can publish: ${CAN_PUBLISH}; notarize macOS: ${DO_NOTARIZE}"
           if [[ "$CAN_PUBLISH" == "true" && "$DO_NOTARIZE" != "true" ]]; then
             echo "::error title=Release safety::This run can publish a Cua Driver release, but macOS notarization is disabled. Publishing requires signed, notarized macOS artifacts (#4109)."
             exit 1
           fi
+
+      # Rebuild dispatch guard: only main's workflow files, only an existing
+      # draft, only the exact tagged commit. Nothing here moves or re-creates
+      # a tag, and a published release is refused so no duplicate can ship.
+      - name: Validate rebuild request
+        if: ${{ inputs.rebuild_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REBUILD_TAG: ${{ inputs.rebuild_tag }}
+          REBUILD_SHA: ${{ inputs.rebuild_sha }}
+          EVENT: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          NOTARIZE: ${{ inputs.notarize }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] \
+            || { echo "::error::rebuild_tag is only allowed on a workflow_dispatch from main"; exit 1; }
+          [[ "$REBUILD_TAG" =~ ^cua-driver-rs-v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "::error::rebuild_tag must be a stable cua-driver-rs-vX.Y.Z tag"; exit 1; }
+          [[ "$REBUILD_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::rebuild_sha must be a full lowercase commit SHA"; exit 1; }
+          [[ "$NOTARIZE" == "true" ]] \
+            || { echo "::error::a rebuild that publishes must notarize"; exit 1; }
+          TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${REBUILD_TAG}" --jq .sha)
+          [[ "$TAG_SHA" == "$REBUILD_SHA" ]] \
+            || { echo "::error::$REBUILD_TAG resolves to $TAG_SHA, not $REBUILD_SHA"; exit 1; }
+          DRAFT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"${REBUILD_TAG}\") | .draft")
+          [[ "$DRAFT" == "true" ]] \
+            || { echo "::error::no unpublished draft release for $REBUILD_TAG (already published or missing); refusing to rebuild"; exit 1; }
+          echo "Rebuilding $REBUILD_TAG at $REBUILD_SHA from main's workflow files." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve candidate version
         id: candidate
@@ -125,8 +180,8 @@ jobs:
         run: |
           if [[ "$CHANNEL" == "nightly" ]]; then
             VERSION="$INPUT_VERSION"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="$INPUT_VERSION"
           fi
@@ -135,7 +190,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}
 
       - name: Check out release control tooling
         uses: actions/checkout@v4
@@ -149,8 +204,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          if [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             echo "No immutable release candidate requested; skipping attribution preflight."
             exit 0
@@ -232,28 +287,63 @@ jobs:
       # is bare. Install git + the build toolchain before anything else.
       - name: Install base tooling (container is bare)
         run: |
-          # Freeze bullseye indexes and packages together: the live security
-          # mirror can advertise packages it no longer serves. HTTP bootstraps
-          # ca-certificates; APT still verifies Debian signatures and hashes.
+          # Debian 11 is past its support window, so bullseye indexes and packages
+          # are frozen on snapshot.debian.org (the live security mirror advertises
+          # packages it no longer serves). HTTP bootstraps ca-certificates; APT still
+          # verifies Debian signatures and hashes.
+          # snapshot.debian.org answers 504/503 under load. APT retries each fetch
+          # with timeouts, the shell retries the whole step with a backoff, and if
+          # the snapshot is still down we fall back to archive.debian.org, which
+          # holds the same final bullseye packages (the pin exists for
+          # reproducibility, not for different versions). Same retry policy as
+          # libs/cua-spacesd/packaging/release/debian-build-deps.sh.
+          mkdir -p /etc/apt/apt.conf.d
+          cat > /etc/apt/apt.conf.d/80-cua-retries <<'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          EOF
+          # PipeWire ScreenCast capture remains Nix/modern-build only because
+          # bullseye's 0.3.19 headers are too old for libspa-sys 0.10. Portal
+          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
+          # in these portable release binaries.
+          PACKAGES="git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev"
+          apt_retry() {
+            n=0
+            until "$@"; do
+              n=$((n + 1))
+              if [ "$n" -ge 3 ]; then return 1; fi
+              echo "apt step failed (attempt $n of 3); retrying in $((n * 20))s" >&2
+              sleep $((n * 20))
+            done
+          }
+          apt_bootstrap() {
+            # Ignore any additional image-provided sources for this bootstrap.
+            apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" update &&
+              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends $PACKAGES
+          }
+          rm -f /etc/apt/sources.list.d/debian.sources
           cat > /etc/apt/sources.list <<'EOF'
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
           EOF
-          # Ignore any additional image-provided sources for this bootstrap.
-          # snapshot.debian.org answers 504 under load; retry each fetch.
-          apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 update
-          # PipeWire ScreenCast capture remains Nix/modern-build only because
-          # bullseye's 0.3.19 headers are too old for libspa-sys 0.10. Portal
-          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
-          # in these portable release binaries.
-          apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 install -y --no-install-recommends \
-            git ca-certificates curl python3 build-essential pkg-config \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
-            libxkbcommon-dev
+          if apt_bootstrap; then
+            echo "apt mirror used: snapshot.debian.org 20260901T000000Z"
+          else
+            echo "::warning::snapshot.debian.org failed after retries; falling back to archive.debian.org"
+            rm -rf /var/lib/apt/lists/*
+            cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
+          deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main
+          EOF
+            apt_bootstrap
+            echo "apt mirror used: archive.debian.org (snapshot fallback)"
+          fi
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}
       - name: Stage nightly artifact version
         if: inputs.channel == 'nightly'
         run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
@@ -268,8 +358,8 @@ jobs:
         run: |
           if [[ "${{ inputs.channel }}" == "nightly" ]]; then
             VERSION="${{ inputs.version }}"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
           fi
@@ -345,7 +435,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}
       - name: Stage nightly artifact version
         if: inputs.channel == 'nightly'
         shell: bash
@@ -361,8 +451,8 @@ jobs:
         run: |
           if [[ "${{ inputs.channel }}" == "nightly" ]]; then
             VERSION="${{ inputs.version }}"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
           fi
@@ -529,7 +619,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -592,14 +682,14 @@ jobs:
     # `notarize` input so we can iterate on the build pipeline without
     # touching the Apple notary service.
     env:
-      DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
+      DO_NOTARIZE: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.notarize == true }}
       KEYCHAIN_PASSWORD: temporary-cd-keychain-pwd
     steps:
       - name: Assert notarization for publishable builds
         env:
-          CAN_PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v') }}
+          CAN_PUBLISH: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true" ]]; then
+          if [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true" ]]; then
             echo "::error title=Release safety::Tag builds must notarize the macOS artifacts."
             exit 1
           fi
@@ -610,7 +700,7 @@ jobs:
           echo "notarize macOS: ${DO_NOTARIZE}"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}
       - name: Preflight Computer History provisioning profile
         if: env.DO_NOTARIZE == 'true'
         env:
@@ -669,8 +759,8 @@ jobs:
         run: |
           if [[ "${{ inputs.channel }}" == "nightly" ]]; then
             VERSION="${{ inputs.version }}"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
           fi
@@ -1005,14 +1095,13 @@ jobs:
     name: pinned Hyprland plugin source
     needs: release-attribution-preflight
     if: >-
-      github.event_name == 'push' &&
-      startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -1022,8 +1111,8 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          if [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="$REQUESTED_VERSION"
           fi
@@ -1065,15 +1154,15 @@ jobs:
         with:
           # Candidate artifacts come from the exact source; the verifier comes
           # from the commit that defined this workflow run.
-          ref: ${{ inputs.source_ref || github.workflow_sha }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.workflow_sha }}
 
       - name: Determine version
         id: version
         run: |
           if [[ "${{ inputs.channel }}" == "nightly" ]]; then
             VERSION="${{ inputs.version }}"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
           fi
@@ -1104,7 +1193,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.workflow_sha }}
+          ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.workflow_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -1116,8 +1205,8 @@ jobs:
         run: |
           if [[ "${{ inputs.channel }}" == "nightly" ]]; then
             VERSION="${{ inputs.version }}"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$RELEASE_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           else
             VERSION="${{ inputs.version }}"
           fi
@@ -1168,47 +1257,48 @@ jobs:
   e2e-linux:
     name: release gate / Linux E2E
     needs: release-attribution-preflight
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/e2e-rust-linux.yml
     with:
-      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
+      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}
 
   e2e-windows:
     name: release gate / Windows E2E
     needs: release-attribution-preflight
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/e2e-rust-windows.yml
     with:
-      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
+      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}
 
   e2e-macos:
     name: release gate / macOS hosted E2E
     needs: release-attribution-preflight
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
       pull-requests: read
     uses: ./.github/workflows/e2e-rust-macos.yml
     with:
-      source_sha: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
+      source_sha: ${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}
+      rebuild_of_released_source: ${{ inputs.channel != 'nightly' && inputs.rebuild_sha != '' }}
 
   e2e-standalone-browsers:
     name: release gate / standalone browser E2E
     needs: release-attribution-preflight
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/e2e-rust-standalone-browsers.yml
     with:
-      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
+      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}
 
   # ── Release signature gate ──────────────────────────────────────────────────
   # Release safety (#4109): verify the exact uploaded archives the way the
@@ -1220,7 +1310,7 @@ jobs:
   verify-macos-release-signatures:
     name: macOS release signatures
     needs: [release-attribution-preflight, build-macos-universal]
-    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.notarize == true
     uses: ./.github/workflows/cua-driver-release-signatures.yml
     with:
       version: ${{ needs.release-attribution-preflight.outputs.version }}
@@ -1252,7 +1342,7 @@ jobs:
   # the gate times out and the smoke is started by hand as before.
   request-staging-smoke:
     name: Request the staging smoke
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1272,7 +1362,7 @@ jobs:
       - name: Send the cua-release-candidate dispatch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: .github/scripts/request_staging_smoke.sh cua-driver "$GITHUB_SHA"
+        run: .github/scripts/request_staging_smoke.sh cua-driver "$CERTIFIED_SHA"
 
   # Staging first (CUA-1907): a release publishes only when the staging smoke
   # is recorded green for this exact commit as the commit status
@@ -1282,7 +1372,7 @@ jobs:
   # release job runs on a tag push only, so there is no manual-run bypass.
   staging-gate:
     name: staging smoke is green
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
     runs-on: ubuntu-latest
     # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
     timeout-minutes: 40
@@ -1295,7 +1385,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_MINUTES: "30"
-        run: .github/scripts/require_staging_smoke.sh cua-driver "$GITHUB_SHA"
+        run: .github/scripts/require_staging_smoke.sh cua-driver "$CERTIFIED_SHA"
 
   release:
     needs:
@@ -1313,7 +1403,7 @@ jobs:
       - e2e-windows
       - e2e-macos
       - e2e-standalone-browsers
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))
     runs-on: ubuntu-latest
     # id-token: keyless Sigstore bundles for every release asset. The
     # attribution collector reads pull requests and issues.
@@ -1327,7 +1417,7 @@ jobs:
     steps:
       - name: Refuse to publish unverified or unnotarized artifacts
         env:
-          DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
+          DO_NOTARIZE: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) || inputs.notarize == true }}
           MACOS_SIGNATURES: ${{ needs.verify-macos-release-signatures.result }}
           WINDOWS_SIGNATURES: ${{ needs.verify-windows-release-signatures.result }}
         run: |
@@ -1340,7 +1430,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref }}
+          ref: ${{ env.RELEASE_REF }}
 
       # Release inputs stay pinned to the tag checkout above; orchestration
       # helpers run from the workflow revision in a separate checkout.
@@ -1354,11 +1444,11 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" != refs/tags/cua-driver-rs-v* ]]; then
-            echo "Publication requires a cua-driver-rs-v* tag push, got $GITHUB_REF" >&2
+          if [[ "$RELEASE_REF" != refs/tags/cua-driver-rs-v* ]]; then
+            echo "Publication requires a cua-driver-rs-v* tag push, got $RELEASE_REF" >&2
             exit 1
           fi
-          VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          VERSION="${RELEASE_REF#refs/tags/cua-driver-rs-v}"
           TAG="cua-driver-rs-v${VERSION}"
           SHA=$(git rev-parse HEAD)
           TAG_SHA=$(git rev-list -n 1 "$TAG")
@@ -1366,9 +1456,9 @@ jobs:
             echo "Checked-out source $SHA does not match $TAG ($TAG_SHA)" >&2
             exit 1
           fi
-          # The E2E gates certified github.sha; publish only that exact commit.
-          if [[ "$SHA" != "$GITHUB_SHA" ]]; then
-            echo "$TAG ($SHA) is not the E2E-certified commit ($GITHUB_SHA)" >&2
+          # The E2E gates certified CERTIFIED_SHA (github.sha or rebuild_sha); publish only that exact commit.
+          if [[ "$SHA" != "$CERTIFIED_SHA" ]]; then
+            echo "$TAG ($SHA) is not the E2E-certified commit ($CERTIFIED_SHA)" >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -1395,7 +1485,7 @@ jobs:
           # canonical one-liners both fetch from
           # raw.githubusercontent.com/trycua/cua/main/... so they always
           # serve the current installer regardless of release flags
-          # (prerelease excludes us from the /releases/latest/ endpoint).
+          # (no installer reads the repo-wide Latest release).
           # The tag-pinned asset URLs below are a convenience for users who
           # want to audit the exact installer that shipped with a release.
           #
@@ -1725,6 +1815,8 @@ jobs:
               --base main \
               --head "$ATTEMPT_BRANCH" \
               --title "chore(cua-driver): advance published installer version to ${VERSION}" \
+              --label no-release \
+              --label agent \
               --body "Post-release bookkeeping for Cua Driver ${VERSION}, opened by the release workflow after the signed release and installers verified. Merges through the normal required checks.") || {
                 echo "Could not open the bookkeeping PR; retrying." >&2
                 git push origin --delete "$ATTEMPT_BRANCH" || true
@@ -1732,16 +1824,51 @@ jobs:
               }
             echo "Opened ${PR_URL}"
 
-            # Wait for the required checks, then merge. Repository auto-merge
-            # is off, so merge explicitly once they pass.
-            if timeout 40m gh pr checks "$PR_URL" --required --watch --fail-fast \
-              && gh pr merge "$PR_URL" --squash --delete-branch; then
-              echo "Public installers now advertise ${VERSION}."
-              exit 0
-            fi
-            echo "Bookkeeping PR ${PR_URL} did not merge; closing it and retrying from the new main head." >&2
+            # Queue the merge and stop. Repository auto-merge is on, so the PR
+            # merges itself once the required checks (including the local-ci
+            # sign-off, which can take 20-40 minutes) pass. Do not watch the
+            # checks and do not close the PR on a timeout: the required checks
+            # register a few seconds after the PR opens, and `gh pr checks
+            # --required` fails at once with "no checks reported" until then,
+            # which used to close every PR within seconds (#6679 to #6685).
+            for _ in $(seq 1 30); do
+              gh pr merge "$PR_URL" --auto --squash --delete-branch && {
+                echo "Auto-merge queued for ${PR_URL}; installers advance to ${VERSION} when checks pass."
+                exit 0
+              }
+              sleep 10
+            done
+            echo "Could not queue auto-merge for ${PR_URL}; retrying from the new main head." >&2
             gh pr close "$PR_URL" --delete-branch || true
           done
 
           echo "Could not advance the public installers after 5 attempts." >&2
           exit 1
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [release]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-driver-rs-v${{ needs.release.outputs.version }}

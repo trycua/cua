@@ -28,7 +28,7 @@
         "channel": {
           "enum": [
             "stable",
-            "beta"
+            "nightly"
           ]
         },
         "lastCheck": {
@@ -270,6 +270,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copySignIn": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2088,6 +2097,40 @@
         "failure"
       ]
     },
+    "DriverPermission": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "enum": [
+            "screen",
+            "accessibility"
+          ]
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "on",
+            "off",
+            "absent",
+            "unknown",
+            null
+          ]
+        },
+        "settingsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "granted",
+        "settingsUrl"
+      ]
+    },
     "DriverStatus": {
       "type": "object",
       "properties": {
@@ -2156,30 +2199,14 @@
         "permissions": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "enum": [
-                  "screen",
-                  "accessibility"
-                ]
-              },
-              "granted": {
-                "type": "boolean"
-              },
-              "settingsUrl": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "granted",
-              "settingsUrl"
-            ]
+            "$ref": "#/$defs/DriverPermission"
           }
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "apps": {
           "type": [
@@ -2284,24 +2311,6 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "yourCloud": {
-          "type": "boolean"
-        },
-        "sharing": {
-          "type": "boolean"
-        },
-        "webUi": {
-          "type": "boolean"
-        },
-        "secureSpaces": {
-          "type": "boolean"
-        },
-        "childSpaces": {
-          "type": "boolean"
-        },
-        "askFirst": {
-          "type": "boolean"
-        },
         "ciRunners": {
           "type": "boolean"
         },
@@ -2309,9 +2318,6 @@
           "type": "boolean"
         },
         "mobile": {
-          "type": "boolean"
-        },
-        "warmPools": {
           "type": "boolean"
         }
       }
@@ -5236,7 +5242,7 @@
             "updateChannel": {
               "enum": [
                 "stable",
-                "beta",
+                "nightly",
                 null
               ]
             },
@@ -5475,6 +5481,28 @@
           "required": [
             "name",
             "installed"
+          ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
           ]
         }
       },
@@ -5955,6 +5983,9 @@
         "arch": {
           "type": "string"
         },
+        "hidden": {
+          "type": "boolean"
+        },
         "reachable": {
           "type": "boolean"
         },
@@ -5965,6 +5996,9 @@
           "type": "string"
         },
         "hostName": {
+          "type": "string"
+        },
+        "parent": {
           "type": "string"
         },
         "power": {
@@ -6602,6 +6636,156 @@
             "kind",
             "member",
             "by"
+          ]
+        },
+        "child": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "subagent"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "running",
+                        "done",
+                        "failed"
+                      ]
+                    },
+                    "steps": {
+                      "type": "number"
+                    },
+                    "result": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "agent",
+                    "title",
+                    "state",
+                    "steps",
+                    "result",
+                    "startedMs",
+                    "endedMs"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "child_space"
+                      ]
+                    },
+                    "space": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "os": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "by": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "creating",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "percent": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "space",
+                    "name",
+                    "os",
+                    "agent"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "joinRequest": {
@@ -8083,7 +8267,7 @@
         "updateChannel": {
           "enum": [
             "stable",
-            "beta",
+            "nightly",
             null
           ]
         },
@@ -8127,6 +8311,28 @@
           "required": [
             "name",
             "installed"
+          ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
           ]
         },
         "tips": {
@@ -8323,6 +8529,12 @@
             "null"
           ]
         },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "power": {
           "type": [
             "object",
@@ -8485,6 +8697,9 @@
     "agentKeys.check": {
       "$ref": "#/$defs/AgentKeysReport"
     },
+    "agentKeys.copySignIn": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.fromShell": {
       "$ref": "#/$defs/AgentKeysReport"
     },
@@ -8522,6 +8737,48 @@
     },
     "agents.allowComputer": {
       "type": "null"
+    },
+    "agents.computerSignIn": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "not_signed_in",
+            "signing_in",
+            "signed_in",
+            "failed",
+            "expired"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pasteCode": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "url",
+        "code",
+        "pasteCode",
+        "reason"
+      ]
     },
     "agents.configure": {
       "type": "array",
@@ -9326,6 +9583,27 @@
     },
     "driver.pause": {
       "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
     },
     "driver.setApp": {
       "type": "null"
@@ -11189,6 +11467,38 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "type": "number"
+                        },
+                        "step": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sinceMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "steps",
+                        "step"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -11422,6 +11732,129 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.copySignIn": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11527,6 +11960,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11632,6 +12074,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11737,6 +12188,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11842,6 +12302,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -11947,6 +12416,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -12066,6 +12544,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -12859,6 +13346,27 @@
     },
     "driver.pause": {
       "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
     },
     "driver.setApp": {
       "type": "null"
@@ -15162,6 +15670,7 @@
     }
   },
   "webkitUnshaped": {
+    "agents.computerSignIn": "the daemon tool's JSON as-is (agent_sign_in); ops/agent-sign-in.ts maps it for every host",
     "agents.recentThreads": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
     "agents.threadHistory": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
     "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",

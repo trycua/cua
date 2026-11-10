@@ -595,7 +595,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         cloudPlace: info.cloudPlace.isEmpty ? nil : info.cloudPlace,
                         cloudDelete: info.cloudDelete.isEmpty ? nil : info.cloudDelete,
                         stopReason: info.stopReason.isEmpty ? nil : info.stopReason,
-                        sharing: info.sharing.map(Self.sharingFacts))
+                        sharing: info.sharing.map(Self.sharingFacts),
+                        parent: info.parent)
                     // Turned off on purpose: no probe (it would only time out).
                     if ["suspended", "stopped"].contains(info.powerState) {
                         return (index, row)
@@ -913,16 +914,17 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 
     /// The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
-    /// `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
-    /// `unprotected`) and lists.
+    /// `localhost:5432,3000`, `localhost:all`, `lan`, `localhost+lan:5432,3000`,
+    /// `custom`, `custom:none`, `unprotected`) and lists.
     /// `via`: where its internet traffic leaves (`internet`, `this-machine`,
     /// `space:<id>`, `socks5://...`); nil keeps the exit it has.
     static func networkSettings(word: String, allow: [String], deny: [String], via: String? = nil) -> CuaSDK.NetworkSettings {
         let parts = word.trimmingCharacters(in: .whitespaces).lowercased().split(separator: ":", maxSplits: 1).map(String.init)
         let preset = parts.first ?? "internet"
         let rest = parts.count > 1 ? parts[1] : ""
-        let all = preset == "localhost" && rest == "all"
-        let ports: [UInt16] = preset == "localhost" && !all
+        let opensLocalhost = preset == "localhost" || preset == "localhost+lan"
+        let all = opensLocalhost && rest == "all"
+        let ports: [UInt16] = opensLocalhost && !all
             ? rest.split(separator: ",").compactMap { UInt16($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 > 0 }
             : []
         return CuaSDK.NetworkSettings(
@@ -1532,17 +1534,17 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                     image: "ghcr.io/trycua/linux:24.04",
                     imageDigest: "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
                     kind: .container, arch: "arm64", hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
+                    power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil),
         AppSpaceRow(id: "direct:builder", name: "builder", displayName: nil, provider: "direct", spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z",
                     os: .linux, osName: "Arch Linux", osPrettyName: nil, image: nil, imageDigest: nil,
                     kind: nil, arch: nil, hidden: false, reachable: false, error: "timed out", host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil),
         AppSpaceRow(id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", displayName: nil, provider: "direct",
                     spacesdVersion: "0.4.0", features: [], addedAt: nil, os: .windows,
                     osName: "Windows", osPrettyName: "Windows Server 2022 Datacenter 10.0.20348",
                     image: nil, imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil),
+                    power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil),
     ]
 
     public func rows() async throws -> [AppSpaceRow] { await MainActor.run { fixtureRows } }
@@ -1618,7 +1620,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                                            addedAt: nil, os: .linux, osName: nil, osPrettyName: nil,
                                            image: args.image, imageDigest: nil, kind: args.kind, arch: nil,
                                            hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
-                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil))
+                                           power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil))
             return id
         }
     }

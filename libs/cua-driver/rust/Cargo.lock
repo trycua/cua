@@ -1189,8 +1189,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-agent-setup"
+version = "0.20.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "cua-home",
+ "hex",
+ "include_dir",
+ "jsonc-parser",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "thiserror 2.0.18",
+ "toml_edit 0.25.12+spec-1.1.0",
+]
+
+[[package]]
 name = "cua-cursor-motion"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1198,13 +1216,14 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64",
  "cap-fs-ext",
  "cap-std",
+ "cua-agent-setup",
  "cua-driver-contract",
  "cua-driver-core",
  "cua-driver-sdk",
@@ -1231,6 +1250,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "toml_edit 0.25.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "ureq",
@@ -1242,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1250,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1260,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1302,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-e2e"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "base64",
  "core-foundation",
@@ -1331,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1355,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "arbitrary",
  "async-trait",
@@ -1376,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1387,6 +1407,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "cua-home"
+version = "0.20.0"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1406,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.18.0"
+version = "0.20.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1418,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -1438,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -2308,6 +2336,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2407,6 +2454,15 @@ dependencies = [
  "futures-util",
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "jsonc-parser"
+version = "0.33.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ff5a48f48971be8e762a6ff955725a0802b6e46c441057992da5a673db9fd3a"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -3398,7 +3454,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "serde_json",
 ]
@@ -3439,7 +3495,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3492,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3532,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.46.0"
+version = "0.47.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4516,7 +4572,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

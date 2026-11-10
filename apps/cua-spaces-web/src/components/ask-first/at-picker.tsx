@@ -54,20 +54,27 @@ export function atPlaces({
         ...computers.map((c): AtPlace => ({ id: c.id, name: c.name, os: c.os, online: true, current: false, where: { kind: "space", space: c } })),
       ];
   // Online first, this computer leading, the order given otherwise.
-  return [...list.filter((p) => p.online), ...list.filter((p) => !p.online)].sort((a, b) => Number(b.current) - Number(a.current) || Number(b.online) - Number(a.online));
+  return [...list.filter((p) => p.online), ...list.filter((p) => !p.online)].sort(
+    (a, b) => Number(b.current) - Number(a.current) || Number(b.online) - Number(a.online),
+  );
 }
 
-const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "computer";
+const slug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "computer";
 
 /** The places whose name starts with (or has a word starting with) what follows `@`. */
 export function matchPlaces(query: string, places: readonly AtPlace[]): AtPlace[] {
   const q = query.toLowerCase();
   if (!q) return [...places];
-  return places.filter((p) =>
-    p.name
-      .toLowerCase()
-      .split(/[\s-]+/)
-      .some((w) => w.startsWith(q)) || slug(p.name).startsWith(q),
+  return places.filter(
+    (p) =>
+      p.name
+        .toLowerCase()
+        .split(/[\s-]+/)
+        .some((w) => w.startsWith(q)) || slug(p.name).startsWith(q),
   );
 }
 
@@ -118,7 +125,11 @@ export function AtPicker({
             onMouseEnter={() => onIndex(i)}
             className={cn("flex h-9 cursor-default items-center gap-2.5 rounded-lg px-2 text-[13px]", i === index && "bg-accent", !p.online && "opacity-50")}
           >
-            {p.current ? <LaptopIcon className="size-4 shrink-0 text-muted-foreground" /> : <OsIcon os={p.os} className="size-4 shrink-0 text-muted-foreground" />}
+            {p.current ? (
+              <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <OsIcon os={p.os} className="size-4 shrink-0 text-muted-foreground" />
+            )}
             <span className="min-w-0 flex-1 truncate">{p.name}</span>
             {!p.online ? <span className="text-xs text-muted-foreground">{t("home.ask_box.off")}</span> : null}
           </div>

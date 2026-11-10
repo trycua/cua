@@ -218,7 +218,12 @@ export function AskBox({
     setIndex(0);
     ref.current?.focus();
   };
-  const chosen = agentHome && placed ? places.find((p) => (where.kind === "machine" ? p.where.kind === "machine" && p.where.machine.id === where.machine.id : where.kind === "this-mac" && p.current)) : undefined;
+  const chosen =
+    agentHome && placed
+      ? places.find((p) =>
+          where.kind === "machine" ? p.where.kind === "machine" && p.where.machine.id === where.machine.id : where.kind === "this-mac" && p.current,
+        )
+      : undefined;
   return (
     <div data-ask-box="" className="relative rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
       {open ? <AtPicker places={shown} index={at} onIndex={setIndex} onPick={pickPlace} side={pickerSide} filtered={places.length > 0} /> : null}

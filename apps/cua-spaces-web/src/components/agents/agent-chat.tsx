@@ -13,16 +13,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, EyeIcon, InfoIcon, LockIcon, MonitorPlayIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 
-import {
-  useAgentDm,
-  useBridge,
-  type AgentChat,
-  type AgentChatSpace,
-  type ChatNeed,
-  type DmItem,
-  type ThreadAttachment,
-  type ThreadEntry,
-} from "@/bridge";
+import { useAgentDm, useBridge, type AgentChat, type AgentChatSpace, type ChatNeed, type DmItem, type ThreadAttachment, type ThreadEntry } from "@/bridge";
 import { AskComposer } from "@/components/ask-first/use-ask-composer";
 import { OsIcon } from "@/components/os-icon";
 import { AgentTile } from "@/components/space-thread/avatar";
@@ -347,17 +338,7 @@ function useRosters(chat: AgentChat, entries: Record<string, ThreadEntry[]>, me:
   }, [chat, entries, me, identity]);
 }
 
-export function AgentDmView({
-  chat,
-  identity,
-  onInfo,
-  me,
-}: {
-  chat: AgentChat;
-  identity: string | null;
-  onInfo: () => void;
-  me: string | null;
-}) {
+export function AgentDmView({ chat, identity, onInfo, me }: { chat: AgentChat; identity: string | null; onInfo: () => void; me: string | null }) {
   const { data } = useBridge();
   const navigate = useNavigate();
   const dm = useAgentDm(chat, null);
@@ -469,13 +450,7 @@ export function AgentDmView({
             </Button>
           </div>
         ) : null}
-        <DmComposer
-          chat={chat}
-          to={to}
-          onSend={(text) => dm.send(to.spaceId, text)}
-          onOpenSpace={() => openSpace(to.spaceId)}
-          rosters={rosters}
-        />
+        <DmComposer chat={chat} to={to} onSend={(text) => dm.send(to.spaceId, text)} onOpenSpace={() => openSpace(to.spaceId)} rosters={rosters} />
       </div>
     </section>
   );
@@ -561,13 +536,13 @@ function DmComposer({
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             In
-              <span
-                data-dm-target={to.spaceId}
-                className="inline-flex h-6 items-center gap-1 rounded-lg bg-background/60 px-2 text-foreground dark:bg-background/40"
-              >
-                <OsIcon os={to.os} className="size-3" />
-                {to.spaceName}
-              </span>
+            <span
+              data-dm-target={to.spaceId}
+              className="inline-flex h-6 items-center gap-1 rounded-lg bg-background/60 px-2 text-foreground dark:bg-background/40"
+            >
+              <OsIcon os={to.os} className="size-3" />
+              {to.spaceName}
+            </span>
           </span>
           <span className="inline-flex items-center gap-1" data-dm-members-see="">
             <EyeIcon className="size-3.5" />

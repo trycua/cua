@@ -38,7 +38,8 @@ const click = async (el: HTMLElement) => {
   });
 };
 const open = () => mountApp("/agents", { failsCreates: false, listsGhost: false });
-const failed = (prompt: string, over: Partial<AskTask> = {}) => addAskTask({ prompt, agent: "claude-code", os: "linux", inSpace: false, error: "boom", ...over });
+const failed = (prompt: string, over: Partial<AskTask> = {}) =>
+  addAskTask({ prompt, agent: "claude-code", os: "linux", inSpace: false, error: "boom", ...over });
 
 describe("Not started", () => {
   it.skipIf(!wasmBuilt)("each run has a Remove that drops only its record; Clear all drops the rest", async () => {
@@ -75,7 +76,20 @@ describe("Not started", () => {
 describe("what counts as orphaned", () => {
   const now = 10 * ORPHAN_MAX_MS;
   const task = (over: Partial<AskTask>): AskTask =>
-    ({ id: "t", prompt: "x", agent: "claude-code", os: "linux", createdMs: now - 1, pendingId: null, spaceId: null, runId: null, error: "boom", ending: null, inSpace: false, ...over }) as AskTask;
+    ({
+      id: "t",
+      prompt: "x",
+      agent: "claude-code",
+      os: "linux",
+      createdMs: now - 1,
+      pendingId: null,
+      spaceId: null,
+      runId: null,
+      error: "boom",
+      ending: null,
+      inSpace: false,
+      ...over,
+    }) as AskTask;
   const spaces = [{ id: "local:a" }];
 
   it("a failed run whose real Space is gone, once past the grace; never a pending one, never while the list is empty", () => {
@@ -95,7 +109,15 @@ describe("what counts as orphaned", () => {
   });
 
   it("notes: Space gone or a week old; one being connected is left", () => {
-    const note = (id: string, over: Partial<WakeNote>): WakeNote => ({ id, seq: null, text: "@x", cant: {} as never, state: "blocked", atMs: now - ORPHAN_MAX_MS / 2, ...over });
+    const note = (id: string, over: Partial<WakeNote>): WakeNote => ({
+      id,
+      seq: null,
+      text: "@x",
+      cant: {} as never,
+      state: "blocked",
+      atMs: now - ORPHAN_MAX_MS / 2,
+      ...over,
+    });
     const o = orphanedRuns(
       [],
       {

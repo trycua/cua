@@ -58,7 +58,8 @@ function AgentsChatPage() {
   // A run that hasn't started opens its Space's thread; only agents have a DM here.
   // New agent clears the selection: nothing is open and the box to start one shows.
   // `agent` is an entry's key; a link by who the agent is (owner, kind and name) opens its first entry.
-  const byKey = (c: AgentChat) => c.kind === "agent" && (c.key === search.agent || (c.spaces[0] && chatKey(c.spaces[0].spaceId, c.spaces[0].member) === search.agent));
+  const byKey = (c: AgentChat) =>
+    c.kind === "agent" && (c.key === search.agent || (c.spaces[0] && chatKey(c.spaces[0].spaceId, c.spaces[0].member) === search.agent));
   const chat = search.new ? null : (chats?.find(byKey) ?? (search.agent ? null : (chats?.find((c) => c.kind === "agent") ?? null)));
   const select = (agent: string) => void navigate({ search: { agent }, replace: true });
   return (
@@ -80,13 +81,7 @@ function AgentsChatPage() {
         <div className="flex-1" />
       ) : chat ? (
         <>
-          <AgentDmView
-            key={chat.key}
-            chat={chat}
-            identity={identity}
-            onInfo={() => setInfo(true)}
-            me={me}
-          />
+          <AgentDmView key={chat.key} chat={chat} identity={identity} onInfo={() => setInfo(true)} me={me} />
           <AgentPage chat={chat} open={info} onOpenChange={setInfo} me={me} identity={identity} />
         </>
       ) : search.new || chats.every((c) => c.kind !== "agent") ? (

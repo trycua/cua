@@ -228,7 +228,11 @@ describe("the DM and the list, as data", () => {
       core,
       [
         { space: space("local:a"), role: "owner", members: [member("hermes", ident("ada", "hermes", "Hermes"), { status: "asleep" })] },
-        { space: space("local:b"), role: "owner", members: [member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes" })] },
+        {
+          space: space("local:b"),
+          role: "owner",
+          members: [member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes" })],
+        },
       ],
       [],
       true,

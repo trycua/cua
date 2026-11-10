@@ -4754,8 +4754,7 @@ fn run_capture_bound_pixel_click_background_atspi(spec: &BrowserSpec) {
         ],
     );
     execute_case(case, |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_pixel_target_html());
+        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_pixel_target_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         wait_for_text(&fixture.server, "lbl-counter", "counter=0");
         let session = format!("standalone-pixel-click-atspi-{}", fixture.pid);

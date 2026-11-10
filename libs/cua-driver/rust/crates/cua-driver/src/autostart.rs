@@ -338,7 +338,7 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
 }
 $user = "$domain\$env:USERNAME"
 $launcher = Join-Path (Split-Path -Parent $env:CUA_DRIVER_AS_EXE) 'cua-driver-autostart.exe'
-if (-not (Test-Path -LiteralPath $launcher)) { throw "missing $launcher; reinstall cua-driver" }
+if (-not (Test-Path -LiteralPath $launcher)) { throw "missing $launcher; reinstall cua-driver (source builds: cargo build -p cua-driver)" }
 $action = New-ScheduledTaskAction `
     -Execute $launcher `
     -Argument "`"$env:CUA_DRIVER_AS_EXE`" autostart launch" `

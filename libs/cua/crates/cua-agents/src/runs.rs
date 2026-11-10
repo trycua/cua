@@ -427,6 +427,58 @@ fn valid_run_id(run_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// A command on the computer that did not succeed, in plain words. One
+/// stopped at its `timeout` has no exit code, which used to reach the
+/// person as "guest command failed (None)".
+pub fn guest_command_failed(
+    status: &cua_spacesd_client::ExitStatus,
+    stderr: &str,
+    timeout: Duration,
+) -> String {
+    let stderr = stderr.trim();
+    let error = status.error.as_deref().filter(|e| !e.trim().is_empty());
+    let mut msg = match (status.code, error, status.signal_name.as_deref()) {
+        (Some(c), _, _) => format!("a step on the computer failed (exit code {c})"),
+        (None, _, _) if status.timed_out => format!(
+            "a step on the computer didn't finish within {} s, so it was stopped",
+            timeout.as_secs()
+        ),
+        (None, Some(e), _) => format!("a step on the computer couldn't run ({})", e.trim()),
+        (None, None, Some(sig)) => format!("a step on the computer was stopped (SIG{sig})"),
+        (None, None, None) => format!(
+            "a step on the computer was stopped before it finished (it had {} s)",
+            timeout.as_secs()
+        ),
+    };
+    if !stderr.is_empty() {
+        msg.push_str(": ");
+        msg.push_str(stderr);
+    }
+    msg
+}
+
+/// Whether `path` is on the Cua Volume mount (`/volume` in a Linux Space,
+/// `~/Cua Volume` on a Mac).
+pub fn on_volume(path: &str) -> bool {
+    path == "/volume" || path.starts_with("/volume/") || path.contains("/Cua Volume")
+}
+
+/// The agent's folders could not be made at start: `home` is its home (or
+/// working folder) and `e` what the computer said.
+fn folders_failed(home: &str, e: Error) -> Error {
+    let why = e.to_string();
+    if on_volume(home) {
+        return Error::Step(format!(
+            "Couldn't open the agent's folder on Cua Volume ({home}). Cua Volume isn't answering \
+             on this computer, usually because sync with your other computers is stalled. \
+             Try again in a minute. Details: {why}"
+        ));
+    }
+    Error::Step(format!(
+        "Couldn't create the agent's folders on this computer ({home}). Details: {why}"
+    ))
+}
+
 /// A persistent agent name (the Cua Volume rule): 1 to 63 of `[a-z0-9._-]`,
 /// starting with a letter or digit.
 pub fn valid_home_name(name: &str) -> bool {
@@ -618,10 +670,10 @@ impl Agents {
             .run(Command::shell(script).timeout(timeout))
             .await?;
         if !out.status.success() {
-            return Err(Error::Guest(format!(
-                "guest command failed ({:?}): {}",
-                out.status.code,
-                String::from_utf8_lossy(&out.stderr).trim()
+            return Err(Error::Step(guest_command_failed(
+                &out.status,
+                &String::from_utf8_lossy(&out.stderr),
+                timeout,
             )));
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -1138,7 +1190,7 @@ impl Agents {
         {
             notes.push(note);
         }
-        mkdirs?;
+        mkdirs.map_err(|e| folders_failed(home_dir.as_deref().unwrap_or(&cwd), e))?;
         let (bridge_file, runner_dir, skills_done) = shared?;
         if let Some(Err(e)) = skills_done {
             notes.push(format!("cua skills were not installed: {e}"));
@@ -2085,5 +2137,68 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
+    }
+
+    /// CUA-4002: a step stopped at its timeout said "guest command failed
+    /// (None)". It says what happened, and an agent folder on a Cua Volume
+    /// that does not answer says that.
+    #[test]
+    fn a_failed_step_says_what_happened_in_plain_words() {
+        use cua_spacesd_client::ExitStatus;
+        let t = Duration::from_secs(30);
+        let timed_out = ExitStatus {
+            timed_out: true,
+            ..Default::default()
+        };
+        let stopped = guest_command_failed(&timed_out, "", t);
+        assert_eq!(
+            stopped,
+            "a step on the computer didn't finish within 30 s, so it was stopped"
+        );
+        assert!(!stopped.contains("None"));
+        let exit1 = ExitStatus {
+            code: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            guest_command_failed(&exit1, "mkdir: x: Input/output error\n", t),
+            "a step on the computer failed (exit code 1): mkdir: x: Input/output error"
+        );
+        let missing = ExitStatus {
+            error: Some("executable not found: umask".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            guest_command_failed(&missing, "", t),
+            "a step on the computer couldn't run (executable not found: umask)"
+        );
+        let killed = ExitStatus {
+            signal_name: Some("KILL".into()),
+            ..Default::default()
+        };
+        assert!(guest_command_failed(&killed, "", t).ends_with("was stopped (SIGKILL)"));
+        assert!(!guest_command_failed(&ExitStatus::default(), "", t).contains("None"));
+        let mac = folders_failed(
+            "/Users/ada/Cua Volume/agents/claude",
+            Error::Step(stopped.clone()),
+        )
+        .to_string();
+        assert!(
+            mac.starts_with("Couldn't open the agent's folder on Cua Volume"),
+            "{mac}"
+        );
+        assert!(
+            mac.contains("sync with your other computers is stalled"),
+            "{mac}"
+        );
+        assert!(!mac.contains("guest command failed"), "{mac}");
+        let linux = folders_failed("/volume/agents/claude", Error::Step(stopped.clone()));
+        assert!(linux.to_string().contains("Cua Volume isn't answering"));
+        let local = folders_failed("/home/cua/.cua/runs/run-1/work", Error::Step(stopped));
+        assert!(
+            local
+                .to_string()
+                .starts_with("Couldn't create the agent's folders on this computer")
+        );
     }
 }

@@ -1,95 +1,16 @@
-//! `cua compat`: run another provider's SDK, unchanged, on Cua Spaces
-//! (cua-compat). `serve` runs the gateway; `env` prints what a client
-//! exports to use it.
+//! `cua compat`: the command (the arguments are `cua-compat-cmd`'s) and the
+//! job services `cua run --compat` starts in a daemon. Here, not in `cua-cli`,
+//! so the CLI crates build beside this one: the Cua Spaces `cua` reaches it
+//! through its `CliExtension` and the MIT `cua` through the `compat` feature.
 
-use clap::Subcommand;
-use cua_compat::backend::SpaceDefaults;
-use cua_compat::{Gateway, GatewayOptions, Provider};
+use crate::backend::SpaceDefaults;
+use crate::{Gateway, GatewayOptions, Provider};
+pub use cua_compat_cmd::{CompatCmd, CompatOpts};
 use cua_sdk::CuaError;
 use std::io::Write;
-use std::net::SocketAddr;
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum CompatCmd {
-    /// Serve a provider's wire protocol from Cua Spaces until stopped.
-    #[command(after_help = "Examples:
-  cua compat serve --provider e2b
-  cua compat serve --provider daytona --on host:mac-studio --kind vm
-  cua compat serve --provider modal
-  cua compat serve --provider e2b --overlay cua-spacesd=./target/debug/cua-spacesd")]
-    Serve {
-        #[command(flatten)]
-        opts: CompatOpts,
-    },
-    /// Print the shell exports for a client of the gateway (`eval` them).
-    #[command(after_help = "Examples:
-  cua compat env --provider e2b
-  cua compat env --provider daytona")]
-    Env {
-        /// Provider whose SDK the client uses (`e2b`, `daytona`, `modal`).
-        #[arg(long, default_value = "e2b")]
-        provider: String,
-        /// API listen address of the running gateway.
-        #[arg(long)]
-        listen: Option<SocketAddr>,
-        /// Host-router port of the running gateway.
-        #[arg(long)]
-        host_port: Option<u16>,
-    },
-}
-
-#[derive(clap::Args, Debug, Clone)]
-pub struct CompatOpts {
-    /// Provider whose SDK clients use (`e2b`, `daytona`, `modal`).
-    #[arg(long, default_value = "e2b")]
-    pub provider: String,
-    /// API (and envd) listen address. Loopback by default.
-    #[arg(long)]
-    pub listen: Option<SocketAddr>,
-    /// Port of the `<port>-<id>.<domain>` host router (TLS and plain HTTP).
-    #[arg(long)]
-    pub host_port: Option<u16>,
-    /// Where new Spaces run (default: the core default, this machine; `auto`:
-    /// least-loaded machine of your pool; `host:<machine>`).
-    #[arg(long)]
-    pub on: Option<String>,
-    /// Space kind (`vm`: Linux on QEMU/HVF or KVM; `container`; `microvm`).
-    /// Default: `vm` where this machine can run one, else `container`.
-    #[arg(long)]
-    pub kind: Option<String>,
-    /// Image for the provider's base template (default: the canonical
-    /// Linux image).
-    #[arg(long)]
-    pub image: Option<String>,
-    /// vCPUs per Space.
-    #[arg(long)]
-    pub cpus: Option<u32>,
-    /// Memory per Space (MiB).
-    #[arg(long)]
-    pub memory_mb: Option<u64>,
-    /// Inject a freshly built binary into every new sandbox,
-    /// `NAME=PATH[:GUEST_PATH]` (as `cua sandbox create --overlay`), for
-    /// trying a guest agent that no image carries yet. Repeatable.
-    #[arg(long = "overlay", value_name = "NAME=PATH[:GUEST_PATH]", value_parser = parse_overlay)]
-    pub overlays: Vec<cua_sdk::Overlay>,
-    /// The guest user for the provider's default user (default: the
-    /// provider's own: `user` for E2B, `daytona` for Daytona, `root` for
-    /// Modal).
-    #[arg(long)]
-    pub default_user: Option<String>,
-    /// Do not make a first sandbox before serving. By default `serve` pulls
-    /// the image and boots one default sandbox (then deletes it) and only
-    /// then prints the `Clients export` line, so the first create of a
-    /// separate client program cannot outlast the SDK's request timeout.
-    #[arg(long)]
-    pub no_warm: bool,
-    /// Do not create the default user in images that lack it.
-    #[arg(long)]
-    pub no_create_user: bool,
-}
-
-fn parse_overlay(s: &str) -> Result<cua_sdk::Overlay, String> {
-    cua_sdk::Overlay::parse(s).map_err(|e| e.to_string())
+fn line(out: &mut dyn Write, s: impl AsRef<str>) {
+    let _ = writeln!(out, "{}", s.as_ref());
 }
 
 fn provider(name: &str) -> Result<Provider, CuaError> {
@@ -141,7 +62,33 @@ fn shell_quote(v: &str) -> String {
     }
 }
 
-pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+/// What `provider`'s template, snapshot or image `reference` starts from, as a
+/// Cua image (`None`: the provider's default), for `cua run --compat P
+/// --prewarm`.
+pub fn resolve_prewarm_image(provider: &str, reference: &str) -> Result<Option<String>, String> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "e2b" => crate::e2b::prewarm::resolve_image(
+            reference,
+            &std::collections::BTreeMap::new().into_iter().collect(),
+        ),
+        "daytona" => crate::daytona::prewarm::resolve(reference, &[], "", (1, 1024))
+            .map(|t| Some(t.cua_image).filter(|i| !i.is_empty())),
+        "modal" => {
+            crate::modal::prewarm::resolve_image(reference, &std::collections::HashMap::new(), "")
+                .map(|t| t.cua_image)
+        }
+        other => Err(format!("--prewarm: unknown provider {other}")),
+    }
+}
+
+/// Runs `cua compat`. `hint` names the commands in a message for this build's
+/// CLI (`cua-local` on Local); the CLI passes its own.
+pub async fn run(
+    cmd: CompatCmd,
+    json: bool,
+    out: &mut dyn Write,
+    hint: fn(&str) -> String,
+) -> Result<i32, CuaError> {
     match cmd {
         CompatCmd::Serve { opts } => {
             let g = options(&opts)?;
@@ -150,7 +97,7 @@ pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32,
             } else {
                 eprintln!(
                     "{}",
-                    crate::util::hint(
+                    hint(
                         "cua compat: warming (image pull and first boot; the first create is made now)..."
                     )
                 );
@@ -163,11 +110,11 @@ pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32,
                     .iter()
                     .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                     .collect();
-                crate::util::line(out, serde_json::Value::Object(m).to_string());
+                line(out, serde_json::Value::Object(m).to_string());
             } else {
-                crate::util::hint_line(
+                line(
                     out,
-                    format!(
+                    hint(&format!(
                         "cua compat: serving the {} API on http://{} and sandbox hosts on {} (Spaces: --on {} --kind {}).\nClients export:\n{}",
                         gw.provider.name(),
                         gw.api_addr,
@@ -175,9 +122,9 @@ pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32,
                         opts.on.as_deref().unwrap_or("the default"),
                         opts.kind
                             .as_deref()
-                            .unwrap_or(cua_compat::backend::default_kind()),
+                            .unwrap_or(crate::backend::default_kind()),
                         exports(&env)
-                    ),
+                    )),
                 );
             }
             let _ = out.flush();
@@ -200,26 +147,24 @@ pub async fn run(cmd: CompatCmd, json: bool, out: &mut dyn Write) -> Result<i32,
                 g.host_port = h;
             }
             let dir = g.dir();
-            let keys = cua_compat::auth::Keys::load_or_create(
-                &dir.join("keys.json"),
-                g.provider.key_prefix(),
-            )
-            .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
-            let env = cua_compat::client_env(
+            let keys =
+                crate::auth::Keys::load_or_create(&dir.join("keys.json"), g.provider.key_prefix())
+                    .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+            let env = crate::client_env(
                 g.provider,
                 g.listen,
                 &keys.keys[0].key,
                 &g.client_domain(g.host_port),
-                &cua_compat::tls::TlsFiles::new(dir.join("tls")).bundle(),
+                &crate::tls::TlsFiles::new(dir.join("tls")).bundle(),
             );
             if json {
                 let m: serde_json::Map<String, serde_json::Value> = env
                     .iter()
                     .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                     .collect();
-                crate::util::line(out, serde_json::Value::Object(m).to_string());
+                line(out, serde_json::Value::Object(m).to_string());
             } else {
-                crate::util::line(out, exports(&env));
+                line(out, exports(&env));
             }
             Ok(0)
         }
@@ -281,7 +226,7 @@ impl CompatJobServices {
         // container sandboxes, not VMs the host's memory limit then
         // refuses); a gateway per kind keeps its own state.
         o.defaults.kind = kind.clone();
-        o.dir = Some(cua_compat::auth::provider_dir(&if kind.is_empty() {
+        o.dir = Some(crate::auth::provider_dir(&if kind.is_empty() {
             format!("{}-jobs", provider.name())
         } else {
             format!("{}-jobs-{kind}", provider.name())
@@ -376,7 +321,7 @@ mod tests {
 
     #[test]
     fn the_gateway_kind_follows_the_flag_then_the_target() {
-        use cua_compat::backend::kind_on;
+        use crate::backend::kind_on;
         // An explicit kind is honoured wherever it runs (a refusal by a host
         // that cannot run it surfaces from the create as an error).
         assert_eq!(kind_on("vm", "hetzner"), "vm");
@@ -387,8 +332,8 @@ mod tests {
         for on in ["hetzner", "aws", "auto", "host:spare", "cloud"] {
             assert_eq!(kind_on("", on), "container", "{on}");
         }
-        assert_eq!(kind_on("", "local"), cua_compat::backend::default_kind());
-        assert_eq!(kind_on("", ""), cua_compat::backend::default_kind());
+        assert_eq!(kind_on("", "local"), crate::backend::default_kind());
+        assert_eq!(kind_on("", ""), crate::backend::default_kind());
     }
 
     #[test]

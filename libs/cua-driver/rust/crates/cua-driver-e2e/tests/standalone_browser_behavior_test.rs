@@ -4673,6 +4673,22 @@ fn standalone_full_viewport_inert_cover_html() -> String {
     )
 }
 
+/// The fixture page with every other control hidden from the accessibility
+/// tree and one button over the lower half of the viewport, where the pixel
+/// click lands: the smallest control covering the point is that button, which
+/// forwards its click to the fixture's journaled increment counter.
+#[cfg(target_os = "linux")]
+fn standalone_pixel_target_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
+<button id="pixel-target" aria-label="pixel-target"
+        style="visibility:visible !important;position:fixed;left:0;right:0;top:40%;bottom:0;border:0"
+        onclick="document.getElementById('btn-increment').click()">pixel-target</button>
+</body>"#,
+    )
+}
+
 /// Capture id and the click arguments for a background pixel click below the
 /// browser toolbar, inside the page.
 #[cfg(target_os = "linux")]
@@ -4739,7 +4755,7 @@ fn run_capture_bound_pixel_click_background_atspi(spec: &BrowserSpec) {
     );
     execute_case(case, |evidence| {
         let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_full_viewport_click_html());
+            launch_browser_with_html(spec, &scenario, standalone_pixel_target_html());
         *evidence = recording_evidence(fixture.driver.recording_dir());
         wait_for_text(&fixture.server, "lbl-counter", "counter=0");
         let session = format!("standalone-pixel-click-atspi-{}", fixture.pid);
@@ -4751,6 +4767,7 @@ fn run_capture_bound_pixel_click_background_atspi(spec: &BrowserSpec) {
                 "background pixel click on a Chromium control was refused: {}",
                 delivered.raw
             );
+            eprintln!("[standalone-browser] pixel click result: {}", delivered.raw);
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })

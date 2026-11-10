@@ -415,6 +415,12 @@ struct RerenderState {
     /// Labels of the current snapshot, by row.
     rows: Vec<(&'static str, &'static str)>,
     clicked: Vec<String>,
+    click_attempts: usize,
+    /// Reads that happen between a find and its click: the next this many
+    /// clicks find their token already replaced.
+    rerender_before_click: usize,
+    /// Refuse every click with this code.
+    refuse_with: Option<&'static str>,
 }
 
 #[async_trait]
@@ -449,6 +455,15 @@ impl Tool for Rerender {
                 }))
             }
             "click" => {
+                state.click_attempts += 1;
+                if let Some(code) = state.refuse_with {
+                    return ToolResult::error(format!("Background input refused ({code}): no"))
+                        .with_structured(json!({"code": code}));
+                }
+                if state.rerender_before_click > 0 {
+                    state.rerender_before_click -= 1;
+                    state.snapshot += 1;
+                }
                 let token = args["element_token"]
                     .as_str()
                     .unwrap_or_default()
@@ -459,7 +474,8 @@ impl Tool for Rerender {
                         "Background input refused (element_outside_target_window): the addressed \
                          element could not be proven to belong to window 7; take a fresh \
                          get_window_state snapshot and re-address it",
-                    );
+                    )
+                    .with_structured(json!({"code": "element_outside_target_window"}));
                 }
                 let row: usize = token[current.len()..].parse().unwrap();
                 let label = state.rows[row - 1].1.to_owned();
@@ -561,4 +577,40 @@ async fn a_stale_token_is_not_retried_when_its_label_is_ambiguous_or_unknown() {
         );
     }
     assert!(state.lock().unwrap().clicked.is_empty());
+}
+
+#[tokio::test]
+async fn a_described_step_refused_after_a_rerender_is_found_again_and_run() {
+    let (registry, state) = rerender_registry(vec![
+        ("AXButton", "Delete event"),
+        ("AXButton", "Dune handoff LHP-DUNE"),
+    ]);
+    state.lock().unwrap().rerender_before_click = 1;
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [
+                {"click": {"role": "button", "name": "Dune handoff LHP-DUNE"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(state.lock().unwrap().clicked, vec!["Dune handoff LHP-DUNE"]);
+    assert!(text(&result).contains("found again"), "{}", text(&result));
+}
+
+#[tokio::test]
+async fn a_described_step_is_not_retried_for_other_refusals() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Save")]);
+    state.lock().unwrap().refuse_with = Some("off_space_or_ax_unresolved");
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [
+                {"click": {"role": "button", "name": "Save"}}
+            ]}),
+        )
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(state.lock().unwrap().click_attempts, 1);
 }

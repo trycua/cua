@@ -44,6 +44,7 @@ use crate::{
 
 mod engine;
 
+use crate::background_input::refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW as OUTSIDE_WINDOW;
 use engine::{FailureKind, HostCall, HostError, Limits};
 
 pub const RUN_SCRIPT_TOOL: &str = "run_script";
@@ -673,6 +674,7 @@ impl<'a> Api<'a> {
         };
         let (window, element) = locate::take_selector(&mut args)
             .map_err(|message| HostError::new(message, "invalid_args"))?;
+        let find_deadline = Instant::now() + Duration::from_millis(find_timeout);
         let mut target = None;
         if !element.is_empty() {
             if tool == "drag" {
@@ -717,7 +719,27 @@ impl<'a> Api<'a> {
         } else if let Some(pid) = window.pid {
             args.insert("pid".into(), json!(pid));
         }
-        let mut value = self.invoke(tool, args).await?;
+        let mut value = match self.invoke(tool, args.clone()).await {
+            // The window re-rendered between the find and the action (a click
+            // that deletes a row, then a click on the next one): find the
+            // element again and act on it once more, within the find timeout.
+            Err(refused) if target.is_some() && refused.code.as_deref() == Some(OUTSIDE_WINDOW) => {
+                let left = find_deadline.saturating_duration_since(Instant::now());
+                let Ok(found) = self.locator.find(&window, &element, left).await else {
+                    return Err(refused);
+                };
+                args.insert("pid".into(), json!(found.window.pid));
+                args.insert("window_id".into(), json!(found.window.window_id));
+                args.insert(
+                    "element_token".into(),
+                    json!(found.token().unwrap_or_default()),
+                );
+                target =
+                    Some(json!({"window": found.window.to_json(), "element": found.describe()}));
+                self.invoke(tool, args).await?
+            }
+            other => other?,
+        };
         if let (Some(target), Value::Object(object)) = (target, &mut value) {
             object.insert("target".into(), target);
         }

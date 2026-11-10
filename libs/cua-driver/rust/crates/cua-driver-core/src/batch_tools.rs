@@ -915,12 +915,12 @@ async fn run_step(
         } else {
             window
         };
-        if !element.is_empty() {
-            let element = ElementSpec {
-                action: Some(tool),
-                ..element
-            };
-            match locator.find(&window_spec, &element, find_timeout).await {
+        let described = (!element.is_empty()).then_some(ElementSpec {
+            action: Some(tool),
+            ..element
+        });
+        if let Some(element) = &described {
+            match locator.find(&window_spec, element, find_timeout).await {
                 Ok(found) => {
                     let object = args.as_object_mut().expect("object");
                     object.insert("pid".into(), json!(found.window.pid));
@@ -987,7 +987,13 @@ async fn run_step(
             }
         }
         if result.is_error == Some(true) && refound_note.is_none() {
-            if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
+            let refound = match &described {
+                Some(element) => {
+                    refind_described_target(locator, &window_spec, element, &args, &result).await
+                }
+                None => refind_stale_target(locator, &args, &result).await,
+            };
+            if let Some((retry, note)) = refound {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry).await;
                 refound_note = Some(note);
@@ -1376,15 +1382,20 @@ fn wants_foreground(result: &ToolResult) -> bool {
         || text.contains("Retry with delivery_mode:\"foreground\"")
 }
 
-/// Whether an action failed because its element target died: the element
-/// was re-rendered or its snapshot was replaced.
-fn stale_element(result: &ToolResult) -> bool {
-    let code = result.structured_content.as_ref().and_then(|value| {
+/// The structured refusal code of a failed action, if any.
+fn refusal_code(result: &ToolResult) -> Option<&str> {
+    result.structured_content.as_ref().and_then(|value| {
         value
             .get("code")
             .or_else(|| value.pointer("/refusal/code"))
             .and_then(Value::as_str)
-    });
+    })
+}
+
+/// Whether an action failed because its element target died: the element
+/// was re-rendered or its snapshot was replaced.
+fn stale_element(result: &ToolResult) -> bool {
+    let code = refusal_code(result);
     if matches!(
         code,
         Some("element_outside_target_window" | "stale_element_token")
@@ -1453,6 +1464,37 @@ async fn refind_stale_target(
         retry,
         format!(
             "element {token} went stale (the window changed); acted on the same {role} \"{label}\", found again as {}",
+            found.describe()
+        ),
+    ))
+}
+
+/// Act again on a target the step described by role and name, after the
+/// window re-rendered between the find and the action: find it again the
+/// same way and return the arguments with its fresh token plus a note.
+async fn refind_described_target(
+    locator: &Locator<'_>,
+    window: &WindowSpec,
+    element: &ElementSpec,
+    args: &Value,
+    result: &ToolResult,
+) -> Option<(Value, String)> {
+    if refusal_code(result)
+        != Some(crate::background_input::refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW)
+    {
+        return None;
+    }
+    let found = locator.find(window, element, REFIND_TIMEOUT).await.ok()?;
+    let mut retry = args.clone();
+    let object = retry.as_object_mut()?;
+    object.insert("pid".into(), json!(found.window.pid));
+    object.insert("window_id".into(), json!(found.window.window_id));
+    object.insert("element_token".into(), json!(found.token()?));
+    Some((
+        retry,
+        format!(
+            "the window changed before the action, so {} was found again as {}",
+            element.describe(),
             found.describe()
         ),
     ))

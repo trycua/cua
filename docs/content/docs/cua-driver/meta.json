@@ -8,6 +8,7 @@
     "concepts/platform-support",
     "concepts/how-cua-driver-works",
     "---Use with your agent---",
+    "guides/cua-spaces",
     "guides/connect-your-agent",
     "guides/claude-code",
     "guides/codex",

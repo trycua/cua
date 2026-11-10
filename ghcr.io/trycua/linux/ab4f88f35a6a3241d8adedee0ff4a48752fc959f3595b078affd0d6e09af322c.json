@@ -1,0 +1,44 @@
+{
+  "arch": "arm64",
+  "digest": "sha256:ab4f88f35a6a3241d8adedee0ff4a48752fc959f3595b078affd0d6e09af322c",
+  "lanes": {
+    "runc": {
+      "counts": {
+        "fail": 0,
+        "pass": 124,
+        "skip": 11,
+        "warn": 0
+      },
+      "date": "2026-11-10T16:40:15Z",
+      "manifest_sha256": "7d924c35dc1bf42c632a2384e964663abe09102b98a4eb6e001752df63dd5e27",
+      "producer": "cua-spacesd",
+      "report": "ghcr.io/trycua/linux@sha256:fb88716d82475392fc2fd00249cc24ab2b61fd4b49dca8d4b025eb663bceb6f2",
+      "spacesd_version": "0.14.0",
+      "status": "pass",
+      "strict": true,
+      "workflow_run": "https://github.com/trycua/cua/actions/runs/42842043415"
+    },
+    "runsc": {
+      "counts": {
+        "fail": 0,
+        "pass": 127,
+        "skip": 8,
+        "warn": 0
+      },
+      "date": "2026-11-10T16:40:18Z",
+      "manifest_sha256": "7d924c35dc1bf42c632a2384e964663abe09102b98a4eb6e001752df63dd5e27",
+      "producer": "cua-spacesd",
+      "report": "ghcr.io/trycua/linux@sha256:99cd35e1b3cf5ebfbc805f2574607df06023efffd62f7c4a73373b2cc4c437f2",
+      "spacesd_version": "0.14.0",
+      "status": "pass",
+      "strict": true,
+      "workflow_run": "https://github.com/trycua/cua/actions/runs/42842043415"
+    }
+  },
+  "os": "linux",
+  "repo": "ghcr.io/trycua/linux",
+  "schema_version": 1,
+  "status": "pass",
+  "updated": "2026-11-10T16:40:18Z",
+  "variant": "rootfs"
+}

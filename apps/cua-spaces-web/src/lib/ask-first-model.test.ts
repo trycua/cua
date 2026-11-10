@@ -108,3 +108,23 @@ describe("the last pick, kept on this computer", () => {
     expect(pickedAgent()).toBeNull();
   });
 });
+
+describe("the reasoning level of a pick", () => {
+  const sonnet = group("claude-code", [
+    account("p", {
+      selected: true,
+      models: [{ id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", fast: false, default: true }],
+      defaultModel: "claude-sonnet-5-5",
+    }),
+  ]);
+  it("is the model's own until one is chosen, and is remembered with the pick", () => {
+    const v = view([sonnet]);
+    expect(resolveAgent(v, { harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN" })!.effort).toBe("high");
+    const s = resolveAgent(v, { harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", effort: "low" })!;
+    expect(s.effort).toBe("low");
+    expect(pickOf(s).effort).toBe("low");
+  });
+  it("is none for a model without levels", () => {
+    expect(resolveAgent(view([claude]), { harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", effort: "low" })!.effort).toBeNull();
+  });
+});

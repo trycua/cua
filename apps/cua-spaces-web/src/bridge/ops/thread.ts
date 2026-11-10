@@ -373,6 +373,8 @@ export interface ThreadAgentAddArgs {
   harness: string;
   /** The model its next message uses (an open session switches to it before the turn). On a member that exists, it is updated. */
   model?: string;
+  /** The reasoning level its runs take (Claude Code and Codex). */
+  effort?: string;
   /** Keep its run open with the session ready, so a message starts its turn at once. */
   standby?: boolean;
   /** Standing instructions: the first message each run takes carries them in front of its text. */
@@ -558,6 +560,7 @@ export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({
   name: a.name,
   agent: a.harness,
   ...(a.model ? { model: a.model } : {}),
+  ...(a.effort ? { effort: a.effort } : {}),
   ...(a.standby !== undefined ? { standby: a.standby } : {}),
   ...(a.brief ? { brief: a.brief } : {}),
 });

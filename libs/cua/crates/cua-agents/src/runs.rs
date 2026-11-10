@@ -107,6 +107,9 @@ pub struct RunOptions {
     pub endpoint: Option<Endpoint>,
     /// Model id (also applied without an endpoint where the harness allows).
     pub model: Option<String>,
+    /// Reasoning level (`low`, `medium`, `high`, `xhigh`, `max`) for the harnesses that take one;
+    /// see [`harness::apply_effort`].
+    pub effort: Option<String>,
     /// Install what the harness needs. Default true.
     pub install: Option<bool>,
     /// Exit (resumably) once the queue is empty: fire-and-forget batch runs.
@@ -1155,6 +1158,7 @@ impl Agents {
             home_dir.as_deref(),
             opts.hermes_config.as_deref(),
         )?;
+        harness::apply_effort(h, &mut launch, opts.effort.as_deref());
         if opts.durable.as_ref().is_some_and(|d| d.guard) {
             launch.env.extend(crate::durable::guard_env(h));
         }

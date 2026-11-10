@@ -146,6 +146,9 @@ pub struct AgentRecord {
     pub space: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Reasoning level the agent's runs take (Claude Code and Codex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// A custom model endpoint base URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
@@ -419,6 +422,7 @@ pub struct AgentSpec {
     pub harness: String,
     pub space: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     /// Standing instructions ([`AgentRecord::brief`]).
     pub brief: Option<String>,
     pub base_url: Option<String>,
@@ -715,6 +719,7 @@ impl Persistent {
             harness: h.id.into(),
             space,
             model: spec.model,
+            effort: spec.effort,
             base_url: spec.base_url,
             env_from_host: spec.env_from_host,
             env: spec.env,
@@ -1215,6 +1220,7 @@ impl Persistent {
                     env,
                     endpoint,
                     model: rec.model.clone(),
+                    effort: rec.effort.clone(),
                     home: Some(rec.name.clone()),
                     home_dir,
                     bridge: true,

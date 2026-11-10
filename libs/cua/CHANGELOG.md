@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.0](https://github.com/trycua/cua/compare/cua-sdk-v0.22.0...cua-sdk-v0.23.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Home shows your computers as one supercomputer (CUA-3976) ([#7166](https://github.com/trycua/cua/issues/7166)) ([49f716e](https://github.com/trycua/cua/commit/49f716e9c7e224db0f1bafbb2957be385f308e01))
+
+
+### Performance Improvements
+
+* **cua-sdk:** build libcua_sdk in its own crate so cua-sdk is rlib-only (CUA-3971) ([#7250](https://github.com/trycua/cua/issues/7250)) ([73b54ae](https://github.com/trycua/cua/commit/73b54aeb62c5c5a253be761d30f4026dea2f1fd5))
+
 ## [0.22.0](https://github.com/trycua/cua/compare/cua-sdk-v0.21.0...cua-sdk-v0.22.0) (2026-11-10)
 
 

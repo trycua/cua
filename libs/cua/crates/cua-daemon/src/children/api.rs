@@ -619,6 +619,96 @@ impl Scoped {
 /// person: what is missing, and that retrying from inside the Space will not help. The host's own
 /// wording talks to someone at a terminal (`cua cache prune`, a build script); an agent that
 /// repeats it sends the person to commands they do not need.
+/// What the thread shows of one create an agent asked for: recorded in
+/// [`cua_spaces::child_creates`] as it goes, so every client draws the same row.
+struct Tracked {
+    home: std::path::PathBuf,
+    /// This create's own record (two creates under one name never share one).
+    id: String,
+    /// Whether it ended in a result or an error. One that is dropped before either (its stream was
+    /// cut) is failed, not left on "creating".
+    done: std::sync::atomic::AtomicBool,
+    os: &'static str,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+impl Tracked {
+    fn start(home: &std::path::Path, parent: &str, child: &pb::CreateSpaceRequest) -> Tracked {
+        let os = cua_spaces::child_creates::os_of_image(&child.image);
+        Tracked {
+            home: home.to_path_buf(),
+            id: cua_spaces::child_creates::start(
+                home,
+                parent,
+                &child.name,
+                &child.name,
+                os,
+                now_ms(),
+            ),
+            done: std::sync::atomic::AtomicBool::new(false),
+            os,
+        }
+    }
+
+    fn set(&self, f: impl FnOnce(&mut cua_spaces::child_creates::Entry)) {
+        cua_spaces::child_creates::update_id(&self.home, &self.id, f);
+    }
+
+    fn progress(&self, p: &pb::CreateSpaceProgress) {
+        let words = cua_spaces::child_creates::phase_words(&p.phase, self.os);
+        self.set(|e| {
+            if !words.is_empty() {
+                e.phase = words;
+            }
+            e.code = p.phase.clone();
+            e.percent = p.fraction.map(|f| (f.clamp(0.0, 1.0) * 100.0) as u8);
+            if !p.space.is_empty() {
+                e.space = p.space.clone();
+            }
+        });
+    }
+
+    fn ready(&self, id: &str) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.set(|e| {
+            e.state = cua_spaces::child_creates::State::Ready;
+            e.space = id.to_string();
+            e.phase = "Ready".into();
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+
+    fn failed(&self, why: &str) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let reason = cua_spaces::child_creates::person_reason(why);
+        // A create the person cancelled is not a failure to show on a row.
+        let cancelled = why.to_lowercase().contains("cancel");
+        self.set(|e| {
+            e.hidden = cancelled;
+            e.state = cua_spaces::child_creates::State::Failed;
+            e.error = reason;
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        if !self.done.load(std::sync::atomic::Ordering::Relaxed) {
+            // The stream was dropped (the agent or its connection went away) before the create ended: it
+            // is cancelled with it, so its row says so instead of staying on "creating".
+            self.failed("The create was interrupted before it finished");
+        }
+    }
+}
+
 pub(crate) fn for_the_agent(status: Status) -> Status {
     match agent_words(status.message()) {
         Some(m) => Status::new(status.code(), m),
@@ -628,6 +718,19 @@ pub(crate) fn for_the_agent(status: Status) -> Status {
 
 fn agent_words(msg: &str) -> Option<String> {
     let l = msg.to_lowercase();
+    if l.contains("probe port") && l.contains("not published") {
+        // The agent repeats what it is told to the person: no port numbers or internals.
+        return Some(
+            "The Space's network setup did not come up, so it was not made. Say that plainly; do not quote ports or internals. Offer to try a Linux Space instead, or to try this one again later."
+                .into(),
+        );
+    }
+    if l.contains("stopped while booting") {
+        return Some(
+            "The Space stopped while starting up, so it was not made. Say that plainly and offer to try again or to use a Linux Space instead."
+                .into(),
+        );
+    }
     if l.contains("not enough disk space") {
         let between = |a: &str, b: &str| -> Option<String> {
             let from = msg.find(a)? + a.len();
@@ -853,12 +956,16 @@ impl SpaceService for Scoped {
         let _held = super::admit(&self.shared, &claims.root, ask).inspect_err(|e| {
             self.audit("refuse", &name, e.message());
         })?;
-        let resp = self
-            .owner()
-            .create_space(Request::new(child))
-            .await
-            .map_err(for_the_agent)?;
+        let tracked = Tracked::start(self.spaces().home_dir(), &self.space, &child);
+        let resp = match self.owner().create_space(Request::new(child)).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
         if let Some(s) = &resp.get_ref().space {
+            tracked.ready(&s.id);
             self.audit("spawn", &s.id, &name);
             self.adopt(&claims, &s.id);
             super::record_cost(&self.shared, &claims.root, &s.id, ask);
@@ -878,24 +985,43 @@ impl SpaceService for Scoped {
         let child = self.child_request(&claims, inner.create.unwrap_or_default())?;
         let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
         let held = super::admit(&self.shared, &claims.root, ask)?;
-        let stream = self
+        let tracked = std::sync::Arc::new(Tracked::start(
+            self.spaces().home_dir(),
+            &self.space,
+            &child,
+        ));
+        let stream = match self
             .owner()
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
                 create: Some(child),
             }))
             .await
-            .map_err(for_the_agent)?
-            .into_inner();
+        {
+            Ok(r) => r.into_inner(),
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
             let item = item.map_err(for_the_agent);
             let _ = &held;
+            match &item {
+                Ok(pb::CreateSpaceStreamResponse {
+                    event: Some(pb::create_space_stream_response::Event::Progress(p)),
+                }) => tracked.progress(p),
+                Err(e) => tracked.failed(e.message()),
+                _ => {}
+            }
+            let item = item.map_err(for_the_agent);
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item
                 && let Some(s) = &r.space
             {
+                tracked.ready(&s.id);
                 me.adopt(&claims, &s.id);
                 super::record_cost(&me.shared, &claims.root, &s.id, ask);
             }
@@ -1444,6 +1570,21 @@ mod agent_words_tests {
     use super::*;
 
     #[test]
+    fn a_network_or_boot_failure_is_said_without_ports_or_internals() {
+        let a = agent_words("invalid request: probe port 3211 is not published by this sandbox")
+            .unwrap();
+        assert!(
+            !a.contains("3211") && a.contains("network setup did not come up"),
+            "{a}"
+        );
+        let b = agent_words("local runtime: lume VM 'mac1' stopped while booting").unwrap();
+        assert!(
+            !b.to_lowercase().contains("lume") && b.contains("stopped while starting up"),
+            "{b}"
+        );
+    }
+
+    #[test]
     fn a_full_disk_is_said_for_the_person_not_the_terminal() {
         let m = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 55.0 GiB and cua keeps 5.0 GiB free, but only 24.5 GiB is available on /Users/a/.cua (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
         let w = agent_words(m).unwrap();
@@ -1468,5 +1609,50 @@ mod agent_words_tests {
             for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
             "the budget is spent"
         );
+    }
+}
+
+#[cfg(test)]
+mod tracked_tests {
+    use super::*;
+
+    fn req(name: &str) -> pb::CreateSpaceRequest {
+        pb::CreateSpaceRequest {
+            name: name.into(),
+            image: "linux:24.04".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_create_whose_stream_is_dropped_is_failed_not_left_on_creating() {
+        let d = tempfile::tempdir().unwrap();
+        let t = Tracked::start(d.path(), "local:p", &req("a"));
+        drop(t);
+        let e = &cua_spaces::child_creates::of(d.path(), "local:p")[0];
+        assert_eq!(e.state, cua_spaces::child_creates::State::Failed);
+        assert!(e.error.contains("interrupted"), "{}", e.error);
+    }
+
+    #[test]
+    fn a_create_that_finished_is_not_touched_when_dropped() {
+        let d = tempfile::tempdir().unwrap();
+        let t = Tracked::start(d.path(), "local:p", &req("a"));
+        t.ready("local:a");
+        drop(t);
+        let e = &cua_spaces::child_creates::of(d.path(), "local:p")[0];
+        assert_eq!(e.state, cua_spaces::child_creates::State::Ready);
+    }
+
+    #[test]
+    fn two_creates_under_one_name_are_tracked_apart() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Tracked::start(d.path(), "local:p", &req("same"));
+        let b = Tracked::start(d.path(), "local:p", &req("same"));
+        b.failed("nope");
+        let all = cua_spaces::child_creates::of(d.path(), "local:p");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].state, cua_spaces::child_creates::State::Creating);
+        drop(a);
     }
 }

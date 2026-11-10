@@ -243,6 +243,12 @@ export function ThreadScreen({ spaceId, onBack, onFullStream, hideHeaderStream, 
           </View>
         );
       }
+      case "creator":
+        return (
+          <View style={{ marginLeft: 12, marginTop: 10 }}>
+            <AuthorLine author={item.entry.author} tsMs={item.entry.tsMs} />
+          </View>
+        );
       case "message":
         return (
           <Bubble

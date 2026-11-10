@@ -147,6 +147,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     error: opt(s.sdk?.error),
     host: opt(s.host),
     hostName: opt(s.hostName),
+    parent: opt(s.parent),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
     stopReason: off ? opt(s.power?.stopReason) : undefined,

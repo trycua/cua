@@ -61,6 +61,7 @@ pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
 pub mod build;
+pub mod child_creates;
 pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;

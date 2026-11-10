@@ -517,6 +517,7 @@ impl Runtime {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    #[cfg(any(feature = "client", test))]
     fn is_share_host(&self) -> bool {
         self.inner
             .share_host
@@ -1864,7 +1865,10 @@ impl Runtime {
         if self.inner.shares.revoke(id) {
             return Ok(());
         }
+        #[cfg(feature = "client")]
         let name = &self.key(name).await?;
+        #[cfg(not(feature = "client"))]
+        self.key(name).await?;
         #[cfg(feature = "client")]
         if !self.is_share_host()
             && id.starts_with("share-")

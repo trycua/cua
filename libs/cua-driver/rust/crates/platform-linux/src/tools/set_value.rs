@@ -293,13 +293,8 @@ fn pick_from_popup(
             return Ok(());
         }
         if foreground {
-            crate::interaction::with_x11_foreground(
-                win,
-                crate::input::ForegroundOptions::keyboard(),
-                crate::interaction::session_policy().menu,
-                || crate::input::send_key_xtest("Escape", &[]),
-            )
-            .map(|_| ())
+            // Inside the click's transaction: the target still has the focus.
+            crate::input::send_key_xtest("Escape", &[])
         } else {
             background_virtual_key(cursor_id, pid, win, "Escape", &[]).map(|_| ())
         }
@@ -326,14 +321,18 @@ fn pick_from_popup(
         closed
     };
     if foreground {
+        // Open, pick and close in one transaction, so the restore runs once
+        // the popup is gone instead of closing it before the pick.
         let (sx, sy) = window_local_to_screen(win, lx, ly)?;
         crate::interaction::with_x11_foreground(
             win,
             crate::input::ForegroundOptions::pointer(),
             crate::interaction::session_policy().menu,
-            || crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1),
+            || {
+                crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1)?;
+                open_and_pick()
+            },
         )?;
-        open_and_pick()?;
         return Ok(None);
     }
     let (_, guard) = crate::input::focus_guard::guarded(Some(pid), || {

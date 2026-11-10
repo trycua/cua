@@ -25,10 +25,14 @@ public struct StreamWindow: Identifiable, Hashable, Sendable {
     /// 0 when unknown): what `Space.appIcon` looks the icon up by.
     public var appID: String
     public var processID: UInt32
+    /// For a window another Space shows here: the Space it lives in
+    /// (id, name, OS). `nil` for the Space's own windows.
+    public var origin: StreamWindowOrigin?
 
     public init(id: String, app: String, title: String, epoch: UInt64 = 1,
          surfaceSize: CGSize = .zero, scaleFactor: CGFloat = 1,
-         appID: String = "", processID: UInt32 = 0) {
+         appID: String = "", processID: UInt32 = 0, origin: StreamWindowOrigin? = nil) {
+        self.origin = origin
         self.id = id
         self.app = app
         self.title = title
@@ -47,6 +51,19 @@ public struct StreamWindow: Identifiable, Hashable, Sendable {
     /// What the source switcher shows.
     public var displayName: String {
         title.isEmpty ? app : "\(app): \(title)"
+    }
+}
+
+/// The Space a shown window lives in.
+public struct StreamWindowOrigin: Hashable, Sendable {
+    public var spaceID: String
+    public var name: String
+    public var os: String
+
+    public init(spaceID: String, name: String, os: String = "") {
+        self.spaceID = spaceID
+        self.name = name
+        self.os = os
     }
 }
 
@@ -85,6 +102,12 @@ public protocol SpaceStreamSourceProviding: AnyObject, Sendable {
     /// Joins the Space's presence as `name`.
     func joinPresence(name: String, color: String?) async throws -> SpacePresence
 
+    /// Joins presence for the surface being watched. A window another Space
+    /// shows here, streamed straight from its origin, joins the origin's
+    /// channel and this Space's together (one avatar and one cursor per
+    /// viewer); any other source is `joinPresence(name:color:)`.
+    func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence
+
     /// Whether ⌘ chords go to the Space with Control instead of Command: a
     /// Linux or Windows guest, where Command arrives as Super (⌘C would be
     /// Super+C, which types "c"). Known once a session opened.
@@ -92,6 +115,10 @@ public protocol SpaceStreamSourceProviding: AnyObject, Sendable {
 }
 
 extension SpaceStreamSourceProviding {
+    public func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence {
+        try await joinPresence(name: name, color: color)
+    }
+
     /// Providers that don't know the guest send ⌘ as it is.
     public var commandAsControl: Bool { false }
 

@@ -1608,7 +1608,7 @@ struct ParityTests {
             id: w["id"] as! String, appName: w["appName"] as! String, title: w["title"] as! String,
             visible: w["visible"] as? Bool ?? true, appId: w["appId"] as! String,
             targetEpoch: (w["targetEpoch"] as! NSNumber).uint64Value,
-            widthPx: u("widthPx"), heightPx: u("heightPx"), pid: u("pid"))
+            widthPx: u("widthPx"), heightPx: u("heightPx"), pid: u("pid"), origin: nil)
     }
 
     func runStreamSection(_ f: [String: Any]) throws -> [Any] {

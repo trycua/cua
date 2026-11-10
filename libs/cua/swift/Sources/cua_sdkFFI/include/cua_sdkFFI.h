@@ -1874,6 +1874,11 @@ RustBuffer uniffi_cua_sdk_fn_method_space_info(uint64_t ptr, RustCallStatus *_No
 uint64_t uniffi_cua_sdk_fn_method_space_join_presence(uint64_t ptr, RustBuffer identity, RustBuffer timeout_ms
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_JOIN_PRESENCE_FOR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_JOIN_PRESENCE_FOR
+uint64_t uniffi_cua_sdk_fn_method_space_join_presence_for(uint64_t ptr, RustBuffer window_id, RustBuffer identity, RustBuffer timeout_ms
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_KEPT_SERVICES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_KEPT_SERVICES
 uint64_t uniffi_cua_sdk_fn_method_space_kept_services(uint64_t ptr
@@ -5479,6 +5484,12 @@ uint16_t uniffi_cua_sdk_checksum_method_space_info(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_JOIN_PRESENCE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_JOIN_PRESENCE
 uint16_t uniffi_cua_sdk_checksum_method_space_join_presence(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_JOIN_PRESENCE_FOR
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_JOIN_PRESENCE_FOR
+uint16_t uniffi_cua_sdk_checksum_method_space_join_presence_for(void
 
 );
 #endif

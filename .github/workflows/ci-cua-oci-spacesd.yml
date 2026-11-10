@@ -18,7 +18,7 @@ on:
       - "libs/cua/crates/cua-vmm/src/inject.rs"
       - "libs/cua/crates/cua-vmm/src/container/**"
       - "libs/cua/crates/cua-vmm/src/microvm/**"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - "tests/e2e/local-runtimes/tests/oci_any.rs"
       - "tests/e2e/local-runtimes/tests/space_jobs.rs"
       - "libs/cua/crates/cua-spaces/src/space_jobs.rs"
@@ -30,7 +30,7 @@ on:
       - "libs/cua-spacesd/**"
       - "libs/cua/crates/cua-vmm/src/inject.rs"
       - "libs/cua/crates/cua-vmm/src/container/**"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - ".github/workflows/ci-cua-oci-spacesd.yml"
   workflow_dispatch:
 

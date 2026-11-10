@@ -22,6 +22,7 @@ members = [
     # Share a link to anything you run (`cua share`): records, the read-only
     # file server and the access-checked gateway.
     "crates/cua-share",
+    "crates/cua-daemon-core",
     "crates/cua-daemon",
     "crates/cua-teleport-bundle",
     # Chromium localStorage (Local Storage LevelDB) as items.
@@ -110,6 +111,7 @@ members = [
     # Run other providers' SDKs (E2B, Daytona) unchanged on Cua Spaces:
     # a local wire-compatible gateway (`cua compat serve`).
     "crates/cua-compat",
+    "crates/cua-compat-cmd",
     # Copies checkpoints between your machines (FSL-1.1-MIT): manifests,
     # read grants, resumable LAN transfer, the S3 / Cua Volume fallback.
     "crates/cua-snapshot-sync",
@@ -209,6 +211,7 @@ cua-host = { path = "crates/cua-host", version = "0.21.0" } # x-release-please-v
 cua-cluster = { path = "crates/cua-cluster", version = "0.21.0" } # x-release-please-version
 cua-spaces-cluster = { path = "crates/cua-spaces-cluster", version = "0.21.0" } # x-release-please-version
 cua-mesh = { path = "crates/cua-mesh", version = "0.21.0" } # x-release-please-version
+cua-daemon-core = { path = "crates/cua-daemon-core", version = "0.21.0", default-features = false } # x-release-please-version
 cua-daemon = { path = "crates/cua-daemon", version = "0.21.0", default-features = false } # x-release-please-version
 cua-auth = { path = "crates/cua-auth", version = "0.21.0" } # x-release-please-version
 cua-agent-setup = { path = "crates/cua-agent-setup", version = "0.21.0" } # x-release-please-version
@@ -233,6 +236,7 @@ cua-hotspot = { path = "crates/cua-hotspot", version = "0.21.0" } # x-release-pl
 cua-connections = { path = "crates/cua-connections", version = "0.21.0" } # x-release-please-version
 cua-share = { path = "crates/cua-share", version = "0.21.0" } # x-release-please-version
 cua-compat = { path = "crates/cua-compat", version = "0.21.0" } # x-release-please-version
+cua-compat-cmd = { path = "crates/cua-compat-cmd", version = "0.21.0" } # x-release-please-version
 cua-media-protocol = { path = "crates/cua-media-protocol" }
 cua-media-transport = { path = "crates/cua-media-transport" }
 cua-media-codec = { path = "crates/cua-media-codec", default-features = false }

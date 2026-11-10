@@ -75,7 +75,8 @@ need unrelated illustrations. A maintainable asset system uses:
     ([action support](action-support.md)). On X11, a key or click that opened
     a menu also leaves the target focused, with `focus_outcome: "menu_open"`
     and a sentence in the result, since giving the focus back would close
-    the menu.
+    the menu. The Wayland restore does not detect a menu: a `press_key` or
+    `hotkey` that opens one gives the focus back, and the menu closes.
 
 The desktop input family exposing `delivery_mode` is:
 

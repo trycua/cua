@@ -71,8 +71,9 @@ pub fn foreground_policy(desktop: Desktop) -> ForegroundPolicy {
             menu: Leave,
             setup: Restore,
         },
-        // A key or click that opens a menu still leaves it open: on X11 the
-        // restore sees the menu's grab and keeps the target focused.
+        // On X11 a key or click that opens a menu still leaves it open: the
+        // restore sees the menu's popup and keeps the target focused. The
+        // Wayland adapters do not detect one and give the focus back.
         Desktop::X11 | Desktop::XWayland(_) | Desktop::Wayland(_) => ForegroundPolicy {
             typing: Restore,
             key: Restore,

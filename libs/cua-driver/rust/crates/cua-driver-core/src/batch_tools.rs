@@ -995,6 +995,10 @@ async fn run_step(
                 Some(element) => {
                     refind_described_target(locator, &window_spec, element, &args, &result).await
                 }
+                None => None,
+            };
+            let refound = match refound {
+                Some(refound) => Some(refound),
                 None => refind_stale_target(locator, &args, &result).await,
             };
             if let Some((retry, note)) = refound {

@@ -419,7 +419,7 @@ struct RerenderState {
     /// Reads that happen between a find and its click: the next this many
     /// clicks find their token already replaced.
     rerender_before_click: usize,
-    /// Refuse every click with this code.
+    /// Refuse the next click with this code.
     refuse_with: Option<&'static str>,
 }
 
@@ -456,7 +456,7 @@ impl Tool for Rerender {
             }
             "click" => {
                 state.click_attempts += 1;
-                if let Some(code) = state.refuse_with {
+                if let Some(code) = state.refuse_with.take() {
                     return ToolResult::error(format!("Background input refused ({code}): no"))
                         .with_structured(json!({"code": code}));
                 }
@@ -738,4 +738,29 @@ async fn the_end_read_after_a_change_is_taken_once() {
     let result = click_and_observe(&registry).await;
     assert!(text(&result).contains("changed since"), "{}", text(&result));
     assert_eq!(reads.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_described_step_with_a_stale_token_still_gets_the_token_refind() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Save")]);
+    state.lock().unwrap().refuse_with = Some("stale_element_token");
+    // The step's lookup is read 41 (s00000029); a platform that remembers
+    // that read lets the token re-find look its row up.
+    crate::window_state_view::remember_for_test(
+        "s00000029",
+        42,
+        7,
+        "- [0] AXWindow \"Daymark\"\n  - [1] AXButton \"Save\"\n",
+    );
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [
+                {"click": {"role": "button", "name": "Save"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(state.lock().unwrap().clicked, vec!["Save"]);
+    assert!(text(&result).contains("went stale"), "{}", text(&result));
 }

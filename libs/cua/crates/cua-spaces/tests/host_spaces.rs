@@ -1858,8 +1858,12 @@ async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
     register("space-00000000000000a2", host.clone()).await;
     relay.delete("ada-token", &host).await.unwrap();
     let msg = spaces.delete("relay:space-00000000000000a2").await.unwrap();
-    assert!(msg.contains("stale entry"), "{msg}");
-    assert!(msg.contains("no longer on the relay"), "{msg}");
+    // The relay takes a removed host's Spaces with it, so nothing is left to call a stale entry: the delete just says the
+    // Space is gone.
+    assert!(
+        msg.contains("Removed relay:space-00000000000000a2"),
+        "{msg}"
+    );
     assert!(provided_machines(&f).await.is_empty());
 }
 

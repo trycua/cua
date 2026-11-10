@@ -685,10 +685,10 @@ export function PermissionsScreen({
         footer={view.note}
         extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null}
       />
-      <Actions className="flex flex-wrap items-center gap-x-6 gap-y-2">
+      <Actions className="flex items-center gap-x-6">
         <button
           type="button"
-          className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON}
+          className={cn("shrink-0", view.primary.white ? WHITE_BUTTON : GLASS_BUTTON)}
           onClick={onContinue}
           data-onboarding-primary=""
           data-new-run-permissions-next={view.primary.label}
@@ -699,7 +699,7 @@ export function PermissionsScreen({
           // What is still off, by name: on a short window its row can be below the fold, so pressing this shows it.
           <button
             type="button"
-            className={cn(LINK, "text-left text-[14px] font-medium text-white/85")}
+            className={cn(LINK, "line-clamp-2 min-w-0 text-left text-[14px] leading-tight font-medium text-white/85")}
             onClick={() => showRow(view.missing[0]!.id)}
             data-new-run-still-off=""
           >

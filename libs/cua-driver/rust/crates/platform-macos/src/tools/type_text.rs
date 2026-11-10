@@ -506,8 +506,12 @@ impl Tool for TypeTextTool {
                 } else {
                     note
                 };
+                let commit_unproven = uncommitted_binding_target(element_ptr, target_is_web_content);
+                let commit_note = if commit_unproven {
+                    " The app takes this field's value at end-of-edit, which type_text does not deliver: press Tab or Return, or use set_value."
+                } else { "" };
                 ToolResult::text(format!(
-                    "{mark} {char_count} char(s){detail}.{note}{}",
+                    "{mark} {char_count} char(s){detail}.{note}{commit_note}{}",
                     changes.result_suffix()
                 ))
                 .with_structured({
@@ -522,6 +526,11 @@ impl Tool for TypeTextTool {
                         "verified": verified,
                         "effect": if verified { "confirmed" } else { "unverifiable" },
                     });
+                    if commit_unproven {
+                        s["committed"] = serde_json::json!(
+                            cua_driver_contract::ActionCommit::Unproven.as_wire()
+                        );
+                    }
                     if let Some(delivered_chars) = delivered_chars {
                         s["delivered_chars"] = serde_json::json!(delivered_chars);
                     }
@@ -733,6 +742,22 @@ fn synthesis_refusal_result(
         )
     };
     ToolResult::error(message).with_structured(structured)
+}
+
+fn uncommitted_binding_target(
+    element_ptr: Option<(usize, Option<usize>)>,
+    web_content: bool,
+) -> bool {
+    if web_content {
+        return false;
+    }
+    let Some((ptr, _)) = element_ptr else {
+        return false;
+    };
+    let element = ptr as AXUIElementRef;
+    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+    let subrole = unsafe { copy_string_attr(element, "AXSubrole") }.unwrap_or_default();
+    super::set_value::is_binding_target_role(&role, &subrole)
 }
 
 fn path_has_untrusted_web_readback(path: &str) -> bool {
@@ -1281,6 +1306,17 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
+    type_and_drain(pid, text, delay_ms, before, element_ptr_and_idx, window_id)
+}
+
+pub(super) fn type_and_drain(
+    pid: i32,
+    text: &str,
+    delay_ms: u64,
+    before: Option<&str>,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    window_id: Option<u32>,
+) -> anyhow::Result<(bool, Option<usize>)> {
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
     let batched = delay_ms == 0;
 

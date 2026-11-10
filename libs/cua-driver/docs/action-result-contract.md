@@ -38,6 +38,7 @@ evidence rests on. A `refused` result adds `error: {code, hint}`.
 | `delivery.mode` | `background`, `foreground`, `not_applicable`, `unknown` |
 | `evidence[].kind` | `value_readback`, `window_change` |
 | `evidence[].detail` | optional human readback behind the evidence |
+| `committed` | optional; `committed`, `not_committed`, `unproven` |
 | `summary` | optional; the result text, verbatim |
 | `error.code` / `error.hint` | only with `effect: refused` |
 | `hint` | optional; one short sentence saying what to do next (see [Recovery hints](#recovery-hints)) |
@@ -67,6 +68,20 @@ The invariants are:
 - `partial` has `delivery.delivered_count`;
 - `refused` has neither delivery nor evidence;
 - `error` appears only on `refused`.
+
+Contract 0.9 adds `committed` separately from delivery and value readback
+(RFC #4009). On macOS, `set_value` retypes native non-secure single-line
+bound fields, selecting the old value in UTF-16 units, then ends editing.
+`committed` means the typed value survived and the control lost keyboard
+focus; a refused gesture or replaced value is `not_committed`. An AX-only
+value echo is at most `unproven`. Other actions omit the field, except native
+`type_text`, which reports `unproven` because it does not end editing. Secure
+fields keep AX-only writes: a masked or unreadable value gives no safe length
+for a whole-value selection.
+
+Typed writes already use the application's edit model, so they do not run
+the document net-zero edit used after direct AX writes. Neither a committed
+field nor an edited document proves the file was saved.
 
 ## Recovery hints
 

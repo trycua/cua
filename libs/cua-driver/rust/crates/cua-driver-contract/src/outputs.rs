@@ -676,6 +676,45 @@ pub struct ActionEscalation {
     pub reason: ActionEscalationReason,
 }
 
+/// What the driver observed of the target application's own end-of-edit after
+/// a value-setting action.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionCommit {
+    /// The edit session was observed to end with the written value in place.
+    Committed,
+    /// The commit gesture could not be dispatched, or the application replaced
+    /// the written value at its end-of-edit.
+    NotCommitted,
+    /// The value survived the gesture, but the only evidence is an
+    /// accessibility read-back. A control whose value is a binding target
+    /// echoes that read-back whether or not the application took the value.
+    Unproven,
+}
+
+impl ActionCommit {
+    /// The single wire spelling, so a platform producer and the record that
+    /// reads it back cannot drift apart.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Committed => "committed",
+            Self::NotCommitted => "not_committed",
+            Self::Unproven => "unproven",
+        }
+    }
+
+    /// Only the three published verdicts are accepted; an unknown spelling
+    /// yields `None` rather than a claim about the app's end-of-edit.
+    pub fn from_wire(raw: &str) -> Option<Self> {
+        match raw {
+            "committed" => Some(Self::Committed),
+            "not_committed" => Some(Self::NotCommitted),
+            "unproven" => Some(Self::Unproven),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ActionResult {
@@ -696,6 +735,8 @@ pub struct ActionResult {
     /// Present only with `effect: refused`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ActionError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed: Option<ActionCommit>,
     /// What to do next, in one short sentence. Present when the effect is
     /// `unverifiable` or `suspected_noop`, so an unconfirmed action points at
     /// the next step instead of leaving the agent to guess. Also carries a
@@ -942,6 +983,23 @@ mod tests {
             hint: None,
             next_call: None,
             fast_path: None,
+            committed: None,
+        }
+    }
+
+    #[test]
+    fn committed_verdicts_round_trip_and_default_to_absent() {
+        assert!(serde_json::to_value(confirmed_result()).unwrap().get("committed").is_none());
+        for (verdict, wire) in [
+            (ActionCommit::Committed, "committed"),
+            (ActionCommit::NotCommitted, "not_committed"),
+            (ActionCommit::Unproven, "unproven"),
+        ] {
+            let mut result = confirmed_result();
+            result.committed = Some(verdict);
+            let payload = serde_json::to_value(&result).unwrap();
+            assert_eq!(payload["committed"], json!(wire));
+            assert_eq!(serde_json::from_value::<ActionResult>(payload).unwrap(), result);
         }
     }
 
@@ -997,6 +1055,7 @@ mod tests {
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
             [
+                "committed",
                 "delivery",
                 "effect",
                 "error",

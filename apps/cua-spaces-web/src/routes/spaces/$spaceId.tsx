@@ -46,6 +46,7 @@ import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { SpaceHeader } from "@/components/space-detail/space-header";
 import { SpaceCall } from "@/components/space-thread/space-call";
 import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
+import { useComputerActions } from "@/components/computers/computer-actions";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
@@ -159,6 +160,8 @@ function SpaceDetailPage() {
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
   const { detail, stream, windowsUnsupported, windowsLoaded, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
+  // A computer's own desktop page also manages the computer: its page, and Remove.
+  const computer = useComputerActions(space?.id ?? spaceId);
   // Call view or thread view, remembered per Space.
   const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
@@ -531,9 +534,20 @@ function SpaceDetailPage() {
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           facts={detail.facts}
           more={sections}
-          header={<SpaceHeader back={<BackLink inline parent={parentRef} />} os={space.os} title={detail.title} place={place} childOf={parentRef} />}
+          header={
+            <SpaceHeader
+              back={<BackLink inline parent={parentRef} />}
+              os={space.os}
+              title={detail.title}
+              place={place}
+              childOf={parentRef}
+              computerSettings={computer?.settings}
+              removeComputer={computer?.remove}
+            />
+          }
         />
         {dialogs}
+        {computer?.dialogs}
       </>
     );
   }
@@ -588,7 +602,11 @@ function SpaceDetailPage() {
                     ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share }
                     : undefined
               }
-              remove={!creating && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
+              remove={
+                !creating && !computer && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined
+              }
+              computerSettings={computer?.settings}
+              removeComputer={computer?.remove}
               dismiss={state === "failed" ? { label: t("computers.account.remove"), enabled: true, onClick: dismiss } : undefined}
             />
           }
@@ -627,6 +645,7 @@ function SpaceDetailPage() {
           owner={sharedOwner}
         />
         {dialogs}
+        {computer?.dialogs}
       </>
     );
   }

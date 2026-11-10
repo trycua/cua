@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_script`: run a model-written JavaScript program that drives the
 //! computer through Cua Driver's own actions and reads.
 //!

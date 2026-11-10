@@ -24,6 +24,12 @@ public protocol UpdaterDriving: AnyObject {
     var onChange: (() -> Void)? { get set }
     /// The Sparkle channels to install from besides the default one.
     var channels: [String] { get set }
+    /// The appcast to read instead of the bundle's `SUFeedURL` (the
+    /// nightly one); nil: `SUFeedURL`.
+    var feedURL: String? { get set }
+    /// The bundle's own appcast (`SUFeedURL`); the nightly one is found
+    /// next to it (`appAboutFeedUrl`).
+    var stableFeed: String? { get }
     /// A check the user started is running (not a held update that waits
     /// for a restart).
     var checking: Bool { get }
@@ -52,6 +58,8 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     private var observations: [NSKeyValueObservation] = []
     public var onChange: (() -> Void)?
     public var channels: [String] = []
+    public var feedURL: String?
+    public let stableFeed: String?
     public var onUpdateEvent: ((String) -> Void)?
     /// The bundle this process runs from, as it was at launch.
     private let launched = LaunchedBundle(bundle: .main)
@@ -79,10 +87,13 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
 
     private init(channels: [String], bundle: Bundle) {
         self.channels = channels
+        stableFeed = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String
         driver = UpdateUserDriver(currentVersion: AboutBundleInfo(bundle: bundle).version)
         super.init()
         updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: self)
         driver.onChange = { [weak self] in self?.onChange?() }
+        driver.resumeSilentUpdate = { [weak self] in self?.updater.checkForUpdates() }
+        driver.quitApp = { NSApp.terminate(nil) }
         driver.onEvent = { [weak self] event in self?.onUpdateEvent?(event) }
         let changed: @Sendable () -> Void = { [weak self] in
             DispatchQueue.main.async { self?.onChange?() }
@@ -154,6 +165,12 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
         MainActor.assumeIsolated { Set(channels) }
     }
 
+    /// The nightly appcast on Nightly; nil reads `SUFeedURL`. Sparkle asks
+    /// before every check, so a channel switch takes effect at the next one.
+    public nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
+        MainActor.assumeIsolated { feedURL }
+    }
+
     // MARK: - What a check found (usage telemetry: fixed words)
 
     private nonisolated func tell(_ event: String) {
@@ -166,18 +183,19 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     }
     public nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) { tell("not_found") }
 
+    /// What `willInstallUpdateOnQuit` returns: false leaves Sparkle in charge,
+    /// so the update installs when the app quits (CUA-3065). Sparkle then ends
+    /// its session and the install block it passed is dead, so "Restart to
+    /// update" resumes the update through a check instead (`installNow`).
+    static let handlesQuitInstallItself = false
+
     /// The silent path (`automaticallyDownloadsUpdates`): the update is
-    /// downloaded and the page offers "Restart to update" through
-    /// `immediateInstallHandler`. Returning false leaves Sparkle in charge of
-    /// the install, so the update is also applied when the app quits. Returning
-    /// true would promise that the app installs it, and only the click does:
-    /// users who never click (the app lives in the menu bar and notch) stayed
-    /// on the old version for ever (CUA-3065).
+    /// downloaded and the page offers "Restart to update".
     public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                                     immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         let version = item.displayVersionString
-        MainActor.assumeIsolated { driver.silentlyDownloaded(version: version, install: immediateInstallHandler) }
-        return false
+        MainActor.assumeIsolated { driver.silentlyDownloaded(version: version) }
+        return Self.handlesQuitInstallItself
     }
 
     /// A cycle that ended with nothing to show clears a pending "checking".
@@ -324,6 +342,9 @@ public final class FixtureUpdater: UpdaterDriving {
     public var canCheck = true
     public var onChange: (() -> Void)?
     public var channels: [String] = []
+    public var feedURL: String?
+    /// The release appcast, so fixtures follow Nightly as the shipped app does.
+    public var stableFeed: String? = "https://github.com/trycua/cua/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
     public var onUpdateEvent: ((String) -> Void)?
     public private(set) var checks = 0
     /// What the page shows; scripted by tests through the `simulate` calls.
@@ -387,8 +408,11 @@ public final class UpdatesModel {
     /// The chosen channel and where it is saved.
     public var channel: AppUpdateChannel {
         didSet {
-            updater?.channels = appAboutAllowedChannels(channel: channel)
+            Self.follow(channel, updater)
             saveChannel(channel)
+            // A new channel is checked at once; what it finds downloads and
+            // is offered as "Restart to update".
+            if channel != oldValue { checkNow() }
         }
     }
     @ObservationIgnored public var saveChannel: (AppUpdateChannel) -> Void = { _ in }
@@ -402,7 +426,7 @@ public final class UpdatesModel {
         self.updater = updater
         self.info = info
         self.channel = channel
-        updater?.channels = appAboutAllowedChannels(channel: channel)
+        Self.follow(channel, updater)
         updater?.onChange = { [weak self] in
             self?.revision += 1
             self?.installWhenReady()
@@ -412,14 +436,30 @@ public final class UpdatesModel {
         updater?.onUpdateEvent = { [weak self] event in self?.record(event) }
     }
 
+    /// Points `updater` at `channel`: the Sparkle channels it may install
+    /// from and, for Nightly, the nightly appcast.
+    private static func follow(_ channel: AppUpdateChannel, _ updater: UpdaterDriving?) {
+        guard let updater else { return }
+        updater.channels = appAboutAllowedChannels(channel: channel)
+        updater.feedURL = updater.stableFeed.flatMap { appAboutFeedUrl(channel: channel, stableFeed: $0) }
+    }
+
+    /// The channel's id (`stable`, `nightly`), as telemetry and the page name it.
+    public static func id(_ channel: AppUpdateChannel) -> String {
+        switch channel {
+        case .stable: "stable"
+        case .nightly: "nightly"
+        }
+    }
+
     private func record(_ action: String) {
         let trigger = userCheck ? "user" : "background"
         if action != "found" { userCheck = false }
         var signals: [AppTelemetrySignal] = []
         if action == "found" || action == "not_found" {
-            signals.append(.appUpdate(action: "checked", channel: channel == .beta ? "beta" : "stable", trigger: trigger))
+            signals.append(.appUpdate(action: "checked", channel: Self.id(channel), trigger: trigger))
         }
-        signals.append(.appUpdate(action: action, channel: channel == .beta ? "beta" : "stable", trigger: trigger))
+        signals.append(.appUpdate(action: action, channel: Self.id(channel), trigger: trigger))
         telemetry?.record(signals)
     }
 
@@ -495,7 +535,8 @@ public final class UpdatesModel {
     }
 
     public func choose(channel id: String) {
-        channel = id == "beta" ? .beta : .stable
+        // `beta`, from a page before Nightly, is Nightly now.
+        channel = id == "nightly" || id == "beta" ? .nightly : .stable
     }
 
     public func checkNow() {

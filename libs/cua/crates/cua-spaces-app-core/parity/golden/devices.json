@@ -6,14 +6,14 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "warning: Trust this machine within 5 days to keep reaching your machines. [Trust this machine]",
+        "banner": "warning: Trust this computer within 5 days to keep reaching your computers. [Trust this computer]",
         "enrolled": false,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
+        "labels": "Computers / This Computer / Your Computers / Recent access (No access yet.) / Last seen / Add computer Not me Rename… Revoke… / Rename Computer Rename Cancel / New computers Add computer",
         "recent": [],
         "rows": [
           "Studio | Linux, Trusted, check again in 12 days | seen 1799990000 | "
         ],
-        "thisDevice": "grace: Not trusted yet, grace ends @1800432000 name=- [Trust this machine]",
+        "thisDevice": "grace: Not trusted yet, grace ends @1800432000 name=- [Trust this computer]",
         "unconfirmedMachines": []
       }
     },
@@ -22,12 +22,12 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "critical: Trust this machine to reach your machines. [Trust this machine]",
+        "banner": "critical: Trust this computer to reach your computers. [Trust this computer]",
         "enrolled": false,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
+        "labels": "Computers / This Computer / Your Computers / Recent access (No access yet.) / Last seen / Add computer Not me Rename… Revoke… / Rename Computer Rename Cancel / New computers Add computer",
         "recent": [],
         "rows": [],
-        "thisDevice": "needs-enrollment: Not trusted yet @null name=- [Trust this machine]",
+        "thisDevice": "needs-enrollment: Not trusted yet @null name=- [Trust this computer]",
         "unconfirmedMachines": []
       }
     },
@@ -36,15 +36,15 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "warning: Sign in again to trust this machine, or add it from a machine you already trust with the code K7QX-M2RP. [Trust this machine]",
+        "banner": "warning: Sign in again to trust this computer, or add it from a computer you already trust with the code K7QX-M2RP. [Trust this computer]",
         "enrolled": false,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
+        "labels": "Computers / This Computer / Your Computers / Recent access (No access yet.) / Last seen / Add computer Not me Rename… Revoke… / Rename Computer Rename Cancel / New computers Add computer",
         "recent": [],
         "rows": [
-          "MacBook Pro (this machine) | macOS, Waiting to be added | seen null |  | current",
+          "MacBook Pro (this computer) | macOS, Waiting to be added | seen null |  | current",
           "Studio | Linux, Trusted, check again in 12 days | seen null | "
         ],
-        "thisDevice": "waiting: Waiting to be added @null name=MacBook Pro [Trust this machine]",
+        "thisDevice": "waiting: Waiting to be added @null name=MacBook Pro [Trust this computer]",
         "unconfirmedMachines": []
       }
     },
@@ -53,29 +53,29 @@
       "view": {
         "activity": [
           "1799990500 Lost phone was revoked from MacBook Pro",
-          "1799990400 An untrusted machine opened build-box (notable)",
+          "1799990400 An untrusted computer opened build-box (notable)",
           "1799990300 Work laptop asked to join",
           "1799990200 bob@example.com opened studio-mac (notable)",
           "1799990100 MacBook Pro opened studio-mac",
           "1799990000 MacBook Pro was approved from dev_a"
         ],
         "approvals": [
-          "dev_p: Add “Work laptop” to your machines? Only add a machine you just signed in on. | Add “Work laptop”? / A machine signed in to your Cua account and asks to be added.",
-          "dev_o (expired): Keep “Old laptop” on your account for another 30 days? | Keep “Old laptop”? / It needs one approval to keep reaching your machines."
+          "dev_p: Add “Work laptop” to your computers? Only add a computer you just signed in on. | Add “Work laptop”? / A computer signed in to your Cua account and asks to be added.",
+          "dev_o (expired): Keep “Old laptop” on your account for another 30 days? | Keep “Old laptop”? / It needs one approval to keep reaching your computers."
         ],
         "banner": null,
         "enrolled": true,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
+        "labels": "Computers / This Computer / Your Computers / Recent access (No access yet.) / Last seen / Add computer Not me Rename… Revoke… / Rename Computer Rename Cancel / New computers Add computer",
         "recent": [
-          "1799990400 An untrusted machine opened build-box (notable)",
+          "1799990400 An untrusted computer opened build-box (notable)",
           "1799990200 bob@example.com opened studio-mac (notable)",
           "1799990100 MacBook Pro opened studio-mac"
         ],
         "rows": [
-          "MacBook Pro (this machine) | macOS, Trusted, check again in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
+          "MacBook Pro (this computer) | macOS, Trusted, check again in 30 days | seen 1799999940 | rename,revoke | current | Revoke “MacBook Pro”? / This computer will no longer see or reach your computers until you trust it again.",
           "Lost phone | iOS, Revoked | seen null | ",
-          "Old laptop | Linux, Needs a quick check | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
-          "Work laptop | Windows, Waiting to be added | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
+          "Old laptop | Linux, Needs a quick check | seen 1797300000 | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your computers. To use it again, add it again.",
+          "Work laptop | Windows, Waiting to be added | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your computers. To use it again, add it again."
         ],
         "thisDevice": "enrolled: Trusted until @1802592000 name=MacBook Pro [-]",
         "unconfirmedMachines": [
@@ -88,12 +88,12 @@
       "view": {
         "activity": [],
         "approvals": [],
-        "banner": "warning: Check this machine within 2 days: sign in again, or add it from a machine you already trust. [-]",
+        "banner": "warning: Check this computer within 2 days: sign in again, or add it from a computer you already trust. [-]",
         "enrolled": true,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
+        "labels": "Computers / This Computer / Your Computers / Recent access (No access yet.) / Last seen / Add computer Not me Rename… Revoke… / Rename Computer Rename Cancel / New computers Add computer",
         "recent": [],
         "rows": [
-          "MacBook Pro (this machine) | macOS, Trusted, check again in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again."
+          "MacBook Pro (this computer) | macOS, Trusted, check again in 2 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This computer will no longer see or reach your computers until you trust it again."
         ],
         "thisDevice": "enrolled: Trusted until @1800172800 name=MacBook Pro [-]",
         "unconfirmedMachines": []
@@ -104,17 +104,17 @@
       "view": {
         "activity": [],
         "approvals": [
-          "dev_p: Add “Work laptop” to your machines? Only add a machine you just signed in on. | Add “Work laptop”? / A machine signed in to your Cua account and asks to be added.",
-          "dev_o (expired): Keep “Old laptop” on your account for another 30 days? | Keep “Old laptop”? / It needs one approval to keep reaching your machines."
+          "dev_p: Add “Work laptop” to your computers? Only add a computer you just signed in on. | Add “Work laptop”? / A computer signed in to your Cua account and asks to be added.",
+          "dev_o (expired): Keep “Old laptop” on your account for another 30 days? | Keep “Old laptop”? / It needs one approval to keep reaching your computers."
         ],
         "banner": null,
         "enrolled": true,
-        "labels": "Machines / This Machine / Your Machines / Recent access (No access yet.) / Last seen / Add machine Not me Rename… Revoke… / Rename Machine Rename Cancel / New machines Add machine",
+        "labels": "Computers / This Computer / Your Computers / Recent access (No access yet.) / Last seen / Add computer Not me Rename… Revoke… / Rename Computer Rename Cancel / New computers Add computer",
         "recent": [],
         "rows": [
-          "MacBook Pro (this machine) | macOS, Trusted, check again in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This machine will no longer see or reach your machines until you trust it again.",
-          "Old laptop | Linux, Needs a quick check | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your machines. To use it again, add it again.",
-          "Work laptop | Windows, Waiting to be added | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your machines. To use it again, add it again."
+          "MacBook Pro (this computer) | macOS, Trusted, check again in 30 days | seen null | rename,revoke | current | Revoke “MacBook Pro”? / This computer will no longer see or reach your computers until you trust it again.",
+          "Old laptop | Linux, Needs a quick check | seen null | approve,rename,revoke | Revoke “Old laptop”? / Old laptop will no longer see or reach your computers. To use it again, add it again.",
+          "Work laptop | Windows, Waiting to be added | seen null | approve,rename,revoke | Revoke “Work laptop”? / Work laptop will no longer see or reach your computers. To use it again, add it again."
         ],
         "thisDevice": "enrolled: Trusted until @1802592000 name=MacBook Pro [-]",
         "unconfirmedMachines": []
@@ -131,11 +131,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
-          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
+          "sign-in: Sign in again / A fresh sign-in trusts this computer right away.",
+          "approve: Add it from another computer / Show a one-time code to add it from a computer you already trust."
         ],
         "status": null,
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -150,11 +150,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
-          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
+          "sign-in: Sign in again / A fresh sign-in trusts this computer right away.",
+          "approve: Add it from another computer / Show a one-time code to add it from a computer you already trust."
         ],
         "status": null,
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -170,7 +170,7 @@
         "error": null,
         "options": [],
         "status": "Finish signing in in your browser…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -185,8 +185,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this machine…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "status": "Registering this computer…",
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -197,12 +197,12 @@
         "busy": true,
         "buttons": "- / Cancel",
         "code": "K7QX-M2RP",
-        "codeHelp": "On a machine you already trust, add it in Cua Spaces under Machines, or run `cua devices approve K7QX-M2RP`. The code expires in 10 minutes.",
+        "codeHelp": "On a computer you already trust, add it in Cua Spaces under Computers, or run `cua devices approve K7QX-M2RP`. The code expires in 10 minutes.",
         "done": false,
         "error": null,
         "options": [],
         "status": "Waiting to be added…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -217,8 +217,8 @@
         "done": true,
         "error": null,
         "options": [],
-        "status": "This machine is trusted.",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "status": "This computer is trusted.",
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -232,11 +232,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
-          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
+          "sign-in: Sign in again / A fresh sign-in trusts this computer right away.",
+          "approve: Add it from another computer / Show a one-time code to add it from a computer you already trust."
         ],
         "status": null,
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -252,7 +252,7 @@
         "error": null,
         "options": [],
         "status": "Finish signing in in your browser…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -267,8 +267,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this machine…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "status": "Registering this computer…",
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -283,8 +283,8 @@
         "done": true,
         "error": null,
         "options": [],
-        "status": "This machine is trusted.",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "status": "This computer is trusted.",
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -298,11 +298,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
-          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
+          "sign-in: Sign in again / A fresh sign-in trusts this computer right away.",
+          "approve: Add it from another computer / Show a one-time code to add it from a computer you already trust."
         ],
         "status": null,
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -317,8 +317,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this machine…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "status": "Registering this computer…",
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -334,7 +334,7 @@
         "error": "the relay is unreachable",
         "options": [],
         "status": null,
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -349,11 +349,11 @@
         "done": false,
         "error": null,
         "options": [
-          "sign-in: Sign in again / A fresh sign-in trusts this machine right away.",
-          "approve: Add it from another machine / Show a one-time code to add it from a machine you already trust."
+          "sign-in: Sign in again / A fresh sign-in trusts this computer right away.",
+          "approve: Add it from another computer / Show a one-time code to add it from a computer you already trust."
         ],
         "status": null,
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -368,8 +368,8 @@
         "done": false,
         "error": null,
         "options": [],
-        "status": "Registering this machine…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "status": "Registering this computer…",
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -380,12 +380,12 @@
         "busy": true,
         "buttons": "- / Cancel",
         "code": "Z9WY-4TPN",
-        "codeHelp": "On a machine you already trust, add it in Cua Spaces under Machines, or run `cua devices approve Z9WY-4TPN`. The code expires in 10 minutes.",
+        "codeHelp": "On a computer you already trust, add it in Cua Spaces under Computers, or run `cua devices approve Z9WY-4TPN`. The code expires in 10 minutes.",
         "done": false,
         "error": null,
         "options": [],
         "status": "Waiting to be added…",
-        "title": "Trust this machine / Your machines can be reached only from machines you trust."
+        "title": "Trust this computer / Your computers can be reached only from computers you trust."
       }
     },
     {
@@ -393,11 +393,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = ",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": null,
         "title": "Add “Work laptop”?"
@@ -408,11 +408,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = ",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": null,
         "title": "Add “Work laptop”?"
@@ -423,11 +423,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = K7QX",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": null,
         "title": "Add “Work laptop”?"
@@ -438,11 +438,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
@@ -453,11 +453,11 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
@@ -468,11 +468,11 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
@@ -483,11 +483,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = K7QX-M2RP",
         "error": "authentication was cancelled",
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=K7QX-M2RP device=-",
         "title": "Add “Work laptop”?"
@@ -498,11 +498,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=Z9WY-4TPN device=-",
         "title": "Add “Work laptop”?"
@@ -513,11 +513,11 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": null,
-        "message": "Enter the code Work laptop shows to let it see and open your machines. Only add a machine you just signed in on.",
+        "message": "Enter the code Work laptop shows to let it see and open your computers. Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=Z9WY-4TPN device=-",
         "title": "Add “Work laptop”?"
@@ -528,11 +528,11 @@
       "approve": "dev_p",
       "view": {
         "busy": false,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": true,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": "The code expired.",
-        "message": "The code expired. Add “Work laptop” without it instead? Only add a machine you just signed in on.",
+        "message": "The code expired. Add “Work laptop” without it instead? Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=- device=dev_p",
         "title": "Add “Work laptop”?"
@@ -543,11 +543,11 @@
       "approve": "dev_p",
       "view": {
         "busy": true,
-        "buttons": "Add machine / Not me (revokes)",
+        "buttons": "Add computer / Not me (revokes)",
         "canApprove": false,
         "code": "Code [XXXX-XXXX] = Z9WY-4TPN",
         "error": null,
-        "message": "The code expired. Add “Work laptop” without it instead? Only add a machine you just signed in on.",
+        "message": "The code expired. Add “Work laptop” without it instead? Only add a computer you just signed in on.",
         "presence": "add “Work laptop” to your Cua account",
         "request": "code=- device=dev_p",
         "title": "Add “Work laptop”?"
@@ -558,11 +558,11 @@
       "approve": "dev_o",
       "view": {
         "busy": false,
-        "buttons": "Keep machine / Not now",
+        "buttons": "Keep computer / Not now",
         "canApprove": true,
         "code": null,
         "error": null,
-        "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
+        "message": "Old laptop needs one approval to keep reaching your computers for another 30 days.",
         "presence": "add “Old laptop” to your Cua account",
         "request": "code=- device=dev_o",
         "title": "Keep “Old laptop”?"
@@ -573,11 +573,11 @@
       "approve": "dev_o",
       "view": {
         "busy": true,
-        "buttons": "Keep machine / Not now",
+        "buttons": "Keep computer / Not now",
         "canApprove": false,
         "code": null,
         "error": null,
-        "message": "Old laptop needs one approval to keep reaching your machines for another 30 days.",
+        "message": "Old laptop needs one approval to keep reaching your computers for another 30 days.",
         "presence": "add “Old laptop” to your Cua account",
         "request": "code=- device=dev_o",
         "title": "Keep “Old laptop”?"

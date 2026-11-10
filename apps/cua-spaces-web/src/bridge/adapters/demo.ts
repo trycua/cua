@@ -8,6 +8,8 @@
  */
 
 import type { RiskyRequest } from "../ops/nudges";
+import { demoAgentThreads } from "./demo/agent-threads";
+import { demoAgentSignIn } from "./demo/agent-sign-in";
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
 import type { AgentSetupRow, ConnectionReport, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
@@ -33,6 +35,8 @@ import {
   demoKeyvaultItems,
   demoKeyvaultOverview,
   demoDesktopRows,
+  demoBusyMachines,
+  demoBusyRows,
   demoSpaceRows,
   demoTelemetry,
 } from "./demo-data";
@@ -40,7 +44,7 @@ import { demoNewSpaceState, newSpaceDemoHandlers, type DemoClouds, type DemoNewS
 import { demoShareHandlers } from "./demo/share";
 import { DEMO_THREAD_SPACE, demoThreadHandlers, hangingSpace, seedLongDm } from "./demo/thread";
 import { demoAgentDetailHandlers } from "./demo/agent-detail";
-import { demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
+import { demoAccountKeys, demoAgentKeysHandlers, demoKeyStore, type DemoKeyStore } from "./demo/agent-keys";
 import { demoKeyvaultManageHandlers, demoKeyvaultManageState, withDemoCopies, type DemoKeyvaultManageState } from "./demo/keyvault-manage";
 import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview, type DemoKeyvaultSetupState } from "./demo/keyvault-setup";
 import { unsupportedStreamOps } from "../ops/stream";
@@ -51,23 +55,35 @@ import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
 import { demoChooseRuntime, demoRuntimesInput, demoRuntimesState, type DemoRuntimes } from "./demo/runtimes";
-import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
+import {
+  demoAgentSetup,
+  demoConnections,
+  demoPersistentAgents,
+  demoReply,
+  demoRunRecords,
+  demoStartedRun,
+  runAt,
+  writtenEvents,
+  type DemoRunRecord,
+} from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoGithubHandlers, demoGithubState, type DemoGithubStart } from "./demo/github";
 import { demoCiHandlers, demoCiState, type DemoCiStart } from "./demo/ci";
-import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
+import { demoHostSetupHandlers, demoHostSetupState, demoHostStatusFor, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
 import { demoLinksHandlers, demoLinksState, type DemoLinksState, type DemoSharesPreset } from "./demo/links";
 import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
+import { demoDriverHandlers, demoDriverState, type DemoDriverState } from "./demo/driver";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
+import { demoSpacesSettingsHandlers, demoSpacesSettingsState, type DemoSpacesSettingsState } from "./demo/spaces-settings";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
-import { createDemoNetwork, demoNetworkSpaceRows } from "./demo/network";
+import { createChildrenStore } from "../children";
+import { createDemoChildren } from "./demo/children";
+import { createDemoNetwork, demoAgentHomeRows, demoNetworkSpaceRows } from "./demo/network";
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
 export interface DemoOptions {
-  /** The Ask first experiment is on (`?demo=ask-first`; the GitHub demos turn it on too): Settings, Connections lists GitHub and Labs has its switch. */
-  askFirst?: boolean;
   /** Connections, GitHub: `gh` with two accounts and an Enterprise host (default), `?demo=github-none`, `github-saved` (a saved token) or `github-warning` (scopes broader than needed). */
   github?: DemoGithubStart;
   /** CI Runners: nothing connected (`?demo=ci-fresh`), GitHub connected and no job yet (`?demo=ci-connected`), or a week of jobs (default). */
@@ -94,12 +110,16 @@ export interface DemoOptions {
   claudeLogin?: "signed-in" | "expired" | "none";
   /** `?demo=chatgpt-signed-in`: a ChatGPT sign-in is saved for Codex (no OpenAI API key unless `no-keys` is left off). */
   chatgptLogin?: boolean;
+  /** Three Claude sign-ins and one ChatGPT sign-in, nothing else (`?demo=accounts`). */
+  accounts?: boolean;
   /** Which connections are saved: `none` (`?demo=no-keys`, an empty Connections list) or `several` (`?demo=connections`: Anthropic, OpenRouter, a custom endpoint and a DeepSeek key the provider refuses). Default: an OpenAI key. */
   keys?: "none" | "several";
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
-  /** `?demo=desktops`: the Linux box also shares its desktop (a Space row of its own, `relay:linux-box`). */
+  /** `?demo=desktops`: the Mac mini and the Linux box also share their desktops (Space rows of their own, `relay:mac-mini`, `relay:linux-box`). */
   desktops?: boolean;
+  /** `?demo=driver-update`: a newer Cua Driver is ready for This Mac. */
+  driverUpdate?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
    * scripts/scale-bench.mjs). */
   extraSpaces?: number;
@@ -148,8 +168,16 @@ export interface DemoOptions {
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
   cli?: "local" | "missing";
+  /** No coding agent installed on this computer (`?demo=no-agents`): the first run's "Install a coding agent". */
+  noAgents?: boolean;
+  /** The channel and environment the demo host reports (`settings.get`'s
+   * `target`): the released app on production unless set; `?demo=local-staging`,
+   * `?demo=local-prod` and `?demo=stable-staging` show the title bar's tag. */
+  target?: { channel: "stable" | "local"; env: "prod" | "staging" };
   /** A daemon without the Space thread (`?demo=nothread`): the Space page keeps its old layout. */
   noThread?: boolean;
+  /** No Claude Code, Codex or Hermes chats on this computer (`?demo=nochats`): the Ready screen hides "Pick up where you left off". */
+  noChats?: boolean;
   /** You in the demo's thread as someone the Space is shared with: `guest` (`?demo=thread-guest`, view only) or `member` (`?demo=thread-member`); the owner by default. */
   threadRole?: "member" | "guest";
   /** Extra scenes in the demo's thread: `?demo=thread-lookalike` (CUA-2262). */
@@ -174,6 +202,9 @@ export interface DemoOptions {
   threadPushCard?: boolean;
   /** The host asks about a push on a card and posts a notice (`?demo=thread-cards`). */
   threadCards?: boolean;
+  /** A busy account (`?demo=computers-busy`): an offline computer with two Spaces on it, an online Mac Studio with 33 GB of
+   * disk left and a Space, and two more idle offline computers. */
+  busyComputers?: boolean;
   /** Another of your computers is creating a Space (`?demo=creating-elsewhere`):
    * the Mac mini, a macOS Space 40% of the way (CUA-2349). */
   creatingElsewhere?: boolean;
@@ -182,6 +213,8 @@ export interface DemoOptions {
    * `net-exit-down`): research-swarm and its
    * workers, and each Space's network, Volume and clipboard settings. */
   network?: Set<string>;
+  /** The agent's Home Space with two Spaces under it, and Child Spaces on (`?demo=agent-home`, CUA-2630). */
+  agentHome?: boolean;
   /** Public TCP shares (Labs) on, with a scene: `?demo=shares-consent` (the first share through a share edge asks first), `shares-routes` (shares on three routes and an agent's ask), `shares-settings` (Settings, Sharing with a share edge) or `shares-cap` (the same, with today's data). */
   shares?: DemoSharesPreset;
   /** The home's create takes its time (`?demo=slow-home`), the rest of the demo does not: the first run to look at while it is preparing. */
@@ -219,15 +252,35 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space: New
  * Space and the first Space offers see it too), and `?demo=intel-mac` /
  * `?demo=linux-pc` (an Intel Mac, an x64 Linux PC with QEMU), and
- * `?demo=desktops` (the Linux box shares its desktop, a shared desktop row beside the Spaces), and
+ * `?demo=desktops` (the Mac mini and the Linux box share their desktops, a shared desktop row beside the Spaces), and
  * `?demo=creating-elsewhere` (the Mac mini is creating a Space). */
 /** The account's signed-in machines that share nothing, as a host lists them (`?demo=signed-in-machines`): one enrolled, and the demo devices that wait. */
 function demoSignedInRows(nowMs: number): MachineRow[] {
   const t = Math.floor(nowMs / 1000);
   return [
-    { id: "dev_laptop", name: "Ana's laptop", via: "relay", online: false, os: "macos", device: true, deviceState: "enrolled", lastSeen: t - 2 * 3600, limits: [] },
+    {
+      id: "dev_laptop",
+      name: "Ana's laptop",
+      via: "relay",
+      online: false,
+      os: "macos",
+      device: true,
+      deviceState: "enrolled",
+      lastSeen: t - 2 * 3600,
+      limits: [],
+    },
     { id: "dev_work", name: "Work laptop", via: "relay", online: false, os: "windows", device: true, deviceState: "pending", lastSeen: t - 120, limits: [] },
-    { id: "dev_old", name: "Old laptop", via: "relay", online: false, os: "linux", device: true, deviceState: "expired", lastSeen: t - 33 * 86_400, limits: [] },
+    {
+      id: "dev_old",
+      name: "Old laptop",
+      via: "relay",
+      online: false,
+      os: "linux",
+      device: true,
+      deviceState: "expired",
+      lastSeen: t - 33 * 86_400,
+      limits: [],
+    },
   ];
 }
 
@@ -263,8 +316,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
-    ...(flags.has("ask-first") ? { askFirst: true } : {}),
-    ...(flags.has("github-none") ? { github: "none" as const } : flags.has("github-saved") ? { github: "saved" as const } : flags.has("github-warning") ? { github: "warning" as const } : {}),
+    ...(flags.has("github-none")
+      ? { github: "none" as const }
+      : flags.has("github-saved")
+        ? { github: "saved" as const }
+        : flags.has("github-warning")
+          ? { github: "warning" as const }
+          : {}),
     ...(flags.has("ci-fresh") ? { ci: "fresh" as const } : flags.has("ci-connected") ? { ci: "connected" as const } : {}),
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
@@ -272,10 +330,19 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("signin-wait") ? { signIn: "wait" as const } : flags.has("signin-timeout") ? { signIn: "timeout" as const } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
     ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
-    ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
+    ...(flags.has("claude-expired")
+      ? { claudeLogin: "expired" as const }
+      : flags.has("claude-signed-in")
+        ? { claudeLogin: "signed-in" as const }
+        : flags.has("claude-none")
+          ? { claudeLogin: "none" as const }
+          : {}),
     ...(flags.has("chatgpt-signed-in") ? { chatgptLogin: true } : {}),
+    ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
     desktops: flags.has("desktops"),
+    busyComputers: flags.has("computers-busy"),
+    driverUpdate: flags.has("driver-update"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
       return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
@@ -283,6 +350,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     noTeam: flags.has("no-team"),
     teamFull: flags.has("team-full"),
     noThread: flags.has("nothread"),
+    noChats: flags.has("nochats"),
     ...(flags.has("thread-guest") ? { threadRole: "guest" as const } : flags.has("thread-member") ? { threadRole: "member" as const } : {}),
     threadLookalike: flags.has("thread-lookalike"),
     threadAuthFailed: flags.has("thread-auth-failed"),
@@ -310,10 +378,10 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
               : flags.has("clouds-revoked")
                 ? "revoked"
                 : flags.has("clouds-approval")
-            ? "approval"
-            : flags.has("clouds") || flags.has("clouds-many")
-              ? "connected"
-              : undefined,
+                  ? "approval"
+                  : flags.has("clouds") || flags.has("clouds-many")
+                    ? "connected"
+                    : undefined,
     manyMachines: flags.has("clouds-many"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
@@ -325,13 +393,28 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    ...(flags.has("no-agents") ? { noAgents: true } : {}),
+    ...(flags.has("local-staging")
+      ? { target: { channel: "local" as const, env: "staging" as const } }
+      : flags.has("local-prod")
+        ? { target: { channel: "local" as const, env: "prod" as const } }
+        : flags.has("stable-staging")
+          ? { target: { channel: "stable" as const, env: "staging" as const } }
+          : {}),
     ...(flags.has("network") ? { network: flags } : {}),
+    ...(flags.has("agent-home") ? { agentHome: true } : {}),
     shares: (["consent", "routes", "settings", "cap"] as const).find((p) => flags.has(`shares-${p}`)),
     // Slow creates, to look at a state before it is gone (`?demo=slow-create`).
     ...(flags.has("slow-create") ? { stepMs: 5000 } : {}),
     ...(flags.has("slow-home") ? { slowHome: true } : {}),
     creatingElsewhere: flags.has("creating-elsewhere"),
-    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : flags.has("create-fail-unsupported") ? "unsupported" : undefined,
+    failCreates: flags.has("create-fail-runtime")
+      ? "runtime-once"
+      : flags.has("create-fail-disk")
+        ? "disk"
+        : flags.has("create-fail-unsupported")
+          ? "unsupported"
+          : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
@@ -381,7 +464,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const state: DemoState = {
-    rows: options.noSpaces ? [] : [...(options.network ? demoNetworkSpaceRows(now()) : []), ...demoSpaceRows(now()), ...(options.desktops ? demoDesktopRows(now()) : []), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
+    rows: options.noSpaces
+      ? []
+      : [
+          ...(options.network ? demoNetworkSpaceRows(now()) : []),
+          ...(options.agentHome ? demoAgentHomeRows(now()) : []),
+          ...demoSpaceRows(now()),
+          ...(options.desktops ? demoDesktopRows(now()) : []),
+          ...(options.busyComputers ? demoBusyRows(now()) : []),
+          ...demoScaleRows(now(), options.extraSpaces ?? 0),
+        ],
     items: demoKeyvaultItems(now()),
     keyvaultLocked: Boolean(options.keyvaultLocked),
     keyvaultDisabled: false,
@@ -396,9 +488,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
     imported: [],
-    keyStore: demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys, options.chatgptLogin),
+    keyStore: (() => {
+      const store = demoKeyStore(now, options.rejectedKeys ?? [], options.claudeLogin, options.keys, options.chatgptLogin);
+      return options.accounts ? { ...store, keys: demoAccountKeys(now) } : store;
+    })(),
     readOnlyAgents: options.agentsReadOnly ?? [],
-    agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
+    agentSetup: demoAgentSetup(
+      options.onboarded === false || options.agents === "unset",
+      options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null,
+    ),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},
@@ -406,13 +504,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
     runtimes: demoRuntimesState(),
     volume: (() => {
-      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, Boolean(options.askFirst || options.github), options.ci !== undefined);
-      return options.shares || options.network
-        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.network ? { secureSpaces: true } : {}) } }
-        : v;
+      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, options.ci !== undefined);
+      return options.shares ? { ...v, experiments: { ...v.experiments, tcpShares: true } } : v;
     })(),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    ...demoSpacesSettingsState(),
     links: demoLinksState(now(), options.shares),
     ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
@@ -422,6 +519,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),
     ...demoKeyvaultManageState(),
+    ...demoDriverState(now(), options.onboarded === false, Boolean(options.driverUpdate)),
   };
 
   if (state.platform.os !== "macos") state.host = { ...state.host, name: demoMachine(state.platform).name };
@@ -457,6 +555,13 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     if (!row) throw new HostError(`no Space ${id}`, "not_found");
     return row;
   };
+  // Child Spaces: research-swarm's tree with `?demo=network`, the agent's Home with `?demo=agent-home`, else none.
+  const children = createDemoChildren({
+    rows: () => state.rows,
+    findRow: (id) => findRow(id),
+    network: Boolean(options.network),
+    agentHome: Boolean(options.agentHome),
+  });
   const replaceRow = (id: string, patch: Partial<SpaceRow>) => {
     state.rows = state.rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
   };
@@ -487,6 +592,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
     cli: { name: cliName, installed: cliInstalled },
+    // The released app on production unless `?demo=local-staging` (or another) says otherwise.
+    target: { channel: "stable", env: "prod", authHost: "", ...options.target },
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());
@@ -539,7 +646,13 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       try {
         // A failure the options ask for, after the create starts preparing.
         const failure =
-          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "unsupported" ? DEMO_CREATE_FAILURES.unsupported : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
+          options.failCreates === "disk"
+            ? DEMO_CREATE_FAILURES.disk
+            : options.failCreates === "unsupported"
+              ? DEMO_CREATE_FAILURES.unsupported
+              : options.failCreates === "runtime-once" && createAttempts++ === 0
+                ? DEMO_CREATE_FAILURES.runtime
+                : null;
         if (failure) {
           for (const fraction of [0, 0.3]) {
             emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
@@ -558,7 +671,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           for (const [phase, detail, total] of legs) {
             for (const fraction of [0, 0.15, 0.4, 0.7, 0.9]) {
               if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
-              emit({ type: "spaces.createProgress", progress: { pendingId, phase, fraction, detail, space: id, bytesDone: Math.round(fraction * total), bytesTotal: total, bytesPerSecond: 5 * MB } });
+              emit({
+                type: "spaces.createProgress",
+                progress: { pendingId, phase, fraction, detail, space: id, bytesDone: Math.round(fraction * total), bytesTotal: total, bytesPerSecond: 5 * MB },
+              });
               await wait(homeStep / 2);
             }
           }
@@ -567,23 +683,23 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
             await wait(homeStep / 2);
           }
         } else
-        for (const phase of CREATE_PHASES) {
-          for (const fraction of [0, 0.5]) {
-            if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
-            emit({
-              type: "spaces.createProgress",
-              progress: {
-                pendingId,
-                phase,
-                fraction,
-                detail: phase,
-                space: id,
-                ...(phase === "pulling" ? { bytesDone: fraction * 4.2e9, bytesTotal: 4.2e9, bytesPerSecond: 85e6 } : {}),
-              },
-            });
-            await wait(step / 2);
+          for (const phase of CREATE_PHASES) {
+            for (const fraction of [0, 0.5]) {
+              if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
+              emit({
+                type: "spaces.createProgress",
+                progress: {
+                  pendingId,
+                  phase,
+                  fraction,
+                  detail: phase,
+                  space: id,
+                  ...(phase === "pulling" ? { bytesDone: fraction * 4.2e9, bytesTotal: 4.2e9, bytesPerSecond: 85e6 } : {}),
+                },
+              });
+              await wait(step / 2);
+            }
           }
-        }
         if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
         const row: SpaceRow = {
           id,
@@ -657,7 +773,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       for (const id of ids) {
         const row = state.rows.find((r) => r.id === id);
         if (!row) results.push({ id, ok: false, error: `Couldn't leave ${id}: it isn't listed.` });
-        else if (!row.sharing || row.sharing.role === "owner") results.push({ id, ok: false, error: `Couldn't leave ${row.name}: it's yours; delete it instead.` });
+        else if (!row.sharing || row.sharing.role === "owner")
+          results.push({ id, ok: false, error: `Couldn't leave ${row.name}: it's yours; delete it instead.` });
         else {
           await wait(step);
           state.rows = state.rows.filter((r) => r.id !== id);
@@ -695,6 +812,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       findRow(spaceId);
       return null;
     },
+    ...children,
     "spaces.rename": async ({ spaceId, name }) => {
       findRow(spaceId);
       const next = name.trim();
@@ -719,6 +837,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "machines.list": () =>
       [
         ...demoMachineRows(now(), state.host, state.platform),
+        ...(options.busyComputers ? demoBusyMachines(now()) : []),
         ...(options.manyMachines ? Array.from({ length: 14 }, (_, i) => demoExtraMachine(i)) : []),
         ...state.paired.map((m) => ({ ...m, limits: [...m.limits] })),
         ...(options.signedInMachines ? demoSignedInRows(now()) : []),
@@ -737,10 +856,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "machines.remove": async ({ machine, device }) => {
       await wait(step / 2);
       state.removed = [...state.removed, ...[machine, device].filter((x): x is string => Boolean(x))];
+      // The Spaces made on it leave the list with it: detached, or with `deleteSpaces` forgotten (the same to the list).
+      if (machine) {
+        const before = state.rows.length;
+        state.rows = state.rows.filter((r) => r.host !== machine);
+        if (state.rows.length !== before) emit({ type: "spaces.changed" });
+      }
       emit({ type: "machines.changed" });
       return null;
     },
-    "host.status": () => ({ ...state.host }),
+    "host.status": (args) => demoHostStatusFor(state, args),
 
     "settings.get": () => settingsSnapshot(),
     "settings.set": ({ key, value }) => {
@@ -779,8 +904,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "keyvault.setUnattended": ({ itemIds, unattended }) => {
       const idp = state.items.find((i) => itemIds.includes(i.id) && i.identity_provider);
       if (unattended && idp) throw new HostError(`${idp.domain ?? idp.app_display} signs you in elsewhere, so it never runs unattended.`, "identity_provider");
-      state.items = state.items.map((i): KvItem =>
-        itemIds.includes(i.id) ? { ...i, policy: { ...i.policy, unattended }, rev: i.rev + 1, updated_ms: now() } : i,
+      state.items = state.items.map(
+        (i): KvItem => (itemIds.includes(i.id) ? { ...i, policy: { ...i.policy, unattended }, rev: i.rev + 1, updated_ms: now() } : i),
       );
       emit({ type: "keyvault.changed" });
       return state.items.filter((i) => itemIds.includes(i.id));
@@ -903,7 +1028,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         const last = written[written.length - 1];
         rec.events = [
           ...written,
-          { seq: (last?.seq ?? 0) + 1, ts_ms: t, turn: last?.turn ?? 0, kind: "turn_ended", stop_reason: "cancelled", category: "activity", summary: `Turn ${last?.turn ?? 0} ended (cancelled)` },
+          {
+            seq: (last?.seq ?? 0) + 1,
+            ts_ms: t,
+            turn: last?.turn ?? 0,
+            kind: "turn_ended",
+            stop_reason: "cancelled",
+            category: "activity",
+            summary: `Turn ${last?.turn ?? 0} ended (cancelled)`,
+          },
         ];
         rec.stoppedAt = t;
       }
@@ -919,7 +1052,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       emit({ type: "agents.changed" });
       return null;
     },
-    "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
+    "agents.setup": () => state.agentSetup.map((r) => ({ ...r, ...(options.noAgents ? { installed: false } : {}) })),
     "agents.status": () => options.connections ?? demoConnections(state.agentSetup, state.imported, now()),
     "agents.connect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);
@@ -931,7 +1064,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           ? state.readOnlyAgents.includes(r.agent)
             ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
             : part
-              ? { ...r, configured: false, skillsInstalled: skills === false ? 0 : r.skillsTotal, detail: skills === false ? "MCP server set up" : "Skills set up" }
+              ? {
+                  ...r,
+                  configured: false,
+                  skillsInstalled: skills === false ? 0 : r.skillsTotal,
+                  detail: skills === false ? "MCP server set up" : "Skills set up",
+                }
               : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
           : r,
       );
@@ -957,13 +1095,18 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           agent,
           tools_ok: Boolean(row?.installed),
           tools_line: row?.installed ? null : `Couldn't add Cua to ${row?.mcpConfig ?? agent}`,
-          sign_in: !signIn || !["hermes", "claude-code", "codex"].includes(agent)
-            ? null
-            : copyable
-              ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
-              : agent === "claude-code"
-                ? { imported: null, refused: "not_signed_in", line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again." }
-                : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
+          sign_in:
+            !signIn || !["hermes", "claude-code", "codex"].includes(agent)
+              ? null
+              : copyable
+                ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
+                : agent === "claude-code"
+                  ? {
+                      imported: null,
+                      refused: "not_signed_in",
+                      line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again.",
+                    }
+                  : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
         };
       });
     },
@@ -975,9 +1118,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     "agents.signInWait": async () => {
       await wait(step * 20);
-      state.keyStore.keys = [...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"), { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() }];
+      state.keyStore.keys = [
+        ...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"),
+        { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() },
+      ];
       emit({ type: "agents.changed" });
-      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Signed in with ChatGPT", expires_ms: null, added_ms: now() }, refused: null, line: null };
+      return {
+        imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Signed in with ChatGPT", expires_ms: null, added_ms: now() },
+        refused: null,
+        line: null,
+      };
     },
     "agents.disconnect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);
@@ -988,7 +1138,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         if (!part) return { ...r, configured: false, skillsInstalled: 0, detail: "Not set up" };
         const hasSkills = skills ? false : r.skillsInstalled > 0;
         const hasMcp = mcp ? false : r.configured || /MCP/.test(r.detail);
-        return { ...r, configured: false, skillsInstalled: hasSkills ? r.skillsTotal : 0, detail: hasSkills && hasMcp ? "Skills and MCP server set up" : hasSkills ? "Skills set up" : hasMcp ? "MCP server set up" : "Not set up" };
+        return {
+          ...r,
+          configured: false,
+          skillsInstalled: hasSkills ? r.skillsTotal : 0,
+          detail: hasSkills && hasMcp ? "Skills and MCP server set up" : hasSkills ? "Skills set up" : hasMcp ? "MCP server set up" : "Not set up",
+        };
       });
       const removed = signIn ? state.imported.filter((a) => agents.includes(a)) : [];
       if (signIn && agents.includes("claude-code")) state.keyStore.keys = state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN");
@@ -1032,22 +1187,47 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoAgentKeysHandlers({ wait, stepMs: step, now, store: state.keyStore }),
     ...demoGithubHandlers({ state: githubState, wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
-    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
+    ...createDemoSettings({
+      now,
+      wait,
+      emit,
+      stepMs: step,
+      platform: state.platform,
+      unenrolled: options.unenrolled,
+      update: options.update,
+      experiments: state.volume.experiments,
+      signedIn: () => Boolean(state.identity),
+      settings: () => state.settings,
+      setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })),
+      addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })),
+    }),
     ...demoTelemetryHandlers(ctx),
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
+    ...demoSpacesSettingsHandlers(ctx, () => handlers["machines.list"]({}) as MachineRow[]),
     ...demoLinksHandlers(ctx),
     ...((): ReturnType<typeof demoThreadHandlers> => {
-      const h = demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
-      joinRedeemMs: options.joinRedeemMs,
-      joinExpireMs: options.joinExpireMs,
-      request: options.threadRequest ?? false,
-      pushCard: options.threadPushCard ?? false,
-      cards: options.threadCards ?? false,
-    });
+      const h = demoThreadHandlers({
+        now,
+        wait,
+        stepMs: step,
+        enabled: !options.noThread,
+        role: options.threadRole ?? "owner",
+        lookalike: options.threadLookalike ?? false,
+        authFailed: options.threadAuthFailed ?? false,
+        stranger: options.threadStranger ?? false,
+        paused: options.threadPaused ?? false,
+        joinRedeemMs: options.joinRedeemMs,
+        joinExpireMs: options.joinExpireMs,
+        request: options.threadRequest ?? false,
+        pushCard: options.threadPushCard ?? false,
+        cards: options.threadCards ?? false,
+      });
       if (options.threadLongDm && !options.noThread) seedLongDm(h, options.threadLongDm);
       return options.threadSlow ? hangingSpace(h, DEMO_THREAD_SPACE) : h;
     })(),
+    ...demoAgentThreads(now, options.noChats ?? false),
+    ...demoAgentSignIn(now),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);
@@ -1059,6 +1239,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoKeyvaultSetupHandlers(ctx),
     ...demoKeyvaultManageHandlers(ctx, overview),
     ...demoStartupHandlers(ctx),
+    ...demoDriverHandlers(ctx),
     ...unsupportedStreamOps("demo"),
     ...unsupportedChecklistOps("demo"),
     ...demoCiHandlers({ state: ciState, now, wait, stepMs: step, signedIn: () => Boolean(state.identity) }),
@@ -1072,8 +1253,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
   };
 
-  return {
-    mode: "demo",
+  const self = {
+    mode: "demo" as const,
     state,
     async call<K extends OpName>(op: K, args: OpArgs<K>): Promise<OpResult<K>> {
       const handler = handlers[op] as Handler<K> | undefined;
@@ -1081,7 +1262,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(latency);
       return handler(args);
     },
-    subscribe: (l) => events.subscribe(l),
+    subscribe: (l: Parameters<DataAdapter["subscribe"]>[0]) => events.subscribe(l),
     ...(options.network ? { network: createDemoNetwork({ now, flags: options.network }) } : {}),
     ...(options.creatingElsewhere ? { creatingElsewhere: () => DEMO_CREATING_ELSEWHERE } : {}),
     dispose() {
@@ -1090,13 +1271,28 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       events.clear();
     },
   };
+  // The demo shows Child Spaces (and the agent's Home that rests on them) only for its tree demos: every other page keeps the
+  // classic Home with its where picker. A real host always has the store.
+  return options.network || options.agentHome ? Object.assign(self, { children: createChildrenStore(self, now) }) : self;
 }
 
 interface DemoLinksStateField {
   links: DemoLinksState;
 }
 
-export interface DemoState extends DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState
+  extends DemoDriverState,
+    DemoLinksStateField,
+    DemoTelemetryState,
+    DemoRelayUsageState,
+    DemoSpacesSettingsState,
+    DemoResourcesState,
+    DemoSpaceDetailState,
+    DemoHostSetupState,
+    DemoStartupState,
+    DemoNewSpaceState,
+    DemoKeyvaultSetupState,
+    DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

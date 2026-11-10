@@ -104,6 +104,10 @@ pub struct JoinConfig {
     /// every call). A build that does not must say `false`: the relay then sends
     /// it nothing of a phone's.
     pub phone_support: bool,
+    /// Notified before every attempt to dial the relay (the first one and
+    /// each reconnect): the machine reads its pending deletions then (see
+    /// [`pending_deletions`]).
+    pub dialing: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl JoinConfig {
@@ -126,6 +130,7 @@ impl JoinConfig {
             relay_token_file: None,
             account: Arc::default(),
             phone_support: true,
+            dialing: None,
         }
     }
 }
@@ -210,6 +215,9 @@ pub enum SessionEnd {
 pub async fn run(config: JoinConfig, shutdown: CancellationToken) {
     let mut attempt = 0u32;
     loop {
+        if let Some(dialing) = &config.dialing {
+            dialing.notify_one();
+        }
         let started = Instant::now();
         let end = session(&config, &shutdown).await;
         match &end {
@@ -328,6 +336,112 @@ pub async fn session(config: &JoinConfig, shutdown: &CancellationToken) -> Sessi
     // its relay connection up until the relay's heartbeat notices.
     driver.abort();
     end
+}
+
+/// The relay's HTTP base for its REST routes (`ws(s)://` becomes
+/// `http(s)://`; no trailing slash).
+pub fn http_base(relay_url: &str) -> Result<String, String> {
+    let mut url = url::Url::parse(relay_url).map_err(|_| "invalid relay URL".to_owned())?;
+    let scheme = match url.scheme() {
+        "wss" | "https" => "https",
+        "ws" | "http" => "http",
+        _ => return Err("unsupported relay scheme".into()),
+    };
+    url.set_scheme(scheme)
+        .map_err(|_| "cannot set scheme".to_owned())?;
+    Ok(url.to_string().trim_end_matches('/').to_owned())
+}
+
+/// What went wrong asking the relay for this machine's pending deletions.
+#[derive(Debug)]
+pub enum PendingError {
+    /// The relay does not know this token (nothing is pending for a
+    /// removed computer, or the token is wrong): ask again much later.
+    Unknown(String),
+    /// Anything else (network, a relay error, an old relay without the
+    /// route): ask again soon.
+    Failed(String),
+}
+
+impl std::fmt::Display for PendingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PendingError::Unknown(m) | PendingError::Failed(m) => f.write_str(m),
+        }
+    }
+}
+
+fn pending_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_default()
+}
+
+async fn pending_error(r: reqwest::Response) -> PendingError {
+    let status = r.status();
+    let body = r.text().await.unwrap_or_default();
+    let message = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(str::to_owned))
+        .unwrap_or(body);
+    let text = format!("relay answered {status}: {message}");
+    if status == http::StatusCode::UNAUTHORIZED {
+        PendingError::Unknown(text)
+    } else {
+        PendingError::Failed(text)
+    }
+}
+
+/// The Spaces this machine's owner deleted while it was removed from the
+/// account ([`crate::pending_deletions`]), read with its machine token.
+pub async fn pending_deletions(
+    relay_url: &str,
+    machine_id: &str,
+    token: &str,
+) -> Result<Vec<crate::pending_deletions::PendingSpace>, PendingError> {
+    #[derive(serde::Deserialize)]
+    struct Answer {
+        #[serde(default)]
+        spaces: Vec<crate::pending_deletions::PendingSpace>,
+    }
+    let base = http_base(relay_url).map_err(PendingError::Failed)?;
+    let r = pending_http()
+        .get(format!("{base}/v1/machines/{machine_id}/pending-deletions"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| PendingError::Failed(e.to_string()))?;
+    if !r.status().is_success() {
+        return Err(pending_error(r).await);
+    }
+    r.json::<Answer>()
+        .await
+        .map(|a| a.spaces)
+        .map_err(|e| PendingError::Failed(e.to_string()))
+}
+
+/// Tells the relay this machine deleted `space` (one of its pending
+/// deletions). Idempotent.
+pub async fn ack_pending_deletion(
+    relay_url: &str,
+    machine_id: &str,
+    token: &str,
+    space: &str,
+) -> Result<(), PendingError> {
+    let base = http_base(relay_url).map_err(PendingError::Failed)?;
+    let r = pending_http()
+        .post(format!(
+            "{base}/v1/machines/{machine_id}/pending-deletions/{space}/ack"
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| PendingError::Failed(e.to_string()))?;
+    if !r.status().is_success() {
+        return Err(pending_error(r).await);
+    }
+    Ok(())
 }
 
 /// Records the relay keys and owner from the 101 response. With pinned
@@ -452,6 +566,23 @@ mod tests {
             assert!(d >= Duration::from_millis(250));
         }
         assert!(backoff(20, cap) >= Duration::from_secs(15));
+    }
+
+    #[test]
+    fn http_base_turns_the_relay_url_into_its_rest_base() {
+        assert_eq!(
+            http_base("wss://relay.cua.ai").unwrap(),
+            "https://relay.cua.ai"
+        );
+        assert_eq!(
+            http_base("ws://127.0.0.1:9/").unwrap(),
+            "http://127.0.0.1:9"
+        );
+        assert_eq!(
+            http_base("https://r.example/base/").unwrap(),
+            "https://r.example/base"
+        );
+        assert!(http_base("ftp://x").is_err());
     }
 
     #[test]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS platform backend for cua-driver-rs.
 //!
 //! Provides background automation on macOS via:
@@ -33,6 +36,8 @@ pub mod display_awake;
 pub mod document_edit;
 #[cfg(target_os = "macos")]
 pub mod fast_path_guard;
+#[cfg(target_os = "macos")]
+pub mod focus_arbiter;
 #[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]

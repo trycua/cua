@@ -29,14 +29,14 @@ use crate::error::{Result, VmmError};
 use crate::host;
 
 /// The pinned Lume release.
-pub const VERSION: &str = "0.6.0";
+pub const VERSION: &str = "0.7.0";
 /// Its Apple silicon tarball (`lume` launcher + signed `lume.app`).
 pub const URL: &str =
-    "https://github.com/trycua/cua/releases/download/lume-v0.6.0/lume-0.6.0-darwin-arm64.tar.gz";
+    "https://github.com/trycua/cua/releases/download/lume-v0.7.0/lume-0.7.0-darwin-arm64.tar.gz";
 /// The tarball's SHA-256 (the release manifest's).
-pub const SHA256: &str = "4d25c7c36ebd3fdf0e2f97f9e7a2c4ff2d0538ba9eb2d536f6dbb542d9d504a7";
+pub const SHA256: &str = "66ae137164f5428ef73f90994850db49f1270dec298653f9f806debe29d529fc";
 /// The tarball's size, for progress and the disk check.
-pub const SIZE: u64 = 6_114_070;
+pub const SIZE: u64 = 6_208_105;
 /// Cua AI, Inc.'s Developer ID team: the only signer accepted.
 pub const TEAM_ID: &str = "YCK386LBJ7";
 
@@ -203,13 +203,16 @@ fn system_lume(
     which(channel.lume_bin_name()).filter(|p| !p.starts_with(builtin_root))
 }
 
-/// The oldest Lume cua runs macOS Spaces on. Lume 0.6.0 is the first
-/// release with what cua's client relies on (forced and bounded stop for
-/// detached VMs, running without a VNC listener, GPU passthrough), and a
-/// real 0.5.3 `lume serve` hung booting the macOS 26 image ("stopped while
-/// booting") where 0.6.0 boots it. It is the pin today; it only moves when
-/// cua starts needing something newer, not with every pin.
-pub const MIN_VERSION: &str = "0.6.0";
+/// The oldest Lume cua runs macOS Spaces on. Lume 0.7.0 is the first release
+/// that takes a network gateway (`--network gateway:<socket>`), which the
+/// secure network default for macOS Spaces runs behind; 0.6.0 rejects it with
+/// an argument error. 0.6.0 was the first with what the rest of cua's client
+/// relies on (forced and bounded stop for detached VMs, running without a VNC
+/// listener, GPU passthrough), and a real 0.5.3 `lume serve` hung booting the
+/// macOS 26 image ("stopped while booting"). It is the pin today; it only
+/// moves when cua starts needing something newer, not with every pin. The number
+/// lives in [`crate::kinds::LUME_MIN_VERSION`] (the tool table reads it too).
+pub const MIN_VERSION: &str = crate::kinds::LUME_MIN_VERSION;
 
 /// The first `x.y.z` in `text` (`lume --version` prints `0.6.0`; a
 /// `v0.6.0` or `lume 0.6.0-beta` is read the same way).
@@ -840,7 +843,11 @@ mod tests {
         assert_eq!(parse_version("Error: unknown option"), None);
         assert_eq!(parse_version("1.2"), None);
         assert!(!new_enough("0.5.3"));
-        assert!(new_enough("0.6.0"));
+        assert!(
+            !new_enough("0.6.0"),
+            "0.6.0 does not take a network gateway"
+        );
+        assert!(new_enough("0.7.0"));
         assert!(new_enough("0.10.0"), "numeric, not lexical");
         assert!(new_enough("1.0.0"));
         assert!(!new_enough("garbage"));
@@ -860,21 +867,27 @@ mod tests {
         use ServerVerdict::*;
         for s in [LumeSource::Auto, LumeSource::Builtin] {
             assert_eq!(judge_server(s, Some("0.5.3")), Avoid("0.5.3".into()));
-            assert_eq!(judge_server(s, Some("0.6.0")), Use);
+            assert_eq!(judge_server(s, Some("0.6.0")), Avoid("0.6.0".into()));
+            assert_eq!(judge_server(s, Some("0.7.0")), Use);
             assert_eq!(judge_server(s, None), Use, "unknown: as before");
         }
         assert_eq!(
             judge_server(LumeSource::System, Some("0.5.3")),
             UseOld("0.5.3".into())
         );
-        assert_eq!(judge_server(LumeSource::System, Some("0.6.0")), Use);
+        assert_eq!(
+            judge_server(LumeSource::System, Some("0.6.0")),
+            UseOld("0.6.0".into())
+        );
+        assert_eq!(judge_server(LumeSource::System, Some("0.7.0")), Use);
     }
 
     #[test]
     fn auto_uses_this_mac_s_lume_only_when_new_enough() {
         assert!(!system_binary_usable(LumeSource::Auto, Some("0.5.3")));
         assert!(!system_binary_usable(LumeSource::Auto, None));
-        assert!(system_binary_usable(LumeSource::Auto, Some("0.6.0")));
+        assert!(!system_binary_usable(LumeSource::Auto, Some("0.6.0")));
+        assert!(system_binary_usable(LumeSource::Auto, Some("0.7.0")));
         assert!(system_binary_usable(LumeSource::System, Some("0.5.3")));
         assert!(system_binary_usable(LumeSource::System, None));
     }

@@ -159,23 +159,58 @@ jobs:
       - name: Install base tooling (debian:11 is bare)
         if: matrix.container != ''
         run: |
-          # The live bullseye-security mirror now 404s: freeze indexes and
-          # packages on snapshot.debian.org (same pin as cd-rust-cua-driver.yml;
-          # the glibc 2.31 floor is unchanged). HTTP bootstraps ca-certificates;
-          # APT still verifies Debian signatures and hashes.
+          # Debian 11 is past its support window, so bullseye indexes and packages
+          # are frozen on snapshot.debian.org (the live security mirror advertises
+          # packages it no longer serves). HTTP bootstraps ca-certificates; APT still
+          # verifies Debian signatures and hashes.
+          # snapshot.debian.org answers 504/503 under load. APT retries each fetch
+          # with timeouts, the shell retries the whole step with a backoff, and if
+          # the snapshot is still down we fall back to archive.debian.org, which
+          # holds the same final bullseye packages (the pin exists for
+          # reproducibility, not for different versions). Same retry policy as
+          # libs/cua-spacesd/packaging/release/debian-build-deps.sh.
+          mkdir -p /etc/apt/apt.conf.d
+          cat > /etc/apt/apt.conf.d/80-cua-retries <<'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          EOF
+          PACKAGES="git ca-certificates curl build-essential pkg-config unzip python3 xz-utils cmake"
+          apt_retry() {
+            n=0
+            until "$@"; do
+              n=$((n + 1))
+              if [ "$n" -ge 3 ]; then return 1; fi
+              echo "apt step failed (attempt $n of 3); retrying in $((n * 20))s" >&2
+              sleep $((n * 20))
+            done
+          }
+          apt_bootstrap() {
+            # Ignore any additional image-provided sources for this bootstrap.
+            apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" update &&
+              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends $PACKAGES
+          }
+          rm -f /etc/apt/sources.list.d/debian.sources
           cat > /etc/apt/sources.list <<'EOF'
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
           EOF
-          rm -f /etc/apt/sources.list.d/debian.sources
-          # snapshot.debian.org answers 504 under load; retry each fetch.
-          echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl build-essential \
-            pkg-config unzip python3 xz-utils cmake
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-          apt-get install -y nodejs
+          if apt_bootstrap; then
+            echo "apt mirror used: snapshot.debian.org 20260901T000000Z"
+          else
+            echo "::warning::snapshot.debian.org failed after retries; falling back to archive.debian.org"
+            rm -rf /var/lib/apt/lists/*
+            cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
+          deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main
+          EOF
+            apt_bootstrap
+            echo "apt mirror used: archive.debian.org (snapshot fallback)"
+          fi
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 https://deb.nodesource.com/setup_22.x | bash -
+          apt_retry apt-get install -y nodejs
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
@@ -396,15 +431,12 @@ jobs:
           python -m pip install --upgrade pip build hatchling
           DIR="../../../native/native-${{ matrix.native }}"
           EXE=cua; [ "${{ matrix.platform }}" = windows ] && EXE=cua.exe
-          # Linux wheels carry the static cua-spacesd the native job bundled.
-          SPACESD=()
-          if [ "${{ matrix.platform }}" = linux ]; then
-            A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
-            SPACESD=(--spacesd "$DIR/cua-spacesd-linux-$A")
-          fi
-          # Two wheels: `cua` (the SDK library, plus the static cua-spacesd
-          # on Linux) and its dependency `cua-cli` (the `cua` binary).
-          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" "${SPACESD[@]}" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+          # Every wheel carries the static Linux cua-spacesd the native job
+          # bundled: the guest of a local container is Linux on any host.
+          A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
+          # Two wheels: `cua` (the SDK library plus the static cua-spacesd)
+          # and its dependency `cua-cli` (the `cua` binary).
+          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" --spacesd "$DIR/cua-spacesd-linux-$A" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
       # PyPI rejects a file over 100 MB (HTTP 400) only at upload, after the
       # whole build: fail here, with margin, instead.
       - name: Check every wheel is under 95 MB
@@ -438,7 +470,6 @@ jobs:
           print(pins[0])
           PY
       - name: Check the wheel ships the static cua-spacesd in cua/bin/
-        if: matrix.platform == 'linux'
         run: .github/scripts/check_static_spacesd_packaged.sh libs/cua/python/dist
       - name: Import the wheel
         working-directory: libs/cua/python
@@ -723,9 +754,10 @@ jobs:
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           set -euo pipefail
-          flags=(--draft=false)
-          # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          # Never the repo-wide "Latest": only Cua Spaces is (release-latest-policy test).
+          flags=(--draft=false --latest=false)
+          # Staging builds and X.Y.Z-suffix versions are prereleases.
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
           if [ "$CANONICAL" != true ] || grep -q UNSIGNED dist/signing-*/*.txt; then
             label="staging"; [ "$CANONICAL" = true ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".
@@ -744,6 +776,25 @@ jobs:
             flags+=(--title "cua SDK $VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-sdk: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
+      # Publishing a draft can still hand this component the repo-wide "Latest"
+      # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
+      # on Cua Spaces; the release-latest-guard schedule is the backstop.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: always() && github.repository == 'trycua/cua'
+        with:
+          sparse-checkout: .github/scripts
+      - name: Keep Latest on Cua Spaces
+        if: always() && github.repository == 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pin_latest_release.py
       # A prerelease on trycua/cua stays off the rolling feed; on any other
       # repository the feed is that repository's own and follows every release.
       - name: Update the rolling installer manifest (cua-install-latest)
@@ -830,7 +881,69 @@ jobs:
           cp "$xcframework" release/
           cosign sign-blob --yes --bundle release/CuaSDKFFI.xcframework.zip.sigstore.json \
             release/CuaSDKFFI.xcframework.zip >/dev/null
-          gh release download "$TAG" --pattern checksums.txt --dir previous --repo "$GITHUB_REPOSITORY"
+          # This job has no checkout: retry inline so a GitHub 5xx does not fail the attach.
+          for attempt in 1 2 3 4 5; do
+            gh release download "$TAG" --pattern checksums.txt --dir previous --repo "$GITHUB_REPOSITORY" && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep $((attempt * 3))
+          done
           (cd release && sha256sum -- CuaSDKFFI.xcframework.zip CuaSDKFFI.xcframework.zip.sigstore.json) > new.txt
           grep -v ' CuaSDKFFI\.xcframework\.zip' previous/checksums.txt | cat - new.txt | sort > release/checksums.txt
           gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [version, publish]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.publish.result == 'success' && needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}
+            ${{ needs.version.outputs.prerelease != 'true' && 'cua-install-latest' || '' }}
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish-xcframework:
+    name: Copy to the downloads CDN
+    needs: [version, attach-xcframework]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.attach-xcframework.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows platform backend for cua-driver-rs.
 //!
 //! Background automation on Windows via:
@@ -72,6 +75,10 @@ pub fn install_pointer_shape_backend() -> bool {
 
 #[cfg(any(target_os = "windows", test))]
 mod process_selection;
+
+// Pure restore rule for foreground input turns; runs its table test on any host.
+#[cfg(any(target_os = "windows", test))]
+mod typing_turn;
 
 #[cfg(target_os = "windows")]
 pub mod win32;

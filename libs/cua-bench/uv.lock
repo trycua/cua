@@ -494,7 +494,7 @@ wheels = [
 
 [[package]]
 name = "cua"
-version = "0.10.1"
+version = "0.21.0"
 source = { editable = "../cua/python" }
 
 [package.metadata]
@@ -594,7 +594,7 @@ provides-extras = ["computer", "openai", "anthropic", "qwen", "uitars", "uitars-
 
 [[package]]
 name = "cua-bench"
-version = "0.3.1"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

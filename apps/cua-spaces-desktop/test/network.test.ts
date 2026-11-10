@@ -13,7 +13,16 @@ function backend(spaces: Record<string, unknown>) {
 }
 
 const INFO = {
-  settings: { preset: "localhost", localhostPorts: [5432, 3000], allLocalhostPorts: false, allow: [], deny: [], customBase: "", widenedBy: undefined, via: "this-machine" },
+  settings: {
+    preset: "localhost",
+    localhostPorts: [5432, 3000],
+    allLocalhostPorts: false,
+    allow: [],
+    deny: [],
+    customBase: "",
+    widenedBy: undefined,
+    via: "this-machine",
+  },
   summary: "Allow this computer's localhost (ports 5432, 3000)",
   widenings: [],
   enforcement: "enforced",
@@ -38,18 +47,31 @@ describe("network.*", () => {
     const setNetwork = vi.fn(async () => ({ applied: "next_start" }));
     const b = backend({ setNetwork });
     expect(await b.setNetwork("local:aurora", "localhost:5432,3000", [], [], false, false, "this-machine")).toBe("next_start");
-    expect(setNetwork).toHaveBeenCalledWith("local:aurora", expect.objectContaining({ preset: "localhost", localhostPorts: [5432, 3000], via: "this-machine" }), false, false);
+    expect(setNetwork).toHaveBeenCalledWith(
+      "local:aurora",
+      expect.objectContaining({ preset: "localhost", localhostPorts: [5432, 3000], via: "this-machine" }),
+      false,
+      false,
+    );
   });
 
   it("reads the words of a preset", () => {
     expect(networkSettingsOf("internet", [], [])).toMatchObject({ preset: "internet", localhostPorts: [], allLocalhostPorts: false });
     expect(networkSettingsOf("localhost:all", [], [])).toMatchObject({ preset: "localhost", allLocalhostPorts: true });
+    expect(networkSettingsOf("localhost+lan:5432,3000", [], [])).toMatchObject({
+      preset: "localhost+lan",
+      localhostPorts: [5432, 3000],
+      allLocalhostPorts: false,
+    });
+    expect(networkSettingsOf("localhost+lan:all", [], [])).toMatchObject({ preset: "localhost+lan", localhostPorts: [], allLocalhostPorts: true });
     expect(networkSettingsOf("custom:none", ["github.com"], ["10.0.0.0/8"])).toMatchObject({ customBase: "none", allow: ["github.com"], deny: ["10.0.0.0/8"] });
     expect(networkSettingsOf("localhost:99999,abc,22", [], []).localhostPorts).toEqual([22]);
   });
 
   it("answers the blocked connections as numbers", async () => {
-    const b = backend({ networkLog: vi.fn(async () => [{ reason: "default:lan", dst: "192.168.1.20:445", proto: "tcp", count: 3n, lastUnix: 1_700_000_000n }]) });
+    const b = backend({
+      networkLog: vi.fn(async () => [{ reason: "default:lan", dst: "192.168.1.20:445", proto: "tcp", count: 3n, lastUnix: 1_700_000_000n }]),
+    });
     const r = await b.networkLog("local:aurora");
     expect(r).toEqual([{ reason: "default:lan", dst: "192.168.1.20:445", proto: "tcp", count: 3, lastUnix: 1_700_000_000 }]);
     expect(validate(OP_SHAPES["network.log"], r, SHAPE_DEFS)).toEqual([]);

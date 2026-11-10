@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Focus-free keyboard delivery on X11 via XInput2 MPX: a second master
 //! keyboard with its own focus, fed by a uinput slave.
 //!
@@ -31,18 +34,29 @@ const X_KEYCODE_OFFSET: u16 = 8;
 const MAX_EVDEV_KEY: u16 = 0xff;
 /// Unicode keysyms are the codepoint with this bit set (X11 keysym encoding).
 const UNICODE_KEYSYM_BASE: u32 = 0x0100_0000;
-/// How long the server gets to report the last emitted key through a raw
-/// event before the pair is torn down.
+/// How long the server gets to report the awaited key events as raw events
+/// before a confirm gives up.
 const DELIVERY_CONFIRM_TIMEOUT: Duration = Duration::from_millis(1500);
+const UNCONFIRMED_STEPS: usize = 8;
 
-static UINPUT_KEYBOARDS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> =
-    OnceLock::new();
+/// A session's plugged-in uinput keyboard and the id the X server gave its
+/// slave device. A session has a keyboard exactly while it is in
+/// [`uinput_keyboards`]: [`plugged_keyboard`] adds it once it is warm, and
+/// [`unplug_keyboard`] removes it. Closing the device makes the kernel
+/// discard whatever the server has not read. `models/virtual_keyboard.md`
+/// charts the lifecycle.
+struct Keyboard {
+    device: Mutex<VirtualDevice>,
+    slave_id: i32,
+}
 
-fn uinput_keyboards() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>> {
+static UINPUT_KEYBOARDS: OnceLock<Mutex<HashMap<String, Arc<Keyboard>>>> = OnceLock::new();
+
+fn uinput_keyboards() -> &'static Mutex<HashMap<String, Arc<Keyboard>>> {
     UINPUT_KEYBOARDS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(super) fn forget_uinput_keyboard(cursor_id: &str) {
+pub(super) fn unplug_keyboard(cursor_id: &str) {
     uinput_keyboards().lock().unwrap().remove(cursor_id);
 }
 
@@ -184,7 +198,7 @@ pub struct KeyboardDeliveryReport {
     pub virtual_focus_held: bool,
     /// `XGetInputFocus` (the user's core focus) was identical before and after.
     pub core_focus_unchanged: bool,
-    /// The server reported the last emitted key transition as a raw event.
+    /// The server reported every emitted key transition as a raw event.
     pub delivery_confirmed: bool,
     /// Key transitions emitted through the uinput slave.
     pub key_events: usize,
@@ -288,22 +302,17 @@ fn create_uinput_keyboard(name: &str) -> Result<VirtualDevice> {
     })
 }
 
-/// Make sure the session's master pair carries an attached uinput keyboard
-/// slave; creates the pair (pointer + keyboard master, uinput pointer) through
-/// `ensure_master_pointer` first when needed.
-fn ensure_master_keyboard(
-    cursor_id: &str,
-) -> Result<(MasterPointerIds, Arc<Mutex<VirtualDevice>>)> {
+/// The session's plugged-in keyboard, plugging one in first when it has none;
+/// creates the pair (pointer + keyboard master, uinput pointer) through
+/// `ensure_master_pointer` when needed.
+fn plugged_keyboard(cursor_id: &str) -> Result<(MasterPointerIds, Arc<Keyboard>)> {
     let ids = ensure_master_pointer(cursor_id)?;
-    if let (Some(_), Some(device)) = (
-        ids.slave_keyboard_id,
-        uinput_keyboards().lock().unwrap().get(cursor_id).cloned(),
-    ) {
-        return Ok((ids, device));
+    if let Some(keyboard) = uinput_keyboards().lock().unwrap().get(cursor_id).cloned() {
+        return Ok((ids, keyboard));
     }
 
     let display = open_display()?;
-    let result = (|| -> Result<(MasterPointerIds, Arc<Mutex<VirtualDevice>>)> {
+    let result = (|| -> Result<(MasterPointerIds, Arc<Keyboard>)> {
         // The master keyboard's device name is "<base> keyboard"; recover the
         // base to derive the slave's name so the reaper can pair them by eye.
         let base = xi2_query_devices(display)?
@@ -312,86 +321,106 @@ fn ensure_master_keyboard(
             .and_then(|(_, _, name)| name.strip_suffix(" keyboard").map(str::to_owned))
             .ok_or_else(|| anyhow!("master keyboard {} vanished", ids.keyboard_id))?;
         let device_name = slave_keyboard_name(&base);
-        let mut device = create_uinput_keyboard(&device_name)?;
-        let slave_keyboard_id = wait_for_slave_id(
+        // A keyboard unplugged by an earlier call can still be listed under
+        // this name; never attach it in place of the new one.
+        let deadline = crate::interaction::operation_deadline(Duration::from_secs(5));
+        while xi2_query_devices(display)?
+            .iter()
+            .any(|(_, _, name)| *name == device_name)
+        {
+            if std::time::Instant::now() >= deadline {
+                bail!("the unplugged '{device_name}' is still listed");
+            }
+            crate::interaction::pause(Duration::from_millis(20));
+        }
+        let device = Mutex::new(create_uinput_keyboard(&device_name)?);
+        let slave_id = wait_for_slave_id(
             display,
             &device_name,
             x11::xinput2::XISlaveKeyboard,
             Duration::from_secs(5),
         )?;
-        attach_slave_to_master(display, slave_keyboard_id, ids.keyboard_id)?;
-        warm_up_keyboard(display, &mut device, slave_keyboard_id, ids.keyboard_id);
-        let ids = MasterPointerIds {
-            slave_keyboard_id: Some(slave_keyboard_id),
-            ..ids
-        };
-        mpx_pointers()
-            .lock()
-            .unwrap()
-            .insert(cursor_id.to_owned(), ids);
-        let device = Arc::new(Mutex::new(device));
+        attach_slave_to_master(display, slave_id, ids.keyboard_id)?;
+        disable_key_repeat(display, slave_id)?;
+        let keyboard = Arc::new(Keyboard { device, slave_id });
+        warm_up_keyboard(display, cursor_id, keyboard.clone())?;
         uinput_keyboards()
             .lock()
             .unwrap()
-            .insert(cursor_id.to_owned(), device.clone());
-        Ok((ids, device))
+            .insert(cursor_id.to_owned(), keyboard.clone());
+        Ok((ids, keyboard))
     })();
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
 }
 
-/// evdev `KEY_UNKNOWN`: X keycode 248, `NoSymbol` in every evdev keymap, so
-/// it types nothing anywhere.
-const WARM_UP_EVDEV_CODE: u16 = 240;
+/// Turn off the server's key repeat (XKB `RepeatKeys`) for the keyboard.
+/// The driver writes every transition itself. A server that has read a press
+/// and stalls before the release would otherwise repeat the key on its own.
+fn disable_key_repeat(display: *mut x11::xlib::Display, slave_keyboard_id: i32) -> Result<()> {
+    const REPEAT_KEYS: std::os::raw::c_uint = 1;
+    const ALL_CONTROLS: std::os::raw::c_ulong = 0xF800_1FFF;
+    let device = slave_keyboard_id as std::os::raw::c_uint;
+    // SAFETY: display is open. desc is null-checked, owned here and freed
+    // with its controls before the block ends.
+    let repeats = unsafe {
+        let previous = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XkbChangeEnabledControls(display, device, REPEAT_KEYS, 0);
+        let desc = x11::xlib::XkbAllocKeyboard();
+        let mut repeats = true;
+        if !desc.is_null() {
+            (*desc).device_spec = device as u16;
+            if x11::xlib::XkbGetControls(display, ALL_CONTROLS, desc) == 0
+                && !(*desc).ctrls.is_null()
+            {
+                repeats = (*(*desc).ctrls).enabled_ctrls & REPEAT_KEYS != 0;
+            }
+            x11::xlib::XkbFreeKeyboard(desc, 0, 1);
+        }
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous);
+        repeats
+    };
+    if repeats {
+        bail!("could not turn off key repeat on the virtual keyboard {slave_keyboard_id}");
+    }
+    Ok(())
+}
+
+/// The key a new keyboard taps to warm up: evdev `KEY_UNKNOWN`, `NoSymbol` in
+/// every evdev keymap, so it types nothing anywhere. No text borrows it
+/// (`is_spare_keycode`), so it stays that way.
+pub(super) const WARM_UP_X_KEYCODE: u8 = 248;
+const WARM_UP_EVDEV_CODE: u16 = WARM_UP_X_KEYCODE as u16 - X_KEYCODE_OFFSET;
 
 /// The first key events of a freshly hot-plugged keyboard were observed to
 /// vanish (the master switches to the slave's keymap on its first event and
 /// clients only learn about the new master from the hierarchy event queued
 /// ahead of the keys). Tap a symbol-less key through the whole pipeline and
 /// wait until the server reports it back, so the real text starts on a warm
-/// device. Best effort: a failure here only costs the warm-up.
+/// device with nothing unread.
 fn warm_up_keyboard(
     display: *mut x11::xlib::Display,
-    device: &mut VirtualDevice,
-    slave_keyboard_id: i32,
-    master_keyboard_id: i32,
-) {
-    let Some(xi_opcode) = xinput_opcode(display) else {
-        return;
-    };
-    if select_raw_key_events(display, slave_keyboard_id).is_err() {
-        return;
-    }
-    let steps = [
-        KeyStep {
+    cursor_id: &str,
+    keyboard: Arc<Keyboard>,
+) -> Result<()> {
+    let mut probe = Delivery::begin(display, cursor_id, keyboard)?;
+    for press in [true, false] {
+        probe.write(KeyStep {
             evdev_code: WARM_UP_EVDEV_CODE,
-            press: true,
-        },
-        KeyStep {
-            evdev_code: WARM_UP_EVDEV_CODE,
-            press: false,
-        },
-    ];
-    for step in steps {
-        let _ = device.emit(&[InputEvent::new(
-            EventType::KEY,
-            step.evdev_code,
-            if step.press { 1 } else { 0 },
-        )]);
+            press,
+        })?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
-    let seen = wait_for_raw_key(
-        display,
-        xi_opcode,
-        &[slave_keyboard_id, master_keyboard_id],
-        steps[1],
-        Duration::from_millis(1500),
-    );
-    if !seen {
-        tracing::warn!("virtual keyboard warm-up: server did not report the probe key");
+    if !probe.read_all() {
+        bail!(
+            "virtual keyboard: the X server did not report the new keyboard's warm-up key \
+             within {DELIVERY_CONFIRM_TIMEOUT:?}"
+        );
     }
     // Give clients a beat to process the hierarchy/keymap change.
     sleep(Duration::from_millis(120));
+    Ok(())
 }
 
 /// Shift keycode from the server's modifier map (modifier index 0).
@@ -437,37 +466,39 @@ fn select_raw_key_events(display: *mut x11::xlib::Display, device_id: i32) -> Re
     Ok(())
 }
 
-/// Block (bounded) until the server reports `last` as a raw key event from
-/// one of `device_ids`. Returns false on timeout.
-fn wait_for_raw_key(
+/// Wait until `deadline` for the server to report a raw key event from the
+/// slave keyboard `slave_id`. False when none arrives.
+fn next_raw_key(
     display: *mut x11::xlib::Display,
     xi_opcode: std::os::raw::c_int,
-    device_ids: &[i32],
-    last: KeyStep,
-    timeout: Duration,
+    slave_id: i32,
+    deadline: std::time::Instant,
 ) -> bool {
-    let want_type = if last.press {
-        x11::xinput2::XI_RawKeyPress
-    } else {
-        x11::xinput2::XI_RawKeyRelease
-    };
-    let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         if unsafe { x11::xlib::XPending(display) } == 0 {
-            sleep(Duration::from_millis(2));
+            let wait = deadline.saturating_duration_since(std::time::Instant::now());
+            let mut socket = libc::pollfd {
+                // SAFETY: display is the open connection the caller passes in.
+                fd: unsafe { x11::xlib::XConnectionNumber(display) },
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let timeout = i32::try_from(wait.as_millis()).unwrap_or(i32::MAX);
+            // SAFETY: socket is one valid pollfd that outlives the call.
+            unsafe { libc::poll(&mut socket, 1, timeout) };
             continue;
         }
         let mut ev: x11::xlib::XEvent = unsafe { std::mem::zeroed() };
         unsafe { x11::xlib::XNextEvent(display, &mut ev) };
-        if unsafe { ev.type_ } != x11::xlib::GenericEvent {
+        if ev.get_type() != x11::xlib::GenericEvent {
             continue;
         }
         let mut cookie = unsafe { ev.generic_event_cookie };
-        if cookie.extension != xi_opcode
-            || !matches!(
-                cookie.evtype,
-                x11::xinput2::XI_RawKeyPress | x11::xinput2::XI_RawKeyRelease
-            )
+        if cookie.extension != xi_opcode {
+            continue;
+        }
+        if cookie.evtype != x11::xinput2::XI_RawKeyPress
+            && cookie.evtype != x11::xinput2::XI_RawKeyRelease
         {
             continue;
         }
@@ -475,18 +506,107 @@ fn wait_for_raw_key(
             continue;
         }
         let raw = cookie.data as *const x11::xinput2::XIRawEvent;
-        let matched = !raw.is_null() && {
-            let raw = unsafe { &*raw };
-            cookie.evtype == want_type
-                && raw.detail == i32::from(last.x_keycode())
-                && (device_ids.contains(&raw.deviceid) || device_ids.contains(&raw.sourceid))
-        };
+        // SAFETY: XGetEventData filled cookie.data, which stays valid until XFreeEventData.
+        let ours = unsafe { raw.as_ref() }.is_some_and(|raw| raw.deviceid == slave_id);
         unsafe { x11::xlib::XFreeEventData(display, &mut cookie) };
-        if matched {
+        if ours {
             return true;
         }
     }
     false
+}
+
+/// One call's use of a keyboard: the key transitions it wrote, how many of
+/// them the server has reported back, and the keys it left down. Dropping it
+/// releases those keys and, when a written transition is still unread,
+/// unplugs the keyboard. So a keyboard that stays plugged in has no key down
+/// and nothing unread, and the next call's count starts from zero.
+struct Delivery<'a> {
+    display: *mut x11::xlib::Display,
+    xi_opcode: std::os::raw::c_int,
+    cursor_id: &'a str,
+    keyboard: Arc<Keyboard>,
+    written: usize,
+    read: usize,
+    down: Vec<u16>,
+}
+
+impl<'a> Delivery<'a> {
+    fn begin(
+        display: *mut x11::xlib::Display,
+        cursor_id: &'a str,
+        keyboard: Arc<Keyboard>,
+    ) -> Result<Self> {
+        let xi_opcode = xinput_opcode(display)
+            .ok_or_else(|| anyhow!("virtual keyboard delivery requires XInput2"))?;
+        select_raw_key_events(display, keyboard.slave_id)?;
+        Ok(Self {
+            display,
+            xi_opcode,
+            cursor_id,
+            keyboard,
+            written: 0,
+            read: 0,
+            down: Vec::new(),
+        })
+    }
+
+    fn write(&mut self, step: KeyStep) -> Result<()> {
+        let event = [InputEvent::new(
+            EventType::KEY,
+            step.evdev_code,
+            i32::from(step.press),
+        )];
+        let mut device = self.keyboard.device.lock().unwrap();
+        // A call that ran out of time presses nothing more, but always releases.
+        let emitted = if step.press {
+            super::action::admit(|| device.emit(&event))?
+        } else {
+            device.emit(&event)
+        };
+        // A failed write may still have reached the kernel, so it counts.
+        self.written += 1;
+        self.down.retain(|code| *code != step.evdev_code);
+        if step.press {
+            self.down.push(step.evdev_code);
+        }
+        Ok(emitted?)
+    }
+
+    /// Count the keyboard's raw key events until the server has reported
+    /// every written transition. False when it reports none for
+    /// [`DELIVERY_CONFIRM_TIMEOUT`].
+    fn read_all(&mut self) -> bool {
+        while self.read < self.written {
+            let deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
+            if !next_raw_key(
+                self.display,
+                self.xi_opcode,
+                self.keyboard.slave_id,
+                deadline,
+            ) {
+                return false;
+            }
+            self.read += 1;
+        }
+        true
+    }
+}
+
+impl Drop for Delivery<'_> {
+    fn drop(&mut self) {
+        // Never end with keys down: a held modifier would chord every later
+        // key of this session.
+        for code in std::mem::take(&mut self.down).into_iter().rev() {
+            let _ = self.write(KeyStep {
+                evdev_code: code,
+                press: false,
+            });
+        }
+        if self.read < self.written {
+            unplug_keyboard(self.cursor_id);
+        }
+    }
 }
 
 /// Everything the planners need from the server's keymap, resolved once per
@@ -523,17 +643,50 @@ fn session_guard(
     }
 }
 
+/// Pauses between the steps of one delivery.
+#[derive(Clone, Copy)]
+struct StepPacing {
+    /// After every step.
+    step: Duration,
+    /// After a release, on top of `step`.
+    after_release: Duration,
+}
+
+impl StepPacing {
+    /// Key chords: the fixed hold.
+    fn keys() -> Self {
+        Self {
+            step: Duration::from_millis(KEY_DELAY_MS),
+            after_release: Duration::ZERO,
+        }
+    }
+
+    /// Text under the `delay_ms` contract: batched delivery has no pauses
+    /// (the raw-key confirmation after the last step proves the server read
+    /// the batch), paced delivery holds each key and waits `delay_ms`.
+    fn for_text(pacing: super::TypePacing) -> Self {
+        Self {
+            step: pacing.hold(),
+            after_release: pacing.gap(),
+        }
+    }
+}
+
 /// Deliver `steps` to `target_window` through the session's virtual master
-/// keyboard. The caller holds the session's MPX operation guard.
-/// `remap_guards` keeps any spare-keycode remaps alive until the server has
-/// processed the events.
+/// keyboard. The caller holds the session's MPX operation guard. `borrowed`
+/// keeps any spare-keycode remaps alive until the server has processed the
+/// events.
 fn deliver(
     cursor_id: &str,
     target_window: u64,
     steps: &[KeyStep],
-    remap_guards: Vec<RemappedKeycode<'_>>,
+    mut borrowed: BorrowedKeycodes<'_>,
     keymap_conn: &RustConnection,
+    pacing: StepPacing,
 ) -> Result<KeyboardDeliveryReport> {
+    // The kernel drops a press of a held key and a release of a free one, so
+    // the server would never report them and the confirm count would stall.
+    let steps = &state_changes(steps);
     let display = open_display()?;
     let result = (|| -> Result<KeyboardDeliveryReport> {
         supports_parallel_pointer_injection(display)?;
@@ -543,17 +696,12 @@ fn deliver(
         if rc != 0 {
             bail!("XIQueryVersion failed with status {rc}");
         }
-        let xi_opcode = xinput_opcode(display)
-            .ok_or_else(|| anyhow!("virtual keyboard delivery requires XInput2"))?;
-        let (ids, device) = ensure_master_keyboard(cursor_id)?;
-        let slave_keyboard_id = ids
-            .slave_keyboard_id
-            .ok_or_else(|| anyhow!("uinput keyboard for '{cursor_id}' is not attached"))?;
+        let (ids, keyboard) = plugged_keyboard(cursor_id)?;
 
         let window = target_window as x11::xlib::Window;
         let core_before = core_focus(display);
-        let released_stuck = release_stuck_virtual_input(cursor_id, display, ids, &device);
-        select_raw_key_events(display, slave_keyboard_id)?;
+        let released_stuck = release_stuck_virtual_input(cursor_id, display, ids, &keyboard.device);
+        let mut delivery = Delivery::begin(display, cursor_id, keyboard)?;
         // A BadWindow/BadMatch from XISetFocus (target unmapped meanwhile) must
         // surface as an error, not take the daemon down through Xlib's default
         // handler.
@@ -583,54 +731,40 @@ fn deliver(
             );
         }
 
-        let mut last = None;
-        let mut held: Vec<u16> = Vec::new();
-        for step in steps {
-            let emitted = {
-                let mut device = device.lock().unwrap();
-                let event = [InputEvent::new(
-                    EventType::KEY,
-                    step.evdev_code,
-                    if step.press { 1 } else { 0 },
-                )];
-                if step.press {
-                    super::action::admit(|| device.emit(&event))
-                        .and_then(|emitted| emitted.map_err(Into::into))
-                } else {
-                    device.emit(&event).map_err(Into::into)
+        let confirm_at = confirm_points(steps);
+        for (sent, step) in steps.iter().enumerate() {
+            delivery.write(*step)?;
+            borrowed.mark_sent(step.x_keycode());
+            let pacing = if borrowed.contains(step.x_keycode()) {
+                StepPacing {
+                    step: pacing.step.max(StepPacing::keys().step),
+                    ..pacing
                 }
-            };
-            if let Err(error) = emitted {
-                // Never abort with keys down: a held modifier would chord
-                // every later key of this session.
-                let mut device = device.lock().unwrap();
-                for code in held.iter().rev() {
-                    let _ = device.emit(&[InputEvent::new(EventType::KEY, *code, 0)]);
-                }
-                return Err(error);
-            }
-            if step.press {
-                held.push(step.evdev_code);
             } else {
-                held.retain(|code| *code != step.evdev_code);
+                pacing
+            };
+            let pause = if step.press {
+                pacing.step
+            } else {
+                pacing.step + pacing.after_release
+            };
+            if !pause.is_zero() {
+                sleep(pause);
             }
-            last = Some(*step);
-            sleep(Duration::from_millis(KEY_DELAY_MS));
+            if confirm_at.binary_search(&sent).is_ok() && !delivery.read_all() {
+                bail!(
+                    "virtual keyboard: the X server read {} of the first {} characters, \
+                     then nothing for {DELIVERY_CONFIRM_TIMEOUT:?}; the rest was not sent",
+                    characters(&steps[..delivery.read]),
+                    characters(&steps[..=sent])
+                );
+            }
         }
-        let delivery_confirmed = match last {
-            Some(last) => wait_for_raw_key(
-                display,
-                xi_opcode,
-                &[slave_keyboard_id, ids.keyboard_id],
-                last,
-                DELIVERY_CONFIRM_TIMEOUT,
-            ),
-            None => true,
-        };
+        let delivery_confirmed = delivery.read_all();
         // The raw event proves the server consumed the transition; give the
         // toolkit a beat to translate it under any temporary remap before the
-        // guards restore the keymap and the slave disappears.
-        sleep(Duration::from_millis(30));
+        // keymap is restored.
+        sleep(borrowed.idle_left().max(Duration::from_millis(30)));
         let _ = keymap_conn.get_input_focus()?.reply();
         let virtual_focus_held = xi_get_focus(display, ids.keyboard_id) == Some(window);
         let core_focus_unchanged = core_focus(display) == core_before;
@@ -653,14 +787,65 @@ fn deliver(
             grab_popup: None,
         })
     })();
-    drop(remap_guards);
+    // The delivery has ended, and unplugged a keyboard with unread keys, so
+    // the server reads none of them under the restored keymap.
+    drop(borrowed);
     // The master pair is retained for reuse. Per-call teardown would hot-plug
     // a uinput keyboard and churn the XInput hierarchy on every keystroke
     // batch — enough to crash LibreOffice VCL. The pair is cleaned up on
     // end_session / idle / startup reap instead.
-    let _ = cursor_id;
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
+}
+
+fn state_changes(steps: &[KeyStep]) -> Vec<KeyStep> {
+    let mut held = Vec::new();
+    steps
+        .iter()
+        .copied()
+        .filter(|step| {
+            let was_held = held.contains(&step.evdev_code);
+            if step.press {
+                held.push(step.evdev_code);
+            } else {
+                held.retain(|code| *code != step.evdev_code);
+            }
+            step.press != was_held
+        })
+        .collect()
+}
+
+fn characters(steps: &[KeyStep]) -> usize {
+    let mut held = 0usize;
+    let mut done = 0;
+    for step in steps {
+        held = if step.press {
+            held + 1
+        } else {
+            held.saturating_sub(1)
+        };
+        done += usize::from(!step.press && held == 0);
+    }
+    done
+}
+
+fn confirm_points(steps: &[KeyStep]) -> Vec<usize> {
+    let mut points = Vec::new();
+    let mut held = 0usize;
+    let mut unconfirmed = 0;
+    for (index, step) in steps.iter().enumerate() {
+        held = if step.press {
+            held + 1
+        } else {
+            held.saturating_sub(1)
+        };
+        unconfirmed += 1;
+        if unconfirmed >= UNCONFIRMED_STEPS && held == 0 && index + 1 < steps.len() {
+            points.push(index);
+            unconfirmed = 0;
+        }
+    }
+    points
 }
 
 /// Type `text` into `target_window` without touching the core focus or the
@@ -670,17 +855,36 @@ pub fn send_virtual_keyboard_text(
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
-    keyboard_text(Some(cursor_id), target_window, text)
+    send_virtual_keyboard_text_paced(cursor_id, target_window, text, super::TypePacing::default())
+}
+
+/// [`send_virtual_keyboard_text`] with the `delay_ms` contract in `pacing`.
+pub fn send_virtual_keyboard_text_paced(
+    cursor_id: &str,
+    target_window: u64,
+    text: &str,
+    pacing: super::TypePacing,
+) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(Some(cursor_id), target_window, text, pacing)
 }
 
 pub fn send_popup_keyboard_text(popup: u64, text: &str) -> Result<KeyboardDeliveryReport> {
-    keyboard_text(None, popup, text)
+    send_popup_keyboard_text_paced(popup, text, super::TypePacing::default())
+}
+
+pub fn send_popup_keyboard_text_paced(
+    popup: u64,
+    text: &str,
+    pacing: super::TypePacing,
+) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(None, popup, text, pacing)
 }
 
 fn keyboard_text(
     session: Option<&str>,
     target_window: u64,
     text: &str,
+    pacing: super::TypePacing,
 ) -> Result<KeyboardDeliveryReport> {
     let (_op, cursor_id) = session_guard(session, target_window)?;
     let keymap = Keymap::load()?;
@@ -696,7 +900,14 @@ fn keyboard_text(
         plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch, mapping| {
             keycode_for_keysym(&keymap.conn, mapping, keysym_for_char(ch), &ch.to_string())
         })?;
-    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
+    deliver(
+        &cursor_id,
+        target_window,
+        &steps,
+        BorrowedKeycodes::new(guards),
+        &keymap.conn,
+        StepPacing::for_text(pacing),
+    )
 }
 
 /// Press `key` with `modifiers` held, into `target_window`, without touching
@@ -746,7 +957,14 @@ fn keyboard_key(
         }
     };
     let steps = plan_chord(&modifier_keycodes, keycode, needs_shift, keymap.shift);
-    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
+    deliver(
+        &cursor_id,
+        target_window,
+        &steps,
+        BorrowedKeycodes::new(guards),
+        &keymap.conn,
+        StepPacing::keys(),
+    )
 }
 
 #[cfg(test)]
@@ -831,6 +1049,30 @@ mod tests {
                 step(28, false),
             ]
         );
+    }
+
+    #[test]
+    fn a_long_text_is_confirmed_in_windows_that_fit_the_evdev_buffer() {
+        let (steps, _) = plan_text_with_fallback::<()>(
+            &mapping(),
+            Some(50),
+            &"aA1!".repeat(20),
+            |_, _| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(characters(&steps), 80);
+        let points = confirm_points(&steps);
+        assert!(!points.is_empty());
+        assert!(*points.last().unwrap() < steps.len() - 1);
+        let mut start = 0;
+        for &point in points.iter().chain([steps.len() - 1].iter()) {
+            let window = &steps[start..=point];
+            assert!(window.len() <= UNCONFIRMED_STEPS + 3, "{window:?}");
+            let pressed = window.iter().filter(|step| step.press).count();
+            assert_eq!(pressed * 2, window.len(), "{window:?}");
+            start = point + 1;
+        }
+        assert!(confirm_points(&steps[..UNCONFIRMED_STEPS - 1]).is_empty());
     }
 
     #[test]
@@ -946,6 +1188,29 @@ mod tests {
                 step(29, false),
             ]
         );
+    }
+
+    #[test]
+    fn a_chord_that_repeats_a_key_sends_only_the_transitions_the_kernel_reports() {
+        // ctrl+ctrl+a and ctrl+ctrl: one press and one release of Ctrl each.
+        assert_eq!(
+            state_changes(&plan_chord(&[37, 37], 38, false, Some(50))),
+            vec![
+                step(29, true),
+                step(30, true),
+                step(30, false),
+                step(29, false)
+            ]
+        );
+        assert_eq!(
+            state_changes(&plan_chord(&[37], 37, false, Some(50))),
+            vec![step(29, true), step(29, false)]
+        );
+        let text =
+            plan_text_with_fallback::<()>(&mapping(), Some(50), "aA1!", |_, _| unreachable!())
+                .unwrap()
+                .0;
+        assert_eq!(state_changes(&text), text);
     }
 
     #[test]

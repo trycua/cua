@@ -13,8 +13,10 @@ def test_canonical_certification_is_fail_closed_and_complete() -> None:
     certification = workflow.split("\n  certify:\n", 1)[1]
 
     # Manual dispatches and stable-tag release-gate calls both certify.
-    assert "if: success() && inputs.lane == 'all'" in certification
-    assert "needs: [source, shared, native, capture, installer]" in certification
+    assert "!failure() && !cancelled() && inputs.lane == 'all'" in certification
+    for job in ("source", "shared", "native", "capture", "installer"):
+        assert f"needs.{job}.result == 'success'" in certification
+    assert "needs: [quick, source, shared, native, capture, installer]" in certification
     assert 'schema "cua-driver/e2e-certification/v1"' in certification
     assert 'platform "linux"' in certification
     for job in ("shared", "native", "capture", "installer"):
@@ -45,7 +47,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertIn("          - verify", workflow)
         job = workflow.split("\n  verify-skill:\n")[1].split("\n  shared:\n")[0]
         for setting in (
-            "if: inputs.lane == '' || inputs.lane == 'verify'",
+            "if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') && needs.quick.outputs.skip != 'true' }}",
             "timeout-minutes: 25",
             'CUA_E2E_RETRY_ONCE: "0"',
             "key: e2e-shared",
@@ -61,7 +63,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertNotIn("name: rust-linux-", job)
         for name in ("summary", "certify"):
             section = workflow.split(f"\n  {name}:\n")[1].split("    steps:")[0]
-            self.assertIn("needs: [source, shared, native, capture, installer]", section)
+            self.assertIn("needs: [quick, source, shared, native, capture, installer]", section)
             self.assertNotIn("verify-skill", section)
         summary = workflow.split("\n  summary:\n")[1].split("    needs:")[0]
         self.assertIn("always() && inputs.lane != '' && inputs.lane != 'verify'", summary)

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Artifact-gated perception demo for a custom-painted surface.
 //!
 //! The provider-neutral chooser sees bounded observation regions and action

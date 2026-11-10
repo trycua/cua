@@ -102,8 +102,16 @@ export interface AgentStartRequest {
   repo?: string;
   branch?: string;
   model?: string;
+  /** Reasoning level (`low`, `medium`, `high`, `xhigh`, `max`) for the agents that take one. */
+  effort?: string;
   /** Provider key names to forward (values never cross the bridge). Saved keys the harness reads go without being named. */
   envFromHost?: string[];
+  /** The run's folder (a continued chat's own, with `resumeSession`). */
+  cwd?: string;
+  /** Continue this session of the agent's own (a chat from `agents.recentThreads`) instead of a new one. */
+  resumeSession?: string;
+  /** With `resumeSession`: the earlier conversation, for when the agent can't reload its session. */
+  resumeContext?: string;
 }
 
 /** `agent_start`'s answer (snake_case, as the tool answers). */

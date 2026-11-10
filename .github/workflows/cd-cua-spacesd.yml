@@ -513,9 +513,12 @@ jobs:
           fi
           # Release Please's draft keeps its assets private (downloads 404);
           # publish it now that every asset is attached. Staging builds and
-          # X.Y.Z-suffix versions are prereleases, never latest.
-          FLAGS=(--draft=false)
-          [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease --latest=false)
+          # X.Y.Z-suffix versions are prereleases. No cua-spacesd release is
+          # ever the repository's Latest: that is the Cua Spaces app's
+          # (a stable cua-spacesd release took it from cua-spaces-v0.20.0 on
+          # 5 Nov 2026).
+          FLAGS=(--draft=false --latest=false)
+          [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease)
           if [ "$CANONICAL" != true ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$CANONICAL" = true ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".
@@ -531,3 +534,50 @@ jobs:
             FLAGS+=(--title "cua-spacesd $VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${FLAGS[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-spacesd: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
+      # Publishing a draft can still hand this component the repo-wide "Latest"
+      # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
+      # on Cua Spaces; the release-latest-guard schedule is the backstop.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: always() && github.repository == 'trycua/cua'
+        with:
+          sparse-checkout: .github/scripts
+      - name: Keep Latest on Cua Spaces
+        if: always() && github.repository == 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pin_latest_release.py
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [version, release]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.release.result == 'success' && needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}

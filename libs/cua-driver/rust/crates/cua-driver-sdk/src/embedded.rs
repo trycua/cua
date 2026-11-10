@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Rust-owned lifecycle for a host-embedded Cua Driver daemon.
 //!
 //! Language bindings deliberately expose this object rather than reimplementing
@@ -7,6 +10,9 @@ use cua_driver_contract::{
     CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::input_pacing::{
+    CLICK_GAP_ENV, MOUSE_PRIMER_ENV, MULTI_CLICK_GAP_ENV, WEBKIT_SETTLE_ENV,
+};
 use cua_driver_core::key_pacing::KEY_GAP_ENV;
 use cua_driver_core::step_pacing::BATCH_PACING_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
@@ -1023,6 +1029,10 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
         || upper == KEY_GAP_ENV
+        || upper == MOUSE_PRIMER_ENV
+        || upper == CLICK_GAP_ENV
+        || upper == MULTI_CLICK_GAP_ENV
+        || upper == WEBKIT_SETTLE_ENV
         || upper == BATCH_PACING_ENV
         || matches!(
             upper.as_str(),
@@ -1161,7 +1171,7 @@ fn validate_metadata(
 fn default_socket_path(generation: &str) -> String {
     #[cfg(target_os = "windows")]
     {
-        return format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8]);
+        format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8])
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1850,6 +1860,14 @@ mod tests {
     /// override in embedded/worker modes.
     #[test]
     fn key_gap_env_propagates() {
+        for name in [
+            "CUA_DRIVER_MOUSE_PRIMER_MS",
+            "CUA_DRIVER_CLICK_GAP_MS",
+            "CUA_DRIVER_MULTI_CLICK_GAP_MS",
+            "CUA_DRIVER_WEBKIT_SETTLE_MS",
+        ] {
+            assert!(allowed_environment_name(name), "{name}");
+        }
         assert!(allowed_environment_name("CUA_DRIVER_KEY_GAP_MS"));
         let merged =
             merge_safe_environment([("CUA_DRIVER_KEY_GAP_MS".to_owned(), "7".to_owned())], &[]);

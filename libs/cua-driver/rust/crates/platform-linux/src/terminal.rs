@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Terminal-emulator detection for the Linux `type_text` path.
 //!
 //! Linux already routes terminal typing through pty injection

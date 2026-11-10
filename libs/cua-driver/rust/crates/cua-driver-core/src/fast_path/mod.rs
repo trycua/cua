@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fast path: act on cached targets with act-time guards instead of a fresh
 //! full window snapshot before every action (CUA-3102).
 //!

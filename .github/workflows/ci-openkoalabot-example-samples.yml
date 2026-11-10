@@ -13,17 +13,20 @@ name: "CI: openkoalabot-example (TypeScript and Swift)"
 # composite actions it runs (the map and the reasons are in
 # .github/scripts/ci_swift_samples_scope.py). There is no event-level `paths:`
 # filter: the cheap ubuntu `scope` job always runs and decides, so the `ci:full`
-# label, every push to main and the nightly schedule reach it. Rust-internal
-# changes that leave the binding alone are covered by the full run on every
-# push to main and by the nightly schedule. Release-please branches skip both
+# label, every push to main and the nightly schedule reach it. A push to main
+# is scoped by the paths it changed, like a pull request (the macOS build is
+# 10x runner minutes); Rust-internal changes that leave the binding alone are
+# covered by the nightly full run. Release-please branches skip both
 # jobs as they always have. The TypeScript job keeps the trigger paths this
 # workflow had before; the scope job evaluates them too.
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
-  # Drift check: the full build on main, whatever changed.
+  # The full build on main, whatever changed (a push builds only when it touches
+  # the sample or its dependencies).
   schedule:
     - cron: "53 5 * * *"
   workflow_dispatch:
@@ -57,12 +60,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   typescript:
-    needs: changes
-    if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -88,12 +91,10 @@ jobs:
           workspaces: libs/cua
           key: openkoalabot-example-ts
       - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
-            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libxrandr-dev libxi-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -104,7 +105,7 @@ jobs:
           npm ci
           node ../scripts/stage-uniffi-library.mjs --only=node
           npm run build
-          command -v wasm-pack >/dev/null || curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
+          command -v wasm-pack >/dev/null || curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
           command -v wasm-bindgen >/dev/null || cargo install --locked wasm-bindgen-cli --version 0.2.126
           npm run build:browser
       - name: Test the sample
@@ -117,7 +118,7 @@ jobs:
 
   changes:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: scope (macOS Swift sample)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -138,6 +139,8 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           # Fails when the dependency map no longer matches the Swift manifests.
@@ -147,15 +150,19 @@ jobs:
             # Both names of a renamed file: moving a dependency out of a mapped
             # directory is still a change to the dependency.
             files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
+          elif [[ "$EVENT" == push && "$BEFORE" =~ [1-9a-f] ]]; then
+            # Same for the commits a push to main brought in. A new branch (all-zero
+            # BEFORE) or a failed listing leaves `files` empty, which runs the full build.
+            files=$(gh api --paginate "repos/$REPO/compare/$BEFORE...$SHA?per_page=100" --jq '.files[] | .filename, (.previous_filename // empty)' || true)
           fi
           python3 .github/scripts/ci_swift_samples_scope.py scope openkoalabot <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
 
   swift:
-    needs: changes
-    if: ${{ needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

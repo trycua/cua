@@ -16,6 +16,13 @@
       "owner": "f-trycua",
       "issue": "CUA-3133",
       "expires": "2026-11-10"
+    },
+    {
+      "test": "handover_process::the_next_relay_waits_then_serves_what_queued",
+      "suite": "spacesd-*",
+      "owner": "f-trycua",
+      "issue": "CUA-3855",
+      "expires": "2026-11-15"
     }
   ]
 }

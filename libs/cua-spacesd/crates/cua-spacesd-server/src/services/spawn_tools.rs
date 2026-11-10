@@ -360,6 +360,8 @@ fn row(s: dpb::Space) -> Value {
         } else {
             s.parent.clone()
         },
+        // The state (`running`, `stopped`, `suspended`); `power` is how it turns off.
+        "state": s.power_state,
         "power": s.power,
         "image": s.image,
         "os": s.os,
@@ -477,5 +479,27 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("not turned children on"));
+    }
+
+    /// The MCP server refuses a tool with no reviewed risk classification before it runs, so every
+    /// child-Space tool must have one (an agent in any Space, whatever its runtime, makes its
+    /// children through these).
+    #[test]
+    fn every_child_space_tool_has_a_reviewed_risk_classification() {
+        for t in TOOLS {
+            assert_ne!(
+                cua_driver_core::authorization::advertised_risk_for(t).class,
+                cua_driver_core::authorization::RiskClass::Unclassified,
+                "{t} would be refused as unclassified"
+            );
+            assert!(
+                cua_driver_core::authorization::authorize_tool_call(t, &json!({})).is_ok()
+                    || !cua_driver_core::authorization::authorize_tool_call(t, &json!({}))
+                        .unwrap_err()
+                        .to_string()
+                        .contains("no reviewed risk classification"),
+                "{t}"
+            );
+        }
     }
 }

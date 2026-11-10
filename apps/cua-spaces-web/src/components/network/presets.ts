@@ -13,26 +13,68 @@ export interface PresetInfo {
   description: string;
   /** Opens more than the default: says so when chosen. */
   warning?: string;
-  /** How open it is: a child Space can't go above its parent's. */
-  rank: number;
 }
+
+/** What a preset adds to Internet only. The two extras are independent of each other. */
+export interface Extras {
+  /** Services running on this computer, on listed ports. */
+  localhost: boolean;
+  /** Printers, routers, NAS and other devices on the local network. */
+  lan: boolean;
+}
+
+export const extrasOf = (p: NetworkPreset): Extras => ({ localhost: p === "localhost" || p === "localhost+lan", lan: p === "lan" || p === "localhost+lan" });
+
+/** The Internet-only preset with these extras: `internet`, `localhost`, `lan` or `localhost+lan`. */
+export const presetWith = ({ localhost, lan }: Extras): NetworkPreset =>
+  localhost && lan ? "localhost+lan" : localhost ? "localhost" : lan ? "lan" : "internet";
+
+/** Internet only with the extras ("Also allow"), or something else. */
+export const isInternetBase = (p: NetworkPreset) => p === "internet" || p === "localhost" || p === "lan" || p === "localhost+lan";
+
+/**
+ * Whether `p` opens more than `ceiling`, a parent's preset: a child Space can't. Having
+ * any network is more than none; each extra is more only where the ceiling lacks it, so
+ * neither extra is above the other.
+ */
+export function exceeds(p: NetworkPreset, ceiling: NetworkPreset): boolean {
+  const reaches = (x: NetworkPreset) => (x === "none" ? 0 : 1);
+  if (reaches(p) > reaches(ceiling)) return true;
+  const a = extrasOf(p);
+  const c = extrasOf(ceiling);
+  return (a.localhost && !c.localhost) || (a.lan && !c.lan);
+}
+
+/** The two "Also allow" choices under Internet only. */
+export const EXTRAS: { id: keyof Extras; title: string; description: string; warning: string }[] = [
+  {
+    id: "localhost",
+    title: "Services on this computer",
+    description: "Lets the Space use services running on this computer, like a database or dev server.",
+    warning: "Only for code you trust. Programs in this Space could read or change data in those services.",
+  },
+  {
+    id: "lan",
+    title: "Other devices on my network",
+    description: "Lets the Space reach printers, routers, NAS and other computers on your network.",
+    warning: "Only for code you trust. Programs in this Space could reach every computer on your network.",
+  },
+];
 
 export const PRESETS: PresetInfo[] = [
   {
     id: "internet",
-    title: "Internet only (default)",
+    title: "Internet only",
     short: "Internet only",
     description: "Reaches the internet and its own child Spaces. Can't reach this computer, your local network or other Spaces.",
-    rank: 1,
   },
-  { id: "none", title: "No network", short: "No network", description: "No connections in or out. Cua can still show and control the Space.", rank: 0 },
+  { id: "none", title: "No network", short: "No network", description: "No connections in or out. Cua can still show and control the Space." },
   {
     id: "localhost",
     title: "Allow this computer's localhost",
     short: "This computer's localhost",
     description: "Lets the Space use services running on this computer, like a database or dev server.",
     warning: "Only for code you trust. Programs in this Space could read or change data in those services.",
-    rank: 2,
   },
   {
     id: "lan",
@@ -40,16 +82,26 @@ export const PRESETS: PresetInfo[] = [
     short: "Local network",
     description: "Lets the Space reach printers, routers, NAS and other computers on your network.",
     warning: "Only for code you trust. Programs in this Space could reach every computer on your network.",
-    rank: 3,
   },
-  { id: "custom", title: "Custom", short: "Custom", description: "Choose domains and address ranges.", rank: 1 },
+  {
+    id: "localhost+lan",
+    title: "Allow this computer's localhost and my local network",
+    short: "Localhost and local network",
+    description: "Lets the Space use services on this computer and reach the other devices on your network.",
+    warning: "Only for code you trust. Programs in this Space could use services on this computer and reach every computer on your network.",
+  },
+  { id: "custom", title: "Custom", short: "Custom", description: "Choose domains and address ranges." },
 ];
 
 export const presetInfo = (id: NetworkPreset) => PRESETS.find((p) => p.id === id)!;
 
-/** "Internet only (default)", "No network", "Custom". */
+/** "Internet only", "Internet and this computer's services", "No network", "Custom". */
 export function networkSummary(n: SpaceNetwork): string {
-  if (n.preset === "internet") return n.inheritedFrom ? "Internet only" : "Internet only (default)";
+  const e = extrasOf(n.preset);
+  if (e.localhost && e.lan) return "Internet, this computer's services and your local network";
+  if (e.localhost) return "Internet and this computer's services";
+  if (e.lan) return "Internet and your local network";
+  if (n.preset === "internet") return "Internet only";
   return presetInfo(n.preset).short;
 }
 

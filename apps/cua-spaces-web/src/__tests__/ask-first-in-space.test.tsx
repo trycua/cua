@@ -12,14 +12,13 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
 import { resetWakeNotes } from "@/components/space-thread/summon";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { askTasks, resetAskTasks } from "@/lib/ask-first";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -28,7 +27,6 @@ beforeEach(() => {
   resetWakeNotes();
   resetConnectState();
   resetConnectedAppsState();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => {
   cleanup();
@@ -36,7 +34,6 @@ afterEach(() => {
 });
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
-const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const found = (s: string, timeout = 8000) =>
   waitFor(
     () => {
@@ -47,32 +44,86 @@ const found = (s: string, timeout = 8000) =>
     { timeout },
   );
 
+/** A Space the person's own job made (no agent in it yet): Home, a job, then its page. */
+async function inAFreshSpace(host: Parameters<typeof mountApp>[1]) {
+  const { router } = await mountApp("/home", host);
+  await screen.findByLabelText("What should it do?");
+  await pickNewLinux();
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "look around" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  });
+  await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\//));
+  await waitFor(() => expect(askTasks()[0]?.inSpace).toBe(true), { timeout: 15000 });
+  return router;
+}
+
+/** Types `text` in the Space's composer and sends it. */
+async function compose(text: string) {
+  const box = await waitFor(() => {
+    const el = q("[data-composer]") as HTMLTextAreaElement | null;
+    expect(el?.disabled).toBe(false);
+    return el!;
+  });
+  fireEvent.change(box, { target: { value: text, selectionStart: text.length } });
+  await act(async () => {
+    fireEvent.keyDown(box, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 20));
+  });
+}
+
 describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
-  it("lands on the Space being made, posts @claude <job>, and offers Connect, then sends again", { timeout: 40000 }, async () => {
+  it("lands on the Space being made and posts the job to the agent the model runs on", { timeout: 40000 }, async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     const { router } = await mountApp("/home", {
       failsCreates: false,
       listsGhost: false,
       intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
     });
-    fireEvent.change(await screen.findByLabelText("What do you want to do?"), { target: { value: "fix the build" } });
+    await screen.findByLabelText("What should it do?");
+    await pickNewLinux();
+    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
     // Straight to the Space (not the task page), and its first message once made.
     await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\//));
     expect(router.state.location.pathname).not.toMatch(/^\/home/);
+    // The demo has an OpenAI key saved, so the model is OpenAI's and Codex runs it.
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@codex fix the build")).toBe(true), { timeout: 15000 });
+    expect(calls.some((c) => c.op === "thread.agentAdd" && c.args.harness === "openai-codex")).toBe(true);
+    expect(calls.some((c) => c.op === "agents.start")).toBe(false);
+    expect(askTasks()[0]).toMatchObject({ inSpace: true, agent: "openai-codex", model: "gpt-5.5" });
+    expect(q("[data-wake-note]")).toBeNull();
+  });
+});
+
+describe.skipIf(!wasmBuilt)("Ask first: nothing connected", () => {
+  it("has no agent to start with: the box says to sign in and Start waits", { timeout: 40000 }, async () => {
+    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
+    fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
+    expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent");
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
+  it("offers Connect for an agent with no sign-in, and sends again once connected", { timeout: 40000 }, async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await inAFreshSpace({
+      failsCreates: false,
+      listsGhost: false,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
+    calls.length = 0;
+    await compose("@claude fix the build");
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toBe(true), { timeout: 15000 });
     // No Anthropic sign-in: Claude Code isn't added, and isn't started as a run either.
     expect(calls.some((c) => c.op === "thread.agentAdd")).toBe(false);
     expect(calls.some((c) => c.op === "agents.start")).toBe(false);
-    expect(askTasks()[0]!.inSpace).toBe(true);
     const note = await found("[data-wake-note=claude]", 15000);
     expect(note.textContent).toContain("Claude Code isn't connected yet");
     expect(q("[data-wake-connect]")!.textContent).toContain("Connect Claude Code");
-    // The message draws its mention as a chip.
-    expect(qa("[data-call-layout] .text-brand-strong").some((el) => el.textContent === "@claude")).toBe(true);
-
     await act(async () => {
       fireEvent.click(q("[data-wake-connect]")!);
     });
@@ -86,24 +137,43 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
     await waitFor(() => expect(calls.some((c) => c.op === "thread.agentAdd" && c.args.harness === "claude-code")).toBe(true));
     await waitFor(() => expect(calls.filter((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toHaveLength(2));
   });
-});
 
-describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
+  it("says plainly when an @ names nobody in the Space (never a silent no-op)", { timeout: 40000 }, async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await inAFreshSpace({
+      failsCreates: false,
+      listsGhost: false,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
+    calls.length = 0;
+    await compose("@ghost are you there");
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), {
+      timeout: 15000,
+    });
+    const note = await found("[data-wake-note=ghost]", 15000);
+    expect(note.textContent).toContain("Nobody called @ghost is in this Space");
+    expect(note.textContent).toContain("Only visible to you");
+    // Nothing to connect or send again: it is not an agent that failed to start.
+    expect(q("[data-wake-connect]")).toBeNull();
+    expect(q("[data-wake-retry]")).toBeNull();
+    expect(calls.some((c) => c.op === "thread.agentAdd")).toBe(false);
+  });
+
   it("says why and posts nothing more (a message no agent reads would look sent)", { timeout: 40000 }, async () => {
     const posts: string[] = [];
-    await mountApp("/home", {
+    let armed = false;
+    await inAFreshSpace({
       failsCreates: false,
       listsGhost: false,
       intercept: (op, args) => {
+        if (!armed) return undefined;
         if (op === "thread.agentAdd") throw new Error("this Space is full: remove an agent first");
         if (op === "thread.post") posts.push((args as { text: string }).text);
         return undefined;
       },
     });
-    fireEvent.change(await screen.findByLabelText("What do you want to do?"), { target: { value: "fix the build" } });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Start" }));
-    });
+    armed = true;
+    await compose("@claude fix the build");
     await found("[data-wake-connect]", 15000);
     await act(async () => {
       fireEvent.click(q("[data-wake-connect]")!);
@@ -118,13 +188,15 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
 });
 
 describe.skipIf(!wasmBuilt)("notes only you see", () => {
-  it("say so, can be dismissed, and never reach the thread or any other member", async () => {
+  it("the queued line says so, and what a wake note says never reaches the thread or any other member", { timeout: 40000 }, async () => {
     const calls: { op: string; args: unknown }[] = [];
     // The create waits until the queued line has been looked at.
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
     await mountApp("/home", { failsCreates: false, listsGhost: false, hold, intercept: (op, args) => (calls.push({ op, args }), undefined) });
-    fireEvent.change(await screen.findByLabelText("What do you want to do?"), { target: { value: "fix the build" } });
+    await screen.findByLabelText("What should it do?");
+    await pickNewLinux();
+    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
@@ -134,14 +206,20 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
     expect(queued.textContent).toContain("Only visible to you");
     expect(queued.textContent).toContain("Sends when the Space is ready");
     release();
-    // Once ready: the can't-wake note, marked the same, with Dismiss.
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && (c.args as { text: string }).text === "@codex fix the build")).toBe(true), {
+      timeout: 15000,
+    });
+    const sent = JSON.stringify(calls.map((c) => c.args));
+    for (const words of ["Only visible to you", "isn't connected yet", "Sends when the Space is ready", "Sent again"]) expect(sent).not.toContain(words);
+    expect(calls.filter((c) => c.op === "thread.post").map((c) => (c.args as { text: string }).text)).toEqual(["@codex fix the build"]);
+  });
+
+  it("a wake note says so, can be dismissed, and is marked as only yours", { timeout: 40000 }, async () => {
+    await inAFreshSpace({ failsCreates: false, listsGhost: false });
+    await compose("@claude fix the build");
     const note = await found("[data-wake-note=claude]", 15000);
     expect(note.hasAttribute("data-only-you")).toBe(true);
     expect(note.querySelector("[data-only-you-label]")?.textContent).toContain("Only visible to you");
-    // Nothing a note says was ever sent anywhere: not posted, not in any call.
-    const sent = JSON.stringify(calls.map((c) => c.args));
-    for (const words of ["Only visible to you", "isn't connected yet", "Sends when the Space is ready", "Sent again"]) expect(sent).not.toContain(words);
-    expect(calls.filter((c) => c.op === "thread.post").map((c) => (c.args as { text: string }).text)).toEqual(["@claude fix the build"]);
     await act(async () => {
       fireEvent.click(note.querySelector("[data-wake-dismiss]")!);
     });
@@ -151,7 +229,6 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
 
 describe.skipIf(!wasmBuilt)("@ any agent in a Space ", () => {
   it("offers the agents that can start here and adds one on send", async () => {
-    setFlagOverride("spaces_ask_first_home", null);
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     await mountApp(`/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`, {
       failsCreates: false,

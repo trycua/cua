@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Streamable-HTTP MCP transport for the daemon (trycua/cua#1799).
 //!
 //! Why: over **stdio**, one `cua-driver mcp` process is a single pipe, so all of
@@ -56,6 +59,7 @@ fn configured_port_from(value: Option<std::ffi::OsString>) -> anyhow::Result<Opt
 /// Spawn the HTTP MCP listener bound to `127.0.0.1:port` (loopback only).
 pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Result<()> {
     let token = Arc::<str>::from(configured_auth_token().map_err(anyhow::Error::msg)?);
+    let sessions = Arc::new(Sessions::default());
     tokio::spawn(async move {
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
         match TcpListener::bind(addr).await {
@@ -66,8 +70,9 @@ pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Res
                         Ok((stream, peer)) => {
                             let sdk = sdk.clone();
                             let token = token.clone();
+                            let sessions = sessions.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = serve_conn(stream, sdk, token).await {
+                                if let Err(e) = serve_conn(stream, sdk, token, sessions).await {
                                     debug!(%peer, "MCP HTTP connection closed: {e}");
                                 }
                             });
@@ -85,6 +90,64 @@ pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Res
     Ok(())
 }
 
+/// MCP session ids minted by a successful `initialize`. Bounded: the oldest id
+/// is forgotten first, and its client gets 404 and initializes again.
+#[derive(Default)]
+struct Sessions(std::sync::Mutex<std::collections::VecDeque<String>>);
+
+const MAX_SESSIONS: usize = 256;
+
+impl Sessions {
+    fn mint(&self) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut ids = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if ids.len() >= MAX_SESSIONS {
+            ids.pop_front();
+        }
+        ids.push_back(id.clone());
+        id
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        let ids = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        ids.iter().any(|known| known == id)
+    }
+}
+
+/// Streamable HTTP lifecycle: every request except `initialize` names a live
+/// session. Notifications and unparseable bodies fall through to dispatch.
+fn session_refusal(
+    body: &[u8],
+    session: Option<&str>,
+    sessions: &Sessions,
+) -> Option<(u16, String)> {
+    let body: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let id = body.get("id")?;
+    if body.get("method")?.as_str()? == "initialize" {
+        return None;
+    }
+    let (status, message) = match session {
+        None => (400, "Missing Mcp-Session-Id; send initialize first"),
+        Some(session) if !sessions.contains(session) => {
+            (404, "Unknown MCP session; send initialize again")
+        }
+        Some(_) => return None,
+    };
+    let error = serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": message}
+    });
+    Some((status, error.to_string()))
+}
+
+fn is_initialize_success(body: &[u8], response: &str) -> bool {
+    let method = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|body| body.get("method")?.as_str().map(str::to_owned));
+    method.as_deref() == Some("initialize")
+        && serde_json::from_str::<serde_json::Value>(response)
+            .is_ok_and(|response| response.get("result").is_some())
+}
+
 /// Handle one TCP connection: a keep-alive loop of HTTP requests. Requests on a
 /// single connection stay FIFO-ordered (so one agent's ordered calls are safe);
 /// parallelism comes from DISTINCT connections, each its own task.
@@ -92,6 +155,7 @@ async fn serve_conn(
     mut stream: TcpStream,
     sdk: Arc<crate::sdk_adapter::SdkAdapter>,
     token: Arc<str>,
+    sessions: Arc<Sessions>,
 ) -> anyhow::Result<()> {
     let transport_session = format!("http-{}", uuid::Uuid::new_v4());
     struct TransportCleanup {
@@ -118,6 +182,7 @@ async fn serve_conn(
                 403,
                 br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Browser-origin requests are forbidden"}}"#,
                 keep_alive,
+                None,
             )
             .await?;
         } else if !req.authorized {
@@ -126,6 +191,7 @@ async fn serve_conn(
                 401,
                 br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"Authentication required"}}"#,
                 false,
+                None,
             )
             .await?;
             return Ok(());
@@ -135,24 +201,40 @@ async fn serve_conn(
                 405,
                 br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Use POST /mcp with a JSON-RPC body"}}"#,
                 keep_alive,
+                None,
             )
             .await?;
         } else {
             if let Some(error) =
                 unsupported_protocol_error(&req.body, req.protocol_version.as_deref())
             {
-                write_http(&mut stream, 400, error.as_bytes(), keep_alive).await?;
+                write_http(&mut stream, 400, error.as_bytes(), keep_alive, None).await?;
                 if !keep_alive {
                     return Ok(());
                 }
                 continue;
             }
-            match dispatch(&req.body, &sdk, &transport_session).await {
-                Some(resp_json) => {
-                    write_http(&mut stream, 200, resp_json.as_bytes(), keep_alive).await?
+            if let Some((status, error)) =
+                session_refusal(&req.body, req.session_id.as_deref(), &sessions)
+            {
+                write_http(&mut stream, status, error.as_bytes(), keep_alive, None).await?;
+            } else {
+                match dispatch(&req.body, &sdk, &transport_session).await {
+                    Some(resp_json) => {
+                        let session =
+                            is_initialize_success(&req.body, &resp_json).then(|| sessions.mint());
+                        write_http(
+                            &mut stream,
+                            200,
+                            resp_json.as_bytes(),
+                            keep_alive,
+                            session.as_deref(),
+                        )
+                        .await?
+                    }
+                    // Notification (no id): MCP wants 202 Accepted, no body.
+                    None => write_http(&mut stream, 202, b"", keep_alive, None).await?,
                 }
-                // Notification (no id): MCP wants 202 Accepted, no body.
-                None => write_http(&mut stream, 202, b"", keep_alive).await?,
             }
         }
         // Honor the client's Connection: close (and HTTP/1.0 default) — close the
@@ -284,6 +366,7 @@ struct HttpRequest {
     keep_alive: bool,
     authorized: bool,
     protocol_version: Option<String>,
+    session_id: Option<String>,
 }
 
 /// Read one HTTP/1.1 request, or `None` on clean EOF. Minimal: request line +
@@ -318,6 +401,7 @@ async fn read_http_request(
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
     let mut authorized = false;
     let mut protocol_version = None;
+    let mut session_id = None;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
@@ -340,6 +424,8 @@ async fn read_http_request(
                 if protocol_version.as_deref().is_none_or(is_legacy_protocol) {
                     protocol_version = Some(v.to_owned());
                 }
+            } else if k.eq_ignore_ascii_case("mcp-session-id") {
+                session_id = Some(v.to_owned());
             }
         }
     }
@@ -357,6 +443,7 @@ async fn read_http_request(
         keep_alive,
         authorized,
         protocol_version,
+        session_id,
     }))
 }
 
@@ -405,6 +492,7 @@ async fn write_http(
     status: u16,
     body: &[u8],
     keep_alive: bool,
+    session: Option<&str>,
 ) -> anyhow::Result<()> {
     let reason = match status {
         200 => "OK",
@@ -412,12 +500,16 @@ async fn write_http(
         400 => "Bad Request",
         403 => "Forbidden",
         401 => "Unauthorized",
+        404 => "Not Found",
         405 => "Method Not Allowed",
         _ => "OK",
     };
     let conn = if keep_alive { "keep-alive" } else { "close" };
+    let session = session
+        .map(|id| format!("Mcp-Session-Id: {id}\r\n"))
+        .unwrap_or_default();
     let head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {conn}\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{session}Connection: {conn}\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes()).await?;
@@ -434,6 +526,14 @@ mod tests {
     use serde_json::json;
 
     async fn serve_raw_request(sdk: Arc<crate::sdk_adapter::SdkAdapter>, request: &[u8]) -> String {
+        serve_raw_request_with(sdk, Arc::default(), request).await
+    }
+
+    async fn serve_raw_request_with(
+        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+        sessions: Arc<Sessions>,
+        request: &[u8],
+    ) -> String {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -442,6 +542,7 @@ mod tests {
                 stream,
                 sdk,
                 Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+                sessions,
             )
             .await
             .unwrap();
@@ -626,6 +727,83 @@ mod tests {
         sdk.shutdown().await.expect("SDK shutdown");
     }
 
+    #[tokio::test]
+    async fn http_requires_an_initialized_session_across_connections() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let sessions = Arc::new(Sessions::default());
+        let post = |id: u64, method: &str, session: Option<&str>| {
+            let params = if method == "tools/call" {
+                json!({"name": "get_config", "arguments": {}})
+            } else {
+                json!({})
+            };
+            let body =
+                json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
+            let session = session
+                .map(|id| format!("Mcp-Session-Id: {id}\r\n"))
+                .unwrap_or_default();
+            format!(
+                "POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\n{session}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let send = |request: String| {
+            let (sdk, sessions) = (sdk.clone(), sessions.clone());
+            async move {
+                let raw = serve_raw_request_with(sdk, sessions, request.as_bytes()).await;
+                let (head, body) = raw.split_once("\r\n\r\n").unwrap();
+                let session = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Mcp-Session-Id: "))
+                    .map(str::to_owned);
+                let status = head.split(' ').nth(1).unwrap().to_owned();
+                let body: serde_json::Value = serde_json::from_str(body).unwrap();
+                (status, session, body)
+            }
+        };
+        for (id, method, session, status) in [
+            (1, "tools/call", None, "400"),
+            (2, "tools/list", None, "400"),
+            (3, "tools/call", Some("forged"), "404"),
+        ] {
+            let (got, minted, body) = send(post(id, method, session)).await;
+            assert_eq!(got, status, "{method}");
+            assert_eq!(body["id"], id);
+            assert_eq!(body["error"]["code"], -32600);
+            assert!(body.get("result").is_none());
+            assert!(minted.is_none());
+        }
+        let (status, minted, body) = send(post(4, "initialize", None)).await;
+        assert_eq!(status, "200");
+        assert!(body["result"]["protocolVersion"].is_string());
+        let session = minted.expect("initialize mints an Mcp-Session-Id");
+        // Each request uses a new connection, as a pooled client may.
+        let (status, _, body) = send(post(5, "tools/call", Some(&session))).await;
+        assert_eq!(status, "200");
+        assert!(body["result"]["content"].is_array(), "{body}");
+        let (status, _, body) = send(post(6, "tools/list", Some(&session))).await;
+        assert_eq!(status, "200");
+        assert!(body["result"]["tools"].is_array());
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[test]
+    fn session_registry_forgets_the_oldest_id_first() {
+        let sessions = Sessions::default();
+        let first = sessions.mint();
+        let second = sessions.mint();
+        for _ in 2..MAX_SESSIONS {
+            sessions.mint();
+        }
+        assert!(sessions.contains(&first));
+        sessions.mint();
+        assert!(!sessions.contains(&first));
+        assert!(sessions.contains(&second));
+    }
+
     #[test]
     fn apply_session_identity_uses_transport_implicit_without_session() {
         let mut req: Request = serde_json::from_value(json!({
@@ -715,6 +893,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_tool_call_waits_for_the_permission_gate() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let call = || {
+            dispatch(
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_screen_size","arguments":{}}}"#,
+                &sdk,
+                "http-pending",
+            )
+        };
+
+        driver.set_awaiting_permissions(true);
+        let pending: serde_json::Value =
+            serde_json::from_str(&call().await.expect("JSON-RPC response")).unwrap();
+        assert_eq!(
+            pending["result"]["structuredContent"]["refusal"]["code"], "permissions_pending",
+            "{pending}"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        driver.set_awaiting_permissions(false);
+        call().await.expect("JSON-RPC response");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
     async fn invalid_bearer_receives_401_before_json_rpc_dispatch() {
         let _runtime_guard = crate::test_runtime_lock().lock().await;
         let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
@@ -729,6 +934,7 @@ mod tests {
                 stream,
                 server_sdk,
                 Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+                Arc::default(),
             )
             .await
             .unwrap();

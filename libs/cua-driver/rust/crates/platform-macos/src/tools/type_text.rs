@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! type_text tool — matches the Swift reference TypeTextTool.swift.
 //!
 //! Inserts text via `AXSelectedText` attribute write — an atomic single-call
@@ -79,7 +82,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 200,
-                    "description": "Ms between characters in the CGEvent fallback. Default 30."
+                    "description": "Ms between characters in the CGEvent fallback. Default 0: characters go in batched key events, fast. Set a positive value for one paced key per character (debounced search boxes)."
                 },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id types into the frontmost app." },
                 "delivery_mode": {
@@ -142,7 +145,7 @@ impl Tool for TypeTextTool {
             let text =
                 cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
                     .into_owned();
-            let delay_ms = args.u64_or("delay_ms", 30).min(200);
+            let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS).min(200);
             if let Some(refusal) = synthesis_preflight(
                 TextDeliveryRoute::UnicodeSynthesis,
                 text.chars().count(),
@@ -189,7 +192,7 @@ impl Tool for TypeTextTool {
             Ok(window_id) => window_id,
             Err(error) => return error,
         };
-        let delay_ms = args.u64_or("delay_ms", 30);
+        let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         if let Some(error) = screen_sharing_delivery_error(
             crate::input::keyboard::is_screen_sharing_pid(pid),
@@ -229,6 +232,19 @@ impl Tool for TypeTextTool {
             }
             _ => (None, BackgroundKeyboardPolicy::Allowed),
         };
+        if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                element,
+                "type_text",
+                delivery_mode.is_foreground(),
+            )
+            .await
+            {
+                return refusal;
+            }
+        }
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_token) for an *element px action*: pixel-click the
@@ -423,7 +439,11 @@ impl Tool for TypeTextTool {
                     &format!("{note}{}", changes.result_suffix()),
                 )
             }
-            Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
+            Ok(Err(e)) => window_id
+                .and_then(|wid| {
+                    super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+                })
+                .unwrap_or_else(|| ToolResult::error(format!("type_text failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -657,8 +677,20 @@ fn chromium_native_field_submit_refusal(
     })
 }
 
+/// Default `delay_ms`. Zero selects batched key events (see
+/// `keyboard::type_text_batched`); a positive value keeps per-character pacing.
+const DEFAULT_DELAY_MS: u64 = 0;
+
+/// Pace used to retype the undelivered tail when a batched send did not land.
+const RETYPE_TAIL_DELAY_MS: u64 = 30;
+
+/// A readable field that has not changed at all after this long is not going
+/// to (an app ignoring synthesized keys, or web content echoing a stale
+/// AXValue). Stop polling instead of burning the whole drain timeout.
+const UNCHANGED_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(500);
+
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
 /// an app that installs its own first responder just after activation is
@@ -1105,6 +1137,7 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
     // particular, Chromium can acknowledge the posting process while a long
@@ -1112,12 +1145,27 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    Ok(await_typed_delivery(before, text, deadline, || {
+    let read_trusted = || {
         let trusted = element_ptr_and_idx
             .is_some_and(|(ptr, _)| crate::input::ax_actions::is_element_focused(pid, ptr))
             && target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false);
         trusted.then(|| read_axvalue(element_ptr_and_idx)).flatten()
-    }))
+    };
+    let progress = await_typed_delivery(before, text, deadline, read_trusted);
+    // A batched send that a native field only partly took (an app that reads
+    // just the first character of a multi-character event) is finished one
+    // paced key at a time from where it stopped. Only a trusted prefix takes
+    // this branch: an unchanged or unverifiable field may still publish the
+    // first send, so typing it again could duplicate text.
+    if let (true, TypedProgress::Partial(done)) = (batched, progress) {
+        if done > 0 && done < text.chars().count() {
+            let tail: String = text.chars().skip(done).collect();
+            crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
+            let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+            return Ok(await_typed_delivery(before, text, deadline, read_trusted));
+        }
+    }
+    Ok(progress)
 }
 
 fn await_typed_delivery(
@@ -1129,6 +1177,7 @@ fn await_typed_delivery(
     // Keep the strongest observation. A field that falls back to its prior
     // value after showing progress contradicts that progress.
     let mut best = TypedProgress::Unchanged;
+    let started = std::time::Instant::now();
     loop {
         let after = read_value();
         best = match (typed_progress(before, after.as_deref(), text), best) {
@@ -1138,7 +1187,12 @@ fn await_typed_delivery(
             (TypedProgress::Unchanged, TypedProgress::Partial(_)) => TypedProgress::Unverifiable,
             (progress, _) => progress,
         };
+        // A readable field that has not changed at all by the give-up window
+        // is not going to. Stopping early still reports unchanged, which the
+        // caller treats as unverifiable, never as zero delivered.
+        let gave_up = best == TypedProgress::Unchanged && started.elapsed() >= UNCHANGED_GIVE_UP;
         if matches!(best, TypedProgress::Complete | TypedProgress::Unverifiable)
+            || gave_up
             || std::time::Instant::now() >= deadline
         {
             return best;
@@ -1304,7 +1358,17 @@ fn type_text_in_key_window(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
+        // The caller's early AXEnabled read skips a foreground call into a
+        // background app; read it here, after activation, before any key.
+        let ensure_enabled = || match element_ptr_and_idx {
+            Some((ptr, _)) => crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+                ptr,
+                "type_text",
+            ),
+            None => Ok(()),
+        };
         let do_type = |element: Option<(usize, Option<usize>)>| {
+            ensure_enabled()?;
             cgevent_type_verified(
                 pid,
                 text,
@@ -1327,6 +1391,7 @@ fn type_text_in_key_window(
                     pid as libc::pid_t,
                     wid,
                     || {
+                        ensure_enabled()?;
                         if foreground_settle_ms > 0 {
                             std::thread::sleep(std::time::Duration::from_millis(
                                 foreground_settle_ms,
@@ -2366,6 +2431,22 @@ mod tests {
             || Some("BEGIN".to_owned()),
         );
         assert_eq!(delivery, TypedProgress::Partial(5));
+    }
+
+    #[test]
+    fn zero_progress_stops_polling_after_the_give_up_window() {
+        let started = std::time::Instant::now();
+        let outcome =
+            await_typed_delivery(Some("abc"), "xyz", started + DELIVERY_DRAIN_TIMEOUT, || {
+                Some("abc".to_string())
+            });
+        assert_eq!(outcome, TypedProgress::Unchanged);
+        assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    #[test]
+    fn default_delay_selects_batched_typing() {
+        assert_eq!(DEFAULT_DELAY_MS, 0);
     }
 
     #[test]

@@ -163,6 +163,16 @@ struct BridgeContractTests {
         func setAccess(id: String, clipboard: String?, volume: String?) async throws {
             try await inner.setAccess(id: id, clipboard: clipboard, volume: volume)
         }
+        func spaceTree() async throws -> [[String: Any]] { try await inner.spaceTree() }
+        func setChildren(id: String, enabled: Bool) async throws { try await inner.setChildren(id: id, enabled: enabled) }
+        func treeBudget(id: String) async throws -> [String: Any] { try await inner.treeBudget(id: id) }
+        func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+            try await inner.setTreeBudget(id: id, limits: limits)
+        }
+        func services(id: String) async throws -> [[String: Any]] { try await inner.services(id: id) }
+        func controlService(id: String, name: String, action: String) async throws {
+            try await inner.controlService(id: id, name: name, action: action)
+        }
         func hosts() async -> [AppSpaceHost] { await inner.hosts() }
         func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
         func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
@@ -248,14 +258,20 @@ struct BridgeContractTests {
             // The relay allowance before the sign-out below (signed out, it is null).
             // No request is waiting on the fixtures: an answer to none is left alone.
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]),
+            // The default Space reads from the fixture account (before the sign-out: signed out, each is null).
+            ("spaces.settings", [:]), ("spaces.setSettings", ["defaultSpace": NSNull(), "fallback": [String](), "fallbackOn": true]),
+            ("spaces.resolveDefault", [:]), ("session.signOut", [:]),
             ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
             ("links.approve", ["id": "share-pending"]), ("links.deny", ["id": "share-pending"]),
             ("shares.settings.get", [:]), ("shares.edge.remove", [:]),
             ("network.get", ["spaceId": space]),
             ("network.set", ["spaceId": space, "network": "internet", "allow": [String](), "deny": [String]()]),
             ("network.log", ["spaceId": space]), ("network.ackNotice", ["spaceId": space]),
-            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]),
+            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]), ("spaces.tree", [:]),
+            ("children.set", ["spaceId": space, "enabled": true]),
+            ("budget.get", ["spaceId": space]), ("budget.set", ["spaceId": space, "limits": ["maxSpaces": 4]]),
+            ("services.list", ["spaceId": space]), ("services.control", ["spaceId": space, "name": "web", "action": "restart"]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("shares.settings.set", ["settings": ["landing": "auto", "relayFallback": true, "dailyCapMib": 2048, "defaultAllow": [String](), "approveAgentShares": true, "alwaysAllowSpaces": [String](), "edgeConsent": [String](), "usedToday": 0]]),
             ("cli.plan", [:]),
@@ -280,7 +296,9 @@ struct BridgeContractTests {
             ("agentKeys.list", [:]), ("agentKeys.check", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
             ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
             ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.rename", ["env": "ANTHROPIC_API_KEY", "label": "Work key"]),
             ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.copySignIn", ["on": false]),
             ("github.status", [:]), ("github.rescan", [:]), ("github.use", ["host": "github.com", "login": "ada"]),
             ("github.enable", ["host": "github.com", "enabled": false]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
@@ -292,7 +310,7 @@ struct BridgeContractTests {
             ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
-            ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
+            ("about.get", [:]), ("about.set", ["channel": "nightly"]), ("about.checkNow", [:]),
             ("update.get", [:]), ("update.install", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
@@ -322,6 +340,10 @@ struct BridgeContractTests {
             ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 48]]]),
             ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
             ("startup.get", [:]),
+            // A test runner carries no Cua Driver: null and an empty list.
+            ("driver.status", [:]),
+            ("driver.permissions", [:]),
+            ("driver.list", [:]),
         ]
     }
 
@@ -343,6 +365,9 @@ struct BridgeContractTests {
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
         "agents.message": "as agents.start (the daemon's agent_message)",
+        "agents.recentThreads": "needs the daemon's agent_threads; WebUIHostTests checks it is unsupported without it",
+        "agents.threadHistory": "as agents.recentThreads (the daemon's agent_thread_read)",
+        "agents.computerSignIn": "needs the daemon's agent_sign_in and a Space to sign in on; ops/agent-sign-in.ts and the Rust remote_login tests cover it",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers
@@ -383,6 +408,12 @@ struct BridgeContractTests {
         "thread.joinCodeList": "answers the daemon's thread_join_code_list as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.joinCodeCancel": "answers the daemon's thread_join_code_cancel as-is (the page ignores it); ThreadBridgeTests covers the arguments",
         "thread.settings": "answers the daemon's thread_settings as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "driver.config": "needs the bundled Cua Driver running (embedded-driver-vm-check.sh); EmbeddedDriverTests covers the socket",
+        "driver.setConfig": "as driver.config",
+        "driver.test": "as driver.config (it moves the agent pointer)",
+        "driver.pause": "as driver.config (it stops the driver); EmbeddedDriverTests covers the marker path",
+        "driver.setup": "writes the coding agents' configs and restarts the driver",
+        "driver.setApp": "as driver.setup, for one agent",
     ]
 
     static func shapes() throws -> [String: Any] {
@@ -470,7 +501,7 @@ struct BridgeContractTests {
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
-                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil)
+                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil, origin: nil)
         let png = WebUIBridge.dataURL(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]))
         return try [
             ("teleport.catalog", [BridgeValue.encode(entry)]),
@@ -604,5 +635,18 @@ enum JSONShape {
             }
         }
         return errors
+    }
+}
+
+/// The core reads a failed create's fix action in kebab case; the page gets it that way.
+@Suite("Bridge values")
+struct BridgeValueFixTests {
+    @Test("a fix action crosses the bridge in the case the core reads")
+    func fixActionIsKebabCase() {
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let out = BridgeValue.encode(fix) as? [String: Any]
+        #expect(out?["action"] as? String == "copy-command")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
     }
 }

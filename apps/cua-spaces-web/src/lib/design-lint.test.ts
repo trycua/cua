@@ -62,25 +62,36 @@ describe("design language drift guard", () => {
         }
       }
     }
-    expect(worse, "Use GroupedSection / PlainList / SectionHeading (components/ui/grouped.tsx) and rounded-lg; see the header of design-lint.test.ts").toEqual([]);
+    expect(worse, "Use GroupedSection / PlainList / SectionHeading (components/ui/grouped.tsx) and rounded-lg; see the header of design-lint.test.ts").toEqual(
+      [],
+    );
   });
 
   it("the baseline only names files that still have findings (counts only go down)", () => {
     const now = scanAll();
     const baseline = JSON.parse(readFileSync(baselinePath, "utf8")) as Record<string, Partial<Record<DesignRule, number>>>;
     const stale = Object.entries(baseline).flatMap(([file, counts]) =>
-      (Object.entries(counts) as [DesignRule, number][]).filter(([rule, n]) => (now[file]?.[rule] ?? 0) < n).map(([rule, n]) => `${file}: ${rule} ${now[file]?.[rule] ?? 0} < ${n}`),
+      (Object.entries(counts) as [DesignRule, number][])
+        .filter(([rule, n]) => (now[file]?.[rule] ?? 0) < n)
+        .map(([rule, n]) => `${file}: ${rule} ${now[file]?.[rule] ?? 0} < ${n}`),
     );
     expect(stale, "A page got better: refresh design-baseline.json (UPDATE_DESIGN_BASELINE=1)").toEqual([]);
   });
 });
 
 /** Where Settings tabs live: they share one spacing, heading and button style. */
-const settingsFiles = () => [...walk(join(src, "components/settings")), ...walk(join(src, "routes/settings")), join(src, "components/settings-group.tsx"), join(src, "components/volume/driver-card.tsx")];
+const settingsFiles = () => [
+  ...walk(join(src, "components/settings")),
+  ...walk(join(src, "routes/settings")),
+  join(src, "components/settings-group.tsx"),
+  join(src, "components/volume/driver-card.tsx"),
+];
 
 describe("Settings pages", () => {
   it("get their spacing, headings and row buttons from the shared components", () => {
-    const found = settingsFiles().flatMap((file) => scanSettings(readFileSync(file, "utf8")).map((f) => `${relative(src, file)}:${f.line}  ${f.rule}  ${f.text}`));
+    const found = settingsFiles().flatMap((file) =>
+      scanSettings(readFileSync(file, "utf8")).map((f) => `${relative(src, file)}:${f.line}  ${f.rule}  ${f.text}`),
+    );
     expect(found, "Use SettingsGroup (title, footer), GroupedAction and outline buttons; see the header of design-lint.ts").toEqual([]);
   });
 
@@ -88,7 +99,7 @@ describe("Settings pages", () => {
     const found = [...walk(join(src, "components/agents")), ...walk(join(src, "routes/agents"))].flatMap((file) =>
       scanSettings(readFileSync(file, "utf8"), { rowButtonsOnly: true }).map((f) => `${relative(src, file)}:${f.line}  ${f.text}`),
     );
-    expect(found, "Connect, Sign in and other small row buttons are variant=\"outline\"").toEqual([]);
+    expect(found, 'Connect, Sign in and other small row buttons are variant="outline"').toEqual([]);
     expect(scanSettings(`<Button size="sm" variant="secondary">Connect</Button>`, { rowButtonsOnly: true }).map((f) => f.rule)).toEqual(["row-button"]);
     expect(scanSettings(`<Button variant="secondary">Cancel</Button>`, { rowButtonsOnly: true })).toEqual([]);
   });

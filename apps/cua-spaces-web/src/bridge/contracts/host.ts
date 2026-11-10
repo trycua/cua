@@ -59,6 +59,10 @@ export interface SpaceCreateConfig {
   spacesd?: boolean;
   reuse?: boolean;
   gpu?: string;
+  /** Lets the Space make child Spaces of its own (the SDK's `children`). */
+  children?: boolean;
+  /** Labels kept with the Space (the SDK's `labels`). The agent home's grants ride on `cua.home.*`. */
+  labels?: Record<string, string>;
 }
 
 /** Where new Spaces go by default (`default.on`), and where that came from. */
@@ -514,8 +518,8 @@ export interface HostStatus {
   account?: HostAccount | null;
   /** What a running setup (or Sign In) waits for, such as finishing the
    * sign-in in the browser (the SwiftUI app's `HostModel.progress`). */
-  progress?: string | null;  /** The name System Settings lists the app under ("Cua Spaces", "Cua
-   * Spaces Local"): the Mac app's own name, for the permissions screen. */
+  progress?: string | null /** The name System Settings lists the app under ("Cua Spaces", "Cua
+   * Spaces Local"): the Mac app's own name, for the permissions screen. */;
   appName?: string | null;
 }
 
@@ -798,16 +802,7 @@ export interface SettingsInput {
   showTips?: boolean;
 }
 
-export type SettingsRowKind =
-  | "text"
-  | "choice"
-  | "note"
-  | "error"
-  | "field"
-  | "secret"
-  | "prompt"
-  | "link"
-  | "toggle";
+export type SettingsRowKind = "text" | "choice" | "note" | "error" | "field" | "secret" | "prompt" | "link" | "toggle";
 
 export interface SettingsOption {
   id: string;

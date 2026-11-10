@@ -27,7 +27,7 @@ use tonic::Status;
 use tower::{Service, ServiceExt};
 
 /// Where and how to listen.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// Unix socket (unix only). Created with mode 0600; a stale socket file
     /// is replaced.
@@ -40,6 +40,18 @@ pub struct ServerConfig {
     pub discovery_path: Option<PathBuf>,
     /// Lifetime of media bridge tickets.
     pub bridge_ticket_ttl: Duration,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConfig")
+            .field("socket_path", &self.socket_path)
+            .field("loopback", &self.loopback)
+            .field("token", &"<redacted>")
+            .field("discovery_path", &self.discovery_path)
+            .field("bridge_ticket_ttl", &self.bridge_ticket_ttl)
+            .finish()
+    }
 }
 
 impl ServerConfig {
@@ -131,6 +143,17 @@ const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
 /// Space's settings.
 #[cfg(feature = "spaces")]
 const NETWORK_RECONCILE: Duration = Duration::from_secs(15);
+
+/// How often the Spaces listed on the account are looked at again without
+/// being woken.
+#[cfg(feature = "spaces")]
+const PUBLISH_TO_RELAY: Duration = Duration::from_secs(15);
+/// The next pass when the last one left Spaces waiting.
+#[cfg(feature = "spaces")]
+const PUBLISH_MORE: Duration = Duration::from_secs(4);
+/// Changes this close together are one pass.
+#[cfg(feature = "spaces")]
+const PUBLISH_COALESCE: Duration = Duration::from_secs(2);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
 /// How often the daemon checks that its home is still there.
@@ -323,6 +346,8 @@ impl DaemonHandle {
                 break;
             }
         }
+        let began = std::time::Instant::now();
+        tracing::info!("the daemon is shutting down");
         // What an extension serves must not outlive the daemon (a mount,
         // writes not yet stored): each ends first, bounded.
         for a in self.shared.runtime.attached_extensions() {
@@ -339,15 +364,31 @@ impl DaemonHandle {
         if let Ok(vmm) = self.shared.runtime.vmm()
             && let Some(pool) = vmm.pool()
         {
+            tracing::info!(
+                after_ms = began.elapsed().as_millis() as u64,
+                "shutdown: draining the warm pool"
+            );
             let _ = tokio::time::timeout(std::time::Duration::from_secs(90), pool.drain()).await;
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: stopping tasks"
+        );
         for t in self.tasks.drain(..) {
             t.abort();
             let _ = t.await;
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: tasks stopped"
+        );
         // The built-in Linux runtime VM must not outlive the daemon that
         // started it (nothing else would stop it): stop it unless Linux
         // Spaces still run in it, and leave the answer for `cua daemon stop`.
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: stopping the Linux runtime"
+        );
         if let Ok(vmm) = self.shared.runtime.vmm().cloned() {
             let stop = tokio::time::timeout(
                 std::time::Duration::from_secs(200),
@@ -360,6 +401,10 @@ impl DaemonHandle {
             tracing::info!(?stop, "the Linux runtime at daemon shutdown");
             cua_vmm::managed::record_shutdown(&stop);
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: finished"
+        );
         self.cleanup();
     }
 
@@ -521,6 +566,21 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                 rt.reap_expired().await;
                 #[cfg(feature = "spaces")]
                 rt.spaces().reap_expired().await;
+            }
+        });
+    }
+    // A macOS Space whose network gateway ended under a running VM (the
+    // gateway was stopped by something that stopped the whole app bundle)
+    // has no network and no agent: restarted behind a new gateway, and the
+    // connections to it dropped.
+    {
+        let rt = runtime.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                rt.mend_local().await;
             }
         });
     }
@@ -775,6 +835,66 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                     _ = rx.changed() => return,
                     _ = tokio::time::sleep(NETWORK_RECONCILE) => {}
                 }
+            }
+        }));
+    }
+    // Spaces running on this computer are listed on the signed-in account
+    // (the phone and the owner's other computers open them): a Space made
+    // by any path, one that was already here, and one that stopped or was
+    // deleted are kept in line with the relay (`relay.spaces`).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            // The first look comes after the daemon settled, at a different
+            // moment on every computer.
+            let mut wait = cua_spaces::share::jitter(Duration::from_secs(5));
+            let spaces = rt.spaces().clone();
+            loop {
+                let changed = tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(wait) => false,
+                    _ = cua_spaces::share::PUBLISH_CHANGED.notified() => true,
+                };
+                if changed {
+                    // A burst of changes is one pass.
+                    tokio::select! {
+                        _ = rx.changed() => return,
+                        _ = tokio::time::sleep(cua_spaces::share::jitter(PUBLISH_COALESCE)) => {}
+                    }
+                }
+                // A shutdown never waits for a pass that is still working.
+                let pass = tokio::spawn({
+                    let spaces = spaces.clone();
+                    async move { spaces.publish_to_relay().await }
+                });
+                let more = tokio::select! {
+                    _ = rx.changed() => {
+                        return;
+                    }
+                    r = pass => match r {
+                        Ok(Ok(r)) => {
+                            if !r.published.is_empty() || !r.unpublished.is_empty() {
+                                tracing::info!(
+                                    listed = r.published.len(),
+                                    taken_off = r.unpublished.len(),
+                                    "Spaces on the account updated"
+                                );
+                            }
+                            r.more
+                        }
+                        Ok(Err(e)) => {
+                            tracing::debug!(error = %e, "Spaces on the account not updated");
+                            false
+                        }
+                        Err(_) => false,
+                    },
+                };
+                // A pass with nothing to do asks the relay for nothing, so
+                // the interval is cheap; more waiting is picked up sooner.
+                wait =
+                    cua_spaces::share::jitter(if more { PUBLISH_MORE } else { PUBLISH_TO_RELAY });
             }
         }));
     }

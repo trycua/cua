@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Real Linux tool implementations (compiled only on Linux).
 
 use cua_driver_core::{
@@ -73,7 +76,7 @@ fn window_target_candidates_for_pid(
         .collect()
 }
 
-fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+pub(crate) fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = u32::try_from(pid) else {
         return Vec::new();
     };
@@ -128,22 +131,22 @@ fn topmost_window_at(
 /// toplevel (see [`crate::x11::pick_pid_window`]). A dialog the app just
 /// opened therefore receives the following `type_text` / `press_key` even
 /// while the main window is still the WM's active window.
-fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
+pub(crate) fn pid_fallback_window_resolver(
+) -> cua_driver_core::window_target::PidFallbackWindowResolver {
     Arc::new(|pid| {
         let pid = u32::try_from(pid).ok()?;
         if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
             return crate::wayland::niri::window_in_use(pid);
+        }
+        if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+            return crate::wayland::hyprland::window_in_use(pid);
         }
         let windows: Vec<crate::x11::WindowInfo> = crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .filter(|w| w.pid == Some(pid))
             .collect();
         if crate::wayland::is_wayland() {
-            return windows
-                .into_iter()
-                .filter(|w| w.is_on_screen)
-                .max_by_key(|w| w.z_index.unwrap_or(0))
-                .map(|w| w.xid);
+            return topmost_on_screen_window(&windows);
         }
         let ids: Vec<u64> = windows.iter().map(|w| w.xid).collect();
         crate::x11::pick_pid_window(
@@ -153,6 +156,20 @@ fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallback
             crate::x11::active_window(),
         )
     })
+}
+
+/// The only on-screen window, else the highest stacking position. Without one,
+/// several on-screen windows stay unresolved: list order is not stacking.
+fn topmost_on_screen_window(windows: &[crate::x11::WindowInfo]) -> Option<u64> {
+    let on_screen: Vec<_> = windows.iter().filter(|w| w.is_on_screen).collect();
+    if let [only] = on_screen.as_slice() {
+        return Some(only.xid);
+    }
+    on_screen
+        .iter()
+        .filter_map(|w| Some((w.z_index?, w.xid)))
+        .max()
+        .map(|(_, xid)| xid)
 }
 
 #[cfg(test)]
@@ -243,6 +260,29 @@ mod pid_window_resolver_tests {
     }
 
     #[test]
+    fn wayland_fallback_needs_a_stacking_position_to_choose_among_on_screen_windows() {
+        let hidden = win(3, Some(9), false, 800, 600);
+        assert_eq!(
+            topmost_on_screen_window(&[win(1, None, true, 800, 600), hidden.clone()]),
+            Some(1)
+        );
+        assert_eq!(
+            topmost_on_screen_window(&[win(1, None, true, 800, 600), win(2, None, true, 800, 600)]),
+            None
+        );
+        assert_eq!(
+            topmost_on_screen_window(&[
+                win(1, Some(4), true, 800, 600),
+                win(2, Some(2), true, 800, 600),
+                win(4, None, true, 800, 600),
+                hidden.clone()
+            ]),
+            Some(1)
+        );
+        assert_eq!(topmost_on_screen_window(&[hidden]), None);
+    }
+
+    #[test]
     fn pid_only_resolver_skips_unmapped_dialogs() {
         let main = win(1, Some(1), true, 800, 600);
         let unmapped_dialog = win(2, Some(2), false, 400, 300);
@@ -271,7 +311,10 @@ fn pid_window_guarded<T: Tool + 'static>(
             .with_point_resolver(point_resolver.clone())
             .with_fallback_resolver(fallback_resolver.clone())
             .with_snapshot_resolver(snapshot_resolver.clone())
-            .with_token_pid_resolver(token_pid_resolver.clone()),
+            .with_token_pid_resolver(token_pid_resolver.clone())
+            .with_not_found_note(Arc::new(|pid| {
+                crate::atspi::unlisted_window_note(u32::try_from(pid).ok()?)
+            })),
     )
 }
 
@@ -802,7 +845,7 @@ pub(crate) fn resolve_element_local_coords(
 
     let xid = if let Some(x) = xid_hint {
         x
-    } else if crate::wayland::wayland_input_enabled() {
+    } else if crate::wayland::is_wayland() {
         crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .next()
@@ -816,7 +859,7 @@ pub(crate) fn resolve_element_local_coords(
             .ok_or_else(|| anyhow::anyhow!("No windows for pid {pid}"))?
     };
 
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
                 .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
@@ -874,7 +917,7 @@ pub(crate) fn checked_element_local_coords(
     xid_hint: Option<u64>,
 ) -> anyhow::Result<(u64, f64, f64)> {
     let (xid, lx, ly) = resolve_element_local_coords(pid, token, xid_hint)?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return Ok((xid, lx, ly));
     }
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -1289,6 +1332,13 @@ pub(crate) fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
     }
 }
 
+/// The budget of a `type_text` call that types `text`, whichever input route it
+/// takes. libei text with line breaks takes time between its parts.
+pub(crate) fn text_typing_budget(text: &str) -> std::time::Duration {
+    typing_budget(text.chars().count(), crate::wayland::niri::is_session())
+        + crate::wayland::text_pacing(text)
+}
+
 #[cfg(test)]
 #[test]
 fn niri_typing_outlasts_the_keyboard_deadline() {
@@ -1344,6 +1394,17 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         return refusal;
     }
     match crate::input::foreground::error_code(&e) {
+        Some(code) if text.ends_with(crate::wayland::NOTHING_TYPED) => {
+            ToolResult::error(text.clone()).with_structured(json!({
+                "code": code,
+                "detail": text,
+                "effect": "none",
+                // Set here so it isn't the generic hint for this code, which
+                // blames a window that could not be brought forward.
+                "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+                "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+            }))
+        }
         Some(code) => ToolResult::error(text.clone()).with_structured(json!({
             "code": code,
             "detail": text,
@@ -1358,6 +1419,28 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_refused_text_says_why_instead_of_blaming_a_window() {
+    let mut refused =
+        input_error_result(crate::wayland::type_text_focused("abc\u{8}").unwrap_err());
+    cua_driver_core::recovery_hint::annotate(
+        "type_text",
+        &cua_driver_core::recovery_hint::Seed::from_args(&json!({})),
+        &mut refused,
+    );
+    assert_eq!(
+        refused.structured_content.unwrap(),
+        json!({
+            "code": "foreground_unavailable",
+            "detail": "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed",
+            "effect": "none",
+            "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+            "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+        })
+    );
 }
 
 #[cfg(test)]
@@ -1522,6 +1605,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::SamePid,
             window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1534,6 +1618,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Target,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
         assert_eq!(v["effect"], "unverifiable");
@@ -1545,6 +1630,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Unknown,
             window_change: Some("closed: window 3 \"Format Cells\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", closed, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1559,6 +1645,7 @@ mod pointer_argument_tests {
             focus_after,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured(
             "x11_xtest_fg",
@@ -1586,6 +1673,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Elsewhere,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
         assert_eq!(v["effect"], "suspected_noop");
@@ -1892,17 +1980,18 @@ pub(crate) fn background_virtual_text(
     pid: u32,
     xid: u64,
     text: &str,
+    pacing: crate::input::TypePacing,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
-        match crate::input::send_popup_keyboard_text(popup.window, text) {
+        match crate::input::send_popup_keyboard_text_paced(popup.window, text, pacing) {
             Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
             delivered => return delivered,
         }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
-            crate::input::send_type_text_xtest(text)
+            crate::input::send_type_text_xtest_paced(text, pacing)
         });
     }
-    crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+    crate::input::send_virtual_keyboard_text_paced(cursor_id, xid, text, pacing)
 }
 
 pub(crate) fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
@@ -2040,8 +2129,9 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     match route {
         KeyRoute::Foreground(report) => ToolResult::text(format!(
             "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
-             not verified — confirm with a screenshot.",
-            report.focus_after.as_str()
+             not verified — confirm with a screenshot.{}",
+            report.focus_after.as_str(),
+            report.focus_note()
         ))
         .with_structured(foreground_structured(
             "key_events_fg",
@@ -2126,7 +2216,7 @@ pub(crate) fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
+    (crate::wayland::is_wayland()
         && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
         && !delivery.is_foreground())
     .then(|| {
@@ -2142,10 +2232,10 @@ pub(crate) enum CoordinateContext {
     Screenshot(f64),
 }
 
-/// Chromium's X11 renderer drops synthetic input sent to an occluded,
-/// unfocused toplevel. Returning success here would be a silent loss, so all
-/// input tools expose the same typed refusal and leave foreground activation
-/// as the explicit escalation.
+/// Chromium's X11 renderer drops synthetic input sent to an unfocused
+/// toplevel. Returning success here would be a silent loss, so all input
+/// tools expose the same typed refusal and leave foreground activation as the
+/// explicit escalation. A plain left click still reaches it through AT-SPI.
 pub(crate) fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
@@ -2206,8 +2296,9 @@ pub(crate) enum PointerRoute {
     Atspi(crate::atspi::AtPointHit),
     /// Target-addressed synthetic `XSendEvent` (core-only toolkits).
     Synthetic,
-    /// Activated the window first and used XTest (delivery_mode=foreground).
-    Foreground,
+    /// Activated the window first and used XTest (delivery_mode=foreground);
+    /// the pid whose open menu kept the target focused.
+    Foreground { menu_open: Option<u32> },
     /// Native Wayland pointer route.
     Wayland,
 }
@@ -2219,7 +2310,7 @@ impl PointerRoute {
             Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
             Self::Atspi(_) => Some("x11_atspi"),
             Self::Synthetic => Some("x11_xsendevent"),
-            Self::Foreground => Some("x11_xtest_fg"),
+            Self::Foreground { .. } => Some("x11_xtest_fg"),
             Self::Wayland => None,
         }
     }
@@ -2357,6 +2448,9 @@ impl PointerRoute {
     /// Human-readable tail for the result text.
     pub(crate) fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
+        if let Self::Foreground { menu_open } = self {
+            text.push_str(&crate::input::foreground::menu_open_note(*menu_open));
+        }
         if let Self::Mpx(effect) = self {
             if let Some(popup) = effect.popups.last() {
                 text.push_str(&format!(
@@ -2707,7 +2801,7 @@ pub(crate) fn isolated_hyprland_background(delivery: crate::input::delivery::Del
 
 pub(crate) fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
-        && crate::wayland::wayland_input_enabled()
+        && crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
 }
 
@@ -2788,9 +2882,7 @@ pub(crate) async fn wm_chord_background(
     modifiers: &[String],
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if delivery.is_foreground()
-        || crate::wayland::wayland_input_enabled()
-        || crate::wayland::is_inject_mode()
+    if delivery.is_foreground() || crate::wayland::is_wayland() || crate::wayland::is_inject_mode()
     {
         return None;
     }
@@ -3033,6 +3125,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
             } else {
                 unavailable
             };
+            if !foreground && code.starts_with("client_") {
+                value["hint"] = json!(
+                    "This app does not take background pointer or key input on Hyprland's \
+                     agent seats. Use element_token (accessibility actions), the browser \
+                     tools for a browser page, or delivery_mode:\"foreground\"."
+                );
+            }
             value["reason"] = json!(code);
             value["code"] = json!(refusal);
             value["route"] = json!(if foreground {
@@ -3507,6 +3606,27 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
 
 #[cfg(test)]
 #[test]
+fn background_client_refusals_name_the_alternatives() {
+    for code in ["client_not_bound", "client_xwayland", "client_unattested"] {
+        let result = isolated_hyprland_result(Ok(json!({"ok":false,"code":code,"detail":code})));
+        let value = result.structured_content.as_ref().unwrap();
+        assert_eq!(value["code"], "background_unavailable");
+        assert_eq!(value["reason"], code);
+        assert!(value["hint"].as_str().unwrap().contains("element_token"));
+    }
+    let foreground = hyprland_input_result(
+        Ok(json!({"ok":false,"code":"client_not_bound","detail":"client_not_bound"})),
+        true,
+    );
+    assert!(foreground.structured_content.as_ref().unwrap()["hint"].is_null());
+    let other = isolated_hyprland_result(Ok(
+        json!({"ok":false,"code":"primary_target_busy","detail":"primary_target_busy"}),
+    ));
+    assert!(other.structured_content.as_ref().unwrap()["hint"].is_null());
+}
+
+#[cfg(test)]
+#[test]
 fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let busy = isolated_hyprland_result(Err(crate::wayland::hyprland_input::LaneBusy.into()));
     let content = busy.structured_content.as_ref().unwrap();
@@ -3883,7 +4003,7 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
             crate::interaction::policy::Scope::DesktopInput,
             crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
         )?;
-        if !crate::wayland::wayland_input_enabled() {
+        if !crate::wayland::is_wayland() {
             return Ok(crate::wayland::DesktopInputSpace::default());
         }
         crate::wayland::DesktopInputSpace::current()
@@ -3997,7 +4117,7 @@ pub(crate) fn explicit_keyboard_cursor_target(
     }
 
     let (x, y) = pixel_target?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return crate::wayland::window_geometry(xid)
             .map(|(wx, wy, _, _)| (f64::from(wx) + x.round(), f64::from(wy) + y.round()));
     }
@@ -4430,6 +4550,7 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);
         r.recording

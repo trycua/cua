@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Linux AT-SPI handling for Chromium's browser-owned debugging consent.
 
 use std::time::{Duration, Instant};
@@ -8,7 +11,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
-use crate::interaction::{with_target_foreground, RestoreMode};
+use crate::interaction::{session_policy, with_target_foreground};
 
 fn normalized_text(node: &AtspiNode) -> String {
     [
@@ -190,7 +193,7 @@ fn exact_button_center(
 }
 
 fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
+    with_target_foreground(pid, window_id, session_policy().setup, || {
         let tree = crate::atspi::walk_tree(pid, window_id, None);
         let index = exact_allow_button(&tree.nodes, &tree.bounds)
             .map_err(|error| anyhow::anyhow!(error.message))?
@@ -198,7 +201,7 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
                 anyhow::anyhow!("the exact Chromium remote-debugging consent action became stale")
             })?;
         let (center_x, center_y) = exact_button_center(&tree.bounds, index)?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             crate::wayland::click_focused((center_x, center_y).into(), 1, 1)
         } else {
             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)

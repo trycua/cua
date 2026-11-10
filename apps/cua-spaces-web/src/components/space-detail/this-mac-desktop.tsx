@@ -51,7 +51,7 @@ export function DesktopStage({ shared, nudge }: { shared: boolean; nudge?: boole
       <div>
         <h2 className="text-[15px] font-semibold">{shared ? "You're sharing your desktop as a Space" : "You aren't sharing your desktop as a Space"}</h2>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          {shared ? `Your other machines can see and control the screen of ${here}. It isn't shown here.` : `Turn this on to see and control the screen of ${here} from your other machines.`}
+          {shared ? "Shared. Open it from another computer to see it." : `Turn this on to see and control the screen of ${here} from your other machines.`}
         </p>
       </div>
       {toggle ? (
@@ -98,7 +98,7 @@ export function ThisMacCall({
           setNudge((n) => n + 1);
           throw new Error(NOT_SHARING_CHAT);
         }
-        if (noThread) throw new Error("Chat isn't available on this Mac's own desktop yet.");
+        if (noThread) throw new Error(`Chat isn't available on ${thisComputerText()}'s own desktop yet.`);
         return live.post(text, view);
       },
     }),

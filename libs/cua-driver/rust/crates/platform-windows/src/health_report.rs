@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows `health_report` provider.
 //!
 //! Implements [`cua_driver_core::health_report::HealthCheckProvider`]

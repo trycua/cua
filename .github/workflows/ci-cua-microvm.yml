@@ -25,6 +25,7 @@ on:
       - "libs/cua/bench/microvm-fork/**"
       - "tests/e2e/local-runtimes/tests/microvm_vz.rs"
       - ".github/workflows/ci-cua-microvm.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -56,12 +57,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   unit:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: unit (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -104,7 +105,7 @@ jobs:
 
   macos:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: unit (macos)
     runs-on: macos-26
     timeout-minutes: 45
@@ -121,7 +122,17 @@ jobs:
           shared-key: libs-cua-vmm
       - name: cua-vz Swift tests
         working-directory: libs/cua/vz
-        run: swift test
+        # Per-file times (timings.py) from the XCTest suite summaries; the exit code is swift test's.
+        run: |
+          rc=0
+          swift test 2>&1 | tee "$RUNNER_TEMP/swift-test-cua-vz.log"
+          rc=${PIPESTATUS[0]}
+          python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" swift-log --suite swift-cua-vz "$RUNNER_TEMP/swift-test-cua-vz.log"
+          exit "$rc"
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: swift-cua-vz
       - name: cua-vz builds and is signed with its entitlement
         run: libs/cua/vz/build.sh "$RUNNER_TEMP/vz"
       - name: Backend unit tests on a Mac
@@ -144,7 +155,7 @@ jobs:
   vz-e2e:
     name: vz e2e + perf guard (self-hosted Mac)
     needs: quick
-    if: ${{ !failure() && !cancelled() && (vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request') }}
+    if: ${{ !failure() && !cancelled() && (vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request') && needs.quick.outputs.skip != 'true' }}
     runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
     timeout-minutes: 120
     steps:

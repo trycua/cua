@@ -96,13 +96,75 @@ pub fn extra_spaces_use(c: &ComputerResources) -> Option<String> {
     ))
 }
 
-/// The warning's sentence, when there is one.
+/// The computer the CLI runs on, in the words of its system: "This Mac",
+/// "This PC" on Windows, "This machine" elsewhere (the app's convention).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Host {
+    /// macOS.
+    Mac,
+    /// Windows.
+    Pc,
+    /// Linux and the rest.
+    Other,
+}
+
+impl Host {
+    /// The system this binary runs on.
+    pub fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Host::Mac
+        } else if cfg!(windows) {
+            Host::Pc
+        } else {
+            Host::Other
+        }
+    }
+
+    /// "This Mac", "This PC", "This machine".
+    pub fn this(self) -> &'static str {
+        match self {
+            Host::Mac => "This Mac",
+            Host::Pc => "This PC",
+            Host::Other => "This machine",
+        }
+    }
+
+    /// [`Self::this`] for a column header: "THIS MAC", "THIS PC", "THIS MACHINE".
+    pub fn this_upper(self) -> &'static str {
+        match self {
+            Host::Mac => "THIS MAC",
+            Host::Pc => "THIS PC",
+            Host::Other => "THIS MACHINE",
+        }
+    }
+}
+
+/// The warning's sentence, when there is one, for the system this runs on.
 pub fn warning(w: &DiskWarning) -> Option<&'static str> {
-    match w.level {
-        DiskLevel::Ok => None,
-        DiskLevel::Low => Some("This Mac is almost out of space. Delete old Spaces or snapshots."),
-        DiskLevel::Critical => Some(
+    warning_on(w, Host::current())
+}
+
+/// [`warning`] for `host`.
+pub fn warning_on(w: &DiskWarning, host: Host) -> Option<&'static str> {
+    match (w.level, host) {
+        (DiskLevel::Ok, _) => None,
+        (DiskLevel::Low, Host::Mac) => {
+            Some("This Mac is almost out of space. Delete old Spaces or snapshots.")
+        }
+        (DiskLevel::Low, Host::Pc) => {
+            Some("This PC is almost out of space. Delete old Spaces or snapshots.")
+        }
+        (DiskLevel::Low, Host::Other) => {
+            Some("This machine is almost out of space. Delete old Spaces or snapshots.")
+        }
+        (DiskLevel::Critical, Host::Mac) => Some(
             "This Mac is out of space, so new Spaces can't be created. Delete old Spaces or snapshots.",
+        ),
+        (DiskLevel::Critical, Host::Pc) => Some(
+            "This PC is out of space, so new Spaces can't be created. Delete old Spaces or snapshots.",
+        ),
+        (DiskLevel::Critical, Host::Other) => Some(
+            "This machine is out of space, so new Spaces can't be created. Delete old Spaces or snapshots.",
         ),
     }
 }
@@ -342,13 +404,32 @@ mod tests {
 
         let low = DiskWarning::assess(10 * GIB, TB, 5 * GIB, DiskLevel::Ok);
         assert_eq!(
-            warning(&low),
+            warning_on(&low, Host::Mac),
             Some("This Mac is almost out of space. Delete old Spaces or snapshots.")
         );
+        assert_eq!(
+            warning_on(&low, Host::Pc),
+            Some("This PC is almost out of space. Delete old Spaces or snapshots.")
+        );
+        assert_eq!(
+            warning_on(&low, Host::Other),
+            Some("This machine is almost out of space. Delete old Spaces or snapshots.")
+        );
+        // The CLI words it for the system it runs on.
+        assert_eq!(warning(&low), warning_on(&low, Host::current()));
         let ok = DiskWarning::assess(500 * GIB, TB, 5 * GIB, DiskLevel::Ok);
         assert_eq!(warning(&ok), None);
         let crit = DiskWarning::assess(GIB, TB, 5 * GIB, DiskLevel::Ok);
         assert!(warning(&crit).unwrap().contains("out of space"));
+        for (host, this) in [
+            (Host::Mac, "This Mac"),
+            (Host::Pc, "This PC"),
+            (Host::Other, "This machine"),
+        ] {
+            assert!(warning_on(&crit, host).unwrap().starts_with(this));
+            assert_eq!(host.this(), this);
+            assert_eq!(host.this_upper(), this.to_uppercase());
+        }
     }
 
     #[test]

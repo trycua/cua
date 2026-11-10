@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.AppKit Swift app.
 //!
 //! Mirror of `harness_wpf_test.rs` for the macOS AppKit hosting pattern.
@@ -34,7 +37,7 @@ use cua_driver_testkit::e2e::{
     recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
 };
 use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
-use cua_driver_testkit::sentinel::run_with_background_oracles;
+use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
 #[path = "support/appkit_snapshot_publication.rs"]
@@ -277,6 +280,17 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
         .and_then(|element| element["element_token"].as_str())
         .unwrap_or_else(|| panic!("{identifier} element_token not found"))
         .to_owned()
+}
+
+/// The AppKit harness's `activations=` count (`disabled_control` scenario).
+fn activations(snapshot: &ToolResponse) -> u64 {
+    snapshot
+        .tree_text()
+        .split("activations=")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no activations= label:\n{}", snapshot.tree_text()))
 }
 
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
@@ -1063,6 +1077,26 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+            // The target revalidates the item only once it has processed
+            // losing activation, and until then AppKit still reports it
+            // enabled. Wait for that, so the call below runs in the background
+            // state it is meant to test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let state = snapshot_elements(driver, pid, wid);
+                if state
+                    .tree_text()
+                    .contains("[id=menu-window-arrange-left enabled=false")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Window > Arrange > Left stayed enabled with the distractor in front: {}",
+                    state.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
 
             // invoke_menu does not activate a background app (#4955): with
             // the distractor in front, the item stays disabled and the call
@@ -1934,12 +1968,39 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
                     "{}",
                     refused.raw
                 );
+                assert_eq!(
+                    refused.structured()["code"],
+                    "element_disabled",
+                    "{}",
+                    refused.raw
+                );
+
+                // Every other token writer refuses the same control the same way.
+                let token = &element["element_token"];
+                let writers = [
+                    ("set_value", serde_json::json!({ "value": "1" })),
+                    ("right_click", serde_json::json!({})),
+                    ("double_click", serde_json::json!({})),
+                    ("click", serde_json::json!({ "button": "middle" })),
+                    ("type_text", serde_json::json!({ "text": "x" })),
+                ];
+                for (tool, mut args) in writers {
+                    args["pid"] = serde_json::json!(pid as i64);
+                    args["window_id"] = serde_json::json!(wid);
+                    args["element_token"] = token.clone();
+                    let refused = driver.call(tool, args);
+                    assert!(
+                        refused.is_error() && refused.structured()["code"] == "element_disabled",
+                        "{tool} on a disabled control was not refused as element_disabled: {}",
+                        refused.raw
+                    );
+                }
 
                 std::thread::sleep(Duration::from_millis(200));
                 let after = snapshot_elements(driver, pid, wid);
                 assert!(
                     after.tree_text().contains("disabled_checked=false"),
-                    "the refused press changed the disabled checkbox:\n{}",
+                    "a refused action changed the disabled checkbox:\n{}",
                     after.tree_text()
                 );
             },
@@ -1947,6 +2008,162 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
 
         Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+/// A foreground call into a background app skips the early `AXEnabled` read so
+/// activation can enable the control, and reads it again before input. A
+/// control enabled only while its app is active reads `enabled: false` from
+/// behind another app and is acted on; one that stays disabled is refused as
+/// `element_disabled`, not clicked, double-clicked, middle-clicked or typed
+/// into.
+#[test]
+#[ignore]
+fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
+    let case = native_foreground_case(
+        "appkit",
+        "activation_enablement",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
+
+        // (tool, target id, extra args, fixture label after delivery, or None
+        // when the target stays disabled and the call must be refused)
+        let calls = [
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=click"),
+            ),
+            (
+                "double_click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=double_click"),
+            ),
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({ "button": "middle" }),
+                Some("active_only=middle_click"),
+            ),
+            (
+                "type_text",
+                "txt-active-only",
+                serde_json::json!({ "text": "ok" }),
+                Some("active_only=text:ok"),
+            ),
+            ("double_click", "chk-disabled", serde_json::json!({}), None),
+            (
+                "click",
+                "chk-disabled",
+                serde_json::json!({ "button": "middle" }),
+                None,
+            ),
+            (
+                "type_text",
+                "chk-disabled",
+                serde_json::json!({ "text": "x" }),
+                None,
+            ),
+        ];
+        for (tool, id, mut args, delivered) in calls {
+            // Each call starts with the harness behind another app, the case
+            // in which the early read is skipped.
+            sentinel
+                .prepare_background_observation(&mut driver, target)
+                .unwrap_or_else(|error| panic!("put the harness in the background: {error}"));
+            let snapshot = snapshot_elements(&mut driver, pid, wid);
+            let index = element_index_by_id(snapshot.tree_text(), id)
+                .unwrap_or_else(|| panic!("{id} has no element_index:\n{}", snapshot.tree_text()));
+            let element = snapshot.structured()["elements"]
+                .as_array()
+                .and_then(|elements| {
+                    elements
+                        .iter()
+                        .find(|element| element["element_index"].as_u64() == Some(index))
+                })
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} is missing from elements"));
+            assert_eq!(
+                element["enabled"], false,
+                "{id} is not disabled while its app is in the background: {element}"
+            );
+            let activations_before = activations(&snapshot);
+            args["pid"] = serde_json::json!(pid as i64);
+            args["window_id"] = serde_json::json!(wid);
+            args["element_token"] = element["element_token"].clone();
+            args["delivery_mode"] = serde_json::json!("foreground");
+            let response = driver.call(tool, args);
+            let Some(expected) = delivered else {
+                assert!(
+                    response.is_error() && response.structured()["code"] == "element_disabled",
+                    "foreground {tool} on {id}, which stays disabled, was not refused as \
+                     element_disabled: {}",
+                    response.raw
+                );
+                // An early refusal returns the same code; the activation count
+                // shows this one came from the read after activation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let after = snapshot_elements(&mut driver, pid, wid);
+                    if activations(&after) > activations_before {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "foreground {tool} on {id} was refused without activating the app:\n{}",
+                        after.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            };
+            assert!(
+                !response.is_error(),
+                "foreground {tool} on {id}, which activation enables, failed: {}",
+                response.raw
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let after = snapshot_elements(&mut driver, pid, wid);
+                if after.tree_text().contains(expected) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "foreground {tool} on {id} did not record {expected}:\n{}",
+                    after.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot_elements(&mut driver, pid, wid);
+        assert!(
+            after.tree_text().contains("disabled_checked=false"),
+            "a refused foreground action changed the disabled checkbox:\n{}",
+            after.tree_text()
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
     });
 }
 

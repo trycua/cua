@@ -27,15 +27,15 @@ struct UpdatesTests {
         model.telemetry = telemetry
         model.checkNow()
         updater.nextResult = "found"
-        model.choose(channel: "beta")
-        model.checkNow()
+        // A switch checks the new channel at once.
+        model.choose(channel: "nightly")
         // Sparkle installs what it found on its own schedule.
         updater.onUpdateEvent?("installed")
         let got = telemetry.recorded.map { ParityTests.signalFrame($0) }
             .map { "\($0["action"]!) \($0["channel"]!) \($0["trigger"]!)" }
         #expect(got == [
             "checked stable user", "not_found stable user",
-            "checked beta user", "found beta user", "installed beta user",
+            "checked nightly user", "found nightly user", "installed nightly user",
         ])
         // A scheduled check is the background's.
         updater.nextResult = "not_found"
@@ -90,13 +90,32 @@ struct UpdatesTests {
         var saved: [AppUpdateChannel] = []
         model.saveChannel = { saved.append($0) }
         #expect(updater.channels.isEmpty)
-        model.choose(channel: "beta")
-        #expect(updater.channels == ["beta"])
-        #expect(saved == [.beta])
-        #expect(model.view.updates?.channels.first(where: \.active)?.id == "beta")
+        #expect(updater.feedURL == nil)
+        #expect(model.view.updates?.channels.map(\.id) == ["stable", "nightly"])
+        model.choose(channel: "nightly")
+        #expect(updater.channels == ["nightly"])
+        #expect(updater.feedURL == "https://github.com/trycua/cua/releases/download/cua-spaces-nightly/cua-spaces-nightly-appcast.xml")
+        #expect(saved == [.nightly])
+        #expect(model.view.updates?.channels.first(where: \.active)?.id == "nightly")
+        // A switch checks the new channel at once.
+        #expect(updater.checks == 1)
         model.choose(channel: "stable")
         #expect(updater.channels.isEmpty)
-        #expect(saved == [.beta, .stable])
+        #expect(updater.feedURL == nil)
+        #expect(saved == [.nightly, .stable])
+        // A page from before Nightly asks for Beta: that is Nightly.
+        model.choose(channel: "beta")
+        #expect(model.channel == .nightly)
+    }
+
+    /// A nightly's About says when it was built, and its notes are the nightly release.
+    @Test func aNightlyShowsItsBuildDayAndNotes() {
+        let info = AboutBundleInfo(version: "0.21.0-nightly.20261105.42+55e1f5d", build: "0.20.0.202611050731", os: "macOS 26.0 (arm64)")
+        let model = UpdatesModel(updater: FixtureUpdater(), channel: .nightly, info: info)
+        #expect(model.view.versionLine == "Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026")
+        #expect(UpdateState.notesURL(version: "0.21.0-nightly.20261105.42+55e1f5d")
+            == "https://github.com/trycua/cua/releases/tag/cua-spaces-nightly")
+        #expect(UpdateState.notesURL(version: "0.20.0") == "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.20.0")
     }
 
     // MARK: - The in-app update flow
@@ -207,17 +226,104 @@ struct UpdatesTests {
         #expect(driver.state.status == .idle)
     }
 
-    @Test func theSilentPathReachesDownloadedWithItsImmediateInstall() {
+    @Test func theSilentPathReachesDownloaded() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
         var events: [String] = []
-        var installs = 0
         driver.onEvent = { events.append($0) }
-        driver.silentlyDownloaded(version: "0.9.3") { installs += 1 }
+        driver.silentlyDownloaded(version: "0.9.3")
         #expect(driver.state.status == .downloaded && driver.state.version == "0.9.3")
         #expect(events == ["downloaded"])
-        #expect(installs == 0)
+    }
+
+    /// Sparkle ignores the install block unless the delegate takes the
+    /// install (returns true), and taking it loses the install on quit
+    /// (CUA-3065). So the delegate leaves it to Sparkle.
+    @Test func quitInstallStaysWithSparkle() {
+        #expect(SparkleUpdater.handlesQuitInstallItself == false)
+    }
+
+    /// 0.21.1: "Restart to update" did nothing on the silent path, since the
+    /// install block was dead. It must resume the update and install it.
+    @Test func restartToUpdateInstallsASilentlyDownloadedUpdate() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var resumes = 0
+        var choices: [SPUUserUpdateChoice] = []
+        driver.resumeSilentUpdate = { resumes += 1 }
+        // Nothing downloaded: nothing to do.
+        #expect(!driver.installNow() && resumes == 0)
+        driver.silentlyDownloaded(version: "0.9.3")
         #expect(driver.installNow())
-        #expect(installs == 1)
+        #expect(resumes == 1)
+        // The resumed session asks to install: answered at once.
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices == [.install])
+        // A later session's prompt is held again, not auto-answered.
+        driver.dismissUpdateInstallation()
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices == [.install])
+    }
+
+    /// 0.20.0 to 0.22.0: the click did nothing. When the app is still running
+    /// a few seconds after "Restart to update", it quits, so Sparkle's own
+    /// installer applies the staged update; if that does not end the app, the
+    /// page says to quit and reopen.
+    @Test func aRestartThatDoesNothingQuitsTheApp() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        #expect(quits == 0 && timers.count == 1)
+        timers.removeFirst()()
+        #expect(quits == 1 && driver.state.status != .error)
+        // Still running after the quit: say what to do.
+        timers.removeFirst()()
+        #expect(driver.state.status == .error)
+        #expect(driver.state.message == UpdateUserDriver.restartStuckMessage)
+    }
+
+    @Test func aNewerClickSupersedesAnOlderRestartTimer() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        #expect(driver.installNow())
+        timers.removeFirst()()
+        #expect(quits == 0)
+        timers.removeFirst()()
+        #expect(quits == 1)
+    }
+
+    @Test func aHeldReplyRestartIsWatchedToo() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var timers: [() -> Void] = []
+        var quits = 0
+        driver.schedule = { _, work in timers.append(work) }
+        driver.quitApp = { quits += 1 }
+        var choices: [SPUUserUpdateChoice] = []
+        driver.handleFound(version: "0.9.3", informationOnly: false) { _ in }
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(driver.installNow() && choices == [.install])
+        timers.removeFirst()()
+        #expect(quits == 1)
+    }
+
+    @Test func aFailedResumeDoesNotInstallALaterPrompt() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var choices: [SPUUserUpdateChoice] = []
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        driver.handleError("offline")
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices.isEmpty)
     }
 
     @Test func nothingFoundAndBackgroundErrorsStayQuiet() {
@@ -283,13 +389,13 @@ struct UpdatesTests {
         defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
         var s = appSettingsLoad(path: path)
         s.menuBar = true
-        s.updateChannel = .beta
+        s.updateChannel = .nightly
         try? appSettingsSave(path: path, settings: s)
         // A build from before the updater kept no record: after the first
         // run, that is an update.
         #expect(UpdateRefresh.record(settingsPath: path, version: "0.2.0", build: "0.2.0.2", onboarded: true))
         let after = appSettingsLoad(path: path)
-        #expect(after.menuBar && after.updateChannel == .beta)
+        #expect(after.menuBar && after.updateChannel == .nightly)
     }
 
     /// Answers `cua` the way the real CLI does, recording each call.

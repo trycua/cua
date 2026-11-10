@@ -56,7 +56,8 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       // A retried create's final outcome; a page from before them sends neither.
       const retryAttempt = s.retryAttempt === undefined ? 0 : s.retryAttempt === 0 || s.retryAttempt === 1 ? s.retryAttempt : null;
       const errorSubclass = s.errorSubclass === undefined ? "none" : word("errorSubclass");
-      if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null || errorVariant === null) return null;
+      if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null || errorVariant === null)
+        return null;
       if (retryAttempt === null || !errorSubclass) return null;
       return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant, retryAttempt, errorSubclass });
     }
@@ -65,8 +66,16 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
       return location && guestOs && kind && gpu !== null ? new S.SpaceCreateStarted({ location, guestOs, kind, gpu }) : null;
     }
     case "volume-setup": {
-      const [surface, storage, mountMethod, outcome, addToFinder] = [word("surface"), word("storage"), word("mountMethod"), word("outcome"), flag("addToFinder")];
-      return surface && storage && mountMethod && outcome && addToFinder !== null ? new S.VolumeSetup({ surface, storage, addToFinder, mountMethod, outcome }) : null;
+      const [surface, storage, mountMethod, outcome, addToFinder] = [
+        word("surface"),
+        word("storage"),
+        word("mountMethod"),
+        word("outcome"),
+        flag("addToFinder"),
+      ];
+      return surface && storage && mountMethod && outcome && addToFinder !== null
+        ? new S.VolumeSetup({ surface, storage, addToFinder, mountMethod, outcome })
+        : null;
     }
     case "share": {
       const [action, role, outcome] = [word("action"), word("role"), word("outcome")];

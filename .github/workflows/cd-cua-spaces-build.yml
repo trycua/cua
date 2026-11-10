@@ -16,9 +16,12 @@ name: "CD: Cua Spaces build (shadow)"
 #    them absolute when it publishes) and the signing notes.
 # Not built here: Sparkle appcast (needs the published release), Sigstore
 # bundles and release-artifacts.json (made at the tag), Electron macOS (beta
-# only), dSYMs.
+# only). The macOS dSYMs go to Sentry, not into the build set.
 #
-# Trigger: push to main when a release input changes (paths below). The inputs
+# Trigger: push to main when a release input changes (paths below). A push
+# runs only the producer stages (the SwiftUI Rust slice and the Electron macOS
+# natives, which the tag run restores); the signed shadow build below them runs
+# for workflow_dispatch and the nightly call only (CUA-3571). The inputs
 # are keyed by their git tree hash: a run whose tree hash already has a live,
 # complete build (an Actions cache marker pointing at a run whose artifact has
 # not expired) does nothing. workflow_dispatch can force a rebuild.
@@ -35,11 +38,15 @@ name: "CD: Cua Spaces build (shadow)"
 # (signer workflow: this file at refs/heads/main). verify-release.sh runs on
 # the produced set before it is attested.
 #
-# Nightly (CUA-1991; called by nightly-cua-spaces.yml with `channel:
-# nightly`): the same macOS build with the nightly version and
-# CFBundleVersion the caller chose, and nothing else. No Windows or Linux
-# build, no build set, attestation or marker: the caller publishes the
-# signed, notarized disk image to the nightly appcast and records the cost.
+# Nightly (CUA-1991, CUA-3503; called by nightly-cua-spaces.yml with
+# `channel: nightly`): the same macOS, Windows and Linux builds with the
+# nightly version and CFBundleVersion the caller chose. The Electron apps get
+# the version without its +sha build metadata (X.Y.Z-nightly.YYYYMMDD.N:
+# electron-builder takes no build metadata), which makes electron-builder
+# write the `nightly` feeds (nightly.yml, nightly-linux*.yml) for the
+# cua-spaces-nightly release. No build set, attestation or marker: the caller
+# publishes the signed parts (part-*, part-winfeed-*) to the nightly release
+# and records the cost.
 
 on:
   push:
@@ -51,11 +58,19 @@ on:
       - "apps/cua-spaces-web/**"
       - "libs/cua/**"
       - "libs/cua-spacesd/VERSION"
+      # Files outside libs/cua that the SwiftUI Rust slice reads at compile
+      # time (spaces_rust_slice_inputs.py lists them; a unit test checks this
+      # list covers them). apps/cua-spaces-web is above.
+      - "libs/images/sandbox-images.json"
+      - ".cargo/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/actions/spaces-native/**"
       - ".github/actions/spaces-rust-slice/**"
       - ".github/actions/setup-protoc/**"
       - ".github/scripts/spaces_build_*.py"
       - ".github/workflows/cd-cua-spaces-build.yml"
+      - ".github/workflows/ci-cua-spaces-rust-slice.yml"
+      - ".github/workflows/cd-cua-spaces-natives-main.yml"
   workflow_dispatch:
     inputs:
       force:
@@ -65,7 +80,7 @@ on:
   workflow_call:
     inputs:
       channel:
-        description: "nightly: the macOS app only, for nightly-cua-spaces.yml"
+        description: "nightly: the nightly build for nightly-cua-spaces.yml"
         type: string
         required: true
       version:
@@ -118,8 +133,15 @@ jobs:
       actions: read
     outputs:
       skip: ${{ steps.plan.outputs.skip }}
+      # False for a push to main: the producer stages (`slice`, `natives-mac`)
+      # still fill the caches the tag run restores, but the signed installers
+      # (the shadow build, about 145k weighted runner min/wk) are built only
+      # for a manual run, the nightly call and `force`.
+      shadow: ${{ github.event_name != 'push' }}
       reuse_run: ${{ steps.plan.outputs.reuse_run }}
       version: ${{ steps.plan.outputs.version }}
+      # The Electron apps' version: the version without +build metadata.
+      electron_version: ${{ steps.plan.outputs.electron_version }}
       build_number: ${{ github.run_number }}
       tree: ${{ steps.plan.outputs.tree }}
       retention: ${{ steps.plan.outputs.retention }}
@@ -170,6 +192,7 @@ jobs:
             echo "skip=$skip"
             echo "reuse_run=$reuse_run"
             echo "version=$version"
+            echo "electron_version=${version%%+*}"
             echo "tree=$TREE"
             echo "retention=$retention"
           } >> "$GITHUB_OUTPUT"
@@ -192,7 +215,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -200,13 +223,43 @@ jobs:
       - name: Check the baked cua-spacesd release
         env:
           GH_TOKEN: ${{ github.token }}
+          # The VERSION bump and its release publish start together on main.
+          SPACESD_WAIT_MINUTES: "30"
         run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
 
-  # The SwiftUI app's Rust slices, restored from the cache the main producer
-  # (ci-cua-spaces-rust-slice.yml) fills, or built.
+  # The producers: the one place a libs/cua tree is compiled on main. Each
+  # builds on a cache miss and saves, under the keys the tag run
+  # (cd-cua-spaces.yml) restores, so a release of a commit that main built
+  # compiles nothing. They run once per tree (`plan` skips a tree with a live
+  # build) and one build at a time, never beside another producer.
+  #
+  # SwiftUI app Rust slices (arm64, x86_64), with the cache-key check.
+  slice:
+    name: Producer, SwiftUI Rust
+    needs: [plan, spacesd-published]
+    if: needs.plan.outputs.skip != 'true'
+    uses: ./.github/workflows/ci-cua-spaces-rust-slice.yml
+    permissions:
+      contents: read
+
+  # Electron macOS native layers (beta releases restore them). Not needed by
+  # the stable build set below, so a failure here does not block it.
+  natives-mac:
+    name: Producer, Electron macOS natives
+    needs: [plan, spacesd-published]
+    if: needs.plan.outputs.skip != 'true' && inputs.channel != 'nightly'
+    uses: ./.github/workflows/cd-cua-spaces-natives-main.yml
+    permissions:
+      contents: read
+
+  # The SwiftUI app's Rust slices, taken from the artifact `slice` just
+  # uploaded (the cache is the fallback). Neither being there is an alert (the
+  # workflow is watched by workflow-failure-alerts.yml): it never compiles a
+  # second copy.
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
-    needs: [plan, spacesd-published]
+    needs: [plan, spacesd-published, slice]
+    if: needs.plan.outputs.shadow == 'true'
     runs-on: macos-26
     timeout-minutes: 180
     strategy:
@@ -217,9 +270,35 @@ jobs:
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/spaces-rust-slice
+      # The producer stage hands the slice over as an artifact of this run
+      # (an Actions cache entry can be evicted before this job starts).
+      - name: Download the slice the producer built
+        id: artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftui-rust-slice-${{ matrix.arch }}
+          path: libs/cua/target/${{ matrix.triple }}/release
+      - name: Restore the slice from the cache (artifact missing)
+        id: slice
+        if: steps.artifact.outcome != 'success'
+        uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
+          build: "false"
+      - name: The producer left the slice
+        if: steps.artifact.outcome != 'success' && steps.slice.outputs.cache-hit != 'true'
+        run: |
+          echo "::error title=Slice missing::The SwiftUI Rust slice (${{ matrix.triple }}) is neither an artifact of this run nor in the Actions cache although the producer stage just ran. Key: ${{ steps.slice.outputs.key }}. Not compiling a second copy."
+          exit 1
+      - name: The slice is complete
+        run: |
+          set -euo pipefail
+          d="libs/cua/target/${{ matrix.triple }}/release"
+          chmod +x "$d/cua-spaces-cli"
+          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
+            test -s "$d/$f" || { echo "::error::missing or empty $f"; exit 1; }
+          done
       # microVMs on Apple silicon: the static aarch64 guest init the app
       # bundles (build-release.sh --skip-cargo takes it from here). Same
       # step as cd-cua-spaces.yml.
@@ -250,6 +329,7 @@ jobs:
   web:
     name: Web UI
     needs: plan
+    if: needs.plan.outputs.shadow == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     permissions:
@@ -292,7 +372,7 @@ jobs:
           retention-days: 1
 
   # macOS: sign, notarize, staple; DMG and .pkg. Same steps as build-macos in
-  # cd-cua-spaces.yml (without the release upload, the appcast and the dSYMs).
+  # cd-cua-spaces.yml (without the release upload and the appcast).
   build-macos:
     name: darwin-universal (SwiftUI)
     needs: [plan, spacesd-published, macos-rust, web]
@@ -398,6 +478,10 @@ jobs:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
 
+      # GitHub's release CDN answers 504 for minutes (Sparkle, Sentry binary
+      # targets): resolve with retries before the build that follows the
+      # long Rust compile, so one blip does not cost a whole run.
+      - uses: ./.github/actions/swiftpm-resolve
       - name: Build and sign Cua Spaces.app (universal)
         env:
           SIGNED: ${{ steps.signing.outputs.apple }}
@@ -415,6 +499,19 @@ jobs:
             "${bundle[@]}" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
+
+      # build-release.sh strips the shipped binaries and keeps their symbols
+      # here. Nightly and beta crash reports (CUA-SPACES-DESKTOP-2, -H) were
+      # unreadable without them: Sentry matches a crash to its dSYM by build
+      # UUID, so the build that ships must be the one that uploads. Never
+      # fails the build (see the action).
+      - name: Upload the macOS dSYMs to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ env.VERSION }}
+          kind: debug-files
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
 
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'
@@ -533,7 +630,7 @@ jobs:
   electron-native:
     name: Electron native (${{ matrix.label }})
     needs: plan
-    if: inputs.channel != 'nightly'
+    if: needs.plan.outputs.shadow == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -585,7 +682,7 @@ jobs:
         working-directory: apps/cua-spaces-desktop
         shell: bash
     env:
-      VERSION: ${{ needs.plan.outputs.version }}
+      VERSION: ${{ needs.plan.outputs.electron_version }}
       # Pack this architecture only (packaging/archs.cjs).
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
     steps:
@@ -660,7 +757,7 @@ jobs:
       - name: Build and sign (electron-builder)
         env:
           SIGNED: ${{ steps.signing.outputs.azure }}
-          CUA_SPACES_VERSION: ${{ needs.plan.outputs.version }}
+          CUA_SPACES_VERSION: ${{ needs.plan.outputs.electron_version }}
           CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
           ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
@@ -691,7 +788,7 @@ jobs:
           }
           New-Item -ItemType Directory -Force electron-assets, electron-feed | Out-Null
           Copy-Item dist/*.exe, dist/*.blockmap electron-assets/
-          Copy-Item dist/beta.yml, dist/latest.yml electron-feed/ -ErrorAction SilentlyContinue
+          Copy-Item dist/beta.yml, dist/latest.yml, dist/nightly.yml electron-feed/ -ErrorAction SilentlyContinue
           if ($env:ARCH -eq 'x64') {
             if ($env:SIGNED -eq 'true') {
               "electron-windows: Authenticode signed (Electron app, Azure Artifact Signing)" | Set-Content electron-assets/signing-electron-windows.txt
@@ -758,7 +855,7 @@ jobs:
       # No OS code signing on Linux; electron-updater checks each file's sha512.
       - name: Build (electron-builder)
         env:
-          CUA_SPACES_VERSION: ${{ needs.plan.outputs.version }}
+          CUA_SPACES_VERSION: ${{ needs.plan.outputs.electron_version }}
           CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
         run: pnpm dist:linux
       - name: Collect the assets
@@ -768,7 +865,7 @@ jobs:
           set -euo pipefail
           mkdir -p electron-assets
           cp dist/*.AppImage dist/*.deb electron-assets/
-          cp dist/beta-linux*.yml dist/latest-linux*.yml electron-assets/ 2>/dev/null || true
+          cp dist/beta-linux*.yml dist/latest-linux*.yml dist/nightly-linux*.yml electron-assets/ 2>/dev/null || true
           if [ "$ARCH" = x64 ]; then
             echo "electron-linux: updater sha512 only (no OS code signing on Linux)" > electron-assets/signing-electron-linux.txt
           fi
@@ -788,6 +885,8 @@ jobs:
   assemble:
     name: Assemble the build set
     needs: [plan, build-macos, electron-windows-pkg, electron-linux-pkg]
+    # A nightly is published part by part by nightly-cua-spaces.yml.
+    if: inputs.channel != 'nightly'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -939,7 +1038,7 @@ jobs:
   summary:
     name: Cost summary
     needs: [plan, assemble, verify, attest]
-    if: always() && needs.plan.result == 'success' && inputs.channel != 'nightly'
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.shadow == 'true' && inputs.channel != 'nightly'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

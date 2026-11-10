@@ -12,10 +12,13 @@ import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
 import { mentionSegments } from "@/lib/mentions";
+import { abilityOfAction } from "@/lib/agent-home/prompt";
+import { askText } from "@/lib/agent-home/requests";
 import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
-import { FailureNote } from "./failure-note";
+import { ChildSpaceRow, SubagentRow } from "./child-rows";
+import { FailureComputerContext, FailureNote, type FailureComputer } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
@@ -54,8 +57,11 @@ export function ThreadView({
   endInset = 0,
   after,
   tail,
+  computer,
 }: {
   items: ThreadItem[];
+  /** The computer this thread's agents run on (a failed sign-in offers to sign in there). */
+  computer?: FailureComputer;
   /** Room kept clear at the end (px): thread mode's mini-player sits there, never over the newest message. */
   endInset?: number;
   /** Drawn under the item that posted entry `seq` (a summon's "can't be woken" note). */
@@ -144,20 +150,34 @@ export function ThreadView({
         }
       }}
       // Soft fades at the edges: an entry cut off there reads as scrolled, not broken.
-      className={cn("relative overflow-y-auto overscroll-contain [mask-image:linear-gradient(to_bottom,transparent_0,black_28px,black_calc(100%-16px),transparent_100%)]", className)}
+      className={cn(
+        "relative overflow-y-auto overscroll-contain [mask-image:linear-gradient(to_bottom,transparent_0,black_28px,black_calc(100%-16px),transparent_100%)]",
+        className,
+      )}
     >
       {items.length === 0 ? (
         <div className="flex h-full items-end px-8 pb-4">{empty}</div>
       ) : (
-        <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
-          {items.map((item, i) => (
-            <Fragment key={item.key}>
-              <ThreadItemView item={item} above={aboveSeq(items, i)} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} onRetry={onRetry} onReply={onReply} />
-              {after && "entry" in item ? after(item.entry.seq) : null}
-            </Fragment>
-          ))}
-          {tail}
-        </div>
+        <FailureComputerContext.Provider value={computer}>
+          <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
+            {items.map((item, i) => (
+              <Fragment key={item.key}>
+                <ThreadItemView
+                  item={item}
+                  above={aboveSeq(items, i)}
+                  roster={roster}
+                  onAnswer={onAnswer}
+                  onOpenAttachment={onOpenAttachment}
+                  onRemoveAgent={onRemoveAgent}
+                  onRetry={onRetry}
+                  onReply={onReply}
+                />
+                {after && "entry" in item ? after(item.entry.seq) : null}
+              </Fragment>
+            ))}
+            {tail}
+          </div>
+        </FailureComputerContext.Provider>
       )}
     </div>
   );
@@ -167,7 +187,7 @@ export function ThreadView({
 export function aboveSeq(items: readonly ThreadItem[], i: number): number | null {
   for (let j = i - 1; j >= 0; j--) {
     const it = items[j]!;
-    if (it.type === "system" || it.type === "unread") continue;
+    if (it.type === "system" || it.type === "unread" || it.type === "subagent" || it.type === "child_space") continue;
     return it.entry.seq;
   }
   return null;
@@ -214,9 +234,20 @@ export const ThreadItemView = memo(function Item({
           {item.text}
         </p>
       );
+    case "subagent":
+      return <SubagentRow item={item} />;
+    case "child_space":
+      return <ChildSpaceRow item={item} />;
     case "message":
       // One row, in order. A reply quotes the message it answers only when that is not the one right above it.
-      return <Message entry={item.entry} {...m} quote={item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
+      return (
+        <Message
+          entry={item.entry}
+          {...m}
+          quote={item.quote && item.quote.seq !== above ? item.quote : null}
+          task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined}
+        />
+      );
     case "task":
       // How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here.
       return (
@@ -343,14 +374,20 @@ function Message({
                 </span>
               ) : null}
             </>
-          ) : who.kind === "agent" ? <AgentName who={who} roster={roster} onRemove={onRemoveAgent} /> : person ? (
+          ) : who.kind === "agent" ? (
+            <AgentName who={who} roster={roster} onRemove={onRemoveAgent} />
+          ) : person ? (
             <ProfileTrigger person={person} className="truncate text-[13px] font-semibold hover:underline" data={{ "data-person-name": person.label }}>
               {who.label}
             </ProfileTrigger>
           ) : (
             <span className="truncate text-[13px] font-semibold">{who.label}</span>
           )}
-          <time className="shrink-0 text-[11px] text-muted-foreground tabular-nums" dateTime={new Date(entry.tsMs).toISOString()} title={new Date(entry.tsMs).toLocaleString()}>
+          <time
+            className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+            dateTime={new Date(entry.tsMs).toISOString()}
+            title={new Date(entry.tsMs).toLocaleString()}
+          >
             {clock(entry.tsMs)}
           </time>
           {label ? <span className="shrink-0">{label}</span> : null}
@@ -470,7 +507,10 @@ function Approval({
   const { core } = useBridge();
   const card = useMemo(() => (entry.approval?.card ? exportCardView(core, entry.approval.card) : null), [core, entry.approval?.card]);
   const exportAsk = !card && entry.approval ? exportAskText(entry.approval.action, entry.approval.details) : null;
-  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : exportAsk;
+  // An agent asking for an ability (see Spaces, use a machine) says it in plain words, on this same card.
+  const ability = !card && !exportAsk && entry.approval ? abilityOfAction(entry.approval.action) : null;
+  const abilityAsk = ability ? askText({ seq: entry.seq, ability, detail: (entry.approval?.details ?? "").trim(), tsMs: entry.tsMs }, null) : null;
+  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : (exportAsk ?? abilityAsk);
   const press = (approve: boolean) => {
     setBusy(approve);
     setError(null);
@@ -485,7 +525,12 @@ function Approval({
   // Answered: the card is one muted line.
   if (card && answer) {
     return (
-      <div data-approval={entry.seq} data-approval-state={answer.approve ? "approved" : "denied"} data-approval-collapsed="" className="my-1 flex items-center gap-2 py-1 text-xs text-muted-foreground">
+      <div
+        data-approval={entry.seq}
+        data-approval-state={answer.approve ? "approved" : "denied"}
+        data-approval-collapsed=""
+        className="my-1 flex items-center gap-2 py-1 text-xs text-muted-foreground"
+      >
         {answer.approve ? <CheckIcon className="size-3.5 shrink-0 text-success" /> : <XIcon className="size-3.5 shrink-0 text-destructive" />}
         <span className="min-w-0 truncate" title={new Date(answer.tsMs).toLocaleString()}>
           {answer.approve ? card.resultApproved : card.resultDeclined} by {roster.author(answer.by).label}
@@ -496,7 +541,12 @@ function Approval({
   // Answered: the card is one muted line.
   if (card && answer) {
     return (
-      <div data-approval={entry.seq} data-approval-state={answer.approve ? "approved" : "denied"} data-approval-collapsed="" className="my-1 flex items-center gap-2 py-1 text-xs text-muted-foreground">
+      <div
+        data-approval={entry.seq}
+        data-approval-state={answer.approve ? "approved" : "denied"}
+        data-approval-collapsed=""
+        className="my-1 flex items-center gap-2 py-1 text-xs text-muted-foreground"
+      >
         {answer.approve ? <CheckIcon className="size-3.5 shrink-0 text-success" /> : <XIcon className="size-3.5 shrink-0 text-destructive" />}
         <span className="min-w-0 truncate" title={new Date(answer.tsMs).toLocaleString()}>
           {answer.approve ? card.resultApproved : card.resultDeclined} by {roster.author(answer.by).label}
@@ -505,7 +555,11 @@ function Approval({
     );
   }
   return (
-    <div data-approval={entry.seq} data-approval-state={answer ? (answer.approve ? "approved" : "denied") : (entry.approval?.state ?? "open")} className="-mx-3 my-1.5 rounded-lg bg-muted/50 px-3 pb-3">
+    <div
+      data-approval={entry.seq}
+      data-approval-state={answer ? (answer.approve ? "approved" : "denied") : (entry.approval?.state ?? "open")}
+      className="-mx-3 my-1.5 rounded-lg bg-muted/50 px-3 pb-3"
+    >
       <Message
         entry={entry}
         roster={roster}
@@ -529,7 +583,9 @@ function Approval({
         ) : (
           <>
             <p className="text-[13px] font-medium">{ask ? ask.title : entry.approval?.action}</p>
-            {(ask ? ask.detail : entry.approval?.details) ? <p className="mt-0.5 text-xs text-muted-foreground">{ask ? ask.detail : entry.approval?.details}</p> : null}
+            {(ask ? ask.detail : entry.approval?.details) ? (
+              <p className="mt-0.5 text-xs text-muted-foreground">{ask ? ask.detail : entry.approval?.details}</p>
+            ) : null}
           </>
         )}
       </div>
@@ -570,7 +626,15 @@ function Approval({
  * it and from where, what it will do, and Let it join / Deny for the owner
  * and admins. Answered like an approval.
  */
-function JoinRequestCard({ item, roster, onAnswer }: { item: Extract<ThreadItem, { type: "join_request" }>; roster: Roster; onAnswer: (approval: number, approve: boolean) => Promise<void> }) {
+function JoinRequestCard({
+  item,
+  roster,
+  onAnswer,
+}: {
+  item: Extract<ThreadItem, { type: "join_request" }>;
+  roster: Roster;
+  onAnswer: (approval: number, approve: boolean) => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { entry, answer } = item;
@@ -593,12 +657,20 @@ function JoinRequestCard({ item, roster, onAnswer }: { item: Extract<ThreadItem,
   const name = i?.displayName ?? entry.author.name;
   return (
     <div data-join-request={entry.seq} data-join-request-state={state} className="-mx-3 my-1.5 flex gap-3 rounded-lg bg-muted/50 px-3 py-2.5">
-      {i ? <AgentTile harness={i.harness.id} icon={i.icon} owner={i.owner} name={i.handle} px={28} surface="muted" className="mt-0.5" /> : <MemberAvatar kind="agent" name={name} size={28} className="mt-0.5" />}
+      {i ? (
+        <AgentTile harness={i.harness.id} icon={i.icon} owner={i.owner} name={i.handle} px={28} surface="muted" className="mt-0.5" />
+      ) : (
+        <MemberAvatar kind="agent" name={name} size={28} className="mt-0.5" />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[13px] font-semibold">{name}</span>
           <AiTag />
-          <time className="shrink-0 text-[11px] text-muted-foreground tabular-nums" dateTime={new Date(entry.tsMs).toISOString()} title={new Date(entry.tsMs).toLocaleString()}>
+          <time
+            className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+            dateTime={new Date(entry.tsMs).toISOString()}
+            title={new Date(entry.tsMs).toLocaleString()}
+          >
             {clock(entry.tsMs)}
           </time>
           {state === "open" ? (

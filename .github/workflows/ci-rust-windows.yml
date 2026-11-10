@@ -19,6 +19,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-uia/**"
       - "libs/cua-driver/tests/fixtures/**"
       - ".github/workflows/ci-rust-windows.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -64,12 +65,12 @@ jobs:
   # and runs a third of the test steps; `unit` below keeps the check name.
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   shard:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: Rust Windows shard ${{ matrix.shard }}/3
     runs-on: windows-latest
     strategy:
@@ -252,17 +253,41 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver --test protocol_schema_test --locked
 
+  # Lints the whole driver workspace (every crate, every target) on the pinned
+  # 1.97.1 toolchain. Runs beside the shards so it adds no wall-clock time.
+  clippy:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
+    name: Rust Windows clippy
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: clippy
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          shared-key: windows-clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Clippy driver workspace (all targets)
+        working-directory: libs/cua-driver/rust
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
   # The one check that stood for the whole suite before it was sharded.
   unit:
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Rust Windows unit and compile
     runs-on: ubuntu-latest
-    needs: shard
+    needs: [quick, shard, clippy]
     timeout-minutes: 5
     steps:
-      - name: All shards passed
+      - name: All shards and clippy passed
         env:
           RESULT: ${{ needs.shard.result }}
+          CLIPPY: ${{ needs.clippy.result }}
         run: |
-          echo "shards: $RESULT"
+          echo "shards: $RESULT, clippy: $CLIPPY"
           test "$RESULT" = success
+          test "$CLIPPY" = success

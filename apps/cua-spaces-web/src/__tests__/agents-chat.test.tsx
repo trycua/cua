@@ -46,7 +46,11 @@ describe("the Agents tab", () => {
     await open();
     await found(`[data-chat='${CODEX}']`);
     // Needs you: Hermes's tag, Codex's question, Claude Code's push.
-    expect(qa("[data-needs-you]").map((n) => n.dataset.needsYou).sort()).toEqual(["approval", "approval", "question"]);
+    expect(
+      qa("[data-needs-you]")
+        .map((n) => n.dataset.needsYou)
+        .sort(),
+    ).toEqual(["approval", "approval", "question"]);
     expect(qa("[data-needs-you]").map((n) => n.textContent)).toContainEqual(expect.stringContaining("Which branch should the snapshots go to"));
     // Hermes is in release-checks and ubuntu-build: one row.
     expect(qa(`[data-chat='${HERMES}']`)).toHaveLength(1);
@@ -178,7 +182,18 @@ describe("the DM and the list, as data", () => {
     state: "active",
     lastSeenMs: null,
   });
-  const member = (name: string, i: MemberIdentity | null, over: Partial<AgentMember> = {}): AgentMember => ({ name, harness: i?.harness.id ?? "", status: "idle", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: i, ...over });
+  const member = (name: string, i: MemberIdentity | null, over: Partial<AgentMember> = {}): AgentMember => ({
+    name,
+    harness: i?.harness.id ?? "",
+    status: "idle",
+    activity: null,
+    sessions: 1,
+    rights: null,
+    youCan: null,
+    heldBy: null,
+    identity: i,
+    ...over,
+  });
   const space = (id: string) => ({ id, name: id.split(":").pop()!, os: "linux" as const }) as never;
 
   it.skipIf(!wasmBuilt)("keys one agent across Spaces on owner, harness and name; without an identity, on its Space", async () => {
@@ -187,7 +202,13 @@ describe("the DM and the list, as data", () => {
     expect(chatKey("local:x", member("bot", null))).toBe("local:x/bot");
     const chats = mergeChats(core, [
       { space: space("local:a"), role: "owner", members: [member("hermes", ident("ada", "hermes", "Hermes"), { status: "asleep" })] },
-      { space: space("local:b"), role: "owner", members: [member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes", dm: { unread: 2, last: null }, needsYou: [] })] },
+      {
+        space: space("local:b"),
+        role: "owner",
+        members: [
+          member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes", dm: { unread: 2, last: null }, needsYou: [] }),
+        ],
+      },
       { space: space("local:b"), role: "owner", members: [member("hermes-3", ident("grace", "hermes", "Hermes"))] },
     ]);
     expect(chats.map((c) => [c.key, c.spaces.length, c.tone, c.line, c.unread])).toEqual([
@@ -197,7 +218,18 @@ describe("the DM and the list, as data", () => {
   });
 
   it("the DM rule (as the daemon's): the agent's entries, mine to it, and what hangs off them", () => {
-    const e = (seq: number, author: string, extra: Record<string, unknown> = {}) => ({ seq, kind: "message", text: "", mentions: [], reply_to: null, task: null, update: null, answer: null, author: { id: author }, ...extra });
+    const e = (seq: number, author: string, extra: Record<string, unknown> = {}) => ({
+      seq,
+      kind: "message",
+      text: "",
+      mentions: [],
+      reply_to: null,
+      task: null,
+      update: null,
+      answer: null,
+      author: { id: author },
+      ...extra,
+    });
     const entries = [
       e(1, "acct_ada", { mentions: ["codex"], task: { to: "codex" } }),
       e(2, "acct_ada", { mentions: ["hermes"], task: { to: "hermes" } }),

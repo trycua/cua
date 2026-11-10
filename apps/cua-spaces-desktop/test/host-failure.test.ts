@@ -6,7 +6,8 @@
 // that never carry a URL or the raw error, which stays whole as Details, and
 // Sign In or Retry. On Windows and Linux the words name the machine.
 import { describe, expect, it } from "vitest";
-import { classify, presentHostFailure } from "../src/model/host-failure";
+import { classify, presentHostFailure, refusalCode } from "../src/model/host-failure";
+import { Failure, reply } from "../src/bridge/host";
 
 const MISSING_RELEASE =
   "http: download: https://github.com/trycua/cua/releases/download/cua-spacesd-v0.2.0/cua-spacesd-aarch64-apple-darwin.tar.gz: HTTP 404";
@@ -58,7 +59,7 @@ describe("host setup failures", () => {
     expect(f.message).not.toMatch(/429|http|relay/i);
   });
 
-  it.each(["http: relay: HTTP 429: computer limit for this token reached", "HTTP 429: at most 5 unused pairing codes", "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."])(
+  it.each(["http: relay: HTTP 429: computer limit for this token reached", "HTTP 429: at most 5 unused pairing codes", "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."])(
     "a limit the relay explains is not a throttle: %s",
     (raw) => expect(classify(raw)).toBe("other"),
   );
@@ -96,6 +97,28 @@ describe("host setup failures", () => {
     expect(f.title).toBe("Couldn’t set up this Mac for access");
     expect(f.message).toBe("Something went wrong. Try again, or open Details to see what happened.");
     expect(f.details).toBe("something odd failed\nmore");
+  });
+
+  it("a new computer that needs proof asks for a code from another computer, in plain words", () => {
+    const raw = "permission denied: relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]";
+    const f = presentHostFailure(raw, "win32");
+    expect(f.kind).toBe("needsProof");
+    expect(f.refusalCode).toBe("new_computer_needs_proof");
+    expect(f.title).toBe("Confirm it’s you");
+    expect(f.message).toContain("To add this PC to your account, enter a code from a computer you already added.");
+    expect(f.actionLabel).toBe("Use a code from another computer");
+    expect(f.details).toBe(raw);
+    for (const word of ["relay", "enrol", "MFA", "token", "pairing"]) expect(`${f.title} ${f.message}`).not.toContain(word);
+    // The kind and the code reach the page.
+    const e = reply("1", new Failure("failed", f.message, f));
+    expect(e).toMatchObject({ ok: false, error: { kind: "needsProof", refusalCode: "new_computer_needs_proof", actionLabel: "Use a code from another computer" } });
+  });
+
+  it("reads a refusal code only from the end of the error", () => {
+    expect(refusalCode("relay: no [code: phone]")).toBe("phone");
+    expect(refusalCode("relay: that host is shared with you to watch only")).toBeUndefined();
+    expect(refusalCode("relay: x [code: Bad-Code]")).toBeUndefined();
+    expect(classify("relay: x [code: phone]")).toBe("other");
   });
 
   it("a port number is not a status code", () => {

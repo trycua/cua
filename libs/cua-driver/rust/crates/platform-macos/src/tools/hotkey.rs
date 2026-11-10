@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
@@ -551,7 +554,7 @@ impl Tool for HotkeyTool {
                                 wid,
                                 || {
                                     if screen_sharing_target {
-                                        crate::input::keyboard::press_key_bare_global(&key, &m)
+                                        crate::input::keyboard::press_key_bare_global(pid, &key, &m)
                                     } else {
                                         crate::input::keyboard::press_key_global(&key, &m)
                                     }
@@ -569,7 +572,7 @@ impl Tool for HotkeyTool {
                                 wid,
                                 || {
                                     focus_hotkey_element(pid, ptr)?;
-                                    crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    crate::input::keyboard::press_key_bare_global(pid, &key, &m)
                                 },
                             )?;
                             Ok(())
@@ -578,7 +581,7 @@ impl Tool for HotkeyTool {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
-                                || crate::input::keyboard::press_key_bare_global(&key, &m),
+                                || crate::input::keyboard::press_key_bare_global(pid, &key, &m),
                             )?;
                             Ok(())
                         }

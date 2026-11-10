@@ -77,6 +77,10 @@ pub struct AgentKeysInput {
     pub keys: Vec<AgentKeyInput>,
     /// Why this machine can't keep keys (the daemon's words), when it can't.
     pub unavailable: Option<String>,
+    /// Keys can be saved but only in an unencrypted file (a Local
+    /// development build without the Keychain): the daemon's warning, shown
+    /// in the notice while the buttons stay on.
+    pub warning: Option<String>,
     /// The keys could not be read (no daemon, a refused Keychain).
     pub error: Option<String>,
 }
@@ -263,7 +267,7 @@ pub fn view_on(input: &AgentKeysInput, os: SpaceOs) -> AgentKeysView {
             Some(k),
         )
     }));
-    let notice = input
+    let blocked = input
         .error
         .as_ref()
         .map(|e| format!("Couldn't read your agent keys: {e}"))
@@ -273,6 +277,8 @@ pub fn view_on(input: &AgentKeysInput, os: SpaceOs) -> AgentKeysView {
                 .as_ref()
                 .map(|why| format!("Keys can't be saved here: {why}."))
         });
+    let can_edit = blocked.is_none();
+    let notice = blocked.or_else(|| input.warning.as_ref().map(|w| format!("{w}.")));
     AgentKeysView {
         title: "Agent keys".into(),
         intro: intro(os),
@@ -281,7 +287,7 @@ pub fn view_on(input: &AgentKeysInput, os: SpaceOs) -> AgentKeysView {
         other_help: "For another provider, save its key under the variable its agent reads, \
                      like GEMINI_API_KEY."
             .into(),
-        can_edit: notice.is_none(),
+        can_edit,
         notice,
         added_label: "Added".into(),
     }
@@ -512,6 +518,24 @@ mod tests {
         assert!(!v.can_edit && v.notice.unwrap().contains("no Keychain"));
     }
 
+    #[test]
+    fn a_development_build_warns_that_keys_are_unencrypted_and_keeps_the_buttons_on() {
+        let warn = "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets";
+        let v = view(&AgentKeysInput {
+            warning: Some(warn.into()),
+            ..Default::default()
+        });
+        assert!(v.can_edit);
+        assert_eq!(v.notice.as_deref(), Some(format!("{warn}.").as_str()));
+        // A refusal still wins over the warning and turns the buttons off.
+        let v = view(&AgentKeysInput {
+            warning: Some(warn.into()),
+            unavailable: Some("no Keychain".into()),
+            ..Default::default()
+        });
+        assert!(!v.can_edit && v.notice.unwrap().starts_with("Keys can't be saved here"));
+    }
+
     /// Where the keys stay is the shell's system's: the Mac's words are the
     /// ones every build had before, to the byte.
     #[test]
@@ -561,11 +585,11 @@ mod tests {
         // Linux: cua has no vault there (the file store never holds agent keys), so no store is named.
         assert_eq!(
             view_on(&AgentKeysInput::default(), SpaceOs::Linux).intro,
-            "Agents in your Spaces need a provider key to run. Keys stay on this machine, and each one is only given to the agents that use it."
+            "Agents in your Spaces need a provider key to run. Keys stay on this computer, and each one is only given to the agents that use it."
         );
         assert_eq!(
             sheet(SpaceOs::Linux).value_help,
-            "It's saved on this machine and won't be shown again."
+            "It's saved on this computer and won't be shown again."
         );
 
         // Nothing of another system's words is left, in any sheet or section.

@@ -11,6 +11,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-sdk/src/remote_receiver*.rs"
       - "libs/python/cua-sandbox/cua_sandbox/interfaces/_driver_mcp.py"
       - "libs/python/cua-sandbox/cua_sandbox/interfaces/driver.py"
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -28,12 +29,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   candidate:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: MCP candidate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -66,11 +67,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Run envelope receiver and service tests
         working-directory: libs/cua-driver/rust
         run: |

@@ -47,7 +47,11 @@ describe("the method table", () => {
     const actions: string[] = [];
     Object.assign(ctx.model, { windowsRuntime: {}, fixRuntime: (action: string) => actions.push(action) });
     const r = registryOf(ctx);
-    expect(await r.dispatch({ id: "fix", method: "spaces.fixRuntime", args: { action: "open-windows-features" } })).toEqual({ id: "fix", ok: true, result: null });
+    expect(await r.dispatch({ id: "fix", method: "spaces.fixRuntime", args: { action: "open-windows-features" } })).toEqual({
+      id: "fix",
+      ok: true,
+      result: null,
+    });
     expect(actions).toEqual(["open-windows-features"]);
     expect(await r.dispatch({ id: "bad", method: "spaces.fixRuntime", args: { action: "reboot" } })).toMatchObject({ ok: false, error: { code: "bad_args" } });
     expect(actions).toEqual(["open-windows-features"]);

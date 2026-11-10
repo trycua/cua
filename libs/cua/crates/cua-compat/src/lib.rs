@@ -18,6 +18,7 @@
 
 pub mod auth;
 pub mod backend;
+pub mod cli;
 pub mod connect;
 pub mod daytona;
 pub mod e2b;

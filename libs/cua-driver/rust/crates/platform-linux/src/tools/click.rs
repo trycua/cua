@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::ClickButton;
 use cua_driver_core::{
@@ -548,6 +551,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::session_policy().click,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -569,7 +573,7 @@ impl ClickTool {
                         let confirmed = report.window_change_confirms();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
-                             (delivery_mode=foreground, focus_after={}){}{}",
+                             (delivery_mode=foreground, focus_after={}){}{}{}",
                             report.focus_after.as_str(),
                             if confirmed {
                                 format!("; {}.", report.window_change.as_deref().unwrap_or(""))
@@ -580,6 +584,7 @@ impl ClickTool {
                                 .as_deref()
                                 .map(|n| format!(" ({n})."))
                                 .unwrap_or_default(),
+                            report.focus_note(),
                         ))
                         .with_structured(foreground_structured(
                             "x11_xtest_fg",
@@ -642,6 +647,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::session_policy().click,
                             || crate::atspi::perform_action_observed(&observed_for_ax),
                         )
                     },
@@ -674,12 +680,13 @@ impl ClickTool {
                             "Clicked element [{idx}] (pid {pid}) through its AT-SPI action \
                              \"{action}\" with the window activated (delivery_mode=foreground, \
                              path=ax_fg, focus_after={}): the element had no usable \
-                             on-screen bounds ({reason}), so no pointer was moved.{}",
+                             on-screen bounds ({reason}), so no pointer was moved.{}{}",
                             report.focus_after.as_str(),
                             match &report.window_change {
                                 Some(change) => format!(" {change}."),
                                 None => " Not verified — confirm with a screenshot.".to_owned(),
-                            }
+                            },
+                            report.focus_note()
                         ))
                         .with_structured(foreground_structured("ax_fg", report, extra))
                     }
@@ -946,7 +953,7 @@ impl Tool for ClickTool {
             )
             .await;
             let r = spawn_blocking_bounded("desktop click", foreground_budget(0), move || {
-                if crate::wayland::wayland_input_enabled() {
+                if crate::wayland::is_wayland() {
                     if !modifiers.is_empty() {
                         anyhow::bail!(
                             "modified desktop clicks are unavailable on native Wayland: \
@@ -973,7 +980,7 @@ impl Tool for ClickTool {
                     "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
                 ))
                 .with_structured(
-                    json!({ "path": if crate::wayland::wayland_input_enabled() { "wayland_desktop" } else { "xtest_desktop" }, "verified": false, "effect": "unverifiable" }),
+                    json!({ "path": if crate::wayland::is_wayland() { "wayland_desktop" } else { "xtest_desktop" }, "verified": false, "effect": "unverifiable" }),
                 ),
                 Ok(Err(e)) if crate::input::foreground::error_code(&e).is_some() => {
                     input_error_result(e)
@@ -1085,7 +1092,7 @@ impl Tool for ClickTool {
             // action, no second tree walk. Element bounds come from the
             // (bounded) placement above.
             if delivery.is_foreground()
-                && !crate::wayland::wayland_input_enabled()
+                && !crate::wayland::is_wayland()
                 && !hyprland_foreground(delivery)
             {
                 return self
@@ -1140,7 +1147,7 @@ impl Tool for ClickTool {
             // same rule the foreground route applies), so those keep the
             // action route.
             let real_pointer = !delivery.is_foreground()
-                && !crate::wayland::wayland_input_enabled()
+                && !crate::wayland::is_wayland()
                 && crate::input::real_pointer_input_available();
             let menu_entry_on_screen = real_pointer && element_is_menu_role(&observed.role) && {
                 // A bounded D-Bus round-trip: off the runtime thread.
@@ -1321,6 +1328,20 @@ impl Tool for ClickTool {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
+            // A KWin handle is not an X11 id, and KWin has no input route bound
+            // to one window, so it gets no pointer fallback.
+            if let Some(xid) = xid_hint {
+                let kwin =
+                    tokio::task::spawn_blocking(move || crate::wayland::refuse_kwin_input(xid));
+                if let Ok(Err(error)) = kwin.await {
+                    if !delivery.is_foreground() {
+                        return crate::input::delivery::background_unavailable_error(
+                            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                        );
+                    }
+                    return input_error_result(error);
+                }
+            }
 
             // The AX route was unavailable. Fall back to a real MPX pointer
             // click at the element (no focus steal), then to a target-addressed
@@ -1334,7 +1355,7 @@ impl Tool for ClickTool {
                     // depend on where the element is, and a window without
                     // compositor geometry must not turn it into a lookup error.
                     let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
+                    if crate::wayland::is_wayland() && !modifier_refs.is_empty() {
                         anyhow::bail!(
                             "modified element clicks are unavailable on native Wayland: \
                          the pointer route cannot carry keyboard modifier state"
@@ -1346,12 +1367,13 @@ impl Tool for ClickTool {
                     // selectable rows) expose bounds but no AT-SPI Action and
                     // ignore a targeted XSendEvent; limiting XTest to modified
                     // clicks made those rows addressable but not selectable.
-                    if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                    if delivery.is_foreground() && !crate::wayland::is_wayland() {
                         let (_, sx, sy) = placement
                             .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
                         crate::interaction::with_x11_foreground(
                             xid2,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::session_policy().click,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -1362,9 +1384,10 @@ impl Tool for ClickTool {
                                 )
                             },
                         )
-                        .map(|(value, _report)| value)
-                        .map(|()| PointerRoute::Foreground)
-                    } else if modifier_refs.is_empty() && !crate::wayland::wayland_input_enabled() {
+                        .map(|((), report)| PointerRoute::Foreground {
+                            menu_open: report.menu_open,
+                        })
+                    } else if modifier_refs.is_empty() && !crate::wayland::is_wayland() {
                         x11_pixel_click_no_focus_steal(
                             &cursor_id_for_fallback,
                             xid2,
@@ -1412,11 +1435,17 @@ impl Tool for ClickTool {
             };
         }
 
-        if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-                return refusal;
-            }
-        }
+        // Chromium drops background pointer events, but on X11 the AT-SPI
+        // action of the control under a plain left click still lands: that
+        // route tries it first and refuses only on a miss.
+        let plain_left = button == 1 && count == 1 && modifiers.is_empty();
+        let chromium_atspi_only = match (!isolated_background)
+            .then(|| unavailable_chromium_background(pid, delivery))
+            .flatten()
+        {
+            Some(refusal) if crate::wayland::is_wayland() || !plain_left => return refusal,
+            refusal => refusal.is_some(),
+        };
 
         // Coordinate-based path.
         if let Some(refusal) = require_point_args("click", &args) {
@@ -1508,7 +1537,7 @@ impl Tool for ClickTool {
         // Resolve the screen point the cursor glides to. Tool coordinates are
         // always window-local screenshot pixels; native Wayland translates
         // through compositor/AT-SPI geometry while X11 uses XTranslateCoordinates.
-        let wayland_output_point = if crate::wayland::wayland_input_enabled() {
+        let wayland_output_point = if crate::wayland::is_wayland() {
             match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
                 Ok(point) => Some(point),
                 Err(error) => return input_error_result(error),
@@ -1590,10 +1619,11 @@ impl Tool for ClickTool {
         let modifiers_for_task = modifiers.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
-        // then restore prior active. Mirrors macOS/Windows.
+        // then restore the prior active window unless the click opened a menu.
+        // Mirrors macOS/Windows.
         let fg_budget = foreground_budget(0);
         let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>, Option<PointerRoute>, Option<crate::input::FocusGuardReport>)> {
-            if crate::wayland::wayland_input_enabled() {
+            if crate::wayland::is_wayland() {
                 if !modifiers_for_task.is_empty() {
                     anyhow::bail!(
                         "modified coordinate clicks are unavailable on native Wayland: \
@@ -1624,7 +1654,7 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::interaction::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
+                crate::interaction::with_target_foreground(pid, xid, crate::interaction::session_policy().click, || {
                     crate::wayland::click_focused(aimed, count as u32, button)
                 })?;
                 return Ok(("wayland_activate", None, None, None));
@@ -1643,8 +1673,10 @@ impl Tool for ClickTool {
                     // real pointer available, an entry / spin button / cell
                     // under the point is left to the MPX click below (its
                     // `doAction` would not focus it for a following type_text).
+                    // Chromium: an editable's action does not focus it for a
+                    // following type, so leave it to the refusal.
                     let real_click_for_focus_roles =
-                        crate::input::real_pointer_input_available();
+                        chromium_atspi_only || crate::input::real_pointer_input_available();
                     let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
                         Ok(crate::atspi::perform_action_at_point_in(
                             pid,
@@ -1659,6 +1691,9 @@ impl Tool for ClickTool {
                     if let Some(hit) = hit {
                         return Ok(("x11_atspi", Some(PointerRoute::Atspi(hit)), guard));
                     }
+                }
+                if chromium_atspi_only {
+                    return Ok(("background_unavailable_chromium", None, None));
                 }
                 if !fg
                     && !crate::input::real_pointer_input_available()
@@ -1721,6 +1756,7 @@ impl Tool for ClickTool {
                 crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
+                    crate::interaction::session_policy().click,
                     || inject(true),
                 )
                 .map(|((path, route, guard), report)| (path, Some(report), route, guard))
@@ -1738,6 +1774,11 @@ impl Tool for ClickTool {
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
+            Ok(Ok(("background_unavailable_chromium", _, _, _))) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::ChromiumInput,
                 )
             }
             Ok(Ok(("background_unavailable_pointer", _, _, _))) => {
@@ -1771,16 +1812,19 @@ impl Tool for ClickTool {
                         "delivery_mode": mode_label,
                     }),
                 };
-                if let Some(report) = report {
-                    apply_foreground_report(&mut structured, &report);
+                if let Some(report) = &report {
+                    apply_foreground_report(&mut structured, report);
                 }
-                let suffix = match &route {
+                let mut suffix = match &route {
                     Some(route) => route.text_suffix(mode_label),
                     None => format!(
                         "(delivery_mode={mode_label}, path={path}); not verified — confirm \
                          with a screenshot."
                     ),
                 };
+                if let Some(report) = &report {
+                    suffix.push_str(&report.focus_note());
+                }
                 attach_focus_guard(
                     ToolResult::text(format!("Clicked at ({x:.1}, {y:.1}) × {count} {suffix}"))
                         .with_structured(structured),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted host authorization seam.
 //!
 //! Ordinary MCP elicitation, tool arguments, inherited stdio, files, and
@@ -340,6 +343,21 @@ impl ProtectedResourceOwnershipStore {
         matches
     }
 
+    /// Forget one launched process instance. A later launch that reused its
+    /// pid keeps its own record.
+    pub fn remove_process(&self, session: &str, process: &crate::browser::ProcessFingerprint) {
+        let mut sessions = self.processes_by_session.lock().unwrap();
+        let Some(processes) = sessions.get_mut(session) else {
+            return;
+        };
+        if processes.get(&process.pid) == Some(process) {
+            processes.remove(&process.pid);
+        }
+        if processes.is_empty() {
+            sessions.remove(session);
+        }
+    }
+
     pub fn remove_session(&self, session: &str) {
         self.processes_by_session.lock().unwrap().remove(session);
     }
@@ -614,6 +632,7 @@ fn digest_request(request: &ConsentRequest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "yaml")]
     use std::io::Write;
 
     struct FakeProvider {
@@ -679,6 +698,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(feature = "yaml")]
     fn authorization_context_with_manifest(
         mode: PermissionMode,
     ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
@@ -819,6 +839,7 @@ mod tests {
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_resources_narrow_standard_and_unrestricted_without_prompting() {
         for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {

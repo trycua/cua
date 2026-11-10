@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared MCP request dispatch and privacy-bounded observations.
 
 use std::sync::{Arc, OnceLock};

@@ -117,8 +117,8 @@ def _result_path(value) -> str | None:
 
 
 def has_nvidia_gpu() -> bool:
-    """A Linux host with a working NVIDIA driver (`nvidia-smi -L` lists a GPU)."""
-    if not sys.platform.startswith("linux") or not shutil.which("nvidia-smi"):
+    """A Linux or Windows host with a working NVIDIA driver (`nvidia-smi -L` lists a GPU)."""
+    if not (sys.platform.startswith("linux") or sys.platform == "win32") or not shutil.which("nvidia-smi"):
         return False
     try:
         out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=30)
@@ -455,9 +455,10 @@ def run(fn) -> int:
         if sync is not None and cluster.rank == 0:
             syncer = _Syncer(sync, float(os.environ.get("CUA_SYNC_SECS", "30") or 30)).start()
         signal.signal(signal.SIGTERM, _on_sigterm)
-        sig = inspect.signature(fn.fn)
+        if hasattr(signal, "SIGBREAK"):  # Windows: Ctrl-Break is the polite stop
+            signal.signal(signal.SIGBREAK, _on_sigterm)
         try:
-            value = fn.fn(cluster) if sig.parameters else fn.fn()
+            value = fn.fn(*call_args(fn.fn, cluster))
         finally:
             if syncer is not None:
                 syncer.stop()
@@ -468,6 +469,30 @@ def run(fn) -> int:
     finally:
         if live:
             live.stop()
+
+
+def call_args(func, cluster) -> list:
+    """The arguments the function is called with: the Cluster only when its
+    first parameter is named `cluster` or annotated `cua.Cluster`; a function
+    whose parameters all have defaults is called with none; any other
+    required parameter is an error that says so."""
+    import cua
+    params = [p for p in inspect.signature(func).parameters.values()
+              if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    if params:
+        first = params[0]
+        ann = first.annotation
+        wants = first.name == "cluster" or ann is cua.Cluster or (
+            isinstance(ann, str) and ann.split(".")[-1] == "Cluster")
+        if wants:
+            return [cluster]
+    required = [p.name for p in params if p.default is p.empty]
+    if required:
+        raise TypeError(
+            f"{func.__name__}() needs {', '.join(required)}: a function run passes no arguments. "
+            "Take no parameters, give them defaults, or name the first one `cluster` "
+            "(or annotate it cua.Cluster) to receive the cua.Cluster")
+    return []
 
 
 def main(argv: list[str]) -> int:

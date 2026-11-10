@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! An agent that sends action after action as single calls is told, at the
 //! dispatch seam, to chain them with `run_steps`. Steps inside `run_steps` are
 //! never nudged.
@@ -84,30 +87,35 @@ fn hint(result: &ToolResult) -> Option<String> {
 }
 
 #[tokio::test]
-async fn the_third_direct_action_carries_the_nudge_after_its_own_hint() {
+async fn the_second_direct_action_carries_the_nudge_after_its_own_hint() {
     let registry = registry();
     let args = || json!({"pid": 42, "window_id": 7, "session": "nudge-direct"});
     let first = call(&registry, "click", args()).await;
-    let second = call(
+    // A read between actions neither counts nor breaks the streak.
+    call(&registry, "get_window_state", args()).await;
+    let second = call(&registry, "click", args()).await;
+
+    let own = hint(&first).expect("an unverifiable click carries its recovery hint");
+    assert!(!own.contains(NUDGE));
+    let second = hint(&second).expect("hint");
+    assert!(second.starts_with(&own), "{second}");
+    assert!(second.contains(NUDGE), "{second}");
+    // The nudge names the window the action targeted, ready to send.
+    assert!(
+        second.contains("run_steps({pid:42,window_id:7,"),
+        "{second}"
+    );
+
+    // The nudge repeats on every second direct action, not on the one between.
+    let third = call(
         &registry,
         "press_key",
         json!({"pid": 42, "key": "tab", "session": "nudge-direct"}),
     )
     .await;
-    // A read between actions neither counts nor breaks the streak.
-    call(&registry, "get_window_state", args()).await;
-    let third = call(&registry, "click", args()).await;
-
-    let own = hint(&first).expect("an unverifiable click carries its recovery hint");
-    assert!(!own.contains(NUDGE));
-    assert!(!hint(&second).unwrap_or_default().contains(NUDGE));
-    let third = hint(&third).expect("hint");
-    assert!(third.ends_with(NUDGE), "{third}");
-    assert!(third.starts_with(&own), "{third}");
-
-    // The nudge is advice only: it adds no call to make.
+    assert!(!hint(&third).unwrap_or_default().contains(NUDGE));
     let fourth = call(&registry, "click", args()).await;
-    assert!(!hint(&fourth).unwrap_or_default().contains(NUDGE));
+    assert!(hint(&fourth).unwrap_or_default().contains(NUDGE));
 }
 
 #[tokio::test]

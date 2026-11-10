@@ -329,6 +329,9 @@ pub fn list_lines(rows: &[Row], report: &serde_json::Value) -> Vec<String> {
             report["unavailable"].as_str().unwrap_or("no Keychain")
         ));
     }
+    if let Some(w) = report["insecure"].as_str() {
+        v.push(format!("Warning: {w}."));
+    }
     let w = rows.iter().map(|r| r.id.len()).max().unwrap_or(0);
     for r in rows {
         let mut l = format!("{:<w$}  {:<15}", r.id, state_words(r.state));

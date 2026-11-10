@@ -165,7 +165,7 @@ mod routed_tests {
     }
 }
 
-fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
+pub(crate) fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
     let raw = std::fs::read(path).map_err(|e| {
         status(
             Code::FailedPrecondition,
@@ -278,7 +278,7 @@ impl HostJobsImpl {
     async fn client<T>(
         &self,
         req: &Request<T>,
-    ) -> Result<(HostJobsServiceClient<tonic::transport::Channel>, String), Status> {
+    ) -> Result<(HostJobsServiceClient<DaemonChannel>, String), Status> {
         let policy = read_policy(&self.0.policy_file)?;
         if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
             return Err(refusal);
@@ -484,8 +484,110 @@ fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
 #[cfg(unix)]
 static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Channel, Status> {
+/// What a call to the host's daemon carries: the daemon's own token where it
+/// listens on loopback (a Windows host; its Unix socket needs none).
+#[derive(Clone, Default)]
+pub(crate) struct DaemonAuth(Option<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>);
+
+impl tonic::service::Interceptor for DaemonAuth {
+    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(v) = &self.0 {
+            req.metadata_mut().insert("authorization", v.clone());
+        }
+        Ok(req)
+    }
+}
+
+/// The channel to the host's daemon ([`DaemonAuth`] on it).
+pub(crate) type DaemonChannel =
+    tonic::service::interceptor::InterceptedService<tonic::transport::Channel, DaemonAuth>;
+
+/// Where the daemon of `cua_home` listens (its discovery file `daemon.json`:
+/// the loopback URL and the token), for a host with no Unix socket.
+#[cfg(not(unix))]
+fn daemon_discovery(cua_home: &str) -> Option<(String, String)> {
+    let home = if cua_home.is_empty() {
+        std::env::var("CUA_HOME").ok()?
+    } else {
+        cua_home.to_string()
+    };
+    let raw = std::fs::read(Path::new(&home).join("daemon.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    Some((
+        v.get("loopback_url")?.as_str()?.to_string(),
+        v.get("token")?.as_str()?.to_string(),
+    ))
+}
+
+pub(crate) async fn daemon_channel(daemon: &SpacesDaemon) -> Result<DaemonChannel, Status> {
     #[cfg(unix)]
+    {
+        let ch = unix_daemon_channel(daemon).await?;
+        Ok(tonic::service::interceptor::InterceptedService::new(
+            ch,
+            DaemonAuth::default(),
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        // A Windows host: the daemon listens on loopback, with a token.
+        let connect = || async {
+            let (url, token) = daemon_discovery(&daemon.cua_home)?;
+            let auth = tonic::metadata::MetadataValue::try_from(format!("Bearer {token}")).ok()?;
+            let ch = tonic::transport::Endpoint::from_shared(url)
+                .ok()?
+                .connect_timeout(Duration::from_secs(5))
+                .connect()
+                .await
+                .ok()?;
+            Some(tonic::service::interceptor::InterceptedService::new(
+                ch,
+                DaemonAuth(Some(auth)),
+            ))
+        };
+        if let Some(ch) = connect().await {
+            return Ok(ch);
+        }
+        let Some(bin) = daemon.cua_bin.as_deref().filter(|b| !b.is_empty()) else {
+            return Err(status(
+                Code::Unavailable,
+                ErrorReason::TargetUnavailable,
+                "the cua daemon on this host is not running (on it: `cua daemon start`)",
+            ));
+        };
+        tracing::info!(%bin, "starting the host's cua daemon");
+        let mut cmd = tokio::process::Command::new(bin);
+        cmd.args(["daemon", "start"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .env("CUA_DAEMON_STARTED_BY", "host");
+        if !daemon.cua_home.is_empty() {
+            cmd.env("CUA_HOME", &daemon.cua_home);
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(20), cmd.status()).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(ch) = connect().await {
+                return Ok(ch);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(status(
+                    Code::Unavailable,
+                    ErrorReason::TargetUnavailable,
+                    format!(
+                        "the cua daemon on this host did not start (`{bin} daemon start`); \
+                         run it on the host and retry"
+                    ),
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn unix_daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Channel, Status> {
     {
         let socket = PathBuf::from(&daemon.socket);
         let connect = |socket: PathBuf| async move {
@@ -543,15 +645,6 @@ async fn daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Chann
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
-    #[cfg(not(unix))]
-    {
-        let _ = daemon;
-        Err(status(
-            Code::Unimplemented,
-            ErrorReason::FeatureUnsupported,
-            "providing Spaces from a Windows host is not supported yet",
-        ))
-    }
 }
 
 impl HostSpacesImpl {
@@ -559,7 +652,7 @@ impl HostSpacesImpl {
     async fn forward_to<T>(
         &self,
         req: &Request<T>,
-    ) -> Result<(HostSpacesServiceClient<tonic::transport::Channel>, String), Status> {
+    ) -> Result<(HostSpacesServiceClient<DaemonChannel>, String), Status> {
         self.forward(req, true).await
     }
 
@@ -570,7 +663,7 @@ impl HostSpacesImpl {
         &self,
         req: &Request<T>,
         provided: bool,
-    ) -> Result<(HostSpacesServiceClient<tonic::transport::Channel>, String), Status> {
+    ) -> Result<(HostSpacesServiceClient<DaemonChannel>, String), Status> {
         let policy = read_policy(&self.policy_file)?;
         if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
             return Err(refusal);
@@ -680,13 +773,7 @@ impl HostSnapshotsImpl {
     async fn client<T>(
         &self,
         req: &Request<T>,
-    ) -> Result<
-        (
-            HostSnapshotsServiceClient<tonic::transport::Channel>,
-            String,
-        ),
-        Status,
-    > {
+    ) -> Result<(HostSnapshotsServiceClient<DaemonChannel>, String), Status> {
         let policy = read_policy(&self.0.policy_file)?;
         if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
             return Err(refusal);
@@ -953,6 +1040,35 @@ impl HostSpacesService for HostSpacesImpl {
 
 #[cfg(test)]
 mod tests {
+    use tonic::service::Interceptor as _;
+
+    #[test]
+    fn calls_to_the_daemon_carry_its_token_only_where_it_has_one() {
+        let mut none = DaemonAuth::default();
+        let req = none.call(Request::new(())).unwrap();
+        assert!(req.metadata().get("authorization").is_none());
+        let v = tonic::metadata::MetadataValue::try_from("Bearer tok").unwrap();
+        let mut some = DaemonAuth(Some(v));
+        let req = some.call(Request::new(())).unwrap();
+        assert_eq!(req.metadata().get("authorization").unwrap(), "Bearer tok");
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn a_windows_host_finds_its_daemon_in_the_discovery_file() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(daemon_discovery(&d.path().to_string_lossy()).is_none());
+        std::fs::write(
+            d.path().join("daemon.json"),
+            br#"{"pid":1,"socket_path":null,"loopback_url":"http://127.0.0.1:5","token":"t"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            daemon_discovery(&d.path().to_string_lossy()),
+            Some(("http://127.0.0.1:5".to_string(), "t".to_string()))
+        );
+    }
+
     use super::*;
     use crate::auth::{CallerIdentity, RelayCaller};
 

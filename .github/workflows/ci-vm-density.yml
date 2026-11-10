@@ -28,8 +28,8 @@ on:
       - "libs/cua/crates/cua-daemon/tests/qemu_resize.rs"
       - "libs/cua/bench/spaces-startup/**"
       - ".github/workflows/ci-vm-density.yml"
-  schedule:
-    - cron: "17 6 * * *"
+  merge_group:
+  # Nightly schedule off: it has failed on every run since it was added. Re-enable the cron once the lane is green.
   workflow_dispatch:
 
 permissions:
@@ -53,12 +53,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   unit:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -91,7 +91,7 @@ jobs:
     name: nightly KVM (density tests + bench guard)
     # Also on a pull request labelled ci:vm-density.
     needs: quick
-    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:vm-density')) }}
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:vm-density')) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -106,6 +106,8 @@ jobs:
             libs/cua
             libs/cua-spacesd
           shared-key: libs-cua-qemu-tests
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: QEMU, KVM and the Linux reference disk
         run: |
           sudo apt-get update -qq

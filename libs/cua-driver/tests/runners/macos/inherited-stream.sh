@@ -9,8 +9,9 @@ clang -Wall -Wextra -Werror "$ROOT/libs/cua-driver/rust/crates/cua-driver/tests/
 cp "$RUN/host" "$RUN/substitute"
 codesign --force --sign - --options runtime --identifier org.example.embedded-fixture "$RUN/host"
 codesign --force --sign - --options runtime --identifier org.example.substitute "$RUN/substitute"
-HASH=$(codesign -dvv "$RUN/host" 2>&1 | sed -n 's/^CDHash=//p')
-[[ -n "$HASH" ]]
+HASH=$(codesign -dvvv "$RUN/host" 2>&1 | sed -n 's/^CDHash=//p')
+[[ "$HASH" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "Missing fixture code hash" >&2; exit 1; }
+codesign --verify -R "=cdhash H\"$HASH\"" "$RUN/host"
 export CUA_DRIVER_EMBEDDED_PARENT_REQUIREMENT="cdhash H\"$HASH\""
 export CUA_TEST_SIGNED_HOST="$RUN/host" CUA_TEST_SUBSTITUTE_HOST="$RUN/substitute"
 cd "$ROOT/libs/cua-driver/rust"

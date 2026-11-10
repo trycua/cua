@@ -41,6 +41,7 @@ fn signed_host_owns_the_only_embedded_channel() {
     let spawn = |host: &str, arguments: &[&str], extra: &[(&str, &str)]| {
         let mut command = Command::new(host);
         command
+            .current_dir(state.path())
             .arg(env!("CARGO_BIN_EXE_cua-driver"))
             .arg("cua-driver")
             .args(arguments)
@@ -94,10 +95,17 @@ fn signed_host_owns_the_only_embedded_channel() {
         unsafe { libc::poll(&mut readable, 1, 10_000) } > 0,
         "embedded response timeout"
     );
-    assert!(
-        output.read_line(&mut line).unwrap() > 0,
-        "embedded child must answer on the inherited FD"
-    );
+    let received = output.read_line(&mut line).unwrap();
+    if received == 0 {
+        let mut error = String::new();
+        host.0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut error)
+            .unwrap();
+        panic!("embedded child must answer on the inherited FD: {error}");
+    }
     let ready: Value = serde_json::from_str(&line).unwrap();
     assert_eq!(ready["ok"], true, "{ready}");
     assert_eq!(ready["result"]["pid"], pid);
@@ -115,7 +123,12 @@ fn signed_host_owns_the_only_embedded_channel() {
         .args(["-a", "-p", &pid.to_string(), "-U", "-Fnt"])
         .output()
         .unwrap();
+    assert!(listing.status.success(), "socket inventory must succeed");
     let listing = String::from_utf8_lossy(&listing.stdout);
+    assert!(
+        listing.lines().any(|line| line == "tunix"),
+        "connected Unix stream must be observed"
+    );
     assert!(
         !listing.lines().any(|line| line
             .strip_prefix('n')
@@ -133,11 +146,15 @@ fn signed_host_owns_the_only_embedded_channel() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
     for (parent, arguments, extra, refusal) in [
         (
             substitute.as_str(),
             private.to_vec(),
-            vec![],
+            vec![("CUA_DRIVER_EMBEDDED_PARENT_REQUIREMENT", "true")],
             "untrusted embedded parent",
         ),
         (
@@ -200,7 +217,7 @@ fn signed_host_owns_the_only_embedded_channel() {
             .unwrap()
             .read_to_string(&mut error)
             .unwrap();
-        assert!(!status.success());
+        assert_eq!(status.code(), Some(64));
         assert!(error.contains(refusal), "expected {refusal}, got {error}");
     }
 }

@@ -36,6 +36,8 @@ mod history_runtime;
 mod mcp_envelope;
 mod mcp_http;
 mod perception_cli;
+#[cfg(target_os = "macos")]
+mod private_transport;
 mod private_worker;
 mod proxy;
 mod release_channel;
@@ -552,6 +554,10 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    if let Err(error) = private_transport::guard() {
+        eprintln!("cua-driver: {error}");
+        std::process::exit(64);
+    }
     cua_driver_core::build_info::init(env!("CUA_DRIVER_GIT_SHA"));
     cua_driver_sdk::configure_perception_client_resolver(
         extension_manager::perception_client_resolver(),

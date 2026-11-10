@@ -136,6 +136,50 @@ const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_m
 const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
 const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// Longest a pop-up menu item click waits for the pop-up to show the item.
+const POPUP_COMMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// The AXPopUpButton whose open menu holds `item`: item, AXMenu, pop-up.
+///
+/// # Safety
+///
+/// `item` must be a valid, live `AXUIElementRef`.
+unsafe fn owning_popup(item: AXUIElementRef) -> Option<crate::ax::snapshot::RetainedElement> {
+    let menu = copy_element_attr(item, "AXParent")?;
+    let menu_role = copy_string_attr(menu, "AXRole");
+    let button = copy_element_attr(menu, "AXParent");
+    CFRelease(menu as CFTypeRef);
+    let button = button?;
+    if menu_role.as_deref() != Some("AXMenu")
+        || copy_string_attr(button, "AXRole").as_deref() != Some("AXPopUpButton")
+    {
+        CFRelease(button as CFTypeRef);
+        return None;
+    }
+    let retained = crate::ax::snapshot::RetainedElement::retain(button as usize);
+    CFRelease(button as CFTypeRef);
+    Some(retained)
+}
+
+/// Whether `read` shows `title` before `timeout`, polling every `poll`.
+fn popup_shows(
+    title: &str,
+    read: impl Fn() -> Option<String>,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if read().as_deref() == Some(title) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 /// AXPress on a radio button or checkbox that advertises it: a press whose
 /// effect the control's own AXValue shows.
 fn is_toggle_press(ax_action: &str, role: &str, advertised: &[String]) -> bool {
@@ -1886,6 +1930,10 @@ fn perform_ax_click(
     if !foreground {
         prime_key_window_for_background_press(pid, window_id, ax_action);
     }
+    // Taken before the press, which closes the menu and drops the item.
+    let popup = (ax_action == "AXPress" && role == "AXMenuItem")
+        .then(|| unsafe { owning_popup(element) })
+        .flatten();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
         // Checked before the row-selection fallback, which writes AXSelected
@@ -1934,6 +1982,20 @@ fn perform_ax_click(
     }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
+
+    // A pop-up commits its selection after the press returns, so a click
+    // right after it (Submit) could read the old value. Wait until the
+    // pop-up shows the item.
+    if let Some(popup) = popup {
+        let read = || unsafe { copy_string_attr(popup.as_ptr() as AXUIElementRef, "AXValue") };
+        let shown = popup_shows(&title, read, POPUP_COMMIT_TIMEOUT, SELECTION_READBACK_POLL);
+        if !shown {
+            summary.push_str(&format!(
+                " The pop-up did not show \"{title}\" within {} ms.",
+                POPUP_COMMIT_TIMEOUT.as_millis()
+            ));
+        }
+    }
 
     // AXPopUpButton: list available options, redirect to set_value.
     if role == "AXPopUpButton" {
@@ -2177,6 +2239,40 @@ fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// IR-01: the pop-up shows the picked team a few polls after the press.
+    #[test]
+    fn a_popup_item_click_waits_until_the_popup_shows_the_item() {
+        let polls = std::cell::Cell::new(0);
+        let read = || {
+            polls.set(polls.get() + 1);
+            Some(
+                if polls.get() < 4 {
+                    "Choose a team"
+                } else {
+                    "Research"
+                }
+                .to_owned(),
+            )
+        };
+        let ms = std::time::Duration::from_millis;
+        assert!(popup_shows("Research", read, ms(300), ms(1)));
+        assert_eq!(polls.get(), 4);
+    }
+
+    #[test]
+    fn a_popup_that_never_shows_the_item_stops_at_the_cap() {
+        let ms = std::time::Duration::from_millis;
+        let started = std::time::Instant::now();
+        assert!(!popup_shows(
+            "Research",
+            || Some("Design".to_owned()),
+            ms(60),
+            ms(10)
+        ));
+        assert!(started.elapsed() >= ms(60));
+        assert!(started.elapsed() < ms(300));
+    }
 
     /// The pixel focus rung keeps working after unknown AX action names
     /// started refusing: background pixel typing into Electron depended on it.

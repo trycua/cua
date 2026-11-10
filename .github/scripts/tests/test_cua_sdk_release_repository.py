@@ -326,3 +326,11 @@ def test_sdk_publish_sparse_checkout_does_not_wipe_the_workspace():
             assert with_.get("path"), "sparse checkout before the installer feed must use its own path"
     run = next(s["run"] for s in steps if s.get("name") == "Keep Latest on Cua Spaces")
     assert "latest-guard/.github/scripts/pin_latest_release.py" in run
+
+
+def test_driver_installer_bump_pr_queue_has_no_delete_branch():
+    # `gh pr merge --delete-branch` is refused when the merge queue is on, so
+    # the post-publish installer bump failed five times in a row.
+    run = text("cd-rust-cua-driver.yml")
+    assert "--auto --squash --delete-branch" not in run
+    assert 'gh pr merge "$PR_URL" --auto --squash' in run

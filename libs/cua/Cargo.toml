@@ -22,6 +22,7 @@ members = [
     # Share a link to anything you run (`cua share`): records, the read-only
     # file server and the access-checked gateway.
     "crates/cua-share",
+    "crates/cua-daemon-core",
     "crates/cua-daemon",
     "crates/cua-teleport-bundle",
     # Chromium localStorage (Local Storage LevelDB) as items.
@@ -210,6 +211,7 @@ cua-host = { path = "crates/cua-host", version = "0.21.0" } # x-release-please-v
 cua-cluster = { path = "crates/cua-cluster", version = "0.21.0" } # x-release-please-version
 cua-spaces-cluster = { path = "crates/cua-spaces-cluster", version = "0.21.0" } # x-release-please-version
 cua-mesh = { path = "crates/cua-mesh", version = "0.21.0" } # x-release-please-version
+cua-daemon-core = { path = "crates/cua-daemon-core", version = "0.21.0", default-features = false } # x-release-please-version
 cua-daemon = { path = "crates/cua-daemon", version = "0.21.0", default-features = false } # x-release-please-version
 cua-auth = { path = "crates/cua-auth", version = "0.21.0" } # x-release-please-version
 cua-agent-setup = { path = "crates/cua-agent-setup", version = "0.21.0" } # x-release-please-version

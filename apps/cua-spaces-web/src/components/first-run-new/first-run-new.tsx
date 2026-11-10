@@ -10,7 +10,7 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, CopyIcon, LoaderCircleIcon } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { folderLabel, isNeedsProof, useMachines, useSession, useSettings, type SignInPhase } from "@/bridge";
@@ -264,6 +264,35 @@ function useFadeUnder(scroller: RefObject<HTMLElement | null>, screen: string) {
       for (const el of [...masked]) clear(el);
     };
   }, [scroller, screen]);
+}
+
+/** How far the content may run under the action row before "More below" shows, in px. */
+const MORE_SLACK = 8;
+
+/**
+ * Whether the screen's content runs on below the window (a short window: a 13" MacBook with the Dock, a small
+ * external display). The fade under the action row alone hid that there was more, so a row could be missed; the page
+ * then shows "More below", which scrolls to it.
+ */
+export function useMoreBelow(scroller: RefObject<HTMLElement | null>, screen: string): boolean {
+  const [more, setMore] = useState(false);
+  useLayoutEffect(() => {
+    const main = scroller.current;
+    if (!main) return;
+    const update = () => setMore(main.scrollHeight - main.scrollTop - main.clientHeight > MORE_SLACK);
+    update();
+    main.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(main);
+    if (main.firstElementChild) ro?.observe(main.firstElementChild);
+    return () => {
+      main.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+      ro?.disconnect();
+    };
+  }, [scroller, screen]);
+  return more;
 }
 
 /**
@@ -658,22 +687,54 @@ export function PermissionsScreen({
         footer={view.note}
         extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null}
       />
-      <Actions>
+      <Actions className="flex items-center gap-x-6">
         <button
           type="button"
-          className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON}
+          className={cn("shrink-0", view.primary.white ? WHITE_BUTTON : GLASS_BUTTON)}
           onClick={onContinue}
           data-onboarding-primary=""
           data-new-run-permissions-next={view.primary.label}
         >
           {view.primary.label}
         </button>
+        {view.stillOff && view.missing[0] ? (
+          // What is still off, by name: on a short window its row can be below the fold, so pressing this shows it.
+          <button
+            type="button"
+            className={cn(LINK, "line-clamp-2 min-w-0 text-left text-[14px] leading-tight font-medium text-white/85")}
+            onClick={() => showRow(view.missing[0]!.id)}
+            data-new-run-still-off=""
+          >
+            {view.stillOff}
+          </button>
+        ) : null}
       </Actions>
     </div>
   );
 }
 
+/** Scrolls a permission row into view and puts the focus on its Allow (or the row itself once there is none). */
+function showRow(id: string): void {
+  const row = document.querySelector<HTMLElement>(`[data-app-permission="${id}"]`);
+  if (!row) return;
+  const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  row.scrollIntoView?.({ block: "center", behavior: reduce ? "auto" : "smooth" });
+  const target = row.querySelector<HTMLElement>("button") ?? row;
+  if (target === row && !row.hasAttribute("tabindex")) row.tabIndex = -1;
+  target.focus({ preventScroll: true });
+}
+
 /* ---- The page ------------------------------------------------------------------------- */
+
+/** The page's side padding (`px-16`) and the copy column's widest (`max-w-[600px]`), in px. */
+const PAGE_PAD = 64;
+const COPY_MAX = 600;
+/**
+ * Where the copy column ends, from the left. The keys show only on windows 860px and wider, where the column is
+ * always at its widest, so the keys never cover the text, the buttons or the links (the action rows run to the
+ * column's full width: "Install Claude Code", "Install Codex instead", "Install later").
+ */
+export const COPY_RIGHT = PAGE_PAD + COPY_MAX;
 
 /**
  * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
@@ -764,6 +825,7 @@ export function NewFirstRun() {
   const [addEnter, setAddEnter] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
+  const moreBelow = useMoreBelow(mainRef, s.screen);
 
   // The onboarding funnel (`cua_onboarding_*`): the run starts once, then each screen counts when it shows.
   const core = ctx?.core ?? null;
@@ -1077,6 +1139,7 @@ export function NewFirstRun() {
           view={permissionsStepView({
             appName: perms.data?.appName ?? "Cua Spaces",
             allGranted: perms.allGranted,
+            off: perms.data?.permissions.filter((p) => !p.granted).map((p) => p.id),
             localNetwork: !net.available ? "none" : net.granted ? "on" : net.denied ? "denied" : "off",
           })}
           perms={perms}
@@ -1126,7 +1189,7 @@ export function NewFirstRun() {
       data-new-first-run=""
       data-step={s.screen}
     >
-      <FloatKeys copyRight={544} />
+      <FloatKeys copyRight={COPY_RIGHT} />
       {/* A fixed height, with or without Skip for now, so the content under it never moves between steps. */}
       <header className="relative z-30 box-content flex h-9 shrink-0 items-center justify-between pt-[calc(var(--titlebar-height,0px)+12px)] pr-16 pb-2 pl-16">
         <span className="flex items-center gap-1.5" data-new-run-logo="">
@@ -1144,6 +1207,7 @@ export function NewFirstRun() {
           (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. On windows taller
           than 1000px the area stops at 860px, so the button stays near the text instead of the far bottom edge. */}
       <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col scroll-y-stable px-16" data-new-run-main="">
+        {/* px-16 and max-w-[600px] are PAGE_PAD and COPY_MAX: change them together, they keep the keys off the copy. */}
         <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">
           {body}
         </div>
@@ -1151,6 +1215,24 @@ export function NewFirstRun() {
       {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
       <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">
         {dots ? <StepDots dots={dots} onGo={goDot} /> : null}
+        {moreBelow ? (
+          <div className="pointer-events-none absolute bottom-[3px] left-16 flex w-[min(600px,calc(100%-128px))] justify-end">
+            <button
+              type="button"
+              className={cn(GLASS_CHIP, "pointer-events-auto h-8 gap-1 px-3 text-[13.5px]")}
+              onClick={() => {
+                const main = mainRef.current;
+                if (!main) return;
+                const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+                main.scrollBy({ top: Math.max(120, main.clientHeight * 0.6), behavior: reduce ? "auto" : "smooth" });
+              }}
+              data-new-run-more-below=""
+            >
+              More below
+              <ChevronDownIcon aria-hidden className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <AddComputerSheet
         open={addOpen}

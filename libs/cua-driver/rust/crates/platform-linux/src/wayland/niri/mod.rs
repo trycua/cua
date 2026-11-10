@@ -13,8 +13,9 @@
 //! (`tile_pos_in_workspace_view`). Since niri#4711 (after 26.04) that
 //! includes tiled windows while they intersect the view, so window capture
 //! and window-coordinate pointer input work on them too. Releases before
-//! that field refuse a tiled window; the desktop scope reaches it with
-//! pixels of the single output.
+//! that field fall back to niri's own focused-window screenshot for capture;
+//! window-coordinate input still refuses, and the desktop scope reaches the
+//! window with pixels of the output.
 //!
 //! Pointer input and window capture first wait, a few short reads at most,
 //! for two consecutive reads that agree on the target, then check the layout
@@ -151,6 +152,157 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
         scale,
         outputs,
     })
+}
+
+/// Capture one window through niri's own screenshot action. This is the
+/// fallback for niri releases before #4711, where a tiled window has no IPC
+/// position to crop from. The action captures the focused window to the
+/// configured screenshot path; the previous focus is restored and the
+/// temporary file is removed.
+pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
+    use std::time::{Duration, Instant, SystemTime};
+
+    let window = window_for_id(id)?;
+    if !window.on_screen {
+        bail!("niri screenshot fallback: the window is not on screen");
+    }
+    let size = window
+        .size
+        .ok_or_else(|| anyhow!("niri reports no window size"))?;
+    let previous = focused_window_id();
+    let dir = screenshot_dir()?;
+    let before: std::collections::HashSet<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let started = SystemTime::now();
+
+    if previous != Some(id) {
+        run_niri_action(&["focus-window", "--id", &id.to_string()])?;
+        wait_for_focus(id, Duration::from_millis(800));
+    }
+    let result = (|| -> Result<Vec<u8>> {
+        run_niri_action(&["screenshot-window"])?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(path) = newest_screenshot(&dir, &before, started) {
+                let bytes = std::fs::read(&path)?;
+                let _ = std::fs::remove_file(&path);
+                let image = image::load_from_memory(&bytes)?;
+                if (image.width(), image.height()) == size {
+                    let mut out = std::io::Cursor::new(Vec::new());
+                    image.write_to(&mut out, image::ImageFormat::Png)?;
+                    return Ok(out.into_inner());
+                }
+                let image =
+                    image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
+                let mut out = std::io::Cursor::new(Vec::new());
+                image.write_to(&mut out, image::ImageFormat::Png)?;
+                return Ok(out.into_inner());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "niri screenshot fallback: no new PNG appeared in {}",
+                    dir.display()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    })();
+    if let Some(previous) = previous.filter(|previous| *previous != id) {
+        let _ = run_niri_action(&["focus-window", "--id", &previous.to_string()]);
+    }
+    result
+}
+
+fn focused_window_id() -> Option<u64> {
+    let output = std::process::Command::new("niri")
+        .args(["msg", "--json", "focused-window"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .ok()?
+        .get("id")?
+        .as_u64()
+}
+
+fn run_niri_action(args: &[&str]) -> Result<()> {
+    let output = std::process::Command::new("niri")
+        .args(["msg", "action"])
+        .args(args)
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "niri action {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn wait_for_focus(id: u64, budget: std::time::Duration) {
+    let deadline = std::time::Instant::now() + budget;
+    while std::time::Instant::now() < deadline {
+        if focused_window_id() == Some(id) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn screenshot_dir() -> Result<std::path::PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        let config = std::env::var_os("NIRI_CONFIG")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(&home).join(".config/niri/config.kdl"));
+        if let Ok(text) = std::fs::read_to_string(config) {
+            for line in text.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("screenshot-path") {
+                    let rest = rest.trim();
+                    if let Some(value) = rest.strip_prefix('"').and_then(|v| v.split('"').next()) {
+                        let expanded = value.replace("~", &home.to_string_lossy());
+                        let path = std::path::PathBuf::from(expanded);
+                        let parent = path.parent().map(std::path::Path::to_path_buf);
+                        return Ok(parent.unwrap_or(path));
+                    }
+                }
+            }
+        }
+        return Ok(std::path::PathBuf::from(home).join("Pictures/Screenshots"));
+    }
+    bail!("niri screenshot fallback: HOME is not set")
+}
+
+fn newest_screenshot(
+    dir: &std::path::Path,
+    before: &std::collections::HashSet<std::path::PathBuf>,
+    started: std::time::SystemTime,
+) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "png") || before.contains(&path) {
+            continue;
+        }
+        let modified = entry.metadata().ok()?.modified().ok()?;
+        if modified < started {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(time, _)| modified > *time) {
+            best = Some((modified, path));
+        }
+    }
+    best.map(|(_, path)| path)
 }
 
 /// Compose every output's capture into the bounding-box desktop frame niri
@@ -352,6 +504,23 @@ mod tests {
             (0, 0, 3200, 1080, 2.0)
         );
         assert_eq!(frame.outputs.len(), 2);
+    }
+
+    #[test]
+    fn newest_screenshot_skips_existing_files_and_returns_the_new_one() {
+        let dir = std::env::temp_dir().join(format!("niri-shot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("old.png");
+        std::fs::write(&old, b"old").unwrap();
+        let before: std::collections::HashSet<_> = [old.clone()].into_iter().collect();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let started = std::time::SystemTime::now();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let new = dir.join("new.png");
+        std::fs::write(&new, b"new").unwrap();
+        assert_eq!(newest_screenshot(&dir, &before, started), Some(new));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

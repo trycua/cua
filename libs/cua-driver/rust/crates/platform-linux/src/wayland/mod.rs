@@ -1380,8 +1380,20 @@ pub(crate) fn niri_capture_output_png(name: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
-    let (png, plan) = niri::capture_window(xid, pid, niri_display_capture)
-        .map_err(|reason| surface_identity_unproven(xid, format!("niri: {reason}")))?;
+    let (png, plan) = match niri::capture_window(xid, pid, niri_display_capture) {
+        Ok(captured) => captured,
+        Err(reason)
+            if reason.starts_with("this niri release does not report where a tiled window is") =>
+        {
+            // niri before #4711 has no tiled-window position to crop from.
+            // Use the compositor's own focused-window screenshot instead.
+            return niri::screenshot_window(xid)
+                .map_err(|error| surface_identity_unproven(xid, format!("niri: {error}")));
+        }
+        Err(reason) => {
+            return Err(surface_identity_unproven(xid, format!("niri: {reason}")));
+        }
+    };
     let pixels = plan.pixels;
     let crop = crop_png_to_rect(
         &png,

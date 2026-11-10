@@ -135,6 +135,12 @@ export function RunSomethingSheet({
             );
           })}
         </div>
+        {/* Said under the agents, where it is fixed: below the Run button it sat off screen in a short window. */}
+        {!selected && view ? (
+          <p className="mt-2 text-[13px] text-muted-foreground" data-run-sign-in-first="">
+            {t("home.run.sign_in_first")}
+          </p>
+        ) : null}
 
         <p className="mt-5 text-[13px] text-muted-foreground">{t("home.run.project")}</p>
         <div className="mt-2">
@@ -181,7 +187,6 @@ export function RunSomethingSheet({
             {chosen ? t("home.run.run_on", { computer: chosen.machine.name }) : t("home.run.no_computer")}
           </Button>
         </div>
-        {!selected && view ? <p className="mt-3 text-right text-[13px] text-muted-foreground">{t("home.run.sign_in_first")}</p> : null}
       </DialogPopup>
     </Dialog>
   );

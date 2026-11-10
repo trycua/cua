@@ -219,7 +219,7 @@
   "home.run.agent": "Agent",
   "home.run.signed_in": "Signed in",
   "home.run.sign_in_again": "Sign in again",
-  "home.run.sign_in_first": "Sign in to an agent first.",
+  "home.run.sign_in_first": "Sign in to one of these agents first.",
   "home.run.project": "Project",
   "home.run.task": "Task",
   "home.run.task_placeholder": "Make the search page load faster. Keep the tests green.",

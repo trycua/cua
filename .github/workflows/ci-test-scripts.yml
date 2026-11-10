@@ -58,6 +58,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
       - "scripts/install/install.ps1"
       - "scripts/ci/**"
+      - "scripts/spdx-headers.py"
       - "bin/ci"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"

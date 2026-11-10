@@ -553,7 +553,12 @@ update found by a scheduled check downloads and extracts at once; Sparkle's
 ready-to-install reply is then held, and nothing restarts the app until the
 page calls `update.install` ("Restart to update"). With "check for and
 download updates automatically" on (the default), Sparkle's silent path reaches the same state through
-`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`, which returns false so Sparkle also installs the downloaded update when the app quits. The page
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`, which returns false so Sparkle also installs the downloaded update when the app quits. "Restart to update" resumes that update through a check
+(`UpdateUserDriver.installNow`); builds 0.20.0 to 0.22.0 lacked that resume and the button did nothing (quitting still installed the update; a user on one of them
+quits and reopens Cua Spaces). If the app is still running 6 seconds after the click, it quits itself so Sparkle's installer applies the staged update, and if
+it still runs 6 seconds later the state is an error telling the user to quit from the menu bar and reopen. `scripts/test-update-restart.sh` is the upgrade test: it
+installs the previous release, offers it the new build through a local appcast signed with a throwaway key, presses "Restart to update" and checks the new
+version runs (`--legacy` for a release with the dead button); the release workflow runs it in verify-release. The page
 reads the state with `update.get` (`{status, currentVersion, version,
 percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
 `downloading`, `downloaded` or `error`) and refetches on the `update.changed`

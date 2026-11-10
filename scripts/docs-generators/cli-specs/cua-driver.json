@@ -791,7 +791,7 @@
   {
    "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
    "arguments": [],
-   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. An agent whose cua-driver server launches a different Cua Driver, such as the one inside Cua Spaces, is reported as using another Cua Driver and left as is. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. An agent whose cua-driver server launches a different Cua Driver, such as the one inside Cua Spaces, is reported as using another Cua Driver and left as is; --replace switches Claude Code, Codex and Cursor to this one the way Set up in Cua Spaces does, backing up the config file first. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
    "examples": [
     {
      "command": "cua-driver connect",
@@ -804,6 +804,10 @@
     {
      "command": "cua-driver connect --json",
      "description": "Print the result for each agent as JSON"
+    },
+    {
+     "command": "cua-driver connect --replace",
+     "description": "Switch agents that use another Cua Driver to this one"
     }
    ],
    "flags": [
@@ -811,6 +815,12 @@
      "default_value": false,
      "help": "Show what would be connected without changing anything.",
      "name": "dry-run",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Switch an agent that uses another Cua Driver, such as the one inside Cua Spaces, to this one.",
+     "name": "replace",
      "short_name": null
     },
     {
@@ -2439,5 +2449,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.46.1"
+ "version": "0.47.0"
 }

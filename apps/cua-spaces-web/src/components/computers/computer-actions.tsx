@@ -85,7 +85,8 @@ export function useComputerActions(spaceId: string): { settings: HeaderAction; r
     onClick: () => setAsking(true),
   };
   const sharing = Boolean(view && view.status !== t("computers.row.not_sharing"));
-  const signOutNow = () => void signOut().catch(fail(t("shell.account.sign_out_failed")));
+  // Signed out, this computer's page is no longer yours: back to the list.
+  const signOutNow = () => void signOut().then(() => void navigate({ to: "/spaces" }), fail(t("shell.account.sign_out_failed")));
   const stopSharing = () => host.run("stop-sharing").catch(fail(t("computers.page.stop_sharing_failed", { name })));
   const removeOther = () => {
     void navigate({ to: "/spaces" });

@@ -66,7 +66,7 @@ describe.skipIf(!wasmBuilt)("a computer's desktop page manages the computer", ()
 
   it("offers Stop sharing, and Stop sharing and sign out, to remove the computer you are on while it shares", { timeout: 30000 }, async () => {
     const calls: Call[] = [];
-    await mountApp("/spaces/this-mac", host(calls));
+    const { router } = await mountApp("/spaces/this-mac", host(calls));
     fireEvent.click(await found("[data-header-remove-computer]"));
     expect(await screen.findByRole("button", { name: "Stop sharing and sign out" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Stop sharing" }).length).toBeGreaterThan(0);
@@ -79,6 +79,8 @@ describe.skipIf(!wasmBuilt)("a computer's desktop page manages the computer", ()
     fireEvent.click(q("[data-header-remove-computer]")!);
     fireEvent.click(await screen.findByRole("button", { name: "Stop sharing and sign out" }));
     await waitFor(() => expect(calls.map((c) => c[0])).toEqual(["session.signOut"]));
+    // Signed out, the page leaves for the list.
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces"));
   });
 
   it("offers only Sign out once the computer you are on is not shared", { timeout: 30000 }, async () => {

@@ -1852,6 +1852,55 @@ impl DesktopInputSpace {
     }
 }
 
+#[cfg(test)]
+mod desktop_input_space_tests {
+    use super::*;
+
+    fn space() -> DesktopInputSpace {
+        DesktopInputSpace {
+            snapshot: Some(hyprland::DesktopSnapshot {
+                frame: hyprland::DesktopFrame {
+                    x: 100,
+                    y: 50,
+                    width: 250,
+                    height: 100,
+                    scale: 1.0,
+                    outputs: vec![
+                        hyprland::FrameOutput {
+                            name: "DP-1".into(),
+                            x: 100,
+                            y: 50,
+                            width: 100,
+                            height: 100,
+                        },
+                        hyprland::FrameOutput {
+                            name: "DP-2".into(),
+                            x: 250,
+                            y: 50,
+                            width: 100,
+                            height: 100,
+                        },
+                    ],
+                },
+                pointer: None,
+            }),
+            kwin_distorted: None,
+        }
+    }
+
+    #[test]
+    fn multi_output_frame_adds_the_frame_origin_and_refuses_a_gap() {
+        let space = space();
+        assert_eq!(space.to_layout(0, 0), (100, 50));
+        assert_eq!(space.input_layout(10, 10).unwrap(), (110, 60));
+        assert_eq!(space.input_layout(160, 10).unwrap(), (260, 60));
+        assert!(
+            space.input_layout(125, 10).is_err(),
+            "layout (225, 60) is between two outputs"
+        );
+    }
+}
+
 impl VptrSession {
     /// Puts the pointer at output pixel `(px, py)` so the compositor picks
     /// the surface under it. A `motion_absolute` to where the pointer already

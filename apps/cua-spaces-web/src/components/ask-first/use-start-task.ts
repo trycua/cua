@@ -13,6 +13,7 @@ import { containerHome } from "@/lib/agent-home/container";
 import { grantsFor, homeGrantsArg, homeMentionsArg } from "@/lib/agent-home/grants";
 import { homeForRequest, rememberHome } from "@/lib/agent-home/home-space";
 import { petName } from "@/lib/pet-name";
+import { hostStatusWhenOnline } from "@/lib/this-mac-target";
 import { parseMentions } from "@/lib/agent-home/mentions";
 import { homeBrief, homePrompt } from "@/lib/agent-home/prompt";
 import type { AskRepo } from "@/lib/ask-first-repo";
@@ -112,7 +113,10 @@ export function useStartTask(): {
         const task0 = askTask(id);
         const isHome = Boolean(task0?.home && children);
         if (target.kind === "host") {
-          const status = (await host?.call("host.status", {} as never).catch(() => null)) as HostStatus | null;
+          // Waits out the few seconds its sharing service restarts after Set up (CUA-3974).
+          const status = await hostStatusWhenOnline(
+            async () => ((await host?.call("host.status", {} as never).catch(() => null)) ?? null) as HostStatus | null,
+          );
           spaceId = hostSpaceId(status);
           if (!spaceId) throw new Error(HOST_NOT_SHARED);
           updateAskTask(id, { spaceId, onHost: true });

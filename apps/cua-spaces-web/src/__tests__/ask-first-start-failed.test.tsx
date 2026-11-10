@@ -105,8 +105,9 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
     const task = addAskTask({ prompt: "Hey!", agent: "openai-codex", os: "macos", spaceId: "this-mac", error: CORE_NOT_FOUND });
     await mountApp(`/home/${task.id}`, HOST);
     await screen.findByText("Couldn't start on this Mac");
-    // The header and the screen agree.
-    expect(screen.getAllByText("Didn't start").length).toBeGreaterThanOrEqual(2);
+    // Said once, in the header; the empty screen says nothing ran (CUA-3974).
+    expect(screen.getAllByText("Didn't start")).toHaveLength(1);
+    expect(screen.getByText("Nothing ran yet")).toBeTruthy();
     expect(screen.queryByText("Finished")).toBeNull();
     expect(screen.queryByText("Stopped")).toBeNull();
     // Jargon only under Details.

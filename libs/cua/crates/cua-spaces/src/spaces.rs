@@ -312,6 +312,24 @@ pub struct PendingSpace {
 /// is kept before the next use dials again.
 const SPACESD_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Whether the computer's relay session changed between `then` (when a
+/// connection was made) and `now`: online again with another connect time.
+/// Unknown either side (no relay, never listed) is no change, and so is an
+/// offline listing: the connection may still work over the LAN mesh.
+pub(crate) fn session_changed(
+    then: crate::dial_backoff::Presence,
+    now: crate::dial_backoff::Presence,
+) -> bool {
+    matches!((then, now), (Some((_, Some(a))), Some((true, Some(b)))) if a != b)
+}
+
+/// How long [`Spaces::checked`] waits for a cached connection's cua-spacesd
+/// to answer before it dials again. A live one answers in one round trip,
+/// even over the relay; a dead one (its cua-spacesd restarted behind the
+/// mesh, which sends no reset) would otherwise hold a call until the HTTP/2
+/// keepalive gives up (20 s + 10 s).
+pub(crate) const LIVE_CHECK: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
@@ -430,6 +448,7 @@ impl SpacesBuilder {
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
                 connections: tokio::sync::Mutex::new(HashMap::new()),
+                connected_sessions: Default::default(),
                 connecting: Default::default(),
                 dial_backoff: Default::default(),
                 mesh: crate::mesh::MeshClients::default(),
@@ -665,6 +684,10 @@ pub(crate) struct Inner {
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
+    /// The relay session (online, connected at) of the computer behind each
+    /// cached connection when it was made: a computer that reconnected since
+    /// (its cua-spacesd restarted) is dialed again ([`session_changed`]).
+    connected_sessions: std::sync::Mutex<HashMap<String, crate::dial_backoff::Presence>>,
     /// One connect at a time per Space; callers that arrive meanwhile take
     /// its outcome instead of dialing again.
     connecting: std::sync::Mutex<HashMap<String, Arc<ConnectGate>>>,
@@ -1842,6 +1865,13 @@ impl Spaces {
             self.inner.connections.lock().await.remove(&key);
             return None;
         }
+        if cached.is_some()
+            && let Some(reason) = self.peer_reconnected(&key)
+        {
+            tracing::info!(space = %key, %reason, "its computer reconnected; reconnecting");
+            self.forget_stale_connection(&key).await;
+            return None;
+        }
         if let Some(s) = cached {
             let policy = |provided| {
                 if provided {
@@ -1942,6 +1972,12 @@ impl Spaces {
         if matches!(id, SpaceId::Relay { .. }) && self.inner.registry.get(&key)?.is_none() {
             self.remember_reported(&key, &s);
         }
+        let session = self.session_of(&key);
+        self.inner
+            .connected_sessions
+            .lock()
+            .expect("sessions")
+            .insert(key.clone(), session);
         self.inner.connections.lock().await.insert(key, s.clone());
         #[cfg(feature = "mcp")]
         self.notify_connected(&id);
@@ -1958,6 +1994,74 @@ impl Spaces {
             .iter()
             .find(|m| m.id == machine_id)
             .map(|m| (m.online, m.connected_at))
+    }
+
+    /// The relay session of the computer that carries Space `key`: the
+    /// relay machine itself, or the host a routed Space rides on. `None`
+    /// for a Space no relay computer carries.
+    fn session_of(&self, key: &str) -> crate::dial_backoff::Presence {
+        match SpaceId::parse(key).ok()? {
+            SpaceId::Relay { machine_id } => self.relay_presence(&machine_id),
+            SpaceId::Direct { authority } => {
+                let (machine, _) = crate::id::routed_host(&authority)?;
+                self.relay_presence(machine)
+            }
+            _ => None,
+        }
+    }
+
+    /// Why the cached connection to `key` is to a cua-spacesd that is gone:
+    /// the relay says its computer connected again since (Set up sharing
+    /// This Mac's desktop, an update or a restart starts its cua-spacesd
+    /// again). Over the mesh nothing resets the old connection, so without
+    /// this its next call waits out the keepalive and fails.
+    fn peer_reconnected(&self, key: &str) -> Option<String> {
+        let then = *self
+            .inner
+            .connected_sessions
+            .lock()
+            .expect("sessions")
+            .get(key)?;
+        session_changed(then, self.session_of(key))
+            .then(|| "the relay says it connected again since".to_string())
+    }
+
+    /// Forgets the cached connection to `key` (its next use dials again),
+    /// keeping what [`crate::dial_backoff`] learned: unlike
+    /// [`Spaces::forget_connection`], nobody asked for a dial. Unlike
+    /// `drop_connection`, the Space's hotspot and what extensions attached
+    /// (a mounted volume) stay: the Space is the same, only its connection
+    /// is new.
+    pub(crate) async fn forget_stale_connection(&self, key: &str) {
+        self.inner.connections.lock().await.remove(key);
+        self.inner
+            .connected_sessions
+            .lock()
+            .expect("sessions")
+            .remove(key);
+    }
+
+    /// `space`, or a new connection to it when its cua-spacesd does not
+    /// answer a health check within [`LIVE_CHECK`]. For a call that must
+    /// not hang on a dead connection and is not safe to send twice (starting
+    /// an agent): the check has no side effect, so the call itself goes
+    /// out once, on a connection that just answered. Any answer, even a
+    /// refusal, proves the connection; only a transport failure or silence
+    /// dials again.
+    pub async fn checked(&self, space: Space) -> Result<Space> {
+        let Ok(spacesd) = space.spacesd() else {
+            return Ok(space);
+        };
+        let reason = match tokio::time::timeout(LIVE_CHECK, spacesd.health()).await {
+            Ok(Ok(_)) => return Ok(space),
+            Ok(Err(cua_spacesd_client::Error::Transport(e))) => e,
+            Ok(Err(_)) => return Ok(space),
+            Err(_) => format!("no answer in {} s", LIVE_CHECK.as_secs()),
+        };
+        let key = space.id().to_string();
+        tracing::info!(space = %key, %reason, "its connection is dead; reconnecting");
+        self.forget_stale_connection(&key).await;
+        self.space(&key).await
     }
 
     /// [`Spaces::resolve`], first asking where a durable Space is now when
@@ -1980,7 +2084,7 @@ impl Spaces {
         // What an extension attached over its own socket (a mounted volume,
         // where an agent's home may be) stays; the next connection tells
         // the extensions again.
-        self.inner.connections.lock().await.remove(&id.to_string());
+        self.forget_stale_connection(&id.to_string()).await;
         // Asked for on purpose: dial at once, whatever failed before.
         self.inner.dial_backoff.clear(&id.to_string());
         Ok(())
@@ -4352,6 +4456,33 @@ fn kind_of_runtime(
 
 #[cfg(test)]
 mod tests {
+    /// Set up turning on This Mac's desktop restarts its cua-spacesd, which
+    /// joins the relay again: a cached connection from before is dialed
+    /// again (CUA-3974).
+    #[test]
+    fn a_computer_that_connected_again_is_a_new_session() {
+        use super::session_changed;
+        assert!(session_changed(
+            Some((true, Some(100))),
+            Some((true, Some(160)))
+        ));
+        assert!(!session_changed(
+            Some((true, Some(100))),
+            Some((true, Some(100)))
+        ));
+        // Offline now, or never listed: nothing says the connection died.
+        assert!(!session_changed(
+            Some((true, Some(100))),
+            Some((false, None))
+        ));
+        assert!(!session_changed(None, Some((true, Some(160)))));
+        assert!(!session_changed(
+            Some((true, None)),
+            Some((true, Some(160)))
+        ));
+        assert!(!session_changed(Some((true, Some(100))), None));
+    }
+
     #[test]
     fn a_spaces_kind_is_what_its_runtime_makes_it() {
         use cua_sandbox_core::placement::Kind;

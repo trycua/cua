@@ -416,7 +416,7 @@ export interface StartErrorView {
  * words with the one thing to do next. The raw text stays on the task and
  * shows under Details.
  */
-export function startErrorView(raw: string, agent: string): StartErrorView {
+export function startErrorView(raw: string, agent: string, onHost = false): StartErrorView {
   const e = raw.toLowerCase();
   if (e.includes("isn't shared"))
     return {
@@ -447,7 +447,15 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (/api key|key|sign in|signed in|auth|login|credential|unauthori[sz]ed|401/.test(e))
     return { title: t("home.start_error.key_title", { agent }), body: t("home.start_error.key_body"), action: "add-key", retry: true };
   if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
-    return { title: t("home.start_error.unreachable_title"), body: t("home.start_error.unreachable_body"), action: "retry", retry: true };
+    // This computer is plainly on: "Check it's on" would send the person looking for nothing.
+    return onHost
+      ? {
+          title: t("home.start_error.host_unreachable_title", { computer: thisComputerLabel() }),
+          body: t("home.start_error.host_unreachable_body", { computer: thisComputerText() }),
+          action: "retry",
+          retry: true,
+        }
+      : { title: t("home.start_error.unreachable_title"), body: t("home.start_error.unreachable_body"), action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
     return {
       title: t("home.start_error.no_room_title", { computer: thisComputerLabel() }),

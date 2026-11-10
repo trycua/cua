@@ -110,6 +110,7 @@ members = [
     # Run other providers' SDKs (E2B, Daytona) unchanged on Cua Spaces:
     # a local wire-compatible gateway (`cua compat serve`).
     "crates/cua-compat",
+    "crates/cua-compat-cmd",
     # Copies checkpoints between your machines (FSL-1.1-MIT): manifests,
     # read grants, resumable LAN transfer, the S3 / Cua Volume fallback.
     "crates/cua-snapshot-sync",
@@ -233,6 +234,7 @@ cua-hotspot = { path = "crates/cua-hotspot", version = "0.20.0" } # x-release-pl
 cua-connections = { path = "crates/cua-connections", version = "0.20.0" } # x-release-please-version
 cua-share = { path = "crates/cua-share", version = "0.20.0" } # x-release-please-version
 cua-compat = { path = "crates/cua-compat", version = "0.20.0" } # x-release-please-version
+cua-compat-cmd = { path = "crates/cua-compat-cmd", version = "0.20.0" } # x-release-please-version
 cua-media-protocol = { path = "crates/cua-media-protocol" }
 cua-media-transport = { path = "crates/cua-media-transport" }
 cua-media-codec = { path = "crates/cua-media-codec", default-features = false }

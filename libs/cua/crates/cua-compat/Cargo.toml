@@ -15,6 +15,9 @@ default = []
 testing = ["cua-spacesd-client/testing"]
 
 [dependencies]
+cua-compat-cmd.workspace = true
+cua-cluster.workspace = true
+cua-spaces.workspace = true
 cua-sdk = { workspace = true, features = ["local", "spaces", "media"] }
 cua-spacesd-client.workspace = true
 cua-proto = { workspace = true, features = ["client"] }

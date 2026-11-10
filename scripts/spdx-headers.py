@@ -221,7 +221,7 @@ def main() -> int:
         if (
             GENERATED_ELSEWHERE.search(path.name)
             or rel.as_posix().startswith(GENERATED_DIRS)
-            or (args.fsl and foreign_notice(head))
+            or foreign_notice(head)
         ):
             foreign.append(rel)
             continue

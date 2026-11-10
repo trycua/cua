@@ -17,7 +17,6 @@ def test_sync_sdk_release_docs_updates_standalone_versions(tmp_path: Path):
         tmp_path / f"docs/content/docs/{folder}/nested/page.mdx"
         for folder in ("cua-cli", "cua-sdk")
     ]
-    paths.append(tmp_path / "scripts/docs-generators/cli-specs/cua.json")
     outside = tmp_path / "docs/content/docs/other/page.mdx"
     for path in [*paths, outside]:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,10 +42,6 @@ def test_sync_sdk_release_docs_leaves_the_contract_version(tmp_path: Path):
         "  Version: 0.7.0\n"
         "Contract version 0.7.0; MCP protocol revision 2025-06-18.\n"
     )
-    spec = tmp_path / "scripts/docs-generators/cli-specs/cua.json"
-    spec.parent.mkdir(parents=True)
-    spec.write_text('{"version": "0.7.0"}\n')
-
     assert main(["--repo-root", str(tmp_path), "--from", "0.7.0"]) == 0
 
     assert page.read_text() == (

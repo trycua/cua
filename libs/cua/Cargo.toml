@@ -33,6 +33,8 @@ members = [
     # The Cua Spaces app core: view models shared by the Tauri and SwiftUI apps.
     "crates/cua-spaces-app-core",
     "crates/cua-sdk",
+    # libcua_sdk (cdylib + staticlib) for the language bindings, built from cua-sdk.
+    "crates/cua-sdk-native",
     "crates/cua-bindgen",
     "crates/cua-cli",
     # Cua CI: GitHub Actions jobs on Cua Spaces (`cua ci`), an experiment.

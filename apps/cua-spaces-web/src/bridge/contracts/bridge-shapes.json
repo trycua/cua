@@ -10690,6 +10690,28 @@
         "expiresAt"
       ]
     },
+    "spaces.reach": {
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "listedOffline": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reachable",
+        "listedOffline",
+        "reason"
+      ]
+    },
     "spaces.rename": {
       "type": "null"
     },
@@ -15022,6 +15044,28 @@
     },
     "spaces.open": {
       "type": "null"
+    },
+    "spaces.reach": {
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "listedOffline": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reachable",
+        "listedOffline",
+        "reason"
+      ]
     },
     "spaces.rename": {
       "type": "object",

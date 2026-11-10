@@ -515,6 +515,7 @@ export class FixtureSpacesBackend implements SpacesBackend {
         { image: "windows", kind: "vm", supported: false, reason: "Windows on AWS is not offered yet." },
       ],
     });
+    if (tool === "spaces.reach") return { space: args.space, reachable: true, listed_offline: false, reason: null };
     if (tool === "cloud_status") return { default_on: this.cloudConnected ? "aws" : "local", providers: [aws(this.cloudConnected)] };
     if (tool === "cloud_test") return { provider: "aws", ok: true, account: "1", checks: [{ name: "credentials", ok: true, detail: "account 1" }] };
     if (tool === "cloud_connect") {

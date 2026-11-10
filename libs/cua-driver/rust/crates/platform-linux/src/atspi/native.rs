@@ -5234,6 +5234,7 @@ pub fn perform_action_at_point(
                 if v.actions.is_empty()
                     || !v.has_component
                     || is_container_role(&v.role)
+                    || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
                 {
                     continue;

@@ -614,6 +614,7 @@ export const OPERATIONS = [
   ...NOTIFICATIONS_OPERATIONS,
   ...TELEMETRY_OPERATIONS,
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",

@@ -1346,13 +1346,18 @@ fn cgevent_type_verified(
             ));
         }
     }
-    if is_terminal_target {
-        return Ok((outcome.0, outcome.1.filter(|_| outcome.0)));
-    }
-    Ok(outcome)
+    Ok(reported(outcome, is_terminal_target))
 }
 
-/// Resumes a batched send when a native field shows its old value followed by the start of the text.
+fn reported(outcome: (bool, Option<usize>), is_terminal_target: bool) -> (bool, Option<usize>) {
+    let (verified, delivered) = outcome;
+    (
+        verified,
+        delivered.filter(|_| verified || !is_terminal_target),
+    )
+}
+
+/// Where a batched send resumes in a native field; web content and terminals are never retyped.
 fn retype_from(
     outcome: (bool, Option<usize>),
     total: usize,
@@ -1362,7 +1367,7 @@ fn retype_from(
     let (false, Some(done)) = outcome else {
         return None;
     };
-    (done > 0 && done < total && !is_terminal_target && !is_web()).then_some(done)
+    (done < total && !is_terminal_target && !is_web()).then_some(done)
 }
 
 fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: usize) -> bool {
@@ -2510,7 +2515,18 @@ mod tests {
         assert_eq!(retype_from((false, Some(5)), 5, false, || false), None);
         assert_eq!(retype_from((true, Some(5)), 5, false, || false), None);
         assert_eq!(retype_from((false, None), 5, false, || false), None);
-        assert_eq!(retype_from((false, Some(0)), 5, false, || false), None);
+        assert_eq!(retype_from((false, Some(0)), 5, false, || false), Some(0));
+        assert!(appends_prefix(Some("ab"), Some("ab"), "cde", 0));
+        assert!(!appends_prefix(Some("ab"), Some("aX"), "cde", 0));
+    }
+
+    #[test]
+    fn an_unconfirmed_terminal_insert_reports_no_delivered_count() {
+        assert_eq!(reported((false, Some(0)), true), (false, None));
+        assert_eq!(reported((false, Some(3)), true), (false, None));
+        assert_eq!(reported((true, Some(5)), true), (true, Some(5)));
+        assert_eq!(reported((false, Some(3)), false), (false, Some(3)));
+        assert_eq!(reported((false, None), false), (false, None));
     }
 
     #[test]

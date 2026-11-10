@@ -467,7 +467,7 @@ fn harness_webview_left_click_px_background() {
                     "window_id": wid,
                     "action": "execute_javascript",
                     "cdp_port": cdp_port,
-                    "target_url_contains": "harness-webview/web/index.html",
+                "target_url_contains": "/web/index.html",
                     "javascript": r#"(() => {
                         const r = document.getElementById('btn-increment').getBoundingClientRect();
                         return JSON.stringify({

@@ -1,17 +1,19 @@
 \* SPDX-License-Identifier: MIT
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE recording ----
-\* The runtime's trajectory recorder, RecordingSession in src/recording.rs.
-\* Two sessions A and B share one recorder. Directories are numbered by start.
-\* The cursor sampler (and video, when it started) is the recording's media.
+\* The runtime's trajectory recorder: RecordingSession and enum Recorder in
+\* cua-driver-core/src/recording.rs (:634), and the idle-TTL stop in
+\* cua-driver-sdk/src/runtime.rs. Two sessions A and B share one recorder.
+\* Directories are numbered by start. The cursor sampler (and video, when it
+\* started) is the recording's media.
 \*
-\* Three switches select the code. All TRUE is src/recording.rs; each FALSE is
-\* the old behaviour it replaced:
+\* Three switches select the code. All TRUE is main (#6794); each FALSE is the
+\* old behaviour it replaced:
 \*   FinalizeOnRestart  a start over a live recording finalizes the old one
 \*   DirFirst           the new directory is created before the old one is torn down
 \*   IdleByGen          the idle-TTL stop names the generation it read
 \*
-\* Check with TLC (tla2tools.jar):
+\* Check with TLC (tla2tools.jar), from this directory:
 \*   java -cp tla2tools.jar tlc2.TLC -config recording.cfg recording.tla
 \*     the code: every invariant holds
 \*   ... -config recording_restart.cfg   RC3 fails: A starts, B starts
@@ -30,7 +32,9 @@ Init == /\ enabled = FALSE /\ owner = "none" /\ gen = 0 /\ media = "none"
         /\ turn = [g |-> 0, into |-> 0, phase |-> "none"]
         /\ idle = [phase |-> "none", read |-> 0, hit |-> 0]
 
-\* start refuses a dead owner, then replaces any live recording with a new one.
+\* start_with_redactions (:802-860) under the recorder mutex: refuse an ended
+\* owner, create the new directory (:830), finalize the live recording, then
+\* publish the new generation.
 Start(s) ==
   /\ gen < MaxStarts /\ ~ended[s]
   /\ gen' = gen + 1
@@ -39,22 +43,24 @@ Start(s) ==
                ELSE IF g = gen /\ enabled /\ FinalizeOnRestart THEN "final" ELSE dirs[g]]
   /\ enabled' = TRUE /\ owner' = s /\ media' = "running"
   /\ UNCHANGED <<ended, hooked, turn, idle>>
-\* create_dir_all fails. The old code had already stopped the live media.
+\* create_dir_all fails (:830). The old code had already stopped the live media.
 DirFail(s) ==
   /\ ~ended[s]
   /\ media' = IF enabled /\ ~DirFirst THEN "stopped" ELSE media
   /\ UNCHANGED <<enabled, owner, gen, ended, hooked, dirs, turn, idle>>
 Stop == /\ enabled' = FALSE /\ owner' = "none" /\ media' = "none"
         /\ dirs' = [dirs EXCEPT ![gen] = "final"]
-\* stop(StopBy::Anyone): manual stop and runtime shutdown
+\* stop(StopBy::Anyone) (:900): manual stop and runtime shutdown; Stop is finalize (:665)
 StopAnyone == enabled /\ Stop /\ UNCHANGED <<gen, ended, hooked, turn, idle>>
 \* session end: tombstone first, then the "recording" hook runs stop(StopBy::Owner(s))
+\* (cua-driver-sdk/src/runtime.rs:697)
 SessionEnds(s) == /\ ~ended[s] /\ ended' = [ended EXCEPT ![s] = TRUE]
                   /\ UNCHANGED <<enabled, owner, gen, media, hooked, dirs, turn, idle>>
 EndHook(s) == /\ ended[s] /\ ~hooked[s] /\ hooked' = [hooked EXCEPT ![s] = TRUE]
               /\ IF enabled /\ owner = s THEN Stop ELSE UNCHANGED <<enabled, owner, media, dirs>>
               /\ UNCHANGED <<gen, ended, turn, idle>>
-\* The idle-TTL thread reads the state, then stops in a separate call.
+\* The idle-TTL thread reads current_state().generation, then calls
+\* stop(StopBy::Generation(g)) in a separate call (cua-driver-sdk/src/runtime.rs:614-620).
 IdleRead == /\ enabled /\ idle.phase = "none"
             /\ idle' = [phase |-> "read", read |-> gen, hit |-> 0]
             /\ UNCHANGED <<enabled, owner, gen, media, ended, hooked, dirs, turn>>
@@ -66,7 +72,8 @@ IdleStop(readGen) ==
   /\ UNCHANGED <<gen, ended, hooked, turn>>
 IdleReset == /\ idle.phase = "done" /\ idle' = [phase |-> "none", read |-> 0, hit |-> 0]
              /\ UNCHANGED <<enabled, owner, gen, media, ended, hooked, dirs, turn>>
-\* begin_turn reserves under the live generation; finish_turn drops it if the generation moved
+\* begin_turn (:943) reserves under the live generation; finish_turn (:1100) drops it
+\* if the generation moved (Recorder::is_live, :659)
 BeginTurn == /\ enabled /\ turn.phase = "none"
              /\ turn' = [g |-> gen, into |-> 0, phase |-> "pending"]
              /\ UNCHANGED <<enabled, owner, gen, media, ended, hooked, dirs, idle>>

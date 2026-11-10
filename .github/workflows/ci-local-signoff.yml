@@ -68,7 +68,9 @@ jobs:
           CARGO_BUILD_JOBS: "6"
           VITEST_MAX_WORKERS: "6"
         run: |
-          set -uo pipefail
+          # No -e (GitHub's default shell sets it): a failed attempt or a grep with no match must not end the step
+          # before the verdict is written.
+          set +e -uo pipefail
           # Infra, not the change: a vitest worker that never started under load, a bin/ci log file
           # that vanished, a dropped connection while installing. Same list as ci-remote-sweep.
           flake='Timeout waiting for worker to respond|Failed to start forks worker|No such file or directory.*bin-ci/logs|Connection (reset|closed|timed out)|ETIMEDOUT|ECONNRESET|EAI_AGAIN'
@@ -85,8 +87,8 @@ jobs:
             echo "::warning title=infra flake, attempt $attempt of 3::bin/ci exited $rc with an infra error; retrying"
           done
           clean=$(sed 's/\x1b\[[0-9;]*m//g' "$log")
-          summary=$(grep -E '^bin/ci: .* in ' <<<"$clean" | tail -1 | sed 's/^bin\/ci: //')
-          failed=$(grep -E '^\s*FAIL ' <<<"$clean" | sed -E 's/^\s*FAIL +//; s/ +[0-9.]+s$//' | head -5 | paste -sd ';' - | sed 's/;/; /g')
+          summary=$({ grep -E '^bin/ci: .* in ' <<<"$clean" || true; } | tail -1 | sed 's/^bin\/ci: //')
+          failed=$({ grep -E '^[[:space:]]*FAIL ' <<<"$clean" || true; } | sed -E 's/^[[:space:]]*FAIL[[:space:]]+//; s/[[:space:]]+[0-9.]+s$//' | head -5 | paste -sd ';' - | sed 's/;/; /g')
           {
             echo "verdict=$verdict"
             echo "summary=${summary:0:100}"

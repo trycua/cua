@@ -27,6 +27,8 @@ def test_self_hosted_job_is_same_repo_only_read_only_and_secret_free():
     assert 'secrets.' not in text
     checkout = job['steps'][0]
     assert checkout['with']['persist-credentials'] is False
+    run = next(s for s in job['steps'] if s.get('id') == 'run')
+    assert run['run'].lstrip().splitlines()[2].startswith('set +e'), 'the verdict must be written even when a grep finds nothing'
 
 
 def test_status_job_never_runs_pull_request_code():

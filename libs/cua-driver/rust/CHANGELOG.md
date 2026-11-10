@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.0...cua-driver-rs-v0.46.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** the driver inside Cua Spaces leaves updates to the app ([#7153](https://github.com/trycua/cua/issues/7153)) ([0f39fa3](https://github.com/trycua/cua/commit/0f39fa3f63b0536ec6fcf952875f8e8dc0030744))
+
 ## [0.46.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.4...cua-driver-rs-v0.46.0) (2026-11-09)
 
 

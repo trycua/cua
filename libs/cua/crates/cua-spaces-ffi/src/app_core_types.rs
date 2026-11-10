@@ -359,6 +359,9 @@ pub struct AppSpace {
     /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
     /// SDK and `cua spaces ls` still return it, marked.
     pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    pub parent: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -426,6 +429,8 @@ pub struct AppSpaceRow {
     pub stop_reason: Option<String>,
     /// A relay Space: who owns it and who else has it.
     pub sharing: Option<AppSpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    pub parent: Option<String>,
 }
 
 /// Where new Spaces can be created.
@@ -681,6 +686,8 @@ pub struct AppPendingCreate {
     pub host: Option<String>,
     /// That machine's name, for the row and for a failure that names it.
     pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    pub parent: Option<String>,
     /// How many times the app ran this create again by itself: 0, or 1
     /// after a failure that usually passes ([`fail_decision`]).
     pub attempt: u32,
@@ -788,6 +795,8 @@ pub enum AppCreateAction {
         host: Option<String>,
         /// That machine's name.
         host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {

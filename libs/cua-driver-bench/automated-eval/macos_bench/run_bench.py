@@ -628,22 +628,26 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
             if ca.SCRIPT_ONLY_FLAG in env:
                 if set(tools) != {"run_script"}:
                     raise RuntimeError("unexpected script-only Cua Driver tools/list")
+                # the same reads through the one tool; run_script returns the capture's image block
+                script = 'await cua.call("check_permissions", {}); await cua.call("get_desktop_state", {}); return 1'
+                result = call("run_script", {"script": script})
             elif (
                 "list_apps" not in tools
                 or len(tools) < 50
                 or ("run_script" in tools) != (ca.SCRIPT_FLAG in env)
             ):
                 raise RuntimeError("unexpected Cua Driver tools/list")
-            call("check_permissions", {})
-            tool = next((t for t in ("get_desktop_state", "screenshot") if t in tools), None)
-            if tool is None:
-                raise RuntimeError("no desktop capture tool")
-            arguments = (
-                {"screenshot_out_file": str(dest)}
-                if "screenshot_out_file" in tools[tool].get("inputSchema", {}).get("properties", {})
-                else {}
-            )
-            result = call(tool, arguments)
+            if ca.SCRIPT_ONLY_FLAG not in env:
+                call("check_permissions", {})
+                tool = next((t for t in ("get_desktop_state", "screenshot") if t in tools), None)
+                if tool is None:
+                    raise RuntimeError("no desktop capture tool")
+                arguments = (
+                    {"screenshot_out_file": str(dest)}
+                    if "screenshot_out_file" in tools[tool].get("inputSchema", {}).get("properties", {})
+                    else {}
+                )
+                result = call(tool, arguments)
         elif source in ca.CU_HELPER_ARMS:
             if set(tools) != set(ca.load_pins()["claude_cu_helper"]["tools"]):
                 raise RuntimeError("unexpected helper tools/list")

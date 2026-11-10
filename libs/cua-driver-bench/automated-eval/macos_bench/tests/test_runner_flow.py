@@ -646,6 +646,53 @@ class RealCaptureTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 capture_detail(Path(tmp) / "missing.png", str(Path(tmp) / "missing-ffmpeg"))
 
+    def test_script_only_capture_goes_through_run_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            ffmpeg = Path(tmp) / "ffmpeg"
+            ffmpeg.write_text(
+                '#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nsys.stdout.buffer.write(Path(sys.argv[sys.argv.index("-i")+1]).read_bytes())\n'
+            )
+            ffmpeg.chmod(0o755)
+            image = b"P6\n2 1\n255\n" + b"\x00\x01\x02\xff\xfe\xfd"
+            capture_detail = rb.rec.capture_detail
+            arm = "cc-cua-driver-script-only"
+            ctx.mcp[arm] = (Path(tmp) / f"{arm}.json", "server")
+            for listed, message in [(["run_script"], None), (["run_script", "click"], "script-only")]:
+                calls = []
+                client = mock.Mock()
+
+                def request(method, params, **kwargs):
+                    calls.append((method, params))
+                    if method == "tools/list":
+                        return {"result": {"tools": [{"name": n} for n in listed]}}
+                    block = {"type": "image", "data": base64.b64encode(image).decode()}
+                    return {"result": {"content": [{"type": "text", "text": "ok"}, block]}}
+
+                client.request.side_effect = request
+                with (
+                    self.subTest(listed=listed),
+                    mock.patch.object(rb.rec, "McpStdioClient", return_value=client),
+                    mock.patch.object(rb, "ensure_agent_daemon"),
+                    mock.patch.object(rb, "mcp_entry", return_value=("mcp", [], {})),
+                    mock.patch.object(
+                        rb.rec,
+                        "capture_detail",
+                        side_effect=lambda path: capture_detail(path, str(ffmpeg)),
+                    ),
+                ):
+                    name, status, detail = rb.real_capture_check(ctx, arm)
+                self.assertEqual(status, "fail" if message else "pass", detail)
+                self.assertIn(message or "2x1 bytes=", detail)
+                tool_calls = [p for m, p in calls if m == "tools/call"]
+                if message:
+                    self.assertEqual(tool_calls, [])
+                else:
+                    self.assertEqual([p["name"] for p in tool_calls], ["run_script"])
+                    script = tool_calls[0]["arguments"]["script"]
+                    self.assertIn("check_permissions", script)
+                    self.assertIn("get_desktop_state", script)
+
     def test_stdio_client_answers_calculator_elicitation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "server.py"

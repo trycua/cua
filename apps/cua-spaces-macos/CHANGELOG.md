@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/trycua/cua/compare/cua-spaces-v0.27.0...cua-spaces-v0.27.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spaces:** hold Child Spaces on in the relay_publish opt-out test ([#7181](https://github.com/trycua/cua/issues/7181)) ([5b89d98](https://github.com/trycua/cua/commit/5b89d98fb55496c104ecac4221229bb2080ebdb9))
+
 ## [0.27.0](https://github.com/trycua/cua/compare/cua-spaces-v0.26.2...cua-spaces-v0.27.0) (2026-11-10)
 
 

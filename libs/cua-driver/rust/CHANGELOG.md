@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.1...cua-driver-rs-v0.47.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** rebuild the X11 overlay window when a compositor starts or stops ([#7217](https://github.com/trycua/cua/issues/7217)) ([78c6ecd](https://github.com/trycua/cua/commit/78c6ecd296abbc5d49814e5338fdb86efd5b3e7c))
+
 ## [0.47.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.0...cua-driver-rs-v0.47.1) (2026-11-10)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/trycua/cua/compare/cua-sdk-v0.21.0...cua-sdk-v0.21.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spaces:** read spaces.json once per connect ([#7235](https://github.com/trycua/cua/issues/7235)) ([1344c86](https://github.com/trycua/cua/commit/1344c86d1cf892002c454b5c73139b9bca62f47a))
+
 ## [0.21.0](https://github.com/trycua/cua/compare/cua-sdk-v0.20.0...cua-sdk-v0.21.0) (2026-11-10)
 
 

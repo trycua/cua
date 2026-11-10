@@ -131,8 +131,8 @@ pub struct ForegroundReport {
     /// unknown, every on-screen window; a change among those alone is not
     /// the target's own.
     pub window_change_owned: bool,
-    /// The input opened a menu that holds the keyboard grab, so the target
-    /// was left focused rather than restored: the pid that owns the grab.
+    /// The input opened a menu, so the target was left focused rather than
+    /// restored: the pid whose new popup it is.
     pub menu_open: Option<u32>,
 }
 
@@ -176,14 +176,14 @@ impl ForegroundReport {
 }
 
 /// A sentence for the tool's text when a foreground action left the target
-/// focused because the menu it opened holds `menu_open`'s grab; empty
-/// otherwise.
+/// focused because pid `menu_open` mapped a popup during it; empty
+/// otherwise. A new popup is read as a menu: its grab is not probed.
 pub fn menu_open_note(menu_open: Option<u32>) -> String {
     menu_open
         .map(|pid| {
             format!(
-                " The target was left focused because a menu is open (pid {pid} holds its \
-                 keyboard grab); giving the focus back would close it."
+                " The target was left focused because a menu is open (a new popup of pid \
+                 {pid}); giving the focus back would close it."
             )
         })
         .unwrap_or_default()

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background keyboard synthesis via SLEventPostToPid (SkyLight SPI),
 //! with fallback to the public CGEvent::post_to_pid.
 //!
@@ -10,6 +13,9 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use foreign_types::ForeignType;
+use std::sync::{Arc, Mutex};
+
+use super::input_source;
 
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const SHIFT_KEY_CODE: u16 = 56;
@@ -50,14 +56,14 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
     if key == "+" || key.to_lowercase() == "plus" {
         let flags = modifier_flags(&["shift"]);
-        let eq_code = key_name_to_code("=")?;
+        let eq_code = target_key_code(pid, "=", modifiers)?;
         post_key(pid, eq_code, true, modifier_flags(modifiers) | flags)?;
         key_gap_sleep();
         post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
         return Ok(());
     }
 
-    let key_code = key_name_to_code(key)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let flags = modifier_flags(modifiers);
 
     post_key(pid, key_code, true, flags)?;
@@ -87,20 +93,90 @@ fn control_key_for_char(ch: char) -> Option<u16> {
 /// uppercase char (e.g. 'E') is seen as Shift+e and the modifier leaks into
 /// the next character (Swift fix: event.flags = []).
 fn char_key_events(source: &CGEventSource, ch: char) -> anyhow::Result<(CGEvent, CGEvent)> {
-    let (key_code, payload) = match control_key_for_char(ch) {
-        Some(code) => (code, None),
-        None => (0, Some(ch.to_string())),
-    };
+    match control_key_for_char(ch) {
+        Some(code) => key_events(source, code, None),
+        None => key_events(source, 0, Some(ch.encode_utf8(&mut [0; 4]))),
+    }
+}
+
+fn key_events(
+    source: &CGEventSource,
+    key_code: u16,
+    payload: Option<&str>,
+) -> anyhow::Result<(CGEvent, CGEvent)> {
     let make = |down: bool| -> anyhow::Result<CGEvent> {
         let event = CGEvent::new_keyboard_event(source.clone(), key_code, down)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard event failed"))?;
-        if let Some(payload) = &payload {
+        if let Some(payload) = payload {
             event.set_string(payload);
         }
         event.set_flags(CGEventFlags::CGEventFlagNull);
         Ok(event)
     };
     Ok((make(true)?, make(false)?))
+}
+
+/// Most UTF-16 units one keyboard event may carry
+/// (`CGEventKeyboardSetUnicodeString` documents a 20-unit ceiling).
+pub const MAX_UNICODE_UNITS_PER_EVENT: usize = 16;
+
+/// One keyboard event pair of batched typing.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TypingChunk<'a> {
+    /// Plain text carried as one Unicode payload on a single key pair.
+    Text(&'a str),
+    /// A control character sent as its real Return/Tab key.
+    Control(char),
+}
+
+/// Split `text` into the fewest key-event pairs: runs of ordinary characters
+/// of at most [`MAX_UNICODE_UNITS_PER_EVENT`] UTF-16 units (never splitting a
+/// character), with `\n`, `\r` and `\t` kept as their own real key presses.
+pub fn plan_chunks(text: &str) -> Vec<TypingChunk<'_>> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut units = 0;
+    for (i, ch) in text.char_indices() {
+        if control_key_for_char(ch).is_some() {
+            if start < i {
+                chunks.push(TypingChunk::Text(&text[start..i]));
+            }
+            chunks.push(TypingChunk::Control(ch));
+            start = i + ch.len_utf8();
+            units = 0;
+            continue;
+        }
+        let n = ch.len_utf16();
+        if units + n > MAX_UNICODE_UNITS_PER_EVENT {
+            chunks.push(TypingChunk::Text(&text[start..i]));
+            start = i;
+            units = 0;
+        }
+        units += n;
+    }
+    if start < text.len() {
+        chunks.push(TypingChunk::Text(&text[start..]));
+    }
+    chunks
+}
+
+/// Type `text` to `pid` in batches: one key-down/key-up pair per
+/// [`TypingChunk`] instead of per character, with no inter-character sleep.
+/// A 100-character string costs about 7 pairs rather than 100.
+pub fn type_text_batched(pid: i32, text: &str) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    for chunk in plan_chunks(text) {
+        let (down, up) = match chunk {
+            TypingChunk::Text(run) => key_events(&source, 0, Some(run))?,
+            TypingChunk::Control(ch) => char_key_events(&source, ch)?,
+        };
+        post_keyboard_event(pid, &down);
+        key_gap_sleep();
+        post_keyboard_event(pid, &up);
+        key_gap_sleep();
+    }
+    Ok(())
 }
 
 /// Type a string character-by-character to `pid`.
@@ -120,7 +196,14 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
 /// pause after each character (on top of the internal down/up key gap).
+///
+/// `inter_char_delay_ms == 0` selects [`type_text_batched`]: a caller that asks
+/// for no pacing gets the fast path; any positive delay keeps one event pair
+/// per character so debounce-sensitive fields see each key.
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    if inter_char_delay_ms == 0 {
+        return type_text_batched(pid, text);
+    }
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
@@ -152,7 +235,7 @@ pub fn hotkey(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
 /// sees those events. Without the envelope the path goes through IOHIDPostEvent
 /// so NSApplication.sendEvent: dispatches NSMenu key equivalents.
 pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    let key_code = key_name_to_code(key)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
     key_gap_sleep();
@@ -163,7 +246,7 @@ pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result
 /// Press and release a single key to `pid` WITHOUT the auth-message envelope.
 /// Works for single keys as well as combinations (same as hotkey_no_auth for single key).
 pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    let key_code = key_name_to_code(key)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
     key_gap_sleep();
@@ -180,7 +263,8 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
 pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
-    let key_code = key_name_to_code(key)?;
+    // The HID queue reaches the frontmost app, which may be Screen Sharing.
+    let key_code = target_key_code(crate::apps::frontmost_pid(), key, modifiers)?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let mut active_flags = CGEventFlags::CGEventFlagNull;
@@ -451,10 +535,10 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
 /// key carries no flags arrives as the bare key: `cmd+a` inserts a literal `a`.
 /// Remote-input clients such as Screen Sharing re-derive modifiers from the
 /// keycode transitions and ignore the flags, so both consumers are served.
-pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+pub fn press_key_bare_global(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
-    let key_code = key_name_to_code(key)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let mut modifier_keys = Vec::new();
     for modifier in modifiers {
         let Some((modifier_code, flag)) = modifier_key_code_and_flag(modifier) else {
@@ -811,6 +895,230 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
     Ok(code)
 }
 
+/// The characters a keyboard layout types, by virtual key code: with no
+/// modifier, with Command held and with Control held. The Command layer is
+/// QWERTY on Russian and on Dvorak - QWERTY ⌘ and the same as the plain one
+/// on AZERTY and QWERTZ; the Control layer types control characters (`^C` for
+/// the key that types `c`) on most layouts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KeyLayout {
+    plain: Vec<(u16, char)>,
+    command: Vec<(u16, char)>,
+    control: Vec<(u16, char)>,
+}
+
+impl KeyLayout {
+    /// Return and Tab type `^M` and `^I` with Control held: they are left out
+    /// of the Control layer so `ctrl+m` presses the M key.
+    fn new(plain: Vec<(u16, char)>, command: Vec<(u16, char)>, control: Vec<(u16, char)>) -> Self {
+        let named: Vec<u16> = plain
+            .iter()
+            .filter(|(_, typed)| typed.is_control())
+            .map(|&(code, _)| code)
+            .collect();
+        let control = control
+            .into_iter()
+            .filter(|(code, _)| !named.contains(code))
+            .collect();
+        Self {
+            plain,
+            command,
+            control,
+        }
+    }
+}
+
+/// The virtual key a chord presses for `key` with `modifiers` held.
+///
+/// A single printable character is pressed by the key that types it with
+/// those modifiers, so the app receives what the user's own keyboard sends
+/// for that shortcut: `cmd+a` presses the AZERTY A key (US Q), `ctrl+c` on
+/// Russian the key whose Control layer types `^C`. Command reads the Command
+/// layer, Control the Control layer, any other chord the plain one. When
+/// several keys type the character, the US key is kept, then the one that
+/// types it with no modifier (Turkish F types `^C` on its C and Ç keys). A character the layer has no
+/// key for, a named key, and every key when the layout could not be read keep
+/// the US position, as macOS does for a shortcut whose character is not on
+/// the layout.
+fn chord_key_code(
+    key: &str,
+    modifiers: &[&str],
+    layout: Option<&KeyLayout>,
+) -> anyhow::Result<u16> {
+    let us = key_name_to_code(key);
+    let name = canonical_key_name(key);
+    let mut chars = name.chars();
+    let (Some(character), None, Some(layout)) = (chars.next(), chars.next(), layout) else {
+        return us;
+    };
+    if character.is_whitespace() || character.is_control() {
+        return us;
+    }
+    let held = |code: u16| {
+        modifiers.iter().any(|modifier| {
+            modifier_key_code_and_flag(modifier).is_some_and(|(key, _)| key == code)
+        })
+    };
+    let character = character.to_lowercase().next().unwrap_or(character);
+    let (keys, control) = if held(55) {
+        (&layout.command, None)
+    } else if held(59) {
+        let control = character
+            .is_ascii_lowercase()
+            .then(|| char::from(character as u8 & 0x1f));
+        (&layout.control, control)
+    } else {
+        (&layout.plain, None)
+    };
+    let codes: Vec<u16> = keys
+        .iter()
+        .filter(|&&(_, typed)| {
+            typed.to_lowercase().eq(std::iter::once(character)) || Some(typed) == control
+        })
+        .map(|&(code, _)| code)
+        .collect();
+    let keycap = codes.iter().copied().find(|code| {
+        layout.plain.iter().any(|&(key, typed)| {
+            key == *code && typed.to_lowercase().eq(std::iter::once(character))
+        })
+    });
+    match us {
+        Ok(code) if codes.contains(&code) => Ok(code),
+        _ => keycap.or(codes.first().copied()).map_or(us, Ok),
+    }
+}
+
+/// The virtual key a chord aimed at `pid` presses, on the current keyboard
+/// layout. Every chord path resolves its key here. Screen Sharing forwards key
+/// positions to a guest whose layout this host cannot read, so it keeps the US
+/// positions its text path (`physical_key_for_char`) assumes too: the host
+/// layout would press AZERTY's A key (US Q) for `cmd+a` on a US guest.
+fn target_key_code(
+    pid: impl Into<Option<i32>>,
+    key: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<u16> {
+    let screen_sharing = pid.into().is_some_and(is_screen_sharing_pid);
+    chord_key_code(key, modifiers, target_layout(screen_sharing).as_deref())
+}
+
+/// The virtual key `key` with `modifiers` presses on the current keyboard
+/// layout, as `press_key` and `hotkey` resolve it for a local app.
+pub fn layout_key_code(key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
+    target_key_code(None, key, modifiers)
+}
+
+fn target_layout(screen_sharing: bool) -> Option<Arc<KeyLayout>> {
+    (!screen_sharing).then(current_layout).flatten()
+}
+
+/// The main typing keys (the ANSI/ISO block). The keypad is left out: its
+/// keys send navigation keys with Num Lock off and are not where a shortcut's
+/// character is.
+const TYPING_KEY_CODES: std::ops::RangeInclusive<u16> = 0..=50;
+
+/// The current keyboard layout, or `None` when it has no Unicode layout data
+/// or could not be read with the thread affinity Text Input Sources requires
+/// (see [`super::input_source`]); chords then keep their US key positions.
+///
+/// In a process with a main run loop the layout is read once on the main
+/// queue and cached until the selected or enabled input sources change.
+fn current_layout() -> Option<Arc<KeyLayout>> {
+    static CACHE: Mutex<Option<(u64, Option<Arc<KeyLayout>>)>> = Mutex::new(None);
+
+    let generation = input_source::generation();
+    if input_source::can_cache() {
+        if let Some((cached, layout)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            if *cached == generation {
+                return layout.clone();
+            }
+        }
+    }
+    input_source::run(move || {
+        let layout = read_current_layout().map(Arc::new);
+        if input_source::can_cache() {
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((generation, layout.clone()));
+        }
+        layout
+    })
+    .flatten()
+}
+
+/// Read the current layout with `UCKeyTranslate`. Text Input Sources calls:
+/// only through [`input_source::run`].
+fn read_current_layout() -> Option<KeyLayout> {
+    use core_foundation::base::{CFRelease, CFTypeRef};
+    use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
+    use core_foundation::string::CFStringRef;
+
+    #[link(name = "Carbon", kind = "framework")]
+    extern "C" {
+        static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
+        fn TISCopyCurrentKeyboardLayoutInputSource() -> CFTypeRef;
+        fn TISGetInputSourceProperty(source: CFTypeRef, key: CFStringRef) -> CFTypeRef;
+        fn LMGetKbdType() -> u8;
+        fn UCKeyTranslate(
+            layout: *const u8,
+            key_code: u16,
+            key_action: u16,
+            modifier_key_state: u32,
+            keyboard_type: u32,
+            options: u32,
+            dead_key_state: *mut u32,
+            max_length: usize,
+            actual_length: *mut usize,
+            unicode: *mut u16,
+        ) -> i32;
+    }
+    const KEY_ACTION_DISPLAY: u16 = 3;
+    const NO_DEAD_KEYS: u32 = 1;
+    // `cmdKey >> 8` and `controlKey >> 8`, the modifier states UCKeyTranslate takes.
+    const COMMAND_STATE: u32 = 0x01;
+    const CONTROL_STATE: u32 = 0x10;
+
+    unsafe {
+        let source = TISCopyCurrentKeyboardLayoutInputSource();
+        if source.is_null() {
+            return None;
+        }
+        let data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+        let layout = (!data.is_null()).then(|| {
+            let bytes = CFDataGetBytePtr(data as CFDataRef);
+            let keyboard_type = u32::from(LMGetKbdType());
+            let layer = |state: u32| {
+                TYPING_KEY_CODES
+                    .filter_map(|code| {
+                        let mut dead = 0u32;
+                        let mut length = 0usize;
+                        let mut unicode = [0u16; 4];
+                        let status = UCKeyTranslate(
+                            bytes,
+                            code,
+                            KEY_ACTION_DISPLAY,
+                            state,
+                            keyboard_type,
+                            NO_DEAD_KEYS,
+                            &mut dead,
+                            unicode.len(),
+                            &mut length,
+                            unicode.as_mut_ptr(),
+                        );
+                        let mut typed =
+                            char::decode_utf16(unicode[..length.min(4)].iter().copied());
+                        match (status, typed.next(), typed.next()) {
+                            (0, Some(Ok(character)), None) => Some((code, character)),
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            };
+            KeyLayout::new(layer(0), layer(COMMAND_STATE), layer(CONTROL_STATE))
+        });
+        CFRelease(source);
+        layout
+    }
+}
+
 /// The error for a name `key_name_to_code` does not know, saying what to send
 /// instead: a combination such as "shift+Right" is a key plus modifiers, and
 /// a printable symbol is text.
@@ -1082,10 +1390,271 @@ mod tests {
         }
     }
 
+    /// A layout from the characters its keys 0..=50 type with no modifier,
+    /// Command and Control, as `UCKeyTranslate` reads them on macOS 26
+    /// (dumped from the installed layouts; `\0` is a key that types nothing).
+    fn layout([plain, command, control]: [&str; 3]) -> KeyLayout {
+        let keys = |row: &str| -> Vec<(u16, char)> {
+            assert_eq!(row.chars().count(), 51);
+            (0u16..)
+                .zip(row.chars())
+                .filter(|&(_, typed)| typed != '\0')
+                .collect()
+        };
+        KeyLayout::new(keys(plain), keys(command), keys(control))
+    }
+
+    /// ABC: plain, Command and Control layers.
+    const US: [&str; 3] = [
+        "asdfhgzxcv§bqweryt123465=97-80]ou[ip\rlj'k;\\,/nm.\t `",
+        "asdfhgzxcv§bqweryt123465=97-80]ou[ip\rlj'k;\\,/nm.\t `",
+        "\x01\x13\x04\x06\x08\x07\x1a\x18\x03\x160\x02\x11\x17\x05\x12\x19\x14123465=97\x1f80\x1d\x0f\x15\x1b\t\x10\r\x0c\n'\x0b;\x1c,/\x0e\r.\t `",
+    ];
+    /// French: plain, Command and Control layers.
+    const FRENCH: [&str; 3] = [
+        "qsdfhgwxcv@bazeryt&é\"'§(-çè)!à$ou^ip\rljùkm`;=n,:\t <",
+        "qsdfhgwxcv@bazeryt&é\"'§(-çè)!à$ou^ip\rljùkm`;=n,:\t <",
+        "\x11\x13\x04\x06\x08\x07\x17\x18\x03\x160\x02\x01\x1a\x05\x12\x19\x141234\x1d5\x1f\x1c7\x1b8\0\x1d\x0f\x15\x1e\t\x10\r\x0c\nù\x0b\r\x1c;=\x0e,:\t <",
+    ];
+    /// German: plain, Command and Control layers.
+    const GERMAN: [&str; 3] = [
+        "asdfhgyxcv^bqwerzt123465´97ß80+ouüip\rljäkö#,-nm.\t <",
+        "asdfhgyxcv^bqwerzt123465´97ß80+ouüip\rljäkö#,-nm.\t <",
+        "\x01\x13\x04\x06\x08\x07\x19\x18\x03\x16\x1e\x02\x11\x17\x05\x12\x1a\x14123465´97ß80+\x0f\x15\x1d\t\x10\r\x0c\n\x1b\x0b\x1c#,-\x0e\r.\t <",
+    ];
+    /// Russian: plain, Command and Control layers.
+    const RUSSIAN: [&str; 3] = [
+        "фыварпячсм>ийцукне123465=97-80ъщгхшз\rдоэлжёб/тью\t ]",
+        "asdfhgzxcv§bqweryt123465=97-80]ou[ip\rlj'k;\\,/nm.\t `",
+        "\x01\x13\x04\x06\x08\x07\x1a\x18\x03\x160\x02\x11\x17\x05\x12\x19\x14123465=97\x1f80\x1d\x0f\x15\x1b\t\x10\r\x0c\n'\x0b;\x1c,/\x0e\r.\t `",
+    ];
+    /// Dvorak – QWERTY ⌘: plain, Command and Control layers.
+    const DVORAK_QWERTY_CMD: [&str; 3] = [
+        "aoeudi;qjk§x',.pfy123465]97[80=rg/cl\rnh-ts\\wzbmv\t `",
+        "asdfhgzxcv§bqweryt123465=97-80]ou[ip\rlj'k;\\,/nm.\t `",
+        "\x01\x13\x04\x06\x08\x07\x1a\x18\x03\x160\x02\x11\x17\x05\x12\x19\x14123465=97\x1f80\x1d\x0f\x15\x1b\t\x10\r\x0c\n'\x0b;\x1c,/\x0e\r.\t `",
+    ];
+    /// Hungarian: plain, Command and Control layers.
+    const HUNGARIAN: [&str; 3] = [
+        "asdfhgyxcv0bqwerzt123465ó97ü8öúouőip\rljákéű,-nm.\t í",
+        "asdfhgyxcv0bqwerzt123465ó97ü8öúouőip\rljákéű,-nm.\t í",
+        "\x01\x13\x04\x06\x08\x07\x19\x18\x03\x160\x02\x11\x17\x05\x12\x1a\x14123465=97\x1f80\x1d\x0f\x15\x1b\t\x10\r\x0c\n'\x0b;\x1c,/\x0e\r.\t `",
+    ];
+    /// Lithuanian – QWERTY: plain, Command and Control layers.
+    const LITHUANIAN: [&str; 3] = [
+        "asdfhgzxcv§bqwerytąčęėšįž„ų-ū“]ou[ip\rlj'k;\\,/nm.\t `",
+        "asdfhgzxcv§bqweryt123465=97-80]ou[ip\rlj'k;\\,/nm.\t `",
+        "asdfhgzxcv§bqweryt123465=97-80]ou[ip\rlj'k;\\,/nm.\t `",
+    ];
+
+    fn code(key: &str, modifiers: &[&str], layout: [&str; 3]) -> u16 {
+        chord_key_code(key, modifiers, Some(&self::layout(layout))).unwrap()
+    }
+
+    /// HW-106: `cmd+a` on an AZERTY Mac pressed the US A key, which types
+    /// `q` there, and Slack quit.
+    #[test]
+    fn azerty_shortcuts_press_the_key_that_types_their_letter() {
+        assert_eq!(code("a", &["cmd"], FRENCH), 12);
+        assert_eq!(code("q", &["cmd"], FRENCH), 0);
+        assert_eq!(code("w", &["cmd"], FRENCH), 6);
+        assert_eq!(code("z", &["cmd", "shift"], FRENCH), 13);
+        assert_eq!(code("A", &["cmd"], FRENCH), 12);
+        assert_eq!(code("a", &["ctrl"], FRENCH), 12);
+        // Return types ^M with Control held too; the M key is pressed.
+        assert_eq!(code("m", &["ctrl"], FRENCH), 41);
+        // Letters that sit where US has them keep the US key.
+        assert_eq!(code("c", &["cmd"], FRENCH), 8);
+        // Symbols too: cmd+= zooms in rather than pressing AZERTY `-`.
+        assert_eq!(code("=", &["cmd"], FRENCH), 44);
+        assert_eq!(code("-", &["cmd"], FRENCH), 24);
+    }
+
+    #[test]
+    fn qwertz_swaps_y_and_z() {
+        assert_eq!(code("z", &["cmd"], GERMAN), 16);
+        assert_eq!(code("y", &["ctrl"], GERMAN), 6);
+        assert_eq!(code("ß", &[], GERMAN), 27);
+    }
+
+    /// Russian and Dvorak - QWERTY ⌘ type QWERTY with Command or Control
+    /// held, so their shortcuts are on the QWERTY keys.
+    #[test]
+    fn chords_read_the_layer_of_their_modifiers() {
+        assert_eq!(code("c", &["cmd"], RUSSIAN), 8);
+        assert_eq!(code("c", &["ctrl"], RUSSIAN), 8);
+        assert_eq!(code("c", &["cmd"], DVORAK_QWERTY_CMD), 8);
+        assert_eq!(code("c", &["ctrl"], DVORAK_QWERTY_CMD), 8);
+        assert_eq!(code("c", &["shift"], DVORAK_QWERTY_CMD), 34);
+        // Lithuanian types plain letters with Control held.
+        assert_eq!(code("c", &["ctrl"], LITHUANIAN), 8);
+    }
+
+    /// Turkish F types `^C` on its C key (9) and its Ç key (11).
+    #[test]
+    fn of_several_keys_the_one_that_types_the_letter_is_pressed() {
+        // The Ç key first, as if it came first in the layout.
+        let turkish_f = KeyLayout::new(
+            vec![(8, 'ü'), (9, 'c'), (11, 'ç')],
+            vec![(8, 'ü'), (9, 'c'), (11, 'ç')],
+            vec![(11, '\x03'), (8, '\x16'), (9, '\x03')],
+        );
+        assert_eq!(chord_key_code("c", &["ctrl"], Some(&turkish_f)).unwrap(), 9);
+    }
+
+    /// Digits are where the layer types them: Hungarian has 0 left of 1.
+    /// AZERTY types `&` on the 1 key with Command held, so the 1 key stays.
+    #[test]
+    fn digits_are_pressed_where_the_layer_types_them() {
+        assert_eq!(code("0", &["cmd"], HUNGARIAN), 10);
+        assert_eq!(code("1", &["cmd"], FRENCH), 18);
+        assert_eq!(code("1", &["ctrl"], FRENCH), 18);
+        assert_eq!(code("1", &["cmd"], LITHUANIAN), 18);
+        assert_eq!(code("5", &["cmd"], US), 23);
+    }
+
+    /// Like macOS for a shortcut whose character is not on the layout.
+    #[test]
+    fn a_character_the_layer_lacks_keeps_its_us_key() {
+        assert_eq!(code("[", &["cmd"], FRENCH), 33);
+        assert_eq!(code("c", &[], RUSSIAN), 8);
+    }
+
+    #[test]
+    fn named_keys_keep_their_positions() {
+        for (key, us) in [
+            ("return", 36),
+            ("left", 123),
+            ("f5", 96),
+            ("space", 49),
+            ("tab", 48),
+        ] {
+            assert_eq!(code(key, &["ctrl"], FRENCH), us, "{key}");
+        }
+        assert_eq!(chord_key_code("a", &["cmd"], None).unwrap(), 0);
+        assert!(chord_key_code("asterisk", &[], Some(&layout(FRENCH)))
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown key name"));
+    }
+
+    /// A French host driving a US guest through Screen Sharing: `cmd+a` must
+    /// press the US A key, not the host's AZERTY A key (US Q).
+    #[test]
+    fn screen_sharing_chords_keep_us_positions() {
+        assert!(target_layout(true).is_none());
+        assert_eq!(
+            chord_key_code("a", &["cmd"], target_layout(true).as_deref()).unwrap(),
+            0
+        );
+    }
+
+    /// Reads the host's real layout through Carbon: per-user state, so not in
+    /// plain `cargo test`.
+    #[test]
+    #[ignore = "reads the host keyboard layout"]
+    fn the_current_layout_types_its_letters() {
+        let layout = current_layout().expect("current layout has Unicode data");
+        for letter in 'a'..='z' {
+            if layout.plain.iter().all(|&(_, typed)| typed != letter) {
+                continue;
+            }
+            let code = chord_key_code(&letter.to_string(), &[], Some(&*layout)).unwrap();
+            assert!(layout.plain.contains(&(code, letter)), "{letter}");
+        }
+    }
+
     #[test]
     fn screen_sharing_detection_is_exact_and_case_sensitive() {
         assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
         assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
         assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+
+    #[test]
+    fn short_text_is_one_pair() {
+        assert_eq!(plan_chunks("hello"), vec![TypingChunk::Text("hello")]);
+    }
+
+    #[test]
+    fn controls_split_runs_and_stay_real_keys() {
+        assert_eq!(
+            plan_chunks("a\tb\n"),
+            vec![
+                TypingChunk::Text("a"),
+                TypingChunk::Control('\t'),
+                TypingChunk::Text("b"),
+                TypingChunk::Control('\n'),
+            ]
+        );
+    }
+
+    #[test]
+    fn long_text_chunks_never_exceed_the_unit_limit_and_round_trip() {
+        let text = "x".repeat(100) + "é😀日本語" + &"y".repeat(33);
+        let chunks = plan_chunks(&text);
+        let mut joined = String::new();
+        for c in &chunks {
+            let TypingChunk::Text(t) = c else { panic!() };
+            assert!(t.encode_utf16().count() <= MAX_UNICODE_UNITS_PER_EVENT);
+            joined.push_str(t);
+        }
+        assert_eq!(joined, text);
+        assert!(chunks.len() < text.chars().count() / 8);
+    }
+
+    #[test]
+    fn astral_characters_are_not_split() {
+        let text = "😀".repeat(9); // 18 units
+        let chunks = plan_chunks(&text);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], TypingChunk::Text(&"😀".repeat(8)));
+    }
+
+    #[test]
+    fn empty_text_is_no_chunks() {
+        assert!(plan_chunks("").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// Micro-benchmark: wall time to post a 100-character string to `pid`,
+    /// paced (the old 30 ms default) versus batched. Run with
+    /// `CUA_BENCH_PID=<pid> cargo test -p platform-macos bench_type_text_posting -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_type_text_posting() {
+        let pid: i32 = std::env::var("CUA_BENCH_PID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .expect("set CUA_BENCH_PID to a running app's pid");
+        let text = "The quick brown fox jumps over the lazy dog. 0123456789 hello there, world! Cua Driver type_text bench.";
+        assert!(text.chars().count() >= 100);
+        for (label, delay) in [
+            ("paced (before, delay_ms=30)", 30u64),
+            ("batched (after, delay_ms=0)", 0),
+        ] {
+            let mut ms: Vec<f64> = (0..9)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    type_text_with_delay(pid, text, delay).unwrap();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!(
+                "{label}: p50 {:.0} ms over {} chars",
+                ms[ms.len() / 2],
+                text.chars().count()
+            );
+        }
     }
 }

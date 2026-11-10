@@ -1,6 +1,6 @@
 ---
 title: Adapter benchmarks
-description: 'Run established benchmarks through Cua Bench adapters: OSWorld-Verified, MiniWoB++, WebVoyager, Online-Mind2Web, WebGym and the grounding sets, locally or in the cloud.'
+description: 'Run established benchmarks through Cua Bench adapters: OSWorld-Verified, MiniWoB++, WebVoyager, Online-Mind2Web, WebGym and the grounding sets, on your machine.'
 ---
 
 Cua Bench's own tasksets come from the [registry](/cua-bench/guides/benchmarks).
@@ -35,8 +35,8 @@ Both run cua-spacesd, and every result records `image_ref`, `image_variant`,
 | [OSWorld-G](https://github.com/xlang-ai/OSWorld-G) | Click the described element | 564 | none |
 | [ScreenSpot-Pro](https://huggingface.co/datasets/likaixin/ScreenSpot-Pro) | High-resolution professional app screenshots | ~1,581 | none |
 
-Images live under `ghcr.io/trycua/`. How they are built:
-[Convert benchmark images](/cua-bench/guides/convert-benchmark-images).
+Images live under `ghcr.io/trycua/`. To see how they are built, read
+[Build a benchmark image](/cua-bench/guides/benchmarks#build-a-benchmark-image).
 
 ## OSWorld-Verified
 
@@ -72,7 +72,7 @@ guest's server. `CUA_BENCH_OSWORLD_SPLIT` picks the list (`test_all`,
 
 To keep the upstream disk as is and add only a `cua-driver mcp` service
 (Streamable HTTP on `3000/mcp`), use the recipe in
-[`samples/python/osworld-image`](https://github.com/trycua/cua/tree/main/samples/python/osworld-image).
+[`examples/python/osworld-image`](https://github.com/trycua/cua/tree/main/examples/python/osworld-image).
 It edits an overlay with `virt-customize` (no guest network, `base.qcow2`
 untouched) and packages `disk.img` as a containerDisk. This disk has no
 cua-spacesd; the SDK's OSWorld adapter (`agent_type="osworld"`) talks to the
@@ -83,16 +83,15 @@ docker build -t osworld-guestfs:local osworld-image/guestfs
 docker run --rm --device /dev/kvm -v "$PWD:/work" osworld-guestfs:local \
   bash /work/osworld-image/build-osworld-cua.sh           # -> disk.img
 export OSWORLD_IMAGE="<registry>/<repo>@sha256:<digest>"  # after pushing the containerDisk
-uv run samples/python/3_osworld_fleet.py                  # OSWORLD_LOCAL=1 boots it under QEMU
+uv run examples/python/3_osworld_local.py                  # boots it under QEMU
 ```
 
 - Wrap OSWorld setup and evaluation in timeouts: its controller has none.
 - Downscale the 1920x1080 screenshot to about 1280 px for the model and scale
   clicks back.
 - Local VM guests have outbound network by default (`network="none"` turns it off).
-- A cloud sandbox that never becomes ready: the probe is TCP on `5000`, so the
-  image is still pulling or the guest has no DHCP lease. `cua fleet pools ls`
-  shows its capacity.
+- A sandbox that never becomes ready: the probe is TCP on `5000`, so the
+  image is still pulling or the guest has no DHCP lease.
 
 ## bench-web
 

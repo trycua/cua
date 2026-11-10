@@ -20,9 +20,15 @@ export function AgentsSection({
   failed: string | null;
   copy: { loading: string; empty: string; failed: string };
 }) {
-  const note = (text: string, hint?: string) => (
-    <li data-agents-status="" title={hint} className="px-4 py-2.5 text-[13px] text-muted-foreground">
+  // "Could not read" says why on the line itself, not only in a tooltip.
+  const note = (text: string, why?: string) => (
+    <li data-agents-status="" title={why} className="px-4 py-2.5 text-[13px] text-muted-foreground">
       {text}
+      {why ? (
+        <span data-agents-reason="" className="mt-0.5 block truncate text-xs">
+          {why}
+        </span>
+      ) : null}
     </li>
   );
   return (
@@ -36,7 +42,12 @@ export function AgentsSection({
             : runs.length === 0
               ? note(copy.empty)
               : runs.map((r) => (
-                  <li key={r.runId} data-agent-run={r.runId} title={r.reason} className="flex min-h-10 items-center justify-between gap-4 px-4 py-2.5 text-[13px]">
+                  <li
+                    key={r.runId}
+                    data-agent-run={r.runId}
+                    title={r.reason}
+                    className="flex min-h-10 items-center justify-between gap-4 px-4 py-2.5 text-[13px]"
+                  >
                     <span className="min-w-0 truncate">{r.line}</span>
                     <span className="shrink-0 text-muted-foreground">{r.status}</span>
                   </li>

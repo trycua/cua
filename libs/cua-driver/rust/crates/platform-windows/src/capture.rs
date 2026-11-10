@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window screenshot via PrintWindow + GDI BitBlt on Windows.
 //!
 //! `PW_RENDERFULLCONTENT` (0x2) renders the window contents even if it is
@@ -772,6 +775,10 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
         if let Err(error) = blt_result {
+            // A locked PC or a disconnected Remote Desktop session: say which.
+            if let Some(why) = crate::diagnostics::desktop_unavailable() {
+                bail!("{} (BitBlt: {error})", why.message());
+            }
             bail!("desktop capture: BitBlt failed: {error}");
         }
         if ok == 0 {

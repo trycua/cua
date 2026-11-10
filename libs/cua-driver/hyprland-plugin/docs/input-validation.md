@@ -1,5 +1,8 @@
 # Isolated-input VM validation
 
+> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the Fleet references below are historical.
+
 This is the historical single-seat record. The later
 [concurrent real-app validation](realapp-validation.md) covers two independent
 lanes, Calc and Inkscape, moving-primary measurement, Cancel, and Stop on a

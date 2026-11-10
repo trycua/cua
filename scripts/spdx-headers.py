@@ -6,7 +6,7 @@ Two trees carry headers:
 
   libs/cua-driver (MIT, .rs and .swift), the default root;
   every FSL-1.1-MIT package (`--fsl`): each source file whose nearest LICENSE
-  file is the Functional Source License (see LICENSING.md).
+  file is the Functional Source License (see legal/LICENSING.md).
 
 Modes:
   --apply (default): insert the header on files that lack it
@@ -74,8 +74,8 @@ GENERATED_ELSEWHERE = re.compile(r"_pb2(_grpc)?\.py$|_pb\.ts$")
 GENERATED_DIRS = ("libs/cua/crates/cua-spacesd-html5/assets/",)
 # FSL directories whose files are pinned by content digest: a header would
 # change the digests the benchmark checks, so the folder-level LICENSE covers
-# them instead (see benchmarks/cua-driver-bench/LICENSE).
-HEADER_EXEMPT_DIRS = ("benchmarks/cua-driver-bench/taskpack/tasks/",)
+# them instead (see libs/cua-driver-bench/LICENSE).
+HEADER_EXEMPT_DIRS = ("libs/cua-driver-bench/taskpack/tasks/",)
 
 
 def spdx_header(license_id: str, suffix: str) -> list[str]:
@@ -190,7 +190,7 @@ def main() -> int:
             for root in fsl_roots()
             for path in iter_source_files(root, extensions)
             if nearest_license_is_fsl(path, cache)
-            and not str(path.relative_to(REPO)).startswith(HEADER_EXEMPT_DIRS)
+            and not path.relative_to(REPO).as_posix().startswith(HEADER_EXEMPT_DIRS)
         ]
         label = "FSL packages"
     else:
@@ -220,7 +220,7 @@ def main() -> int:
             continue
         if (
             GENERATED_ELSEWHERE.search(path.name)
-            or str(rel).startswith(GENERATED_DIRS)
+            or rel.as_posix().startswith(GENERATED_DIRS)
             or (args.fsl and foreign_notice(head))
         ):
             foreign.append(rel)

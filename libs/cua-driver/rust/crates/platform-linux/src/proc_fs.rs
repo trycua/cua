@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux process enumeration via the /proc filesystem.
 //!
 //! Each /proc/<pid>/status file contains Name:, Pid:, PPid: etc.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::MoveCursorInput;
 use cua_driver_core::{
@@ -69,7 +72,7 @@ impl Tool for MoveCursorTool {
                 Err(result) => return result,
             };
             let (x, y) = (input.x, input.y);
-            let (x, y) = super::desktop_screenshot_point(x, y).await;
+            let (x, y) = super::desktop_screenshot_point(x, y);
             if let Some(refusal) =
                 super::desktop_pointer_guard::check("move_cursor", &args, vec![(x, y)]).await
             {

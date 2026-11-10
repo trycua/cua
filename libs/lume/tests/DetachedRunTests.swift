@@ -41,3 +41,14 @@ func detachedDefaultLogPath() {
   let path = DetachedVMRunner.defaultLogURL(vmName: "example/vm:latest").path
   #expect(path.hasSuffix("/Library/Logs/lume/example_vm_latest.log"))
 }
+
+@Test("A Local detached run logs to lume-local's own directory, never the released Lume's")
+func detachedLocalLogPath() {
+  let home = URL(fileURLWithPath: "/Users/dev", isDirectory: true)
+  #expect(
+    DetachedVMRunner.defaultLogURL(vmName: "example/vm:latest", channel: .local, userHome: home).path
+      == "/Users/dev/Library/Logs/lume-local/example_vm_latest.log")
+  #expect(
+    DetachedVMRunner.defaultLogURL(vmName: "example/vm:latest", channel: .stable, userHome: home).path
+      == "/Users/dev/Library/Logs/lume/example_vm_latest.log")
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Process-lifetime Chromium/Electron accessibility enablement.
 //!
 //! Chromium-family apps (Arc, VS Code, Electron shells) ship their web-content
@@ -23,21 +26,24 @@ use super::bindings::{
     AccessibilityOptIn,
 };
 
-const CHROMIUM_SETTLE_SECONDS: f64 = 0.5;
+const CHROMIUM_SETTLE_MAX_SECONDS: f64 = 0.5;
+const CHROMIUM_SETTLE_POLL_SECONDS: f64 = 0.05;
 const MATERIALIZE_TIMEOUT_SECONDS: f64 = 4.0;
 const MATERIALIZE_POLL_SECONDS: f64 = 0.1;
 const MATERIALIZE_MAX_ATTEMPTS: u32 = 3;
 const MATERIALIZE_RETRY_BACKOFF_SECONDS: f64 = 30.0;
 const RUN_LOOP_PUMPS_PER_POLL: u32 = 4;
 const WEB_AREA_ROLE: &str = "AXWebArea";
+const MENU_BAR_ROLE: &str = "AXMenuBar";
 const WEB_AREA_MAX_DEPTH: u32 = 10;
 const WEB_AREA_PROBE_NODES: u32 = 400;
+const WEB_AREA_SETTLE_SAMPLE_CAP: u32 = 128;
 
 type ProcessStartStamp = (u64, u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WebContent {
-    Present,
+    Present { nodes: u32 },
     Absent,
 }
 
@@ -126,38 +132,70 @@ fn wait_outcome(
 ) -> Option<Wait> {
     match opt_in {
         AccessibilityOptIn::NotAccepted => None,
-        AccessibilityOptIn::EnhancedUserInterface => Some(Wait::Complete),
-        AccessibilityOptIn::ManualAccessibility => Some(if await_tree() {
-            Wait::Complete
-        } else {
-            Wait::TimedOut {
-                attempts: prior_timeouts + 1,
-                attempted_at,
-            }
-        }),
+        // Chrome builds its web tree asynchronously after either opt-in, so
+        // both wait for it. Returning at once for `AXEnhancedUserInterface`
+        // let the first read return browser chrome only (CUA-1766).
+        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::ManualAccessibility => {
+            Some(if await_tree() {
+                Wait::Complete
+            } else {
+                Wait::TimedOut {
+                    attempts: prior_timeouts + 1,
+                    attempted_at,
+                }
+            })
+        }
     }
 }
 
-unsafe fn has_web_area(element: AXUIElementRef, depth: u32, visits: &mut u32) -> bool {
-    if depth == 0 {
-        return false;
+unsafe fn count_web_area_descendants(element: AXUIElementRef, depth: u32, cap: &mut u32) -> u32 {
+    if depth == 0 || *cap == 0 {
+        return 0;
     }
-    let mut found = false;
-    for child in copy_children(element) {
-        if !found && *visits > 0 {
-            *visits -= 1;
-            found = copy_string_attr(child, "AXRole").as_deref() == Some(WEB_AREA_ROLE)
-                || has_web_area(child, depth - 1, visits);
+    let children = copy_children(element);
+    let mut total = 0u32;
+    for child in children {
+        if *cap > 0 {
+            *cap -= 1;
+            total += 1;
+            total += count_web_area_descendants(child, depth - 1, cap);
         }
         CFRelease(child as CFTypeRef);
     }
-    found
+    total
+}
+
+unsafe fn find_populated_web_area(element: AXUIElementRef, depth: u32, visits: &mut u32) -> u32 {
+    if depth == 0 {
+        return 0;
+    }
+    let mut populated_nodes = 0u32;
+    for child in copy_children(element) {
+        if populated_nodes == 0 && *visits > 0 {
+            *visits -= 1;
+            let role = copy_string_attr(child, "AXRole");
+            populated_nodes = match role.as_deref() {
+                // Menu items are numerous and never hold web content.
+                Some(MENU_BAR_ROLE) => 0,
+                // An AXWebArea with no children is a stub: Chrome has not
+                // built the page tree yet, so it does not count as content.
+                Some(WEB_AREA_ROLE) => {
+                    let mut sample_cap = WEB_AREA_SETTLE_SAMPLE_CAP;
+                    count_web_area_descendants(child, 4, &mut sample_cap)
+                }
+                _ => find_populated_web_area(child, depth - 1, visits),
+            };
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    populated_nodes
 }
 
 unsafe fn probe_web_content(app_element: AXUIElementRef) -> WebContent {
     let mut visits = WEB_AREA_PROBE_NODES;
-    if has_web_area(app_element, WEB_AREA_MAX_DEPTH, &mut visits) {
-        WebContent::Present
+    let nodes = find_populated_web_area(app_element, WEB_AREA_MAX_DEPTH, &mut visits);
+    if nodes > 0 {
+        WebContent::Present { nodes }
     } else {
         WebContent::Absent
     }
@@ -191,11 +229,27 @@ fn await_web_content(
 ) -> bool {
     let steps = (MATERIALIZE_TIMEOUT_SECONDS / MATERIALIZE_POLL_SECONDS).round() as u32;
     let reassert_step = steps / 2;
+    let settle_slices = (CHROMIUM_SETTLE_MAX_SECONDS / CHROMIUM_SETTLE_POLL_SECONDS).round() as u32;
     for step in 0..=steps {
         match probe() {
-            WebContent::Present => {
+            WebContent::Present { nodes: initial } => {
                 reassert();
-                settle(CHROMIUM_SETTLE_SECONDS);
+                // Poll in bounded 50 ms slices up to 500 ms rather than paying
+                // a blind 500 ms sleep when the AXWebArea subtree is already
+                // populated and stable.
+                let mut prev = initial;
+                for slice in 0..settle_slices {
+                    settle(CHROMIUM_SETTLE_POLL_SECONDS);
+                    if slice + 1 == settle_slices {
+                        break;
+                    }
+                    if let WebContent::Present { nodes: current } = probe() {
+                        if current > 0 && current == prev {
+                            break;
+                        }
+                        prev = current;
+                    }
+                }
                 return true;
             }
             WebContent::Absent => {}
@@ -337,28 +391,37 @@ mod tests {
     }
 
     #[test]
-    fn only_the_manual_accessibility_path_polls_for_web_content() {
+    fn both_chromium_opt_ins_wait_for_web_content_and_others_do_not() {
         let now = Instant::now();
+        for opt_in in [
+            AccessibilityOptIn::EnhancedUserInterface,
+            AccessibilityOptIn::ManualAccessibility,
+        ] {
+            let polls = Cell::new(0u32);
+            let ready = wait_outcome(opt_in, 0, now, || {
+                polls.set(polls.get() + 1);
+                true
+            });
+            assert_eq!(ready, Some(Wait::Complete));
+            assert_eq!(polls.get(), 1, "{opt_in:?} must wait for the web tree");
+            assert_eq!(
+                wait_outcome(opt_in, 1, now, || false),
+                Some(Wait::TimedOut {
+                    attempts: 2,
+                    attempted_at: now
+                }),
+                "{opt_in:?}: a tree that never appears is a timeout, not Complete"
+            );
+        }
         let polls = Cell::new(0u32);
-        let probe = || {
-            polls.set(polls.get() + 1);
-            false
-        };
-
         assert_eq!(
-            wait_outcome(AccessibilityOptIn::EnhancedUserInterface, 0, now, probe),
-            Some(Wait::Complete),
-            "an app that only accepts AXEnhancedUserInterface has no web area to wait for"
-        );
-        assert_eq!(
-            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, probe),
+            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, || {
+                polls.set(polls.get() + 1);
+                false
+            }),
             None
         );
-        assert_eq!(
-            polls.get(),
-            0,
-            "only the Chromium opt-in may pay the materialization wait"
-        );
+        assert_eq!(polls.get(), 0, "native apps must not pay the wait");
     }
 
     #[test]
@@ -426,15 +489,20 @@ mod tests {
 
     #[test]
     fn an_already_materialized_tree_is_re_asserted_without_polling() {
-        let (materialized, log) = drive(vec![WebContent::Present]);
+        let (materialized, log) = drive(vec![
+            WebContent::Present { nodes: 42 },
+            WebContent::Present { nodes: 42 },
+        ]);
         assert!(materialized);
         assert_eq!(
             log,
             vec![
-                "probe:Present".to_string(),
+                "probe:Present { nodes: 42 }".to_string(),
                 "reassert".to_string(),
-                format!("settle:{CHROMIUM_SETTLE_SECONDS}"),
-            ]
+                format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"),
+                "probe:Present { nodes: 42 }".to_string(),
+            ],
+            "an already-stable AXWebArea exits after one 50ms check instead of sleeping 500ms"
         );
     }
 
@@ -443,7 +511,9 @@ mod tests {
         let (materialized, log) = drive(vec![
             WebContent::Absent,
             WebContent::Absent,
-            WebContent::Present,
+            WebContent::Present { nodes: 5 },
+            WebContent::Present { nodes: 28 },
+            WebContent::Present { nodes: 28 },
         ]);
         assert!(materialized);
         assert_eq!(
@@ -453,11 +523,32 @@ mod tests {
                 format!("settle:{MATERIALIZE_POLL_SECONDS}"),
                 "probe:Absent".to_string(),
                 format!("settle:{MATERIALIZE_POLL_SECONDS}"),
-                "probe:Present".to_string(),
+                "probe:Present { nodes: 5 }".to_string(),
                 "reassert".to_string(),
-                format!("settle:{CHROMIUM_SETTLE_SECONDS}"),
+                format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"),
+                "probe:Present { nodes: 28 }".to_string(),
+                format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"),
+                "probe:Present { nodes: 28 }".to_string(),
             ],
-            "materialization must be detected by polling, not by a fixed sleep"
+            "materialization and stabilization must be detected by polling, not a blind 500ms sleep"
+        );
+    }
+
+    #[test]
+    fn a_continuously_growing_tree_is_bounded_by_max_settle_budget() {
+        let mut script = Vec::new();
+        for n in 1..=20 {
+            script.push(WebContent::Present { nodes: n });
+        }
+        let (materialized, log) = drive(script);
+        assert!(materialized);
+        let settles = log
+            .iter()
+            .filter(|e| *e == &format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}"))
+            .count();
+        assert_eq!(
+            (settles as f64 * CHROMIUM_SETTLE_POLL_SECONDS * 1000.0).round(),
+            (CHROMIUM_SETTLE_MAX_SECONDS * 1000.0).round()
         );
     }
 
@@ -481,7 +572,7 @@ mod tests {
         );
         assert!(
             !log.iter()
-                .any(|e| e == &format!("settle:{CHROMIUM_SETTLE_SECONDS}")),
+                .any(|e| e == &format!("settle:{CHROMIUM_SETTLE_POLL_SECONDS}")),
             "no post-materialization settle when nothing materialized"
         );
     }

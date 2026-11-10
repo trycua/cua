@@ -64,7 +64,8 @@ if [ -n "$TOKEN_FILE" ]; then
     # the first is kept as ax-probe.first.json).
     probe=fail
     for attempt in 1 2; do
-        if timeout 300 uv run -q --no-project --with 'mcp>=1.12,<1.14' python "$HERE/tools/ax_probe.py" \
+        # pydantic >= 2.13 drops eval_type_backport, which mcp < 1.14 imports (the probe then dies at import).
+        if timeout 300 uv run -q --no-project --with 'mcp>=1.12,<1.14' --with 'pydantic<2.13' python "$HERE/tools/ax_probe.py" \
             "http://$ip:3211/mcp" "$TOKEN_FILE" "$OUT/ax-probe.json"; then
             probe=pass; break
         fi

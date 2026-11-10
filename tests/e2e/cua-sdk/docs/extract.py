@@ -5,9 +5,9 @@ Each fence carries exactly one disposition in its meta string (fumadocs and
 rehype-pretty-code ignore unknown attributes)::
 
     ```python test="docs" id="images-base"        # runs in lane `docs`; stable id
-    ```python test="docs,fleet" id="omarchy"      # runs in several lanes
+    ```python test="docs,container" id="omarchy"  # runs in several lanes
     ```python test="docs" session="images"        # cumulative with earlier blocks
-    ```python test="docs" prelude="fakefleet"     # hidden harness setup
+    ```python test="docs" prelude="spacesd"       # hidden harness setup
     ```text output                                # program output / not code
     ```bash skip="host-install"                   # reason from the allowlist
 
@@ -56,11 +56,8 @@ BASELINE = REPO / "docs" / "code-block-baseline.json"
 # Guides with self-contained runnable blocks; `--strict` (and the suite's
 # test_guides_are_tagged) fails if one loses its tags. The Omarchy noVNC and
 # Minecraft flows only have fragments or in-guest shell steps; their behaviour
-# is covered by the SDK scenario tests instead. The Fleets quickstart downloads
-# its example from docs/public/scripts (a pinned, published cua-sandbox).
+# is covered by the SDK scenario tests instead.
 GUIDES = [
-    "fleets/guides/terraform.mdx",
-    "fleets/guides/capacity-and-claims.mdx",
     "cua-sdk/guides/agent-frameworks.mdx",
     "cua-sdk/guides/images.mdx",
     "cua-sdk/reference/sandbox/index.mdx",

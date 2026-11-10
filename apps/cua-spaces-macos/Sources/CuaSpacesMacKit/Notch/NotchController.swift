@@ -107,23 +107,30 @@ public final class NotchController {
         if shown { show() } else { hide() }
     }
 
-    /// Shows the panel on the notched display (else the main one).
+    /// Shows the panel on the notched display (else the main one), and
+    /// follows window drags again: at launch and whenever the setting turns
+    /// on while the app runs (CUA-1618), panel new or not.
     public func show() {
-        if isShown, panel != nil { return }
-        if !isShown {
+        let wasShown = isShown
+        if !wasShown {
             isShown = true
             model.send(.visibility(shown: true))
         }
-        if let panel {
-            place()
-            panel.orderFrontRegardless()
-            recheckPermission()
-            return
+        if makesPanel {
+            if let panel {
+                if !wasShown {
+                    place()
+                    panel.orderFrontRegardless()
+                }
+            } else {
+                makePanel()
+            }
         }
-        guard makesPanel else {
-            recheckPermission()
-            return
-        }
+        recheckPermission()
+    }
+
+    /// The panel, made once and put on screen.
+    private func makePanel() {
         let panel = NotchPanel()
         let view = NotchHostingView(rootView: NotchContentView(surface: self))
         view.sizingOptions = []

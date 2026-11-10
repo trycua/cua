@@ -15,6 +15,7 @@ import { expect, type Page } from "@playwright/test";
 import type { ParityCheckpoint } from "../src/bridge/parity";
 import type { PickerGrid, PickerTile } from "../src/bridge/contracts/teleport";
 import type { GridShown } from "../src/bridge/parity-teleport";
+import { messageText } from "../src/lib/messages";
 
 type Cp<K extends ParityCheckpoint["kind"]> = Extract<ParityCheckpoint, { kind: K }>;
 
@@ -103,7 +104,7 @@ async function checkPicker(page: Page, cp: Cp<"picker">): Promise<void> {
     case "options": {
       await expect.poll(() => root.locator("[data-move]").evaluateAll((els) => els.map((e) => e.getAttribute("data-move")))).toEqual(state.entry?.moves ?? []);
       await expect(root.locator("[data-move]:has([data-checked])")).toHaveAttribute("data-move", state.move ?? "app_only");
-      const want = frame.sensitive.map((o) => `${o.group}:${o.label}:${o.detail}:${o.checked ? "on" : "off"}`);
+      const want = frame.sensitive.map((o) => `${o.group}:${messageText(o.label)}:${messageText(o.detail)}:${o.checked ? "on" : "off"}`);
       await expect
         .poll(() =>
           root.locator("[data-sensitive]").evaluateAll((els) =>
@@ -123,7 +124,8 @@ async function checkPicker(page: Page, cp: Cp<"picker">): Promise<void> {
       await expect(page.locator("[data-teleport-title]")).toHaveText(r.title);
       // Every install and every line the user can turn off, with secrets marked.
       const kind = (i: { kind: string; sensitive: boolean }) => (i.kind === "install" ? "install" : i.sensitive ? "secret" : "state");
-      const shown = r.items.filter((i) => i.kind === "install" || r.toggles.some((t) => t.key === i.key));
+      // Sending from the Keyvault, the saved items are the list: no "Also sent".
+      const shown = r.items.filter((i) => i.kind === "install" || (r.source !== "vault" && r.toggles.some((t) => t.key === i.key)));
       await expect
         .poll(() =>
           root.locator("[data-review-item]").evaluateAll((els) =>
@@ -134,6 +136,11 @@ async function checkPicker(page: Page, cp: Cp<"picker">): Promise<void> {
       if (r.leavesText) await expect(page.locator("[data-review-leaves]")).toHaveText(r.leavesText);
       else await expect(page.locator("[data-review-leaves]")).toHaveCount(0);
       await expect.poll(() => root.locator("[data-review-warning]").allTextContents()).toEqual(r.warnings);
+      // Saved passwords: the picker only where the Keyvault keeps the choice.
+      const picking = r.offersPasswords && r.includePasswords && Boolean(r.passwordSummary);
+      await expect
+        .poll(() => root.locator("[data-review-password]").evaluateAll((els) => els.map((e) => `${e.getAttribute("data-review-password")}${e.hasAttribute("data-selected") ? " x" : ""}`)))
+        .toEqual(picking ? (r.passwords ?? []).map((p) => `${p.key}${p.selected ? " x" : ""}`) : []);
       for (const [gate, needed, checked] of [
         ["ack", r.needsAcknowledgement, r.acknowledged],
         ["ack-relay", r.needsRelayPlaintextAcknowledgement, r.acknowledgedRelayPlaintext],

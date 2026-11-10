@@ -17,9 +17,9 @@ use serde_json::{Map, Value};
 use std::sync::Arc;
 
 /// Where an MCP endpoint is and what every request needs. Hand it to any
-/// MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). On
-/// Fleet the headers carry a short-lived gateway bearer: fetch a fresh
-/// config per connection.
+/// MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). A
+/// provider's headers may be short-lived: fetch a fresh config per
+/// connection.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct McpConfig {
     /// Streamable-HTTP endpoint URL.

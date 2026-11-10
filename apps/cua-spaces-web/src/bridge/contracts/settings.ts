@@ -16,7 +16,8 @@ export type { DriveMountInput } from "./volume";
 
 /* ---- About (`about::*`) --------------------------------------------------- */
 
-export type UpdateChannelId = "stable" | "beta";
+/** Stable releases, or a build of main every night (Beta is gone: hosts read a saved `beta` as Nightly). */
+export type UpdateChannelId = "stable" | "nightly";
 
 /** `about::AboutInput`: what the host reports about the app and its updater. */
 export interface AboutInput {
@@ -37,7 +38,7 @@ export interface AboutInput {
   checking: boolean;
 }
 
-export type AboutLinkId = "acknowledgements" | "privacy" | "terms" | "issue";
+export type AboutLinkId = "acknowledgements" | "privacy" | "terms" | "status" | "issue";
 
 export interface AboutLink {
   id: AboutLinkId;
@@ -55,6 +56,11 @@ export interface AboutUpdates {
   channelLabel: string;
   channels: SettingsOption[];
   channelHelp: string;
+  /** A prerelease build back on Stable: it stays until the next stable release; null: nothing to say. */
+  channelNote: string | null;
+  /** "Download Stable", the way back right now; null when none is needed. */
+  downloadLabel: string | null;
+  downloadUrl: string | null;
   checkLabel: string;
   checkEnabled: boolean;
   lastCheck: string;
@@ -67,6 +73,29 @@ export interface AboutView {
   links: AboutLink[];
   copyright: string;
   updates: AboutUpdates | null;
+}
+
+/* ---- In-app updates (`update.*`) ------------------------------------------ */
+
+/** Where an update is: nothing to do, a check running, found and about to
+ * download, downloading, ready to install, or the last step failed. */
+export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "error";
+
+/** What the host's updater (Sparkle in the Mac app, electron-updater on
+ * Windows and Linux) reports for the in-app indicator. The host downloads
+ * on its own; it installs only on `update.install`. */
+export interface UpdateState {
+  status: UpdateStatus;
+  /** The version this app runs. */
+  currentVersion: string;
+  /** The version found, downloading or ready; null with none. */
+  version: string | null;
+  /** Download progress, 0 to 100, while `downloading`; else null. */
+  percent: number | null;
+  /** The GitHub release notes page for `version`; null with none. */
+  notesUrl: string | null;
+  /** Why the last step failed (`error` only); else null. */
+  message: string | null;
 }
 
 /** What `about.set` changes. */
@@ -193,3 +222,31 @@ export type StorageAction =
 
 /** The Storage section, as `storage.section` returns it (id `storage`). */
 export type StorageSection = SettingsSection;
+
+/** What the repo cache holds and saved (`cua_sdk::RepoCacheStatus`; words and numbers only, never a repository name). */
+export interface RepoCacheView {
+  /** The cache is on (`cache.repos`). */
+  enabled: boolean;
+  /** Repositories held. */
+  repos: number;
+  /** What they take on disk, in bytes. */
+  bytes: number;
+  /** The size cap in force, in bytes. */
+  capBytes: number;
+  /** The size setting: `auto`, or a number of GB. */
+  sizeSetting: string;
+  /** `Repos: 3, 1.2 GB of 5 GB`. */
+  summary: string;
+  /** `Last week: 80% of clones came from the cache, about 2 minutes saved`. */
+  week: string;
+  hits: number;
+  misses: number;
+  secondsSaved: number;
+}
+
+/** A change to the repo cache (`repoCache.set`); a missing field keeps its value. */
+export interface RepoCacheChange {
+  enabled?: boolean;
+  /** GB; null: automatic (the smaller of 5 GB and a tenth of the free disk). */
+  sizeGb?: number | null;
+}

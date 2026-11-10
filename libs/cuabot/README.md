@@ -13,7 +13,7 @@
 > rm -rf ~/.cuabot
 > ```
 >
-> There will be no fixes or new releases. To give a coding agent a computer, use [Cua Driver](https://cua.ai/docs/cua-driver/guides/connect-your-agent) over MCP, or a sandbox from the [`cua` CLI](https://cua.ai/docs/cua-sdk/quickstart) or [Cua Spaces](https://cua.ai/docs/spaces/quickstart). See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).
+> There will be no fixes or new releases. To give a coding agent a computer, use [Cua Driver](https://cua.ai/docs/cua-driver/guides/connect-your-agent) over MCP, or a sandbox from the [`cua` CLI](https://cua.ai/docs/cua-sdk/quickstart) or [Cua Spaces](https://cua.ai/docs/spaces/quickstart). See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
 
 Co-op computer-use for any agent.
 

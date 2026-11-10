@@ -3,9 +3,8 @@
  * (`@modelcontextprotocol/client`, an optional peer dependency).
  *
  * cua does not implement MCP: `sandbox.mcpConfig(service)` returns the
- * endpoint URL and the headers its route needs (nothing locally; the Fleet
- * gateway bearer and claim in the cloud; the daemon bearer through
- * `cua daemon`), and `connectMcp` hands that to the SDK's streamable-HTTP
+ * endpoint URL and the headers its route needs (nothing locally; a
+ * provider's access headers; the daemon bearer through `cua daemon`), and `connectMcp` hands that to the SDK's streamable-HTTP
  * transport, so every protocol revision and content block works unchanged.
  *
  * ```ts
@@ -30,7 +29,7 @@ export function mcpHeaders(config: McpEndpointConfig): Record<string, string> {
 
 /**
  * Connects the official SDK's `Client` to `config` over streamable HTTP.
- * Fleet bearers are short-lived: fetch a fresh config per connection.
+ * A provider's headers may be short-lived: fetch a fresh config per connection.
  */
 export async function connectMcp(
   config: McpEndpointConfig,

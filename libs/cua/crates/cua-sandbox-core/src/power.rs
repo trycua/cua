@@ -84,6 +84,32 @@ impl PowerState {
     }
 }
 
+/// Why a sandbox stopped without being asked to, as its engine recorded
+/// it (a container's exit code and `OOMKilled`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StopReason {
+    /// The exit code (137: killed with SIGKILL).
+    pub exit_code: i64,
+    /// The kernel killed it for memory.
+    #[serde(default)]
+    pub out_of_memory: bool,
+}
+
+impl StopReason {
+    /// The reason in plain words: "out of memory", "killed", "exited", or
+    /// "exited with code N".
+    pub fn words(&self) -> String {
+        if self.out_of_memory {
+            return "out of memory".into();
+        }
+        match self.exit_code {
+            0 => "exited".into(),
+            137 => "killed".into(),
+            code => format!("exited with code {code}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +130,20 @@ mod tests {
         assert_eq!(PowerControl::parse("pause"), None);
         assert_eq!(PowerControl::Suspend.off_state(), PowerState::Suspended);
         assert_eq!(PowerControl::Stop.off_state(), PowerState::Stopped);
+    }
+
+    #[test]
+    fn a_stop_reason_is_said_in_plain_words() {
+        let r = |exit_code, out_of_memory| StopReason {
+            exit_code,
+            out_of_memory,
+        };
+        assert_eq!(r(137, true).words(), "out of memory");
+        assert_eq!(r(137, false).words(), "killed");
+        assert_eq!(r(0, false).words(), "exited");
+        assert_eq!(r(1, false).words(), "exited with code 1");
+        // A record without the OOM flag (an older writer) reads as not OOM.
+        let old: StopReason = serde_json::from_str(r#"{"exit_code":137}"#).unwrap();
+        assert_eq!(old, r(137, false));
     }
 }

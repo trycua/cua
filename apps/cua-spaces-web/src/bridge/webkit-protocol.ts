@@ -16,8 +16,9 @@
  *
  * `code`: `unimplemented`, `bad_args`, `not_found`, `cancelled`,
  * `native_only`, `forbidden` or `failed`. A failed host setup or This
- * machine button also says `title`, `details` (the raw error) and
- * `actionLabel` (`HostSetupFailure`), and `message` is then the plain words.
+ * machine button also says `title`, `details` (the raw error),
+ * `actionLabel`, `kind` (`HostSetupFailure.Kind`, e.g. `needsProof`) and the
+ * relay's `refusalCode` when it gave one, and `message` is then the plain words.
  *
  * Host -> page events: `window.dispatchEvent(new CustomEvent("cua:event",
  * { detail: { event, payload } }))`, where `event` is one of `WEBKIT_EVENTS`.
@@ -30,11 +31,17 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow } from "./contracts/host";
+import type { MachinePageRow, MachinesView, RuntimesInput } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
+import { GITHUB_WEBKIT_METHODS } from "./ops/github";
+import { CI_WEBKIT_METHODS } from "./ops/ci";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
+import { THREAD_WEBKIT_METHODS } from "./ops/thread";
+import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_WEBKIT_METHODS } from "./ops/agent-sign-in";
+import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -50,24 +57,50 @@ export const WEBKIT_METHODS = [
   "session.get",
   "session.signIn",
   "session.signOut",
+  "onboarding.get",
+  "onboarding.complete",
+  "onboarding.reset",
   "spaces.list",
   "spaces.open",
   "spaces.createOptions",
   "spaces.create",
   "spaces.setPower",
   "spaces.delete",
+  "spaces.deleteMany",
+  "spaces.leave",
+  "spaces.rename",
+  "network.get",
+  "network.set",
+  "network.log",
+  "network.ackNotice",
+  "spaces.setAccess",
+  "spaces.tree",
+  "children.set",
+  "budget.get",
+  "budget.set",
+  "services.list",
+  "services.control",
   "spaces.cancelCreate",
   "machines.list",
   "host.status",
   "agents.list",
   "agents.runs",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.pause",
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
+  "agents.status",
+  "agents.connect",
+  "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
+  ...GITHUB_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
   ...KEYVAULT_MANAGE_WEBKIT_METHODS,
   // The pages beyond Spaces, the Keyvault and Agents (ops/webkit-pages.ts).
@@ -75,6 +108,8 @@ export const WEBKIT_METHODS = [
   "clouds.status",
   "clouds.test",
   "clouds.connect",
+  "clouds.disconnect",
+  "clouds.approve",
   "teleport.catalog",
   "teleport.entryForPath",
   "teleport.windows",
@@ -84,11 +119,14 @@ export const WEBKIT_METHODS = [
   "teleport.plan",
   "teleport.run",
   "teleport.sites",
+  "teleport.readiness",
   "teleport.remembered",
   "teleport.streamWindow",
   "sharing.list",
   "sharing.share",
   "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
   "volume.overview",
   "volume.storage",
   "volume.storageSet",
@@ -103,9 +141,16 @@ export const WEBKIT_METHODS = [
   "about.get",
   "about.set",
   "about.checkNow",
+  "update.get",
+  "update.install",
   "loginItem.get",
   "loginItem.set",
   "loginItem.openSettings",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -116,11 +161,16 @@ export const WEBKIT_METHODS = [
   "devices.createPairingCode",
   "devices.pairingCodes",
   "devices.revokePairingCode",
+  "teams.list",
   "storage.get",
   "storage.run",
   "notifications.list",
   "notifications.markAllRead",
+  "notifications.markRead",
   "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
+  "crashReporting.config",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -129,10 +179,13 @@ export const WEBKIT_METHODS = [
   "spaces.droppedFiles",
   "spaces.sendFiles",
   "host.setUp",
+  "host.joinWithCode",
   "host.action",
+  "host.limits",
   "host.openSettings",
   "settings.get",
   "settings.choose",
+  "settings.update",
   "keyvault.get",
   "keyvault.lock",
   "keyvault.unlock",
@@ -147,19 +200,48 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "nudges.pending",
+  "nudges.answer",
+  "driver.status",
+  "driver.list",
+  "driver.config",
+  "driver.setConfig",
+  "driver.test",
+  "driver.pause",
+  "driver.setup",
+  "driver.setApp",
+  "driver.permissions",
+  "resources.get",
+  "machines.rename",
+  "machines.remove",
+  "machines.checkHealth",
+  ...SPACES_SETTINGS_WEBKIT_METHODS,
   "checklist.get",
   "checklist.send",
+  "links.list",
+  "links.create",
+  "links.stop",
+  "links.approve",
+  "links.deny",
+  "shares.settings.get",
+  "shares.settings.set",
+  "shares.edge.remove",
+  "cli.plan",
+  "cli.install",
+  ...CI_WEBKIT_METHODS,
+  ...THREAD_WEBKIT_METHODS,
+  ...AGENT_THREADS_WEBKIT_METHODS,
+  ...AGENT_SIGN_IN_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
 
 /** What only the Electron host answers: it draws a Space's video in the
  * page (WebCodecs), so the page asks it for a media ticket
- * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
- * `onboarding.complete`); the Mac app draws video and its first run
- * natively. It also joins presence for the video the page draws
+ * (`ops/stream.ts`); the Mac app draws video natively. (Both hosts run
+ * this page's first run: `onboarding.get`, `onboarding.complete`.) It also joins presence for the video the page draws
  * (`presence.*`, `ops/presence.ts`). */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave"] as const;
+export const ELECTRON_HOST_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {
@@ -182,6 +264,7 @@ export const WEBKIT_EVENTS = [
   "keyvault.changed",
   "session.changed",
   "settings.changed",
+  "update.changed",
   "agents.changed",
   "teleport.progress",
   "startup.changed",
@@ -197,7 +280,11 @@ export interface WebkitRequest {
 
 export type WebkitResponse =
   | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string } };
+  | {
+      id: string;
+      ok: false;
+      error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string };
+    };
 
 /** `CustomEvent("cua:event").detail`. */
 export interface WebkitEventDetail {
@@ -220,20 +307,22 @@ export interface WkSpace {
   detail: string;
   lastUsedAt: number;
   startedAt?: number | null;
-  provider?: "cloud" | "local" | "direct" | "relay" | null;
+  provider?: "local" | "direct" | "relay" | null;
   sdk?: { features: string[]; spacesdVersion: string; reachable: boolean; error?: string | null } | null;
   osName?: string | null;
   osPrettyName?: string | null;
   image?: string | null;
   imageDigest?: string | null;
-  kind?: "container" | "vm" | null;
+  kind?: "container" | "vm" | "microvm" | null;
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
-  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null } | null;
+  power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;
   cloudDelete?: string | null;
+  /** Whose it is and what you may do with it (`model::SpaceAccess`). */
+  access?: import("./contracts/spaces").SpaceAccess | null;
   /** A create the app runs (its own pending row): its progress, or why it failed. */
   progress?: import("./contracts/spaces").SpaceProgress | null;
 }
@@ -249,6 +338,18 @@ export interface WkSpaces {
   /** Another app keeps its own daemon running and this app uses it
    * (`AppModel.daemonNotice`): a line above every page. Null otherwise. */
   daemonNotice?: string | null;
+  /** Some of the account's computers have not answered the last read yet
+   * (`Spaces.list_known`): the list may grow, and is not "no Spaces".
+   * Absent from a host that lists complete lists only. */
+  incomplete?: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching?: number;
+  /** Your other computers' rows are the last known ones (kept across a
+   * daemon restart), not yet confirmed by the relay. */
+  stale?: boolean;
+  /** Spaces your other computers are creating now (CUA-2349). Absent from
+   * a host that does not read them. */
+  creatingElsewhere?: import("./contracts/spaces").CreatingElsewhere[];
 }
 
 /** `machines.list`: the sidebar and the account's devices. */
@@ -279,6 +380,9 @@ export interface WkMachines {
   /** The page's rows as the core lists them (`machines::page_rows`, what
    * the SwiftUI Machines page shows); absent from an older host. */
   rows?: MachinePageRow[] | null;
+  /** The Machines page as the core draws it (`machines_view::view`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  view?: MachinesView | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */
@@ -286,8 +390,8 @@ export interface WkSession {
   identity: string | null;
   signedIn: boolean;
   cloudConfigured: boolean;
-  /** `idle`, `starting`, `{type: "waiting", userCode}`, `{type: "failed", message}`. */
-  signIn: string | { type: string; userCode?: string | null; message?: string };
+  /** `idle`, `starting`, `{type: "waiting", userCode, opened}`, `{type: "failed", reason, message, detail}`. */
+  signIn: string | { type: string; userCode?: string | null; opened?: boolean; reason?: string; message?: string; detail?: string | null };
   /** The page a waiting sign-in finishes on (null otherwise), to show and copy. */
   signInUrl?: string | null;
 }
@@ -306,11 +410,26 @@ export interface WkSettingsRow {
 /** `settings.get`, `settings.choose`, `settings.press`: the core's Settings page. */
 export interface WkSettings {
   page: { title: string; sections: { id: string; rows: WkSettingsRow[] }[] };
-  /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
+  /** `AppSettings.updateChannel` (`stable` or `nightly`; `beta` from an older host); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */
   globalShortcut?: { label: string; registered: boolean } | null;
+  /** The host's account app (`app_account_app_url`); absent or null: none named. */
+  accountUrl?: string | null;
+  /** The CLI the app installs (its install plan's file name) and whether it
+   * is on this computer; absent or null: not known. */
+  cli?: { name: string; installed: boolean } | null;
+  /** The channel and environment the app runs as (`app_target`); absent or null: not known. */
+  target?: { channel: string; env: string; authHost: string } | null;
+  /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
+  tips?: { off: boolean; done: string[] };
+  /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */
+  notchPinned?: string[];
+  /** `AppSettings.agentMenu*`: which coding apps the agent menu shows; absent: an older host. Saved with `settings.update`. */
+  agentMenu?: { shown: string[]; hidden: string[]; seen: string[] };
+  /** Settings, Advanced's runtimes as the host read them (`runtimes::RuntimesInput`); absent: not read. */
+  runtimes?: RuntimesInput | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */
@@ -344,6 +463,13 @@ export interface WkHostState {
   provideSpaces: boolean;
   maxSpaces: number;
   maxMacosVms?: number | null;
+  maxMemoryGb?: number | null;
+  maxDiskGb?: number | null;
+  maxRunMinutes?: number | null;
+  usedMemoryGb?: number | null;
+  usedDiskGb?: number | null;
+  totalMemoryGb?: number | null;
+  totalDiskGb?: number | null;
   recentAccess?: { atMs: number; via: string; who: string; what: string }[] | null;
   accessLogError?: string | null;
   providedSpaces?: import("./contracts/host").HostProvidedSpace[] | null;
@@ -356,4 +482,6 @@ export interface WkHostState {
   account?: { id?: string | null; email?: string | null; display?: string | null } | null;
   /** `HostModel.progress`: what a running setup or Sign In waits for. */
   progress?: string | null;
+  /** The app's name as System Settings lists it ("Cua Spaces Local"). */
+  appName?: string | null;
 }

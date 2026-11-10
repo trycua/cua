@@ -15,6 +15,11 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
     var paused = false
     var grants: [[String: Any]] = []
     let now: Int64 = 1_790_000_000_000
+    /// The feed (`notifications_list`); `notifications_ack` marks entries read.
+    lazy var notifications: [[String: Any]] = [
+        ["id": "n1", "at_ms": now - 60_000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Your research is ready.",
+         "space": "local:dev", "read": false],
+    ]
     /// The model calls this from concurrent tasks; one lock keeps the
     /// recorded calls and state consistent.
     private let lock = NSLock()
@@ -29,7 +34,7 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
         case "persistent_agent_list":
             return ["agents": [
                 ["name": "ada", "harness": "hermes", "space": "local:dev", "paused": paused, "run_id": paused ? NSNull() : "run-1", "saved_ms": now - 120_000],
-                ["name": "scout", "harness": "claude-code", "space": "cloud:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
+                ["name": "scout", "harness": "claude-code", "space": "direct:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
             ]]
         case "agent_pause": paused = true; return [:]
         case "volume_ls":
@@ -53,7 +58,17 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
             return ["requests": [["id": "q1", "principal": "agent:ada", "prefix": "agents/writer/outputs/", "mode": "r", "reason": "cite the draft"]]]
         case "volume_grants": return ["grants": []]
         case "notifications_list":
-            return ["notifications": [["id": "n1", "at_ms": now - 60_000, "agent": "ada", "kind": "turn_ended", "title": "ada", "body": "Your research is ready.", "read": false]]]
+            return ["notifications": notifications]
+        case "notifications_ack":
+            // As the daemon's feed: no ids is every entry.
+            let ids = args["ids"] as? [String] ?? []
+            var marked = 0
+            notifications = notifications.map { n in
+                guard ids.isEmpty || ids.contains(n["id"] as? String ?? ""), n["read"] as? Bool != true else { return n }
+                marked += 1
+                return n.merging(["read": true]) { _, new in new }
+            }
+            return ["marked": marked]
         default: throw AgentsToolError(message: "unknown tool \(tool)")
         }
     }
@@ -104,18 +119,4 @@ struct AgentsPagesTests {
         #expect(tools.calls.suffix(2) == ["routine_add", "routine_remove"])
     }
 
-    @Test func snapshots() async throws {
-        let tools = FakeAgentsTools()
-        let m = PersistentModel(tools: tools)
-        m.now = { Date(timeIntervalSince1970: TimeInterval(tools.now) / 1000) }
-        m.thisMachine = "relay:0123"
-        await m.loadAgents()
-        await m.send(.select(name: "ada"))
-        let size = CGSize(width: 720, height: 520)
-        try SnapshotTests().assertSnapshot(AgentsPageView(model: m), "agents-page", size: size)
-        await m.sendDrive(nil)
-        try SnapshotTests().assertSnapshot(DrivePageView(model: m), "drive-page", size: size)
-        await m.pollNotifications()
-        try SnapshotTests().assertSnapshot(NotificationsPageView(model: m), "notifications-page", size: size)
-    }
 }

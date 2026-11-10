@@ -1,0 +1,66 @@
+---
+title: Set up S3 storage for Cua Volume
+description: 'For an AI agent: create a private versioned S3 bucket and a limited IAM user, and connect them to Cua Volume without printing the keys.'
+---
+
+Your user wants Cua Volume, their shared files, stored in their own S3 bucket
+instead of on this Mac. Cua has no storage of its own. Ask your user for the AWS
+profile and region to use (and a bucket name, or suggest `cua-volume-<account-id>`)
+and wait for a yes before you create anything.
+
+## You run on your user's computer
+
+1. Create a private bucket with versioning on. Replace `<bucket>` and `<region>`.
+
+   ```bash skip="your-cloud"
+   aws s3api create-bucket --bucket <bucket> --region <region> --create-bucket-configuration LocationConstraint=<region>
+   aws s3api put-public-access-block --bucket <bucket> --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+   aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
+   ```
+
+   In `us-east-1` leave out `--create-bucket-configuration`.
+
+2. Create an IAM user that can use only this bucket, and no other policy:
+
+   ```bash skip="your-cloud"
+   aws iam create-user --user-name cua-volume-<bucket>
+   aws iam put-user-policy --user-name cua-volume-<bucket> --policy-name bucket-only --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket","s3:GetObjectVersion","s3:ListBucketVersions"],"Resource":["arn:aws:s3:::<bucket>","arn:aws:s3:::<bucket>/*"]}]}'
+   ```
+
+3. Point Cua Volume at the bucket, then pipe the new keys straight into
+   `set-keys`. It reads the access key id and the secret, one per line. They never
+   go to your screen, a file or the chat.
+
+   ```bash skip="your-cloud"
+   cua volume config set --backend s3 --bucket <bucket> --region <region>
+   aws iam create-access-key --user-name cua-volume-<bucket> --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text | tr '\t' '\n' | cua volume config set-keys
+   ```
+
+## You run in the cloud (hosted assistants)
+
+You can't use your user's AWS account or keychain. Tell your user to run this on
+their computer, or to choose **Your S3 bucket** under Cua Volume in Cua Spaces.
+
+## Check it worked
+
+```bash test="cli-shape" id="agent-volume-status"
+cua volume status
+cua volume config show
+```
+
+`cua volume status` should show the S3 backend and sync with no error, and
+`config show` the bucket and region (it never shows keys).
+
+## Don't
+
+- Print, echo, log or paste the secret key, or put it in a command argument.
+- Give the IAM user any policy beyond this bucket, or make the bucket public.
+- Reuse the user's own AWS keys for Cua Volume.
+- Touch other buckets or users in the account.
+
+## What you get
+
+- Nothing new for yourself. Cua Volume now syncs to the bucket, with every
+  version kept, and your user's agents reach it only through Volume's own grants.
+- The keys sit in the Cua credential store on this computer.
+- Your user can switch back with `cua volume config set --backend fs`.

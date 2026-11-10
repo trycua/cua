@@ -5,13 +5,15 @@
 //! no relay account and never refreshed the directory, so "My machines"
 //! went empty while `cua spaces ls` still listed them.
 //!
+//! The signed-in session only sets up that relay account.
+//!
 //! One test (it sets process environment): a temp `CUA_HOME`, the file
 //! credential store and a loopback fake relay; nothing real is touched.
 
 use cua_host::testing::FakeRelay;
 use cua_sdk::{Cua, CuaConfig};
 
-/// cua.local as the user's Mac saw it: online, sharing, desktop not shared
+/// A spare Mac as the user's Mac saw it: online, sharing, desktop not shared
 /// (spacesd 0.2.2 from an older app), and the user's Mac itself, not sharing.
 const OTHER_MAC: &str = "9e9d969d41649428f693b403f6f8f225";
 const THIS_MAC: &str = "b6953d14ff94b10fcbb38bdd13c47824";
@@ -48,7 +50,6 @@ async fn embedded_runtime_on_the_session_lists_your_relay_machines() {
         std::env::set_var("CUA_CREDENTIAL_STORE", "file");
         std::env::set_var("CUA_RELAY_URL", &relay.url);
         std::env::remove_var("CUA_DAEMON_NO_RELAY");
-        std::env::remove_var("CUA_FLEET_SESSION");
     }
     cua_auth::Store::from_env()
         .save(&cua_auth::Credentials {
@@ -61,13 +62,11 @@ async fn embedded_runtime_on_the_session_lists_your_relay_machines() {
         })
         .unwrap();
 
-    // The app's configuration (`CuaConfig(fleetFromSession: true)`).
+    // The app's configuration (`CuaConfig(accountFromSession: true)`).
     let cua = Cua::embedded(CuaConfig {
         state_dir: Some(home.path().join("sandboxes").display().to_string()),
         spaces_home: Some(home.path().display().to_string()),
-        fleet_pool_home: Some(home.path().join("pools").display().to_string()),
-        fleet_from_env: false,
-        fleet_from_session: true,
+        account_from_session: true,
         ..Default::default()
     })
     .unwrap();
@@ -82,14 +81,15 @@ async fn embedded_runtime_on_the_session_lists_your_relay_machines() {
     assert!(ids.contains(&format!("relay:{OTHER_MAC}")), "{ids:?}");
     assert!(ids.contains(&format!("relay:{THIS_MAC}")), "{ids:?}");
 
-    // Without the session (`fleet_from_session` off) nothing reaches the
+    let listed = cua.sandboxes().list_with_warnings(None).await.unwrap();
+    assert!(listed.warnings.is_empty(), "{listed:?}");
+
+    // Without the session (`account_from_session` off) nothing reaches the
     // relay: an SDK user who did not ask for the session gets none of it.
     let bare = Cua::embedded(CuaConfig {
         state_dir: Some(home.path().join("sandboxes2").display().to_string()),
         spaces_home: Some(home.path().join("bare").display().to_string()),
-        fleet_pool_home: Some(home.path().join("pools2").display().to_string()),
-        fleet_from_env: false,
-        fleet_from_session: false,
+        account_from_session: false,
         ..Default::default()
     })
     .unwrap();

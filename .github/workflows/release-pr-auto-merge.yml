@@ -1,0 +1,95 @@
+name: "Release: Auto-merge release PRs"
+
+# CUA-3559. Release-please PRs wait for a human to merge them (median 8 h, p90 36 h; the
+# driver and SDK PRs waited 15 days and 2 days). This turns on auto-merge (squash) for each
+# one as it is opened or updated. It still merges only behind the required checks (ci-gate and
+# the rest of the main-safety-gates ruleset). The `release-hold` label (or the older `hold`)
+# stops it: a held PR gets auto-merge switched off, and ci-gate fails while the label is on.
+#
+# HOLD A RELEASE: add the `release-hold` label. Turning auto-merge off by hand is NOT a hold;
+# this workflow turns it back on at the next run (every PR update and every 30 minutes).
+# RELEASE: remove the label. See docs/release-hold.md.
+#
+# A merge made with the release App token starts the release pipeline (release-on-merge.yml);
+# one made with GITHUB_TOKEN would not. Same App as release-please.yml.
+#
+# The sweep also posts a ReleasePRStuck alert (Alertmanager, same path as
+# workflow-failure-alerts.yml) when a release PR has been green for more than 6 h and is
+# still open and not on hold.
+#
+# Runs on pull_request (same-repo release-please branches only: the job is skipped for forks),
+# and the script always comes from main, never from the PR's checkout.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pr-auto-merge-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    if: >-
+      github.repository == 'trycua/cua' &&
+      (github.event_name != 'pull_request' ||
+       (startsWith(github.event.pull_request.head.ref, 'release-please--branches--') &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            .github/scripts
+            release-please-config.json
+            .release-please-manifest.json
+          persist-credentials: false
+
+      # Release Please tags from the merged PR body. A body edit (an agent adding
+      # user-impact notes above the version heading) made #6350 tag 15 stray
+      # components. Install the pinned engine so the script can check each body.
+      - name: Install the pinned Release Please engine
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+        run: |
+          set -euo pipefail
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          test "$(npm view release-please@17.3.0 dist.integrity)" = "$EXPECTED_INTEGRITY"
+          npm install --prefix "$RUNNER_TEMP/release-please-engine" --ignore-scripts --no-audit --no-fund release-please@17.3.0 > /dev/null
+
+      - name: Enable or disable auto-merge, and alert on stale green release PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ALERTMANAGER_INTAKE_TOKEN: ${{ secrets.ALERTMANAGER_INTAKE_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          export NODE_PATH="$RUNNER_TEMP/release-please-engine/node_modules"
+          args=(--repo "$GITHUB_REPOSITORY" --guard .github/scripts/release_please_tag_guard.cjs)
+          if [ -n "$PR_NUMBER" ]; then
+            args+=(--pr "$PR_NUMBER")
+          fi
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$GITHUB_EVENT_NAME" != push ]; then
+            args+=(--alert)
+          fi
+          python3 .github/scripts/release_pr_automerge.py "${args[@]}"

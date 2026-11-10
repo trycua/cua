@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted KWin window identity adapter.
 //!
 //! The optional in-process KWin effect exposes stable window tokens, process
@@ -8,8 +11,9 @@
 //!
 //! A focus check followed by global input therefore has an unavoidable TOCTOU
 //! race. Until Cua has a KWin input API that binds each mutation to the target
-//! token/window, this module intentionally refuses raw target-addressed input.
-//! Window discovery remains available; input authorization does not.
+//! token/window, [`available`] reports no target-bound input and the shared
+//! delivery policy refuses raw target-addressed input. Window discovery
+//! remains available; input authorization does not.
 
 use std::collections::HashSet;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -54,6 +58,18 @@ pub fn available() -> bool {
     false
 }
 
+/// The index of the keyboard layout KWin has active, or `None` when this isn't
+/// KWin or it doesn't answer. KWin before 6.8 doesn't tell libei clients.
+pub fn active_layout() -> Option<u32> {
+    let reply = gdbus_call_to(
+        "org.kde.keyboard",
+        "/Layouts",
+        "org.kde.KeyboardLayouts.getLayout",
+        &[],
+    )?;
+    parse_first_u32(&reply)
+}
+
 pub fn list_windows() -> Option<Vec<KwinWindow>> {
     snapshot_for_owner(&helper_owner()?)
 }
@@ -82,24 +98,6 @@ pub fn trusted_window_for_id(pid: u32, token: u64) -> Option<KwinWindow> {
     snapshot_for_owner(&helper_owner()?)?
         .into_iter()
         .find(|window| window.pid == pid && window.token == token)
-}
-
-/// Refuse a focus-bound KWin foreground transaction.
-///
-/// `body` is deliberately never invoked. The current helper can identify an
-/// exact KWin window, but its D-Bus API is read-only; even a separate activation
-/// step would not bind a later libei event to that target. More pre-dispatch
-/// focus checks therefore cannot make the operation target-safe.
-pub fn with_focused_window<T>(
-    pid: u32,
-    token: u64,
-    _body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    anyhow::bail!(
-        "foreground_unavailable: KWin target pid={pid} token={token} is verified, but only \
-         focus-bound portal/libei input is available; refusing raw input until a target-bound \
-         KWin input path is implemented"
-    )
 }
 
 fn helper_owner() -> Option<String> {
@@ -244,6 +242,11 @@ fn json_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
         .then(|| number.round() as u32)
 }
 
+/// KWin's own support report, which names its version. No permission needed.
+pub(crate) fn support_information() -> Option<String> {
+    gdbus_call_to(KWIN_DEST, "/KWin", "org.kde.KWin.supportInformation", &[])
+}
+
 fn dbus_call(method: &str, args: &[String]) -> Option<String> {
     gdbus_call_to(
         DBUS_DEST,
@@ -290,7 +293,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
         stdout.read_to_end(&mut bytes).ok()?;
         String::from_utf8(bytes).ok()
     });
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::interaction::operation_deadline(timeout);
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return reader.join().ok().flatten(),
@@ -301,7 +304,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
                 let _ = reader.join();
                 return None;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => crate::interaction::pause(Duration::from_millis(10)),
         }
     }
 }
@@ -321,25 +324,25 @@ fn parse_first_u32(raw: &str) -> Option<u32> {
         .ok()
 }
 
-fn current_uid() -> u32 {
+pub(super) fn current_uid() -> u32 {
     std::fs::metadata(format!("/proc/{}", std::process::id()))
         .map(|meta| meta.uid())
         .unwrap_or(u32::MAX)
 }
 
 fn is_trusted_kwin(pid: u32, helper_owner: &str) -> bool {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
-    if comm.as_deref().map(str::trim) != Some("kwin_wayland") {
-        return false;
-    }
-
     let Some(owner_raw) = dbus_call("GetNameOwner", &[KWIN_DEST.to_owned()]) else {
         return false;
     };
-    let Some(kwin_owner) = parse_quoted_string(&owner_raw) else {
-        return false;
-    };
-    if kwin_owner != helper_owner {
+    parse_quoted_string(&owner_raw).as_deref() == Some(helper_owner) && is_trusted_kwin_process(pid)
+}
+
+pub(super) fn is_trusted_kwin_process(pid: u32) -> bool {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
+    if !matches!(
+        comm.as_deref().map(str::trim),
+        Some("kwin_wayland" | ".kwin_wayland-w")
+    ) {
         return false;
     }
 
@@ -347,9 +350,11 @@ fn is_trusted_kwin(pid: u32, helper_owner: &str) -> bool {
     match executable {
         Some(path) => {
             let metadata = std::fs::metadata(&path).ok();
-            path.file_name().and_then(|name| name.to_str()) == Some("kwin_wayland")
-                && metadata
-                    .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
+            matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("kwin_wayland" | ".kwin_wayland-wrapped")
+            ) && metadata
+                .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
         }
         None => true,
     }

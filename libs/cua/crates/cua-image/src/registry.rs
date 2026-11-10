@@ -341,12 +341,20 @@ impl RegistryClient {
 
     /// [`RegistryClient::blob_to_file`], calling `on_bytes` with the bytes
     /// written so far as the blob arrives.
+    ///
+    /// A connection that breaks mid-blob does not lose what arrived: the
+    /// download continues from `<dest>.partial` with a `Range` request, up to
+    /// [`BLOB_ATTEMPTS`] times, and a pull that still fails leaves the
+    /// partial file for the next pull to continue. A 6 GB single-layer
+    /// image (the Windows containerDisk) on a slow or flaky link used to
+    /// start from zero on every try. The whole file is checked against the
+    /// descriptor's digest before it is renamed to `dest`.
     pub async fn blob_to_file_with_progress(
         &self,
         reference: &str,
         desc: &Descriptor,
         dest: &Path,
-        on_bytes: impl FnMut(u64) + Send + Unpin,
+        mut on_bytes: impl FnMut(u64) + Send + Unpin,
     ) -> Result<()> {
         let r = pull_ref(reference)?;
         // The blob's manifest was read first, which found out whether this
@@ -356,24 +364,63 @@ impl RegistryClient {
             tokio::fs::create_dir_all(p).await?;
         }
         let partial = dest.with_extension("partial");
-        let file = tokio::fs::File::create(&partial).await?;
-        let mut w = Counting {
-            inner: tokio::io::BufWriter::with_capacity(1 << 20, file),
-            written: 0,
-            on_bytes,
-        };
+        // Two processes may fetch the same blob: one at a time continues
+        // the partial file (held until this pull ends), and one that waited
+        // finds the blob already in place.
+        let lock_path = dest.with_extension("partial.lock");
+        let _lock = tokio::task::spawn_blocking(move || {
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&lock_path)?;
+            f.lock()?;
+            Ok::<_, std::io::Error>(f)
+        })
+        .await
+        .map_err(|e| ImageError::Registry(e.to_string()))??;
+        if tokio::fs::metadata(dest).await.is_ok() {
+            return Ok(());
+        }
         let layer = oci_client::manifest::OciDescriptor {
             media_type: desc.media_type.clone(),
             digest: desc.digest.clone(),
             size: desc.size as i64,
             ..Default::default()
         };
-        let res = client.pull_blob(&r, &layer, &mut w).await;
-        if let Err(e) = res {
-            let _ = tokio::fs::remove_file(&partial).await;
-            return Err(e.into());
+        let mut attempt = 1;
+        loop {
+            match download_blob(&client, &r, &layer, desc.size, &partial, &mut on_bytes).await {
+                Ok(()) => break,
+                Err(e) if attempt < BLOB_ATTEMPTS && continues_after(&e) => {
+                    let have = tokio::fs::metadata(&partial).await.map_or(0, |m| m.len());
+                    tracing::warn!(reference, digest = %desc.digest, attempt, have, size = desc.size, error = %e, "blob download broke; continuing it");
+                    tokio::time::sleep(blob_retry_delay(attempt)).await;
+                    attempt += 1;
+                }
+                Err(e) => {
+                    // Kept when the next pull can continue it.
+                    if !continues_after(&e) {
+                        let _ = tokio::fs::remove_file(&partial).await;
+                    }
+                    return Err(e);
+                }
+            }
         }
-        w.flush().await?;
+        // oci-client checks a whole-blob response only; a continued one is
+        // checked here, from the file.
+        let check = partial.clone();
+        let (actual, _) = tokio::task::spawn_blocking(move || crate::digest::sha256_file(&check))
+            .await
+            .map_err(|e| ImageError::Registry(e.to_string()))??;
+        if desc.digest.starts_with("sha256:") && actual != desc.digest {
+            let _ = tokio::fs::remove_file(&partial).await;
+            return Err(ImageError::Digest {
+                what: format!("blob of {reference}"),
+                expected: desc.digest.clone(),
+                actual,
+            });
+        }
         tokio::fs::rename(&partial, dest).await?;
         Ok(())
     }
@@ -488,42 +535,87 @@ impl RegistryClient {
 }
 
 /// An `AsyncWrite` that reports the bytes written through it.
-struct Counting<W, F> {
-    inner: W,
-    written: u64,
-    on_bytes: F,
+/// How many times one pull asks for a blob: the first request, then a
+/// continuation (`Range`) after each break.
+pub const BLOB_ATTEMPTS: u32 = 5;
+
+/// The pause before continuation `attempt` (1 s, 2 s, 4 s, ...; at most 15 s).
+fn blob_retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs((1u64 << attempt.saturating_sub(1).min(4)).min(15))
 }
 
-impl<W: tokio::io::AsyncWrite + Unpin, F: FnMut(u64) + Unpin> tokio::io::AsyncWrite
-    for Counting<W, F>
-{
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let polled = std::pin::Pin::new(&mut this.inner).poll_write(cx, buf);
-        if let std::task::Poll::Ready(Ok(n)) = &polled {
-            this.written += *n as u64;
-            (this.on_bytes)(this.written);
+/// Whether a failed blob download may continue from what arrived: a broken
+/// connection, a short body, a server error. Not a refusal (not found, not
+/// authorized) or wrong content.
+fn continues_after(e: &ImageError) -> bool {
+    matches!(e, ImageError::Io(_) | ImageError::Registry(_))
+}
+
+/// One request for the blob into `partial`: continues after the bytes it
+/// already holds (a `206` answer) or starts again (a `200` answer, or a
+/// file longer than the blob). `on_bytes` gets the blob bytes on disk so far.
+async fn download_blob(
+    client: &Client,
+    r: &Reference,
+    layer: &oci_client::manifest::OciDescriptor,
+    size: u64,
+    partial: &Path,
+    on_bytes: &mut (impl FnMut(u64) + Send),
+) -> Result<()> {
+    use oci_client::client::BlobResponse;
+    let mut have = tokio::fs::metadata(partial).await.map_or(0, |m| m.len());
+    if size > 0 && have > size {
+        have = 0;
+    }
+    if size > 0 && have == size {
+        on_bytes(have);
+        return Ok(());
+    }
+    let (stream, append) = if have == 0 {
+        (client.pull_blob_stream(r, layer).await?, false)
+    } else {
+        match client
+            .pull_blob_stream_partial(r, layer, have, None)
+            .await?
+        {
+            BlobResponse::Partial(s) => (s, true),
+            // The registry sent the whole blob: start the file again.
+            BlobResponse::Full(s) => (s, false),
         }
-        polled
+    };
+    let mut written = if append { have } else { 0 };
+    let file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(partial)
+        .await?;
+    let mut out = tokio::io::BufWriter::with_capacity(1 << 20, file);
+    on_bytes(written);
+    let mut stream = stream.stream;
+    let res: Result<()> = async {
+        while let Some(chunk) = stream.try_next().await? {
+            out.write_all(&chunk).await?;
+            written += chunk.len() as u64;
+            on_bytes(written);
+        }
+        Ok(())
     }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    .await;
+    // What arrived stays on disk for the next request, also on a break.
+    out.flush().await?;
+    res?;
+    if size > 0 && written < size {
+        return Err(ImageError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "blob {} ended after {written} of {size} bytes",
+                layer.digest
+            ),
+        )));
     }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
-    }
+    Ok(())
 }
 
 #[cfg(test)]

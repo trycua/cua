@@ -216,7 +216,7 @@ async def open_sandbox(args) -> Any:
         return await c.sandboxes().connect(args.connect)
     return await c.sandboxes().create(
         cua.SandboxCreateOptions(
-            on="cloud" if args.cloud else "local",
+            on="local",
             image=args.image,
             name=args.name,
             memory_mb=args.memory_mb,
@@ -254,7 +254,7 @@ async def launch(args) -> dict[str, Any]:
         runs[task.id] = run.run_id()
         print(f"{task.id}: {run.run_id()}", file=sys.stderr)
     state = {
-        "sandbox": args.connect or f"{'cloud' if args.cloud else 'local'}:{sb.name()}",
+        "sandbox": args.connect or f"local:{sb.name()}",
         "image": args.image,
         "harness": args.harness,
         "label": args.label,
@@ -344,8 +344,7 @@ def _parser() -> argparse.ArgumentParser:
 
     def launch_flags(sp):
         sp.add_argument("--image", default=DEFAULT_IMAGE, help="any image with cua-spacesd")
-        sp.add_argument("--connect", help="use an existing sandbox (local:NAME, cloud:NAME, ...)")
-        sp.add_argument("--cloud", action="store_true", help="create the sandbox on Fleet")
+        sp.add_argument("--connect", help="use an existing sandbox (local:NAME, ...)")
         sp.add_argument("--name", default="agents-in-sandboxes", help="sandbox name")
         sp.add_argument("--memory-mb", type=int, default=4096)
         sp.add_argument("--harness", default="claude-code", help="see `cua agent harnesses`")

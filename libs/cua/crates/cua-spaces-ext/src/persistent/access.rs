@@ -82,7 +82,7 @@ impl Access {
             return Err(Error::invalid(format!("agent name {agent:?}")));
         }
         if machine.trim().is_empty() {
-            return Err(Error::invalid("name the machine (a Space id)"));
+            return Err(Error::invalid("name the computer (a Space id)"));
         }
         if let Some(g) = self.live(agent, machine)? {
             return Ok(g);
@@ -140,7 +140,7 @@ impl Access {
         self.log(&format!("agent:{agent}"), "denied", machine, what);
         Err(crate::drive_err(cua_volume::Error::Forbidden(format!(
             "agent {agent} has no access to {machine}; the user can allow it in Cua \
-             (This machine > Agents) or with `cua agent allow-computer {agent} {machine}`"
+             (This computer > Agents) or with `cua agent allow-computer {agent} {machine}`"
         ))))
     }
 

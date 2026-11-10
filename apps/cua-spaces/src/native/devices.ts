@@ -38,8 +38,7 @@ export interface DevicesBridge {
 
 export function createTauriDevicesBridge(): DevicesBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     snapshot: () => invoke<DevicesInput>("devices_snapshot"),
@@ -47,7 +46,11 @@ export function createTauriDevicesBridge(): DevicesBridge {
     checkEnrolled: () => invoke<boolean>("devices_check_enrolled"),
     needsPassphrase: () => invoke<boolean>("devices_presence_needs_passphrase"),
     approve: ({ code, deviceId, passphrase }) =>
-      invoke<void>("devices_approve", { code: code ?? null, deviceId: deviceId ?? null, passphrase: passphrase ?? null }),
+      invoke<void>("devices_approve", {
+        code: code ?? null,
+        deviceId: deviceId ?? null,
+        passphrase: passphrase ?? null,
+      }),
     rename: (id, name) => invoke<void>("devices_rename", { id, name }),
     revoke: (id) => invoke<void>("devices_revoke", { id }),
     confirmMachine: (id) => invoke<void>("devices_confirm_machine", { id }),
@@ -156,7 +159,7 @@ export function createFakeDevicesBridge(
       const made: PairingCode = {
         id: `pc_fake${pairing.length + 1}`,
         code,
-        url: `https://spaces.cua.ai/add/${code}`,
+        url: `https://cua.ai/add/${code}`,
         installSh: `curl -fsSL https://cua.ai/install.sh | sh -s -- --pair ${code}`,
         installPowershell: `& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair ${code}`,
         state: "active",

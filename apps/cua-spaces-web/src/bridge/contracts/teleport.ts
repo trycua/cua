@@ -9,6 +9,12 @@
  * decides every step; these only carry its state and views.
  */
 
+/** A message from the core (`message::Msg`): a code plus variables. */
+export interface Msg {
+  code: string;
+  vars: Record<string, string>;
+}
+
 export type Capability = "full" | "install_only" | "unsupported";
 export type TeleportMove = "app_only" | "app_with_files" | "app_with_state";
 export type SensitiveGroup = "sign_ins" | "passwords" | "history";
@@ -95,6 +101,11 @@ export interface TeleportConsent {
   exclude?: string[];
   fromVault?: string[] | null;
   includePasswords?: boolean;
+  /** Reading the app: the sites whose saved passwords to send (the review's
+   * own choice of passwords). */
+  passwordDomains?: string[] | null;
+  /** The browser profile to read (`Profile 1`), chosen in the setup sheet; absent reads `Default`. */
+  profile?: string | null;
 }
 
 export type PickerStep = "loading" | "pick" | "options" | "planning" | "consent" | "running" | "done" | "error";
@@ -143,6 +154,42 @@ export interface KvInventory {
   notes?: string[];
 }
 
+/** One thing a teleport needs from the OS (`keyvault::wire::KvReadinessCheck`). */
+export interface KvReadinessCheck {
+  /** `granted`, `denied`, or `unknown` (macOS only decides on first use). */
+  state: "granted" | "denied" | "unknown";
+  /** What it means and what to do, in plain words; empty when nothing. */
+  say: string;
+}
+
+/** A browser profile to choose from (`KvBrowserProfile`). */
+export interface KvBrowserProfile {
+  dir: string;
+  name: string;
+  account?: string | null;
+  last_used: boolean;
+}
+
+/** Whether a teleport of an app can work now (`KvReadiness`): the Keyvault, what the
+ * OS lets the daemon read, and the profiles. Reads no value, asks for no Touch ID. */
+export interface KvReadiness {
+  provider_id: string;
+  app_display: string;
+  keyvault_initialized: boolean;
+  keyvault_unlocked: boolean;
+  /** The profile checked: the one asked for, else the last used. */
+  profile?: string | null;
+  /** The profile a teleport reads when none is named. */
+  default_profile?: string | null;
+  profiles: KvBrowserProfile[];
+  /** Reading the app's files (Full Disk Access). */
+  files: KvReadinessCheck;
+  /** Reading the app's open tabs (Automation). */
+  tabs: KvReadinessCheck;
+  /** The checked profile has no sign-in data. */
+  profile_empty: boolean;
+}
+
 /** An input to the picker (`flow::PickerEvent`). */
 export type PickerEvent =
   | { type: "loaded"; entries: CatalogEntry[] }
@@ -167,8 +214,11 @@ export type PickerEvent =
   | { type: "domain-query"; text: string }
   | { type: "toggle-item"; key: string }
   | { type: "toggle-passwords"; value: boolean }
+  | { type: "toggle-password"; key: string }
+  | { type: "select-shown-passwords"; value: boolean }
+  | { type: "password-query"; text: string }
   | { type: "send-from"; source: "live" | "vault" }
-  | { type: "vault-items"; count: number; newestMs: number; nowMs: number; selected: string[]; passwordIds: string[] }
+  | { type: "vault-items"; count: number; newestMs: number; nowMs: number; selected: string[]; passwordIds: string[]; passwords?: VaultPassword[]; passwordPicks?: boolean }
   | { type: "vault-selection"; selected: string[] }
   | { type: "confirm" }
   | { type: "progress"; event: RunEvent }
@@ -184,8 +234,8 @@ export interface EntrySection {
 /** An opt-in of the signed-in state move (`flow::SensitiveOption`). */
 export interface SensitiveOption {
   group: SensitiveGroup;
-  label: string;
-  detail: string;
+  label: Msg;
+  detail: Msg;
   checked: boolean;
 }
 
@@ -200,6 +250,25 @@ export interface ReviewDomain {
   selectable: boolean;
   unavailable: number;
   unavailableNote: string;
+}
+
+/** One saved password of the Keyvault (`review::VaultPassword`): its site and
+ * username, never its value. */
+export interface VaultPassword {
+  id: string;
+  site: string;
+  username: string;
+}
+
+/** One saved password choice of the review (`review::ReviewPassword`): a site
+ * of the browser (reading it now) or one saved password (from the Keyvault).
+ * Sites and usernames only, never a value. */
+export interface ReviewPassword {
+  key: string;
+  site: string;
+  username: string;
+  counts: string;
+  selected: boolean;
 }
 
 /** A consent line the user can turn off (`review::ReviewToggle`). */
@@ -240,6 +309,11 @@ export interface ReviewView {
   offersPasswords: boolean;
   includePasswords: boolean;
   passwordsLabel: string;
+  /** Ticked: the saved passwords to pick from, filtered by the search. */
+  passwords?: ReviewPassword[];
+  /** "2 of 5 sites", "2 of 5 passwords". */
+  passwordSummary?: string;
+  passwordQuery?: string;
   sourceNote: string;
 }
 

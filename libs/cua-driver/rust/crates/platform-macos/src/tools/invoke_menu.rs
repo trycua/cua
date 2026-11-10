@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::InvokeMenuInput;
@@ -11,10 +14,8 @@ use cua_driver_core::{
 };
 use serde_json::Value;
 use std::{
-    ffi::c_void,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, SyncSender},
         Arc,
     },
     time::Duration,
@@ -415,70 +416,18 @@ fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     Ok(())
 }
 
-struct AxWindowFocusRequest {
-    pid: i32,
-    window_id: u32,
-    tx: SyncSender<Result<(), String>>,
-    cancelled: Arc<AtomicBool>,
-}
-
-#[link(name = "System", kind = "framework")]
-extern "C" {
-    static _dispatch_main_q: u8;
-    fn dispatch_async_f(
-        queue: *const c_void,
-        context: *mut c_void,
-        work: unsafe extern "C" fn(*mut c_void),
-    );
-}
-
-unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
-    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
-    if request.cancelled.load(Ordering::Acquire) {
-        return;
-    }
-    let result = focus_ax_window(request.pid, request.window_id);
-    let _ = request.tx.send(result);
-}
-
 fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
-    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
-    if pid != std::process::id() as i32 || is_main_thread {
-        return focus_ax_window(pid, window_id);
-    }
-
-    // AX actions against another process execute in that process. An embedded
-    // driver targeting its own window is different: AppKit services AXRaise
-    // in this process, and window ordering is main-thread-only. Queue just the
-    // self-process AX mutation onto AppKit's main queue, then return to the
-    // blocking worker for readiness polling and menu traversal.
-    let (tx, rx) = mpsc::sync_channel(1);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let request = Box::new(AxWindowFocusRequest {
-        pid,
-        window_id,
-        tx,
-        cancelled: Arc::clone(&cancelled),
-    });
-    unsafe {
-        let main_queue = &raw const _dispatch_main_q as *const c_void;
-        dispatch_async_f(
-            main_queue,
-            Box::into_raw(request).cast::<c_void>(),
-            focus_ax_window_on_main,
-        );
-    }
-    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
-        Ok(result) => result,
-        Err(error) => {
-            // If AppKit never serviced the request, prevent a stale focus
-            // change from firing after this tool call has already failed.
-            cancelled.store(true, Ordering::Release);
-            Err(format!(
-                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
-            ))
-        }
-    }
+    // An embedded driver targeting its own window must raise it on AppKit's
+    // main queue; see `ax::main_thread`. Only the AX mutation moves there; the
+    // blocking worker keeps readiness polling and menu traversal.
+    crate::ax::main_thread::run_ax_mutation(pid, MAIN_QUEUE_TIMEOUT, move || {
+        focus_ax_window(pid, window_id)
+    })
+    .unwrap_or_else(|error| {
+        Err(format!(
+            "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+        ))
+    })
 }
 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
@@ -506,7 +455,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         if exact_window_is_ready(
             live_frontmost_pid(pid, window_id),
             pid,
-            crate::ax::bindings::focused_window_id_of_pid(pid),
+            crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.own),
             window_id,
         ) {
             let since = stable_since.get_or_insert(now);
@@ -545,10 +494,15 @@ fn background_unavailable(reason: String) -> ToolResult {
          help: the disabled item ignores its shortcut too. Otherwise use the control in the \
          window."
     );
+    structured_refusal("background_unavailable", message)
+}
+
+fn structured_refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
-        "code": "background_unavailable",
-        "refusal": { "code": "background_unavailable", "message": message }
+        "code": code,
+        "effect": "refused",
+        "refusal": { "code": code, "message": message }
     }))
 }
 
@@ -561,6 +515,61 @@ enum BackgroundPressError {
         is_save: bool,
     },
     Other(String),
+    UnboundWindow {
+        requested: u32,
+        focused: Option<u32>,
+        main: Option<u32>,
+    },
+}
+
+/// Whether the background worker may still act for its call. The worker
+/// keeps running on the blocking pool after the caller's future is dropped,
+/// so it checks this before each mutation of the target app.
+#[derive(Clone, Default)]
+struct PressAdmission(Arc<AtomicBool>);
+
+/// Cancels its [`PressAdmission`] when dropped. Held where the caller waits.
+struct CancelOnDrop(PressAdmission);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0 .0.store(true, Ordering::Release);
+    }
+}
+
+impl PressAdmission {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    /// Run `press` unless the call was cancelled.
+    fn admit<T>(&self, press: impl FnOnce() -> T) -> Result<T, BackgroundPressError> {
+        if self.is_cancelled() {
+            return Err(BackgroundPressError::Other(
+                "invoke_menu: the call was cancelled, so the menu item was not pressed".into(),
+            ));
+        }
+        Ok(press())
+    }
+}
+
+/// Run `work` on the blocking pool with an admission that is cancelled when
+/// this future is dropped, so a worker that outlives its call presses nothing.
+/// A press already admitted cannot be recalled, so the worker shares the pid's
+/// mutation lease and holds the desktop lane until it returns: the next action
+/// waits for it rather than running beside it.
+async fn run_admitted<T: Send + 'static>(
+    mutation: Arc<super::BackgroundMutationLease>,
+    work: impl FnOnce(&PressAdmission) -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    let admission = PressAdmission::default();
+    let _cancel = CancelOnDrop(admission.clone());
+    let lane = cua_driver_core::tool::DesktopLease::current();
+    tokio::task::spawn_blocking(move || {
+        let _held = (mutation, lane);
+        work(&admission)
+    })
+    .await
 }
 
 /// What the background route knows about the pressed item.
@@ -577,6 +586,62 @@ unsafe fn item_is_save(item: AXUIElementRef) -> bool {
             == 0.0
 }
 
+/// How long a disabled item gets to enable after its window becomes key, and
+/// how often it is re-read.
+const ENABLE_WAIT: Duration = Duration::from_millis(600);
+const ENABLE_POLL: Duration = Duration::from_millis(40);
+
+/// AppKit resolves document menus against its key/main window, not the ID
+/// supplied by a caller. Unknown or sibling context must fail before lookup.
+fn require_menu_window(
+    requested: u32,
+    focused: Option<u32>,
+    main: Option<u32>,
+) -> Result<(), BackgroundPressError> {
+    if focused == Some(requested) && main == Some(requested) {
+        Ok(())
+    } else {
+        Err(BackgroundPressError::UnboundWindow {
+            requested,
+            focused,
+            main,
+        })
+    }
+}
+
+unsafe fn require_live_menu_window(
+    app: AXUIElementRef,
+    requested: u32,
+) -> Result<(), BackgroundPressError> {
+    let read = |name| {
+        let window = copy_element_attr(app, name)?;
+        let id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        id
+    };
+    require_menu_window(requested, read("AXFocusedWindow"), read("AXMainWindow"))
+}
+
+fn unbound_menu_window(
+    pid: i32,
+    requested: u32,
+    focused: Option<u32>,
+    main: Option<u32>,
+) -> ToolResult {
+    super::background_refusal_result(
+        pid,
+        requested,
+        &cua_driver_core::background_input::BackgroundRefusal {
+            code: super::WINDOW_NOT_KEY,
+            reason: format!(
+                "invoke_menu: requested window {requested} is not the confirmed document menu context \
+                 (focused={focused:?}, main={main:?}); no menu action was dispatched"
+            ),
+            advice: Some("foreground"),
+        },
+    )
+}
+
 /// Resolve the whole path from the app's live menu bar without opening any
 /// level, then perform the final item's action. Used for a background app:
 /// opening a menu-bar menu would take key focus and draw over the user's
@@ -585,6 +650,7 @@ unsafe fn invoke_path_in_background(
     pid: i32,
     window_id: u32,
     path: &[String],
+    admission: &PressAdmission,
 ) -> Result<PressedItem, BackgroundPressError> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
@@ -593,6 +659,10 @@ unsafe fn invoke_path_in_background(
         ));
     }
     set_messaging_timeout(app);
+    if let Err(error) = require_live_menu_window(app, window_id) {
+        CFRelease(app as CFTypeRef);
+        return Err(error);
+    }
     let menu_bar = copy_element_attr(app, "AXMenuBar");
     CFRelease(app as CFTypeRef);
     let menu_bar = menu_bar.ok_or_else(|| {
@@ -605,13 +675,18 @@ unsafe fn invoke_path_in_background(
     set_messaging_timeout(target);
     let is_save = item_is_save(target);
     let result = (|| {
-        // AppKit validates menu items against the key window. Make the target
-        // window AppKit-key without raising it or touching the user's window
-        // (the focus record only), so items that need a key window enable.
+        // Preserve enablement priming for an already-bound document. The
+        // context check above prevents this from switching to a sibling after
+        // resolving that sibling's menu; the check below revalidates dispatch.
         if copy_bool_attr(target, "AXEnabled") == Some(false)
+            && !admission.is_cancelled()
             && crate::input::skylight::activate_without_raise_with(pid, window_id, false)
         {
-            std::thread::sleep(Duration::from_millis(120));
+            let mut waited = Duration::ZERO;
+            while waited < ENABLE_WAIT && copy_bool_attr(target, "AXEnabled") == Some(false) {
+                std::thread::sleep(ENABLE_POLL);
+                waited += ENABLE_POLL;
+            }
         }
         if copy_bool_attr(target, "AXEnabled") == Some(false) {
             return Err(BackgroundPressError::Disabled {
@@ -628,7 +703,19 @@ unsafe fn invoke_path_in_background(
                 "invoke_menu: the final menu item has no usable native menu action".to_owned(),
             )
         })?;
-        let error = perform_action(target, action);
+        // Revalidate after path resolution, immediately before the only
+        // dispatch. Never fix a mismatch by silently switching documents.
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return Err(BackgroundPressError::Other(
+                "invoke_menu: target application is unavailable before dispatch".into(),
+            ));
+        }
+        set_messaging_timeout(app);
+        let bound = require_live_menu_window(app, window_id);
+        CFRelease(app as CFTypeRef);
+        bound?;
+        let error = admission.admit(|| perform_action(target, action))?;
         if error != kAXErrorSuccess {
             return Err(BackgroundPressError::Other(format!(
                 "invoke_menu: native action for the final menu item failed with AX error {error}"
@@ -695,6 +782,7 @@ pub(super) async fn run_in_background(
     path: Vec<String>,
     request: MenuRequest,
 ) -> ToolResult {
+    let mutation = Arc::new(super::acquire_background_mutation(pid).await);
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
         .ok()
@@ -703,9 +791,9 @@ pub(super) async fn run_in_background(
         .as_deref()
         .and_then(crate::apple_events::modified_time);
     let press_path = path.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = run_admitted(mutation.clone(), move |admission| {
         let _key_focus = crate::key_focus_guard::protect(pid);
-        unsafe { invoke_path_in_background(pid, window_id, &press_path) }
+        unsafe { invoke_path_in_background(pid, window_id, &press_path, admission) }
     })
     .await;
     let preface = request.preface(&path);
@@ -791,6 +879,9 @@ pub(super) async fn run_in_background(
                     ActionTransport::MacosAppleEvent,
                     "The app's scripting interface reported the document saved",
                 ),
+                Ok(Err(refusal)) if refusal.code == "automation_consent_required" => {
+                    structured_refusal(refusal.code, format!("{preface}{}", refusal.reason))
+                }
                 Ok(Err(refusal)) => background_unavailable(format!(
                     "{preface}{message}, and saving through {app_name}'s scripting interface did not \
                      complete ({}: {}). Nothing was saved",
@@ -802,6 +893,11 @@ pub(super) async fn run_in_background(
         Ok(Err(BackgroundPressError::Disabled { message, .. })) => {
             background_unavailable(format!("{preface}{message}"))
         }
+        Ok(Err(BackgroundPressError::UnboundWindow {
+            requested,
+            focused,
+            main,
+        })) => unbound_menu_window(pid, requested, focused, main),
         Ok(Err(BackgroundPressError::Other(error))) => refusal(error),
         Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
     }
@@ -888,8 +984,9 @@ impl Tool for InvokeMenuTool {
 
         let outcome = tokio::task::spawn_blocking(move || {
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
-            let prior_frontmost_window =
-                prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
+            let prior_frontmost_window = prior_frontmost.and_then(|prior| {
+                crate::ax::bindings::focused_window_id_of_pid(prior).map(|window| window.own)
+            });
             let needs_activation = prior_frontmost != Some(pid);
 
             let result = focus_exact_window(pid, window_id)
@@ -943,6 +1040,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn background_menu_requires_both_exact_document_contexts() {
+        assert!(require_menu_window(7, Some(7), Some(7)).is_ok());
+        for (focused, main) in [
+            (Some(8), Some(8)),
+            (Some(7), Some(8)),
+            (Some(8), Some(7)),
+            (None, Some(7)),
+            (Some(7), None),
+            (None, None),
+        ] {
+            assert!(matches!(
+                require_menu_window(7, focused, main),
+                Err(BackgroundPressError::UnboundWindow { requested: 7, focused: f, main: m })
+                    if f == focused && m == main
+            ));
+        }
+    }
+
+    #[test]
+    fn unbound_menu_refuses_before_dispatch_with_the_exact_target() {
+        let result = unbound_menu_window(42, 7, Some(8), None);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "window_not_key");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(data["pid"], 42);
+        assert_eq!(data["window_id"], 7);
+        assert!(data["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no menu action was dispatched"));
+    }
+
+    #[test]
     fn a_background_menu_refusal_names_the_code_and_the_route() {
         let result = background_unavailable("invoke_menu: path segment 1 is disabled".into());
         assert_eq!(result.is_error, Some(true));
@@ -953,6 +1084,83 @@ mod tests {
         assert!(message.contains("bring_to_front"));
         assert!(message.contains("delivery_mode:\"foreground\""));
         assert!(message.contains("A background hotkey does not help"));
+        let reason = "hotkey cmd+s: Grant TextEdit access in System Settings > Privacy & Security > Automation";
+        let result = structured_refusal("automation_consent_required", reason.into());
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "automation_consent_required");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(data["refusal"]["code"], "automation_consent_required");
+        assert_eq!(data["refusal"]["message"], reason);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_background_call_never_presses_its_item() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (pressed_tx, pressed_rx) = std::sync::mpsc::channel();
+        let mutation = Arc::new(super::super::acquire_background_mutation(-92_002).await);
+        let call = tokio::spawn(run_admitted(mutation, move |admission| {
+            let _ = started_tx.send(());
+            let _ = release_rx.recv();
+            let _ = pressed_tx.send(admission.admit(|| ()).is_ok());
+        }));
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        // The worker outlived its call and now reaches the press.
+        release_tx.send(()).unwrap();
+        let pressed = pressed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!pressed, "a worker whose call was dropped pressed the item");
+    }
+
+    /// The next action on the same pid waits for a dropped call's worker to
+    /// finish its press, instead of running beside it.
+    #[tokio::test]
+    async fn a_dropped_call_keeps_the_pid_until_its_worker_returns() {
+        let pid = -92_001;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        // The call holds the pid's lease while it awaits the worker, as
+        // run_in_background does.
+        let call = tokio::spawn(async move {
+            let mutation = Arc::new(super::super::acquire_background_mutation(pid).await);
+            run_admitted(mutation.clone(), move |_| {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv();
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        let mut next = tokio::spawn(super::super::acquire_background_mutation(pid));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut next)
+                .await
+                .is_err(),
+            "the next action started while the dropped call's worker still ran"
+        );
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), next)
+            .await
+            .expect("the next action starts once the worker returns")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_live_background_call_presses_once() {
+        let mutation = Arc::new(super::super::acquire_background_mutation(-92_003).await);
+        let pressed = run_admitted(mutation, |admission| admission.admit(|| 7))
+            .await
+            .unwrap();
+        assert!(matches!(pressed, Ok(7)));
+        let cancelled = PressAdmission::default();
+        drop(CancelOnDrop(cancelled.clone()));
+        assert!(matches!(
+            cancelled.admit(|| 7),
+            Err(BackgroundPressError::Other(message)) if message.contains("cancelled")
+        ));
     }
 
     #[test]

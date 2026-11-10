@@ -126,9 +126,11 @@ class Call:
 
 
 class Smoke:
-    def __init__(self, mcp, out):
+    def __init__(self, mcp, out, open_session=None):
         self.mcp = mcp
         self.out = out
+        # Opens another initialized MCP session (its own session id) on the daemon.
+        self.open_session = open_session
         self.results = []
         self.calls = []
         self.pid = None
@@ -409,7 +411,8 @@ def run_checks(smoke):
     display_only_check(smoke)
 
     # 7b. Lean-read ergonomics from the v035 bench: since:"latest", a bare row
-    # number as element_token, run_steps observe:true, zoom x/y/width/height.
+    # number as element_token (one read only), run_steps observe:true,
+    # zoom x/y/width/height.
     lean_read_ergonomics_check(smoke)
 
     # 7c. The pre-0.35 name run_actions still runs, unlisted, with a note.
@@ -559,24 +562,58 @@ def display_only_check(smoke):
     )
 
 
+def bare_row_problems(smoke):
+    """A bare row number names a read only while it is its caller's only read
+    of the window. This session has read the window many times, so a fresh
+    session reads once and acts on a bare row (must land), then reads again
+    and the same bare row must be refused as stale_bare_row, not re-pointed."""
+    problems = []
+    fresh = Smoke(smoke.open_session(), smoke.out)
+    fresh.pid, fresh.window_id = smoke.pid, smoke.window_id
+    try:
+        state = fresh.read()
+        before = count_value(tree(state))
+        increment = find_row(tree(state), BUTTON, "Increment")
+        args = {"pid": fresh.pid, "window_id": fresh.window_id, "element_token": str(increment)}
+        click = fresh.call("click", args)
+        after = fresh.wait_for_text(f"Count: {(before or 0) + 1}")
+        if click.is_error:
+            problems.append(f"bare row after one read: click {json.dumps(args)} -> {click.first_line()}")
+        elif f"Count: {(before or 0) + 1}" not in tree(after):
+            problems.append(f"bare row click after one read ok but the count did not move from {before}")
+        # wait_for_text read the window again: the number no longer names one read.
+        stale = fresh.call("click", args)
+        reason = stale.structured.get("reason")
+        if not stale.is_error or reason != "stale_bare_row":
+            problems.append(
+                f"bare row after a re-read: click {json.dumps(args)} -> is_error={stale.is_error}, "
+                f"reason {reason!r}: {stale.first_line()}"
+            )
+    finally:
+        smoke.calls.extend(fresh.calls)
+        fresh.mcp.close()
+    return problems
+
+
 def lean_read_ergonomics_check(smoke):
     check = "since:latest, bare row token, run_steps observe:true, zoom x/y/width/height, scroll dy"
-    problems = []
+    problems = bare_row_problems(smoke)
     smoke.read()
     latest = smoke.read(since="latest")
     if latest.structured.get("since_status") not in ("diff", "no_change"):
         problems.append(f"since=latest gave since_status={latest.structured.get('since_status')!r}")
 
+    # This session has read the window many times, so act by the full token.
     state = smoke.read()
     before = count_value(tree(state))
     increment = find_row(tree(state), BUTTON, "Increment")
-    row_args = {"pid": smoke.pid, "window_id": smoke.window_id, "element_token": str(increment)}
+    row_args = {"pid": smoke.pid, "window_id": smoke.window_id, "element_token": token(state, increment)}
     click = smoke.call("click", row_args)
     after = smoke.wait_for_text(f"Count: {(before or 0) + 1}")
     if click.is_error:
         problems.append(f"click {json.dumps(row_args)} -> {click.first_line()}")
     elif f"Count: {(before or 0) + 1}" not in tree(after):
-        problems.append(f"bare row click ok but the count did not move from {before}")
+        problems.append(f"full-token click ok but the count did not move from {before}")
 
     increment = find_row(tree(after), BUTTON, "Increment")
     batch = smoke.call("run_steps", {
@@ -606,7 +643,8 @@ def lean_read_ergonomics_check(smoke):
         "; ".join(problems)
         or f"scroll dy:'3' -> {'ok' if not scrolled.is_error else scrolled.first_line()}; "
         f"since=latest -> {latest.structured.get('since_status')}; click element_token "
-        f"{str(increment)!r} + window_id -> Count moved; observe:true -> "
+        f"{row_args['element_token']!r} + window_id -> Count moved; a bare row lands after one "
+        f"read and is refused as stale_bare_row after a re-read; observe:true -> "
         f"{observed.get('since_status')}; zoom x/y/width/height -> "
         f"{'ok' if not zoom.is_error else zoom.first_line()}",
     )
@@ -812,15 +850,22 @@ def main():
 
     daemon = start_daemon(driver, socket, env, daemon_log)
     fixture = None
-    mcp = Mcp(driver, socket, env, mcp_log)
-    smoke = Smoke(mcp, out)
-    platform_name = "Windows (WinForms)" if WINDOWS else "Linux Xvfb (GTK3)"
-    try:
+
+    def open_session():
+        mcp = Mcp(driver, socket, env, mcp_log)
         init = mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "live-smoke", "version": "1"}})
         if "error" in init:
+            mcp.close()
             raise RuntimeError(f"initialize failed: {init['error']}")
         mcp.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
         mcp.proc.stdin.flush()
+        return mcp
+
+    mcp = None
+    smoke = Smoke(None, out, open_session)
+    platform_name = "Windows (WinForms)" if WINDOWS else "Linux Xvfb (GTK3)"
+    try:
+        mcp = smoke.mcp = open_session()
         version = smoke.call("get_config", {})
         print("driver config:", version.text[:800], flush=True)
 
@@ -833,7 +878,8 @@ def main():
         smoke.record("smoke harness", "fail", f"{type(error).__name__}: {error}")
     finally:
         write_reports(smoke, out, platform_name)
-        mcp.close()
+        if mcp is not None:
+            mcp.close()
         for proc in (fixture, daemon):
             if proc is not None and proc.poll() is None:
                 proc.terminate()

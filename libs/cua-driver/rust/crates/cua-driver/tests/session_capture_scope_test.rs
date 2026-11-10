@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-level contract tests for per-session capture scope.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

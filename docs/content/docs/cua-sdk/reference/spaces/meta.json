@@ -14,11 +14,13 @@
     "build",
     "channel",
     "volume",
+    "presence",
     "streams",
     "resources",
     "list-watch",
     "agents",
     "persistent-agents",
+    "default-space",
     "host"
   ]
 }

@@ -143,3 +143,50 @@ describe("hiding the stream", () => {
     await waitFor(() => expect(q("[data-mini-player]")).not.toBeNull());
   });
 });
+
+describe("an agent's home starts with the desktop folded away", () => {
+  const HOME_ID = "local:agent-home-demo";
+  const homePath = `/spaces/${encodeURIComponent(HOME_ID)}`;
+  const key = `cua-spaces:stream-hidden:${HOME_ID}`;
+  const mountHome = () => mountApp(homePath, { failsCreates: false, listsGhost: false, demo: { agentHome: true } });
+  beforeEach(() => localStorage.removeItem(key));
+
+  it("shows the chat alone, nothing streaming, and the Desktop row in Stream opens and folds it, remembered for this Space", async () => {
+    await mountHome();
+    await waitFor(() => expect(q("[data-thread-only]")).not.toBeNull());
+    // Folded: no stream pane, so no video slot (the host stops streaming what is not drawn), and no bar over the chat.
+    expect(q("[data-stream-surface]")).toBeNull();
+    expect(q("[data-call-divider]")).toBeNull();
+    expect(q("[data-desktop-bar]")).toBeNull();
+    // The Desktop row says so quietly: not highlighted while folded.
+    const row = () => q("[data-stream-desktop]")!;
+    expect(row().getAttribute("aria-current")).toBeNull();
+    expect(row().querySelector("svg.lucide-chevron-right")).toBeNull();
+    // Nothing was chosen yet: nothing is saved.
+    expect(localStorage.getItem(key)).toBeNull();
+
+    act(() => row().click());
+    await waitFor(() => expect(q("[data-stream-surface]")).not.toBeNull());
+    expect(q("[data-call-divider]")).not.toBeNull();
+    expect(row().getAttribute("aria-current")).toBe("true");
+    expect(localStorage.getItem(key)).toBe("0");
+
+    // A home that was opened stays open.
+    cleanup();
+    await mountHome();
+    await waitFor(() => expect(q("[data-stream-surface]")).not.toBeNull());
+    expect(q("[data-thread-only]")).toBeNull();
+
+    // And folded again from the same row, by choice, stays folded.
+    act(() => row().click());
+    await waitFor(() => expect(q("[data-thread-only]")).not.toBeNull());
+    expect(localStorage.getItem(key)).toBe("1");
+  });
+
+  it("leaves an ordinary Space's stream open as before, with no bar", async () => {
+    await mountApp(path, { failsCreates: false, listsGhost: false });
+    await waitFor(() => expect(q("[data-stream-surface]")).not.toBeNull());
+    expect(q("[data-desktop-bar]")).toBeNull();
+    expect(q("[data-thread-only]")).toBeNull();
+  });
+});

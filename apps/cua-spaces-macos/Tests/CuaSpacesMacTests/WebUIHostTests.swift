@@ -47,10 +47,12 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false)
+        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
-        #expect(v?["webUi"] as? Bool == true)
+        #expect(v?["ciRunners"] as? Bool == false)
+        // Secure Spaces and Ask first are always on: they have no switch to send.
+        for gone in ["secureSpaces", "askFirst"] { #expect(v?[gone] == nil, "\(gone)") }
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
@@ -407,11 +409,11 @@ struct WebUIHostTests {
     @Test func theUpdateChannelIsReadAndChosenByRow() async throws {
         let (bridge, model) = bridge()
         #expect((try await bridge.handle("settings.get", [:]) as? [String: Any])?["updateChannel"] is NSNull)
-        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "beta"]) == "unsupported")
+        #expect(await failure(bridge, "settings.choose", ["row": "update-channel", "option": "nightly"]) == "unsupported")
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "beta"]) as? [String: Any]
-        #expect(s?["updateChannel"] as? String == "beta")
-        #expect(model.updates.channel == .beta)
+        let s = try await bridge.handle("settings.choose", ["row": "update-channel", "option": "nightly"]) as? [String: Any]
+        #expect(s?["updateChannel"] as? String == "nightly")
+        #expect(model.updates.channel == .nightly)
     }
 
     /// The page's core has no environment: the host names the account app
@@ -420,6 +422,18 @@ struct WebUIHostTests {
         let (bridge, _) = bridge()
         let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
+    }
+
+    /// Settings carry the channel and environment the app resolved, for the
+    /// title bar's "Local · Staging" tag.
+    @Test func settingsNameTheTarget() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        let target = s?["target"] as? [String: Any]
+        let expected = appTarget()
+        #expect(target?["channel"] as? String == expected.channel)
+        #expect(target?["env"] as? String == expected.env)
+        #expect(target?["authHost"] as? String == expected.authHost)
     }
 
     /// Settings, Advanced's rows come with the page's first `settings.get`,
@@ -511,13 +525,11 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "spaces.create", ["config": config, "pendingId": "pending:web-2"]) == "cancelled")
     }
 
-    /// New Space opens the web wizard, whatever an older build saved for
-    /// the New UI.
+    /// New Space opens the web wizard.
     @Test func newSpaceOpensTheWebWizard() async {
         let (_, model) = bridge()
         var asked: [String?] = []
         model.openWebNewSpace = { on in asked.append(on); return true }
-        model.settings.experiments.webUi = false
         await model.openNewSpace()
         await model.openNewSpace(on: "host:m1")
         #expect(asked == [nil, "host:m1"])
@@ -658,6 +670,22 @@ struct WebUIHostTests {
             #expect((e["details"] as? String)?.contains("connection refused") == true)
             #expect(e["actionLabel"] as? String == "Retry")
         }
+    }
+
+    @Test func aRefusedNewComputerCarriesItsKindAndCodeToThePage() throws {
+        let f = HostSetupFailure.presenting(
+            "relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]")
+        let e = try #require(WebUIBridge.reply(id: "1", error: WebUIBridge.hostFailure(f))["error"] as? [String: Any])
+        #expect(e["kind"] as? String == "needsProof")
+        #expect(e["refusalCode"] as? String == "new_computer_needs_proof")
+        #expect(e["title"] as? String == "Confirm it\u{2019}s you")
+        #expect(e["actionLabel"] as? String == "Use a code from another computer")
+        // Any other failure says its kind, and no code it does not have.
+        let other = try #require(
+            WebUIBridge.reply(id: "2", error: WebUIBridge.hostFailure(HostSetupFailure.presenting("boom")))["error"]
+                as? [String: Any])
+        #expect(other["kind"] as? String == "other")
+        #expect(other["refusalCode"] == nil)
     }
 
     @Test func aFailedButtonIsWordedWithTheRawErrorAsDetails() async throws {
@@ -805,9 +833,9 @@ struct WebUIHostTests {
     @Test func aboutIsTheUpdatesModelsInput() async throws {
         let (bridge, model) = bridge()
         model.updates = UpdatesModel(updater: FixtureUpdater(), channel: .stable)
-        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "beta"]) as? [String: Any]
+        let a = try await bridge.handle("about.set", ["autoCheck": true, "channel": "nightly"]) as? [String: Any]
         #expect(a?["autoCheck"] as? Bool == true)
-        #expect(a?["channel"] as? String == "beta")
+        #expect(a?["channel"] as? String == "nightly")
         #expect(a?["updater"] as? Bool == true)
     }
 }

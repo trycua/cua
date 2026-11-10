@@ -100,15 +100,15 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
         <div className="max-h-[84vh] overflow-y-auto px-6 pt-5 pb-6">
           <DialogTitle className="text-[15px] font-semibold">Connect an agent</DialogTitle>
           <DialogDescription className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-            Coding agents reach Cua through the cua MCP server (<code className="font-mono text-xs">cua mcp</code>) and the cua skills.
-            Once an agent has them, it can create Spaces, work inside them and start persistent agents. Its runs then show up on this page.
+            Coding agents reach Cua through the cua MCP server (<code className="font-mono text-xs">cua mcp</code>) and the cua skills. Connected agents can
+            make and use Spaces. Their runs show up here.
           </DialogDescription>
 
           <section className="mt-5">
             <div className="mb-2 flex items-center justify-between gap-3">
               <h3 className="text-xs font-semibold" data-connect-here="">
                 On {hereName}
-                {here ? <span className="ml-1.5 font-normal text-muted-foreground">this machine</span> : null}
+                {here ? <span className="ml-1.5 font-normal text-muted-foreground">this computer</span> : null}
               </h3>
               {rows && rows.length > 0 ? (
                 <Button size="sm" variant={pending.length ? "default" : "outline"} disabled={busy || pending.length === 0} onClick={setUpAll}>
@@ -136,19 +136,20 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
                 Set up on {doneOn}.{" "}
                 {others.length > 0 ? (
                   <span className="text-muted-foreground" data-connect-others="">
-                    Not touched: {others.join(", ")}. An agent on {others.length === 1 ? "that machine" : "one of those machines"} needs its own setup (see On another machine below).
+                    Not touched: {others.join(", ")}. An agent on {others.length === 1 ? "that computer" : "one of those computers"} needs its own setup (see On
+                    another computer below).
                   </span>
                 ) : null}
               </p>
             ) : null}
             <p className="mt-2 text-xs text-muted-foreground">
-              Setting up edits each agent's own config and keeps everything else in it. <code className="font-mono">cua agents setup</code> in a terminal does the
-              same, and <code className="font-mono">cua agents remove</code> undoes it.
+              Setting up edits each agent's own config and keeps everything else in it. <code className="font-mono">cua agents setup</code> in a terminal does
+              the same, and <code className="font-mono">cua agents remove</code> undoes it.
             </p>
           </section>
 
           <section className="mt-6">
-            <h3 className="mb-1 text-xs font-semibold">On another machine</h3>
+            <h3 className="mb-1 text-xs font-semibold">On another computer</h3>
             <div className="-mx-4">
               <OtherMachineBlock />
             </div>

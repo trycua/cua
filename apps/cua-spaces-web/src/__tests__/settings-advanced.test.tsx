@@ -34,8 +34,8 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(usage.textContent).toContain("Time away from this machine");
-    expect(usage.textContent).toContain("away from the machine you're using");
+    expect(usage.textContent).toContain("Time away from this computer");
+    expect(usage.textContent).toContain("away from the computer you're using");
     expect(document.body.textContent).not.toMatch(/relay hours|remote hours/i);
   });
 
@@ -48,7 +48,7 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       return el as HTMLElement;
     });
     expect(row.textContent).toContain("Use your own connection server");
-    expect(row.textContent).toContain("For teams that run their own.");
+    expect(row.textContent).not.toContain("For teams that run their own.");
     expect(document.body.textContent).not.toMatch(/relay/i);
     fireEvent.click(row.querySelector("button")!);
     const form = await waitFor(() => {
@@ -63,9 +63,6 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
   });
 
   const LABS_ROWS = [
-    ["experiment:secure_spaces", /Secure Spaces/],
-    ["experiment:child_spaces", /Child Spaces/],
-    ["experiment:ask_first", /Ask first/],
     ["experiment:ci_runners", /CI runners/],
     ["experiment:tcp_shares", /Public TCP shares/],
     ["experiment:mobile", /Phone app/],
@@ -86,6 +83,18 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       expect(row.textContent!.length, id).toBeGreaterThan(title.source.length + 20);
       expect(row.textContent, id).not.toContain("\u00b7");
     }
+  });
+
+  it("has no Labs rows for Secure Spaces, Ask first, Child Spaces and Warm start, which are always on", async () => {
+    const { router } = await mountApp("/settings/advanced", host);
+    await router.load();
+    await waitFor(() => expect(document.querySelector("[data-self-hosting]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector('[data-setting-row="experiment:cua_volume"]')).toBeTruthy());
+    for (const id of ["experiment:secure_spaces", "experiment:ask_first", "experiment:child_spaces", "experiment:warm_pools"]) {
+      expect(document.querySelector(`[data-setting-row="${id}"]`), id).toBeNull();
+    }
+    const labs = document.body.textContent ?? "";
+    for (const title of ["Secure Spaces", "Ask first", "Child Spaces", "Warm start"]) expect(labs, title).not.toContain(title);
   });
 
   it("turns an experiment on and back off from its Labs switch", async () => {

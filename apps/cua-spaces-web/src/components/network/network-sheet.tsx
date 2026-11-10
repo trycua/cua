@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import type { NetworkPreset, SpaceNetwork, SpaceTopology } from "@/bridge/contracts/network";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { DetailsDisclosure, GroupedRow, GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { Input } from "@/components/ui/input";
@@ -13,13 +14,15 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-import { PRESETS, alwaysBlocked, exitDescription, presetInfo, validEntry, validProxy } from "./presets";
+import { EXTRAS, PRESETS, alwaysBlocked, exceeds, exitDescription, extrasOf, isInternetBase, presetWith, validEntry, validProxy } from "./presets";
 import { closeNetworkSheet, useNetworkPreview, useNetworkSheetFor } from "./use-network";
 
 /**
- * A Space's Network sheet. Presets as radio rows
- * (Internet only by default), Custom's allow and block lists, what is
- * always blocked, and for a child Space what its parent allows.
+ * A Space's Network sheet. The base as radio rows (Internet only by
+ * default), under Internet only an "Also allow" list of two independent
+ * checkboxes (services on this computer, other devices on the network),
+ * Custom's allow and block lists, what is always blocked, and for a child
+ * Space what its parent allows.
  */
 export function NetworkSheet({ spaceName }: { spaceName: (id: string) => string }) {
   const store = useNetworkPreview();
@@ -78,7 +81,10 @@ function NetworkSheetBody({
   const [widen, setWiden] = useState(false);
   const pick = (preset: NetworkPreset) => setN((x) => ({ ...x, preset }));
   // A child Space: nothing looser than its parent, unless widened here on purpose.
-  const ceiling = parent && !widen ? presetInfo(initial.preset).rank : Infinity;
+  const ceiling = parent && !widen ? initial.preset : null;
+  const tooMuch = (preset: NetworkPreset) => ceiling !== null && exceeds(preset, ceiling);
+  const extras = extrasOf(n.preset);
+  const setExtra = (id: "localhost" | "lan", on: boolean) => setN((x) => ({ ...x, preset: presetWith({ ...extrasOf(x.preset), [id]: on }) }));
   const inherited = Boolean(initial.inheritedFrom) && n.preset === initial.preset;
   return (
     <Dialog open onOpenChange={(open) => !open && closeNetworkSheet()}>
@@ -95,9 +101,9 @@ function NetworkSheetBody({
             </p>
           ) : null}
           <GroupedSection role="radiogroup" aria-label="Network">
-            {PRESETS.map((p) => {
-              const selected = n.preset === p.id;
-              const looser = p.rank > ceiling;
+            {PRESETS.filter((p) => p.id === "internet" || p.id === "none" || p.id === "custom").map((p) => {
+              const selected = p.id === "internet" ? isInternetBase(n.preset) : n.preset === p.id;
+              const looser = tooMuch(p.id);
               return (
                 <div key={p.id} data-network-preset={p.id} data-selected={selected || undefined}>
                   <button
@@ -105,7 +111,7 @@ function NetworkSheetBody({
                     role="radio"
                     aria-checked={selected}
                     disabled={looser}
-                    onClick={() => pick(p.id)}
+                    onClick={() => !selected && pick(p.id)}
                     className="flex w-full cursor-default items-start gap-3 px-4 py-2.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50 disabled:hover:bg-transparent"
                   >
                     <Radio on={selected} className={cn("mt-0.5", looser && "opacity-40")} />
@@ -118,19 +124,44 @@ function NetworkSheetBody({
                     </span>
                     {looser ? <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">More than {parent} allows</span> : null}
                   </button>
-                  {selected && p.warning ? (
-                    <div className="px-4 pb-3 pl-11">
-                      <p data-network-warning="" className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs">
-                        <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-warning" />
-                        {p.warning}
-                      </p>
-                      {p.id === "localhost" ? <Ports ports={n.localhostPorts ?? []} onChange={(localhostPorts) => setN((x) => ({ ...x, localhostPorts }))} /> : null}
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
           </GroupedSection>
+          {isInternetBase(n.preset) ? (
+            <div data-network-extras="" className="mt-4">
+              <SectionHeading>Also allow</SectionHeading>
+              <GroupedSection className="mt-2" role="group" aria-label="Also allow">
+                {EXTRAS.map((x) => {
+                  const on = extras[x.id];
+                  const looser = tooMuch(presetWith({ ...extras, [x.id]: true }));
+                  return (
+                    <div key={x.id} data-network-extra={x.id} data-selected={on || undefined}>
+                      <label className={cn("flex w-full cursor-default items-start gap-3 px-4 py-2.5", !looser && "hover:bg-accent/50")}>
+                        <Checkbox className="mt-0.5" checked={on} disabled={looser && !on} aria-label={x.title} onCheckedChange={(v) => setExtra(x.id, v)} />
+                        <span className={cn("min-w-0 flex-1", looser && !on && "opacity-50")}>
+                          <span className="block text-[13px]">{x.title}</span>
+                          <span className="mt-px block text-xs text-muted-foreground">{x.description}</span>
+                        </span>
+                        {looser && !on ? <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">More than {parent} allows</span> : null}
+                      </label>
+                      {on ? (
+                        <div className="px-4 pb-3 pl-11">
+                          <p data-network-warning="" className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs">
+                            <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-warning" />
+                            {x.warning}
+                          </p>
+                          {x.id === "localhost" ? (
+                            <Ports ports={n.localhostPorts ?? []} onChange={(localhostPorts) => setN((y) => ({ ...y, localhostPorts }))} />
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </GroupedSection>
+            </div>
+          ) : null}
           {parent && !widen ? (
             <button
               type="button"
@@ -153,9 +184,13 @@ function NetworkSheetBody({
             />
           ) : null}
           {topology ? <Reachable topology={topology} /> : null}
-          <p data-network-always="" className="mt-4 flex items-start gap-2 px-1 text-xs text-muted-foreground">
+          <p
+            data-network-always=""
+            title="Cloud metadata, Cua's own services and other Spaces' trees are always blocked."
+            className="mt-4 flex items-start gap-2 px-1 text-xs text-muted-foreground"
+          >
             <LockIcon className="mt-px size-3.5 shrink-0" />
-            Cloud metadata, Cua's own services and other Spaces' trees are always blocked.
+            Some addresses are always blocked.
           </p>
           {blocked.length ? <RecentlyBlocked rows={blocked} /> : null}
           {error ? (
@@ -259,7 +294,9 @@ function ExitThrough({
           {exit.label} isn't reachable, so this Space has no internet until it's back.{exit.note ? ` ${exit.note}` : ""}
         </p>
       ) : via ? (
-        <p className="mt-1.5 px-1 text-xs text-muted-foreground">If the exit stops answering, this Space's internet stops. It never falls back to its own network.</p>
+        <p className="mt-1.5 px-1 text-xs text-muted-foreground">
+          If the exit stops answering, this Space's internet stops. It never falls back to its own network.
+        </p>
       ) : null}
     </div>
   );
@@ -301,8 +338,12 @@ function Radio({ on, className }: { on: boolean; className?: string }) {
   return (
     <span
       aria-hidden
-      // design-ok: a radio's circle is a form control's outline, as Checkbox's
-      className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", on ? "border-brand bg-brand" : "border-input bg-card dark:bg-input/30", className)}
+      className={cn(
+        // design-ok: a radio's circle is a form control's outline, as Checkbox's
+        "flex size-4 shrink-0 items-center justify-center rounded-full border",
+        on ? "border-brand bg-brand" : "border-input bg-card dark:bg-input/30",
+        className,
+      )}
     >
       {on ? <span className="size-1.5 rounded-full bg-white" /> : null}
     </span>
@@ -314,7 +355,12 @@ function Chip({ children, onRemove }: { children: string; onRemove: () => void }
   return (
     <span data-network-chip-value={children} className="inline-flex h-6 items-center gap-1 rounded-lg bg-muted pr-1 pl-2 font-mono text-xs">
       {children}
-      <button type="button" aria-label={`Remove ${children}`} onClick={onRemove} className="inline-flex size-4 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:text-foreground">
+      <button
+        type="button"
+        aria-label={`Remove ${children}`}
+        onClick={onRemove}
+        className="inline-flex size-4 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+      >
         <XIcon className="size-3" />
       </button>
     </span>
@@ -371,7 +417,19 @@ function CustomEditor({ n, onChange }: { n: SpaceNetwork; onChange: (n: SpaceNet
   const remove = (which: "allow" | "deny", e: string) => onChange({ ...n, [which]: n[which].filter((x) => x !== e) });
   return (
     <div data-network-custom="" className="mt-5">
-      <SectionHeading action={<Segmented aria-label="Start from" value={n.base ?? "internet"} options={[{ value: "internet", label: "Internet only" }, { value: "none", label: "No network" }]} onValueChange={(base) => onChange({ ...n, base })} />}>
+      <SectionHeading
+        action={
+          <Segmented
+            aria-label="Start from"
+            value={n.base ?? "internet"}
+            options={[
+              { value: "internet", label: "Internet only" },
+              { value: "none", label: "No network" },
+            ]}
+            onValueChange={(base) => onChange({ ...n, base })}
+          />
+        }
+      >
         Start from
       </SectionHeading>
       <div className="mt-3 grid gap-x-4 sm:grid-cols-2">
@@ -385,8 +443,25 @@ function CustomEditor({ n, onChange }: { n: SpaceNetwork; onChange: (n: SpaceNet
           add();
         }}
       >
-        <Input data-network-entry="" aria-label="Domain or address range" placeholder="Domain or address range" value={entry} spellCheck={false} autoComplete="off" onChange={(e) => setEntry(e.target.value)} className="font-mono text-xs" />
-        <Segmented aria-label="List" value={list} options={[{ value: "allow", label: "Allow" }, { value: "deny", label: "Block" }]} onValueChange={setList} />
+        <Input
+          data-network-entry=""
+          aria-label="Domain or address range"
+          placeholder="Domain or address range"
+          value={entry}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => setEntry(e.target.value)}
+          className="font-mono text-xs"
+        />
+        <Segmented
+          aria-label="List"
+          value={list}
+          options={[
+            { value: "allow", label: "Allow" },
+            { value: "deny", label: "Block" },
+          ]}
+          onValueChange={setList}
+        />
         <Button type="submit" variant="secondary" disabled={!canAdd} data-network-add="">
           Add
         </Button>
@@ -411,7 +486,12 @@ function EntryList({ title, rows, empty, onRemove }: { title: string; rows: stri
         rows.map((r) => (
           <GroupedRow key={r} className="min-h-9 justify-between py-1.5" data-network-entry-row={r}>
             <span className="min-w-0 truncate font-mono text-xs">{r}</span>
-            <button type="button" aria-label={`Remove ${r}`} onClick={() => onRemove(r)} className="inline-flex size-6 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
+            <button
+              type="button"
+              aria-label={`Remove ${r}`}
+              onClick={() => onRemove(r)}
+              className="inline-flex size-6 shrink-0 cursor-default items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
               <XIcon className="size-3.5" />
             </button>
           </GroupedRow>

@@ -85,7 +85,14 @@ describe.skipIf(!built)("the bridge on the app core", () => {
 
   beforeAll(async () => {
     home = mkdtempSync(path.join(tmpdir(), "cua-bridge-native-"));
-    Object.assign(process.env, { HOME: home, USERPROFILE: home, CUA_HOME: path.join(home, ".cua"), CUA_TELEMETRY: "0", DO_NOT_TRACK: "1", CUA_KEYCHAIN_NONINTERACTIVE: "1" });
+    Object.assign(process.env, {
+      HOME: home,
+      USERPROFILE: home,
+      CUA_HOME: path.join(home, ".cua"),
+      CUA_TELEMETRY: "0",
+      DO_NOT_TRACK: "1",
+      CUA_KEYCHAIN_NONINTERACTIVE: "1",
+    });
     native = await loadNative(dir);
   });
 
@@ -189,13 +196,36 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["links.approve", { id: "share-000000000001", always: false }],
       ["links.deny", { id: "share-000000000001" }],
       ["shares.settings.get", {}],
-      ["shares.settings.set", { settings: { landing: "auto", relayFallback: true, dailyCapMib: 2048, defaultAllow: [], approveAgentShares: true, alwaysAllowSpaces: [], edgeConsent: [], usedToday: 0, edgeCloud: null, edgeHost: null, edgeMonthlyUsd: null } }],
+      [
+        "shares.settings.set",
+        {
+          settings: {
+            landing: "auto",
+            relayFallback: true,
+            dailyCapMib: 2048,
+            defaultAllow: [],
+            approveAgentShares: true,
+            alwaysAllowSpaces: [],
+            edgeConsent: [],
+            usedToday: 0,
+            edgeCloud: null,
+            edgeHost: null,
+            edgeMonthlyUsd: null,
+          },
+        },
+      ],
       ["shares.edge.remove", {}],
       ["network.get", { spaceId: "local:aurora" }],
       ["network.set", { spaceId: "local:aurora", network: "internet", allow: [], deny: [] }],
       ["network.log", { spaceId: "local:aurora" }],
       ["network.ackNotice", { spaceId: "local:aurora" }],
       ["spaces.setAccess", { spaceId: "local:aurora", clipboard: "ask" }],
+      ["spaces.tree", {}],
+      ["children.set", { spaceId: "local:aurora", enabled: true }],
+      ["budget.get", { spaceId: "local:aurora" }],
+      ["budget.set", { spaceId: "local:aurora", limits: { maxSpaces: 4 } }],
+      ["services.list", { spaceId: "local:aurora" }],
+      ["services.control", { spaceId: "local:aurora", name: "web", action: "restart" }],
       ["checklist.get", {}],
       ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
@@ -206,9 +236,54 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks, and the default Space: machines-view.test.ts; the Windows runtime fix: below.)
     // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
-    const elsewhere = new Set(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    const elsewhere = new Set([
+      "ci.overview",
+      "ci.connect",
+      "ci.connectToken",
+      "ci.connectCancel",
+      "ci.repositories",
+      "ci.goal",
+      "ci.log",
+      "session.signIn",
+      "spaces.create",
+      "spaces.delete",
+      "spaces.openStream",
+      "relay.usage",
+      "sharing.removals",
+      "sharing.ackRemovals",
+      "resources.get",
+      "machines.rename",
+      "machines.remove",
+      "machines.checkHealth",
+      "spaces.settings",
+      "spaces.setSettings",
+      "spaces.resolveDefault",
+      "presence.join",
+      "presence.publish",
+      "presence.leave",
+      "spaces.fixRuntime",
+      "cli.install",
+      "runtimes.check",
+      "runtimes.browse",
+      "repoCache.get",
+      "repoCache.set",
+      "repoCache.clear",
+      "driver.status",
+      "driver.list",
+      "driver.config",
+      "driver.setConfig",
+      "driver.test",
+      "driver.pause",
+      "driver.setup",
+      "driver.setApp",
+      "driver.permissions",
+      ...THREAD_OPERATIONS,
+      ...AGENT_METHODS,
+      ...VAULT_METHODS,
+      ...HOST_METHODS,
+    ]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -252,7 +327,9 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(made).toMatchObject({ id: "local:dev", name: "dev" });
     expect(backend.created[0]).toMatchObject({ image: config.image, on: "local", kind: "container", name: "dev", spacesd: true });
     expect(runtimeWord(backend.created[0]!.runtime)).toBe("auto");
-    const progress = events.filter((e) => e.event === "spaces.createProgress").map((e) => e.payload as { pendingId: string; phase: string; bytesTotal: number | null });
+    const progress = events
+      .filter((e) => e.event === "spaces.createProgress")
+      .map((e) => e.payload as { pendingId: string; phase: string; bytesTotal: number | null });
     expect(progress.map((p) => p.phase)).toEqual(["preparing", "pulling", "ready"]);
     expect(progress[1]).toMatchObject({ pendingId: "pending:1", bytesTotal: 10 });
     expect(model.spaces.some((s) => s.id === "local:dev")).toBe(true);
@@ -272,7 +349,11 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     backend.phases = [step("preparing"), step("pulling", [12.4 * GB, 30 * GB, 85 * 2 ** 20]), step("ready")];
     let release = () => {};
     backend.hold = new Promise<void>((r) => (release = r));
-    const create = bridge.registry.dispatch({ id: "m", method: "spaces.create", args: { pendingId: "pending:mac", config: { image: "macos", kind: "vm", on: "host:mac-mini" }, os: "macos" } });
+    const create = bridge.registry.dispatch({
+      id: "m",
+      method: "spaces.create",
+      args: { pendingId: "pending:mac", config: { image: "macos", kind: "vm", on: "host:mac-mini" }, os: "macos" },
+    });
     await until(() => model.spaces.some((s) => s.id === "pending:mac" && s.progress?.transfer != null));
     const row = model.spaces.find((s) => s.id === "pending:mac")!;
     expect(row.progress).toMatchObject({ label: "Downloading macOS (first time only)…", transfer: "12.4 of 30.0 GB · 85 MB/s · about 4 min" });
@@ -286,7 +367,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   // first-Space create, from the wizard's Linux offer (the real core), through this host's create.
   it.skipIf(!wasmBuilt)("makes the new setup's first Space through the real create", async () => {
     const core = await testCore();
-    const mac = JSON.parse(readFileSync(path.resolve(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/parity/first-run.json"), "utf8")).machineBase as WizardEnv;
+    const mac = JSON.parse(readFileSync(path.resolve(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/parity/first-run.json"), "utf8"))
+      .machineBase as WizardEnv;
     // The page's offers (`firstSpaceOffers`): the core's, for this machine's env.
     const offers = core.call<HomeOffer[]>("wizard.firstSpaceOffers", { env: mac, hostOs: "macos" });
     const { os, ...config } = homeCreateRequest(offers, "home-claude-code");
@@ -308,7 +390,11 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   it("cancels a create still running: the row goes and the create answers cancelled", async () => {
     let release = () => {};
     backend.hold = new Promise<void>((r) => (release = r));
-    const create = bridge.registry.dispatch({ id: "c", method: "spaces.create", args: { pendingId: "pending:3", config: { image: "linux", kind: "container", name: "gone" }, os: "linux" } });
+    const create = bridge.registry.dispatch({
+      id: "c",
+      method: "spaces.create",
+      args: { pendingId: "pending:3", config: { image: "linux", kind: "container", name: "gone" }, os: "linux" },
+    });
     await until(() => model.spaces.some((s) => s.id === "pending:3"));
     expect(await call("spaces.cancelCreate", { pendingId: "pending:3" })).toEqual({ id: "pending:3", state: "cancelled", message: "" });
     await until(() => backend.cancelled.has("pending:3"));
@@ -322,7 +408,11 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   it("keeps a failed create on its row, in the SDK's words", async () => {
     backend.createError = new Error("CuaError.Runtime: no room on disk");
     Object.assign(backend.createError, { [Symbol.for("typeName")]: "CuaError", tag: "Runtime" });
-    const reply = await bridge.registry.dispatch({ id: "f", method: "spaces.create", args: { pendingId: "pending:4", config: { image: "linux", kind: "container" }, os: "linux" } });
+    const reply = await bridge.registry.dispatch({
+      id: "f",
+      method: "spaces.create",
+      args: { pendingId: "pending:4", config: { image: "linux", kind: "container" }, os: "linux" },
+    });
     expect(reply).toMatchObject({ ok: false, error: { code: "failed", message: "no room on disk" } });
     expect(model.creates.pending.find((p) => p.id === "pending:4")?.error).toBe("no room on disk");
   });
@@ -331,7 +421,9 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     await call("spaces.setPower", { id: "local:aurora", on: false });
     expect(backend.power).toEqual([{ id: "local:aurora", on: false }]);
     await until(() => model.spaces.find((s) => s.id === "local:aurora")?.status === native.AppSpaceStatus.Suspended);
-    const answer = (await call("spaces.delete", { id: "direct:10.0.0.5:3211", removeOnly: true })) as { spaces: { space: { id: string }; deleting: boolean }[] };
+    const answer = (await call("spaces.delete", { id: "direct:10.0.0.5:3211", removeOnly: true })) as {
+      spaces: { space: { id: string }; deleting: boolean }[];
+    };
     expect(answer.spaces.find((s) => s.space.id === "direct:10.0.0.5:3211")?.deleting).toBe(true);
     await until(() => backend.removed.length === 1);
     expect(backend.removed[0]).toMatchObject({ id: "direct:10.0.0.5:3211", removeOnly: true });
@@ -410,7 +502,19 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetry.recorded.length).toBe(before);
     expect(await code("telemetry.track", {})).toBe("bad_args");
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
-    expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
+    expect(
+      telemetrySignal(native, {
+        type: "space-create",
+        location: "local",
+        guestOs: "linux",
+        kind: "container",
+        outcome: "ready",
+        failedPhase: "none",
+        stalled: false,
+        elapsedMs: 1200,
+        gpu: false,
+      }),
+    ).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
     // CUA-1881: plan limits and upgrade links, fixed words only.
     expect(telemetrySignal(native, { type: "plan-limit-shown", surface: "app_create", kind: "sessions", plan: "free" })).not.toBeNull();
@@ -421,7 +525,14 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   it("answers the one-time linking notice from the host's telemetry, and records that it was closed", async () => {
     telemetry.linkNoticeDue = true;
     const notice = (await call("telemetry.linkNotice")) as Record<string, unknown>;
-    expect(notice).toMatchObject({ due: true, title: "We've updated how usage data works", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" });
+    expect(notice).toMatchObject({
+      due: true,
+      title: "We've updated how usage data works",
+      okLabel: "Got it",
+      turnOffLabel: "Turn off usage data",
+      detailsLabel: "What is collected",
+      docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    });
     const before = telemetry.linkNoticeAcknowledged;
     expect(await call("telemetry.acknowledgeLinkNotice")).toBeNull();
     expect(telemetry.linkNoticeAcknowledged).toBe(before + 1);
@@ -435,13 +546,29 @@ describe.skipIf(!built)("the bridge on the app core", () => {
         { type: "feature", feature: "space_create_local" },
         { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
         { type: "step", step: "first_space_created", ok: true },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "error", failedPhase: "preparing", stalled: false, elapsedMs: 900, gpu: false, errorVariant: "" },
+        {
+          type: "space-create",
+          location: "local",
+          guestOs: "linux",
+          kind: "container",
+          outcome: "error",
+          failedPhase: "preparing",
+          stalled: false,
+          elapsedMs: 900,
+          gpu: false,
+          errorVariant: "",
+        },
         { type: "step", step: "first_space_ready", ok: true },
       ],
     });
     expect(telemetry.recorded.length).toBe(before);
     // The page's other signals still count.
-    await call("telemetry.track", { signals: [{ type: "feature", feature: "space_open" }, { type: "step", step: "onboarding_shown", ok: true }] });
+    await call("telemetry.track", {
+      signals: [
+        { type: "feature", feature: "space_open" },
+        { type: "step", step: "onboarding_shown", ok: true },
+      ],
+    });
     expect(telemetry.recorded.length).toBe(before + 2);
     expect(hostRecorded({ type: "feature", feature: "space_create_cloud" })).toBe(true);
     expect(hostRecorded({ type: "step", step: "checklist_create_space", ok: true })).toBe(false);
@@ -451,9 +578,19 @@ describe.skipIf(!built)("the bridge on the app core", () => {
   it("records that the usage notice was seen once the first run leaves Welcome", async () => {
     telemetry.current = { enabled: true, lockedBy: undefined, noticeShown: false };
     const before = telemetry.acknowledged;
-    await call("telemetry.track", { signals: [{ type: "step", step: "onboarding_shown", ok: true }, { type: "onboarding-page", page: "welcome", action: "shown", choice: "none" }] });
+    await call("telemetry.track", {
+      signals: [
+        { type: "step", step: "onboarding_shown", ok: true },
+        { type: "onboarding-page", page: "welcome", action: "shown", choice: "none" },
+      ],
+    });
     expect(telemetry.acknowledged).toBe(before);
-    await call("telemetry.track", { signals: [{ type: "onboarding-page", page: "welcome", action: "completed", choice: "none" }, { type: "onboarding-page", page: "signin", action: "shown", choice: "none" }] });
+    await call("telemetry.track", {
+      signals: [
+        { type: "onboarding-page", page: "welcome", action: "completed", choice: "none" },
+        { type: "onboarding-page", page: "signin", action: "shown", choice: "none" },
+      ],
+    });
     expect(telemetry.acknowledged).toBe(before + 1);
     // "Set up later" from Welcome counts too.
     await call("telemetry.track", { signals: [{ type: "step", step: "onboarding_skipped", ok: true }] });
@@ -640,16 +777,82 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "network.log": { spaceId: "local:aurora" },
       "network.ackNotice": { spaceId: "local:aurora" },
       "spaces.setAccess": { spaceId: "local:aurora", clipboard: "ask" },
+      "children.set": { spaceId: "local:aurora", enabled: true },
+      "budget.get": { spaceId: "local:aurora" },
+      "budget.set": { spaceId: "local:aurora", limits: { maxSpaces: 4 } },
+      "services.list": { spaceId: "local:aurora" },
+      "services.control": { spaceId: "local:aurora", name: "web", action: "restart" },
       "checklist.send": { action: { type: "done", step: "teleport" } },
       "links.approve": { id: "share-000000000001" },
       "links.deny": { id: "share-000000000001" },
-      "shares.settings.set": { settings: { landing: "auto", relayFallback: true, dailyCapMib: 2048, defaultAllow: [], approveAgentShares: true, alwaysAllowSpaces: [], edgeConsent: [], usedToday: 0, edgeCloud: null, edgeHost: null, edgeMonthlyUsd: null } },
+      "shares.settings.set": {
+        settings: {
+          landing: "auto",
+          relayFallback: true,
+          dailyCapMib: 2048,
+          defaultAllow: [],
+          approveAgentShares: true,
+          alwaysAllowSpaces: [],
+          edgeConsent: [],
+          usedToday: 0,
+          edgeCloud: null,
+          edgeHost: null,
+          edgeMonthlyUsd: null,
+        },
+      },
       "spaces.deleteMany": { ids: ["local:nowhere"] },
       "spaces.leave": { ids: ["local:nowhere"] },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
     // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
-    const skip = new Set<OpName>(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    // (The Cua Driver page, driver.*: the Electron app has no driver and refuses with "comes with the Mac app".)
+    const skip = new Set<OpName>([
+      "driver.status",
+      "driver.list",
+      "driver.config",
+      "driver.setConfig",
+      "driver.test",
+      "driver.pause",
+      "driver.setup",
+      "driver.setApp",
+      "driver.permissions",
+      "ci.overview",
+      "ci.connect",
+      "ci.connectToken",
+      "ci.connectCancel",
+      "ci.repositories",
+      "ci.goal",
+      "ci.log",
+      "spaces.create",
+      "spaces.delete",
+      "session.signIn",
+      "session.signOut",
+      "session.openExternal",
+      "spaces.openStream",
+      "relay.usage",
+      "sharing.removals",
+      "sharing.ackRemovals",
+      "resources.get",
+      "machines.rename",
+      "machines.remove",
+      "machines.checkHealth",
+      "spaces.settings",
+      "spaces.setSettings",
+      "spaces.resolveDefault",
+      "presence.join",
+      "presence.publish",
+      "presence.leave",
+      "spaces.fixRuntime",
+      "cli.install",
+      "runtimes.check",
+      "runtimes.browse",
+      "repoCache.get",
+      "repoCache.set",
+      "repoCache.clear",
+      ...(THREAD_OPERATIONS as readonly string[] as OpName[]),
+      ...VAULT_OPS,
+      ...(HOST_OPS as OpName[]),
+    ]);
     // (The thread: thread.test.ts.)
     const problems: string[] = [];
     const checked: string[] = [];

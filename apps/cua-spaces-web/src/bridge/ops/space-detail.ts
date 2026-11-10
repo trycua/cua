@@ -94,6 +94,14 @@ export interface StreamRowAction {
   active: boolean;
 }
 
+/** The Space a window another Space shows here lives in (`stream::StreamRowOrigin`). */
+export interface StreamRowOrigin {
+  spaceId: string;
+  name: string;
+  /** Its OS mark (`os-macos`, `os-ubuntu`, ...). */
+  osIcon: string;
+}
+
 /** One row of the Stream section (`stream::StreamRow`). */
 export interface StreamRow {
   id: string;
@@ -102,6 +110,8 @@ export interface StreamRow {
   help: string;
   resolution?: string | null;
   icon: StreamRowIcon;
+  /** Only on a window another Space shows here: where it lives. A Space's own rows carry none. */
+  origin?: StreamRowOrigin | null;
   actions: StreamRowAction[];
 }
 
@@ -259,7 +269,6 @@ export interface SpaceDetailOps {
   /** Sends picked or dropped files into the Space's Downloads. */
   "spaces.sendFiles": { args: { spaceId: string; paths: string[] }; result: SentFileInfo[] };
 }
-
 
 /* ---- Hosts ------------------------------------------------------------------------- */
 

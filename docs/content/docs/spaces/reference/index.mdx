@@ -10,7 +10,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Version: 0.9.0
 */}
 
-The Spaces contract: 119 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 122 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -53,7 +53,7 @@ Stream a Space's desktop or windows, and show a Space to the operator.
 | --- | --- | --- |
 | [`stream_endpoint`](/spaces/reference/spaces#stream_endpoint) | Return a ticketed media endpoint for the Space's desktop or one window. | mutating, idempotent |
 | [`list_space_windows`](/spaces/reference/spaces#list_space_windows) | List the windows open inside the Space. | read-only, idempotent |
-| [`stream_space_window`](/spaces/reference/spaces#stream_space_window) | Draw one Space window on the operator's desktop. | mutating, idempotent |
+| [`stream_space_window`](/spaces/reference/spaces#stream_space_window) | Show one Space window in another Space's Stream section (into=&lt;your Space&gt;; default the parent of space) or on the operator's desktop (into=desktop). | mutating, idempotent |
 | [`show_space_pip`](/spaces/reference/spaces#show_space_pip) | Pin the Space as picture-in-picture on the operator's desktop. | mutating, idempotent |
 | [`hide_space_pip`](/spaces/reference/spaces#hide_space_pip) | Unpin the picture-in-picture window. | mutating, idempotent |
 | [`open_space_viewer`](/spaces/reference/spaces#open_space_viewer) | Open the full Space viewer on the operator's desktop. | mutating, idempotent |
@@ -82,6 +82,9 @@ Run coding agents inside a Space.
 | [`agent_stop`](/spaces/reference/agents#agent_stop) | Stop an agent run. | destructive |
 | [`agent_list`](/spaces/reference/agents#agent_list) | List agent runs in the Space. | read-only, idempotent |
 | [`agent_capabilities`](/spaces/reference/agents#agent_capabilities) | Report what the agent harnesses support. | read-only, idempotent |
+| [`agent_sign_in`](/spaces/reference/agents#agent_sign_in) | Sign a coding agent in on the Space's computer, the agent's own way. | read-only, idempotent |
+| [`agent_threads`](/spaces/reference/agents#agent_threads) | List the recent Claude Code, Codex and Hermes chats on this computer. For a person only. | read-only, idempotent |
+| [`agent_thread_read`](/spaces/reference/agents#agent_thread_read) | Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only. | read-only, idempotent |
 
 ### [Persistent agents](/spaces/reference/agents#persistent-agents)
 
@@ -304,7 +307,7 @@ An argument is missing, malformed or out of range.
 
 Fix: Check the call against the tool's input schema; the message names the argument.
 
-Listed by [`network_show`](/spaces/reference/spaces#network_show), [`network_set`](/spaces/reference/spaces#network_set), [`resize_space`](/spaces/reference/spaces#resize_space), [`space_service`](/spaces/reference/spaces#space_service), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space), [`cloud_connect`](/spaces/reference/sharing-and-clouds#cloud_connect), [`cloud_approve`](/spaces/reference/sharing-and-clouds#cloud_approve), [`cloud_add_host`](/spaces/reference/sharing-and-clouds#cloud_add_host), [`cloud_budget`](/spaces/reference/sharing-and-clouds#cloud_budget), [`prewarm`](/spaces/reference/sharing-and-clouds#prewarm).
+Listed by [`network_show`](/spaces/reference/spaces#network_show), [`network_set`](/spaces/reference/spaces#network_set), [`resize_space`](/spaces/reference/spaces#resize_space), [`space_service`](/spaces/reference/spaces#space_service), [`agent_thread_read`](/spaces/reference/agents#agent_thread_read), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space), [`cloud_connect`](/spaces/reference/sharing-and-clouds#cloud_connect), [`cloud_approve`](/spaces/reference/sharing-and-clouds#cloud_approve), [`cloud_add_host`](/spaces/reference/sharing-and-clouds#cloud_add_host), [`cloud_budget`](/spaces/reference/sharing-and-clouds#cloud_budget), [`prewarm`](/spaces/reference/sharing-and-clouds#prewarm).
 
 #### not_found
 
@@ -312,7 +315,7 @@ No Space, run, window, service, tool or file with that id.
 
 Fix: List what exists first (list_spaces, agent_list, list_space_windows, list_tools).
 
-Listed by [`network_show`](/spaces/reference/spaces#network_show), [`network_log`](/spaces/reference/spaces#network_log), [`network_set`](/spaces/reference/spaces#network_set), [`space_job`](/spaces/reference/spaces#space_job), [`space_service`](/spaces/reference/spaces#space_service), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/sharing-and-clouds#cloud_remove_host).
+Listed by [`network_show`](/spaces/reference/spaces#network_show), [`network_log`](/spaces/reference/spaces#network_log), [`network_set`](/spaces/reference/spaces#network_set), [`space_job`](/spaces/reference/spaces#space_job), [`space_service`](/spaces/reference/spaces#space_service), [`agent_thread_read`](/spaces/reference/agents#agent_thread_read), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/sharing-and-clouds#cloud_remove_host).
 
 #### spacesd_not_available
 
@@ -356,7 +359,7 @@ The signed-in account may not reach that relay computer.
 
 Fix: Sign in with the account that owns the computer.
 
-Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`thread_import`](/spaces/reference/threads#thread_import), [`agent_set_rights`](/spaces/reference/threads#agent_set_rights), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`thread_join_redeem`](/spaces/reference/threads#thread_join_redeem), [`thread_settings`](/spaces/reference/threads#thread_settings), [`thread_device_revoke`](/spaces/reference/threads#thread_device_revoke), [`share_space`](/spaces/reference/sharing-and-clouds#share_space), [`unshare_space`](/spaces/reference/sharing-and-clouds#unshare_space), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space).
+Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`agent_threads`](/spaces/reference/agents#agent_threads), [`agent_thread_read`](/spaces/reference/agents#agent_thread_read), [`thread_import`](/spaces/reference/threads#thread_import), [`agent_set_rights`](/spaces/reference/threads#agent_set_rights), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`thread_join_redeem`](/spaces/reference/threads#thread_join_redeem), [`thread_settings`](/spaces/reference/threads#thread_settings), [`thread_device_revoke`](/spaces/reference/threads#thread_device_revoke), [`share_space`](/spaces/reference/sharing-and-clouds#share_space), [`unshare_space`](/spaces/reference/sharing-and-clouds#unshare_space), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space).
 
 #### ambiguous_host
 
@@ -416,7 +419,7 @@ An agent run failed outside the transport: install, configuration or a refused m
 
 Fix: Read agent_status and its output_tail for the reason.
 
-Listed by [`agent_start`](/spaces/reference/agents#agent_start), [`agent_message`](/spaces/reference/agents#agent_message), [`agent_events`](/spaces/reference/agents#agent_events), [`agent_status`](/spaces/reference/agents#agent_status), [`agent_interrupt`](/spaces/reference/agents#agent_interrupt), [`agent_stop`](/spaces/reference/agents#agent_stop), [`agent_list`](/spaces/reference/agents#agent_list), [`agent_add`](/spaces/reference/agents#agent_add), [`agent_remove`](/spaces/reference/agents#agent_remove), [`agent_send`](/spaces/reference/agents#agent_send), [`persistent_agent_save`](/spaces/reference/agents#persistent_agent_save), [`agent_pause`](/spaces/reference/agents#agent_pause), [`agent_resume`](/spaces/reference/agents#agent_resume).
+Listed by [`agent_start`](/spaces/reference/agents#agent_start), [`agent_message`](/spaces/reference/agents#agent_message), [`agent_events`](/spaces/reference/agents#agent_events), [`agent_status`](/spaces/reference/agents#agent_status), [`agent_interrupt`](/spaces/reference/agents#agent_interrupt), [`agent_stop`](/spaces/reference/agents#agent_stop), [`agent_list`](/spaces/reference/agents#agent_list), [`agent_sign_in`](/spaces/reference/agents#agent_sign_in), [`agent_add`](/spaces/reference/agents#agent_add), [`agent_remove`](/spaces/reference/agents#agent_remove), [`agent_send`](/spaces/reference/agents#agent_send), [`persistent_agent_save`](/spaces/reference/agents#persistent_agent_save), [`agent_pause`](/spaces/reference/agents#agent_pause), [`agent_resume`](/spaces/reference/agents#agent_resume).
 
 #### timeout
 

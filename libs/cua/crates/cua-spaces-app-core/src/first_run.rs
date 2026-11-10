@@ -3,7 +3,7 @@
 
 //! The first run every app shows: a few short screens, agent first.
 //!
-//! 1. **Welcome.** "Your computers, shared by your team and its agents." One button.
+//! 1. **Welcome.** "Combine all your computers into one supercomputer." One button.
 //! 2. **Pick your agent.** The agents found on this computer, in the order
 //!    [`PREFERENCE`] gives (Hermes, Claude Code, Codex, Cursor, then the
 //!    rest), one Connect each. Nothing is connected until its button is
@@ -273,7 +273,7 @@ pub struct FirstRunPlan {
     pub metered: bool,
     /// `free`, `pro`, `team`.
     pub plan: String,
-    /// Free's connections at once (default 2).
+    /// Free's computers in use at once (default 2).
     pub sessions_limit: Option<u32>,
     /// Free's remote hours a month (default 20).
     pub hours_limit: Option<u32>,
@@ -324,6 +324,14 @@ pub struct FirstRunInput {
     pub signed_in: bool,
     /// Sign-in is waiting for the browser.
     pub signing_in: bool,
+    /// While signing in by a code: the code to enter on the sign-in page
+    /// (none: the browser flow).
+    pub sign_in_code: Option<String>,
+    /// The last sign-in didn't finish, for this reason (none: it did, it is
+    /// still running, or none was tried). Shown on the screen with what to
+    /// do next, never only in a sidebar the first run does not show
+    /// (CUA-3144).
+    pub sign_in_failure: Option<crate::sign_in::SignInFailure>,
     /// `host.status` (none: not read yet).
     pub host: Option<FirstRunHost>,
     /// The host setup is running (after sign-in).
@@ -390,7 +398,7 @@ fn button(id: &str, label: &str) -> FirstRunButton {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WelcomeView {
-    /// "Your computers, shared by your team and its agents."
+    /// "Combine all your computers into one supercomputer."
     pub title: String,
     pub lede: String,
     /// "Get started" (`start`).
@@ -530,7 +538,8 @@ pub struct CheckRow {
     pub state: RowState,
     pub title: String,
     pub note: String,
-    /// The fix: `restart-check`, `connect`, `sign-in`, `open-settings`,
+    /// The fix: `restart-check`, `connect`, `sign-in`, `sign-in-code`,
+    /// `reopen-sign-in`, `open-settings`,
     /// `set-up`.
     pub action: Option<FirstRunButton>,
     /// The Settings pane `open-settings` opens.
@@ -1077,11 +1086,11 @@ fn default_or(name: &str, id: &str) -> String {
     }
 }
 
-fn welcome_view(input: &FirstRunInput) -> WelcomeView {
-    let place = this_computer(&input.host_os);
+fn welcome_view(_input: &FirstRunInput) -> WelcomeView {
     WelcomeView {
-        title: "Your computers, shared by your team and its agents.".into(),
-        lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
+        title: "Combine all your computers into one supercomputer.".into(),
+        // The shipped welcome (first-run-new) carries the product line; this one says nothing twice.
+        lede: String::new(),
         primary: button("start", "Get started"),
     }
 }
@@ -1180,14 +1189,7 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
         settings_url: None,
     };
     if !input.signed_in {
-        return input.signing_in.then(|| {
-            row(
-                RowState::Checking,
-                "Signing in".into(),
-                "Finish signing in to Cua in your browser.".into(),
-                None,
-            )
-        });
+        return sign_in_row(input);
     }
     let Some(host) = &input.host else {
         return Some(row(
@@ -1231,6 +1233,56 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
     ))
 }
 
+/// Screen 3's sign-in line before this computer is signed in: waiting
+/// (with the way out when the browser tab was closed or opened in the
+/// wrong browser), or why it didn't finish with the next step. Every way a
+/// sign-in ends shows here: the first run has no sidebar to show it in.
+fn sign_in_row(input: &FirstRunInput) -> Option<CheckRow> {
+    use crate::sign_in::{FAILED_TITLE, SignInFailure, reason_text};
+    let row = |state, title: &str, note: String, action: Option<FirstRunButton>| CheckRow {
+        id: "account".into(),
+        state,
+        title: title.into(),
+        note,
+        action,
+        settings_url: None,
+    };
+    if input.signing_in {
+        let code = input.sign_in_code.as_deref().filter(|c| !c.is_empty());
+        return Some(match code {
+            Some(code) => row(
+                RowState::Checking,
+                "Signing in",
+                format!("Enter the code {code} on the sign-in page."),
+                Some(button("reopen-sign-in", "Open the page")),
+            ),
+            None => row(
+                RowState::Checking,
+                "Signing in",
+                "Finish signing in to Cua in your browser.".into(),
+                Some(button("sign-in-code", "Use a code instead")),
+            ),
+        });
+    }
+    let reason = input.sign_in_failure?;
+    let note = match reason_text(reason) {
+        "" => "Try again, or use a code instead.".to_string(),
+        why => why.to_string(),
+    };
+    // A code helps when the browser can't get back here; not when the
+    // person declined, is offline, or this computer can't save it.
+    let code = matches!(
+        reason,
+        SignInFailure::NotConfirmed | SignInFailure::CodeRejected | SignInFailure::Unknown
+    );
+    Some(row(
+        RowState::Fix,
+        FAILED_TITLE,
+        note,
+        code.then(|| button("sign-in-code", "Use a code instead")),
+    ))
+}
+
 fn devices_view(input: &FirstRunInput) -> DevicesView {
     let place = this_computer(&input.host_os);
     let rows = vec![
@@ -1267,7 +1319,14 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
         ),
         rows,
         status: account_row(input),
-        primary: button("sign-in", "Sign in"),
+        primary: button(
+            "sign-in",
+            if input.sign_in_failure.is_some() && !input.signing_in {
+                "Try again"
+            } else {
+                "Sign in"
+            },
+        ),
         secondary: Some(button("not-now", "Not now")),
         note: Some(format!(
             "Not now keeps Cua on {place} only. You can sign in later."
@@ -1630,7 +1689,7 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
     let Some(lead) = lead_of(input) else {
         return SetupView {
             title: "Try a first Space.".into(),
-            lede: format!("Spaces run on {place}, away from your files and your mouse."),
+            lede: format!("Spaces run on {place}."),
             prompt: None,
             status: None,
             extra: Some(extra_view(input)),
@@ -1706,7 +1765,7 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
     if plan.teammates && kind != "teams" {
         return Some(UpsellCard {
             plan: "teams".into(),
-            title: "Working with others?".into(),
+            title: "Teams".into(),
             lines: vec![
                 "Teams gives your team computers you share, with roles and device approval.".into(),
             ],
@@ -1725,8 +1784,10 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
         plan: "pro".into(),
         title: "More remote hours with Pro".into(),
         lines: vec![
-            format!("Free: {hours} remote hours a month · {sessions} connections at once"),
-            format!("Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} connections at once"),
+            format!("Free: {hours} remote hours a month · {sessions} computers in use at once"),
+            format!(
+                "Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} computers in use at once"
+            ),
         ],
         price: "$18 a month".into(),
         cta: button("upsell", "Try Pro"),
@@ -1931,7 +1992,7 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     items.push(FirstRunTodo {
         id: "extra".into(),
         title: "Make a first Space (optional)".into(),
-        note: format!("A separate computer on {place}, away from your files and your mouse."),
+        note: format!("A separate computer on {place}."),
         done: extra_done,
         optional: true,
         action: (!extra_done).then(|| button("add", "Add a Space")),
@@ -2233,7 +2294,7 @@ mod tests {
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
         assert_eq!(
             w.title,
-            "Your computers, shared by your team and its agents."
+            "Combine all your computers into one supercomputer."
         );
         assert_eq!(w.primary.id, "start");
     }
@@ -2510,6 +2571,104 @@ mod tests {
             view(&i).devices.unwrap().status.unwrap().state,
             RowState::Ok
         );
+    }
+
+    /// Every way a sign-in on screen 3 ends is on the screen with a next
+    /// step, never a silent "Sign in" again (CUA-3144): the first run has no
+    /// sidebar or toast to show it in.
+    #[test]
+    fn every_sign_in_state_shows_on_the_screen_with_a_next_step() {
+        use crate::sign_in::SignInFailure;
+        let mut i = input(FirstRunStep::Devices, vec![]);
+
+        // Waiting for the browser: the way out if the tab was closed or
+        // opened in another browser.
+        i.signing_in = true;
+        let d = view(&i).devices.unwrap();
+        let w = d.status.unwrap();
+        assert_eq!(
+            (w.state, w.title.as_str(), w.note.as_str()),
+            (
+                RowState::Checking,
+                "Signing in",
+                "Finish signing in to Cua in your browser."
+            )
+        );
+        let a = w.action.unwrap();
+        assert_eq!(
+            (a.id.as_str(), a.label.as_str()),
+            ("sign-in-code", "Use a code instead")
+        );
+        assert_eq!(d.primary.label, "Sign in");
+
+        // Waiting for a code: the code, and the page to enter it on.
+        i.sign_in_code = Some("4F2-91K".into());
+        let w = view(&i).devices.unwrap().status.unwrap();
+        assert_eq!(w.note, "Enter the code 4F2-91K on the sign-in page.");
+        assert_eq!(w.action.unwrap().id, "reopen-sign-in");
+
+        // It failed: why, Try again, and a code where a code helps.
+        i.signing_in = false;
+        i.sign_in_code = None;
+        for reason in SignInFailure::ALL {
+            i.sign_in_failure = Some(reason);
+            let d = view(&i).devices.unwrap();
+            let f = d.status.unwrap_or_else(|| panic!("{reason:?} is silent"));
+            assert_eq!(f.state, RowState::Fix, "{reason:?}");
+            assert_eq!(f.title, "Sign-in didn't finish");
+            assert!(!f.note.is_empty(), "{reason:?} has no words");
+            for raw in ["HTTP", "error", "`", "{", "_", "OIDC", "token"] {
+                assert!(!f.note.contains(raw), "{reason:?} shows {raw:?}");
+            }
+            assert_eq!(
+                (d.primary.id.as_str(), d.primary.label.as_str()),
+                ("sign-in", "Try again"),
+                "{reason:?}"
+            );
+            assert_eq!(d.secondary.as_ref().unwrap().id, "not-now");
+            let code = f.action.map(|a| a.id);
+            let helps = matches!(
+                reason,
+                SignInFailure::NotConfirmed | SignInFailure::CodeRejected | SignInFailure::Unknown
+            );
+            assert_eq!(code.as_deref() == Some("sign-in-code"), helps, "{reason:?}");
+        }
+        i.sign_in_failure = Some(SignInFailure::CouldNotSave);
+        assert_eq!(
+            view(&i).devices.unwrap().status.unwrap().note,
+            "This computer couldn't save the sign-in. Unlock your keychain, then try again."
+        );
+
+        // Trying again is waiting again, not the old failure.
+        i.signing_in = true;
+        let d = view(&i).devices.unwrap();
+        assert_eq!(d.status.unwrap().state, RowState::Checking);
+        assert_eq!(d.primary.label, "Sign in");
+
+        // Signed in: the failure is gone.
+        i.signing_in = false;
+        i.signed_in = true;
+        let d = view(&i).devices.unwrap();
+        assert_ne!(d.status.unwrap().title, "Sign-in didn't finish");
+    }
+
+    /// The shells' JSON for the new fields: camelCase, absent in older ones.
+    #[test]
+    fn the_sign_in_fields_read_from_the_page() {
+        let i: FirstRunInput = serde_json::from_value(serde_json::json!({
+            "step": "devices",
+            "hostOs": "macos",
+            "signInFailure": "couldNotSave",
+            "signInCode": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            i.sign_in_failure,
+            Some(crate::sign_in::SignInFailure::CouldNotSave)
+        );
+        let old: FirstRunInput =
+            serde_json::from_value(serde_json::json!({"step": "devices"})).unwrap();
+        assert_eq!(old.sign_in_failure, None);
     }
 
     /// Where Back and Continue go from `v`.

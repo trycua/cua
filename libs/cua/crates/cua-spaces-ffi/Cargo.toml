@@ -13,6 +13,12 @@ publish = false
 name = "cua_spaces_ffi"
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[features]
+default = ["aws"]
+# AWS (EC2 and S3) in the library the Spaces apps link; see cua-spaces-cli's
+# `aws`. Local development builds leave it off.
+aws = ["cua-sdk/aws", "cua-spaces/s3", "cua-spaces-ext/s3"]
+
 [dependencies]
 cua-sdk = { workspace = true, features = ["local", "spaces", "host", "media", "byoc"] }
 cua-spaces-app-core = { workspace = true, features = ["keyvault-client", "installer", "telemetry"] }

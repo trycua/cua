@@ -15,14 +15,20 @@
 // "Update ready" with "Restart to update" and a link to the release notes.
 // Nothing restarts without that click (`installNow`); a downloaded update is
 // also applied when the app next quits unless "install automatically" is
-// off. The state machine is update-state.ts. The beta channel (prereleases, `beta*.yml`) is
-// served everywhere. The stable channel (`latest*.yml`) is served on Windows
-// and Linux, where stable releases ship the Electron app. On macOS stable
-// releases still ship the Swift app, updated by Sparkle; Check Now on Stable
-// says so until the Sparkle cutover (docs/sparkle-cutover.md) publishes
-// `latest-mac.yml` and STABLE_FEED turns on.
+// off. The state machine is update-state.ts.
+//
+// Channels: Stable reads `latest*.yml` on the rolling `cua-spaces-latest`
+// release; Nightly reads `nightly*.yml` on the rolling `cua-spaces-nightly`
+// release (nightly-cua-spaces.yml builds main every night). The feed is set
+// for the chosen channel before each check (setFeedURL), whatever URL the
+// build baked into app-update.yml, so one build follows either channel. Both
+// are served on Windows and Linux. On macOS the shipped app is the Swift app
+// (Sparkle reads the same two releases' appcasts); this app has no macOS
+// feed until the Sparkle cutover (docs/sparkle-cutover.md) publishes
+// `latest-mac.yml` and STABLE_FEED turns on. There are no betas any more: a
+// saved `beta` is Nightly (update-prefs.ts).
 import { app, BrowserWindow, dialog } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { electronUpdater } from "./electron-updater";
 import type { UpdaterDriving } from "./model/updates";
@@ -36,27 +42,41 @@ export type { UpdateChannel } from "./update-prefs";
 /** macOS only: off until stable releases publish the Electron macOS feed (the cutover). */
 export const STABLE_FEED = false;
 
-/** The channel a version was cut for: X.Y.Z-suffix is a beta. */
-export const buildChannel = (version = app.getVersion()): UpdateChannel => (/^\d+\.\d+\.\d+-/.test(version) ? "beta" : "stable");
+/** The channel a version was cut for: X.Y.Z-suffix (a nightly, or a beta from before Nightly) is Nightly. */
+export const buildChannel = (version = app.getVersion()): UpdateChannel => (/^\d+\.\d+\.\d+-/.test(version) ? "nightly" : "stable");
 
+/** The feed file electron-updater reads: `nightly*.yml` or `latest*.yml`. */
+export const feedChannel = (channel: UpdateChannel) => (channel === "nightly" ? "nightly" : "latest");
 
-/** The feed file electron-updater reads: `beta*.yml` or `latest*.yml`. */
-export const feedChannel = (channel: UpdateChannel) => (channel === "beta" ? "beta" : "latest");
+/** The rolling release that holds each channel's feed. */
+const FEED_RELEASE: Record<UpdateChannel, string> = { stable: "cua-spaces-latest", nightly: "cua-spaces-nightly" };
 
-/** Stable Electron builds exist for Windows and Linux; macOS waits for STABLE_FEED. */
-export const channelServed = (
-  channel: UpdateChannel,
-  stableFeed = STABLE_FEED,
-  platform: NodeJS.Platform = process.platform,
-) => channel === "beta" || stableFeed || platform === "win32" || platform === "linux";
+/**
+ * The feed URL for `channel`, next to the one the build baked in (`baked`,
+ * app-update.yml's `url`: .../releases/download/cua-spaces-latest or
+ * .../cua-spaces-nightly of the repository the build came from).
+ */
+export function feedUrlFor(channel: UpdateChannel, baked: string): string {
+  const base = baked.replace(/\/+$/, "").replace(/\/(cua-spaces-latest|cua-spaces-nightly)$/, "");
+  return `${base}/${FEED_RELEASE[channel]}`;
+}
+
+/** The `url` electron-builder baked into app-update.yml (`fallback` when it can't be read). */
+export function bakedFeedUrl(text: string | null, fallback = "https://github.com/trycua/cua/releases/download/cua-spaces-latest"): string {
+  const url = text ? /^url:\s*['"]?(https:\/\/[^'"\s]+)['"]?\s*$/m.exec(text)?.[1] : undefined;
+  return url ?? fallback;
+}
+
+/** Electron builds exist for Windows and Linux on both channels; macOS waits for STABLE_FEED (Stable only). */
+export const channelServed = (channel: UpdateChannel, stableFeed = STABLE_FEED, platform: NodeJS.Platform = process.platform) =>
+  platform === "win32" || platform === "linux" || (channel === "stable" && stableFeed);
 
 export const updateChannel = (): UpdateChannel => channelPref(readSettings(), buildChannel(), (c) => channelServed(c));
 
 /** A packaged build with a feed (electron-builder's app-update.yml); a development run has no updater. */
 export const hasFeed = () => app.isPackaged && existsSync(path.join(process.resourcesPath, "app-update.yml"));
 
-export const updatesEnabled = () =>
-  app.isPackaged && autoCheckPref(readSettings(), process.env) && channelServed(updateChannel());
+export const updatesEnabled = () => app.isPackaged && autoCheckPref(readSettings(), process.env) && channelServed(updateChannel());
 
 type AutoUpdater = (typeof import("electron-updater"))["autoUpdater"];
 
@@ -136,8 +156,8 @@ export class ElectronUpdater implements UpdaterDriving {
     if (!channelServed(this.channel)) {
       void message({
         type: "info",
-        message: "Stable updates come with a later release",
-        detail: "This version of Cua Spaces updates from the Beta channel. Choose Beta under “Update to” to get updates now.",
+        message: "This app doesn’t update itself on Mac yet",
+        detail: "Updates for this version of Cua Spaces come from the Mac app. Download the newest Cua Spaces from spaces.cua.ai to update now.",
         buttons: ["OK"],
       });
       return;
@@ -183,10 +203,19 @@ export class ElectronUpdater implements UpdaterDriving {
     this.loaded ??= (async () => {
       const { autoUpdater } = await electronUpdater();
       const channel = this.channel;
+      // The chosen channel's own release, never only the baked URL: Stable
+      // reads latest*.yml on cua-spaces-latest, Nightly nightly*.yml on
+      // cua-spaces-nightly, so Stable never sees a nightly.
+      let baked: string | null = null;
+      try {
+        baked = readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8");
+      } catch {
+        // No baked feed: the default repository's.
+      }
+      autoUpdater.setFeedURL({ provider: "generic", url: feedUrlFor(channel, bakedFeedUrl(baked)), channel: feedChannel(channel) });
       autoUpdater.channel = feedChannel(channel);
-      // Betas read beta*.yml (after the cutover stable releases write it too,
-      // so betas move on to the next stable); stable never sees a beta.
-      autoUpdater.allowPrerelease = channel === "beta";
+      autoUpdater.allowPrerelease = channel === "nightly";
+      // Setting `channel` allows downgrades; an update only ever moves forward.
       autoUpdater.allowDowngrade = false;
       // Found updates download in the background; they install on a click, or on quit when allowed.
       autoUpdater.autoDownload = true;

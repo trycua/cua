@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { BridgeMode, DataAdapter } from "../adapter";
+import { createChildrenStore } from "../children";
 import { createNetworkStore } from "../network";
 import { detectMode, type HostWindow } from "../detect";
 import { createDemoAdapter, demoOptionsFromSearch } from "./demo";
@@ -15,17 +16,14 @@ export { createTauriAdapter, TAURI_EVENTS } from "./tauri";
 export { createWebkitAdapter } from "./webkit";
 
 /** The adapter for `mode` (default: detected from the window). */
-export function createAdapter(
-  mode: BridgeMode = detectMode(),
-  win: HostWindow | undefined = globalThis.window as HostWindow | undefined,
-): DataAdapter {
+export function createAdapter(mode: BridgeMode = detectMode(), win: HostWindow | undefined = globalThis.window as HostWindow | undefined): DataAdapter {
   switch (mode) {
     case "tauri":
       return createTauriAdapter(win);
     case "electron":
-      return withNetwork(createElectronAdapter(win));
+      return withChildren(withNetwork(createElectronAdapter(win)));
     case "webkit":
-      return withNetwork(createWebkitAdapter(win));
+      return withChildren(withNetwork(createWebkitAdapter(win)));
     case "demo":
       return createDemoAdapter(demoOptionsFromSearch(win?.location?.search ?? ""));
   }
@@ -35,4 +33,10 @@ export function createAdapter(
  * (a host that does not answer them leaves the store empty). */
 function withNetwork(a: DataAdapter): DataAdapter {
   return a.network ? a : Object.assign(a, { network: createNetworkStore(a) });
+}
+
+/** `a` with the child Spaces store over its `spaces.tree`, `children.*`,
+ * `budget.*` and `services.*` operations. */
+function withChildren(a: DataAdapter): DataAdapter {
+  return a.children ? a : Object.assign(a, { children: createChildrenStore(a) });
 }

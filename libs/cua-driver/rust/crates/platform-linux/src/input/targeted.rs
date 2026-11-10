@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! X11 targeted one-shot input with explicit delivery semantics.
 //!
 //! The Linux adapter for the cross-platform contract in

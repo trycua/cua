@@ -88,20 +88,16 @@ export function settingsPage(model: AppModel, parts: HostParts) {
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
-
 export function experimentsPage(model: AppModel) {
-  const page = model.native.appExperimentsPage(model.settings.experiments);
-  return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
+  return model.native.appExperimentsPage(model.settings.experiments);
 }
 
-/** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+/** The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
 export function refreshDaemonExperiments(model: AppModel): void {
   const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
   const now = model.settings.experiments;
-  if (kept.secureSpaces === now.secureSpaces && kept.childSpaces === now.childSpaces && kept.askFirst === now.askFirst && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
-  model.settings = { ...model.settings, experiments: { ...now, secureSpaces: kept.secureSpaces, childSpaces: kept.childSpaces, askFirst: kept.askFirst, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
+  if (kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
+  model.settings = { ...model.settings, experiments: { ...now, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
@@ -116,6 +112,9 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The channel and environment this app runs as (CUA_CHANNEL, CUA_ENV, as cua-home resolves
+    // them): the page's title bar tag ("Local · Staging", the core's `environment.tag`).
+    target: model.native.appTarget(),
     // The CLI this app installs and whether it is here (`cli.ts`).
     cli: cliSetting(model),
     // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`): the page's core lays out every kind's row.
@@ -124,6 +123,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
     // The Spaces and machine desktops pinned to the notch, in pin order.
     notchPinned: [...model.settings.notchPinned],
+    // Which coding apps the agent menu shows (`AppSettings.agentMenu*`, the core's `agent_menu`).
+    agentMenu: { shown: [...model.settings.agentMenuShown], hidden: [...model.settings.agentMenuHidden], seen: [...model.settings.agentMenuSeen] },
   };
 }
 
@@ -134,13 +135,23 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const t = args.tips;
     if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
     const { off, done } = t as { off?: unknown; done?: unknown };
-    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string"))
+      throw Failure.badArgs("tips: {off: boolean, done: string[]}");
     patch.tips = { off, done: done as string[] };
   }
   if ("notchPinned" in args) {
     const ids = args.notchPinned;
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
     patch.notchPinned = ids as string[];
+  }
+  if ("agentMenu" in args) {
+    const m = args.agentMenu as { shown?: unknown; hidden?: unknown; seen?: unknown } | null;
+    const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen))
+      throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
+    patch.agentMenuShown = m.shown as string[];
+    patch.agentMenuHidden = m.hidden as string[];
+    patch.agentMenuSeen = m.seen as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;
@@ -300,7 +311,6 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         if (!updates.updater) throw Failure.unsupported("Updates are off in this build");
         updates.choose(option);
       } else if (row.startsWith("experiment:")) {
-        if (WEB_UI_ROWS.has(row)) throw Failure.unsupported("This app is the new UI");
         chooseExperiment(model, row, option);
       } else if (row.startsWith("agent:")) {
         // An AI agents row: configure it, or remove what cua added.
@@ -342,7 +352,8 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       }
       if (args.sizeGb !== undefined) {
         const g = args.sizeGb;
-        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000)) throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
+        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000))
+          throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
         change.sizeGb = g;
       }
       try {

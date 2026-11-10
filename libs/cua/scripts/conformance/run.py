@@ -42,7 +42,7 @@ class Run:
         self.env = dict(os.environ)
         self.env.update({
             "CUA_HOME": str(self.home), "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1",
-            "CUA_CREDENTIAL_STORE": "test-keychain", "CUA_EXPERIMENTS": "secure-spaces,child-spaces",
+            "CUA_CREDENTIAL_STORE": "test-keychain",
         })
         # The daemon forwards it to the agent (`env_from_host`); the scripted model ignores the value.
         self.env.setdefault("ANTHROPIC_API_KEY", "mock-key")
@@ -338,6 +338,9 @@ def run_entry(entry, args, out_dir, log):
         # --- lifecycle
         if "lifecycle" in cases:
             row_lifecycle(run, entry, name, row)
+        # --- warm claim
+        if "warm" in cases:
+            row_warm(run, entry, image, args, row)
         # --- cached ready times
         if args.n > 0 and "ready" in cases:
             times = []
@@ -395,7 +398,7 @@ def run_entry(entry, args, out_dir, log):
 
 
 def home_image_for(entry, args):
-    """The image a home Space is made from: the agent-home image (the slim Linux image plus the `cua` CLI),
+    """The image a home Space is made from: the slim Linux image (it carries the `cua` CLI),
     its VM disk for a VM runtime, or what --entry-home-image names for this entry."""
     override = dict(x.split("=", 1) for x in (args.entry_home_image or []))
     if entry["id"] in override:
@@ -452,7 +455,7 @@ def row_children(run, entry, name, args, row, mode):
     img = args.child_image
     flags = ["--kind", entry["kind"]] + (["--runtime", entry["runtime"]] if entry["runtime"] else [])
     # The case drives the `cua` CLI inside the Space: the Space under test when its image ships it,
-    # else a home made from the agent-home image on the same runtime.
+    # else a home made from the slim Linux image on the same runtime.
     rc, o, e, _ = run.exec(name, "command -v cua >/dev/null 2>&1 && echo has-cua || echo no-cua")
     if "has-cua" not in o:
         home_img = home_image_for(entry, args)
@@ -462,7 +465,7 @@ def row_children(run, entry, name, args, row, mode):
             said = (e or o).strip()
             gone = any(k in said for k in ("not published", "not found", "manifest unknown", "MANIFEST_UNKNOWN", "denied", "unauthorized"))
             row("children", "skip" if gone or any(k in said for k in MISSING) else "fail",
-                f"the home image {home_img} could not be made: {said[:300]} (build it with libs/images/agent-home and pass --home-image, or --entry-home-image ID=IMAGE)")
+                f"the home image {home_img} could not be made: {said[:300]} (build libs/images/linux --target slim and pass --home-image, or --entry-home-image ID=IMAGE)")
             return
         run.sh("spaces", "add", f"local:{name}")
         for _ in range(60):  # a Space that was just made answers a moment later
@@ -578,6 +581,77 @@ def row_lifecycle(run, entry, name, row):
     row("lifecycle", "fail" if fails else "pass", "; ".join(fails + notes))
 
 
+def row_warm(run, entry, image, args, row):
+    """A pool of one: the member is claimed by a create, answers, is replaced, and the pool goes.
+
+    The runtime says what it does: a runtime with no warm claims refuses the pool in plain words (its
+    Spaces start cold); one that can claim hands out a Space that answers, and a second member is kept
+    ready afterwards (the refill)."""
+    caps = entry["capabilities"]
+    pool, claimed = "conf-warm", "conf-warm-1"
+    fails, notes = [], []
+    t0 = time.monotonic()
+    a = ["sandbox", "pool", "create", image, "--name", pool, "--min", "1", "--max", "1", "--kind", entry["kind"], "--cpu", "1", "--memory", "1GB", "--json"]
+    if entry["runtime"]:
+        a += ["--runtime", entry["runtime"]]
+    rc, o, e, ms = run.sh(*a, timeout=300)
+    if not caps["claim"]:
+        said = (o + e).strip()
+        if rc != 0 and len(said) >= 15:
+            row("warm", "pass", "no warm claims here, said in plain words: " + said[:120], ms)
+        else:
+            row("warm", "fail", "this runtime declares no warm claims, but the pool was not refused in plain words")
+        run.sh("sandbox", "pool", "rm", pool, timeout=120)
+        return
+
+    def ready():
+        rc, o, e, _ = run.sh("sandbox", "pool", "ls", "--json", timeout=60)
+        try:
+            for p in json.loads(o):
+                if p.get("name") == pool:
+                    return int(p.get("ready", 0)), (p.get("status") or p.get("reason") or "")
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return 0, (o + e).strip()[:120]
+
+    if rc != 0:
+        row("warm", "fail", "pool create: " + (e or o).strip()[:200])
+        return
+    try:
+        n, why = 0, ""
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            n, why = ready()
+            if n >= 1:
+                break
+            time.sleep(3)
+        if n < 1:
+            fails.append(f"no member was ready within 15 minutes ({why})")
+        else:
+            notes.append(f"member ready after {time.monotonic() - t0:.0f}s")
+            rc, o, e, ms = run.sh("sandbox", "create", "--pool", pool, "--name", claimed, "--json", timeout=args.timeout)
+            if rc != 0:
+                fails.append("create from the pool: " + (e or o).strip()[:200])
+            else:
+                notes.append(f"claim {ms:.0f} ms")
+                rc, o, e, _ = run.exec(claimed, "echo claimed-ok && cat /etc/machine-id 2>/dev/null | head -c 8")
+                if "claimed-ok" not in o:
+                    fails.append("the claimed Space does not answer: " + (e or o).strip()[:120])
+                # The pool keeps one member: a replacement comes.
+                again = False
+                for _ in range(200):
+                    if ready()[0] >= 1:
+                        again = True
+                        break
+                    time.sleep(3)
+                if not again:
+                    fails.append("no replacement member became ready in 10 minutes")
+    finally:
+        run.sh("sandbox", "rm", claimed, "-f", timeout=300)
+        run.sh("sandbox", "pool", "rm", pool, timeout=300)
+    row("warm", "fail" if fails else "pass", "; ".join(fails + notes), (time.monotonic() - t0) * 1000)
+
+
 def stop_apple_services(home):
     """Apple's `container` services outlive a Space (cua never stops them, they are per user): the
     ones this run's home started are stopped before the home goes."""
@@ -621,7 +695,7 @@ def main():
     ap.add_argument("--image", default="ghcr.io/trycua/linux:24.04-slim")
     ap.add_argument("--alias", default=None, help="the package the image resolves to (a private mirror of the same tag)")
     ap.add_argument("--child-image", default="ghcr.io/trycua/linux:24.04-slim")
-    ap.add_argument("--home-image", default="ghcr.io/trycua/agent-home:24.04",
+    ap.add_argument("--home-image", default="ghcr.io/trycua/linux:24.04-slim",
                     help="the image of the home Space the children case makes child Spaces from when the Space under test has no `cua` CLI "
                          "(a VM runtime adds -disk)")
     ap.add_argument("--entry-home-image", action="append", help="ID=IMAGE: the home image one entry uses (a local build, for example)")

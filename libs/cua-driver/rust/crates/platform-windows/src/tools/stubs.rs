@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Non-Windows stubs — return a helpful "not implemented" message.
 //! Schemas match the macOS platform-macos implementations (cross-platform interface).
 
@@ -208,7 +211,36 @@ contract_stub_tool!(
     SetAgentCursorThemeTool,
     "set_agent_cursor_theme"
 );
-contract_stub_tool!(invoke_menu_m, InvokeMenuTool, "invoke_menu");
+
+mod invoke_menu_m {
+    use super::*;
+    pub struct InvokeMenuTool;
+    static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+    #[async_trait]
+    impl Tool for InvokeMenuTool {
+        fn def(&self) -> &ToolDef {
+            // The menu contract is a portable subset, which `ToolDef::from_contract`
+            // rejects. Copy its fields the way the native Windows tool does.
+            DEF.get_or_init(|| {
+                let contract = cua_driver_contract::tool_contract("invoke_menu")
+                    .expect("invoke_menu contract");
+                ToolDef {
+                    name: contract.name,
+                    description: contract.description,
+                    input_schema: contract.input_schema,
+                    read_only: contract.annotations.read_only,
+                    destructive: contract.annotations.destructive,
+                    idempotent: contract.annotations.idempotent,
+                    open_world: contract.annotations.open_world,
+                }
+            })
+        }
+        async fn invoke(&self, _args: Value) -> ToolResult {
+            not_impl("invoke_menu")
+        }
+    }
+}
+pub use invoke_menu_m::InvokeMenuTool;
 
 stub_tool!(
     check_perms_m,

@@ -67,7 +67,7 @@
       "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
       "tier": "slim",
       "variant": "container",
-      "summary": "The minimal Linux desktop: cua-spacesd and Chromium, no dev tooling. What CI and benchmarks run.",
+      "summary": "The minimal Linux desktop: cua-spacesd, the cua CLI and Chromium, no dev tooling. What CI and benchmarks run, and the home of an agent that makes child Spaces.",
       "spacesd": true,
       "digest": "sha256:3bb6e503da0a90dd38cd88d664308f45f7af4661fe89f81e758c3927b6efb156",
       "sizes": {
@@ -93,7 +93,7 @@
       "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
       "tier": "slim",
       "variant": "vm",
-      "summary": "The minimal Linux desktop as a full VM.",
+      "summary": "The minimal Linux desktop, with the cua CLI, as a full VM.",
       "spacesd": true,
       "digest": "sha256:3bdeff2c03f2d345c404a7e8090142f80ad8d3ccf56fe345ac095dd3e42046c4",
       "sizes": {
@@ -155,11 +155,11 @@
       "variant": "vm",
       "summary": "Windows VM with cua-spacesd and cua-driver.",
       "spacesd": true,
-      "digest": "sha256:c0428af3841060367e5c30ec1970c1402fd15bc1797b66daf4f657c8407a1b94",
+      "digest": "sha256:9fe49abc7619db4f85f9c69dd45c7e0f9c42d29ef60d5d9c157162b66bfab8a7",
       "sizes": {
-        "digest": "sha256:c0428af3841060367e5c30ec1970c1402fd15bc1797b66daf4f657c8407a1b94",
+        "digest": "sha256:9fe49abc7619db4f85f9c69dd45c7e0f9c42d29ef60d5d9c157162b66bfab8a7",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:d3e2efb224aa90aeebfd7ade33c3febc6e6a81a56e782613f432fa4721e6fc39", "download": 6898178694, "unpacked": 6965755904, "disk": 68719476736 }
+          { "arch": "amd64", "manifest": "sha256:ac9cfa049e875768f915cb7f0df564268c9a7321523d0c52a5d16c4debfae077", "download": 6994746385, "unpacked": 7061241856, "disk": 68719476736 }
         ]
       },
       "browsers": ["edge"],
@@ -180,11 +180,11 @@
       "variant": "vm",
       "summary": "The containerDisk the Windows VM boots. Resolved from windows:2022; not offered on its own.",
       "spacesd": true,
-      "digest": "sha256:677842cda9495cb677a6e6d424727eaea9908902e0e9310095ff21b8a8555fdf",
+      "digest": "sha256:80f7789b85340b455ca6ce18974db9d7305b84c900b2bbbc9b8102f1808c32c7",
       "sizes": {
-        "digest": "sha256:677842cda9495cb677a6e6d424727eaea9908902e0e9310095ff21b8a8555fdf",
+        "digest": "sha256:80f7789b85340b455ca6ce18974db9d7305b84c900b2bbbc9b8102f1808c32c7",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:d3e2efb224aa90aeebfd7ade33c3febc6e6a81a56e782613f432fa4721e6fc39", "download": 6898178694, "unpacked": 6965755904, "disk": 68719476736 }
+          { "arch": "amd64", "manifest": "sha256:ac9cfa049e875768f915cb7f0df564268c9a7321523d0c52a5d16c4debfae077", "download": 6994746385, "unpacked": 7061241856, "disk": 68719476736 }
         ]
       },
       "browsers": ["edge"],
@@ -296,11 +296,11 @@
       "variant": "vm",
       "summary": "Omarchy edge (Arch, Hyprland) VM with Omarchy's cua-driver and Hyprland input plugin, plus cua-spacesd.",
       "spacesd": true,
-      "digest": "sha256:4c6a0f777672aca47590146d4f2a9fcc053e85ae0b1885f3f3c4ce30c6181e0e",
+      "digest": "sha256:829849271fd108a4cec7a39e0bbbf4d89737ffd88cef18eaaa5866203b80309a",
       "sizes": {
-        "digest": "sha256:4c6a0f777672aca47590146d4f2a9fcc053e85ae0b1885f3f3c4ce30c6181e0e",
+        "digest": "sha256:829849271fd108a4cec7a39e0bbbf4d89737ffd88cef18eaaa5866203b80309a",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:e45b48733ca9679de69fc17cadd416dba3086b19d9ec9010fd5119a47527c82e", "download": 1790774560, "unpacked": 1808728064, "disk": 21474836480 }
+          { "arch": "amd64", "manifest": "sha256:8eede19bf98d9fe1ed439610ca7ed264ba289b50e2cf1c0446a5ddb4556f5c8c", "download": 1807669759, "unpacked": 1824784384, "disk": 21474836480 }
         ]
       },
       "browsers": ["chromium"],
@@ -319,11 +319,11 @@
       "variant": "vm",
       "summary": "The containerDisk the Omarchy VM boots. Resolved from omarchy:edge; not offered on its own.",
       "spacesd": true,
-      "digest": "sha256:50080e622b8f37389f3447a825fea88af4cf95be4c06070c8b2fb3b379f5fef8",
+      "digest": "sha256:dae460db11ed86fe6c6cf7d4b63f4a65eb83d968a60acd01229641af359ce467",
       "sizes": {
-        "digest": "sha256:50080e622b8f37389f3447a825fea88af4cf95be4c06070c8b2fb3b379f5fef8",
+        "digest": "sha256:dae460db11ed86fe6c6cf7d4b63f4a65eb83d968a60acd01229641af359ce467",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:e45b48733ca9679de69fc17cadd416dba3086b19d9ec9010fd5119a47527c82e", "download": 1790774560, "unpacked": 1808728064, "disk": 21474836480 }
+          { "arch": "amd64", "manifest": "sha256:8eede19bf98d9fe1ed439610ca7ed264ba289b50e2cf1c0446a5ddb4556f5c8c", "download": 1807669759, "unpacked": 1824784384, "disk": 21474836480 }
         ]
       },
       "browsers": ["chromium"],
@@ -331,36 +331,6 @@
       "local": "qemu",
       "cloud": "kubevirt",
       "published": true
-    },
-    {
-      "ref": "ghcr.io/trycua/agent-home:24.04",
-      "group": "distro",
-      "os": "linux",
-      "name": "Agent home",
-      "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
-      "variant": "container",
-      "summary": "The slim Linux image plus the cua CLI: a home an agent makes child Spaces from.",
-      "spacesd": true,
-      "browsers": ["chromium"],
-      "arch": ["amd64", "arm64"],
-      "local": "container",
-      "cloud": "gvisor",
-      "published": false
-    },
-    {
-      "ref": "ghcr.io/trycua/agent-home:24.04-disk",
-      "group": "distro",
-      "os": "linux",
-      "name": "Agent home VM",
-      "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
-      "variant": "vm",
-      "summary": "The same agent home as a full VM.",
-      "spacesd": true,
-      "browsers": ["chromium"],
-      "arch": ["amd64", "arm64"],
-      "local": "qemu",
-      "cloud": "kubevirt",
-      "published": false
     },
     {
       "ref": "ghcr.io/trycua/bench-web:1.0",

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux process enumeration via the /proc filesystem.
 //!
 //! Each /proc/<pid>/status file contains Name:, Pid:, PPid: etc.
@@ -116,14 +119,24 @@ pub(crate) struct RunningExecutable {
 }
 
 impl RunningExecutable {
-    pub(crate) fn is_system_program(&self, name: &str) -> bool {
-        self.comm.as_deref() == Some(name)
-            && self.path.file_name().and_then(|file| file.to_str()) == Some(name)
+    /// `names` lists the accepted image file names. The kernel truncates
+    /// `comm` to 15 bytes, so Nix's `.kwin_wayland-wrapped` runs as
+    /// `.kwin_wayland-w`.
+    pub(crate) fn is_system_program(&self, names: &[&str]) -> bool {
+        let file = self.path.file_name().and_then(|file| file.to_str());
+        names
+            .iter()
+            .any(|name| self.comm.as_deref() == Some(comm_name(name)))
+            && names.iter().any(|name| file == Some(*name))
             && self
                 .metadata
                 .as_ref()
                 .is_some_and(|meta| is_system_owned(meta.uid(), meta.mode()))
     }
+}
+
+fn comm_name(name: &str) -> &str {
+    name.get(..15).unwrap_or(name)
 }
 
 pub(crate) fn running_executable(pid: u32) -> Option<RunningExecutable> {
@@ -426,19 +439,49 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_nix_wrapped_kwin_is_trusted_under_its_truncated_comm() {
+        let Ok(metadata) = std::fs::metadata("/") else {
+            return;
+        };
+        if !super::is_system_owned(
+            std::os::unix::fs::MetadataExt::uid(&metadata),
+            std::os::unix::fs::MetadataExt::mode(&metadata),
+        ) {
+            eprintln!("skipped: / is not a root-owned, non-writable directory here");
+            return;
+        }
+        let kwin = |comm: &str, path: &str| super::RunningExecutable {
+            path: PathBuf::from(path),
+            comm: Some(comm.to_owned()),
+            metadata: Some(metadata.clone()),
+        };
+        let names = ["kwin_wayland", ".kwin_wayland-wrapped"];
+        assert!(
+            kwin(".kwin_wayland-w", "/nix/store/x/bin/.kwin_wayland-wrapped")
+                .is_system_program(&names)
+        );
+        assert!(kwin("kwin_wayland", "/usr/bin/kwin_wayland").is_system_program(&names));
+        assert!(!kwin("kwin_wayland", "/usr/bin/kwin_x11").is_system_program(&names));
+        assert!(!kwin("sh", "/usr/bin/kwin_wayland").is_system_program(&names));
+    }
+
+    #[test]
     fn a_running_program_whose_file_was_replaced_keeps_its_path_and_image() {
         use std::os::unix::fs::MetadataExt;
         let (program, before, after) = replaced_program("gnome-shell", false).expect("spawn");
         assert_eq!(before.comm.as_deref(), Some("gnome-shell"));
-        assert_eq!(before.is_system_program("gnome-shell"), root_owned_copy());
+        assert_eq!(
+            before.is_system_program(&["gnome-shell"]),
+            root_owned_copy()
+        );
         assert_eq!(
             after.path, program.path,
             "the deleted suffix must be dropped"
         );
         let meta = after.metadata.as_ref().expect("running image metadata");
         assert_eq!(meta.nlink(), 0);
-        assert_eq!(after.is_system_program("gnome-shell"), root_owned_copy());
-        assert!(!after.is_system_program("kwin_wayland"));
+        assert_eq!(after.is_system_program(&["gnome-shell"]), root_owned_copy());
+        assert!(!after.is_system_program(&["kwin_wayland"]));
     }
 
     #[test]
@@ -447,9 +490,12 @@ pub(crate) mod tests {
             eprintln!("skipped: creating a mount namespace needs root or `unshare -r`");
             return;
         };
-        assert_eq!(before.is_system_program("gnome-shell"), root_owned_copy());
+        assert_eq!(
+            before.is_system_program(&["gnome-shell"]),
+            root_owned_copy()
+        );
         assert!(after.metadata.is_none());
-        assert!(!after.is_system_program("gnome-shell"));
+        assert!(!after.is_system_program(&["gnome-shell"]));
     }
 
     #[test]
@@ -523,7 +569,7 @@ pub(crate) mod tests {
             "the image must come from one of our mounts"
         );
         assert!(judged.metadata.is_none());
-        assert!(!judged.is_system_program("gnome-shell"));
+        assert!(!judged.is_system_program(&["gnome-shell"]));
     }
 
     #[test]
@@ -592,7 +638,7 @@ pub(crate) mod tests {
             "the kernel reports the mounted-over path"
         );
         assert!(judged.metadata.is_none());
-        assert!(!judged.is_system_program("gnome-shell"));
+        assert!(!judged.is_system_program(&["gnome-shell"]));
     }
 
     #[test]
@@ -688,7 +734,7 @@ pub(crate) mod tests {
             "the kernel reports the private mount's name: {raw:?}"
         );
         assert!(judged.metadata.is_none());
-        assert!(!judged.is_system_program("gnome-shell"));
+        assert!(!judged.is_system_program(&["gnome-shell"]));
     }
 
     #[test]

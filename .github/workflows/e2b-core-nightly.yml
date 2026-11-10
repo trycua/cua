@@ -71,14 +71,10 @@ jobs:
         with:
           workspaces: "libs/cua-spacesd -> target"
       - name: Install Linux build dependencies and the privileged-test tools
-        working-directory: .
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config perl libx11-dev libxkbcommon-dev \
-            libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev \
-            libxfixes-dev libxdamage-dev libudev-dev util-linux passwd
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev util-linux passwd
       - name: Privileges the run_as tests need are present
         run: |
           set -euo pipefail
@@ -120,6 +116,8 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-vmm
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: QEMU, firmware and image tooling
         run: |
           sudo apt-get update -qq

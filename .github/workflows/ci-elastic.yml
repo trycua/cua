@@ -65,11 +65,10 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
           df -h /
       - name: Linux build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends pkg-config libssl-dev \
-            libx11-dev libxkbcommon-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libxrandr-dev libxi-dev libudev-dev libxext-dev libxtst-dev libdbus-1-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            pkg-config libssl-dev libx11-dev libxkbcommon-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev libxext-dev libxtst-dev libdbus-1-dev
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1

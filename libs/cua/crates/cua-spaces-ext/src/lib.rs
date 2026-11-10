@@ -26,6 +26,7 @@ use cua_spaces::{Error, Result, SpacesBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+mod agent_threads_tools;
 pub mod daemon;
 pub mod drive_runtime;
 pub mod drive_tools;
@@ -197,6 +198,7 @@ impl SpacesExtension for DriveExtension {
             || drive_tools::SERVICE_TOOLS.contains(&tool)
             || persistent_tools::TOOLS.contains(&tool)
             || thread_tools::TOOLS.contains(&tool)
+            || agent_threads_tools::TOOLS.contains(&tool)
             || persistent::phone::TOOLS.contains(&tool)
             || tool == cua_spaces::agents::MEMBER_OP
             || named_volumes::OPS.contains(&tool)
@@ -288,6 +290,9 @@ impl SpacesExtension for DriveExtension {
                 };
                 return persistent_tools::start_with_home(spaces, &space, args).await;
             }
+            if agent_threads_tools::TOOLS.contains(&tool) {
+                return agent_threads_tools::call(&caller, tool, args).await;
+            }
             if thread_tools::TOOLS.contains(&tool) || tool == cua_spaces::agents::MEMBER_OP {
                 return thread_tools::call(spaces, &caller, tool, args).await;
             }
@@ -311,6 +316,16 @@ impl SpacesExtension for DriveExtension {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             self.runtime.detach(space).await;
+        })
+    }
+
+    fn space_deleted<'a>(
+        &'a self,
+        spaces: &'a cua_spaces::Spaces,
+        space: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            spaces.persistent().space_deleted(space).await;
         })
     }
 

@@ -200,7 +200,12 @@ async fn a_local_space_is_named_what_it_was_created_as() {
     assert_eq!(named.name, "todo7b-probe");
     let generated = spaces.create(create(None)).await.unwrap().ready().unwrap();
     let short = generated.id.strip_prefix("local:").unwrap();
-    assert!(short.starts_with("space-"), "{}", generated.id);
+    // A Space made without a name gets a friendly one (`brave-otter`).
+    assert!(
+        cua_spaces_contract::names::is_pet_name(short),
+        "{}",
+        generated.id
+    );
     assert_eq!(generated.name, short);
     let listed: BTreeMap<String, String> = spaces
         .list()
@@ -382,10 +387,9 @@ async fn an_interrupted_local_create_is_registered_or_preserved() {
         Some(RecoveryOutcome::Registered),
         "{got:?}"
     );
-    assert!(matches!(
-        outcome("local:early"),
-        Some(RecoveryOutcome::Failed(_))
-    ));
+    // Nothing was ever started for "early": no state file, and the runtime
+    // has no such instance. Its journal has nothing left to inspect.
+    assert_eq!(outcome("local:early"), Some(RecoveryOutcome::NothingLeft));
     assert!(
         matches!(outcome("local:cut"), Some(RecoveryOutcome::Failed(_))),
         "{got:?}"
@@ -406,10 +410,9 @@ async fn an_interrupted_local_create_is_registered_or_preserved() {
     );
     assert!(creating.join("busy.json").exists());
     assert!(!creating.join("half.json").exists());
-    for name in ["early", "cut"] {
-        assert!(creating.join(format!("{name}.json")).exists());
-        std::fs::remove_file(creating.join(format!("{name}.json"))).unwrap();
-    }
+    assert!(!creating.join("early.json").exists());
+    assert!(creating.join("cut.json").exists());
+    std::fs::remove_file(creating.join("cut.json")).unwrap();
     assert_eq!(good.running.lock().unwrap().get("cut"), Some(&true));
     assert!(good.deleted.lock().unwrap().is_empty());
 
@@ -644,7 +647,9 @@ async fn a_space_that_fails_to_start_leaves_no_instance() {
     let deleted = rt.deleted.lock().unwrap().clone();
     assert!(!deleted.is_empty(), "{deleted:?}");
     assert!(
-        deleted.iter().all(|d| d.starts_with("space-")),
+        deleted
+            .iter()
+            .all(|d| cua_spaces_contract::names::is_pet_name(d)),
         "{deleted:?}"
     );
     assert!(rt.running.lock().unwrap().is_empty());

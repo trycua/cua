@@ -1,5 +1,247 @@
 # Changelog
 
+## [0.21.0](https://github.com/trycua/cua/compare/cua-sdk-v0.20.0...cua-sdk-v0.21.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** show each Space's progress when spaces create makes several ([#7185](https://github.com/trycua/cua/issues/7185)) ([c4403a6](https://github.com/trycua/cua/commit/c4403a69674986ac086666b3108903cd60e1ab46))
+* **spaces:** agent chip shows model and reasoning level, with an inline Reasoning row ([#6861](https://github.com/trycua/cua/issues/6861)) ([bec0f80](https://github.com/trycua/cua/commit/bec0f80852f79ff8c4f6201436a10dcc29ad58d5))
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+* **spaces:** fold the side panel's sections and dock the desktop beside the thread ([#6797](https://github.com/trycua/cua/issues/6797)) ([6ae00f1](https://github.com/trycua/cua/commit/6ae00f1cf9cac8f2ecad5d37e56c10d4d95018fb))
+
+
+### Bug Fixes
+
+* **cua-daemon:** gate client-only code so the build without the client feature is warning-free ([#7209](https://github.com/trycua/cua/issues/7209)) ([ac6e7bf](https://github.com/trycua/cua/commit/ac6e7bff58ed7884ceb59bf6dedd74681e45e340))
+* **spaces:** an offline computer reads offline within seconds, not minutes (CUA-3981) ([#7175](https://github.com/trycua/cua/issues/7175)) ([ac7d344](https://github.com/trycua/cua/commit/ac7d344d5d7e5fedb83cf8d61f50252f49f02c52))
+* **spaces:** new-user friction from the 10 Nov device test (CUA-3980) ([#7176](https://github.com/trycua/cua/issues/7176)) ([55730e3](https://github.com/trycua/cua/commit/55730e3f48d43038276e22c6a8cf1fbf1934d9a5))
+
+## [0.20.0](https://github.com/trycua/cua/compare/cua-sdk-v0.19.0...cua-sdk-v0.20.0) (2026-11-10)
+
+
+### Features
+
+* **cua-driver:** connect --replace switches an agent from another Cua Driver ([#7190](https://github.com/trycua/cua/issues/7190)) ([e15e9dd](https://github.com/trycua/cua/commit/e15e9dd47cdc970e7cbed5fec87e377c28ddae0f))
+
+
+### Bug Fixes
+
+* **cua-spaces:** hold Child Spaces on in the relay_publish opt-out test ([#7181](https://github.com/trycua/cua/issues/7181)) ([5b89d98](https://github.com/trycua/cua/commit/5b89d98fb55496c104ecac4221229bb2080ebdb9))
+
+## [0.19.0](https://github.com/trycua/cua/compare/cua-sdk-v0.18.1...cua-sdk-v0.19.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** report agent run and Space create status to the terminal (OSC 7501) ([#5155](https://github.com/trycua/cua/issues/5155)) ([f54ca3d](https://github.com/trycua/cua/commit/f54ca3de1cd7468a5ec2e74be571a80d9b2b532b))
+
+## [0.18.1](https://github.com/trycua/cua/compare/cua-sdk-v0.18.0...cua-sdk-v0.18.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-vmm:** one constant for the oldest Lume cua runs on ([#6946](https://github.com/trycua/cua/issues/6946)) ([311d525](https://github.com/trycua/cua/commit/311d525ab705dcebdc82dceefa175c32d2da1e18))
+
+## [0.18.0](https://github.com/trycua/cua/compare/cua-sdk-v0.17.1...cua-sdk-v0.18.0) (2026-11-09)
+
+
+### Features
+
+* **agents:** official sign-in on each computer, stop copying sign-ins by default (CUA-3907) ([#7045](https://github.com/trycua/cua/issues/7045)) ([5a14a01](https://github.com/trycua/cua/commit/5a14a01e43fc350dead0f5098d08958b68cff3ce))
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+
+### Bug Fixes
+
+* **auth:** redact tokens in Debug output ([#7071](https://github.com/trycua/cua/issues/7071)) ([#7097](https://github.com/trycua/cua/issues/7097)) ([646d5eb](https://github.com/trycua/cua/commit/646d5eb76db3ffaef409aef77986ac7d368be1a6))
+* **crash:** scrub tokens before sending to Sentry ([#7098](https://github.com/trycua/cua/issues/7098)) ([0d1eb93](https://github.com/trycua/cua/commit/0d1eb93c301e6ab1a9b1492ddb1db93f11f5fe7d))
+* **spaces:** dogfood fixes from 8 Nov (setup, sign-in, Cua Driver, Local Network, Home) ([#7046](https://github.com/trycua/cua/issues/7046)) ([14f9e88](https://github.com/trycua/cua/commit/14f9e8845134af1c13a71e2f57e5b18565df0320))
+
+## [0.17.1](https://github.com/trycua/cua/compare/cua-sdk-v0.17.0...cua-sdk-v0.17.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+* **cua-volume:** a saved presence heartbeat replaces the last one, and a saved change whose bytes are gone is forgotten (fixes [#6859](https://github.com/trycua/cua/issues/6859)) ([#6864](https://github.com/trycua/cua/issues/6864)) ([2349735](https://github.com/trycua/cua/commit/2349735830d4f6e8391c97557d578374e79a4ee2))
+* **spaces:** runs from a Space are confined children and a Space cannot start its own daemon ([#7055](https://github.com/trycua/cua/issues/7055)) ([8275285](https://github.com/trycua/cua/commit/82752858f6256eaf4e8eccf9033cf27ad3163cea))
+
+## [0.17.0](https://github.com/trycua/cua/compare/cua-sdk-v0.16.0...cua-sdk-v0.17.0) (2026-11-09)
+
+
+### Features
+
+* **spaces:** a Space uses the pool, its runs are its children and are cleaned up with it ([#6945](https://github.com/trycua/cua/issues/6945)) ([a35099d](https://github.com/trycua/cua/commit/a35099d7bcc5548d9d1b86b901d20e025a0594b9))
+* **spaces:** Ask first and Secure Spaces are always on, their Labs switches are gone (CUA-3551) ([#6775](https://github.com/trycua/cua/issues/6775)) ([cc67e71](https://github.com/trycua/cua/commit/cc67e715d11b7450a82663bf7e308e6680422beb))
+
+
+### Bug Fixes
+
+* **cua-agents:** an agent's log event bigger than the read window no longer stalls the reader, and the journal keeps lines small ([#7004](https://github.com/trycua/cua/issues/7004)) ([8b339c5](https://github.com/trycua/cua/commit/8b339c56feb1b03252d3e72ff7a6e3d961af856f))
+* **spaces:** hold back an agent's narration of its own process in the thread ([#7027](https://github.com/trycua/cua/issues/7027)) ([fa605be](https://github.com/trycua/cua/commit/fa605be7c8dc15c7042205ae98d5a85699c36a47))
+
+## [0.16.0](https://github.com/trycua/cua/compare/cua-sdk-v0.15.1...cua-sdk-v0.16.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** show "Local · Staging" or "Local · Prod" in the title bar (CUA-3814) ([#6962](https://github.com/trycua/cua/issues/6962)) ([17b37ef](https://github.com/trycua/cua/commit/17b37ef5775b4b06f0d1483bf0a9db6074a8d2ff))
+
+
+### Bug Fixes
+
+* **cua-agents:** say a lost provider connection in plain words, not raw http2 ([#6963](https://github.com/trycua/cua/issues/6963)) ([a2bbc28](https://github.com/trycua/cua/commit/a2bbc280957e5ca674d5ca5a0422da22be1d6cdf))
+* **spaces:** Ready lists only the picked agent's chats, and shows at once (CUA-3774) ([#6916](https://github.com/trycua/cua/issues/6916)) ([4392fe0](https://github.com/trycua/cua/commit/4392fe0502790f4fdd1d9b9e5bc42c1418281146))
+* **vmm:** the runtime doctor's report makes no Local Network connect, so macOS doesn't ask at launch ([#6969](https://github.com/trycua/cua/issues/6969)) ([e002d4f](https://github.com/trycua/cua/commit/e002d4f29f58a1457fe998874ba4ea2e8dbc3016))
+
+## [0.15.1](https://github.com/trycua/cua/compare/cua-sdk-v0.15.0...cua-sdk-v0.15.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua:** ship the static cua-spacesd in every platform wheel ([#6959](https://github.com/trycua/cua/issues/6959)) ([16ac156](https://github.com/trycua/cua/commit/16ac1561354530107bd86cc721b044587d448f6c))
+
+## [0.15.0](https://github.com/trycua/cua/compare/cua-sdk-v0.14.0...cua-sdk-v0.15.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** record the Ready screen, Copy, chat pickup and Done in the first-run funnel ([#6924](https://github.com/trycua/cua/issues/6924)) ([2a1b66e](https://github.com/trycua/cua/commit/2a1b66e731d446c05fa443916eaaaa6ba26c22aa))
+
+
+### Bug Fixes
+
+* **cua-vmm:** forward the agent port of a macOS Space behind the secure gateway ([#6793](https://github.com/trycua/cua/issues/6793)) ([55eaa9b](https://github.com/trycua/cua/commit/55eaa9b6c618bbe2f723ec392436ceb9e2b4e541))
+* **spaces:** a slow-starting desktop no longer keeps a sleeping Space awake ([#6868](https://github.com/trycua/cua/issues/6868)) ([066f837](https://github.com/trycua/cua/commit/066f837d6e9a84483d02076dcd8a3ea5f67fe29c))
+* **spaces:** start Claude agents on Sonnet 5.5 and list the Claude 5 family ([#6810](https://github.com/trycua/cua/issues/6810)) ([1511490](https://github.com/trycua/cua/commit/15114908cae2b3d70a85356651142faa1414ebf8))
+
+
+### Performance Improvements
+
+* **spaces:** connect Space desktop streams in under a second ([#6818](https://github.com/trycua/cua/issues/6818)) ([1f060b6](https://github.com/trycua/cua/commit/1f060b62491bce2fb010b64a6569bb1974decdc0))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-sdk-v0.13.0...cua-sdk-v0.14.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** setup says what Spaces is for, asks for the rest after the first job, offers only what this computer can make ([#6787](https://github.com/trycua/cua/issues/6787)) ([7ecb202](https://github.com/trycua/cua/commit/7ecb202e25329e41985b19b66025f9c02480e25d))
+
+
+### Bug Fixes
+
+* **spaces:** Home's apps row opens again after a relaunch and shows each switch live (CUA-3551) ([#6872](https://github.com/trycua/cua/issues/6872)) ([26858cd](https://github.com/trycua/cua/commit/26858cd5050728f64aaa1ef78a9bf3a248fdccc8))
+
+## [0.13.0](https://github.com/trycua/cua/compare/cua-sdk-v0.12.1...cua-sdk-v0.13.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** put quiet agent home Spaces to sleep ([#6754](https://github.com/trycua/cua/issues/6754)) ([c131a07](https://github.com/trycua/cua/commit/c131a070740605de7b0d86243ddfece22ba9f88d))
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+* **spaces:** say computers in use at once for the plan limit (CUA-3690) ([#6790](https://github.com/trycua/cua/issues/6790)) ([891ccb7](https://github.com/trycua/cua/commit/891ccb7153dde86f6219da719c583d2de0b88b14))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-sdk-v0.12.0...cua-sdk-v0.12.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-spaces:** the relay-turned-off mesh test no longer waits out the reconnect spread, and CI runs cua-spaces unit tests ([#6795](https://github.com/trycua/cua/issues/6795)) ([6c52391](https://github.com/trycua/cua/commit/6c52391390d721a22e53073176edabf010cc7db9))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-sdk-v0.11.0...cua-sdk-v0.12.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** Local dev builds keep agent keys in a private file without the Keychain; install-local.sh signs with its own Keychain ([#6587](https://github.com/trycua/cua/issues/6587)) ([ffa4c06](https://github.com/trycua/cua/commit/ffa4c068ac246b015c13b30982b1f57086443b5c))
+
+
+### Bug Fixes
+
+* **cua-vmm:** macOS Spaces run on Lume 0.7.0, the first release that takes a network gateway ([#6767](https://github.com/trycua/cua/issues/6767)) ([b7b1ae2](https://github.com/trycua/cua/commit/b7b1ae20b78ba27ecfb7cc08779db4ceffa97f92))
+* **spaces:** explain a refused new computer and offer a code from another computer ([#6710](https://github.com/trycua/cua/issues/6710)) ([327f41c](https://github.com/trycua/cua/commit/327f41c89be3e8209a4bfc3b5785cb423f97de9c))
+* **spaces:** New Space Continue did nothing for a Windows image on a Windows PC ([#6724](https://github.com/trycua/cua/issues/6724)) ([2f2af69](https://github.com/trycua/cua/commit/2f2af6925c21eb372b0a2a90a3b0f1fb09d1222c))
+* **spaces:** say This PC (not This Mac) for the current computer on Windows ([#6735](https://github.com/trycua/cua/issues/6735)) ([35407b5](https://github.com/trycua/cua/commit/35407b58467cfddd049547aae9f944d7e0956ded))
+* **spaces:** start never pulls a moved image, pending first message for a new home, pet-name default names ([#6707](https://github.com/trycua/cua/issues/6707)) ([8ef19f2](https://github.com/trycua/cua/commit/8ef19f259a99e2b3b1153bf3e53025f730409736))
+
+## [0.11.0](https://github.com/trycua/cua/compare/cua-sdk-v0.10.1...cua-sdk-v0.11.0) (2026-11-06)
+
+
+### Features
+
+* **cua-driver:** opt-in refusal of ungranted macOS Automation scripting ([#5777](https://github.com/trycua/cua/issues/5777)) ([8d9ec70](https://github.com/trycua/cua/commit/8d9ec709d2e2a73f6ebdaf5b5d838d2b5baf0014))
+* **images:** the slim Linux image carries the cua CLI and a spawn-capable cua-spacesd; drop agent-home ([#6515](https://github.com/trycua/cua/issues/6515)) ([a1d98e8](https://github.com/trycua/cua/commit/a1d98e8ba0510b6decc63b0840f51345adae00c1))
+* **relay,spacesd:** a removed computer deletes its Spaces when it next comes online (CUA-3479) ([#6532](https://github.com/trycua/cua/issues/6532)) ([e7e78c8](https://github.com/trycua/cua/commit/e7e78c8217b126e4bd02ff67ef7d733d11ec243f))
+* **spaces-macos:** Cua Driver built into Cua Spaces (CUA-2771, CUA-2775) ([#6505](https://github.com/trycua/cua/issues/6505)) ([b5125d2](https://github.com/trycua/cua/commit/b5125d2eaf2463b7bbac219b19fd281420213e1a))
+* **spaces:** ask first, CI runners, TCP shares, secure networks and the phone app, behind experiments ([#6355](https://github.com/trycua/cua/issues/6355)) ([8cfff8e](https://github.com/trycua/cua/commit/8cfff8ef0e4a904c1534eac44cea3d65e741e6fd))
+* **spaces:** every running Space of a signed-in computer shows on your account and phone ([#6487](https://github.com/trycua/cua/issues/6487)) ([1ca3a30](https://github.com/trycua/cua/commit/1ca3a30cfebfc6fde6910bb2412f19e2ab44454c))
+* **spaces:** Network picker with an "Also allow" list (localhost and local network are siblings) ([#6610](https://github.com/trycua/cua/issues/6610)) ([dff4d01](https://github.com/trycua/cua/commit/dff4d01d8e4fce3fa65c1c20264ea8b06605a599))
+* **spaces:** pick up where you left off in the first run (CUA-3319) ([#6463](https://github.com/trycua/cua/issues/6463)) ([a79ecf8](https://github.com/trycua/cua/commit/a79ecf8dddf225d11367360cc2dfcf6a9c135340))
+* **spaces:** Secure Spaces, child Spaces, conformance, space jobs and the macOS developer-tools image, behind experiments ([#6306](https://github.com/trycua/cua/issues/6306)) ([4715a72](https://github.com/trycua/cua/commit/4715a723a450610cdf77f688776c1fdd40660149))
+* **spaces:** Spaces as a tree and a default Space, behind Labs, with the SDK bindings and CLI (CUA-3413) ([#6508](https://github.com/trycua/cua/issues/6508)) ([b6090f6](https://github.com/trycua/cua/commit/b6090f6fb2f55ba8e75a458b7dbb4fc815ef161d))
+* **spaces:** Stable / Nightly update channel; betas move to Nightly (CUA-3503) ([#6548](https://github.com/trycua/cua/issues/6548)) ([53dd9d8](https://github.com/trycua/cua/commit/53dd9d868fc1c6b513257ba84f00161ddf999cc1))
+* **spaces:** the new prompt box with a model and an optional repo ([#6490](https://github.com/trycua/cua/issues/6490)) ([2ea6cf3](https://github.com/trycua/cua/commit/2ea6cf34dde37afd37913566ce47ea92413c1cb3))
+* **spaces:** the new setup prepares the first Space while you set up, behind Labs (CUA-2851) ([#6360](https://github.com/trycua/cua/issues/6360)) ([2829e00](https://github.com/trycua/cua/commit/2829e00b180dfb08ca5ff4cbd7c95e0a14ad3409))
+* **spaces:** the warming home stays out of the top bar and off the phone until a person writes into it ([#6513](https://github.com/trycua/cua/issues/6513)) ([a7f27cc](https://github.com/trycua/cua/commit/a7f27ccecbf8c6fcb0fdb4093dcb45b3eb42940d))
+* **spaces:** warm pools, a prepared Linux Space and agent harnesses ready in about one second (behind the warm-pools experiment) ([#6472](https://github.com/trycua/cua/issues/6472)) ([d592250](https://github.com/trycua/cua/commit/d592250ea79f607f948b13de8fa557f8299d673b))
+* **spaces:** Windows Spaces on nested AWS KVM hosts (windows-kvm experiment, off by default) ([#6358](https://github.com/trycua/cua/issues/6358)) ([6bdfdc5](https://github.com/trycua/cua/commit/6bdfdc53972063fa1def9cc8886d627404c53ffe))
+* **telemetry:** report which step a Space start failed at (CUA-3139) ([#6377](https://github.com/trycua/cua/issues/6377)) ([4d985c1](https://github.com/trycua/cua/commit/4d985c120924e3210b9fdcd60907377a74eae579))
+
+
+### Bug Fixes
+
+* **ci:** cua-auth tests never ran on GitHub; fix the broken flows tests (CUA-3363) ([#6478](https://github.com/trycua/cua/issues/6478)) ([1d18983](https://github.com/trycua/cua/commit/1d18983a470ca5e31f9b2de2b2faaf015e83deee))
+* **cua-cli:** bound process start and Space lookup so a silent relay stream fails instead of hanging ([#6601](https://github.com/trycua/cua/issues/6601)) ([c6129be](https://github.com/trycua/cua/commit/c6129be4b8ed61e42eaf355bc07d81dc6e736984))
+* **cua-cli:** run the spacesd mock test on an 8 MiB stack ([#6640](https://github.com/trycua/cua/issues/6640)) ([aec5fa1](https://github.com/trycua/cua/commit/aec5fa1d82f9044d8399ed751b0250c577b98501))
+* **cua-compat:** build Basic auth test headers at runtime ([#6639](https://github.com/trycua/cua/issues/6639)) ([3d9c982](https://github.com/trycua/cua/commit/3d9c9828ee4459d5264dc19487ed7091e0b0a2b3))
+* **cua-compat:** keep sweeping a Space a dead gateway's create makes late ([#6544](https://github.com/trycua/cua/issues/6544)) ([24bf099](https://github.com/trycua/cua/commit/24bf09959b36b289886d2a9570e9129d71b5fadd))
+* **cua-compat:** name root to a guest agent that switches users itself ([#6459](https://github.com/trycua/cua/issues/6459)) ([c2b7a90](https://github.com/trycua/cua/commit/c2b7a906cac682aaa67a0ed0334f2c670641db45))
+* **cua-compat:** name the user on file calls to an agent that switches users ([#6523](https://github.com/trycua/cua/issues/6523)) ([1e1b948](https://github.com/trycua/cua/commit/1e1b9489f736d00a7f841db0ea4127dd75dc682c))
+* **cua-compat:** wait for cua-spacesd when a gateway creates a Space ([#6480](https://github.com/trycua/cua/issues/6480)) ([915281d](https://github.com/trycua/cua/commit/915281d210651bbce7a20726e8fad7ee1189da76))
+* **cua-daemon:** give the density burst tests a vCPU limit that fits the burst ([#6474](https://github.com/trycua/cua/issues/6474)) ([9b83a6c](https://github.com/trycua/cua/commit/9b83a6c3972fadd3f21856f27fa8901dca078f02))
+* **cua-daemon:** list Spaces added by address in the sandbox list ([#6414](https://github.com/trycua/cua/issues/6414)) ([7cf6874](https://github.com/trycua/cua/commit/7cf68742443419c2c7892c098473182338fc5122))
+* **cua-daemon:** name the holder's pid when a second daemon is refused on Windows ([#6402](https://github.com/trycua/cua/issues/6402)) ([c4b67c4](https://github.com/trycua/cua/commit/c4b67c4a5fec7cf65e6056c6ea70f229fd469a86))
+* **cua-daemon:** wait for the lock after release in the instance-lock test ([#6492](https://github.com/trycua/cua/issues/6492)) ([1618ca1](https://github.com/trycua/cua/commit/1618ca188893df1d9c77453e9186002205b9560f))
+* **cua-driver:** admit any native Wayland app to Hyprland background input ([#6706](https://github.com/trycua/cua/issues/6706)) ([895aec7](https://github.com/trycua/cua/commit/895aec7e51b0409b2b22c958920d52c22b0d2b03))
+* **cua-driver:** move the skill version under metadata.version ([#6647](https://github.com/trycua/cua/issues/6647)) ([0402233](https://github.com/trycua/cua/commit/0402233c44647f16e5af1bef23af5bc89e64d2ab))
+* **cua-driver:** stop the Node runtime leaking a libuv handle per future poll ([#5691](https://github.com/trycua/cua/issues/5691)) ([f49571c](https://github.com/trycua/cua/commit/f49571cf3f96d4b8ced7807ca634bd4f978eda8e))
+* **cua-host:** keep staging and production host services apart; Windows host online right after setup ([#6557](https://github.com/trycua/cua/issues/6557)) ([126b01e](https://github.com/trycua/cua/commit/126b01ec330951195b7275cd2b5936d4a707e2fb))
+* **cua-mesh:** a client that hangs up mid-dial, a connection burst and a forward's UDP flows no longer hold descriptors (CUA-2159) ([#6475](https://github.com/trycua/cua/issues/6475)) ([2cac516](https://github.com/trycua/cua/commit/2cac516f93eb5eeb9a5734f87bc8b978782a7e33))
+* **cua-mesh:** a failed dial no longer answers for a peer that came online since ([#6479](https://github.com/trycua/cua/issues/6479)) ([ebf96e5](https://github.com/trycua/cua/commit/ebf96e5ff17a12d92f67f7d32a740662a1bc435c))
+* **cua-mesh:** a mesh forward keeps its UDP port when Windows excludes a UDP range ([#6418](https://github.com/trycua/cua/issues/6418)) ([d685580](https://github.com/trycua/cua/commit/d6855806e6eebfa9813b91986f59931e7f103a51))
+* **cua-mesh:** the NAT rebinding test accepts either of the client's new ports (CUA-3277) ([#6509](https://github.com/trycua/cua/issues/6509)) ([f02a9a0](https://github.com/trycua/cua/commit/f02a9a061c99dbc8aa5afeeb6630d5677d6902b3))
+* **cua-spacesd-client:** mock runs commands and files as the user they name ([#6527](https://github.com/trycua/cua/issues/6527)) ([f294774](https://github.com/trycua/cua/commit/f2947748770bc9e3215b8417965d6193dddfbfe1))
+* **cua-spaces:** publish running Spaces on the relay after a late cua-spacesd ([#6581](https://github.com/trycua/cua/issues/6581)) ([2ee2221](https://github.com/trycua/cua/commit/2ee22216370dafd161436e18364dd4c5cf26b2d7))
+* **cua-spaces:** retire interrupted-create journals whose sandbox is gone ([#6650](https://github.com/trycua/cua/issues/6650)) ([1bb7e7f](https://github.com/trycua/cua/commit/1bb7e7f2b54e839784a090f374e37f7a933d0c0f))
+* **cua-spaces:** save relay-reported.json off the connect path ([#6456](https://github.com/trycua/cua/issues/6456)) ([2acdbd9](https://github.com/trycua/cua/commit/2acdbd9f690c35f7848f8232d7982a82f71ff603))
+* **cua-volume:** a store being created by a clone is no longer taken for removed ([#6496](https://github.com/trycua/cua/issues/6496)) ([cbc348f](https://github.com/trycua/cua/commit/cbc348fba9a70addd1634b2ff56beb034d6106a8))
+* **cua-volume:** sync an installed version through a writable handle on Windows ([#6455](https://github.com/trycua/cua/issues/6455)) ([38d3929](https://github.com/trycua/cua/commit/38d39292a4534d930ecb683b8aa4f4f699ee8576))
+* **cua:** split the rest of create runtime errors and explain the macOS VM limit (CUA-1356) ([#5243](https://github.com/trycua/cua/issues/5243)) ([3a4ec34](https://github.com/trycua/cua/commit/3a4ec34a77ee607be3d6460b7ea0d44bccaf08d6))
+* **spaces:** a computer keeps one identity when re-enabled, renamed or removed (CUA-3316, CUA-3315) ([#6486](https://github.com/trycua/cua/issues/6486)) ([2163887](https://github.com/trycua/cua/commit/21638877b566df572f7d1f728086f0c09762b46f))
+* **spaces:** a new message and an agent's tool calls no longer wait on a slow Space ([#6619](https://github.com/trycua/cua/issues/6619)) ([b2e8df8](https://github.com/trycua/cua/commit/b2e8df864277ec93098acf429eafbab3560a2794))
+* **spaces:** a sign-in during the first run never fails silently (CUA-3144) ([#6408](https://github.com/trycua/cua/issues/6408)) ([7885b58](https://github.com/trycua/cua/commit/7885b58da7df43951382b6365e6533f7639ce341))
+* **spaces:** Cua Driver runs after the new first run, whatever the Mac shares (CUA-3485) ([#6534](https://github.com/trycua/cua/issues/6534)) ([97eabde](https://github.com/trycua/cua/commit/97eabde88dd1fdf4548dbe2d12af8396211ff4ff))
+* **spacesd:** volume attach no longer deadlocks a 1 vCPU Space ([#6565](https://github.com/trycua/cua/issues/6565)) ([8a708ab](https://github.com/trycua/cua/commit/8a708abf6a60b76894df8d95ff94450436a3032f))
+* **spaces:** open picked-up agent chats from the end of their file, never read them whole (CUA-3548) ([#6577](https://github.com/trycua/cua/issues/6577)) ([d152839](https://github.com/trycua/cua/commit/d152839d00991547e59fa8b63cd77f3a6858cf7a))
+* **spaces:** reach macOS VMs over vsock, not Local Network or VPN routes (CUA-3139) ([#6380](https://github.com/trycua/cua/issues/6380)) ([37af9df](https://github.com/trycua/cua/commit/37af9dffdd0a79d9bcbcee0667832272b556435a))
+* **spaces:** say why a running Space is not on your account ([#6536](https://github.com/trycua/cua/issues/6536)) ([84a1353](https://github.com/trycua/cua/commit/84a1353ca5ee43c5c3f1ab8ef9b9b827453d5480))
+* **spaces:** say why a warm-pool refill waits, and end the agents of a deleted Space ([#6632](https://github.com/trycua/cua/issues/6632)) ([1c4cfba](https://github.com/trycua/cua/commit/1c4cfba90f013998e983a64dbaeaa5244c707977))
+* **spaces:** signing in to Claude Code, Codex and Hermes from the chat says what happened ([#6576](https://github.com/trycua/cua/issues/6576)) ([0c5e26f](https://github.com/trycua/cua/commit/0c5e26f86e16809afee3c5d5c9ddd0e8925f0585))
+* **spaces:** three first-run fixes for the new setup (CUA-3193) ([#6409](https://github.com/trycua/cua/issues/6409)) ([a6005a4](https://github.com/trycua/cua/commit/a6005a4a490e4cfbc5596c419ce4d0209a1be4d7))
+* **windows:** no firewall prompt for cua and cua-spacesd, and a real publisher name ([#6558](https://github.com/trycua/cua/issues/6558)) ([0d196ad](https://github.com/trycua/cua/commit/0d196ad7669848951b7f5fa336af01e3f571d1f8))
+
+
+### Performance Improvements
+
+* **pool:** a home claims the warm Space that serves it ([#6566](https://github.com/trycua/cua/issues/6566)) ([4316dc7](https://github.com/trycua/cua/commit/4316dc7cb193d1cc4009e3c9457f85a95938b176))
+* **pool:** a warm member is prepared for every harness the app offers ([#6611](https://github.com/trycua/cua/issues/6611)) ([6dd499f](https://github.com/trycua/cua/commit/6dd499f5561df29c901e4255bff1377be8c171f4))
+* **spaces:** a new home is warm as soon as the person's agents are prepared ([#6645](https://github.com/trycua/cua/issues/6645)) ([397c66c](https://github.com/trycua/cua/commit/397c66c05e97bb8d4b85918d66e600b11079e313))
+
 ## [0.10.1](https://github.com/trycua/cua/compare/cua-sdk-v0.10.0...cua-sdk-v0.10.1) (2026-11-02)
 
 

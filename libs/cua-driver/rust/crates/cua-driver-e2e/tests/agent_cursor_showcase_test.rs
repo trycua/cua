@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform semantic cursor showcase for release evidence.
 
 use std::time::Duration;
@@ -904,8 +907,7 @@ fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {
 fn niri_session() -> bool {
     #[cfg(target_os = "linux")]
     {
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::niri::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::niri::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {

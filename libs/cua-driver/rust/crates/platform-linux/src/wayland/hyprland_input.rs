@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Local Hyprland input after the common Driver registry admits the action.
 //! Production v3 uses per-action target binding, not a second approval system.
 //! Protocol 0 remains an explicitly selected, nonshipping test experiment.
@@ -55,10 +58,12 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
 pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
-    ensure!(
-        text.len() <= 4096 && text.is_ascii(),
-        "Hyprland text requires at most 4096 ASCII bytes"
-    );
+    let text = super::text_keys::typable_text(text)?;
+    if text.len() > 4096 || !text.is_ascii() {
+        return Err(super::text_keys::refused(
+            "Hyprland text takes at most 4096 ASCII bytes",
+        ));
+    }
     text.bytes()
         .map(|byte| {
             let (keycode, shift) = match byte {
@@ -102,7 +107,12 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported Hyprland text control character"),
+                other => {
+                    return Err(super::text_keys::refused(format!(
+                        "Hyprland text has no key for {:?}",
+                        char::from(other)
+                    )))
+                }
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -231,7 +241,7 @@ pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -
 }
 
 pub fn enabled() -> bool {
-    super::wayland_input_enabled()
+    super::is_wayland()
         && super::hyprland::is_session()
         && (protocol() == InputProtocol::Experiment
             || (0..MAX_LANES).any(|lane| {
@@ -246,14 +256,14 @@ pub fn enabled() -> bool {
             }))
 }
 
-/// Whether background (isolated seat) input is admitted for `pid`'s windows,
-/// the check a background action makes before dispatch. `Err` carries the
-/// refusal reason (`client_not_qualified`, ...). Only meaningful while
-/// [`enabled`]: without the isolated seats the tools route background input
-/// elsewhere.
-pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+/// Whether background (isolated seat) input can reach window `address` of
+/// `pid`, the check a background session makes when it opens. `Err` carries
+/// the refusal reason (`client_xwayland`, ...). Per-action checks, such as a
+/// toolkit that drops background keys, still apply to each action. Only
+/// meaningful while [`enabled`].
+pub fn background_admission(pid: u32, address: u64) -> std::result::Result<(), &'static str> {
     if protocol() == InputProtocol::Production {
-        super::hyprland_compatibility::qualify(pid)
+        super::hyprland_compatibility::admit(pid, address, false)
     } else {
         Ok(())
     }
@@ -1200,7 +1210,10 @@ fn execute_actions_routed(
         "foreground input requires production protocol; no downgrade is permitted"
     );
     if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
-        if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
+        let keyboard = actions
+            .iter()
+            .any(|action| matches!(action, Action::Key { .. } | Action::TextKey { .. }));
+        if let Err(reason) = super::hyprland_compatibility::admit(pid, address, keyboard) {
             return Ok(json!({"ok":false,"code":reason,"detail":reason}));
         }
     }
@@ -2097,10 +2110,24 @@ mod tests {
 
     #[test]
     fn hyprland_text_is_bounded_and_fully_prevalidated() {
-        for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(text_actions(text).is_err());
+        let too_much = "foreground_unavailable: Hyprland text takes at most 4096 ASCII bytes; \
+             nothing was typed";
+        for (text, refusal) in [
+            ("valid prefix\u{00e9}".to_owned(), too_much),
+            ("a".repeat(4097), too_much),
+            (
+                "valid prefix\0".to_owned(),
+                "foreground_unavailable: control character U+0000 cannot be typed; nothing was typed",
+            ),
+            (
+                "\u{007f}".to_owned(),
+                "foreground_unavailable: control character U+007F cannot be typed; nothing was typed",
+            ),
+        ] {
+            let error = text_actions(&text).err().map(|error| error.to_string());
+            assert_eq!(error.as_deref(), Some(refusal));
         }
-        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions("a\r\nb").unwrap().len(), 3);
         assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
         let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions

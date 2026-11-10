@@ -11,11 +11,10 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { addAskTask, askTask, askTasks, resetAskTasks, setThisMacConfirmed, thisMacConfirmed } from "@/lib/ask-first";
 
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, newLinuxRow, stubBrowserApis } from "./app-harness";
 
 const CORE_NOT_FOUND = 'Space "this-mac" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found';
 /** The demo host shares this Mac on the relay as machine `this-mac`. */
@@ -30,7 +29,6 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 
 async function pickThisMac() {
@@ -42,27 +40,26 @@ async function pickThisMac() {
 }
 
 async function startJob(text: string) {
-  fireEvent.change(screen.getByLabelText("What do you want to do?"), { target: { value: text } });
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: text } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
   });
 }
 
 describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm core)", () => {
-  it("defaults to a new Linux computer, and This Mac asks once, then starts on this Mac's Space id", async () => {
+  it("defaults to This Mac once it's in the account, asks once on the first Start, then starts on this Mac's Space id", async () => {
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
-    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
-    await pickThisMac();
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
+    await startJob("Tidy my Downloads folder");
     await screen.findByText("Work on this Mac?");
-    expect(screen.getByText(/Claude Code will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
+    expect(askTasks()).toHaveLength(0);
+    expect(screen.getByText(/Codex will use your own files and apps, without asking before each step\./)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Use this Mac" }));
     });
     expect(thisMacConfirmed()).toBe(true);
-    await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
-    await startJob("Tidy my Downloads folder");
-    const id = askTasks()[0]!.id;
+    const id = await waitFor(() => askTasks()[0]!.id);
     // The job goes to this Mac's own Space, as the first message of its thread.
     await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true, error: null }), { timeout: 5000 });
   });
@@ -70,7 +67,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
   it("opens the task's own page, never the unlisted relay Space (trycua/cua#6363)", async () => {
     setThisMacConfirmed(true);
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await pickThisMac();
     await startJob("hi");
     const id = askTasks()[0]!.id;
@@ -79,22 +76,23 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     expect(screen.getAllByText("This Mac").length).toBeGreaterThan(0);
   });
 
-  it("Pick another keeps the default and reopens the picker", async () => {
+  it("Pick another starts nothing and reopens the picker", async () => {
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
-    await pickThisMac();
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
+    await startJob("Tidy my Downloads folder");
     await act(async () => {
       fireEvent.click(await screen.findByRole("button", { name: "Pick another" }));
     });
-    await screen.findByRole("menuitem", { name: /A new Linux computer on this Mac/ });
+    await newLinuxRow();
     expect(thisMacConfirmed()).toBe(false);
-    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
+    expect(askTasks()).toHaveLength(0);
   });
 
   it("doesn't ask again once answered on this device", async () => {
     setThisMacConfirmed(true);
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await pickThisMac();
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     expect(screen.queryByText("Work on this Mac?")).toBeNull();
@@ -124,12 +122,18 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
   });
 
   it("Change computer moves a failed task to a new Linux computer", async () => {
-    const task = addAskTask({ prompt: "Run the tests", agent: "claude-code", os: "linux", spaceId: "local:gone", error: 'Space "local:gone" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found' });
+    const task = addAskTask({
+      prompt: "Run the tests",
+      agent: "claude-code",
+      os: "linux",
+      spaceId: "local:gone",
+      error: 'Space "local:gone" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found',
+    });
     await mountApp(`/home/${task.id}`, HOST);
     await screen.findByText("Couldn't find that computer");
     expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Change computer/ }));
-    const linux = await screen.findByRole("menuitem", { name: /A new Linux computer on this Mac/ });
+    const linux = await newLinuxRow();
     await act(async () => {
       fireEvent.click(linux);
     });
@@ -138,7 +142,13 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
   });
 
   it("offers Try again for an error that may pass", async () => {
-    const task = addAskTask({ prompt: "Run the tests", agent: "claude-code", os: "linux", spaceId: "local:agent-sandbox", error: "agent-sandbox is not running" });
+    const task = addAskTask({
+      prompt: "Run the tests",
+      agent: "claude-code",
+      os: "linux",
+      spaceId: "local:agent-sandbox",
+      error: "agent-sandbox is not running",
+    });
     await mountApp(`/home/${task.id}`, HOST);
     await screen.findByText("Couldn't reach that computer");
     expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy();

@@ -22,7 +22,12 @@ function packageArchs(platform, all, setting, exists = (dir) => fs.existsSync(pa
   const wanted =
     value === "native"
       ? all.filter((arch) => (arch === "universal" ? has("arm64") && has("x64") : has(arch)))
-      : all.filter((arch) => value.split(",").map((a) => a.trim()).includes(arch));
+      : all.filter((arch) =>
+          value
+            .split(",")
+            .map((a) => a.trim())
+            .includes(arch),
+        );
   return wanted.length ? wanted : all;
 }
 

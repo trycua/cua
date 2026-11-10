@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 pub type SpaceArg = String;
 
 /// `add_space`: register a Space by URL after a capabilities handshake.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AddSpace {
     /// The Space's cua-spacesd: `http(s)://host:port` (port defaults to
     /// 3211), `host:port`, or a Space id (`cloud:<name>`, `local:<name>`).
@@ -47,6 +47,17 @@ pub struct AddSpace {
     /// Default `mcp`.
     #[serde(default)]
     pub service: Option<String>,
+}
+
+impl std::fmt::Debug for AddSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddSpace")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("name", &self.name)
+            .field("service", &self.service)
+            .finish()
+    }
 }
 
 /// What a Space runs besides its image (`create_space`).
@@ -173,7 +184,7 @@ pub struct CreateSpace {
     /// else fails with `invalid_placement`, listing the valid values.
     #[serde(default)]
     pub runtime: Option<String>,
-    /// Name. Default: a generated `space-<hex>`.
+    /// Name. Default: a generated friendly name such as `brave-otter`.
     #[serde(default)]
     pub name: Option<String>,
     /// Return a reachable registered Space in the same location that has
@@ -267,6 +278,19 @@ pub struct NetworkSet {
 pub struct SpaceOnly {
     /// Space id or name.
     pub space: SpaceArg,
+}
+
+/// `relay_unregister_space`: take a Space or a computer off the relay.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct RelayUnregisterSpace {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// For one of your computers: also delete the Spaces it provides, their
+    /// files first (through the computer while it answers), then their
+    /// records. Default false: they stay on your account, detached, and come
+    /// back when the computer registers again.
+    #[serde(default)]
+    pub delete_spaces: Option<bool>,
 }
 
 /// `stop_space`: turn a Space off.
@@ -517,11 +541,19 @@ pub struct ListSpaceWindows {
     pub app_name: Option<String>,
 }
 
-/// `stream_space_window`: draw one Space window on the operator's desktop.
+/// `stream_space_window`: show one Space window in another Space's Stream
+/// section, or on the operator's desktop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct StreamSpaceWindow {
-    /// Space id or name.
+    /// The Space the window lives in (id or name): the child Space you made
+    /// and opened the app in.
     pub space: SpaceArg,
+    /// The Space whose Stream section shows the window (id or name): your
+    /// own Space, where the person watches. Default: the Space that created
+    /// `space` (its parent); a Space with no parent shows the window on the
+    /// operator's desktop. `desktop` forces the desktop.
+    #[serde(default)]
+    pub into: Option<String>,
     /// Auto-pick this app's largest visible window, e.g. "Firefox".
     #[serde(default)]
     pub app_name: Option<String>,
@@ -639,6 +671,10 @@ pub struct AgentStart {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Reasoning level: `low`, `medium`, `high`, `xhigh` or `max`. Taken by Claude Code and Codex;
+    /// other agents ignore it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// A custom model endpoint base URL (a proxy or compatible server).
     #[serde(default)]
     pub base_url: Option<String>,
@@ -678,6 +714,17 @@ pub struct AgentStart {
     /// a one-off run whose state lives only in the Space.
     #[serde(default)]
     pub home: Option<String>,
+    /// Continue this session of the harness's own (an id from
+    /// `agent_threads`) instead of starting a new one: the harness reloads
+    /// it from its own store on this computer. Give `cwd` as the chat's
+    /// folder. Not with `home`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_session: Option<String>,
+    /// With `resume_session`: the earlier conversation as text, given to
+    /// the agent before the prompt only when the harness cannot reload the
+    /// session (up to 32 KiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_context: Option<String>,
 }
 
 /// `agent_message`: a follow-up in the same session.
@@ -771,9 +818,52 @@ pub struct AgentStop {
     pub name: Option<String>,
 }
 
+/// `agent_sign_in`: an agent's own sign-in on the Space's computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSignIn {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Harness id: `claude-code` or `openai-codex`.
+    pub agent: String,
+    /// `status` (default), `start`, `code` (hand over the pasted `code`) or `cancel`.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// For `code`: the code the sign-in page showed (Claude Code).
+    #[serde(default)]
+    pub code: Option<String>,
+    /// The agent's last run there was refused its sign-in: a sign-in that is
+    /// there has run out (`expired`).
+    #[serde(default)]
+    pub after_refusal: bool,
+}
+
 /// `agent_capabilities`: takes no arguments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCapabilities {}
+
+/// `agent_threads`: the coding agents' own recent chats on this computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentThreads {
+    /// Harness ids to look at: `claude-code`, `openai-codex`, `hermes`.
+    /// Default: all three.
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// How many chats, newest first (1-50). Default 4.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// `agent_thread_read`: one of those chats, what was said in it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentThreadRead {
+    /// Its harness id (`claude-code`, `openai-codex`, `hermes`).
+    pub agent: String,
+    /// Its id, from `agent_threads`.
+    pub id: String,
+    /// The newest messages to return (1-5000). Default 200.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
 
 /// `agent_add` (formerly `persistent_agent_create`): a named agent whose memory outlives its runs.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -790,6 +880,9 @@ pub struct PersistentAgentCreate {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Reasoning level (see `agent_start`'s `effort`).
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Standing instructions: the first message each run takes carries them
     /// in front of its text (the thread shows only the message).
     #[serde(default)]
@@ -1651,7 +1744,7 @@ pub struct DriveAudit {
 }
 
 /// `volume_storage_set`: test or change where the drive keeps its bytes.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DriveStorageSet {
     /// `fs` (this computer) or `s3` (an S3-compatible bucket: AWS S3, R2,
     /// MinIO). `cloud` is refused.
@@ -1669,6 +1762,21 @@ pub struct DriveStorageSet {
     /// Only test the connection; change nothing. Default false.
     #[serde(default)]
     pub dry_run: Option<bool>,
+}
+
+impl std::fmt::Debug for DriveStorageSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveStorageSet")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
 }
 
 /// Where an S3-compatible bucket is.

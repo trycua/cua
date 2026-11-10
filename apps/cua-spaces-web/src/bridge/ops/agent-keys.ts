@@ -20,6 +20,7 @@
  * | `agentKeys.set {provider, env?, value}` | `agent_keys.set` | `agentKeys.set` |
  * | `agentKeys.remove {env, slot?, keepOthers?}` | `agent_keys.remove` | `agentKeys.remove` |
  * | `agentKeys.use {app, env?, slot?}` | `agent_keys.use` | `agentKeys.use` |
+ * | `agentKeys.rename {env, slot?, label}` | `agent_keys.rename` | `agentKeys.rename` |
  *
  * The Electron shell answers the SwiftUI host's methods.
  */
@@ -83,6 +84,13 @@ export interface AgentKeysReport {
   available: boolean;
   /** Why not, when they can't. */
   unavailable: string | null;
+  /** Keys are kept in an unencrypted file (a Local development build without the Keychain). */
+  insecure?: string | null;
+  /**
+   * "Copy my sign-in to my other computers" is on: a saved Claude Code or ChatGPT sign-in reaches runs on
+   * other computers. Off by default (CUA-3907): each computer signs the agent in itself. Absent: an older host.
+   */
+  copySignIn?: boolean;
 }
 
 declare module "../protocol" {
@@ -100,7 +108,10 @@ declare module "../protocol" {
      * Adds or replaces a key; `env` names an `other` key. With `add` it is saved as another key
      * beside the first one for the provider (named `label`); it replaces nothing. Answers the list after.
      */
-    "agentKeys.set": { args: { provider: AgentKeyProvider; env?: string | null; value: string; add?: boolean; label?: string } & KeyChoices; result: AgentKeysReport };
+    "agentKeys.set": {
+      args: { provider: AgentKeyProvider; env?: string | null; value: string; add?: boolean; label?: string } & KeyChoices;
+      result: AgentKeysReport;
+    };
     /**
      * Removes the key named `env` and every key saved beside it, or with `slot` only that one, or with
      * `keepOthers` only the first (the oldest of the others takes its place). Answers the list after.
@@ -112,14 +123,28 @@ declare module "../protocol" {
      * nothing. Answers the list after.
      */
     "agentKeys.use": { args: { app: string; env?: string; slot?: string }; result: AgentKeysReport };
+    /** Gives a saved key or sign-in a name (`slot` absent: the first saved for `env`). Answers the list after. */
+    "agentKeys.rename": { args: { env: string; slot?: string; label: string }; result: AgentKeysReport };
     /** Which provider keys your login shell has set (names only; never a value). */
     "agentKeys.shell": { args: Record<string, never>; result: { names: string[] } };
     /** Saves the key `env` from your login shell (the value goes straight to the store). Answers the list after. */
     "agentKeys.fromShell": { args: { env: string } & KeyChoices; result: AgentKeysReport };
+    /** Turns "Copy my sign-in to my other computers" on or off (off by default). Answers the list after. */
+    "agentKeys.copySignIn": { args: { on: boolean }; result: AgentKeysReport };
   }
 }
 
-export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell"] as const;
+export const AGENT_KEYS_OPERATIONS = [
+  "agentKeys.list",
+  "agentKeys.check",
+  "agentKeys.set",
+  "agentKeys.remove",
+  "agentKeys.use",
+  "agentKeys.rename",
+  "agentKeys.shell",
+  "agentKeys.fromShell",
+  "agentKeys.copySignIn",
+] as const;
 export type AgentKeysOp = (typeof AGENT_KEYS_OPERATIONS)[number];
 
 /** The SwiftUI host routes each under its own name. */
@@ -132,8 +157,10 @@ export const AGENT_KEYS_METHODS = {
   "agentKeys.set": "agent_keys.set",
   "agentKeys.remove": "agent_keys.remove",
   "agentKeys.use": "agent_keys.use",
+  "agentKeys.rename": "agent_keys.rename",
   "agentKeys.shell": "agent_keys.shell",
   "agentKeys.fromShell": "agent_keys.from_shell",
+  "agentKeys.copySignIn": "agent_keys.copy_sign_in",
 } as const satisfies { [K in AgentKeysOp]: string };
 
 export const AGENT_KEYS_COVERAGE = {
@@ -142,8 +169,10 @@ export const AGENT_KEYS_COVERAGE = {
   "agentKeys.set": { webkit: { methods: ["agentKeys.set"] }, tauri: ["agents_tool"] },
   "agentKeys.remove": { webkit: { methods: ["agentKeys.remove"] }, tauri: ["agents_tool"] },
   "agentKeys.use": { webkit: { methods: ["agentKeys.use"] }, tauri: ["agents_tool"] },
+  "agentKeys.rename": { webkit: { methods: ["agentKeys.rename"] }, tauri: ["agents_tool"] },
   "agentKeys.shell": { webkit: { methods: ["agentKeys.shell"] }, tauri: ["agents_tool"] },
   "agentKeys.fromShell": { webkit: { methods: ["agentKeys.fromShell"] }, tauri: ["agents_tool"] },
+  "agentKeys.copySignIn": { webkit: { methods: ["agentKeys.copySignIn"] }, tauri: ["agents_tool"] },
 } as const satisfies Record<AgentKeysOp, OpCoverage>;
 
 /** Arguments that take each operation down its usual path (the coverage test). */
@@ -153,8 +182,10 @@ export const AGENT_KEYS_ARGS: { [K in AgentKeysOp]: OpArgs<K> } = {
   "agentKeys.set": { provider: "anthropic", value: "sk-ant-test-0000" },
   "agentKeys.remove": { env: "ANTHROPIC_API_KEY" },
   "agentKeys.use": { app: "hermes", env: "OPENAI_API_KEY" },
+  "agentKeys.rename": { env: "OPENAI_API_KEY", label: "Work key" },
   "agentKeys.shell": {},
   "agentKeys.fromShell": { env: "ANTHROPIC_API_KEY" },
+  "agentKeys.copySignIn": { on: false },
 };
 
 /* ---- The daemon's answer ---------------------------------------------------------- */
@@ -186,7 +217,19 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     if (!env) return [];
     const added = r.added_ms ?? r.addedMs;
     const slot = typeof r.slot === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(r.slot) ? r.slot : "";
-    return [{ provider: providerOf(r.provider), env, ...(slot ? { slot } : {}), last4: str(r.last4).slice(-4), addedMs: typeof added === "number" ? added : 0, ...(r.expired === true ? { expired: true } : {}), ...(label(r.label) ? { label: label(r.label) } : {}), ...(line(r.region) ? { region: line(r.region) } : {}), ...(Object.keys(fieldsOf(r.fields)).length ? { fields: fieldsOf(r.fields) } : {}) }];
+    return [
+      {
+        provider: providerOf(r.provider),
+        env,
+        ...(slot ? { slot } : {}),
+        last4: str(r.last4).slice(-4),
+        addedMs: typeof added === "number" ? added : 0,
+        ...(r.expired === true ? { expired: true } : {}),
+        ...(label(r.label) ? { label: label(r.label) } : {}),
+        ...(line(r.region) ? { region: line(r.region) } : {}),
+        ...(Object.keys(fieldsOf(r.fields)).length ? { fields: fieldsOf(r.fields) } : {}),
+      },
+    ];
   });
   const providers = (Array.isArray(o.providers) ? o.providers : []).flatMap((p): AgentKeyProviderRow[] => {
     const r = (p ?? {}) as Record<string, unknown>;
@@ -206,6 +249,8 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     providers: providers.length ? providers : PROVIDERS,
     available: o.available !== false,
     unavailable: typeof o.unavailable === "string" && o.unavailable ? o.unavailable : null,
+    ...(typeof o.insecure === "string" && o.insecure ? { insecure: o.insecure } : {}),
+    ...(typeof o.copy_sign_in === "boolean" ? { copySignIn: o.copy_sign_in } : typeof o.copySignIn === "boolean" ? { copySignIn: o.copySignIn } : {}),
   };
 }
 
@@ -216,10 +261,16 @@ const choicesOf = ({ region, fields }: KeyChoices) => ({
 });
 const setArgs = ({ provider, env, value, region, fields, add, label }: OpArgs<"agentKeys.set">) => {
   const more = { ...(add ? { add: true } : {}), ...(label?.trim() ? { label: label.trim() } : {}) };
-  return provider === "other" ? { provider, env: (env ?? "").trim(), value, ...choicesOf({ region, fields }), ...more } : { provider, value, ...choicesOf({ region, fields }), ...more };
+  return provider === "other"
+    ? { provider, env: (env ?? "").trim(), value, ...choicesOf({ region, fields }), ...more }
+    : { provider, value, ...choicesOf({ region, fields }), ...more };
 };
 /** The arguments `agent_keys.remove` takes (the daemon's `keep_others`). */
-const removeArgs = ({ env, slot, keepOthers }: OpArgs<"agentKeys.remove">) => ({ env, ...(slot ? { slot } : {}), ...(keepOthers ? { keep_others: true } : {}) });
+const removeArgs = ({ env, slot, keepOthers }: OpArgs<"agentKeys.remove">) => ({
+  env,
+  ...(slot ? { slot } : {}),
+  ...(keepOthers ? { keep_others: true } : {}),
+});
 
 type Handlers = { [K in AgentKeysOp]: (args: OpArgs<K>) => Promise<OpResult<K>> };
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -241,8 +292,10 @@ export function tauriAgentKeysOps(invoke: Invoke): Handlers {
     "agentKeys.set": (args) => tool("agentKeys.set", setArgs(args)),
     "agentKeys.remove": (args) => tool("agentKeys.remove", removeArgs(args)),
     "agentKeys.use": ({ app, env, slot }) => tool("agentKeys.use", { app, ...(env ? { env } : {}), ...(slot ? { slot } : {}) }),
+    "agentKeys.rename": ({ env, slot, label }) => tool("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) }),
     "agentKeys.shell": async () => shellNamesFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS["agentKeys.shell"], args: {} })),
     "agentKeys.fromShell": ({ env, region, fields }) => tool("agentKeys.fromShell", { env, ...choicesOf({ region, fields }) }),
+    "agentKeys.copySignIn": ({ on }) => tool("agentKeys.copySignIn", { on }),
   };
 }
 
@@ -255,7 +308,9 @@ export function webkitAgentKeysOps(request: Request): Handlers {
     "agentKeys.set": (args) => call("agentKeys.set", setArgs(args)),
     "agentKeys.remove": (args) => call("agentKeys.remove", removeArgs(args)),
     "agentKeys.use": ({ app, env, slot }) => call("agentKeys.use", { app, ...(env ? { env } : {}), ...(slot ? { slot } : {}) }),
+    "agentKeys.rename": ({ env, slot, label }) => call("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) }),
     "agentKeys.shell": async () => shellNamesFromWire(await request<unknown>("agentKeys.shell", {})),
     "agentKeys.fromShell": ({ env, region, fields }) => call("agentKeys.fromShell", { env, ...choicesOf({ region, fields }) }),
+    "agentKeys.copySignIn": ({ on }) => call("agentKeys.copySignIn", { on }),
   };
 }

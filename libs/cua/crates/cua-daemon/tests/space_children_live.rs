@@ -91,8 +91,6 @@ async fn a_space_makes_uses_and_cannot_escape_its_children() {
     let home = tempfile::tempdir().unwrap();
     // SAFETY: set before the runtime or any thread reads it.
     unsafe { std::env::set_var("CUA_HOME", home.path()) };
-    // Child Spaces are an experiment, off unless turned on.
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::ChildSpaces, Some(true));
     let runtime = DaemonRuntime::new(RuntimeConfig {
         state_dir: Some(home.path().join("sandboxes")),
         spaces_home: Some(home.path().to_path_buf()),

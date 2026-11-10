@@ -11,6 +11,7 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -55,7 +56,11 @@ async function visit(label: string): Promise<Record<string, number | null>> {
     const settled = () => (q("[data-agents-loading]") ? null : Date.now() - t0);
     let done: number | null = null;
     while (Date.now() - t0 < 12_000) {
-      for (const [name, sel] of [["codex row", `[data-chat='${CODEX}']`], ["hermes row", `[data-chat='${HERMES}']`]] as const) if (!(name in seen) && q(sel)) seen[name] = Date.now() - t0;
+      for (const [name, sel] of [
+        ["codex row", `[data-chat='${CODEX}']`],
+        ["hermes row", `[data-chat='${HERMES}']`],
+      ] as const)
+        if (!(name in seen) && q(sel)) seen[name] = Date.now() - t0;
       if ("codex row" in seen && "hermes row" in seen && (done = settled()) !== null && seen["codex row"] !== undefined) break;
       await sleep(10);
     }
@@ -64,7 +69,7 @@ async function visit(label: string): Promise<Record<string, number | null>> {
   }
 }
 
-describe("the Agents page on a busy account", () => {
+describe.skipIf(!wasmBuilt)("the Agents page on a busy account", () => {
   it("shows rows as their Spaces answer, not when the slowest one does", async () => {
     const t = await visit("cold");
     expect(t["codex row"], "first row").toBeDefined();

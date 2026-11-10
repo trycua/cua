@@ -272,19 +272,16 @@ fn every_host_address_is_closed_after_the_resolver_and_localhost() {
 }
 
 #[test]
-fn the_old_open_default_is_what_you_get_until_secure_spaces_is_on() {
-    // Off (the experiment is off): the old open default.
-    assert_eq!(Mode::from_value(None, false), Mode::Legacy);
-    assert_eq!(Mode::from_value(Some(""), false), Mode::Legacy);
-    // On: the secure default.
-    assert_eq!(Mode::from_value(None, true), Mode::Secure);
-    // The variable wins over the experiment, either way.
-    assert_eq!(Mode::from_value(Some("1"), false), Mode::Secure);
-    for on in ["true", "ON", " yes "] {
-        assert_eq!(Mode::from_value(Some(on), false), Mode::Secure, "{on}");
+fn the_secure_default_is_always_on_and_only_the_variable_turns_it_off() {
+    // Not set (or anything else): the secure default.
+    assert_eq!(Mode::from_value(None), Mode::Secure);
+    assert_eq!(Mode::from_value(Some("")), Mode::Secure);
+    // The emergency override: the variable forces either mode.
+    for on in ["1", "true", "ON", " yes "] {
+        assert_eq!(Mode::from_value(Some(on)), Mode::Secure, "{on}");
     }
     for off in ["0", "false", "OFF", " no "] {
-        assert_eq!(Mode::from_value(Some(off), true), Mode::Legacy, "{off}");
+        assert_eq!(Mode::from_value(Some(off)), Mode::Legacy, "{off}");
     }
     let r = compile_mode(&NetworkSettings::internet(), &ctx(), Mode::Legacy).unwrap();
     assert!(r.is_empty());
@@ -465,7 +462,7 @@ fn golden_support_table() {
         (BackendKind::QemuDocker, "R", "R", "R"),
         (BackendKind::Container, "E", "E", "E"),
         (BackendKind::Managed, "E", "E", "E"),
-        (BackendKind::Firecracker, "E", "R", "R"),
+        (BackendKind::Firecracker, "E", "R", "N"),
         (BackendKind::Containerization, "R", "R", "R"),
         (BackendKind::Vz, "R", "E", "R"),
     ];
@@ -647,7 +644,7 @@ fn settings() -> impl Strategy<Value = NetworkSettings> {
                 ..Default::default()
             };
             match preset {
-                NetworkPreset::Localhost => {
+                p if p.opens_localhost() => {
                     s.localhost_ports = ports;
                     s.all_localhost_ports = all || s.localhost_ports.is_empty();
                     s.localhost_ports.dedup();
@@ -719,7 +716,7 @@ proptest! {
             prop_assert!(!asked.allows_port(ip(host), Proto::Tcp, 3200));
         }
         // Only localhost (or no protection) reaches the host.
-        if !matches!(s.preset, NetworkPreset::Localhost | NetworkPreset::Unprotected) {
+        if !(s.preset.opens_localhost() || s.preset == NetworkPreset::Unprotected) {
             for host in ["10.0.2.2", "192.168.64.1", "192.168.1.20", "203.0.113.7", "::ffff:10.0.2.2"] {
                 for port in PORTS {
                     prop_assert!(!asked.allows_port(ip(host), Proto::Tcp, port), "{:?} {}", s, host);
@@ -1113,4 +1110,243 @@ fn the_summary_names_the_exit() {
         .summary(),
         "Internet only, through the Space proxy"
     );
+}
+
+fn both(ports: &[u16]) -> NetworkSettings {
+    NetworkSettings {
+        preset: NetworkPreset::LocalhostLan,
+        localhost_ports: ports.to_vec(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn localhost_and_lan_are_independent_extras_and_together_open_both() {
+    let r = secure(&both(&[5432]));
+    // The host's loopback on the listed port only.
+    assert!(r.allows_port(ip("10.0.2.2"), Proto::Tcp, 5432));
+    assert!(!r.allows_port(ip("10.0.2.2"), Proto::Tcp, 22));
+    // The local network, plus the internet.
+    for ok in ["192.168.0.9", "10.9.9.9", "fd00::5", "1.1.1.1"] {
+        assert!(r.allows(ip(ok)), "{ok}");
+    }
+    // Still closed: the host's other addresses, cloud metadata, CGNAT.
+    for blocked in ["192.168.1.20", "169.254.169.254", "100.64.1.1", "127.0.0.1"] {
+        assert!(!r.allows(ip(blocked)), "{blocked}");
+    }
+    // Neither single preset opens the other's extra.
+    assert!(!secure(&localhost(&[5432])).allows(ip("192.168.0.9")));
+    assert!(
+        !secure(&NetworkSettings::preset(NetworkPreset::Lan)).allows_port(
+            ip("10.0.2.2"),
+            Proto::Tcp,
+            5432
+        )
+    );
+    // Its ports are checked like localhost's.
+    assert!(both(&[]).validate().is_err());
+    assert!(both(&[0]).validate().is_err());
+    let all = NetworkSettings {
+        preset: NetworkPreset::LocalhostLan,
+        all_localhost_ports: true,
+        ..Default::default()
+    };
+    assert!(all.validate().is_ok());
+    // Ports belong to the presets that open localhost only.
+    let mut lan = NetworkSettings::preset(NetworkPreset::Lan);
+    lan.localhost_ports = vec![1];
+    assert!(lan.validate().is_err());
+}
+
+#[test]
+fn localhost_lan_words_json_and_old_values() {
+    assert_eq!(
+        NetworkPreset::parse("localhost+lan").unwrap(),
+        NetworkPreset::LocalhostLan
+    );
+    assert_eq!(
+        NetworkPreset::parse("LAN+Localhost").unwrap(),
+        NetworkPreset::LocalhostLan
+    );
+    assert_eq!(NetworkPreset::LocalhostLan.as_str(), "localhost+lan");
+    // The old words still mean what they did.
+    assert_eq!(
+        NetworkPreset::parse("localhost").unwrap(),
+        NetworkPreset::Localhost
+    );
+    assert_eq!(NetworkPreset::parse("lan").unwrap(), NetworkPreset::Lan);
+    for p in NetworkPreset::ALL {
+        assert_eq!(NetworkPreset::parse(p.as_str()).unwrap(), p);
+        let j = serde_json::to_string(&p).unwrap();
+        assert_eq!(j, format!("\"{}\"", p.as_str()));
+        assert_eq!(serde_json::from_str::<NetworkPreset>(&j).unwrap(), p);
+    }
+    // Settings files written before the combination keep loading.
+    let old: NetworkSettings =
+        serde_json::from_str(r#"{"preset":"localhost","localhost_ports":[5432]}"#).unwrap();
+    assert_eq!(old, localhost(&[5432]));
+    let old: NetworkSettings = serde_json::from_str(r#"{"preset":"lan"}"#).unwrap();
+    assert_eq!(old, NetworkSettings::preset(NetworkPreset::Lan));
+    let new: NetworkSettings =
+        serde_json::from_str(r#"{"preset":"localhost+lan","localhost_ports":[3000]}"#).unwrap();
+    assert_eq!(new, both(&[3000]));
+    assert_eq!(
+        NetworkPreset::with_extras(true, true),
+        NetworkPreset::LocalhostLan
+    );
+    assert_eq!(
+        NetworkPreset::with_extras(false, false),
+        NetworkPreset::Internet
+    );
+}
+
+#[test]
+fn localhost_lan_summary_and_widenings_name_both() {
+    let s = both(&[5432, 3000]);
+    assert_eq!(
+        s.summary(),
+        "Allow this computer's localhost and my local network (ports 5432, 3000)"
+    );
+    let w = s.widenings();
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!(w[0].contains("localhost (ports 5432, 3000)"), "{w:?}");
+    assert_eq!(w[1], "Allows your local network");
+}
+
+#[test]
+fn localhost_lan_children_keep_only_the_extras_both_open() {
+    let lan = NetworkSettings::preset(NetworkPreset::Lan);
+    // A child can only have less than its parent, and the two extras are
+    // independent.
+    assert_eq!(both(&[5432]).intersect(&both(&[5432])), both(&[5432]));
+    assert_eq!(both(&[5432]).intersect(&lan), lan);
+    assert_eq!(lan.intersect(&both(&[5432])), lan);
+    assert_eq!(
+        both(&[5432, 3000]).intersect(&localhost(&[5432])),
+        localhost(&[5432])
+    );
+    assert_eq!(
+        localhost(&[5432]).intersect(&both(&[5432, 3000])),
+        localhost(&[5432])
+    );
+    assert_eq!(
+        both(&[5432]).intersect(&NetworkSettings::internet()),
+        NetworkSettings::internet()
+    );
+    assert_eq!(
+        NetworkSettings::internet().intersect(&both(&[5432])),
+        NetworkSettings::internet()
+    );
+    assert_eq!(
+        both(&[5432]).intersect(&NetworkSettings::none()),
+        NetworkSettings::none()
+    );
+    // Both open, but no port in common: the local network stays, the
+    // localhost extra goes.
+    assert_eq!(both(&[1]).intersect(&both(&[2])), lan);
+    assert_eq!(
+        both(&[1]).intersect(&localhost(&[2])),
+        NetworkSettings::internet()
+    );
+    // Ports under a combination parent narrow like localhost's.
+    assert_eq!(both(&[1, 2]).intersect(&both(&[2, 3])), both(&[2]));
+    // Lan and localhost are siblings: neither is under the other.
+    assert_eq!(
+        lan.intersect(&localhost(&[5432])),
+        NetworkSettings::internet()
+    );
+}
+
+#[test]
+fn vms_forward_localhost_lan_ports_too() {
+    if Mode::from_env() == Mode::Legacy {
+        return;
+    }
+    assert_eq!(
+        vm_localhost_ports(Some(&both(&[3000, 5432]))).unwrap(),
+        [3000, 5432]
+    );
+}
+
+/// Conformance for every runtime that gives a guest DNS servers: whatever
+/// the engine host's resolver files name, each server the guest is given
+/// ([`crate::resolver`]) is reachable on port 53 under the Secure rules of
+/// every preset that has a network, so a name resolves and a fetch over
+/// HTTPS can follow. The runner case: Azure's DNS behind a systemd stub.
+#[test]
+fn every_server_a_guest_is_given_is_reachable_on_53_under_secure() {
+    let hosts: [&[&str]; 5] = [
+        &["127.0.0.53", "168.63.129.16"],
+        &["168.63.129.16"],
+        &["169.254.169.254", "10.0.2.3"],
+        &["192.168.65.7", "100.100.100.200"],
+        &[],
+    ];
+    let presets = [
+        NetworkSettings::internet(),
+        localhost(&[3000]),
+        NetworkSettings {
+            preset: NetworkPreset::Unprotected,
+            ..Default::default()
+        },
+    ];
+    for host in hosts {
+        let host: Vec<IpAddr> = host.iter().map(|h| ip(h)).collect();
+        let resolvers = crate::resolver::select(None, &host, false);
+        assert!(!resolvers.is_empty(), "{host:?}");
+        for s in &presets {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(s, &c, Mode::Secure).unwrap();
+            for d in &resolvers {
+                assert!(
+                    r.allows_port(*d, Proto::Udp, 53) && r.allows_port(*d, Proto::Tcp, 53),
+                    "{d} from {host:?} under {:?}",
+                    s.preset
+                );
+            }
+            // And HTTPS to a public address follows.
+            assert!(r.allows_port(ip("1.1.1.1"), Proto::Tcp, 443));
+        }
+    }
+}
+
+#[test]
+fn a_platform_resolver_is_open_on_53_only_and_the_rest_of_metadata_stays_closed() {
+    for (host, other) in [
+        ("168.63.129.16", "169.254.169.254"),   // Azure
+        ("169.254.169.254", "168.63.129.16"),   // GCP
+        ("169.254.169.253", "169.254.169.254"), // AWS
+    ] {
+        let resolvers = crate::resolver::select(None, &[ip(host)], false);
+        assert_eq!(resolvers, [ip(host)], "{host}");
+        for s in [NetworkSettings::internet(), localhost(&[3000])] {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(&s, &c, Mode::Secure).unwrap();
+            assert!(r.allows_port(ip(host), Proto::Udp, 53), "{host}");
+            assert!(r.allows_port(ip(host), Proto::Tcp, 53), "{host}");
+            // Its HTTP (wireserver 80 and 32526, metadata 80) is closed.
+            for port in [80, 443, 32526] {
+                assert!(!r.allows_port(ip(host), Proto::Tcp, port), "{host}:{port}");
+            }
+            // Other metadata endpoints stay denied on every port.
+            assert!(!r.allows_port(ip(other), Proto::Udp, 53), "{other}");
+            assert!(!r.allows_port(ip(other), Proto::Tcp, 80), "{other}");
+        }
+    }
+}
+
+#[test]
+fn a_loopback_or_made_up_resolver_is_never_opened() {
+    // Not selected: the guest gets the public fallback, and 127.0.0.1 and
+    // an arbitrary metadata address get no port-53 rule.
+    let resolvers = crate::resolver::select(None, &[ip("127.0.0.1"), ip("169.254.170.2")], false);
+    assert_eq!(resolvers, [ip("1.1.1.1"), ip("8.8.8.8")]);
+    let mut c = ctx();
+    c.resolvers = resolvers;
+    let r = compile_mode(&NetworkSettings::internet(), &c, Mode::Secure).unwrap();
+    for a in ["127.0.0.1", "169.254.170.2", "168.63.129.16"] {
+        assert!(!r.allows_port(ip(a), Proto::Udp, 53), "{a}");
+    }
 }

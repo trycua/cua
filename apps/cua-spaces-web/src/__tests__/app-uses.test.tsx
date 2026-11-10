@@ -38,7 +38,12 @@ const click = (el: Element) =>
     fireEvent.click(el);
   });
 const type = (el: Element, value: string) => fireEvent.change(el, { target: { value } });
-const host = (calls: Call[], demo: object = {}) => ({ failsCreates: false, listsGhost: false, demo, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) });
+const host = (calls: Call[], demo: object = {}) => ({
+  failsCreates: false,
+  listsGhost: false,
+  demo,
+  intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined),
+});
 /** Only the Claude and ChatGPT sign-ins are saved: no API key at all. */
 const SIGN_INS_ONLY = { keys: "none", claudeLogin: "signed-in", chatgptLogin: true };
 const SWITCHABLE = ["hermes", "opencode", "goose", "pi", "openclaw"];
@@ -86,7 +91,7 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     const row = await found("[data-connector-uses=connected]");
     // The first connected one that works is in use until the person chooses.
     expect(row.querySelector("[data-uses-provider]")!.textContent).toBe("Anthropic");
-    expect(row.querySelector("[data-uses-line]")!.textContent).toContain("API key ending a91c");
+    expect(row.querySelector("[data-uses-line]")!.textContent).toContain("API Key (*a91c)");
     expect(document.body.textContent).toContain("Takes effect the next time Hermes runs.");
     const popup = await openMenu();
     const options = qa("[data-uses-option]").map((o) => o.dataset.usesOption);
@@ -100,7 +105,7 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     await waitFor(() => expect(q("[data-connector-uses-app=hermes] [data-uses-provider]")!.textContent).toBe("OpenRouter"));
     // Nothing was signed out or removed by choosing.
     expect(calls.filter((c) => c.op === "agentKeys.remove")).toEqual([]);
-    expect(q("[data-connector-uses-app=hermes] [data-uses-line]")!.textContent).toContain("API key ending cdef");
+    expect(q("[data-connector-uses-app=hermes] [data-uses-line]")!.textContent).toContain("API Key (*cdef)");
   });
 
   it("Connect another provider opens the provider choice for this app", async () => {
@@ -148,7 +153,9 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     type(q("[data-add-key-value]")!, "sk-ant-api03-work-0123456789");
     await click(q("[data-add-key-save]")!);
     await waitFor(() => expect(q("[data-connector-add-key-sheet]")).toBeNull());
-    expect(calls.filter((c) => c.op === "agentKeys.set").map((c) => c.args)).toEqual([{ provider: "anthropic", value: "sk-ant-api03-work-0123456789", env: null, add: true, label: "Work key" }]);
+    expect(calls.filter((c) => c.op === "agentKeys.set").map((c) => c.args)).toEqual([
+      { provider: "anthropic", value: "sk-ant-api03-work-0123456789", env: null, add: true, label: "Work key" },
+    ]);
     // The provider's row is still the first key: nothing was replaced.
     expect(q("[data-connector-provider=anthropic] [data-connector-credential]")!.textContent).toContain("a91c");
     // Its sheet now lists both keys, each removable.

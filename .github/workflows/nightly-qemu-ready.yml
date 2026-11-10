@@ -20,8 +20,8 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-vmm/src/cloudinit.rs"
-      - "libs/cua/crates/cua-daemon/src/guest_identity.rs"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/guest_identity.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - "libs/cua/crates/cua-sdk/tests/vm_ready_after_boot.rs"
       - "libs/images/common/boot-qemu.sh"
       - ".github/workflows/nightly-qemu-ready.yml"
@@ -66,6 +66,8 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-qemu-tests
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Install QEMU and firmware
         run: |
           set -euo pipefail

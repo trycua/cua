@@ -109,7 +109,8 @@ describe.skipIf(!wasmBuilt)("About, Reset & Show", () => {
     expect(localStorage.getItem("cua-spaces:theme")).toBe("dark");
     expect(readFirstRun().step).toBe("welcome");
     // The welcome's first page is on screen.
-    await waitFor(() => expect(document.body.textContent).toMatch(/Get started|Welcome/));
+    await waitFor(() => expect(document.querySelector("[data-new-first-run]")?.getAttribute("data-step")).toBe("welcome"));
+    expect(document.body.textContent).toContain("Combine all your computers into one supercomputer.");
     await act(async () => {});
     expect(readFirstRun().step).toBe("welcome");
   });
@@ -125,4 +126,3 @@ describe.skipIf(!wasmBuilt)("About, Reset & Show", () => {
     expect(localStorage.getItem(TEAMMATES_KEY)).toBe(before[TEAMMATES_KEY]);
   });
 });
-

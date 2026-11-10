@@ -568,6 +568,62 @@ impl SpacesExecutor {
         }
     }
 
+    /// Makes the job's Space a child of the Space its run was submitted from
+    /// ([`cua_cluster::model::ENV_PARENT_SPACE`]): on this computer a real
+    /// tree record (listed under it, deleted with it, its network no more
+    /// open than the parent's); on another, the labels a child placed from
+    /// another computer carries and the parent's network settings it sent.
+    fn bind_to_parent(&self, job: &JobSpec, opts: &mut SpaceCreate) {
+        use cua_cluster::model::{
+            ENV_PARENT_NETWORK, ENV_PARENT_SPACE, ENV_ROOT_SPACE, ENV_TREE_DEPTH,
+        };
+        let get = |k: &str| job.env.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+        // The job's row: one Space, a JOB badge, its name (never an id) and a GPU mark.
+        {
+            use cua_cluster::model::{
+                ENV_JOB_NAME, LABEL_JOB, LABEL_JOB_GPU, LABEL_JOB_NAME, LABEL_JOB_RUN,
+                job_display_name,
+            };
+            opts.labels.insert(LABEL_JOB.into(), "1".into());
+            opts.labels.insert(
+                LABEL_JOB_NAME.into(),
+                job_display_name(get(ENV_JOB_NAME), &job.run_id),
+            );
+            if !job.accelerator.is_empty() {
+                opts.labels.insert(LABEL_JOB_GPU.into(), "1".into());
+            }
+            if !job.run_id.is_empty() {
+                opts.labels.insert(LABEL_JOB_RUN.into(), job.run_id.clone());
+            }
+        }
+        let Some(parent) = get(ENV_PARENT_SPACE) else {
+            return;
+        };
+        if self.spaces.registry().meta(parent).is_some() {
+            opts.parent = Some(parent.to_string());
+            return;
+        }
+        opts.labels.insert("cua.parent".into(), parent.to_string());
+        opts.labels.insert(
+            "cua.root".into(),
+            get(ENV_ROOT_SPACE).unwrap_or(parent).to_string(),
+        );
+        opts.labels.insert(
+            "cua.depth".into(),
+            get(ENV_TREE_DEPTH).unwrap_or("1").to_string(),
+        );
+        // The parent's network, cut down from what this host would give
+        // (a parent whose settings do not parse leaves the job with none).
+        let asked = match get(ENV_PARENT_NETWORK) {
+            Some(j) => serde_json::from_str::<cua_vmm::network::NetworkSettings>(j).ok(),
+            None => None,
+        };
+        opts.network_settings = Some(match asked {
+            Some(n) => crate::network::NetworkSettings::internet().intersect(&n),
+            None => crate::network::NetworkSettings::none(),
+        });
+    }
+
     async fn create(
         &self,
         job: &JobSpec,
@@ -586,7 +642,7 @@ impl SpacesExecutor {
             // Lume runs macOS members (paravirtual GPU acceleration).
             runtime = Runtime::parse("lume").map_err(place)?;
         }
-        let opts = SpaceCreate {
+        let mut opts = SpaceCreate {
             image: Some(image.to_string()),
             on: Some(On::Local),
             kind,
@@ -607,6 +663,7 @@ impl SpacesExecutor {
             spacesd: Some(true),
             ..Default::default()
         };
+        self.bind_to_parent(job, &mut opts);
         let created = tokio::select! {
             r = self.spaces.create(opts) => r,
             _ = cancel.cancelled() => {

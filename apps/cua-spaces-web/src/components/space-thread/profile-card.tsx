@@ -107,7 +107,15 @@ export function PersonCard({ person, onDone }: { person: RosterPerson; onDone?: 
     name: person.label,
     who: person.me ? (scope?.identity ?? null) : (share?.who ?? null),
     me: person.me,
-    access: person.me ? (myRole === null || myRole === "owner" ? "owner" : myRole === "admin" ? "editor" : myRole === "guest" ? "viewer" : "editor") : (share?.role ?? null),
+    access: person.me
+      ? myRole === null || myRole === "owner"
+        ? "owner"
+        : myRole === "admin"
+          ? "editor"
+          : myRole === "guest"
+            ? "viewer"
+            : "editor"
+      : (share?.role ?? null),
     // Which team someone is on isn't known to this device yet (only that a team is shared with): none shown.
     team: null,
     active: person.me || Boolean(share?.connected),
@@ -160,7 +168,9 @@ export function PersonCard({ person, onDone }: { person: RosterPerson; onDone?: 
               value={v.accessValue ?? "viewer"}
               disabled={busy}
               options={v.accessChoices}
-              onValueChange={(role) => act(() => data.call("sharing.share", { spaceId: scope.spaceId, who: share.who, role }), `Couldn't change ${v.name}'s access`)}
+              onValueChange={(role) =>
+                act(() => data.call("sharing.share", { spaceId: scope.spaceId, who: share.who, role }), `Couldn't change ${v.name}'s access`)
+              }
               className="h-7 min-w-0 border-0 bg-muted px-2 text-[12.5px] shadow-none dark:bg-muted"
             />
           ) : (
@@ -181,7 +191,19 @@ export function PersonCard({ person, onDone }: { person: RosterPerson; onDone?: 
 
 /* ---- Agents ------------------------------------------------------------------ */
 
-export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { identity: MemberIdentity; agent?: RosterAgent; roster: Roster; onRemove?: () => Promise<void>; onDone?: () => void }) {
+export function AgentCard({
+  identity: i,
+  agent,
+  roster,
+  onRemove,
+  onDone,
+}: {
+  identity: MemberIdentity;
+  agent?: RosterAgent;
+  roster: Roster;
+  onRemove?: () => Promise<void>;
+  onDone?: () => void;
+}) {
   const { core } = useBridge();
   const scope = useProfileScope();
   const c = useConnectors();
@@ -294,7 +316,12 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
     >
       <Line data="who">{v.line}</Line>
       <p className="flex items-center gap-1.5" data-card-status={v.status}>
-        <span className={cn("size-1.5 shrink-0 rounded-full", v.status === "working" ? "bg-success" : v.status === "not-connected" ? "bg-warning" : "bg-muted-foreground/40")} />
+        <span
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            v.status === "working" ? "bg-success" : v.status === "not-connected" ? "bg-warning" : "bg-muted-foreground/40",
+          )}
+        />
         <span className={cn("truncate", v.status === "idle" && "text-muted-foreground")}>{v.statusText}</span>
       </p>
       <div className="pt-1">
@@ -356,7 +383,12 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
               </div>
             ) : null}
             {canEdit && agent && scope?.onSetRights && (editing || !v.defaultPermissions) ? (
-              <RightsEditor agent={agent} onSetRights={scope.onSetRights} labels={RIGHT_WORDS} people={roster.people.filter((p) => !p.id.startsWith("share:"))} />
+              <RightsEditor
+                agent={agent}
+                onSetRights={scope.onSetRights}
+                labels={RIGHT_WORDS}
+                people={roster.people.filter((p) => !p.id.startsWith("share:"))}
+              />
             ) : null}
             {/* Its tasks and posts with you, in the Agents tab. */}
             <Button

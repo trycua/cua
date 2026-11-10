@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: all
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (the PR quick lane passes electron); empty runs them all"
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -40,6 +45,10 @@ on:
           - native
           - capture
           - installer
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (for example electron); empty runs them all"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -92,6 +101,7 @@ jobs:
     timeout-minutes: 90
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.harness_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

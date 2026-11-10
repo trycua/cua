@@ -36,6 +36,7 @@ use crate::error::{Result, VmmError};
 use crate::exec::{ExecOutput, ExecRequest, GuestExec};
 use crate::host;
 use crate::runtime::Runtime;
+use crate::stack::boxed;
 use crate::types::*;
 
 pub use engine::{EngineEndpoint, EngineKind};
@@ -54,6 +55,9 @@ pub const BASE_REPO: &str = "cua-vmm/base";
 /// Engine repository of checkpoints and of the intermediate images this
 /// backend commits for port rebinds and forks.
 pub const CKPT_REPO: &str = "cua-vmm/checkpoint";
+/// Engine repository of the filesystems of prepared warm-pool members
+/// ([`Runtime::save_prepared`]): the image a prepared member starts from.
+pub const PREPARED_REPO: &str = "cua-vmm/prepared";
 
 /// On every container, image and volume the SDK creates: `true`. Garbage
 /// collection only ever touches objects that carry it (plus the images the
@@ -101,6 +105,7 @@ pub fn image_kind(repo: &str, tag: &str) -> &'static str {
         CKPT_REPO if tag.ends_with("-rebind") || tag.starts_with("fork-") => "intermediate",
         CKPT_REPO => "checkpoint",
         BASE_REPO => "base",
+        PREPARED_REPO => "prepared",
         _ => "build-image",
     }
 }
@@ -354,12 +359,33 @@ impl ContainerRuntime {
     /// NVIDIA GPUs for containers under `runtime` (`container` for runc,
     /// `gvisor`) on this host ([`crate::gpu::container_support`]).
     pub async fn gpu_support_for(&self, runtime: &str) -> crate::gpu::GpuSupport {
-        let nvidia = std::env::consts::OS == "linux"
+        let os = std::env::consts::OS;
+        let nvidia = (os == "linux" || os == "windows")
             && self
                 .runtimes()
                 .await
                 .is_ok_and(|r| r.iter().any(|r| r == "nvidia"));
-        crate::gpu::container_support(std::env::consts::OS, runtime, nvidia)
+        crate::gpu::container_support_wsl(os, runtime, nvidia, self.wsl_gpu().await)
+    }
+
+    /// The engine is a WSL 2 distribution on a PC with an NVIDIA driver: its
+    /// containers reach the GPU through `/dev/dxg` and `/usr/lib/wsl`
+    /// ([`apply_wsl_gpu`]) when the engine has no `nvidia` runtime.
+    pub async fn wsl_gpu(&self) -> bool {
+        if std::env::consts::OS != "windows" || host::which("nvidia-smi").is_none() {
+            return false;
+        }
+        if self
+            .runtimes()
+            .await
+            .is_ok_and(|r| r.iter().any(|r| r == "nvidia"))
+        {
+            return false;
+        }
+        self.docker.info().await.is_ok_and(|i| {
+            i.kernel_version
+                .is_some_and(|k| k.to_lowercase().contains("microsoft"))
+        })
     }
 
     /// OCI runtimes the engine has registered.
@@ -843,9 +869,12 @@ impl ContainerRuntime {
             None => spec,
         };
         let mut body = create_body(name, image, spec, base_labels, engine_runtime);
+        if spec.gpu.as_deref() == Some(crate::gpu::NVIDIA) && self.wsl_gpu().await {
+            apply_wsl_gpu(&mut body);
+        }
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
-        if let Some((net, mac)) = self.mac_config(name).await? {
+        if let Some((net, mac)) = boxed(|| self.mac_config(name)).await? {
             body.networking_config = Some(net);
             body.labels
                 .get_or_insert_with(Default::default)
@@ -858,7 +887,7 @@ impl ContainerRuntime {
         }
         // Its own resolv.conf: a user-defined network's embedded resolver
         // (127.0.0.11) is out of reach under gVisor ([`egress`]).
-        if let Some((bind, servers)) = self.prepare_resolv(name).await?
+        if let Some((bind, servers)) = boxed(|| self.prepare_resolv(name)).await?
             && let Some(hc) = body.host_config.as_mut()
         {
             hc.binds.get_or_insert_with(Vec::new).push(bind);
@@ -1292,7 +1321,7 @@ impl Runtime for ContainerRuntime {
                     }
                     let have = Self::published(&i);
                     if merged != env || spec.ports.iter().any(|p| !have.contains(p)) {
-                        self.recreate(&spec.name, &i, merged, &spec.ports).await?;
+                        boxed(|| self.recreate(&spec.name, &i, merged, &spec.ports)).await?;
                         i = self
                             .inspect(&spec.name)
                             .await?
@@ -1337,8 +1366,7 @@ impl Runtime for ContainerRuntime {
                             .as_ref()
                             .and_then(|c| c.labels.clone())
                             .unwrap_or_default();
-                        self.create(&spec.name, &img, spec, labels, None, None)
-                            .await?;
+                        boxed(|| self.create(&spec.name, &img, spec, labels, None, None)).await?;
                     }
                     self.start_policed(&spec.name).await?;
                 }
@@ -1384,11 +1412,12 @@ impl Runtime for ContainerRuntime {
                 let (spec, secret) = pool_member_spec(spec)?;
                 let spec = spec.as_ref();
                 // Warm: restore this configuration's golden checkpoint.
-                let plan = self.golden_plan(original, reference).await;
+                let plan = boxed(|| self.golden_plan(original, reference)).await;
                 if let Some(rec) = plan.as_ref().and_then(|p| p.record.as_ref()) {
-                    match self
-                        .start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
-                        .await
+                    match boxed(|| {
+                        self.start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
+                    })
+                    .await
                     {
                         Ok(inst) => return Ok(inst),
                         Err(e) => {
@@ -1419,14 +1448,16 @@ impl Runtime for ContainerRuntime {
                 let mut attempt = 0;
                 loop {
                     attempt += 1;
-                    self.create(
-                        &spec.name,
-                        reference,
-                        spec,
-                        HashMap::new(),
-                        platform.clone(),
-                        None,
-                    )
+                    boxed(|| {
+                        self.create(
+                            &spec.name,
+                            reference,
+                            spec,
+                            HashMap::new(),
+                            platform.clone(),
+                            None,
+                        )
+                    })
                     .await?;
                     if let Some(secret) = &secret
                         && let Err(e) = self.write_token_file(&spec.name, secret).await
@@ -1437,7 +1468,7 @@ impl Runtime for ContainerRuntime {
                     crate::progress::report(crate::progress::Progress::phase(
                         crate::progress::Phase::Booting,
                     ));
-                    match self.start_policed(&spec.name).await {
+                    match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
                             self.unpolice(&spec.name).await;
@@ -1469,7 +1500,8 @@ impl Runtime for ContainerRuntime {
                 .host_port(snapshot::SPACESD_PORT)
                 .map(|p| format!("http://{}:{p}", inst.endpoints.host));
             if let Err(e) =
-                snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token).await
+                boxed(|| snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token))
+                    .await
             {
                 // A clone must never run on with its source's identity.
                 let _ = self
@@ -1491,8 +1523,8 @@ impl Runtime for ContainerRuntime {
         }
         // Sidecars join the sandbox's network namespace and start before
         // readiness is checked (a probe may target a sidecar's port).
-        if let Err(e) = self.ensure_sidecars(spec).await {
-            let _ = self.delete(&spec.name).await;
+        if let Err(e) = boxed(|| self.ensure_sidecars(spec)).await {
+            let _ = boxed(|| self.delete(&spec.name)).await;
             return Err(e);
         }
         if !spec.probes.is_empty() {
@@ -1500,15 +1532,17 @@ impl Runtime for ContainerRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        self.wait_probes(
-            &spec.name,
-            &inst.endpoints,
-            &spec.probes,
-            spec.ready_timeout,
-        )
+        boxed(|| {
+            self.wait_probes(
+                &spec.name,
+                &inst.endpoints,
+                &spec.probes,
+                spec.ready_timeout,
+            )
+        })
         .await?;
         if let Some((plan, reference)) = record_golden {
-            self.spawn_golden(spec, &reference, plan).await;
+            boxed(|| self.spawn_golden(spec, &reference, plan)).await;
         }
         Ok(inst)
     }
@@ -1696,6 +1730,58 @@ impl Runtime for ContainerRuntime {
             BackendKind::Container,
             Some(name.into()),
         ))
+    }
+
+    fn keeps_prepared(&self) -> bool {
+        true
+    }
+
+    async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+        validate_name(tag)?;
+        let i = self
+            .inspect(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        // The root filesystem as it is now. gVisor keeps its writes in its
+        // own overlay, which a commit cannot see: the rootfs is streamed out.
+        if Self::isolation_from(&i) == Isolation::Gvisor && Self::status_from(&i) == Status::Running
+        {
+            self.export_import_as(name, PREPARED_REPO, tag, config_changes(i.config.as_ref()))
+                .await?;
+        } else {
+            self.commit(name, PREPARED_REPO, tag, true).await?;
+        }
+        Ok(Some(ImageSource::oci(format!("{PREPARED_REPO}:{tag}"))))
+    }
+
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        Ok(self
+            .docker
+            .inspect_image(&image)
+            .await
+            .ok()
+            .map(|_| ImageSource::oci(image)))
+    }
+
+    async fn drop_prepared(&self, tag: &str) -> Result<()> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        match self
+            .docker
+            .remove_image(
+                &image,
+                Some(bollard::query_parameters::RemoveImageOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) if is_not_found(&e) => Ok(()),
+            Err(e) => Err(engine_err(e)),
+        }
     }
 
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
@@ -2036,6 +2122,11 @@ impl Runtime for ContainerRuntime {
         renamed?;
         if egress::kept(member).is_some() {
             egress::copy(member, new_name)?;
+            // The member sits on the network of ITS tree (its own name). Renamed, the Space is still on that
+            // network, so it keeps that tree: with `None` (its own, by its new name) the Space looked as if it were
+            // on the wrong network at its next start, and a warm-claimed Space could never be started again
+            // ("was made before its network settings ... recreate it and its files would be lost").
+            egress::keep_tree_of_claimed(member, new_name)?;
             egress::forget(member);
         }
         if let Err(e) = persisted {
@@ -2946,6 +3037,35 @@ fn no_healthcheck() -> bollard::models::HealthConfig {
     }
 }
 
+/// A container that reaches the PC's GPU through WSL 2: `/dev/dxg`, the
+/// driver's libraries (`/usr/lib/wsl`, read-only) and their directory on the
+/// library path, in place of the `nvidia` runtime's device request.
+fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
+    const LIB: &str = "/usr/lib/wsl/lib";
+    let env = body.env.get_or_insert_with(Vec::new);
+    match env.iter().position(|e| e.starts_with("LD_LIBRARY_PATH=")) {
+        Some(i) => env[i] = format!("{}:{LIB}", env[i]),
+        None => env.push(format!("LD_LIBRARY_PATH={LIB}")),
+    }
+    env.push(format!(
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:{LIB}"
+    ));
+    if let Some(hc) = body.host_config.as_mut() {
+        hc.device_requests = None;
+        hc.devices
+            .get_or_insert_with(Vec::new)
+            .push(bollard::models::DeviceMapping {
+                path_on_host: Some("/dev/dxg".into()),
+                path_in_container: Some("/dev/dxg".into()),
+                cgroup_permissions: Some("rwm".into()),
+            });
+        let binds = hc.binds.get_or_insert_with(Vec::new);
+        binds.push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        // A job's member runs with its own PATH: `nvidia-smi` is on it.
+        binds.push("/usr/lib/wsl/lib/nvidia-smi:/usr/local/bin/nvidia-smi:ro".into());
+    }
+}
+
 /// The engine's device requests for [`StartSpec::gpu`]: every NVIDIA GPU
 /// (`--gpus all`) for [`crate::gpu::NVIDIA`].
 fn gpu_requests(spec: &StartSpec) -> Option<Vec<bollard::models::DeviceRequest>> {
@@ -3512,6 +3632,34 @@ mod tests {
         ));
         assert!(!is_port_conflict("no such image: x"));
         assert!(!is_port_conflict("OCI runtime create failed"));
+    }
+
+    #[test]
+    fn a_wsl_gpu_container_gets_dxg_and_the_driver_libraries() {
+        let mut spec = StartSpec::new("sb", ImageSource::Existing);
+        spec.gpu = Some(crate::gpu::NVIDIA.into());
+        let mut body = create_body("sb", "img:1", &spec, HashMap::new(), "runc".into());
+        assert!(body.host_config.as_ref().unwrap().device_requests.is_some());
+        apply_wsl_gpu(&mut body);
+        let hc = body.host_config.unwrap();
+        assert!(hc.device_requests.is_none(), "no nvidia runtime to ask");
+        assert_eq!(
+            hc.devices.unwrap()[0].path_on_host.as_deref(),
+            Some("/dev/dxg")
+        );
+        let binds = hc.binds.unwrap();
+        assert!(binds.contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string()));
+        assert!(
+            binds
+                .iter()
+                .any(|b| b.ends_with(":/usr/local/bin/nvidia-smi:ro")),
+            "a member's own PATH still finds nvidia-smi"
+        );
+        assert!(
+            body.env
+                .unwrap()
+                .contains(&"LD_LIBRARY_PATH=/usr/lib/wsl/lib".to_string())
+        );
     }
 
     #[test]

@@ -371,9 +371,9 @@ copy in Finder, Resolve clears the entry and keeps both files.
 
 ![The Volume page with two computers and a conflict](/img/spaces/spaces-volume-page.png)
 
-## With Secure Spaces on
+## What a Space sees
 
-When the [Secure Spaces experiment](/spaces/guides/experiments) is on, a Space sees only its own folder:
+With Secure Spaces (always on), a Space sees only its own folder:
 
 - A Space's folder carries the Space's own id, which never changes: `local:work` is `spaces/local-work--0a1b2c3d/`. If you delete a Space and later make another with the same name, the new one starts with an empty folder and cannot see the old one, which stays in your Cua Volume until you delete it. A folder from before ids existed (`spaces/local-work/`) is renamed the next time its Space mounts the volume, and that Space keeps the read-only access to `public/` it had before.
 - `public/` is read only through a grant: for one Space (`space:<id>`, which also covers the agent working in it) or for every Space of a tree (`tree:<root>`, the first Space and the Spaces it started). Only you grant, and every grant asks for Touch ID, your login password or the Keyvault passphrase first. Revoking a grant closes access at once.

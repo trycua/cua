@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Private unary carrier, disabled unless CUA_DRIVER_ENVELOPE_HTTP_PORT is set.
 //!
 //! This loopback endpoint is NOT an authentication boundary. A trusted upstream

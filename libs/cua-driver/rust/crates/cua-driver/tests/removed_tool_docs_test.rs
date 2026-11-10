@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep removed tools out of the live registry and maintained user guidance.
 
 use std::collections::HashSet;
@@ -55,24 +58,28 @@ fn collect_docs(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn advertises_removed_tool(line: &str, tool: &str) -> bool {
-    let line = line.to_ascii_lowercase();
+fn advertises_removed_tool(text: &str, tool: &str, live_tools: &HashSet<String>) -> bool {
+    let text = text.to_ascii_lowercase();
     let invocation = [
         format!("cua-driver call {tool}"),
         format!("cua-driver {tool}"),
         format!("{tool}("),
+        format!("__{tool}`"),
+        format!("\"tool\": \"{tool}\""),
     ]
     .iter()
-    .any(|pattern| line.contains(pattern));
+    .any(|pattern| text.contains(pattern));
 
     let tool_reference = [
-        format!("`{tool}` tool"),
         format!("{tool} tool"),
         format!("tool `{tool}`"),
         format!("tool named `{tool}`"),
     ]
     .iter()
-    .any(|pattern| line.contains(pattern));
+    .any(|pattern| text.contains(pattern))
+        || (about_tools(&text, live_tools)
+            && (names_tool_in_backticks(&text, tool)
+                || lists_tool_with_live_tools(&text, tool, live_tools)));
     let explicitly_absent = [
         "no standalone",
         "does not register",
@@ -81,9 +88,58 @@ fn advertises_removed_tool(line: &str, tool: &str) -> bool {
         "obsolete",
     ]
     .iter()
-    .any(|marker| line.contains(marker));
+    .any(|marker| text.contains(marker));
 
     invocation || (tool_reference && !explicitly_absent)
+}
+
+/// The paragraph says "tool" or backticks a live tool name, so a bare name
+/// in it is read as a tool rather than an action or a value.
+fn about_tools(text: &str, live_tools: &HashSet<String>) -> bool {
+    text.contains("tool")
+        || live_tools
+            .iter()
+            .any(|live| text.contains(&format!("`{live}`")))
+}
+
+/// `` `screenshot` `` names the tool unless a noun such as "object" or
+/// "field" marks it as a result or parameter key of the same name.
+fn names_tool_in_backticks(text: &str, tool: &str) -> bool {
+    let quoted = format!("`{tool}`");
+    text.match_indices(&quoted).any(|(at, _)| {
+        let next = text[at + quoted.len()..]
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .find(|word| !word.is_empty());
+        !matches!(
+            next,
+            Some("object" | "field" | "key" | "property" | "parameter" | "argument")
+        )
+    })
+}
+
+/// `[screenshot, scroll]`, `(click, screenshot)` or `{"screenshot", "click"}`:
+/// a bracketed list of bare or quoted names holding the tool and a tool the
+/// live registry still serves.
+fn lists_tool_with_live_tools(text: &str, tool: &str, live_tools: &HashSet<String>) -> bool {
+    text.split(['[', '(', '{'])
+        .skip(1)
+        .filter_map(|after_open| after_open.split([']', ')', '}']).next())
+        .any(|inside| {
+            let items: Option<Vec<&str>> = inside
+                .split(',')
+                .map(|item| {
+                    let item = item.trim().trim_matches(['"', '\'', '`']);
+                    let is_name = !item.is_empty()
+                        && item
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+                    is_name.then_some(item)
+                })
+                .collect();
+            items.is_some_and(|items| {
+                items.contains(&tool) && items.iter().any(|item| live_tools.contains(*item))
+            })
+        })
 }
 
 #[test]
@@ -127,7 +183,7 @@ fn maintained_guidance_does_not_advertise_removed_tools() {
         let mut line_number = 1;
         for paragraph in contents.split_inclusive("\n\n") {
             for tool in REMOVED_TOOLS {
-                if advertises_removed_tool(paragraph, tool) {
+                if advertises_removed_tool(paragraph, tool, &registered) {
                     failures.push(format!(
                         "{}:{} advertises removed tool {tool:?}: {}",
                         path.display(),
@@ -148,15 +204,34 @@ fn maintained_guidance_does_not_advertise_removed_tools() {
 }
 
 #[test]
-fn removed_tool_reference_detection_covers_invocations_and_prose() {
+fn removed_tool_reference_detection_covers_invocations_lists_and_prose() {
+    let live: HashSet<String> = [
+        "scroll",
+        "wait",
+        "click",
+        "get_window_state",
+        "zoom",
+        "launch_app",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
     for reference in [
         "cua-driver call screenshot '{}'",
         "screenshot({ window_id: 42 })",
         "use the `screenshot` tool",
         "use the screenshot tool",
+        "  tools: [screenshot, scroll, wait]",
+        "GUI tools (click, type_text, screenshot, get_window_state)",
+        r#"safe_tools := {"screenshot", "get_window_state", "click"}"#,
+        "keep `screenshot` and `zoom` out of the allowlist",
+        "`launch_app` start_minimized: only `screenshot` and `delivery_mode` need it restored",
+        "keeps the normal MCP tools and changes only `screenshot`, which requires `pid`",
+        "do not expose the `mcp__cua-computer-use__screenshot` tool name",
+        r#"{"tool": "screenshot", "args": {}}"#,
     ] {
         assert!(
-            advertises_removed_tool(reference, "screenshot"),
+            advertises_removed_tool(reference, "screenshot", &live),
             "{reference:?}"
         );
     }
@@ -166,7 +241,19 @@ fn removed_tool_reference_detection_covers_invocations_and_prose() {
         "the `screenshot` tool was removed",
         "this does not register a standalone `screenshot` tool",
         "the old compatibility flag does not add a screenshot tool",
+        "plus a structured `screenshot` object",
+        r#"("som"/"screenshot" still decode as deprecated aliases.)"#,
+        "use get_window_state for a window tree plus screenshot, then zoom",
+        "take a screenshot, then click",
+        "`shot` saves a screenshot, `click` clicks",
+        "(screenshot, zoom, and click are separate steps)",
+        "save the image as `screenshot` before continuing",
+        "the workflow has three steps: (screenshot, click, zoom)",
+        r#"{"tool": "click", "args": {"name": "screenshot"}}"#,
     ] {
-        assert!(!advertises_removed_tool(notice, "screenshot"), "{notice:?}");
+        assert!(
+            !advertises_removed_tool(notice, "screenshot", &live),
+            "{notice:?}"
+        );
     }
 }

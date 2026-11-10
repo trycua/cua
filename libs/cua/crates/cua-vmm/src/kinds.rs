@@ -195,9 +195,10 @@ pub struct Tool {
     pub min_version: Option<&'static str>,
 }
 
-/// `lume::builtin::MIN_VERSION` (a test keeps them equal; this module
-/// builds without the `lume` feature too).
-const LUME_MIN_VERSION: &str = "0.6.0";
+/// The oldest Lume cua runs macOS Spaces on: the one place the number lives.
+/// `lume::builtin::MIN_VERSION` is this constant (this module builds without
+/// the `lume` feature, so it owns it), and the tool table below reads it.
+pub const LUME_MIN_VERSION: &str = "0.7.0";
 
 const MAC: &[HostOs] = &[HostOs::Macos];
 const LINUX: &[HostOs] = &[HostOs::Linux];
@@ -569,7 +570,14 @@ mod tests {
     #[cfg(feature = "lume")]
     #[test]
     fn lume_s_oldest_version_is_the_one_cua_runs_on() {
+        // One constant: the built-in module re-exports it, so the two cannot drift.
         assert_eq!(LUME_MIN_VERSION, crate::lume::builtin::MIN_VERSION);
+        // The tool table carries it, and the Lume cua pins and downloads meets it.
+        let lume = TOOLS.iter().find(|t| t.id == "lume").unwrap();
+        assert_eq!(lume.min_version, Some(LUME_MIN_VERSION));
+        assert!(crate::lume::builtin::new_enough(
+            crate::lume::builtin::VERSION
+        ));
     }
 
     #[test]
@@ -684,7 +692,12 @@ mod tests {
                 p.min_version.as_deref(),
                 p.guests.as_deref()
             ),
-            (Some("lume"), Some("0.5.3"), Some("0.6.0"), Some("macOS"))
+            (
+                Some("lume"),
+                Some("0.5.3"),
+                Some(LUME_MIN_VERSION),
+                Some("macOS")
+            )
         );
     }
 }

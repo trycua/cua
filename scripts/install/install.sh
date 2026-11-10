@@ -79,7 +79,9 @@ LATEST_TAG="cua-install-latest"
 MINISIGN_PUBKEY="${CUA_INSTALL_MINISIGN_PUBKEY:-}"
 # Only the release workflows may sign, each at its own release tag: the CLI
 # by cd-cua-sdk.yml at refs/tags/cua-sdk-v<version>, the app by
-# cd-cua-spaces.yml at refs/tags/cua-spaces-v<version> (cosign_identity).
+# cd-cua-spaces.yml at refs/tags/cua-spaces-v<version>; a release rebuilt from
+# main (rebuild_tag) is accepted only with a signed claim for its tag
+# (verify_rebuild_claim).
 COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 
 want_cli=1
@@ -895,8 +897,8 @@ resolve_url() {
     esac
 }
 
-# cosign_identity ENTRY: the exact Sigstore certificate identity (workflow
-# at its release tag) that must have signed this manifest entry's artifact.
+# cosign_identity ENTRY: the Sigstore certificate identity (workflow at its
+# release tag) that must have signed this manifest entry's artifact.
 cosign_identity() {
     c="$(json_field "$1" component)"
     v="$(json_field "$1" version)"
@@ -908,6 +910,49 @@ cosign_identity() {
     app) printf 'https://github.com/%s/.github/workflows/cd-cua-spaces.yml@refs/tags/cua-spaces-v%s\n' "$REPO" "$v" ;;
     *) return 1 ;;
     esac
+}
+
+# rebuilt_identity: the app's identity for a release rebuilt from an
+# existing tag (rebuild_tag): cd-cua-spaces.yml at refs/heads/main. That ref
+# alone says nothing about which tag was built, so it is only ever accepted
+# together with a signed claim naming this tag and this file's sha256
+# (verify_rebuild_claim) and the workflow_dispatch trigger.
+rebuilt_identity() {
+    printf 'https://github.com/%s/.github/workflows/cd-cua-spaces.yml@refs/heads/main\n' "$REPO"
+}
+
+# cosign_verify FILE BUNDLE IDENTITY [REBUILT]: one cosign check. A rebuilt
+# identity also pins the repository, the main ref and the dispatch trigger,
+# so a push, schedule or pull_request run of the same workflow never passes.
+cosign_verify() {
+    if [ "${4:-}" = rebuilt ]; then
+        cosign verify-blob --bundle "$2" \
+            --certificate-identity "$3" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" \
+            --certificate-github-workflow-repository "$REPO" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-trigger workflow_dispatch "$1" >/dev/null 2>&1
+    else
+        cosign verify-blob --bundle "$2" \
+            --certificate-identity "$3" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" "$1" >/dev/null 2>&1
+    fi
+}
+
+# verify_rebuild_claim FILE BUNDLE_URL VERSION: a rebuild's main-branch
+# signature proves "the release workflow signed this", not "for this tag".
+# The tie to the tag is rebuild-claim.txt next to the artifact, signed by the
+# same run: a "tag cua-spaces-v<version>" line and "<sha256>  <name>" for
+# every asset. It must verify under the rebuilt identity, name this tag and
+# list this file's sha256 under its name.
+verify_rebuild_claim() {
+    claim="$1.rebuild-claim.txt"
+    # fetch dies on a missing file; a release without a claim is a failed check.
+    (fetch "$(dirname "$2")/rebuild-claim.txt" "$claim") >/dev/null 2>&1 || return 1
+    (fetch "$(dirname "$2")/rebuild-claim.txt.sigstore.json" "$claim.sigstore.json") >/dev/null 2>&1 || return 1
+    cosign_verify "$claim" "$claim.sigstore.json" "$(rebuilt_identity)" rebuilt || return 1
+    grep -Fx "tag cua-spaces-v$3" "$claim" >/dev/null || return 1
+    grep -Fx "$(sha256_of "$1")  ${1##*/}" "$claim" >/dev/null || return 1
 }
 
 verify_signature() { # file entry
@@ -924,10 +969,15 @@ verify_signature() { # file entry
         fetch "$(resolve_url "$bundle")" "$1.sigstore.json"
         identity="$(cosign_identity "$2")" ||
             die "no release identity for ${1##*/} in the manifest"
-        cosign verify-blob --bundle "$1.sigstore.json" \
-            --certificate-identity "$identity" \
-            --certificate-oidc-issuer "$COSIGN_ISSUER" "$1" >/dev/null 2>&1 ||
-            die "cosign signature check failed for ${1##*/}"
+        cosign_ok=0
+        if cosign_verify "$1" "$1.sigstore.json" "$identity"; then
+            cosign_ok=1
+        elif [ "$(json_field "$2" component)" = app ] &&
+            cosign_verify "$1" "$1.sigstore.json" "$(rebuilt_identity)" rebuilt &&
+            verify_rebuild_claim "$1" "$(resolve_url "$bundle")" "$(json_field "$2" version)"; then
+            cosign_ok=1
+        fi
+        [ "$cosign_ok" = 1 ] || die "cosign signature check failed for ${1##*/}"
         sig_ok=1
     fi
     if [ "$sig_ok" = 0 ] && [ "$require_sig" = 1 ]; then

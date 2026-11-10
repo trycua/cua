@@ -95,8 +95,7 @@ export class PendingSpacesBackend implements SpacesBackend {
     const b = await this.b();
     return b.listRead ? b.listRead() : { rows: await b.rows(), incomplete: false, reaching: 0, stale: false, notice: "" };
   };
-  create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) =>
-    (await this.b()).create(args, createId, progress);
+  create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) => (await this.b()).create(args, createId, progress);
   cancelCreate = async (createId: string) => (await this.b()).cancelCreate(createId);
   gpuChoices = async () => (await this.b()).gpuChoices();
   hosts = async () => (await this.b()).hosts();
@@ -106,7 +105,7 @@ export class PendingSpacesBackend implements SpacesBackend {
   deleteMany = async (ids: string[]) => (await this.b()).deleteMany(ids);
   leave = async (ids: string[]) => (await this.b()).leave(ids);
   rename = async (id: string, name: string) => (await this.b()).rename(id, name);
-  relayUnregister = async (machineId: string) => (await this.b()).relayUnregister(machineId);
+  relayUnregister = async (machineId: string, deleteSpaces?: boolean) => (await this.b()).relayUnregister(machineId, deleteSpaces);
   network = async (id: string) => {
     const b = await this.b();
     if (!b.network) throw new Error("network settings are not available in this build");

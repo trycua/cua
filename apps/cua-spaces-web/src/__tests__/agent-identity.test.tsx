@@ -18,6 +18,7 @@ import { APP_MARKS } from "@/components/agents/harness-mark";
 import { HARNESSES, harnessInfo } from "@/components/space-thread/harness-marks";
 import { joinedWhen, reportedHarness } from "@/components/space-thread/identity";
 import { buildRoster } from "@/components/space-thread/roster";
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -44,7 +45,17 @@ const identity = (over: Partial<MemberIdentity> = {}): MemberIdentity => ({
   lastSeenMs: null,
   ...over,
 });
-const member = (name: string, i: MemberIdentity | null): AgentMember => ({ name, harness: i?.harness.id ?? "claude-code", status: "idle", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: i });
+const member = (name: string, i: MemberIdentity | null): AgentMember => ({
+  name,
+  harness: i?.harness.id ?? "claude-code",
+  status: "idle",
+  activity: null,
+  sessions: 1,
+  rights: null,
+  youCan: null,
+  heldBy: null,
+  identity: i,
+});
 const roster = (members: AgentMember[], opts: { me?: string; role?: "owner" | "admin" | "member" | "guest" | null; entries?: ThreadEntry[] } = {}) =>
   buildRoster({ members, shares: [], entries: opts.entries ?? [], me: opts.me ?? ADA.id, identity: null, role: opts.role ?? null, harnessName: (h) => h });
 
@@ -70,7 +81,9 @@ async function details(card: HTMLElement): Promise<Record<string, string>> {
   await act(async () => {
     fireEvent.click(card.querySelector("[data-card-details]")!);
   });
-  return Object.fromEntries([...card.querySelectorAll<HTMLElement>("[data-card-details-open] dt")].map((dt) => [dt.textContent!, dt.nextElementSibling!.textContent!]));
+  return Object.fromEntries(
+    [...card.querySelectorAll<HTMLElement>("[data-card-details-open] dt")].map((dt) => [dt.textContent!, dt.nextElementSibling!.textContent!]),
+  );
 }
 const line = (card: HTMLElement) => card.querySelector("[data-card-line='who']")?.textContent;
 
@@ -96,7 +109,11 @@ describe("an agent's identity", () => {
     expect(q("[data-member='agent:hermes'] [data-agent-tile]")?.className).toContain("opacity-45");
     expect(q("[data-member='agent:hermes'] [data-owner-badge]")?.closest(".opacity-45")).toBeNull();
     // People get no tag.
-    expect(qa("[data-members] [data-member]").filter((m) => !m.dataset.member!.startsWith("agent:")).some((m) => m.querySelector("[data-ai-tag]"))).toBe(false);
+    expect(
+      qa("[data-members] [data-member]")
+        .filter((m) => !m.dataset.member!.startsWith("agent:"))
+        .some((m) => m.querySelector("[data-ai-tag]")),
+    ).toBe(false);
     const post = qa("[data-entry]").find((e) => e.querySelector("[data-author-name='claude']"))!;
     expect(post.querySelector("[data-owner-badge]")?.getAttribute("data-owner-badge")).toBe("acct_grace");
     expect(post.querySelector("[data-ai-tag]")?.textContent).toBe("AI");
@@ -142,7 +159,7 @@ describe("an agent's identity", () => {
     expect(memberIdentity({ handle: "x", owner: ADA, icon: "https://example.com/i.png" })?.icon).toBe("https://example.com/i.png");
   });
 
-  it("opens the card from the name: Grace's Claude Code, in one line, with the rest under Details", async () => {
+  it.skipIf(!wasmBuilt)("opens the card from the name: Grace's Claude Code, in one line, with the rest under Details", async () => {
     await app();
     const card = await openCard("claude");
     expect(card.querySelector("[data-card-title]")?.textContent).toBe("Claude Code");
@@ -164,21 +181,21 @@ describe("an agent's identity", () => {
     expect(card.textContent).not.toContain("checked by Cua");
   });
 
-  it("the card of your own Hermes, started here: run by you in this Space", async () => {
+  it.skipIf(!wasmBuilt)("the card of your own Hermes, started here: run by you in this Space", async () => {
     await app();
     const card = await openCard("hermes");
     expect(line(card)).toBe("Run by you in this Space, uses Anthropic");
     expect(await details(card)).toMatchObject({ Handle: "@hermes", Runs: "Hermes Agent 0.9.2", Joined: expect.stringMatching(/^Started in this Space/) });
   });
 
-  it("a look-alike's card: its own owner, its own handle, Runs not reported", async () => {
+  it.skipIf(!wasmBuilt)("a look-alike's card: its own owner, its own handle, Runs not reported", async () => {
     await app({ threadLookalike: true });
     const card = await openCard("claude-2");
     expect(line(card)).toMatch(/^Run by Linus on linus-thinkpad/);
     expect(await details(card)).toMatchObject({ Handle: "@claude-2", Runs: "Not reported" });
   });
 
-  it("Remove from Space: the owner sees it and removing leaves its posts with their mark and owner", async () => {
+  it.skipIf(!wasmBuilt)("Remove from Space: the owner sees it and removing leaves its posts with their mark and owner", async () => {
     await app({ threadLookalike: true });
     const card = await openCard("claude-2");
     const remove = card.querySelector<HTMLElement>("[data-remove-agent='claude-2']")!;
@@ -211,7 +228,7 @@ describe("an agent's identity", () => {
     expect(roster([], { me: ADA.id, role: "owner" }).canRemove(identity({ owner: grace }))).toBe(true);
   });
 
-  it("a member's card has no Remove for someone else's agent", async () => {
+  it.skipIf(!wasmBuilt)("a member's card has no Remove for someone else's agent", async () => {
     await app({ threadRole: "member" });
     const card = await openCard("claude");
     expect(card.querySelector("[data-remove-agent]")).toBeNull();

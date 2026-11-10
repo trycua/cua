@@ -6,36 +6,71 @@ import { useEffect, useRef, useState } from "react";
 
 import type { HostLimitRow, HostLimits } from "@/bridge/contracts/host";
 
-import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSettings, useThisMachine, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
+import {
+  chooseSettings,
+  useBridge,
+  useLoginItem,
+  useMachines,
+  useSession,
+  useSettings,
+  useThisMachine,
+  useTips,
+  type GlobalShortcut,
+  type SettingsRow as CoreRow,
+} from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CliSettingsSection } from "@/components/settings/cli-section";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { DefaultSpaceGroup } from "@/components/settings/default-space-group";
+import { LanguageRow } from "@/components/settings/language-row";
 import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
-import { globalShortcutLine, showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
-import { LAUNCH_HELP, LAUNCH_LABEL } from "@/lib/settings-copy";
+import { useT } from "@/i18n";
+import { globalShortcutLine, showsMacShellSettings, thisComputerLabel, thisComputerText } from "@/lib/host-labels";
+import { launchHelp, launchLabel } from "@/lib/settings-copy";
 import { acceleratorOf } from "@/lib/shortcut-keys";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 
 const fail = toastError;
 
-const APPEARANCE: { value: ThemePreference; label: React.ReactNode }[] = [
-  { value: "system", label: <><MonitorIcon className="size-3.5" /> System</> },
-  { value: "light", label: <><SunIcon className="size-3.5" /> Light</> },
-  { value: "dark", label: <><MoonIcon className="size-3.5" /> Dark</> },
+type Say = ReturnType<typeof useT>;
+
+const appearance = (say: Say): { value: ThemePreference; label: React.ReactNode }[] => [
+  {
+    value: "system",
+    label: (
+      <>
+        <MonitorIcon className="size-3.5" /> {say("settings.general.appearance_system")}
+      </>
+    ),
+  },
+  {
+    value: "light",
+    label: (
+      <>
+        <SunIcon className="size-3.5" /> {say("settings.general.appearance_light")}
+      </>
+    ),
+  },
+  {
+    value: "dark",
+    label: (
+      <>
+        <MoonIcon className="size-3.5" /> {say("settings.general.appearance_dark")}
+      </>
+    ),
+  },
 ];
 
-const TELEMETRY_HELP = "Which features you use and when something goes wrong. Never your files, what you type or your screen.";
-
 /** The core's notch row in plain words: "Show Cua in", Notch and menu bar or Menu bar only. */
-export const showCuaIn = (row: CoreRow): CoreRow => ({
+export const showCuaIn = (row: CoreRow, say: Say): CoreRow => ({
   ...row,
-  label: "Show Cua in",
-  options: row.options.map((o) => ({ ...o, label: o.id === "hide" ? "Menu bar only" : "Notch and menu bar" })),
+  label: say("settings.general.show_in"),
+  options: row.options.map((o) => ({ ...o, label: o.id === "hide" ? say("settings.general.show_in_menu_bar") : say("settings.general.show_in_notch") })),
 });
 
 /**
@@ -45,6 +80,7 @@ export const showCuaIn = (row: CoreRow): CoreRow => ({
  * and Keyvault pages.
  */
 export function GeneralTab() {
+  const t = useT();
   const { data: settings, updateSetting, chooseSetting } = useSettings();
   const { preference, setPreference } = useTheme();
   const mac = showsMacShellSettings();
@@ -65,14 +101,14 @@ export function GeneralTab() {
   return (
     <div data-settings-tab="general">
       <SettingsGroup
-        title="Everyday"
+        title={t("settings.general.everyday")}
         footer={
           dataLink?.linkLabel && dataLink.linkUrl ? (
             <button
               type="button"
               data-telemetry-link=""
               className="text-brand-strong outline-none hover:underline focus-visible:underline"
-              onClick={() => void openExternal(dataLink.linkUrl!).catch(fail("Couldn't open the page"))}
+              onClick={() => void openExternal(dataLink.linkUrl!).catch(fail(t("settings.general.open_failed")))}
             >
               {dataLink.linkLabel}
             </button>
@@ -82,23 +118,21 @@ export function GeneralTab() {
         <LaunchAtLogin />
         {mac && notch ? (
           <CoreSettingsRow
-            row={showCuaIn(notch)}
-            description="Pick where to find Cua Spaces. Mac only."
-            onChoose={(_, option) => void updateSetting("menuBar", option === "hide").catch(fail("Couldn't change where Cua shows"))}
+            row={showCuaIn(notch, t)}
+            onChoose={(_, option) => void updateSetting("menuBar", option === "hide").catch(fail(t("settings.general.show_in_failed")))}
           />
         ) : mac && values ? (
           <SettingsRow
-            label="Show Cua in"
-            description="Pick where to find Cua Spaces. Mac only."
+            label={t("settings.general.show_in")}
             control={
               <Segmented
-                aria-label="Show Cua in"
+                aria-label={t("settings.general.show_in")}
                 value={values.menuBar ? "hide" : "show"}
                 options={[
-                  { value: "show", label: "Notch and menu bar" },
-                  { value: "hide", label: "Menu bar only" },
+                  { value: "show", label: t("settings.general.show_in_notch") },
+                  { value: "hide", label: t("settings.general.show_in_menu_bar") },
                 ]}
-                onValueChange={(v) => void updateSetting("menuBar", v === "hide").catch(fail("Couldn't change where Cua shows"))}
+                onValueChange={(v) => void updateSetting("menuBar", v === "hide").catch(fail(t("settings.general.show_in_failed")))}
               />
             }
           />
@@ -107,74 +141,93 @@ export function GeneralTab() {
           <CoreSettingsRow
             key={row.id}
             row={row}
-            onChoose={(_, option) => void chooseTips(row.id, option).catch(fail("Couldn't change tips"))}
-            onPress={() => void chooseTips(row.id, "press").catch(fail("Couldn't reset tips"))}
+            onChoose={(_, option) => void chooseTips(row.id, option).catch(fail(t("settings.general.tips_failed")))}
+            onPress={() => void chooseTips(row.id, "press").catch(fail(t("settings.general.tips_reset_failed")))}
           />
         ))}
-        <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
+        <SettingsRow
+          label={t("settings.general.appearance")}
+          control={<Segmented aria-label={t("settings.general.appearance")} value={preference} options={appearance(t)} onValueChange={setPreference} />}
+        />
+        <LanguageRow />
         <ShortcutRow shortcut={settings?.globalShortcut} onChange={(accelerator) => chooseSetting("global-shortcut", accelerator)} />
         {telemetryRow ? (
           <CoreSettingsRow
             row={{ ...telemetryRow, kind: "toggle" }}
-            description={TELEMETRY_HELP}
-            onChoose={(_, option) => void updateSetting("telemetry", option === "on").catch(fail("Couldn't change usage data"))}
+            description={t("settings.general.telemetry_help")}
+            onChoose={(_, option) => void updateSetting("telemetry", option === "on").catch(fail(t("settings.general.telemetry_failed")))}
           />
         ) : values ? (
           <SettingsRow
-            label="Share usage data to help improve Cua"
-            description={TELEMETRY_HELP}
+            label={t("settings.general.telemetry")}
+            description={t("settings.general.telemetry_help")}
             htmlFor="telemetry"
-            control={<Switch id="telemetry" checked={values.telemetry} onCheckedChange={(on) => void updateSetting("telemetry", on).catch(fail("Couldn't change usage data"))} />}
+            control={
+              <Switch
+                id="telemetry"
+                checked={values.telemetry}
+                onCheckedChange={(on) => void updateSetting("telemetry", on).catch(fail(t("settings.general.telemetry_failed")))}
+              />
+            }
           />
         ) : null}
       </SettingsGroup>
       <CliSettingsSection />
       <SharingGroup />
       <RepoCacheGroup />
+      {/* Last: it shows once your computers have loaded, so nothing above it moves when it does. */}
+      <DefaultSpaceGroup />
     </div>
   );
 }
 
-/** What the switch says before this Mac is set up (the core's words once it is). */
-const SPACES_SWITCH = "Let other machines create Spaces here";
-const SPACES_HELP = "Your other machines can create Spaces here.";
-
+/** What the switch says before this Mac is set up (the core's words once it is): `settings.general.sharing_switch`. */
 /**
  * Sharing, for this Mac: "Let other machines create Spaces here", on by default. Before this Mac is set
  * up, turning it on sets it up with the defaults (its desktop stays private; that switch is on its page
  * under Machines). With both switches off this Mac simply is not shared, with no error.
  */
 function SharingGroup() {
+  const t = useT();
   const { data: machines } = useMachines();
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
   const panel = machines?.find((m) => m.current && !m.device)?.panel;
   if (!panel) return null;
-  const toggle = panel.toggles?.find((t) => t.id === "spaces");
+  const toggle = panel.toggles?.find((x) => x.id === "spaces");
   const resume = panel.actions.some((a) => a.id === "resume-sharing" && a.enabled);
   const on = panel.configured && Boolean(toggle?.on);
   const flip = (next: boolean) => {
     void (async () => {
       try {
         if (!panel.configured) {
-          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? "Couldn't set this Mac up.");
+          if (next && !(await host.quickSetUp()))
+            throw new Error(host.setupError?.message ?? t("settings.general.set_up_failed", { computer: thisComputerText() }));
           return;
         }
         if (!toggle) return;
         await host.run(toggle.action);
         if (next && resume) await host.run("resume-sharing");
       } catch (e) {
-        fail("Couldn't change sharing")(e);
+        fail(t("settings.general.sharing_failed"))(e);
       }
     })();
   };
   return (
-    <SettingsGroup title="Sharing">
+    <SettingsGroup title={t("settings.general.sharing")}>
       <SettingsRow
-        label={toggle?.label ?? SPACES_SWITCH}
-        description={toggle?.help ?? SPACES_HELP}
+        label={toggle?.label ?? t("settings.general.sharing_switch")}
+        description={toggle?.help || undefined}
         htmlFor="share-spaces"
-        control={<Switch id="share-spaces" data-setting-row="share-spaces" checked={on} disabled={host.busy || (panel.configured && !toggle?.enabled)} onCheckedChange={flip} />}
+        control={
+          <Switch
+            id="share-spaces"
+            data-setting-row="share-spaces"
+            checked={on}
+            disabled={host.busy || (panel.configured && !toggle?.enabled)}
+            onCheckedChange={flip}
+          />
+        }
       />
       {on
         ? (panel.limitRows ?? []).map((row) => (
@@ -184,7 +237,7 @@ function SharingGroup() {
               busy={host.busy}
               onChange={(limits) =>
                 host.setLimits(limits).catch((e) => {
-                  fail("Couldn't change the limit")(e);
+                  fail(t("settings.general.limit_failed"))(e);
                   throw e;
                 })
               }
@@ -208,6 +261,7 @@ const LIMIT_FIELD: Record<string, keyof HostLimits> = {
  * Saved when the field is left or Enter is pressed.
  */
 function LimitRow({ row, busy, onChange }: { row: HostLimitRow; busy: boolean; onChange: (limits: HostLimits) => Promise<unknown> }) {
+  const t = useT();
   const shown = row.value > 0 ? String(row.value) : "";
   const [draft, setDraft] = useState(shown);
   const latest = useRef(shown);
@@ -222,7 +276,7 @@ function LimitRow({ row, busy, onChange }: { row: HostLimitRow; busy: boolean; o
     // A change the host refused shows the number it still has.
     onChange({ [field]: n }).catch(() => setDraft(latest.current));
   };
-  const total = row.total && row.total > 0 ? `${thisComputerLabel()} has ${row.total} GB` : null;
+  const total = row.total && row.total > 0 ? t("settings.general.limit_total", { computer: thisComputerLabel(), total: String(row.total) }) : null;
   return (
     <SettingsRow
       label={row.label}
@@ -233,7 +287,7 @@ function LimitRow({ row, busy, onChange }: { row: HostLimitRow; busy: boolean; o
           {row.useText ? (
             <span className="block" data-limit-use={row.id}>
               {row.useText}
-              {row.over ? <span className="ml-1.5 font-medium text-destructive">{row.overText ?? "Over limit"}</span> : null}
+              {row.over ? <span className="ml-1.5 font-medium text-destructive">{row.overText ?? t("settings.general.limit_over")}</span> : null}
               {total ? `. ${total}` : null}
             </span>
           ) : null}
@@ -248,7 +302,7 @@ function LimitRow({ row, busy, onChange }: { row: HostLimitRow; busy: boolean; o
             inputMode="numeric"
             min={0}
             className="w-28 text-right"
-            placeholder="No limit"
+            placeholder={t("settings.general.limit_none")}
             value={draft}
             disabled={busy}
             onValueChange={setDraft}
@@ -266,6 +320,7 @@ function LimitRow({ row, busy, onChange }: { row: HostLimitRow; busy: boolean; o
 
 /** Launch at login as the app core lays it out; the switch shows what the system reports, never what was asked. */
 function LaunchAtLogin() {
+  const t = useT();
   const { data, setLaunchAtLogin, openLoginItems } = useLoginItem();
   if (!data?.rows) return null;
   return data.rows
@@ -274,12 +329,12 @@ function LaunchAtLogin() {
       row.id === "launch-at-login" ? (
         <CoreSettingsRow
           key={row.id}
-          row={{ ...row, label: LAUNCH_LABEL }}
-          description={LAUNCH_HELP}
+          row={{ ...row, label: launchLabel() }}
+          description={launchHelp()}
           onChoose={(_, option) => void setLaunchAtLogin(option === "on")}
         />
       ) : (
-        <CoreSettingsRow key={row.id} row={row} onPress={() => void openLoginItems().catch(fail("Couldn't open Login Items"))} />
+        <CoreSettingsRow key={row.id} row={row} onPress={() => void openLoginItems().catch(fail(t("settings.general.login_items_failed")))} />
       ),
     );
 }
@@ -290,6 +345,7 @@ function LaunchAtLogin() {
  * whether the system gave them, and a taken shortcut shows as the old line.
  */
 function ShortcutRow({ shortcut, onChange }: { shortcut: GlobalShortcut | null | undefined; onChange: (accelerator: string) => Promise<void> }) {
+  const t = useT();
   const [recording, setRecording] = useState(false);
   useEffect(() => {
     if (!recording) return;
@@ -300,24 +356,24 @@ function ShortcutRow({ shortcut, onChange }: { shortcut: GlobalShortcut | null |
       const accelerator = acceleratorOf(e);
       if (!accelerator) return;
       setRecording(false);
-      void onChange(accelerator).catch(fail("Couldn't change the shortcut"));
+      void onChange(accelerator).catch(fail(t("settings.general.shortcut_failed")));
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [recording, onChange]);
+  }, [recording, onChange, t]);
   if (!shortcut) return null;
   return (
     <div data-global-shortcut={shortcut.registered ? "registered" : "taken"}>
       <SettingsRow
-        label="Open Cua Spaces from any app"
-        description={recording ? "Press the keys you want. Esc cancels." : shortcut.registered ? "Press this to bring Cua Spaces to the front." : globalShortcutLine(shortcut)}
+        label={t("settings.general.shortcut")}
+        description={recording ? t("settings.general.shortcut_recording") : (globalShortcutLine(shortcut) ?? undefined)}
         control={
           <div className="flex items-center gap-2">
             <span className="text-[13px] text-muted-foreground" data-shortcut-label="">
               {recording ? "…" : shortcut.label}
             </span>
             <Button variant="outline" size="sm" data-shortcut-change="" onClick={() => setRecording((r) => !r)}>
-              {recording ? "Cancel" : "Change"}
+              {recording ? t("settings.general.shortcut_cancel") : t("settings.general.shortcut_change")}
             </Button>
           </div>
         }

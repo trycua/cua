@@ -10,6 +10,7 @@ on:
     paths:
       - "libs/cua-s1/**"
       - ".github/workflows/ci-cua-s1.yml"
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -20,7 +21,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   test:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Lint, test, and train smoke (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -153,6 +161,8 @@ jobs:
           uv run --frozen --extra four-b --group test pytest -q tests/test_four_b.py
 
   macos-unit:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     # Apple silicon is the primary local inference platform for Cua-S1-4B
     # (S1_DEVICE=mps). This job covers the offline unit suite and the four-b
     # dependency resolution on macOS arm64; it does not download weights.

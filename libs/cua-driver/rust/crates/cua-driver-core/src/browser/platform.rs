@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The platform-adapter contract for the browser-tool surface.
 //!
 //! Core owns schemas, semantics, CDP handling, the target/ref store,

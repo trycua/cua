@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver autostart {enable|disable|status|kick}` — register / inspect /
 //! trigger the platform-native auto-start mechanism so `cua-driver serve`
 //! comes up on every interactive logon without the user pasting a

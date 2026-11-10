@@ -3363,6 +3363,13 @@ public protocol DevicesProtocol: AnyObject, Sendable {
     func renameMachine(machineId: String, name: String) async throws  -> RelayMachine
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+    func resolveDefaultSpace() async throws  -> DefaultSpace
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -3374,11 +3381,23 @@ public protocol DevicesProtocol: AnyObject, Sendable {
     func revokePairingCode(id: String) async throws
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+    func setSpacesSettings(settings: SpacesSettings) async throws  -> SpacesSettings
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
      */
     func snapshot(auditLimit: UInt32) async throws  -> DevicesSnapshot
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+    func spacesSettings() async throws  -> SpacesSettings
 
 }
 /**
@@ -3636,6 +3655,28 @@ open func renameMachine(machineId: String, name: String)async throws  -> RelayMa
 }
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+open func resolveDefaultSpace()async throws  -> DefaultSpace  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_resolve_default_space(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDefaultSpace_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -3677,6 +3718,27 @@ open func revokePairingCode(id: String)async throws   {
 }
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+open func setSpacesSettings(settings: SpacesSettings)async throws  -> SpacesSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_set_spaces_settings(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeSpacesSettings_lower(settings)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacesSettings_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
@@ -3694,6 +3756,27 @@ open func snapshot(auditLimit: UInt32)async throws  -> DevicesSnapshot  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeDevicesSnapshot_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+open func spacesSettings()async throws  -> SpacesSettings  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_devices_spaces_settings(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacesSettings_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -9272,6 +9355,17 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    func joinPresenceFor(windowId: String?, identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
+
+    /**
      * This Space's services.
      */
     func keptServices() async throws  -> [SpaceServiceInfo]
@@ -10046,6 +10140,32 @@ open func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?)async thro
                 uniffi_cua_sdk_fn_method_space_join_presence(
                     self.uniffiCloneHandle(),
                     FfiConverterTypePresenceIdentity_lower(identity),FfiConverterOptionUInt64.lower(timeoutMs)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpacePresence_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+open func joinPresenceFor(windowId: String?, identity: PresenceIdentity, timeoutMs: UInt64?)async throws  -> SpacePresence  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_join_presence_for(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(windowId),FfiConverterTypePresenceIdentity_lower(identity),FfiConverterOptionUInt64.lower(timeoutMs)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_u64,
@@ -11893,6 +12013,17 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func relayUnregister(space: String) async throws  -> Bool
 
     /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+    func relayUnregisterComputer(space: String, deleteSpaces: Bool) async throws  -> Bool
+
+    /**
      * Unregisters a Space (the sandbox is not touched).
      */
     func remove(space: String) async throws
@@ -13564,6 +13695,32 @@ open func relayUnregister(space: String)async throws  -> Bool  {
                 uniffi_cua_sdk_fn_method_spaces_relay_unregister(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_i8,
+            completeFunc: ffi_cua_sdk_rust_future_complete_i8,
+            freeFunc: ffi_cua_sdk_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+open func relayUnregisterComputer(space: String, deleteSpaces: Bool)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterBool.lower(deleteSpaces)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_i8,
@@ -23864,6 +24021,196 @@ public func FfiConverterTypeCursorArt_lower(_ value: CursorArt) -> RustBuffer {
 
 
 /**
+ * Where the default Space resolves now.
+ */
+public struct DefaultSpace: Equatable, Hashable {
+    /**
+     * The first online entry; none when this device is the answer
+     * (`reason` `here`).
+     */
+    public var space: String?
+    /**
+     * `default`, `fallback`, `here` or `unset`.
+     */
+    public var reason: String
+    /**
+     * The chosen default, online or not.
+     */
+    public var defaultSpace: String?
+    /**
+     * Whether the default is online; none when unset.
+     */
+    public var defaultOnline: Bool?
+    /**
+     * The order the relay tried.
+     */
+    public var order: [DefaultSpaceStep]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The first online entry; none when this device is the answer
+         * (`reason` `here`).
+         */space: String?,
+        /**
+         * `default`, `fallback`, `here` or `unset`.
+         */reason: String,
+        /**
+         * The chosen default, online or not.
+         */defaultSpace: String?,
+        /**
+         * Whether the default is online; none when unset.
+         */defaultOnline: Bool?,
+        /**
+         * The order the relay tried.
+         */order: [DefaultSpaceStep]) {
+        self.space = space
+        self.reason = reason
+        self.defaultSpace = defaultSpace
+        self.defaultOnline = defaultOnline
+        self.order = order
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DefaultSpace: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDefaultSpace: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DefaultSpace {
+        return
+            try DefaultSpace(
+                space: FfiConverterOptionString.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf),
+                defaultSpace: FfiConverterOptionString.read(from: &buf),
+                defaultOnline: FfiConverterOptionBool.read(from: &buf),
+                order: FfiConverterSequenceTypeDefaultSpaceStep.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DefaultSpace, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.space, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.defaultSpace, into: &buf)
+        FfiConverterOptionBool.write(value.defaultOnline, into: &buf)
+        FfiConverterSequenceTypeDefaultSpaceStep.write(value.order, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpace_lift(_ buf: RustBuffer) throws -> DefaultSpace {
+    return try FfiConverterTypeDefaultSpace.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpace_lower(_ value: DefaultSpace) -> RustBuffer {
+    return FfiConverterTypeDefaultSpace.lower(value)
+}
+
+
+/**
+ * One entry of the order [`Devices::resolve_default_space`] tried.
+ */
+public struct DefaultSpaceStep: Equatable, Hashable {
+    /**
+     * The Space id.
+     */
+    public var space: String
+    /**
+     * Its display name.
+     */
+    public var name: String
+    /**
+     * Connected and sharing now.
+     */
+    public var online: Bool
+    /**
+     * `default`, `fallback` or `here`.
+     */
+    public var role: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space id.
+         */space: String,
+        /**
+         * Its display name.
+         */name: String,
+        /**
+         * Connected and sharing now.
+         */online: Bool,
+        /**
+         * `default`, `fallback` or `here`.
+         */role: String) {
+        self.space = space
+        self.name = name
+        self.online = online
+        self.role = role
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DefaultSpaceStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDefaultSpaceStep: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DefaultSpaceStep {
+        return
+            try DefaultSpaceStep(
+                space: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                online: FfiConverterBool.read(from: &buf),
+                role: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DefaultSpaceStep, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.online, into: &buf)
+        FfiConverterString.write(value.role, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpaceStep_lift(_ buf: RustBuffer) throws -> DefaultSpaceStep {
+    return try FfiConverterTypeDefaultSpaceStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDefaultSpaceStep_lower(_ value: DefaultSpaceStep) -> RustBuffer {
+    return FfiConverterTypeDefaultSpaceStep.lower(value)
+}
+
+
+/**
  * `Devices.enroll`'s result.
  */
 public struct DeviceEnrollment: Equatable, Hashable {
@@ -31523,6 +31870,8 @@ public func FfiConverterTypeNetworkEvent_lower(_ value: NetworkEvent) -> RustBuf
  * - `localhost`: `internet`, plus this computer's localhost on
  * `localhost_ports` (every port only with `all_localhost_ports`);
  * - `lan`: `internet`, plus your local network (not this computer);
+ * - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+ * `lan` are independent extras; this is the one preset with both);
  * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
  * - `unprotected`: everything but cloud metadata, other trees and the
  * daemon.
@@ -31533,17 +31882,18 @@ public func FfiConverterTypeNetworkEvent_lower(_ value: NetworkEvent) -> RustBuf
  */
 public struct NetworkSettings: Equatable, Hashable {
     /**
-     * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-     * empty is `internet`.
+     * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+     * `unprotected`; empty is `internet`.
      */
     public var preset: String
     /**
-     * `localhost`: the ports of this computer's localhost the Space may
-     * reach.
+     * `localhost` and `localhost+lan`: the ports of this computer's
+     * localhost the Space may reach.
      */
     public var localhostPorts: [UInt16]
     /**
-     * `localhost`: every port (the daemon's stay blocked).
+     * `localhost` and `localhost+lan`: every port (the daemon's stay
+     * blocked).
      */
     public var allLocalhostPorts: Bool
     /**
@@ -31574,15 +31924,16 @@ public struct NetworkSettings: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-         * empty is `internet`.
+         * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+         * `unprotected`; empty is `internet`.
          */preset: String = "",
         /**
-         * `localhost`: the ports of this computer's localhost the Space may
-         * reach.
+         * `localhost` and `localhost+lan`: the ports of this computer's
+         * localhost the Space may reach.
          */localhostPorts: [UInt16] = [],
         /**
-         * `localhost`: every port (the daemon's stay blocked).
+         * `localhost` and `localhost+lan`: every port (the daemon's stay
+         * blocked).
          */allLocalhostPorts: Bool = false,
         /**
          * Destinations that stay reachable (addresses or CIDRs).
@@ -43298,6 +43649,13 @@ public struct SpaceWindow: Equatable, Hashable {
      * Why not.
      */
     public var limitation: String
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    public var origin: SpaceWindowOrigin?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -43334,7 +43692,13 @@ public struct SpaceWindow: Equatable, Hashable {
          */available: Bool,
         /**
          * Why not.
-         */limitation: String) {
+         */limitation: String,
+        /**
+         * Where the picture comes from when another Space shows this window
+         * here (`stream_space_window`); `None` for the Space's own windows.
+         * Open it like any window: [`Space::open_stream`] with its `window_id`
+         * streams it straight from the origin when you may reach it.
+         */origin: SpaceWindowOrigin? = nil) {
         self.windowId = windowId
         self.epoch = epoch
         self.title = title
@@ -43346,6 +43710,7 @@ public struct SpaceWindow: Equatable, Hashable {
         self.focused = focused
         self.available = available
         self.limitation = limitation
+        self.origin = origin
     }
 
 
@@ -43374,7 +43739,8 @@ public struct FfiConverterTypeSpaceWindow: FfiConverterRustBuffer {
                 onScreen: FfiConverterBool.read(from: &buf),
                 focused: FfiConverterBool.read(from: &buf),
                 available: FfiConverterBool.read(from: &buf),
-                limitation: FfiConverterString.read(from: &buf)
+                limitation: FfiConverterString.read(from: &buf),
+                origin: FfiConverterOptionTypeSpaceWindowOrigin.read(from: &buf)
         )
     }
 
@@ -43390,6 +43756,7 @@ public struct FfiConverterTypeSpaceWindow: FfiConverterRustBuffer {
         FfiConverterBool.write(value.focused, into: &buf)
         FfiConverterBool.write(value.available, into: &buf)
         FfiConverterString.write(value.limitation, into: &buf)
+        FfiConverterOptionTypeSpaceWindowOrigin.write(value.origin, into: &buf)
     }
 }
 
@@ -43406,6 +43773,95 @@ public func FfiConverterTypeSpaceWindow_lift(_ buf: RustBuffer) throws -> SpaceW
 #endif
 public func FfiConverterTypeSpaceWindow_lower(_ value: SpaceWindow) -> RustBuffer {
     return FfiConverterTypeSpaceWindow.lower(value)
+}
+
+
+/**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+public struct SpaceWindowOrigin: Equatable, Hashable {
+    /**
+     * The origin Space (canonical id).
+     */
+    public var spaceId: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    public var os: String
+    /**
+     * The window's handle in the origin.
+     */
+    public var windowId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The origin Space (canonical id).
+         */spaceId: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Its OS (`macos`, `linux`, `windows`, or empty).
+         */os: String,
+        /**
+         * The window's handle in the origin.
+         */windowId: String) {
+        self.spaceId = spaceId
+        self.name = name
+        self.os = os
+        self.windowId = windowId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceWindowOrigin: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceWindowOrigin: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceWindowOrigin {
+        return
+            try SpaceWindowOrigin(
+                spaceId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                windowId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceWindowOrigin, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.spaceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.windowId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceWindowOrigin_lift(_ buf: RustBuffer) throws -> SpaceWindowOrigin {
+    return try FfiConverterTypeSpaceWindowOrigin.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceWindowOrigin_lower(_ value: SpaceWindowOrigin) -> RustBuffer {
+    return FfiConverterTypeSpaceWindowOrigin.lower(value)
 }
 
 
@@ -43816,6 +44272,97 @@ public func FfiConverterTypeSpacesHostLoad_lift(_ buf: RustBuffer) throws -> Spa
 #endif
 public func FfiConverterTypeSpacesHostLoad_lower(_ value: SpacesHostLoad) -> RustBuffer {
     return FfiConverterTypeSpacesHostLoad.lower(value)
+}
+
+
+/**
+ * The account's default Space and the order to try when it is offline.
+ */
+public struct SpacesSettings: Equatable, Hashable {
+    /**
+     * `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+     */
+    public var defaultSpace: String?
+    /**
+     * The order to try when the default is offline; empty means every
+     * online computer you can use, oldest first.
+     */
+    public var fallback: [String]
+    /**
+     * false: only the default, then this device.
+     */
+    public var fallbackOn: Bool
+    /**
+     * Unix seconds the relay saved it (ignored when writing).
+     */
+    public var updatedAt: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+         */defaultSpace: String?,
+        /**
+         * The order to try when the default is offline; empty means every
+         * online computer you can use, oldest first.
+         */fallback: [String],
+        /**
+         * false: only the default, then this device.
+         */fallbackOn: Bool,
+        /**
+         * Unix seconds the relay saved it (ignored when writing).
+         */updatedAt: UInt64) {
+        self.defaultSpace = defaultSpace
+        self.fallback = fallback
+        self.fallbackOn = fallbackOn
+        self.updatedAt = updatedAt
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpacesSettings: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpacesSettings: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpacesSettings {
+        return
+            try SpacesSettings(
+                defaultSpace: FfiConverterOptionString.read(from: &buf),
+                fallback: FfiConverterSequenceString.read(from: &buf),
+                fallbackOn: FfiConverterBool.read(from: &buf),
+                updatedAt: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpacesSettings, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.defaultSpace, into: &buf)
+        FfiConverterSequenceString.write(value.fallback, into: &buf)
+        FfiConverterBool.write(value.fallbackOn, into: &buf)
+        FfiConverterUInt64.write(value.updatedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesSettings_lift(_ buf: RustBuffer) throws -> SpacesSettings {
+    return try FfiConverterTypeSpacesSettings.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpacesSettings_lower(_ value: SpacesSettings) -> RustBuffer {
+    return FfiConverterTypeSpacesSettings.lower(value)
 }
 
 
@@ -50114,6 +50661,30 @@ fileprivate struct FfiConverterOptionTypeSpaceSharing: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSpaceWindowOrigin: FfiConverterRustBuffer {
+    typealias SwiftType = SpaceWindowOrigin?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpaceWindowOrigin.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpaceWindowOrigin.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSpacesHostLoad: FfiConverterRustBuffer {
     typealias SwiftType = SpacesHostLoad?
 
@@ -51216,6 +51787,31 @@ fileprivate struct FfiConverterSequenceTypeCursorArt: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeCursorArt.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDefaultSpaceStep: FfiConverterRustBuffer {
+    typealias SwiftType = [DefaultSpaceStep]
+
+    public static func write(_ value: [DefaultSpaceStep], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDefaultSpaceStep.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DefaultSpaceStep] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DefaultSpaceStep]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDefaultSpaceStep.read(from: &buf))
         }
         return seq
     }
@@ -54300,13 +54896,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_devices_resolve_default_space() != 5493) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_devices_revoke() != 27802) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_devices_set_spaces_settings() != 38780) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_devices_spaces_settings() != 1866) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_host_configure() != 36828) {
@@ -54777,6 +55382,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_join_presence() != 56636) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_space_kept_services() != 50248) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -55096,6 +55704,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_relay_unregister() != 53366) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer() != 32336) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_remove() != 23086) {

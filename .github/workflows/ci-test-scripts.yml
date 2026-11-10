@@ -58,6 +58,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
       - "scripts/install/install.ps1"
       - "scripts/ci/**"
+      - "scripts/spdx-headers.py"
       - "bin/ci"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
@@ -86,6 +87,7 @@ on:
       - "libs/lume/src/Main.swift"
       - "scripts/docs-generators/config.json"
 
+  merge_group:
 concurrency:
   group: ci-test-scripts-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -99,7 +101,14 @@ permissions:
   contents: read
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   macos-uninstall:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: macOS uninstall regressions
     runs-on: macos-26
     timeout-minutes: 10
@@ -125,6 +134,8 @@ jobs:
         run: /bin/bash libs/cua-driver/scripts/tests/uninstall-history-purge-test.sh
 
   windows-uninstall:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:
@@ -141,6 +152,8 @@ jobs:
         run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
 
   test:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

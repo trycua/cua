@@ -1,0 +1,8 @@
+{
+  "teleport.sensitive.sign_ins.label": "Keep me signed in",
+  "teleport.sensitive.sign_ins.detail": "Sends the session cookies.",
+  "teleport.sensitive.passwords.label": "Saved passwords",
+  "teleport.sensitive.passwords.detail": "Sends the passwords saved in the app.",
+  "teleport.sensitive.history.label": "Browsing history",
+  "teleport.sensitive.history.detail": "Sends the history of pages visited, and the bookmarks where the browser keeps them together."
+}

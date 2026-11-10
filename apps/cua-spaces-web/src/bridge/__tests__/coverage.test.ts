@@ -16,6 +16,7 @@ import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { SPACES_SETTINGS_ARGS } from "../ops/spaces-settings";
 import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
@@ -26,7 +27,10 @@ import { CLI_ARGS } from "../ops/cli";
 import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
+import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_ARGS } from "../ops/agent-sign-in";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
+import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type OpArgs, type OpName } from "../protocol";
@@ -48,6 +52,12 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "network.log": { spaceId: "s1" },
   "network.ackNotice": { spaceId: "s1" },
   "spaces.setAccess": { spaceId: "s1", clipboard: "ask" },
+  "spaces.tree": {},
+  "children.set": { spaceId: "s1", enabled: true },
+  "budget.get": { spaceId: "s1" },
+  "budget.set": { spaceId: "s1", limits: { maxSpaces: 4 } },
+  "services.list": { spaceId: "s1" },
+  "services.control": { spaceId: "s1", name: "web", action: "restart" },
   "machines.list": {},
   "host.status": {},
   "settings.get": {},
@@ -116,7 +126,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "volume.reveal": { path: "/Users/ada/Cua Volume/public" },
   "agents.setupDriver": { agents: ["codex"] },
   "about.get": {},
-  "about.set": { channel: "beta" },
+  "about.set": { channel: "nightly" },
   "about.checkNow": {},
   "update.get": {},
   "update.install": {},
@@ -166,6 +176,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...SPACES_SETTINGS_ARGS,
   ...NUDGES_ARGS,
   ...RESOURCES_ARGS,
   ...MACHINES_ARGS,
@@ -176,7 +187,10 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...THREAD_ARGS,
   ...PRESENCE_ARGS,
   ...CLOUD_APPROVE_ARGS,
+  ...AGENT_THREADS_ARGS,
+  ...AGENT_SIGN_IN_ARGS,
   ...RUNTIME_FIX_ARGS,
+  ...DRIVER_ARGS,
 };
 
 const unsupportedOn = (op: OpName, host: "webkit" | "tauri") =>
@@ -219,7 +233,18 @@ function webkitResult(method: string): unknown {
     case "host.joinWithCode":
     case "host.action":
     case "host.limits":
-      return { configured: false, sharing: false, serviceInstalled: false, serviceRunning: false, serviceKind: "process", clients: [], permissions: [], shareDesktop: true, provideSpaces: false, maxSpaces: 0 };
+      return {
+        configured: false,
+        sharing: false,
+        serviceInstalled: false,
+        serviceRunning: false,
+        serviceKind: "process",
+        clients: [],
+        permissions: [],
+        shareDesktop: true,
+        provideSpaces: false,
+        maxSpaces: 0,
+      };
     case "keyvault.approve":
       return { id: "grant-1", requestId: "req-1", items: [] };
     case "keyvault.revokeGrant":
@@ -307,7 +332,10 @@ describe("bridge contract coverage", () => {
       const outcome = await createWebkitAdapter(webkitWindow(sent))
         .call(op, ARGS[op] as never)
         .then(() => null, failure);
-      expect(sent.filter((m) => !cov.methods.includes(m)), op).toEqual([]);
+      expect(
+        sent.filter((m) => !cov.methods.includes(m)),
+        op,
+      ).toEqual([]);
       if (unsupportedOn(op, "webkit")) {
         expect(outcome, op).toBe("unsupported");
         expect(sent, op).toEqual([]);
@@ -341,7 +369,10 @@ describe("bridge contract coverage", () => {
         .call(op, ARGS[op] as never)
         .then(() => null, failure);
       expect([...channels], op).toEqual(sent.length ? [ELECTRON_BRIDGE_CHANNEL] : []);
-      expect(sent.filter((m) => !methods.includes(m)), op).toEqual([]);
+      expect(
+        sent.filter((m) => !methods.includes(m)),
+        op,
+      ).toEqual([]);
       if (!cov.electron && unsupportedOn(op, "webkit")) {
         expect(outcome, op).toBe("unsupported");
         continue;
@@ -366,7 +397,10 @@ describe("bridge contract coverage", () => {
       expect(outcome, op).not.toBe("unsupported");
       // An empty list: the page answers from the shell's UI storage, with no command.
       if (HOST_COVERAGE[op].tauri.length > 0) expect(seen.length, `${op} sent nothing`).toBeGreaterThan(0);
-      expect(seen.filter((c) => !HOST_COVERAGE[op].tauri.includes(c as never)), op).toEqual([]);
+      expect(
+        seen.filter((c) => !HOST_COVERAGE[op].tauri.includes(c as never)),
+        op,
+      ).toEqual([]);
     }
   });
 });

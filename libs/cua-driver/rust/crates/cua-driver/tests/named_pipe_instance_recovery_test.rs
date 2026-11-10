@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg(target_os = "windows")]
 
 //! The Windows daemon must keep serving after a later named-pipe instance

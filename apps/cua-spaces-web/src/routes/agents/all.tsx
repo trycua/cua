@@ -41,6 +41,7 @@ import {
 } from "@/lib/agents";
 import { needsAgentKey } from "@/lib/agent-keys";
 import { relativeTime, cn } from "@/lib/utils";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 export const Route = createFileRoute("/agents/all")({
   component: AgentsPage,
@@ -94,7 +95,7 @@ function AgentsPage() {
   const detail = opened && (selected.ref || selected.agent);
 
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
+    <div className="h-full scroll-y-stable">
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pt-8 pb-16">
         {detail ? (
           <div className="flex min-h-0 flex-1 flex-col" data-agent-view>
@@ -145,11 +146,7 @@ function Overview({ data, onSelect, connections }: { data: AgentsData; onSelect:
       {waiting.length > 0 ? (
         <Block title="Waiting for you" count={waiting.length} id="waiting">
           {waiting.map((r) => (
-            <div
-              key={`${r.spaceId}/${r.runId}`}
-              data-waiting-run={r.runId}
-              className="flex min-h-12 items-center gap-3 px-4 py-3"
-            >
+            <div key={`${r.spaceId}/${r.runId}`} data-waiting-run={r.runId} className="flex min-h-12 items-center gap-3 px-4 py-3">
               <HarnessMark agent={r.agent} name={r.harnessName} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[14px] font-medium">{r.needsYou!.title}</div>
@@ -164,9 +161,15 @@ function Overview({ data, onSelect, connections }: { data: AgentsData; onSelect:
       ) : null}
 
       {connections.rows.length > 0 ? (
-        <Block title="On This Mac" count={connections.rows.length} id="connections">
+        <Block title={`On ${thisComputerLabel()}`} count={connections.rows.length} id="connections">
           {connections.rows.map((c) => (
-            <ConnectionListRow key={c.id} row={c} busy={connections.busy === c.id} note={connections.notes[c.id] ?? null} onAct={(a) => (a === "connect" ? void navigate({ to: "/settings/connections", search: { app: c.id } }) : void connections.act(c.id, a))} />
+            <ConnectionListRow
+              key={c.id}
+              row={c}
+              busy={connections.busy === c.id}
+              note={connections.notes[c.id] ?? null}
+              onAct={(a) => (a === "connect" ? void navigate({ to: "/settings/connections", search: { app: c.id } }) : void connections.act(c.id, a))}
+            />
           ))}
         </Block>
       ) : null}
@@ -194,7 +197,10 @@ function Overview({ data, onSelect, connections }: { data: AgentsData; onSelect:
                 <StatusDot tone={agentTone(a.state)} />
                 {AGENT_STATE_LABEL[a.state]}
               </span>
-              <span className="w-24 shrink-0 text-right text-[13px] text-muted-foreground" title={a.lastActivityMs ? `Last saved ${relativeTime(a.lastActivityMs, now)}` : undefined}>
+              <span
+                className="w-24 shrink-0 text-right text-[13px] text-muted-foreground"
+                title={a.lastActivityMs ? `Last saved ${relativeTime(a.lastActivityMs, now)}` : undefined}
+              >
                 {a.state === "running" ? "Now" : a.lastActivityMs ? relativeTime(a.lastActivityMs, now) : ""}
               </span>
             </button>
@@ -205,7 +211,10 @@ function Overview({ data, onSelect, connections }: { data: AgentsData; onSelect:
       <Block title="Recent runs" count={data.runs.length} id="runs" empty={data.runs.length === 0 ? "No runs yet in your running Spaces." : null}>
         {data.runs.length > 0 ? (
           <div role="table" aria-label="Recent runs">
-            <div role="row" className="grid min-h-12 grid-cols-[minmax(0,3fr)_minmax(0,2fr)_8rem_7rem_6rem] items-center gap-4 px-4 text-[13px] text-muted-foreground">
+            <div
+              role="row"
+              className="grid min-h-12 grid-cols-[minmax(0,3fr)_minmax(0,2fr)_8rem_7rem_6rem] items-center gap-4 px-4 text-[13px] text-muted-foreground"
+            >
               <span role="columnheader">What it did</span>
               <span role="columnheader">Space</span>
               <span role="columnheader">Status</span>
@@ -290,7 +299,11 @@ function ConnectionListRow({ row, busy, note, onAct }: { row: ConnectionRowView;
           <span className="min-w-0 truncate">{row.label}</span>
         </div>
         {row.signIn ? <div className="mt-0.5 text-xs text-muted-foreground">{row.signIn}</div> : null}
-        {note ? <div className="mt-0.5 text-xs text-muted-foreground" data-connection-note>{note}</div> : null}
+        {note ? (
+          <div className="mt-0.5 text-xs text-muted-foreground" data-connection-note>
+            {note}
+          </div>
+        ) : null}
       </div>
       {row.action ? (
         <Button size="sm" variant="outline" className="shrink-0" disabled={busy} onClick={() => onAct(row.action!.id)} data-connection-action={row.action.id}>

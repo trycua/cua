@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS agent-cursor overlay — transparent click-through NSWindow.
 //!
 //! ## Architecture
@@ -759,6 +762,8 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _mtm = objc2_foundation::MainThreadMarker::new()
         .expect("run_appkit must be called from the main thread");
 
+    // AppKit uses Text Input Sources on this thread from here on.
+    crate::input::input_source::main_thread_runs_event_loop();
     let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
     // NSApplicationActivationPolicyAccessory = 1 (no Dock icon, no menu bar)
     // setActivationPolicy: returns BOOL (success), not void.

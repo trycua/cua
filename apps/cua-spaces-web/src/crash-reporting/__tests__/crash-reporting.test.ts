@@ -9,7 +9,13 @@ import { crashConfigFromHost } from "../../bridge/ops/telemetry";
 import { sentryOptions, startCrashReporting, wantsUiTestCrash, type SentryLike } from "..";
 import { scrubEvent, scrubString, stripUrl } from "../scrub";
 
-const ON: CrashReportingConfig = { allowed: true, dsn: "https://k@o1.ingest.sentry.io/2", release: "cua-spaces-desktop@1.0.0", environment: "stable", shell: "electron" };
+const ON: CrashReportingConfig = {
+  allowed: true,
+  dsn: "https://k@o1.ingest.sentry.io/2",
+  release: "cua-spaces-desktop@1.0.0",
+  environment: "stable",
+  shell: "electron",
+};
 
 function fakeSentry() {
   const calls: { init: Record<string, unknown>[]; close: number } = { init: [], close: 0 };
@@ -34,7 +40,12 @@ function fakeAdapter(mode: BridgeMode, answer: () => Promise<CrashReportingConfi
     if (op !== "crashReporting.config") throw new Error(`unexpected ${op}`);
     return answer();
   });
-  const adapter = { mode, call, subscribe: (l: (e: HostEvent) => void) => (listeners.add(l), () => listeners.delete(l)), dispose: vi.fn() } as unknown as DataAdapter;
+  const adapter = {
+    mode,
+    call,
+    subscribe: (l: (e: HostEvent) => void) => (listeners.add(l), () => listeners.delete(l)),
+    dispose: vi.fn(),
+  } as unknown as DataAdapter;
   return { adapter, call, emit: (e: HostEvent) => listeners.forEach((l) => l(e)), listeners };
 }
 
@@ -140,7 +151,11 @@ describe("starting", () => {
     try {
       const crash = vi.fn();
       const { sentry } = fakeSentry();
-      await startCrashReporting({ adapter: fakeAdapter("electron", async () => ({ ...ON, environment: "local", crashTest: "ui" })).adapter, load: async () => sentry, crash });
+      await startCrashReporting({
+        adapter: fakeAdapter("electron", async () => ({ ...ON, environment: "local", crashTest: "ui" })).adapter,
+        load: async () => sentry,
+        crash,
+      });
       expect(crash).not.toHaveBeenCalled();
       vi.advanceTimersByTime(3500);
       expect(crash).toHaveBeenCalledTimes(1);
@@ -155,6 +170,18 @@ describe("starting", () => {
 });
 
 describe("scrubbing", () => {
+  it("redacts JWTs, Bearer credentials, AWS key ids and keyed secrets", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlX2J5dGVz";
+    const b64 = "dGhpcyBpcyBhIHNlY3JldCB2YWx1ZQ==";
+    expect(scrubString(`auth ${jwt} failed`)).toBe("auth [redacted] failed");
+    expect(scrubString("Authorization: Bearer abc123DEF456ghi789")).toBe("Authorization: Bearer [redacted]");
+    expect(scrubString("id AKIAIOSFODNN7EXAMPLE.")).toBe("id [redacted].");
+    expect(scrubString(`?api_key=${b64}&x=1`)).toBe("?api_key=[redacted]&x=1");
+    expect(scrubString(`{"access_token":"${b64}"}`)).toBe('{"access_token":"[redacted]"}');
+    expect(scrubString("client_secret: 0123456789abcdef0123456789abcdef")).toBe("client_secret: [redacted]");
+    expect(scrubString("password=hunter2hunter2")).toBe("password=[redacted]");
+    expect(scrubString("key=abc and keyboard=layout and v1.2.3")).toBe("key=abc and keyboard=layout and v1.2.3");
+  });
   it("shortens home folders, hides emails and cuts query strings", () => {
     expect(scrubString("/Users/jane/a.js")).toBe("~/a.js");
     expect(scrubString("C:\\Users\\Jane Doe\\a.js")).toBe("~\\a.js");
@@ -174,7 +201,18 @@ describe("scrubbing", () => {
           type: "TypeError",
           value: "bad file /Users/jane/x.txt",
           module: "ui",
-          stacktrace: { frames: [{ filename: "app://cua/assets/index.js?v=1", abs_path: "app://cua/assets/index.js#x", function: "go", lineno: 4, vars: { a: 1 }, context_line: "secret" }] },
+          stacktrace: {
+            frames: [
+              {
+                filename: "app://cua/assets/index.js?v=1",
+                abs_path: "app://cua/assets/index.js#x",
+                function: "go",
+                lineno: 4,
+                vars: { a: 1 },
+                context_line: "secret",
+              },
+            ],
+          },
         },
       ],
     },

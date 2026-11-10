@@ -1,5 +1,6 @@
 #include "mock-hyprland/mock.hpp"
 #include "input_experiment.hpp"
+#include "user_seat_guard.hpp"
 
 #include <array>
 #include <cstdlib>
@@ -46,6 +47,12 @@ void InputExperiment::resume() {
     if (fail_resume) throw std::runtime_error("test transport failure");
 }
 std::string InputExperiment::status_json() const { return "{}"; }
+unsigned seat_guard_installs = 0, seat_guard_removals = 0;
+bool install_user_seat_guard(void*) { ++seat_guard_installs; return true; }
+void remove_user_seat_guard() { ++seat_guard_removals; }
+bool user_seat_guard_active() { return seat_guard_installs > seat_guard_removals; }
+std::uint64_t popup_grabs_withheld() { return 0; }
+std::uint64_t drags_withheld() { return 0; }
 }
 
 int main() {
@@ -67,6 +74,8 @@ int main() {
     const auto initial_status = HyprlandAPI::registered_legacy_command->fn(FORMAT_JSON, {});
     check(created == 0 && initial_status.find(R"("configured":false)") != std::string::npos,
           "plugin starts with input disabled");
+    check(initial_status.find(R"("user_seat_guard":true,"popup_grabs_withheld":0,"drags_withheld":0)") != std::string::npos,
+          "user seat guard is installed with the plugin and reported");
 #ifdef CUA_HYPRLAND_INPUT
     check(advertises_keyboard_behavior(initial_status),
           "disabled v3 module advertises its compiled keyboard behavior before enable");
@@ -121,6 +130,7 @@ int main() {
           "unload retires directly without first sending config-disable cancellation");
     check(Event::bus()->m_events.config.reloaded.active_count() == 0,
           "unload detaches configuration listener");
+    check(!cua::hyprland::user_seat_guard_active(), "unload removes the user seat guard");
     check(rmdir(instance.c_str()) == 0 && rmdir(hypr.c_str()) == 0 &&
               rmdir(directory) == 0,
           "remove test-owned runtime");

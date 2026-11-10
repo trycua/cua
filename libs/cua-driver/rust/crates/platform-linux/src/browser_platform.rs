@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -616,7 +619,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
                 let window = tokio::task::spawn_blocking(move || {
                     crate::wayland::hyprland::window_for_address(window_id)
@@ -764,7 +767,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
                 let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
                     .await

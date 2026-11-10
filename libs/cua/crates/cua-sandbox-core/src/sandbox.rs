@@ -192,7 +192,7 @@ impl NetworkMode {
 }
 
 /// Options for [`Sandboxes::create`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CreateOptions {
     /// Provider.
     pub provider: ProviderKind,
@@ -322,6 +322,51 @@ pub struct CreateOptions {
     /// share its pages ([`Sandboxes::checkpoint`], [`Sandboxes::fork`]). It
     /// never claims a warm-pool member. Other kinds ignore it.
     pub forkable: bool,
+}
+
+impl std::fmt::Debug for CreateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateOptions")
+            .field("provider", &self.provider)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("ready_timeout_given", &self.ready_timeout_given)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("env_token", &self.env_token.as_ref().map(|_| "<redacted>"))
+            .field("firmware", &self.firmware)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_credentials",
+                &self.registry_credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("container_runtime", &self.container_runtime)
+            .field("network", &self.network)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("egress", &self.egress)
+            .field("network_settings", &self.network_settings)
+            .field("network_tree", &self.network_tree)
+            .field("owner_pid", &self.owner_pid)
+            .field("contrib", &self.contrib)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("mounts", &self.mounts)
+            .field("ephemeral_name", &self.ephemeral_name)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 impl CreateOptions {
@@ -1469,6 +1514,18 @@ impl Sandboxes {
         }
     }
 
+    /// Whether `name` is provably gone locally: a local runtime is
+    /// configured, nothing is recorded under it and the runtime answers
+    /// [`crate::RuntimeError::NotFound`]. Any other answer (no runtime, an
+    /// engine that is down) is not proof.
+    pub async fn local_name_gone(&self, name: &str) -> bool {
+        let Ok(rt) = self.local() else {
+            return false;
+        };
+        self.inner.state.load(name).is_none()
+            && matches!(rt.status(name).await, Err(crate::RuntimeError::NotFound(_)))
+    }
+
     /// Deletes local instance `name` straight through the local runtime,
     /// whether or not this machine recorded it: an instance whose create
     /// was cut off (its process died between starting it and recording
@@ -1844,6 +1901,43 @@ impl Sandboxes {
             }
             if let Some(reason) = self.note_stop(s.name(), s.runtime_type()).await {
                 out.push((s.name().to_string(), reason));
+            }
+        }
+        out
+    }
+
+    /// Repairs the running local sandboxes that lost what they need to be
+    /// reached (a macOS VM whose network gateway ended is restarted behind a
+    /// new one) and records where they listen now; the names of those it
+    /// restarted, whose open connections are stale.
+    pub async fn mend_local(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some(rt) = self.inner.local.as_ref() else {
+            return out;
+        };
+        for s in self.inner.state.list_all() {
+            // A stopped record too: the restart that mends a VM is seen as
+            // a stop by the watch ([`Self::note_unasked_stops`]) and its
+            // record says stopped while the VM runs again.
+            if provider_of(&s) != ProviderKind::Local
+                || !matches!(s.status(), "running" | "stopped")
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            let name = s.name().to_string();
+            match rt.mend(&name, s.runtime_type()).await {
+                Ok(Some(inst)) => {
+                    if let Err(e) = self.record_endpoints(&name, &inst) {
+                        tracing::warn!(sandbox = %name, "recording where it listens now: {e}");
+                    }
+                    if let Err(e) = self.inner.state.set_status(&name, "running") {
+                        tracing::warn!(sandbox = %name, "recording that it runs: {e}");
+                    }
+                    out.push(name);
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(sandbox = %name, "repairing it: {e}"),
             }
         }
         out

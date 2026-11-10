@@ -318,14 +318,17 @@ export class AppModel {
 
   /** What the Machines page is listed from (`machines::MachinesPageInput`), the same for its rows and its view. */
   get machinesPageInput(): AppMachinesPageInput {
-    const devices = this.devices.snapshot === null ? [] : this.devices.input.devices.map((d) => ({
-      id: d.id,
-      name: d.name,
-      platform: d.platform ?? "",
-      lastSeen: d.lastSeen,
-      current: d.current,
-      state: d.state,
-    }));
+    const devices =
+      this.devices.snapshot === null
+        ? []
+        : this.devices.input.devices.map((d) => ({
+            id: d.id,
+            name: d.name,
+            platform: d.platform ?? "",
+            lastSeen: d.lastSeen,
+            current: d.current,
+            state: d.state,
+          }));
     return {
       hostOs: this.hostOs,
       spaces: this.spaces,
@@ -432,7 +435,7 @@ export class AppModel {
 
   /** The detail as this machine sees it (`appSpaceDetailFor`). */
   detail(space: AppSpace): AppSpaceDetail {
-    return this.native.appSpaceDetailFor(space, this.usage.get(space.id), this.hostArch, this.settings.experiments, this.devices.accessNotice);
+    return this.native.appSpaceDetailFor(space, this.usage.get(space.id), this.hostArch, this.devices.accessNotice);
   }
 
   /** The Spaces whose desktop can be shown (running and reachable). */
@@ -615,7 +618,9 @@ export class AppModel {
       this.listReaching = list.reaching;
       this.listStale = list.stale;
       // A create this app asked another computer for already has its own pending row.
-      this.creatingElsewhere = (list.creating ?? []).filter((c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))));
+      this.creatingElsewhere = (list.creating ?? []).filter(
+        (c) => !this.spaces.some((s) => s.name === c.name && (s.host === c.machineId || this.native.appCreatesIsPending(s.id))),
+      );
       // Your other computers could not be read: their rows are the last known ones.
       this.rosterError = list.notice ? "Could not reach your other machines. Their Spaces may be out of date." : null;
       if (this.selectedSpaceId === null) {
@@ -646,7 +651,12 @@ export class AppModel {
 
   /** What Settings, Advanced's runtime rows are laid out from (`runtimes::section`): every kind, "Checking…" until read. */
   runtimesInput(): AppRuntimesInput {
-    const os = process.platform === "darwin" ? this.native.AppSpaceOs.Macos : process.platform === "win32" ? this.native.AppSpaceOs.Windows : this.native.AppSpaceOs.Linux;
+    const os =
+      process.platform === "darwin"
+        ? this.native.AppSpaceOs.Macos
+        : process.platform === "win32"
+          ? this.native.AppSpaceOs.Windows
+          : this.native.AppSpaceOs.Linux;
     return {
       os,
       hostArch: this.hostArch,
@@ -694,6 +704,24 @@ export class AppModel {
       this.runtimeAdvice = null;
       return;
     }
+    // Windows: Cua Spaces runs its own engine in WSL 2; when the doctor says why it cannot
+    // (WSL 2 or virtualization off), that is the reason, not "install Docker Desktop".
+    const managed = runtimes.details.get("managed");
+    if (process.platform === "win32" && managed && /wsl|virtual|not enough disk space/i.test(managed)) {
+      this.runtimeAdvice = {
+        reason: managed,
+        fix: /Windows feature|wsl --install/i.test(managed)
+          ? {
+              action: "open-windows-features",
+              label: "Open Windows Features",
+              note: "Turn on the listed features, then restart this PC and open Cua Spaces again.",
+              busy: false,
+              termsUrl: null,
+            }
+          : null,
+      };
+      return;
+    }
     if (w) this.runtimeAdvice = await w.advice().catch(() => null);
     else if (this.linuxRuntime) this.runtimeAdvice = await this.linuxRuntime.advice(runtimes.details.get("container")).catch(() => null);
   }
@@ -726,7 +754,7 @@ export class AppModel {
       localAvailable: backends ? backends.length > 0 : true,
       localReason:
         backends && backends.length === 0
-          ? (this.runtimeAdvice?.reason ?? noLocalRuntimeReason(process.platform, runtimes?.details.get("container")))
+          ? (this.runtimeAdvice?.reason ?? noLocalRuntimeReason(process.platform, runtimes?.details.get("container"), runtimes?.details.get("managed")))
           : undefined,
       localBackends: backends,
       localDetails: runtimes?.details,
@@ -836,7 +864,10 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }));
+      else
+        this.sendCreate(
+          new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }),
+        );
       throw error;
     }
   }
@@ -1106,5 +1137,12 @@ export class AppModel {
 /** The SDK's storage probe as the wizard env takes it. */
 export function wizardStorage(s: LocalStorage): AppLocalStorage {
   const volume = (v: LocalStorage["lume"]) => (v ? { availableBytes: v.availableBytes, totalBytes: v.totalBytes, name: v.name } : undefined);
-  return { reserveBytes: s.reserveBytes, lume: volume(s.lume), qemu: volume(s.qemu), container: volume(s.container), pulled: s.pulled, linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes };
+  return {
+    reserveBytes: s.reserveBytes,
+    lume: volume(s.lume),
+    qemu: volume(s.qemu),
+    container: volume(s.container),
+    pulled: s.pulled,
+    linuxRuntimeDownloadBytes: s.linuxRuntimeDownloadBytes,
+  };
 }

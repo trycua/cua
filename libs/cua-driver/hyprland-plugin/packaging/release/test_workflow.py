@@ -19,8 +19,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("needs: release-attribution-preflight", self.job)
         self.assertIn(
             "    if: >-\n"
-            "      github.event_name == 'push' &&\n"
-            "      startsWith(github.ref, 'refs/tags/cua-driver-rs-v')\n",
+            "      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || "
+            "(github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))\n",
             self.job,
         )
         # The stable tag push is the only publishing run and always runs the
@@ -28,8 +28,8 @@ class WorkflowTest(unittest.TestCase):
         needs, steps = self.release.split("    steps:\n", 1)
         self.assertIn("      - build-hyprland-plugin-source\n", needs)
         self.assertIn(
-            "if: github.event_name == 'push' && "
-            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')",
+            "if: ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || "
+            "(github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))",
             needs,
         )
         self.assertNotIn("inputs.publish", self.workflow)
@@ -39,7 +39,7 @@ class WorkflowTest(unittest.TestCase):
 
     def test_source_override_is_checked_and_assets_remain_namespaced(self):
         self.assertIn("fetch-depth: 0", self.job)
-        self.assertIn("ref: ${{ inputs.source_ref || github.ref }}", self.job)
+        self.assertIn("ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}", self.job)
         self.assertIn('--repo . --revision "$(git rev-parse HEAD)"', self.job)
         self.assertIn('--driver-version "$VERSION" --release-assets', self.job)
         self.assertIn("path: plugin-release-assets/*.tar.gz", self.job)

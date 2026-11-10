@@ -9,6 +9,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  MousePointer2Icon,
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
@@ -19,8 +20,9 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent } from "react";
 
-import { useBridge, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
+import { useBridge, useDriver, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
+import { useT } from "@/i18n";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Kbd, Shortcut } from "@/components/ui/kbd";
@@ -28,6 +30,7 @@ import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
 import { machineName, orderSpaces, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
+import { THIS_COMPUTER } from "@/lib/machines";
 import { SETTINGS_TABS } from "@/lib/settings-tabs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -36,12 +39,13 @@ import { useUiStore } from "@/stores/ui";
 import { useNavItems } from "./nav";
 
 export function CommandPalette() {
+  const t = useT();
   const open = useUiStore((s) => s.paletteOpen);
   const setOpen = useUiStore((s) => s.setPaletteOpen);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogPopup data-command-palette="">
-        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <DialogTitle className="sr-only">{t("shell.palette.title")}</DialogTitle>
         {open ? <PaletteBody onClose={() => setOpen(false)} /> : null}
       </DialogPopup>
     </Dialog>
@@ -53,6 +57,7 @@ type Command = PaletteCommand & { icon?: React.ReactNode };
 const icon = (Icon: LucideIcon) => <Icon className="size-4 text-muted-foreground" strokeWidth={1.75} />;
 
 function PaletteBody({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const router = useRouter();
   const navigate = useNavigate();
   const { core } = useBridge();
@@ -75,12 +80,15 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const other = resolved === "dark" ? "light" : "dark";
 
   const navItems = useNavItems();
+  const driverAvailable = useDriver().available;
+  const actions = t("shell.palette.group_actions");
+  const goTo = t("shell.palette.group_go_to");
   const commands: Command[] = [
     {
       id: "space:new",
-      group: "Actions",
-      label: "New Space",
-      keywords: "create add",
+      group: actions,
+      label: t("shell.palette.new_space"),
+      keywords: t("shell.palette.new_space_keywords"),
       icon: icon(PlusIcon),
       run: () => {
         void navigate({ to: "/spaces" });
@@ -89,73 +97,134 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     },
     {
       id: "theme:toggle",
-      group: "Actions",
-      label: `Switch to ${other} appearance`,
-      keywords: "theme toggle dark light mode",
+      group: actions,
+      label: t(other === "light" ? "shell.palette.switch_to_light" : "shell.palette.switch_to_dark"),
+      keywords: t("shell.palette.theme_keywords"),
       shortcut: bindingFor("theme.cycle"),
       icon: icon(resolved === "dark" ? SunIcon : MoonIcon),
       run: () => setPreference(other),
     },
     ...(preference !== "system"
-      ? [{ id: "theme:system", group: "Actions", label: "Match system appearance", keywords: "theme auto", icon: icon(MonitorIcon), run: () => setPreference("system") }]
+      ? [
+          {
+            id: "theme:system",
+            group: actions,
+            label: t("shell.palette.match_system"),
+            keywords: t("shell.palette.match_system_keywords"),
+            icon: icon(MonitorIcon),
+            run: () => setPreference("system"),
+          },
+        ]
       : []),
     ...(!vaultLocked && unattended.length > 0
       ? [
           {
             id: "keyvault:lock",
-            group: "Actions",
-            label: "Lock Keyvault",
-            hint: "Every login asks before use",
-            keywords: "secure ask",
+            group: actions,
+            label: t("shell.palette.lock_keyvault"),
+            hint: t("shell.palette.lock_keyvault_hint"),
+            keywords: t("shell.palette.lock_keyvault_keywords"),
             icon: icon(LockIcon),
             run: () =>
               void lockItems(unattended)
-                .then(() => toast("Keyvault locked", { description: "Every login now asks before each use." }))
-                .catch(toastError("Couldn't lock Keyvault")),
+                .then(() => toast(t("shell.palette.keyvault_locked"), { description: t("shell.palette.keyvault_locked_description") }))
+                .catch(toastError(t("shell.palette.lock_keyvault_failed"))),
           },
         ]
       : []),
     session?.signedIn
-      ? { id: "session:signOut", group: "Actions", label: "Sign out", hint: session.identity ?? undefined, keywords: "account log out", icon: icon(LogOutIcon), run: () => void signOut().catch(toastError("Couldn't sign out")) }
+      ? {
+          id: "session:signOut",
+          group: actions,
+          label: t("shell.palette.sign_out"),
+          hint: session.identity ?? undefined,
+          keywords: t("shell.palette.sign_out_keywords"),
+          icon: icon(LogOutIcon),
+          run: () => void signOut().catch(toastError(t("shell.palette.sign_out_failed"))),
+        }
       : {
           id: "session:signIn",
-          group: "Actions",
-          label: "Sign in",
-          keywords: "account log in cloud",
+          group: actions,
+          label: t("shell.palette.sign_in"),
+          keywords: t("shell.palette.sign_in_keywords"),
           icon: icon(LogInIcon),
           run: () =>
             void signIn()
-              .then(() => toast("Sign-in opened in your browser", { description: "Finish there, then come back." }))
-              .catch(toastError("Couldn't start sign-in")),
+              .then(() => toast(t("shell.palette.sign_in_opened"), { description: t("shell.palette.sign_in_opened_description") }))
+              .catch(toastError(t("shell.palette.sign_in_failed"))),
         },
-    { id: "sidebar", group: "Actions", label: "Show or hide sidebar", keywords: "toggle", shortcut: bindingFor("sidebar.toggle"), icon: icon(PanelLeftIcon), run: toggleSidebar },
+    {
+      id: "sidebar",
+      group: actions,
+      label: t("shell.palette.toggle_sidebar"),
+      keywords: t("shell.palette.toggle_sidebar_keywords"),
+      shortcut: bindingFor("sidebar.toggle"),
+      icon: icon(PanelLeftIcon),
+      run: toggleSidebar,
+    },
     ...navItems.map((n) => ({
       id: `nav:${n.to}`,
-      group: "Go to",
+      group: goTo,
       label: n.label,
-      keywords: "page",
+      // Computers is where Machines and the Spaces list were (CUA-3551): either old word finds it.
+      keywords: n.to === "/spaces" ? t("shell.palette.computers_keywords") : t("shell.palette.page_keywords"),
       shortcut: n.command ? bindingFor(n.command) : undefined,
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
     })),
     // Each Settings tab, so Cmd+K finds "Connectors" or "Advanced" by name.
-    ...SETTINGS_TABS.filter((t) => t.to !== "/settings").map((t) => ({
-      id: `settings:${t.to}`,
-      group: "Go to",
-      label: `Settings: ${t.label}`,
-      keywords: t.to === "/settings/connections" ? "preferences options connectors providers keys sign in connected apps coding agents" : "preferences options",
+    ...SETTINGS_TABS.filter((tab) => tab.to !== "/settings").map((tab) => ({
+      id: `settings:${tab.to}`,
+      group: goTo,
+      label: t("shell.palette.settings_tab", { tab: tab.label }),
+      keywords: tab.to === "/settings/connections" ? t("shell.palette.settings_connections_keywords") : t("shell.palette.settings_keywords"),
       icon: icon(SettingsIcon),
-      run: () => void navigate({ to: t.to }),
+      run: () => void navigate({ to: tab.to }),
     })),
-    { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
+    // Cua Driver is one of This Mac's settings, where this Cua Spaces carries it.
+    ...(driverAvailable
+      ? [
+          {
+            id: "nav:driver",
+            group: goTo,
+            label: t("common.cua_driver"),
+            keywords: t("shell.palette.driver_keywords"),
+            icon: icon(MousePointer2Icon),
+            run: () => void navigate({ to: "/spaces/computer/$computerId/driver", params: { computerId: THIS_COMPUTER } }),
+          },
+        ]
+      : []),
+    {
+      id: "nav:onboarding",
+      group: goTo,
+      label: t("shell.palette.onboarding"),
+      keywords: t("shell.palette.onboarding_keywords"),
+      icon: icon(SparklesIcon),
+      run: () => void navigate({ to: "/onboarding" }),
+    },
     ...orderSpaces(realSpaces(spaces)).flatMap((s): Command[] => {
       const state = spaceState(s);
-      const meta = { group: "Spaces", hint: osLabel(s), keywords: paletteKeywords(s, state, machineName(machines, s)), icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" /> };
-      const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: `Open ${s.name}`, run: () => openSpace(s.id) }];
+      const meta = {
+        group: "Spaces",
+        hint: osLabel(s),
+        keywords: paletteKeywords(s, state, machineName(machines, s)),
+        icon: <OsIcon os={s.os} className="size-3.5 text-muted-foreground" />,
+      };
+      const out: Command[] = [{ ...meta, id: `space:open:${s.id}`, label: t("shell.palette.open_space", { name: s.name }), run: () => openSpace(s.id) }];
       if (state === "stopped") {
-        out.push({ ...meta, id: `space:start:${s.id}`, label: `Start ${s.name}`, run: () => void startSpace(s.id).catch(toastError(`Couldn't start ${s.name}`)) });
+        out.push({
+          ...meta,
+          id: `space:start:${s.id}`,
+          label: t("shell.palette.start_space", { name: s.name }),
+          run: () => void startSpace(s.id).catch(toastError(t("shell.palette.start_space_failed", { name: s.name }))),
+        });
       } else if (state === "running") {
-        out.push({ ...meta, id: `space:stop:${s.id}`, label: `Stop ${s.name}`, run: () => void stopSpace(s.id).catch(toastError(`Couldn't stop ${s.name}`)) });
+        out.push({
+          ...meta,
+          id: `space:stop:${s.id}`,
+          label: t("shell.palette.stop_space", { name: s.name }),
+          run: () => void stopSpace(s.id).catch(toastError(t("shell.palette.stop_space_failed", { name: s.name }))),
+        });
       }
       return out;
     }),
@@ -204,8 +273,8 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
             setActive(0);
           }}
           onKeyDown={onKeyDown}
-          placeholder="Search for a Space or command"
-          aria-label="Search for a Space or command"
+          placeholder={t("shell.palette.search")}
+          aria-label={t("shell.palette.search")}
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-list"
@@ -214,7 +283,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         />
       </div>
       <div id="palette-list" role="listbox" className="flex-1 overflow-y-auto p-1.5">
-        {results.length === 0 ? <p className="px-3 py-8 text-center text-[13px] text-muted-foreground">No matches</p> : null}
+        {results.length === 0 ? <p className="px-3 py-8 text-center text-[13px] text-muted-foreground">{t("shell.palette.no_matches")}</p> : null}
         {results.map((cmd, i) => {
           const header = cmd.group !== lastGroup ? cmd.group : null;
           lastGroup = cmd.group;
@@ -239,9 +308,19 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         })}
       </div>
       <div className="flex items-center gap-3 border-t bg-foreground/[0.02] px-4 py-2 text-2xs text-muted-foreground">
-        <span className="flex items-center gap-1"><Kbd>↑</Kbd><Kbd>↓</Kbd> to move</span>
-        <span className="flex items-center gap-1"><Kbd><CornerDownLeftIcon className="size-3" /></Kbd> to run</span>
-        <span className="flex items-center gap-1"><Kbd>esc</Kbd> to close</span>
+        <span className="flex items-center gap-1">
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> {t("shell.palette.hint_move")}
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>
+            <CornerDownLeftIcon className="size-3" />
+          </Kbd>{" "}
+          {t("shell.palette.hint_run")}
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>{t("shell.palette.key_esc")}</Kbd> {t("shell.palette.hint_close")}
+        </span>
       </div>
     </div>
   );

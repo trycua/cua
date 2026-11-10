@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! End-to-end tests for the v2 DOM-ref slice against a deterministic
 //! mock CDP endpoint: composed shadow DOM, same-process iframes,
 //! capability-tested OOPIFs with containment, frame/document identity
@@ -61,6 +64,20 @@ pub(super) struct FixtureState {
     /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
     /// `Page.javascriptDialogOpening` and never answers the call.
     click_opens_dialog: bool,
+    /// The renderer dropped its dialog without `Page.javascriptDialogClosed`
+    /// (a crash, a lost event): resolving it answers Chromium's
+    /// `No dialog is showing`.
+    dialog_vanished: bool,
+    /// The trusted mouse event (`mousePressed` or `mouseReleased`) that opens
+    /// a confirm() dialog. Like Chromium, the renderer then answers no input
+    /// or emulation command until it closes.
+    trusted_click_opens_dialog: Option<&'static str>,
+    renderer_blocked: bool,
+    /// Something outside the driver detaches the dialog's Page session on
+    /// the next attach. While `dialog_blocks_page`, the renderer cannot
+    /// answer `Page.enable` on the new session.
+    detach_dialog_session: bool,
+    dialog_blocks_page: bool,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
@@ -88,12 +105,17 @@ pub(super) struct FixtureState {
     /// A page-owned JavaScript dialog is open in T1: `Page.enable` on a tab
     /// session announces it, and the renderer answers nothing else.
     dialog_open: bool,
+    /// `Page.enable` on a tab session never answers (a renderer blocked by a
+    /// dialog it has not yet announced).
+    page_enable_hangs: bool,
     dom_click_changes_readback: bool,
     dom_click_readback_available: bool,
     dom_click_stall_after: Option<usize>,
     dom_click_generation: u64,
     dom_click_focused: bool,
     dom_click_reads_before_failure: Option<usize>,
+    /// Answer every post-snapshot semantic readback after this delay.
+    dom_click_readback_delay: Option<std::time::Duration>,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -112,6 +134,7 @@ impl Default for FixtureState {
             omit_primary_target: false,
             primary_window_error: None,
             dialog_open: false,
+            page_enable_hangs: false,
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -120,6 +143,11 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             click_opens_dialog: false,
+            dialog_vanished: false,
+            trusted_click_opens_dialog: None,
+            renderer_blocked: false,
+            detach_dialog_session: false,
+            dialog_blocks_page: false,
             page_sessions: Vec::new(),
             semantic_large_page: false,
             semantic_html_style: String::new(),
@@ -137,6 +165,7 @@ impl Default for FixtureState {
             dom_click_generation: 0,
             dom_click_focused: false,
             dom_click_reads_before_failure: None,
+            dom_click_readback_delay: None,
             calls: Vec::new(),
         }
     }
@@ -516,7 +545,25 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             })),
             "Target.attachToTarget" => {
                 st.tab_sessions += 1;
-                MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }))
+                let reply =
+                    MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }));
+                if !std::mem::take(&mut st.detach_dialog_session) {
+                    return reply;
+                }
+                let detached = std::mem::take(&mut st.page_sessions);
+                reply.with_events(
+                    detached
+                        .into_iter()
+                        .map(|session| MockEvent {
+                            method: "Target.detachedFromTarget".into(),
+                            params: json!({ "sessionId": session, "targetId": "T1" }),
+                            session_id: None,
+                        })
+                        .collect(),
+                )
+            }
+            "Page.enable" if is_tab && (st.page_enable_hangs || st.dialog_blocks_page) => {
+                MockReply::hang()
             }
             "Page.enable" if is_tab => {
                 st.page_sessions.push(sess.clone());
@@ -737,6 +784,28 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({}))
                 }
             }
+            "Input.dispatchMouseEvent" | "Emulation.setFocusEmulationEnabled"
+                if st.renderer_blocked =>
+            {
+                MockReply::hang()
+            }
+            "Input.dispatchMouseEvent"
+                if st
+                    .trusted_click_opens_dialog
+                    .is_some_and(|opener| call.params["type"] == opener) =>
+            {
+                st.renderer_blocked = true;
+                let events = st
+                    .page_sessions
+                    .iter()
+                    .map(|page_session| MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        session_id: Some(page_session.clone()),
+                        params: json!({ "type": "confirm", "message": "Delete?", "url": st.main_url }),
+                    })
+                    .collect();
+                MockReply::hang().with_events(events)
+            }
             "DOM.focus"
             | "Emulation.setFocusEmulationEnabled"
             | "Input.dispatchMouseEvent"
@@ -780,7 +849,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 let value = json!({
                     "innerText": format!("counter={}", st.dom_click_generation)
                 });
-                MockReply::ok(json!({ "result": { "value": value } }))
+                let mut reply = MockReply::ok(json!({ "result": { "value": value } }));
+                reply.delay = st.dom_click_readback_delay;
+                reply
             }
             "Runtime.callFunctionOn" => {
                 st.dom_click_focused = true;
@@ -809,7 +880,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 MockReply::ok(json!({ "result": { "value": true } }))
             }
+            "Page.handleJavaScriptDialog" if is_tab && st.dialog_vanished => {
+                MockReply::err(-32602, "No dialog is showing")
+            }
             "Page.handleJavaScriptDialog" if is_tab => {
+                st.renderer_blocked = false;
                 MockReply::ok(json!({})).with_events(vec![MockEvent {
                     method: "Page.javascriptDialogClosed".into(),
                     session_id: Some(sess.clone()),
@@ -1873,6 +1948,66 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
     stalled_server.abort();
 }
 
+struct DecliningProtectedProvider;
+
+#[async_trait]
+impl crate::consent::ProtectedConsentProvider for DecliningProtectedProvider {
+    fn provider_id(&self) -> &'static str {
+        "test.browser-declining-provider"
+    }
+
+    async fn request_consent(
+        &self,
+        request: &crate::consent::ConsentRequest,
+    ) -> Result<crate::consent::ProviderDecision, String> {
+        Ok(crate::consent::ProviderDecision {
+            action: crate::consent::ConsentAction::Decline,
+            request_digest: request.request_digest.clone(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn declined_consent_rolls_back_pending_setup_before_refusing() {
+    let setup_aborted = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: "ws://127.0.0.1:9/devtools/browser".to_owned(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: setup_aborted.clone(),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(DecliningProtectedProvider)),
+    );
+    let refused = BrowserPrepareTool::new(engine)
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_consent_required",
+        "{}",
+        structured(&refused)
+    );
+    // Checked before yielding: a rollback left to the Drop backstop would
+    // only be spawned, not finished, when the refusal returns.
+    assert!(
+        setup_aborted.load(Ordering::SeqCst),
+        "declined consent must roll back the pending setup before refusing"
+    );
+}
+
 async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
     let tool = GetBrowserStateTool::new(f.engine.clone());
     let result = tool
@@ -2844,6 +2979,34 @@ async fn an_open_dialog_moves_the_origin_proof_off_the_blocked_renderer() {
 }
 
 #[tokio::test]
+async fn browser_dialog_resubscribe_uses_the_short_dialog_deadline() {
+    let f = fixture_with(|st| st.page_enable_hangs = true).await;
+    let (target, tab) = bind(&f).await;
+
+    let started = std::time::Instant::now();
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    // Revalidation's attach spends one short deadline on its best-effort
+    // subscribe and the tool's retry spends one more; the 20 s CDP call
+    // timeout must never be reached.
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed
+            < 2 * super::engine::DIALOG_SUBSCRIPTION_TIMEOUT + std::time::Duration::from_secs(2),
+        "browser_dialog must not wait out the CDP call timeout: {elapsed:?}"
+    );
+    assert!(
+        recorded_calls(&f, "Page.enable").len() >= 2,
+        "browser_dialog retries the subscription the attach could not complete"
+    );
+    let s = structured(&inspected);
+    assert_eq!(s["refusal"]["code"], "browser_action_unavailable", "{s}");
+}
+
+#[tokio::test]
 async fn a_stale_binding_keeps_its_refusal_code_through_scope_attestation() {
     use crate::authorization::PermissionMode;
     use crate::session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling};
@@ -3254,6 +3417,40 @@ async fn dom_event_click_bounds_stalled_readbacks() {
         assert!(public["evidence"].is_null());
         assert_eq!(public["escalation"]["reason"], "effect_unconfirmed");
     }
+}
+
+#[tokio::test]
+async fn dom_event_click_keeps_readback_when_reads_are_slow() {
+    // Each read answers in 150 ms, so the third post-click read starts with
+    // only ~50 ms of the 400 ms window left. It must still be waited for:
+    // a slow page whose state did not change is "unchanged", not
+    // "readback unavailable".
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_readback_delay = Some(std::time::Duration::from_millis(150));
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = result.action_record.unwrap().public_result().unwrap();
+    let public = serde_json::to_value(public).unwrap();
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
 }
 
 #[tokio::test]
@@ -3941,4 +4138,184 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
     let t = structured(&trusted);
     assert_eq!(t["refusal"]["code"], "browser_action_unavailable", "{t}");
     assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn a_dialog_chromium_no_longer_shows_stops_locking_the_tab() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    let dialog_id = structured(&first)["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    {
+        // The renderer drops the dialog and Chromium never says it closed.
+        let mut state = f.state.lock().unwrap();
+        state.click_opens_dialog = false;
+        state.dialog_vanished = true;
+    }
+
+    let dismissed = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "dismiss",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let d = structured(&dismissed);
+    assert_eq!(d["refusal"]["code"], "browser_action_unavailable", "{d}");
+    assert_eq!(d["refusal"]["detail"]["dialog"]["present"], false, "{d}");
+
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&inspected)["present"], false);
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_coordinate_click_returns_when_its_handler_opens_a_dialog() {
+    for opener in ["mouseReleased", "mousePressed"] {
+        trusted_click_returns_when_a_dialog_opens_on(opener).await;
+    }
+}
+
+async fn trusted_click_returns_when_a_dialog_opens_on(opener: &'static str) {
+    let f = fixture_with(|state| state.trusted_click_opens_dialog = Some(opener)).await;
+    let (target, tab) = bind(&f).await;
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20,
+            "delivery_mode": "foreground"
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the click must not wait out the CDP call timeout ({opener}): {:?}",
+        started.elapsed()
+    );
+    let s = structured(&clicked);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["route"], "trusted", "{s}");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm", "{s}");
+    let dialog_id = s["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    let mouse: Vec<_> = recorded_calls(&f, "Input.dispatchMouseEvent")
+        .into_iter()
+        .map(|(_, p)| p["type"].clone())
+        .collect();
+    assert_eq!(
+        mouse,
+        [json!("mousePressed"), json!("mouseReleased")],
+        "the press must always be released ({opener})"
+    );
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(
+        focus_emulation.last().map(|(_, p)| p["enabled"].clone()),
+        Some(json!(false)),
+        "focus emulation must still be switched off: {focus_emulation:?}"
+    );
+
+    let accepted = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "accept",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    assert_eq!(structured(&accepted)["status"], "ok");
+}
+
+/// Opens a confirm with a dom_event click, then has the next attach detach
+/// the session that saw it open.
+async fn click_then_detach_dialog_session(f: &Fixture, page_blocked: bool) -> (String, String) {
+    let (target, tab) = bind(f).await;
+    let snap = snapshot(f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&first)["dialog"]["present"], true);
+    let mut state = f.state.lock().unwrap();
+    state.click_opens_dialog = false;
+    state.detach_dialog_session = true;
+    state.dialog_blocks_page = page_blocked;
+    (target, tab)
+}
+
+#[tokio::test]
+async fn a_dialog_whose_session_detached_refuses_clicks_without_waiting() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = click_then_detach_dialog_session(&f, true).await;
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    let c = structured(&clicked);
+    assert_eq!(c["refusal"]["code"], "browser_action_unavailable", "{c}");
+    assert_eq!(c["refusal"]["detail"]["dialog"]["present"], true, "{c}");
+    assert_eq!(c["refusal"]["detail"]["dialog"]["resolvable"], false, "{c}");
+    // Only the bounded dialog subscription waits; the 20 s call timeout never runs.
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    let i = structured(&inspected);
+    assert_eq!(i["present"], true, "{i}");
+    assert_eq!(i["resolvable"], false, "{i}");
+    let dismissed = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "dismiss",
+            "dialog_id": i["dialog_id"], "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let d = structured(&dismissed);
+    assert_eq!(d["refusal"]["code"], "browser_action_unavailable", "{d}");
+    assert_eq!(d["refusal"]["detail"]["dialog"]["resolvable"], false, "{d}");
+    assert!(recorded_calls(&f, "Page.handleJavaScriptDialog").is_empty());
+}
+
+#[tokio::test]
+async fn a_detached_dialog_that_closed_unseen_stops_blocking_clicks() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = click_then_detach_dialog_session(&f, false).await;
+
+    // The new session's Page.enable answers, so the renderer is no longer blocked.
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
 }

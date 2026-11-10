@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! UI Automation (UIA) tree walking for Windows.
 //!
 //! Produces the same Markdown format as the macOS AX tree:
@@ -10,7 +13,8 @@
 //!  take >4s when reading each property individually).
 
 use cua_driver_core::walk_budget::WalkBudget;
-use windows::core::{Interface, BSTR};
+use windows::core::{Interface, BSTR, HRESULT};
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
@@ -288,13 +292,38 @@ pub fn walk_tree_budgeted(
     unsafe { walk_tree_unsafe(hwnd, query, max_depth, budget) }
 }
 
+/// Join this thread to the MTA unless COM is already up on it. The init is
+/// never paired with `CoUninitialize`: retained element pointers in the walk
+/// result outlive the call. `RPC_E_CHANGED_MODE` means the thread is already
+/// an STA, where UIA works and the init took no reference to release.
+unsafe fn ensure_com() -> Result<(), String> {
+    com_init_result(CoInitializeEx(None, COINIT_MULTITHREADED))
+}
+
+fn com_init_result(hr: HRESULT) -> Result<(), String> {
+    if hr.is_ok() || hr == RPC_E_CHANGED_MODE {
+        Ok(())
+    } else {
+        Err(format!(
+            "COM init failed: {}",
+            windows::core::Error::from(hr)
+        ))
+    }
+}
+
 unsafe fn walk_tree_unsafe(
     hwnd: u64,
     query: Option<&str>,
     max_depth: usize,
     budget: &mut WalkBudget,
 ) -> UiaTreeResult {
-    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    if let Err(e) = ensure_com() {
+        return UiaTreeResult {
+            tree_markdown: e,
+            nodes: Vec::new(),
+            elements_complete: false,
+        };
+    }
 
     let automation: IUIAutomation =
         match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
@@ -723,7 +752,7 @@ unsafe fn node_cache_request(
 /// would misstate tab topology, so callers must treat it as unavailable.
 pub fn walk_native_tree(hwnd: u64) -> Result<Vec<UiaNode>, String> {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        ensure_com()?;
         let automation: IUIAutomation =
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
                 .map_err(|e| format!("UIA init failed: {e}"))?;
@@ -959,9 +988,11 @@ fn read_cached_bool(
 /// Read bounding rect as (center_x, center_y, Some((l,t,r,b))). Returns
 /// rect=None when the element has no meaningful BoundingRectangle (offscreen
 /// containers, structure-only elements).
+type BoundingRect = (i32, i32, i32, i32);
+
 fn read_cached_bounding_rect_full(
     element: &IUIAutomationElement,
-) -> (i32, i32, Option<(i32, i32, i32, i32)>) {
+) -> (i32, i32, Option<BoundingRect>) {
     unsafe {
         match element.CachedBoundingRectangle() {
             Ok(r) if r.right > r.left && r.bottom > r.top => (
@@ -1157,8 +1188,12 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             ancestors.push("");
             last_emitted.push(None);
         }
-        for d in (depth + 1)..ancestors.len() {
-            last_emitted[d] = None;
+        for slot in last_emitted
+            .iter_mut()
+            .take(ancestors.len())
+            .skip(depth + 1)
+        {
+            *slot = None;
         }
         ancestors[depth] = line;
 
@@ -1190,6 +1225,37 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn com_init_accepts_an_existing_apartment_of_either_mode() {
+        use windows::Win32::Foundation::{E_OUTOFMEMORY, S_FALSE, S_OK};
+        assert!(com_init_result(S_OK).is_ok());
+        assert!(com_init_result(S_FALSE).is_ok());
+        assert!(com_init_result(RPC_E_CHANGED_MODE).is_ok());
+        assert!(com_init_result(E_OUTOFMEMORY)
+            .unwrap_err()
+            .starts_with("COM init failed"));
+    }
+
+    #[test]
+    fn uia_is_usable_on_a_thread_already_in_an_sta() {
+        use windows::Win32::System::Com::{CoUninitialize, COINIT_APARTMENTTHREADED};
+        std::thread::spawn(|| unsafe {
+            assert!(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
+            assert_eq!(
+                CoInitializeEx(None, COINIT_MULTITHREADED),
+                RPC_E_CHANGED_MODE
+            );
+            assert_eq!(ensure_com(), Ok(()));
+            let automation: windows::core::Result<IUIAutomation> =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER);
+            assert!(automation.is_ok());
+            drop(automation);
+            CoUninitialize();
+        })
+        .join()
+        .unwrap();
+    }
+
     fn star(child_count: usize) -> Vec<Vec<usize>> {
         let mut children = vec![Vec::new(); child_count + 1];
         children[0] = (1..=child_count).collect();
@@ -1198,8 +1264,8 @@ mod tests {
 
     fn chain(len: usize) -> Vec<Vec<usize>> {
         let mut children = vec![Vec::new(); len];
-        for i in 0..len.saturating_sub(1) {
-            children[i] = vec![i + 1];
+        for (i, slot) in children.iter_mut().enumerate().take(len.saturating_sub(1)) {
+            *slot = vec![i + 1];
         }
         children
     }

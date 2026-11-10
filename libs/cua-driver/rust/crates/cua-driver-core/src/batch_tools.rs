@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_steps`: run an ordered list of existing action tools in one call.
 //!
 //! The tool owns no input logic. Every step is dispatched through the same
@@ -170,10 +173,7 @@ impl Tool for RunStepsTool {
                 `window`) on run_steps itself are the default window of every step that names \
                 none. Reads (get_window_state, zoom) do not run between steps: one there is \
                 skipped; a get_window_state last is the `observe`, a zoom last runs after it. \
-                Every step goes through the same session, permission and approval checks as a \
-                direct call; a batch grants nothing extra. \
-                All steps are validated before the first one runs, so a malformed step 4 \
-                changes nothing. Element tokens and element_index values come from a \
+                Steps pass the same checks as direct calls. Element tokens and element_index values come from a \
                 get_window_state read before the batch; a step that changes the UI can \
                 invalidate later element targets, so put element-targeted actions before the \
                 actions that reshuffle the window, or target later steps by role/name. A token \
@@ -187,8 +187,7 @@ impl Tool for RunStepsTool {
                 foreground once (the window is activated). That \
                 read is a `since:\"latest\"` diff by default: only the rows that changed \
                 since your last read of the window, plus a new snapshot_id. Without \
-                `observe` nothing is read. The batch uses one session: steps may \
-                omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
+                `observe` nothing is read. `delay_ms` pauses between steps (max \
                 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\n\
                 TARGET BY NAME (no earlier read needed, so one batch can cross screens): \
                 a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and \

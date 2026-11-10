@@ -9,7 +9,7 @@ import sys
 from importlib import metadata
 from pathlib import Path
 
-# The static cua-spacesd the Linux `cua` wheel ships (cua/bin/, where the
+# The static Linux cua-spacesd every `cua` wheel ships (cua/bin/, where the
 # in-process SDK finds it); the CLI lives in another package, so it is told.
 SPACESD_ENV = "CUA_SPACESD_STATIC"
 
@@ -25,7 +25,7 @@ def binary() -> Path | None:
 
 
 def spacesd() -> Path | None:
-    """The static cua-spacesd in this wheel (Linux), if any."""
+    """The static cua-spacesd in this wheel, if any."""
     for p in sorted((Path(__file__).resolve().parent / "bin").glob("cua-spacesd-linux-*")):
         if p.is_file():
             return p

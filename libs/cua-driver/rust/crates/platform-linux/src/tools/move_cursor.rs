@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::MoveCursorInput;
 use cua_driver_core::{
@@ -60,7 +63,7 @@ impl Tool for MoveCursorTool {
             let (x, y) = (input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland {
                 "wayland_desktop"
             } else {

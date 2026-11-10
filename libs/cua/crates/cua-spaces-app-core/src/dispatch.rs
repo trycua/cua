@@ -16,10 +16,10 @@ use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, ci_runners,
+    CoreError, about, account, agent_keys, agent_menu, agents, bulk_confirm, checklist, ci_runners,
     cloud_connect, cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview,
-    drive_page, drive_settings, driver_preview, experiments, github_connection, host,
-    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    drive_page, drive_settings, driver_preview, environment_tag, experiments, github_connection,
+    host, local_network, login_item, machines, notch, notifications, nudges, onboarding,
     onboarding_preview, palette, paths, persistent, prepare, presence, relay_usage, resources,
     runtimes, settings, share, sign_in, space_menu, summon, telemetry, thread_cards, tips, upsell,
     window, wizard,
@@ -204,6 +204,10 @@ pub const METHODS: &[&str] = &[
     "connectors.providerSheet",
     "connectors.providerPicker",
     "connectors.models",
+    "connectors.agents",
+    "agentMenu.view",
+    "agentMenu.choose",
+    "agentMenu.sync",
     "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
@@ -349,6 +353,7 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "environment.tag",
     "relayUsage.planLimit",
     "resources.view",
     "resources.thisMac",
@@ -522,32 +527,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             &a.get::<Option<String>>("selectedId")?.unwrap_or_default(),
         )),
-        // With `experiments`, what Settings, Experiments hides is left out;
-        // with `access` (this device is signed in but not enrolled), the
-        // detail as this device sees it (`detail_for`, as the SwiftUI app's
-        // `AppModel.detail`).
+        // The detail as this device sees it (`detail_for`, as the SwiftUI
+        // app's `AppModel.detail`); with `access` (this device is signed in
+        // but not enrolled), the machines on the relay say why they are off.
         "sidebar.detail" => {
             let space = a.get("space")?;
             let usage = a.get::<Option<sidebar::SpaceUsage>>("usage")?;
             let host_arch = a.get::<Option<String>>("hostArch")?;
             let access = a.get::<Option<devices::MachineAccessNotice>>("access")?;
-            out(
-                match (
-                    a.get::<Option<experiments::Experiments>>("experiments")?,
-                    access,
-                ) {
-                    (None, None) => {
-                        sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
-                    }
-                    (x, access) => sidebar::detail_for(
-                        &space,
-                        usage.as_ref(),
-                        host_arch.as_deref(),
-                        &x.unwrap_or_default(),
-                        access.as_ref(),
-                    ),
-                },
-            )
+            out(sidebar::detail_for(
+                &space,
+                usage.as_ref(),
+                host_arch.as_deref(),
+                access.as_ref(),
+            ))
         }
         "sidebar.detailCopy" => out(sidebar::detail_copy()),
         "sidebar.deleteFailedText" => out(sidebar::delete_failed_text(
@@ -593,10 +586,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<String>>("keyvault")?.as_deref(),
         )),
         "wizard.initial" => out(wizard::initial(&a.get("env")?)),
-        "wizard.reduce" => out(wizard::reduce(
+        // `hostOs`: the shell's system, which decides whether Continue is
+        // allowed (macOS when absent).
+        "wizard.reduce" => out(wizard::reduce_on(
             &a.get("state")?,
             &a.get("action")?,
             &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         // `hostOs`: the shell's system, for its words (macOS when absent).
         "wizard.view" => out(wizard::view_on(
@@ -621,6 +618,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("env")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+        )),
+        // The title bar's "Local · Staging" tag: the host resolves the
+        // channel and environment (`settings.get`'s `target`, from
+        // `app_target`); null for the released app on production.
+        "environment.tag" => out(environment_tag::view(
+            &a.get("target")?,
+            a.get("updateChannel")?,
         )),
         // The page's core has no environment: the host names its account app
         // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
@@ -760,7 +764,16 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("row")?,
             &a.get::<Option<String>>("option")?.unwrap_or_default(),
         )),
-        "upsell.proBanner" => out(upsell::pro_banner(&a.all()?)),
+        // With `usage` (the relay's answer): only near a limit, saying how close.
+        "upsell.proBanner" => match a.get::<Option<crate::relay_usage::RelayUsage>>("usage")? {
+            Some(usage) => out(upsell::pro_banner_near(
+                &upsell::ProBannerInput {
+                    plan: a.get::<Option<String>>("plan")?.unwrap_or_default(),
+                },
+                &usage,
+            )),
+            None => out(upsell::pro_banner(&a.all()?)),
+        },
         "account.menu" => out(account::menu(&a.all()?)),
         "upgrade.link" => out(telemetry::upgrade_link(
             &a.get::<String>("url")?,
@@ -1070,6 +1083,28 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<bool>>("expanded")?.unwrap_or(false),
         )),
         "connectors.models" => out(connectors::models_view(&a.get("input")?)),
+        "connectors.agents" => out(connectors::agents_view_with(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.view" => out(agent_menu::settings_view(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.sync" => out(agent_menu::sync(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.choose" => out(agent_menu::choose(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+            &a.get::<String>("app")?,
+            a.get::<Option<bool>>("on")?.unwrap_or(false),
+        )),
         "connectors.importSheet" => out(connectors::import_sheet_on(
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
@@ -1690,7 +1725,7 @@ mod tests {
         let b = call_value("upsell.proBanner", json!({"plan": "free"})).unwrap();
         assert_eq!(
             b,
-            json!({"visible": true, "text": "Run more Spaces at once with Pro", "button": "Upgrade"})
+            json!({"visible": true, "text": "Use more computers at once with Pro", "button": "Upgrade"})
         );
         let b = call_value("upsell.proBanner", json!({"plan": "pro"})).unwrap();
         assert_eq!(b["visible"], false);
@@ -1720,6 +1755,29 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The title bar's tag over the wire: null for the released app on
+    /// production, words and a tint for Local.
+    #[test]
+    fn environment_tag_over_the_wire() {
+        let tag = |args: Value| call_value("environment.tag", args).unwrap();
+        assert_eq!(
+            tag(json!({"target": {"channel": "stable", "env": "prod"}})),
+            Value::Null
+        );
+        assert_eq!(
+            tag(
+                json!({"target": {"channel": "local", "env": "staging", "authHost": "auth.staging.cua.ai"}, "updateChannel": "nightly"})
+            ),
+            json!({"label": "Local · Staging", "env": "staging", "description": "This app uses Cua Staging (auth.staging.cua.ai)"})
+        );
+        assert_eq!(
+            tag(
+                json!({"target": {"channel": "stable", "env": "staging"}, "updateChannel": "nightly"})
+            )["label"],
+            "Nightly · Staging"
+        );
     }
 
     /// The page's core has no environment: Upgrade's checkout is on the
@@ -1844,7 +1902,7 @@ mod tests {
                 .contains("on this PC in Windows Credential Manager,")
         );
         let linux = intro(json!({ "input": input, "hostOs": "linux" }));
-        assert!(linux.contains("on this machine,") && !linux.contains("Keychain"));
+        assert!(linux.contains("on this computer,") && !linux.contains("Keychain"));
         let help = |os: Value| {
             call_value(
                 "agentKeys.form",
@@ -1862,7 +1920,7 @@ mod tests {
         assert!(help(json!("windows")).contains("in Windows Credential Manager on this PC"));
         assert_eq!(
             help(json!("linux")),
-            "It's saved on this machine and won't be shown again."
+            "It's saved on this computer and won't be shown again."
         );
     }
 
@@ -1989,7 +2047,7 @@ mod tests {
     /// out under the notice; one that keeps its desktop private says so,
     /// and Share follows Settings, Experiments.
     #[test]
-    fn the_detail_follows_access_and_experiments() {
+    fn the_detail_follows_access() {
         let space = |id: &str, features: &[&str]| {
             call_value(
                 "spaces.rowToSpace",
@@ -2018,22 +2076,9 @@ mod tests {
                 .collect()
         };
         let has = |d: &Value, id: &str| ids(d).iter().any(|(a, _)| a == id);
-        // No experiments, no access: every action, as before.
+        // No access: every action.
         let live = call_value("sidebar.detail", json!({ "space": shared })).unwrap();
         assert!(has(&live, "share"));
-        // Sharing off hides Share; on shows it.
-        let off = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": false } }),
-        )
-        .unwrap();
-        assert!(!has(&off, "share"));
-        let on = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true } }),
-        )
-        .unwrap();
-        assert!(has(&on, "share") && on.get("access").is_none());
         // Not enrolled: the notice, Status says why, connection actions off.
         let notice = serde_json::to_value(
             devices::machine_access_notice(devices::EnrollmentKind::NeedsEnrollment, None).unwrap(),
@@ -2041,7 +2086,7 @@ mod tests {
         .unwrap();
         let d = call_value(
             "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true }, "access": notice }),
+            json!({ "space": shared, "access": notice }),
         )
         .unwrap();
         assert_eq!(d["access"], notice);
@@ -2052,21 +2097,10 @@ mod tests {
                 assert!(!enabled, "{id} stays off while not enrolled");
             }
         }
-        // Without experiments, `access` still applies.
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "access": notice }),
-        )
-        .unwrap();
-        assert_eq!(d["access"], notice);
         // A machine that keeps its desktop private: its note, no New Space
         // button word in the note itself, its desktop actions gone.
         let private = space("relay:m1", &["host_spaces", "files"]);
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": private, "experiments": {} }),
-        )
-        .unwrap();
+        let d = call_value("sidebar.detail", json!({ "space": private })).unwrap();
         assert_eq!(
             d["desktopNote"],
             json!("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")

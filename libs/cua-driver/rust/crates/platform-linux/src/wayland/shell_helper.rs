@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Client for the bundled **cua WinRects** GNOME Shell extension
 //! (`org.cua.WinRects`, see `wayland-helper/winrects@cua/`).
 //!
@@ -294,7 +297,8 @@ fn is_trusted_gnome_shell(pid: u32) -> bool {
     if comm.as_deref().map(str::trim) != Some("gnome-shell") {
         return false;
     }
-    crate::proc_fs::running_executable(pid).is_some_and(|exe| exe.is_system_program("gnome-shell"))
+    crate::proc_fs::running_executable(pid)
+        .is_some_and(|exe| exe.is_system_program(&["gnome-shell"]))
 }
 
 /// The outcome of a per-window capture through the GNOME helper.

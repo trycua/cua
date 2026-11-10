@@ -53,7 +53,7 @@ Stream a Space's desktop or windows, and show a Space to the operator.
 | --- | --- | --- |
 | [`stream_endpoint`](/spaces/reference/spaces#stream_endpoint) | Return a ticketed media endpoint for the Space's desktop or one window. | mutating, idempotent |
 | [`list_space_windows`](/spaces/reference/spaces#list_space_windows) | List the windows open inside the Space. | read-only, idempotent |
-| [`stream_space_window`](/spaces/reference/spaces#stream_space_window) | Draw one Space window on the operator's desktop. | mutating, idempotent |
+| [`stream_space_window`](/spaces/reference/spaces#stream_space_window) | Show one Space window in another Space's Stream section (into=&lt;your Space&gt;; default the parent of space) or on the operator's desktop (into=desktop). | mutating, idempotent |
 | [`show_space_pip`](/spaces/reference/spaces#show_space_pip) | Pin the Space as picture-in-picture on the operator's desktop. | mutating, idempotent |
 | [`hide_space_pip`](/spaces/reference/spaces#hide_space_pip) | Unpin the picture-in-picture window. | mutating, idempotent |
 | [`open_space_viewer`](/spaces/reference/spaces#open_space_viewer) | Open the full Space viewer on the operator's desktop. | mutating, idempotent |

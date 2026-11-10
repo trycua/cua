@@ -363,10 +363,12 @@ const SpaceRowShape = ref(
     imageDigest: opt(str),
     kind: opt(oneOf("container", "vm")),
     arch: opt(str),
+    hidden: opt(bool),
     reachable: bool,
     error: opt(str),
     host: opt(str),
     hostName: opt(str),
+    parent: opt(str),
     power: opt(str),
     powerState: opt(str),
     stopReason: opt(str),
@@ -556,10 +558,7 @@ const SettingsShape = ref(
   }),
 );
 
-const ExperimentsShape = ref(
-  "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), childSpaces: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
-);
+const ExperimentsShape = ref("Experiments", obj<Experiments>()({ cuaVolume: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool) }));
 
 const RepoCacheShape = ref(
   "RepoCacheView",
@@ -1204,7 +1203,21 @@ const ThreadEntryShape = ref(
             startedMs: nullable(num),
             endedMs: nullable(num),
           }),
-          object({ kind: oneOf("child_space"), space: str, name: str, os: str, agent: str }),
+          object({
+            kind: oneOf("child_space"),
+            space: str,
+            key: opt(str),
+            name: str,
+            os: str,
+            agent: str,
+            by: opt(nullable(object({ id: str, name: str }))),
+            state: opt(oneOf("creating", "ready", "failed")),
+            phase: opt(str),
+            percent: opt(nullable(num)),
+            error: opt(str),
+            startedMs: opt(nullable(num)),
+            endedMs: opt(nullable(num)),
+          }),
         ),
       ),
     ),
@@ -1961,6 +1974,7 @@ const WkSpaceShape = ref(
     arch: optNull(str),
     host: optNull(str),
     hostName: optNull(str),
+    parent: optNull(str),
     power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str), stopReason: optNull(str) })),
     cloud: optNull(str),
     cloudPlace: optNull(str),

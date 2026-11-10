@@ -214,6 +214,16 @@ fn rate_limited(msg: impl Into<String>) -> Error {
     Error::extension("rate_limited", msg)
 }
 
+/// What the thread says when an agent is added to the Space.
+pub fn added_text(agent: &str) -> String {
+    format!("{agent} was added to this Space.")
+}
+
+/// What the thread says when a person joins the Space.
+pub fn person_joined_text(name: &str) -> String {
+    format!("{name} joined this Space.")
+}
+
 /// A person's possessive ("Ada's").
 pub fn possessive(name: &str) -> String {
     if name.ends_with('s') {
@@ -603,6 +613,7 @@ impl Persistent {
                 harness: "other".into(),
                 space: code.space.clone(),
                 model: None,
+                effort: None,
                 base_url: None,
                 env_from_host: vec![],
                 env: Default::default(),
@@ -616,6 +627,7 @@ impl Persistent {
                 notify: false,
                 saved_ms: 0,
                 last_error: None,
+                home_offline: false,
                 notified_error: None,
                 sessions: 1,
                 policy: super::Policy {
@@ -709,17 +721,9 @@ impl Persistent {
     fn note_joined(&self, store: &ThreadStore, rec: &AgentRecord, by: &Author) -> Result<()> {
         let owner = self.owner();
         let ident = identity::identity_of(rec, &owner);
-        let from = ident
-            .device
-            .as_ref()
-            .map(|d| device_words(&d.name))
-            .unwrap_or_else(|| "a computer".into());
         store.append(Draft::event(
             "join",
-            format!(
-                "{} agent joined from {from}.",
-                possessive(&ident.owner.name)
-            ),
+            added_text(&ident.display_name),
             json!({"kind": "member_joined", "member": ident, "by": Person::from(by)}),
         ))?;
         Ok(())
@@ -1264,5 +1268,19 @@ mod tests {
         assert_eq!(c.shown_state(100), "expired");
         assert_eq!(possessive("Ada"), "Ada's");
         assert_eq!(possessive("Linus"), "Linus'");
+    }
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::*;
+
+    #[test]
+    fn joined_notices_are_plain() {
+        assert_eq!(added_text("Hermes"), "Hermes was added to this Space.");
+        assert_eq!(person_joined_text("Ada"), "Ada joined this Space.");
+        for t in [added_text("Hermes"), person_joined_text("Ada")] {
+            assert!(!t.contains('#') && !t.contains('/') && !t.chars().any(|c| c.is_ascii_digit()));
+        }
     }
 }

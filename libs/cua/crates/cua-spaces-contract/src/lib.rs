@@ -17,6 +17,7 @@
 
 pub mod inputs;
 pub mod names;
+pub mod presence;
 
 use serde::Serialize;
 
@@ -1007,7 +1008,7 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::StreamsAndDisplay,
             result: "JSON: an array of windows (`window_id`, `epoch`, `title`, `app_name`, `app_id`, `pid`, `bounds`, `on_screen`, `focused`, `available`, `limitation`).",
-            instructions: "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds.",
+            instructions: "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds. Windows another Space shows here (stream_space_window) are listed too, with an `origin` (space_id, name, os, window_id); their handle opens with stream_endpoint like any other.",
             capabilities: &["space.windows.list"],
             requires: &["windows"],
             sdk_symbol: "Space.windows()",
@@ -1017,9 +1018,9 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::ListSpaceWindows>(),
         Spec {
             category: Category::StreamsAndDisplay,
-            result: "Text: `Streaming <window> of <space> to your desktop (bidirectional).`",
+            result: "Text: `Showing <window> of <space> in <parent>'s Stream section.` (into a Space) or `Streaming <window> of <space> to your desktop (bidirectional).` (into=desktop).",
             errors: &["stream"],
-            instructions: "FOR THE HUMAN. Opens a bidirectional window on the operator's desktop showing one Space window (the Cua Spaces app draws it from a media ticket). Pass app_name to auto-pick that app's largest visible window, or an exact window_id.",
+            instructions: "FOR THE HUMAN. Shows one window of a Space where the person watches. The usual use: you made a child Space, drive it with the same tools by passing space=<child> (space_bash, space_write, and the computer-use tools through call_tool(space=<child>, tool=\"computer_launch\" or \"computer_click\" or \"computer_screenshot\"; list_tools(space=<child>) lists them)), then call stream_space_window(space=<child>, app_name=\"Safari\") and the window appears in your own Space's Stream section, which the person clicks to watch. Anyone who may use the child streams it straight from the child; others get it relayed. Pass app_name to auto-pick that app's largest visible window, or an exact window_id; the entry ends when the window closes or either Space stops. into=desktop opens a bidirectional window on the operator's desktop instead (the Cua Spaces app draws it from a media ticket).",
             platforms: &OPERATOR_PLATFORMS,
             capabilities: &["operator.display", "operator.display.window"],
             requires: &["window_stream"],
@@ -1028,7 +1029,7 @@ pub fn tools() -> Vec<Tool> {
             sdk_symbol: "space.operatorDisplay.streamWindowToOperatorDesktop(_:)",
             rust_symbol: "OperatorDisplay::stream_window",
             notes: &["Operator-side: the pixels land on the human's computer, so the platform axis is the operator's OS and not the Space's."],
-            ..Spec::new("stream_space_window", "Draw one Space window on the operator's desktop.")
+            ..Spec::new("stream_space_window", "Show one Space window in another Space's Stream section (into=<your Space>; default the parent of space) or on the operator's desktop (into=desktop).")
         }
         .with::<i::StreamSpaceWindow>(),
         Spec {

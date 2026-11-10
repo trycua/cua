@@ -2122,6 +2122,11 @@ impl Runtime for ContainerRuntime {
         renamed?;
         if egress::kept(member).is_some() {
             egress::copy(member, new_name)?;
+            // The member sits on the network of ITS tree (its own name). Renamed, the Space is still on that
+            // network, so it keeps that tree: with `None` (its own, by its new name) the Space looked as if it were
+            // on the wrong network at its next start, and a warm-claimed Space could never be started again
+            // ("was made before its network settings ... recreate it and its files would be lost").
+            egress::keep_tree_of_claimed(member, new_name)?;
             egress::forget(member);
         }
         if let Err(e) = persisted {

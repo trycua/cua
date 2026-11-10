@@ -24,7 +24,7 @@ pub fn provider_from_pb(p: i32) -> Option<ProviderKind> {
     }
 }
 
-pub(crate) fn state_to_pb(s: &Status) -> pb::SandboxState {
+pub fn state_to_pb(s: &Status) -> pb::SandboxState {
     match s {
         Status::Running => pb::SandboxState::Running,
         Status::Suspended | Status::Stopped => pb::SandboxState::Stopped,
@@ -33,7 +33,8 @@ pub(crate) fn state_to_pb(s: &Status) -> pb::SandboxState {
     }
 }
 
-pub(crate) fn state_from_pb(s: i32, detail: &str) -> Status {
+#[cfg(any(feature = "client", test))]
+pub fn state_from_pb(s: i32, detail: &str) -> Status {
     match pb::SandboxState::try_from(s).unwrap_or_default() {
         pb::SandboxState::Running => Status::Running,
         pb::SandboxState::Stopped => Status::Stopped,
@@ -75,7 +76,7 @@ pub fn probe_from_pb(p: &pb::ReadinessProbe) -> Result<Probe> {
     })
 }
 
-pub(crate) fn ts(t: SystemTime) -> pbjson_types::Timestamp {
+pub fn ts(t: SystemTime) -> pbjson_types::Timestamp {
     let d = t.duration_since(UNIX_EPOCH).unwrap_or_default();
     pbjson_types::Timestamp {
         seconds: d.as_secs() as i64,
@@ -85,7 +86,7 @@ pub(crate) fn ts(t: SystemTime) -> pbjson_types::Timestamp {
 
 /// A checkpoint record on the wire.
 #[allow(dead_code)] // used by the server feature
-pub(crate) fn checkpoint_to_pb(c: &cua_sandbox_core::CheckpointRecord) -> pb::Checkpoint {
+pub fn checkpoint_to_pb(c: &cua_sandbox_core::CheckpointRecord) -> pb::Checkpoint {
     let created = c.created_at.replace("+00:00", "Z");
     pb::Checkpoint {
         name: c.name.clone(),
@@ -110,10 +111,7 @@ pub(crate) fn checkpoint_to_pb(c: &cua_sandbox_core::CheckpointRecord) -> pb::Ch
 /// A checkpoint another machine of yours holds (`HostSnapshot`), as a
 /// `Checkpoint` naming that machine.
 #[cfg(feature = "spaces")]
-pub(crate) fn host_snapshot_to_pb(
-    s: &cua_proto::env::v1::HostSnapshot,
-    host: &str,
-) -> pb::Checkpoint {
+pub fn host_snapshot_to_pb(s: &cua_proto::env::v1::HostSnapshot, host: &str) -> pb::Checkpoint {
     pb::Checkpoint {
         name: s.name.clone(),
         source: s.source.clone(),
@@ -129,11 +127,12 @@ pub(crate) fn host_snapshot_to_pb(
     }
 }
 
-pub(crate) fn from_ts(t: &pbjson_types::Timestamp) -> SystemTime {
+#[cfg(any(feature = "client", test))]
+pub fn from_ts(t: &pbjson_types::Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32)
 }
 
-pub(crate) fn dur(d: Duration) -> pbjson_types::Duration {
+pub fn dur(d: Duration) -> pbjson_types::Duration {
     pbjson_types::Duration {
         seconds: d.as_secs() as i64,
         nanos: d.subsec_nanos() as i32,
@@ -141,7 +140,7 @@ pub(crate) fn dur(d: Duration) -> pbjson_types::Duration {
 }
 
 #[allow(dead_code)] // used by the server feature
-pub(crate) fn from_dur(d: &pbjson_types::Duration) -> Duration {
+pub fn from_dur(d: &pbjson_types::Duration) -> Duration {
     Duration::new(d.seconds.max(0) as u64, d.nanos.max(0) as u32)
 }
 
@@ -176,6 +175,7 @@ pub fn info_to_pb(r: &SandboxRecord) -> pb::Sandbox {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 /// Wire → record.
 pub fn info_from_pb(s: &pb::Sandbox) -> SandboxRecord {
     let location = if s.location.is_empty() {
@@ -230,6 +230,7 @@ pub fn public_url_to_pb(u: &crate::shares::PublicUrl) -> pb::PublicUrl {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 /// Wire → public URL.
 pub fn public_url_from_pb(u: &pb::PublicUrl) -> crate::shares::PublicUrl {
     crate::shares::PublicUrl {
@@ -644,7 +645,6 @@ pub fn create_request_to_pb(r: crate::CreateRequest) -> pb::CreateSandboxRequest
 }
 
 /// A pool in its protocol form.
-#[cfg(feature = "server")]
 pub fn pool_to_pb(p: &crate::PoolInfo) -> pb::Pool {
     pb::Pool {
         name: p.name.clone(),
@@ -663,6 +663,7 @@ pub fn pool_to_pb(p: &crate::PoolInfo) -> pb::Pool {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 /// A pool from its protocol form.
 pub fn pool_from_pb(p: pb::Pool) -> crate::PoolInfo {
     crate::PoolInfo {

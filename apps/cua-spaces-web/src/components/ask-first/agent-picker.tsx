@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import type { AgentAccount, AgentGroup, AgentsView } from "@/bridge";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { Popover, PopoverDivider } from "@/components/ui/popover";
-import { agentLine, type AgentSelection } from "@/lib/ask-first-model";
+import { chipLine, type AgentSelection } from "@/lib/ask-first-model";
+import { effortKey, effortLevels } from "@/lib/model-effort";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,7 @@ export function AgentPicker({
   selected,
   onPick,
   onModel,
+  onEffort,
   onSignIn,
   onConfigure,
 }: {
@@ -35,6 +37,8 @@ export function AgentPicker({
   selected: AgentSelection | null;
   onPick: (group: AgentGroup, account: AgentAccount) => void;
   onModel: (model: string) => void;
+  /** Sets the reasoning level of the model in use. */
+  onEffort?: (level: string) => void;
   /** Starts the sign-in of an app that has no account. */
   onSignIn: (group: AgentGroup) => void;
   /** Opens where the agents and their sign-ins are managed (Settings, Connections). */
@@ -44,6 +48,7 @@ export function AgentPicker({
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<{ kind: "model" } | null>(null);
   const focus = useRef<HTMLButtonElement>(null);
+  const chip = selected ? chipLine(selected, t) : null;
   const groups = view?.groups ?? [];
   useEffect(() => {
     if (!open) setPage(null);
@@ -64,14 +69,21 @@ export function AgentPicker({
             !selected && "text-brand-strong",
           )}
           aria-label={
-            selected ? t("home.agent_picker.trigger_label", { agent: agentLine(selected), account: selected.account.line }) : t("home.agent_picker.choose")
+            selected
+              ? t("home.agent_picker.trigger_label", { agent: `${chip!.lead} ${chip!.trail}`, account: selected.account.line })
+              : t("home.agent_picker.choose")
           }
         >
           {selected ? (
             <>
               <HarnessMark agent={selected.group.app} name={selected.group.label} plain />
-              <span data-ask-agent="" className="truncate font-medium">
-                {agentLine(selected)}
+              <span data-ask-agent="" className="truncate">
+                <span data-chip-lead="" className="font-medium">
+                  {chip!.lead}
+                </span>
+                <span data-chip-trail="" className="ml-1.5 text-muted-foreground">
+                  {chip!.trail}
+                </span>
               </span>
             </>
           ) : (
@@ -138,9 +150,9 @@ export function AgentPicker({
               )}
             </div>
           ))}
+          {selected && (selected.account.models.length > 1 || selected.effort) ? <PopoverDivider /> : null}
           {selected && selected.account.models.length > 1 ? (
             <>
-              <PopoverDivider />
               <button
                 type="button"
                 data-agent-model-row=""
@@ -155,9 +167,10 @@ export function AgentPicker({
               </button>
             </>
           ) : null}
+          {selected ? <EffortRow selected={selected} onEffort={onEffort} /> : null}
           {onConfigure ? (
             <>
-              {selected && selected.account.models.length > 1 ? null : <PopoverDivider />}
+              {selected && (selected.account.models.length > 1 || selected.effort) ? null : <PopoverDivider />}
               <button
                 type="button"
                 data-agent-configure=""
@@ -174,6 +187,36 @@ export function AgentPicker({
         </div>
       )}
     </Popover>
+  );
+}
+
+/** The reasoning levels of the model in use, all on one line; nothing when the model has none. */
+function EffortRow({ selected, onEffort }: { selected: AgentSelection; onEffort?: (level: string) => void }) {
+  const t = useT();
+  const e = effortLevels(selected.harness, selected.model.id);
+  if (!e || !onEffort) return null;
+  return (
+    <div data-agent-effort-row="" className="flex items-center gap-2 px-2.5 py-1.5 text-[13px]">
+      <span className="text-muted-foreground">{t("home.agent_picker.reasoning")}</span>
+      <div role="radiogroup" aria-label={t("home.agent_picker.reasoning")} className="ml-auto flex items-center gap-0.5 rounded-lg bg-foreground/[0.05] p-0.5">
+        {e.levels.map((l) => (
+          <button
+            type="button"
+            role="radio"
+            key={l}
+            aria-checked={l === selected.effort}
+            data-effort-option={l}
+            onClick={() => onEffort(l)}
+            className={cn(
+              "rounded-lg px-1.5 py-0.5 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              l === selected.effort ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t(effortKey(l, true))}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

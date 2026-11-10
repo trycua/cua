@@ -75,7 +75,6 @@ pub trait AttachedExtension: Send + Sync + 'static {
 
     /// Background tasks of `cua daemon` (not of an embedded runtime):
     /// supervisors, extra sockets beside `cua.sock` in `socket_dir`.
-    #[cfg(feature = "server")]
     fn daemon_tasks(
         &self,
         runtime: &crate::Runtime,
@@ -88,7 +87,6 @@ pub trait AttachedExtension: Send + Sync + 'static {
     /// Runs when `cua daemon` stops, before its tasks are aborted (bounded
     /// by the daemon): what must not outlive the daemon (a mount it serves,
     /// writes not yet stored) ends here.
-    #[cfg(feature = "server")]
     fn shutdown<'a>(
         &'a self,
         runtime: &'a crate::Runtime,

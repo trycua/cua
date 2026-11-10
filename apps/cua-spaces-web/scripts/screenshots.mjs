@@ -17,7 +17,18 @@ import { chromium } from "@playwright/test";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.env.OUT_DIR ?? `${root}docs/screenshots`;
-const ROUTES = ["spaces", "spaces/computer/this-mac", "agents", "volume", "keyvault", "settings", "settings/experiments", "settings/about", "notifications", "onboarding"];
+const ROUTES = [
+  "spaces",
+  "spaces/computer/this-mac",
+  "agents",
+  "volume",
+  "keyvault",
+  "settings",
+  "settings/experiments",
+  "settings/about",
+  "notifications",
+  "onboarding",
+];
 // Pages under a parameter: [path, file name].
 const DETAIL_ROUTES = [
   [`spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, "space-detail"],
@@ -467,7 +478,11 @@ async function askFirstShots(theme) {
   await page.locator("[data-approval] button", { hasText: "Push and open PR" }).first().click();
   await page.locator("[data-approval-collapsed]").first().waitFor();
   await shot("card-answered");
-  for (const [name, demo] of [["github", "github"], ["github-none", "github-none"], ["github-warning", "github-warning"]]) {
+  for (const [name, demo] of [
+    ["github", "github"],
+    ["github-none", "github-none"],
+    ["github-warning", "github-warning"],
+  ]) {
     await page.goto(`${base}/settings/connections?demo=${demo}`, { waitUntil: "networkidle" });
     await page.locator("[data-connectors-github]").waitFor();
     await page.locator("[data-connectors-github]").scrollIntoViewIfNeeded();

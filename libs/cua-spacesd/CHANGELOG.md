@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.13.0...cua-spacesd-v0.14.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+
 ## [0.13.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.8...cua-spacesd-v0.13.0) (2026-11-09)
 
 

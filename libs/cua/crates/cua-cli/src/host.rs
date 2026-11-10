@@ -1805,29 +1805,43 @@ pub async fn run_spaces_sdk(
                 })
                 .collect();
             use std::io::IsTerminal as _;
-            // What each create is doing, on one updating line of the
-            // terminal (never in --json output).
-            let show = !json && std::io::stderr().is_terminal() && count == 1;
-            let steps = Arc::new(crate::util::StepLines::new(
-                crate::util::CreateWords::for_image(
-                    image.as_deref().unwrap_or_default(),
-                    kind.as_deref().unwrap_or_default(),
-                    true,
-                ),
-            ));
+            // What each create is doing on the terminal (never in --json
+            // output): one Space's steps a line each, or a line per Space.
+            let show = !json && std::io::stderr().is_terminal();
+            let words = crate::util::CreateWords::for_image(
+                image.as_deref().unwrap_or_default(),
+                kind.as_deref().unwrap_or_default(),
+                true,
+            );
+            let steps = Arc::new(crate::util::StepLines::new(words));
+            let many = Arc::new(crate::util::ParallelSteps::new(words, names.clone()));
             let creates = names.into_iter().enumerate().map(|(i, n)| {
                 let options = one(i as u32 + 1, n);
                 let spaces = spaces.clone();
-                let steps = steps.clone();
+                let listener: Option<Arc<dyn cua_sdk::SpaceCreateListener>> = match (show, count) {
+                    (false, _) => None,
+                    (true, 1) => Some(Arc::new(StepListener(steps.clone()))),
+                    (true, _) => Some(Arc::new(SpaceLine(many.clone(), i))),
+                };
+                let many = (show && count > 1).then(|| many.clone());
                 async move {
-                    if show {
-                        Box::pin(
-                            spaces.create_with_progress(options, Arc::new(StepListener(steps))),
-                        )
-                        .await
-                    } else {
-                        Box::pin(spaces.create(options)).await
+                    let r = match listener {
+                        Some(l) => Box::pin(spaces.create_with_progress(options, l)).await,
+                        None => Box::pin(spaces.create(options)).await,
+                    };
+                    if let Some(many) = many {
+                        if let Ok(Some(info)) = r.as_ref().map(|c| c.space.as_ref()) {
+                            many.name(i, &info.name, true);
+                        }
+                        many.ended(
+                            i,
+                            match &r {
+                                Ok(c) => Ok(c.space.as_ref().map(created_text).unwrap_or_default()),
+                                Err(e) => Err(e.to_string()),
+                            },
+                        );
                     }
+                    r
                 }
             });
             let mut all = Box::pin(futures_util::future::join_all(creates));
@@ -1835,6 +1849,7 @@ pub async fn run_spaces_sdk(
                 r = &mut all => r,
                 _ = tokio::signal::ctrl_c() => {
                     // Ctrl-C: stop every create and remove what it made.
+                    many.stop();
                     crate::util::clear_program_status();
                     eprintln!("\nCancelling...");
                     let mut messages = Vec::new();
@@ -1855,8 +1870,11 @@ pub async fn run_spaces_sdk(
                 }
             };
             crate::util::exit_on_ctrl_c();
-            if show {
+            if show && count == 1 {
                 steps.finish();
+            } else if show {
+                let first_error = results.iter().find_map(|r| r.as_ref().err());
+                many.finish(first_error.map(|e| e.to_string()).as_deref());
             }
             let mut failed = 0;
             let mut first_failure = 1;
@@ -1871,17 +1889,8 @@ pub async fn run_spaces_sdk(
                         if !info.cloud.is_empty() {
                             in_cloud.push((info.cloud.clone(), info.cloud_place.clone()));
                         }
-                        let text = format!(
-                            "Created {} ({}{})",
-                            info.id,
-                            info.name,
-                            if info.host_name.is_empty() {
-                                String::new()
-                            } else {
-                                format!(", on {}", info.host_name)
-                            }
-                        );
-                        if show {
+                        let text = created_text(&info);
+                        if show && count == 1 {
                             program_status(ProgramState::Done, None, &text);
                         }
                         if !json {
@@ -1894,7 +1903,7 @@ pub async fn run_spaces_sdk(
                         if failed == 1 {
                             first_failure = crate::exit_code(&e);
                         }
-                        if show {
+                        if show && count == 1 {
                             program_status(ProgramState::Error, None, &e.to_string());
                         }
                         if !json {
@@ -4453,28 +4462,55 @@ async fn durable_spaces() -> Vec<serde_json::Value> {
     }
 }
 
+/// The line for a created Space: `Created <id> (<name>[, on <host>])`.
+fn created_text(info: &cua_sdk::SpaceInfo) -> String {
+    let on = if info.host_name.is_empty() {
+        String::new()
+    } else {
+        format!(", on {}", info.host_name)
+    };
+    format!("Created {} ({}{on})", info.id, info.name)
+}
+
+/// The SDK's create progress as the CLI's.
+fn progress_of(p: cua_sdk::SpaceCreateProgress) -> Option<cua_sandbox_core::progress::Progress> {
+    use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+    let mut out = Progress::phase(Phase::parse(&p.phase)?).detail(p.detail);
+    if let Some(f) = p.fraction {
+        out = out.fraction(f);
+    }
+    if let Some(done) = p.bytes_done {
+        out = out.bytes(Transfer {
+            done,
+            total: p.bytes_total.unwrap_or(0),
+            per_second: p.bytes_per_second,
+        });
+    }
+    Some(out)
+}
+
+/// Passes one of several Space creates' progress to its line.
+struct SpaceLine(Arc<crate::util::ParallelSteps>, usize);
+
+impl cua_sdk::SpaceCreateListener for SpaceLine {
+    fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
+        self.0.name(self.1, &p.space, false);
+        if let Some(p) = progress_of(p) {
+            self.0.show(self.1, &p);
+        }
+    }
+}
+
 /// Passes a Space create's progress to the terminal's step lines.
 struct StepListener(Arc<crate::util::StepLines>);
 
 impl cua_sdk::SpaceCreateListener for StepListener {
     fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
-        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
-        let Some(phase) = Phase::parse(&p.phase) else {
+        let Some(out) = progress_of(p) else {
             return;
         };
-        let mut out = Progress::phase(phase).detail(p.detail);
-        if let Some(f) = p.fraction {
-            out = out.fraction(f);
-        }
-        if let Some(done) = p.bytes_done {
-            out = out.bytes(Transfer {
-                done,
-                total: p.bytes_total.unwrap_or(0),
-                per_second: p.bytes_per_second,
-            });
-        }
         if let Some(text) = self.0.show(&out) {
-            let progress = p.fraction.map(|f| (f * 100.0) as u8);
+            let progress = out.fraction.map(|f| (f * 100.0) as u8);
             program_status(ProgramState::Working, progress, &text);
         }
     }

@@ -1558,7 +1558,7 @@
       "name": "list_space_windows",
       "category": "streams-and-display",
       "description": "List the windows open inside the Space.",
-      "instructions": "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds.",
+      "instructions": "The windows a viewer can stream now, from StreamService.ListTargets: on screen, sized, normal app windows (no hidden, minimized or system-UI windows), each with its handle, title, app and bounds. Windows another Space shows here (stream_space_window) are listed too, with an `origin` (space_id, name, os, window_id); their handle opens with stream_endpoint like any other.",
       "platforms": [
         "macos",
         "windows",
@@ -1609,8 +1609,8 @@
     {
       "name": "stream_space_window",
       "category": "streams-and-display",
-      "description": "Draw one Space window on the operator's desktop.",
-      "instructions": "FOR THE HUMAN. Opens a bidirectional window on the operator's desktop showing one Space window (the Cua Spaces app draws it from a media ticket). Pass app_name to auto-pick that app's largest visible window, or an exact window_id.",
+      "description": "Show one Space window in another Space's Stream section (into=<your Space>; default the parent of space) or on the operator's desktop (into=desktop).",
+      "instructions": "FOR THE HUMAN. Shows one window of a Space where the person watches. The usual use: you made a child Space, drive it with the same tools by passing space=<child> (space_bash, space_write, and the computer-use tools through call_tool(space=<child>, tool=\"computer_launch\" or \"computer_click\" or \"computer_screenshot\"; list_tools(space=<child>) lists them)), then call stream_space_window(space=<child>, app_name=\"Safari\") and the window appears in your own Space's Stream section, which the person clicks to watch. Anyone who may use the child streams it straight from the child; others get it relayed. Pass app_name to auto-pick that app's largest visible window, or an exact window_id; the entry ends when the window closes or either Space stops. into=desktop opens a bidirectional window on the operator's desktop instead (the Cua Spaces app draws it from a media ticket).",
       "platforms": [
         "macos"
       ],
@@ -1642,7 +1642,7 @@
       "notes": [
         "Operator-side: the pixels land on the human's computer, so the platform axis is the operator's OS and not the Space's."
       ],
-      "result": "Text: `Streaming <window> of <space> to your desktop (bidirectional).`",
+      "result": "Text: `Showing <window> of <space> in <parent>'s Stream section.` (into a Space) or `Streaming <window> of <space> to your desktop (bidirectional).` (into=desktop).",
       "errors": [
         "stream"
       ],
@@ -1652,8 +1652,12 @@
             "description": "Auto-pick this app's largest visible window, e.g. \"Firefox\".",
             "type": "string"
           },
+          "into": {
+            "description": "The Space whose Stream section shows the window (id or name): your\nown Space, where the person watches. Default: the Space that created\n`space` (its parent); a Space with no parent shows the window on the\noperator's desktop. `desktop` forces the desktop.",
+            "type": "string"
+          },
           "space": {
-            "description": "Space id or name.",
+            "description": "The Space the window lives in (id or name): the child Space you made\nand opened the app in.",
             "type": "string"
           },
           "title": {
@@ -2089,6 +2093,10 @@
           },
           "cwd": {
             "description": "Working directory in the Space. Default: the run's own.",
+            "type": "string"
+          },
+          "effort": {
+            "description": "Reasoning level: `low`, `medium`, `high`, `xhigh` or `max`. Taken by Claude Code and Codex;\nother agents ignore it.",
             "type": "string"
           },
           "env": {
@@ -2875,6 +2883,10 @@
           "durable": {
             "description": "Re-drive the agent's runs after a crash. Default false.",
             "type": "boolean"
+          },
+          "effort": {
+            "description": "Reasoning level (see `agent_start`'s `effort`).",
+            "type": "string"
           },
           "env": {
             "additionalProperties": {

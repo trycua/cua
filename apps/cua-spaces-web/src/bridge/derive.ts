@@ -65,6 +65,7 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     lastUsedAt: Number.isFinite(added) ? added : now,
     scene: SCENES[os],
     provider: row.provider,
+    ...(row.hidden ? { hidden: true } : {}),
     sdk: { features: row.features, spacesdVersion: row.spacesdVersion, reachable: row.reachable, error: row.error },
     osName: row.osName,
     osPrettyName: row.osPrettyName,
@@ -73,6 +74,7 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     arch: row.arch,
     host: row.host,
     hostName: row.hostName,
+    parent: row.parent,
     power: row.power
       ? {
           control: row.power === "stop" ? "stop" : "suspend",

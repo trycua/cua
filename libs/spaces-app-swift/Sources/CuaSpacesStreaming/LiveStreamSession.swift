@@ -153,8 +153,12 @@ public final class LiveStreamSession: ObservableObject {
     /// The `stream.open` span of the latest open (see `StreamOpenClock`).
     public private(set) var openClock = StreamOpenClock()
 
-    public init(provider: SpaceStreamSourceProviding) {
+    /// `source`: what the first open streams (the desktop unless a window is given). Nothing opens
+    /// until `start()`, so a window slot that is paused does not open the desktop on resume.
+    public init(provider: SpaceStreamSourceProviding, source: StreamSource = .desktop) {
         self.provider = provider
+        self.source = source
+        if source != .desktop { title = source.label }
     }
 
     /// Stream a Space directly. This is the call `FRICTION.md` §10 says was
@@ -504,7 +508,7 @@ public final class LiveStreamSession: ObservableObject {
         presenceJoining = true
         defer { presenceJoining = false }
         do {
-            let session = try await provider.joinPresence(name: name, color: color)
+            let session = try await provider.joinPresence(name: name, color: color, source: source)
             presence = session
             presenceView = session.view()
             let me = try await session.me()

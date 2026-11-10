@@ -312,6 +312,40 @@ pub struct PendingSpace {
 /// is kept before the next use dials again.
 const SPACESD_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// The reason a computer the relay lists offline could not be reached,
+/// from what failed on the way.
+pub(crate) fn listed_offline_reason(failure: &str) -> String {
+    use cua_spaces_contract::presence::{LISTED_OFFLINE, says_listed_offline};
+    if says_listed_offline(failure) {
+        failure.to_string()
+    } else {
+        format!("{LISTED_OFFLINE} and did not answer ({failure})")
+    }
+}
+
+/// Whether `space`'s cua-spacesd answers a health check within `within`.
+/// Any answer, even a refusal, proves the connection; only a transport
+/// failure or silence does not. A Space without cua-spacesd has nothing to
+/// ask: it does not.
+pub(crate) async fn answers_within(space: &Space, within: Duration) -> bool {
+    let Ok(spacesd) = space.spacesd() else {
+        return false;
+    };
+    match tokio::time::timeout(within, spacesd.health()).await {
+        Ok(Ok(_)) => true,
+        Ok(Err(cua_spacesd_client::Error::Transport(_))) | Err(_) => false,
+        Ok(Err(_)) => true,
+    }
+}
+
+/// How long a cached connection to a computer the relay lists offline has
+/// to answer before it is dropped. The relay is the source of presence: a
+/// computer listed offline is used only through a connection that answers
+/// now (over the LAN mesh it may), never through one cached from before it
+/// went away. Over the mesh nothing resets such a connection, so without
+/// this check it looked alive for as long as nobody sent a call on it.
+pub(crate) const OFFLINE_LIVE_CHECK: Duration = Duration::from_secs(2);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
@@ -418,6 +452,8 @@ impl SpacesBuilder {
         let relay_reported = load_reported(&home);
         Spaces {
             inner: Arc::new(Inner {
+                #[cfg(feature = "spaces-stream")]
+                streams: Default::default(),
                 thumbnails,
                 #[cfg(feature = "mcp")]
                 extensions: self.extensions,
@@ -651,6 +687,9 @@ pub fn is_generated_name(name: &str) -> bool {
 }
 
 pub(crate) struct Inner {
+    /// Windows shown in a Space other than their own ([`crate::stream_registry`]).
+    #[cfg(feature = "spaces-stream")]
+    pub(crate) streams: crate::stream_registry::StreamRegistry,
     pub(crate) registry: Registry,
     /// Every Space's latest thumbnail ([`crate::thumbnails`]).
     pub(crate) thumbnails: crate::thumbnails::ThumbnailCache,
@@ -825,12 +864,14 @@ impl Spaces {
         let facts = self.team_facts();
         let provided_here: std::collections::HashSet<String> =
             provided.iter().map(|p| p.relay_machine.clone()).collect();
-        // A Space this computer listed on the account itself is the local
-        // one, once.
+        // A Space of this computer that is on the account (listed by Cua
+        // itself, by hand, or kept there because it is shared with other
+        // people) is the local one, once: every attached machine, not only
+        // the ones a pass listed.
         #[cfg(feature = "spaces-agents")]
         let provided_here = {
             let mut here = provided_here;
-            here.extend(self.auto_published_machines());
+            here.extend(self.attached_machines().into_values());
             here
         };
         let cache = self.inner.relay_cache.lock().expect("relay cache");
@@ -1145,9 +1186,13 @@ impl Spaces {
 
     /// Whether relay machine `machine_id` is a Space one of your own hosts
     /// provides (`on="host:<machine>"`, `on="auto"`): its directory row or
-    /// registry record names its host. Reads the directory once when this
-    /// process has not listed it yet.
-    pub(crate) async fn provided_by_a_host(&self, machine_id: &str) -> bool {
+    /// registry record (`record`) names its host. Reads the directory once
+    /// when this process has not listed it yet.
+    pub(crate) async fn provided_by_a_host(
+        &self,
+        machine_id: &str,
+        record: Option<&dpb::Space>,
+    ) -> bool {
         let known = |s: &Self| {
             let cached = s
                 .inner
@@ -1157,13 +1202,7 @@ impl Spaces {
                 .iter()
                 .find(|m| m.id == machine_id)
                 .map(|m| m.host.as_deref().is_some_and(|h| !h.is_empty()));
-            let recorded = s
-                .inner
-                .registry
-                .get(&format!("relay:{machine_id}"))
-                .ok()
-                .flatten()
-                .map(|r| !r.host.is_empty());
+            let recorded = record.map(|r| !r.host.is_empty());
             match (cached, recorded) {
                 (Some(true), _) | (_, Some(true)) => Some(true),
                 (None, None) => None,
@@ -1322,7 +1361,11 @@ impl Spaces {
             token,
             ..Default::default()
         };
-        let space = match self.connect(&id, &credential, name.as_deref()).await {
+        let record = self.inner.registry.get(&id.to_string())?;
+        let space = match self
+            .connect(&id, &credential, name.as_deref(), record.as_ref())
+            .await
+        {
             Ok(s) => s,
             Err(e) if not_an_spacesd(&e) => {
                 // Not a spacesd: maybe an MCP endpoint.
@@ -1333,7 +1376,9 @@ impl Spaces {
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| "mcp".into());
                 credential.service_urls.insert(service.clone(), mcp_url);
-                let space = self.connect(&id, &credential, name.as_deref()).await?;
+                let space = self
+                    .connect(&id, &credential, name.as_deref(), record.as_ref())
+                    .await?;
                 if let Err(mcp) = space.mcp(&service).await {
                     return Err(match e {
                         Error::SpacesdNotAvailable { reason, .. } => Error::SpacesdNotAvailable {
@@ -1359,6 +1404,8 @@ impl Spaces {
     /// Forgets a Space (registry entry and stored token). The sandbox is not
     /// touched.
     pub async fn remove(&self, space: &str) -> Result<SpaceInfo> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = self.resolve(space)?;
         let info = self.info(&id).ok();
         let _ = crate::lifetimes::forget(self.home_dir(), &id.to_string());
@@ -1668,10 +1715,13 @@ impl Spaces {
     /// Brings a registered Space's handshake facts (OS, image) up to date
     /// after a connect, when they changed (a newer driver, a record written
     /// before these fields existed). Best effort: the connect stands.
-    fn refresh_record(&self, key: &str, space: &Space, credential: &Credential) {
-        let Ok(Some(record)) = self.inner.registry.get(key) else {
-            return;
-        };
+    fn refresh_record(
+        &self,
+        key: &str,
+        record: &dpb::Space,
+        space: &Space,
+        credential: &Credential,
+    ) {
         let (image, digest) = space.image().unwrap_or_default();
         let (os_name, os_pretty_name) = os_names(space);
         let (kind, arch) = space.platform();
@@ -1680,8 +1730,11 @@ impl Spaces {
             || record.kind != kind
             || record.arch != arch
             || (!image.is_empty() && (record.image != image || record.image_digest != digest));
+        // Still registered: a Space removed while this connect ran stays
+        // removed.
         if stale
             && space.has_spacesd()
+            && matches!(self.inner.registry.get(key), Ok(Some(_)))
             && let Err(error) = self.store(space, credential.clone())
         {
             tracing::debug!(space = key, %error, "could not refresh the Space's record");
@@ -1817,12 +1870,14 @@ impl Spaces {
     /// Whether the registry remembers cua-spacesd answering for `id`: its
     /// image runs one, so a connection without it is a Space still waking.
     pub(crate) fn record_expects_spacesd(&self, id: &SpaceId) -> bool {
-        self.inner
-            .registry
-            .get(&id.to_string())
-            .ok()
-            .flatten()
-            .is_some_and(|r| !r.spacesd_version.is_empty() || !r.features.is_empty())
+        record_runs_spacesd(
+            self.inner
+                .registry
+                .get(&id.to_string())
+                .ok()
+                .flatten()
+                .as_ref(),
+        )
     }
 
     /// The open connection to `key`, unless its route went stale or it can
@@ -1839,6 +1894,16 @@ impl Spaces {
             && s.spacesd_retry_due(SPACESD_RETRY_AFTER)
         {
             tracing::info!(space = %key, "no cua-spacesd answered when this connected; reconnecting");
+            self.inner.connections.lock().await.remove(&key);
+            return None;
+        }
+        // Its computer left the relay (its app quit, it slept, it lost the
+        // network): the connection stands only if it still answers.
+        if let Some(s) = &cached
+            && self.carrier_listed_offline(&key)
+            && !answers_within(s, OFFLINE_LIVE_CHECK).await
+        {
+            tracing::info!(space = %key, "its computer is offline and the connection does not answer; dropping it");
             self.inner.connections.lock().await.remove(&key);
             return None;
         }
@@ -1882,8 +1947,10 @@ impl Spaces {
     }
 
     async fn connect_space(&self, id: SpaceId, key: String) -> Result<Space> {
-        let name = match (&id, self.inner.registry.get(&key)?) {
-            (_, Some(record)) => Some(record.name),
+        // Read once: everything below this connect asks this record.
+        let record = self.inner.registry.get(&key)?;
+        let name = match (&id, &record) {
+            (_, Some(record)) => Some(record.name.clone()),
             (SpaceId::Relay { machine_id }, None) => Some(
                 self.inner
                     .relay_cache
@@ -1919,7 +1986,10 @@ impl Spaces {
         {
             return Err(Error::SpacesdNotAvailable { space: key, reason });
         }
-        let s = match self.connect(&id, &credential, name.as_deref()).await {
+        let s = match self
+            .connect(&id, &credential, name.as_deref(), record.as_ref())
+            .await
+        {
             Ok(s) => {
                 self.inner.dial_backoff.clear(&key);
                 s
@@ -1928,19 +1998,25 @@ impl Spaces {
                 if let Some(presence) = presence
                     && !matches!(e, Error::NotFound(_) | Error::InvalidArgument(_))
                 {
+                    // Offline, and it did not answer either: it is offline,
+                    // whatever went wrong on the way (the apps read the
+                    // reason as offline: `presence::LISTED_OFFLINE`).
+                    let reason = listed_offline_reason(&e.to_string());
                     self.inner.dial_backoff.fail(
                         &key,
                         presence,
-                        e.to_string(),
+                        reason.clone(),
                         std::time::Instant::now(),
                     );
+                    return Err(Error::SpacesdNotAvailable { space: key, reason });
                 }
                 return Err(e);
             }
         };
-        self.refresh_record(&key, &s, &credential);
-        if matches!(id, SpaceId::Relay { .. }) && self.inner.registry.get(&key)?.is_none() {
-            self.remember_reported(&key, &s);
+        match &record {
+            Some(record) => self.refresh_record(&key, record, &s, &credential),
+            None if matches!(id, SpaceId::Relay { .. }) => self.remember_reported(&key, &s),
+            None => {}
         }
         self.inner.connections.lock().await.insert(key, s.clone());
         #[cfg(feature = "mcp")]
@@ -1958,6 +2034,22 @@ impl Spaces {
             .iter()
             .find(|m| m.id == machine_id)
             .map(|m| (m.online, m.connected_at))
+    }
+
+    /// Whether the relay lists offline the computer that carries Space
+    /// `key`: the relay machine itself, or the host a routed Space rides
+    /// on. False when no relay computer carries it or the relay has not
+    /// listed it.
+    fn carrier_listed_offline(&self, key: &str) -> bool {
+        let machine = match SpaceId::parse(key) {
+            Ok(SpaceId::Relay { machine_id }) => machine_id,
+            Ok(SpaceId::Direct { authority }) => match crate::id::routed_host(&authority) {
+                Some((machine, _)) => machine.to_string(),
+                None => return false,
+            },
+            _ => return false,
+        };
+        matches!(self.relay_presence(&machine), Some((false, _)))
     }
 
     /// [`Spaces::resolve`], first asking where a durable Space is now when
@@ -1991,8 +2083,9 @@ impl Spaces {
         id: &SpaceId,
         credential: &Credential,
         name: Option<&str>,
+        record: Option<&dpb::Space>,
     ) -> Result<Space> {
-        self.connect_with(id, credential, name, self.inner.probe_timeout)
+        self.connect_with(id, credential, name, record, self.inner.probe_timeout)
             .await
     }
 
@@ -2001,11 +2094,13 @@ impl Spaces {
     /// a spacesd, a Local Space (and a direct Space registered
     /// with service URLs) is still a Space, with an empty capability set;
     /// a direct URL with neither fails with [`Error::SpacesdNotAvailable`].
+    /// `record` is the Space's registry record, read once by the caller.
     async fn connect_with(
         &self,
         id: &SpaceId,
         credential: &Credential,
         name: Option<&str>,
+        record: Option<&dpb::Space>,
         probe: Duration,
     ) -> Result<Space> {
         let mut services: BTreeMap<String, SpaceService> = BTreeMap::new();
@@ -2114,8 +2209,8 @@ impl Spaces {
                 // A Space one of your own machines provides prefers the mesh
                 // (often a LAN neighbour); others follow `CUA_MESH`.
                 // ... and so does a host whose routed Spaces ride its channel.
-                let provided =
-                    self.provided_by_a_host(machine_id).await || self.routes_through(machine_id);
+                let provided = self.provided_by_a_host(machine_id, record).await
+                    || self.routes_through(machine_id);
                 let policy = if provided {
                     crate::mesh::policy_for_provided()
                 } else {
@@ -2236,7 +2331,7 @@ impl Spaces {
                 // runtime still bringing the Space back (a restart
                 // publishes the ports a moment later), not an image
                 // without it: mark it so the next use dials again.
-                if matches!(id, SpaceId::Local { .. }) && self.record_expects_spacesd(id) {
+                if matches!(id, SpaceId::Local { .. }) && record_runs_spacesd(record) {
                     unavailable = Some((
                         String::new(),
                         "the Space's cua-spacesd port is not published yet".into(),
@@ -2329,7 +2424,7 @@ impl Spaces {
         if let Some((kind, arch)) = platform {
             space.set_platform(kind, arch);
         }
-        if let Ok(Some(record)) = self.inner.registry.get(&id.to_string())
+        if let Some(record) = record
             && !record.image_config.is_empty()
             && let Ok(config) = serde_json::from_str(&record.image_config)
         {
@@ -2355,18 +2450,20 @@ impl Spaces {
         budget: Duration,
         expect_spacesd: bool,
     ) -> Result<Space> {
+        let record = self.inner.registry.get(&id.to_string())?;
+        let record = record.as_ref();
         if !expect_spacesd {
             let probe = self
                 .inner
                 .probe_timeout
                 .min(budget.max(Duration::from_secs(1)));
-            return self.connect_with(id, credential, name, probe).await;
+            return self.connect_with(id, credential, name, record, probe).await;
         }
         let deadline = tokio::time::Instant::now() + budget;
         let max_attempts = (budget.as_secs() / 2).max(1) + 1;
         let mut last = None;
         for _ in 0..max_attempts {
-            match self.connect(id, credential, name).await {
+            match self.connect(id, credential, name, record).await {
                 Ok(s) if s.has_spacesd() => {
                     wait_serving(&s, deadline).await;
                     return Ok(s);
@@ -2446,13 +2543,6 @@ impl Spaces {
         // Under the operator override that turns the secure default off, a create asks for no
         // more than the old lists. Child Spaces is an experiment: until it is on, no parent.
         crate::network::require_secure_spaces(opts.network_settings.as_ref())?;
-        if opts.parent.is_some()
-            && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
-        {
-            return Err(Error::invalid(
-                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-            ));
-        }
         // The network it gets: what it asks, no more open than its parent.
         // Every path below carries the resolved settings.
         let network = self.create_network(&opts)?;
@@ -3501,6 +3591,8 @@ impl Spaces {
     /// Space's copy: what the coordinator that keeps durable Spaces uses to
     /// remove a copy it replaced or deleted.
     pub async fn delete_copy(&self, space: &str) -> Result<String> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = match self.resolve(space) {
             Ok(id) => id,
             // A local sandbox no Space record names (a `cua sb fork`, a
@@ -3889,6 +3981,8 @@ impl Spaces {
     /// and a legacy `cloud:` Space fails with
     /// [`cua_sandbox_core::CLOUD_ENDED`].
     pub async fn stop(&self, space: &str) -> Result<SpacePower> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         // Its child Spaces first ([`crate::tree`]).
         self.power_off_children(space, false).await;
         self.set_power(space, false).await
@@ -3925,6 +4019,8 @@ impl Spaces {
 
     /// [`Spaces::suspend`] of this Space alone.
     pub(crate) async fn suspend_one(&self, space: &str) -> Result<SpacePower> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = self.resolve(space)?;
         let SpaceId::Local { name } = &id else {
             return Err(Error::WrongProvider {
@@ -4160,6 +4256,11 @@ impl Drop for UndoOnDrop {
             });
         }
     }
+}
+
+/// Whether `record` remembers cua-spacesd answering: its image runs one.
+fn record_runs_spacesd(record: Option<&dpb::Space>) -> bool {
+    record.is_some_and(|r| !r.spacesd_version.is_empty() || !r.features.is_empty())
 }
 
 /// How long a new local Space's cua-spacesd has to accept the connection

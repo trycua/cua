@@ -517,6 +517,7 @@ impl Runtime {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    #[cfg(any(feature = "client", test))]
     fn is_share_host(&self) -> bool {
         self.inner
             .share_host
@@ -542,8 +543,9 @@ impl Runtime {
         self.inner.host_spaces.get().cloned()
     }
 
-    #[cfg(all(feature = "spaces", feature = "server"))]
-    pub(crate) fn set_host_spaces(&self, h: Arc<cua_spaces::host_spaces::HostSpacesServer>) {
+    #[cfg(feature = "spaces")]
+    #[doc(hidden)]
+    pub fn set_host_spaces(&self, h: Arc<cua_spaces::host_spaces::HostSpacesServer>) {
         let _ = self.inner.host_spaces.set(h);
     }
 
@@ -1864,7 +1866,10 @@ impl Runtime {
         if self.inner.shares.revoke(id) {
             return Ok(());
         }
+        #[cfg(feature = "client")]
         let name = &self.key(name).await?;
+        #[cfg(not(feature = "client"))]
+        self.key(name).await?;
         #[cfg(feature = "client")]
         if !self.is_share_host()
             && id.starts_with("share-")

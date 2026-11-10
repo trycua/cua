@@ -12,13 +12,17 @@
  *   There is no step to pick where agents work (Francesco, 8 Nov 2026): it confused people. Agents can use every
  *   ready computer in the account; Settings and the Computers page change that, and make a separate computer.
  * 2 On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
- *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words.
+ *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words. Left out when every one (and Local
+ *   Network, where it's asked) is already on: the step would ask nothing.
  * 3 Which agents do you use? The coding agents found (all ticked, untick any to leave alone; Choose later skips it),
  *   each with where it is installed, or Install Claude Code / Install Codex instead. Kept in setup, not moved to the
  *   first job: that job is typed into the agent in the person's own terminal, so Cua has to be in the agent's settings
  *   before it, and there is no moment in the app to ask then. A job picks its own agent.
  * 4 Ready: "<agents> can now use <computers>" (every ready computer), one line to try in their own terminal. Done
  *   ends setup on Home.
+ *
+ * The step dots under the page count exactly these steps (`runSteps`): one per step this run shows, so 4 on a Mac
+ * that still needs a permission and 3 elsewhere.
  *
  * The rest (invite a teammate, add another computer, let agents use apps on this Mac, Cua from Terminal) is
  * asked for on Home once the first job is done, not during setup (CUA-3150, idea C): `bringRestView`.
@@ -32,12 +36,56 @@ import type { Machine, SignInPhase } from "@/bridge";
  */
 export type NewRunScreen = "welcome" | "signin" | "where" | "permissions" | "agent" | "ready" | "next";
 
-/** The screens setup shows, in order. */
+/** The screens setup can show, in order (`RUN_STEPS` says which this run shows, and the step each belongs to). */
 export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "permissions", "agent", "ready"];
 
-/** The screen after the sign-in (or Skip for now): the permissions step on a Mac, else the coding agents. */
-export function afterSignIn(os: string): NewRunScreen {
-  return os === "macos" ? "permissions" : "agent";
+/** One step of setup: one step dot, the screens it covers (the first is where its dot opens) and the name read out with it. */
+export type RunStepId = "computer" | "permissions" | "agents" | "ready";
+export interface RunStep {
+  id: RunStepId;
+  screens: readonly NewRunScreen[];
+  name: string;
+}
+
+/**
+ * Every step setup can have, in order. The step dots and where setup goes next are both read from this one list
+ * (`runSteps`), so the dots always count the steps the run really shows. Adding this computer is one step: the
+ * sign-in screen is the wait after its button, and an older run saved on the removed `where` step counts as it too.
+ */
+export const RUN_STEPS: readonly RunStep[] = [
+  { id: "computer", screens: ["welcome", "signin", "where"], name: "Add this computer" },
+  { id: "permissions", screens: ["permissions"], name: "Let Cua Spaces use apps" },
+  { id: "agents", screens: ["agent"], name: "Which agents do you use?" },
+  { id: "ready", screens: ["ready"], name: "Try your first job" },
+];
+
+/**
+ * What decides which steps a run shows. `permissions`, on a Mac: `ask` when Cua Spaces still needs one, `skip` when
+ * the app has none to give or every one is already on, null while that isn't known yet (the step is counted then).
+ * Other computers have no permissions step.
+ */
+export interface RunFacts {
+  os: string;
+  permissions: "ask" | "skip" | null;
+}
+
+/** The steps this run shows, in order: the only list the step dots and the moves between steps read. */
+export function runSteps(facts: RunFacts): RunStep[] {
+  return RUN_STEPS.filter((s) => s.id !== "permissions" || (facts.os === "macos" && facts.permissions !== "skip"));
+}
+
+/** The step a screen belongs to; null for the old last screen (`next`), which finishes on Home. */
+export function stepOf(screen: NewRunScreen): RunStepId | null {
+  return RUN_STEPS.find((s) => s.screens.includes(screen))?.id ?? null;
+}
+
+/** Where setup goes once the step `screen` belongs to is done or skipped: the next step's first screen; null: setup ends. */
+export function nextStepScreen(facts: RunFacts, screen: NewRunScreen): NewRunScreen | null {
+  const steps = runSteps(facts);
+  const id = stepOf(screen);
+  const at = steps.findIndex((s) => s.id === id);
+  if (at < 0) return null;
+  return steps[at + 1]?.screens[0] ?? null;
 }
 
 /** What the run keeps between launches (inside the first run's saved record, so Reset & Show clears it). */
@@ -49,11 +97,16 @@ export interface NewRunSaved {
   connected?: string[];
   /** The coding agents found on screen 3 that the person unticked, so they are left alone. */
   agentsOff?: string[];
-  /** The furthest step dot reached (0 to 1), so a dot can go forward again only to a step already reached. */
-  reached: number;
+  /** The furthest step reached, so a dot can go forward again only to a step already reached. */
+  reachedStep?: RunStepId;
+  /**
+   * Whether this run shows the permissions step, decided when it leaves the first step (a Mac only), so the dots
+   * don't change once the person turns the permissions on there.
+   */
+  permissions?: "ask" | "skip";
 }
 
-export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", agent: null, reached: 0 };
+export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", agent: null };
 
 /** "this Mac", "this PC", "this computer" (the app's THIS_MACHINE). */
 export function placeName(os: string): string {
@@ -410,27 +463,17 @@ export function firstJobDone(signals: JobSignals, sinceMs: number): boolean {
   return taskDone || runDone;
 }
 
-/**
- * Which progress dot is lit (Ready has none): this computer (welcome, sign-in, and its permissions on a Mac), then
- * the coding agents. An older run saved on the removed `where` step counts as the first.
- */
-export function dotFor(screen: NewRunScreen): number | null {
-  return screen === "welcome" || screen === "signin" || screen === "where" || screen === "permissions" ? 0 : screen === "agent" ? 1 : null;
-}
+/** The order of two steps in `RUN_STEPS` (a step left out of this run keeps its place). */
+const stepIndex = (id: RunStepId | null | undefined) => (id ? RUN_STEPS.findIndex((s) => s.id === id) : -1);
 
-/** The screen each step dot opens. */
-export const DOT_SCREENS = ["welcome", "agent"] as const satisfies readonly NewRunScreen[];
-
-/** Each step's name, read out with its dot ("Step 2 of 2: Which agents do you use?"). */
-export const DOT_NAMES = [WELCOME.title, "Which agents do you use?"] as const;
-
-/** How far a run has got, once it's on `screen`: Ready counts as past the last dot. */
-export function reachedAfter(reached: number, screen: NewRunScreen): number {
-  return Math.max(reached, dotFor(screen) ?? DOT_SCREENS.length - 1);
+/** The furthest step a run has reached, once it's on `screen`. Never goes back. */
+export function furthestStep(reached: RunStepId | undefined, screen: NewRunScreen): RunStepId | undefined {
+  const here = stepOf(screen) ?? undefined;
+  return stepIndex(here) > stepIndex(reached) ? here : reached;
 }
 
 export interface StepDot {
-  /** "Step 2 of 2: Which agents do you use?". */
+  /** "Step 3 of 4: Which agents do you use?". */
   label: string;
   current: boolean;
   /** The screen a click opens; null: it can't be opened from here (a step not reached yet, or the one showing). */
@@ -438,15 +481,19 @@ export interface StepDot {
 }
 
 /**
- * The step dots on `screen`. A dot opens any earlier step, and a later step only once the run has
- * reached it, so a dot never skips the sign-in. On the sign-in, the first dot goes back to its start.
+ * The step dots on `screen`: one per step this run shows (`runSteps`), the current one lit. A dot opens any earlier
+ * step, and a later step only once the run has reached it, so a dot never skips the sign-in. On the sign-in, the
+ * first dot goes back to its start. Null on a screen that isn't a step (`next`).
  */
-export function stepDots(screen: NewRunScreen, reached: number): StepDot[] | null {
-  const at = dotFor(screen);
-  if (at === null) return null;
-  return DOT_SCREENS.map((to, i) => {
-    const open = to !== screen && (i <= at || i <= reached);
-    return { label: `Step ${i + 1} of ${DOT_SCREENS.length}: ${DOT_NAMES[i]}`, current: i === at, to: open ? to : null };
+export function stepDots(facts: RunFacts, screen: NewRunScreen, reached?: RunStepId): StepDot[] | null {
+  const steps = runSteps(facts);
+  const at = steps.findIndex((s) => s.screens.includes(screen));
+  if (at < 0) return null;
+  const far = Math.max(stepIndex(reached), stepIndex(steps[at]!.id));
+  return steps.map((step, i) => {
+    const to = step.screens[0]!;
+    const open = to !== screen && (i <= at || stepIndex(step.id) <= far);
+    return { label: `Step ${i + 1} of ${steps.length}: ${step.name}`, current: i === at, to: open ? to : null };
   });
 }
 

@@ -803,8 +803,11 @@ fn arch() -> &'static str {
     }
 }
 
-/// The meta a host registers with.
-fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
+/// The meta a host registers with, and keeps current on its relay row
+/// (the daemon re-sends it whenever the setting changes and on every start,
+/// so a row registered by an earlier version or before a setting changed
+/// never goes stale: the phone and your other computers read it).
+pub fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
     let mut meta = std::collections::BTreeMap::from([(
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
@@ -1144,6 +1147,9 @@ pub(crate) fn hostname() -> String {
 /// relay machine / device name: `CUA_HOST_NAME` if set, then on macOS the
 /// Sharing "Computer Name" ("cua's Mac Studio"), else the host name with a
 /// trailing `.local` / `.localdomain` dropped ("Mac.localdomain" -> "Mac").
+/// A name that is really a network address (a hosted Mac's Computer Name is
+/// often its full host name, "j17-2.example-host.com") keeps only its first
+/// part ("j17-2"): see [`person_name`].
 pub(crate) fn friendly_name() -> String {
     if let Ok(v) = std::env::var("CUA_HOST_NAME")
         && !v.trim().is_empty()
@@ -1159,9 +1165,28 @@ pub(crate) fn friendly_name() -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
     {
+        return person_name(&name);
+    }
+    person_name(&hostname())
+}
+
+/// A computer name as a person reads it: a name with spaces or no dots
+/// ("Ada's MacBook Pro", "studio") is kept as it is; a network host name
+/// ("j17-2.example-host.com", "Mac.localdomain") becomes its first part
+/// ("j17-2", "Mac"). An IP address is kept whole. The person can still
+/// rename the computer afterwards.
+pub(crate) fn person_name(raw: &str) -> String {
+    let name = strip_local_suffix(raw);
+    if name.chars().any(char::is_whitespace)
+        || !name.contains('.')
+        || name.parse::<std::net::IpAddr>().is_ok()
+    {
         return name;
     }
-    strip_local_suffix(&hostname())
+    match name.split('.').next() {
+        Some(first) if !first.is_empty() => first.to_string(),
+        _ => name,
+    }
 }
 
 /// Drops an mDNS / resolver suffix from a host name; keeps the name when
@@ -3725,6 +3750,24 @@ mod tests {
         assert_eq!(meta[super::META_ARCH], "arm64");
         #[cfg(target_arch = "x86_64")]
         assert_eq!(meta[super::META_ARCH], "amd64");
+    }
+
+    #[test]
+    fn person_name_keeps_real_names_and_shortens_host_names() {
+        use super::person_name;
+        // Device test, 10 Nov: a hosted Mac's Computer Name is its full host name.
+        assert_eq!(person_name("j17-2.macminivault.com"), "j17-2");
+        assert_eq!(
+            person_name("Dillons-MacBook-Pro-2.local"),
+            "Dillons-MacBook-Pro-2"
+        );
+        assert_eq!(person_name("Mac.localdomain"), "Mac");
+        assert_eq!(person_name("Ada's MacBook Pro"), "Ada's MacBook Pro");
+        assert_eq!(person_name("Ada's Mac v2.1"), "Ada's Mac v2.1");
+        assert_eq!(person_name("studio"), "studio");
+        assert_eq!(person_name("10.0.0.5"), "10.0.0.5");
+        assert_eq!(person_name("  build.example.com  "), "build");
+        assert_eq!(person_name(".hidden"), ".hidden");
     }
 
     #[test]

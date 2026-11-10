@@ -525,19 +525,19 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spaces/children',
-    title: 'Child Spaces (experiment)',
+    title: 'Child Spaces',
     description: 'Let a Space make Spaces of its own, set the budget of its tree and list orphans.',
     intro:
-      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) and are refused while it is off. `set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
+      '`set_children` lets a Space make children through a channel only it can reach; `tree_budget` and `set_tree_budget` bound what a tree may hold and spend; `orphans` lists children whose parent is gone. See [Child Spaces](/spaces/guides/child-spaces).',
     items: ['TreeBudget', 'TreeBudgetLimits', 'SpaceOrphan'],
     members: [{ object: 'Spaces', title: 'Children', methods: ['set_children', 'tree_budget', 'set_tree_budget', 'orphans'] }],
   },
   {
     slug: 'spaces/services',
-    title: 'Kept commands (experiment)',
+    title: 'Kept commands',
     description: 'Keep a command running in a Space: restarts, health checks, start on boot and logs.',
     intro:
-      'These calls belong to the Child Spaces experiment (`cua experiments enable child-spaces`) for adding a service; listing, stopping and removing work either way. See [Keep a command running](/spaces/guides/keep-a-command-running).',
+      'These calls keep a command running in a Space. See [Keep a command running](/spaces/guides/keep-a-command-running).',
     items: ['SpaceServiceDef', 'SpaceServiceProbe', 'SpaceServiceInfo'],
     members: [{ object: 'Space', title: 'Services', methods: ['put_service', 'kept_services', 'start_service', 'stop_service', 'restart_service', 'delete_service', 'service_logs'] }],
   },
@@ -748,12 +748,22 @@ export const PAGES: PageSpec[] = [
     ],
   },
   {
+    slug: 'spaces/presence',
+    title: 'Joining presence',
+    description: 'Join a Space\'s presence, or the presence of a window another Space shows, so each viewer is one avatar and one cursor.',
+    intro: '`join_presence` joins the Space\'s channel. `join_presence_for` takes the window being watched: a window another Space shows here, streamed straight from its origin, joins the origin\'s channel and this Space\'s and reads them as one. The types are on [Streams and presence](/cua-sdk/reference/spaces/streams).',
+    members: [
+      { object: 'Space', title: 'Joining presence', methods: ['join_presence', 'join_presence_for'] },
+    ],
+    items: [],
+  },
+  {
     slug: 'spaces/streams',
     title: 'Streams and presence',
     description: 'Media sessions of a Space and presence (who is connected, and their cursors).',
     intro: 'Open a media session for another client, stream frames to callbacks, and join presence. `PresenceView` and the `presence_cursor_art*` functions draw the cursors the same way in every Cua UI.',
     members: [
-      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows', 'join_presence'] },
+      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows'] },
     ],
     items: [
       'SpaceStreamSession',

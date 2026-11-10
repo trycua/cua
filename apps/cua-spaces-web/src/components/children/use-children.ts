@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Child Spaces from the host's store, whether the experiment is on, and
-// which Space's Children sheet is open.
+// Child Spaces from the host's store (always on), and which Space's Children
+// sheet is open.
 
 import { useSyncExternalStore } from "react";
 
 import { useBridge } from "@/bridge";
 import type { ChildrenPreview } from "@/bridge/contracts/children";
-import { useExperiments } from "@/bridge/settings-hooks";
 
 const noop = () => () => {};
 
-/** The host's store while the Child Spaces experiment is on, re-rendering
- * on every change; null otherwise (and on a host without it). */
+/** The host's store, re-rendering on every change; null on a host without
+ * it. */
 export function useChildren(): ChildrenPreview | null {
   const { data } = useBridge();
-  const on = useExperiments().data?.experiments.childSpaces === true;
-  const store = on ? (data?.children ?? null) : null;
+  const store = data?.children ?? null;
   useSyncExternalStore(
     store ? store.subscribe : noop,
     () => store?.version() ?? 0,

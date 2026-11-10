@@ -878,7 +878,10 @@ impl FocusSnapshot {
 }
 
 /// Run `body` (a background delivery) between a snapshot and a restore.
-/// The body's error still propagates; the guard only adds its report.
+/// The restore runs whether or not the body succeeded: a delivery that fails
+/// after it opened a popup or let the app take the focus must still give the
+/// focus back. The body's error still propagates; the guard only adds its
+/// report on success.
 pub fn guarded<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
@@ -900,15 +903,16 @@ pub fn guarded_settled<T>(
     })
 }
 
-/// Run `body`, then `restore` the snapshot.
+/// Run `body`, then `restore` the snapshot on every exit path, and only then
+/// propagate the body's error.
 fn restore_after<S, T, R>(
     snapshot: Option<S>,
     body: impl FnOnce() -> Result<T>,
     restore: impl FnOnce(S) -> R,
 ) -> Result<(T, Option<R>)> {
-    let value = body()?;
+    let outcome = body();
     let report = snapshot.map(restore);
-    Ok((value, report))
+    Ok((outcome?, report))
 }
 
 #[cfg(test)]

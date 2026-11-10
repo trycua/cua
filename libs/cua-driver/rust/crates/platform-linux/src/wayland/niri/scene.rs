@@ -55,13 +55,15 @@ impl Rect {
 }
 
 /// What a tiled window's window capture and window-coordinate pointer input
-/// refuse with: no pixel can be proven to be the window's.
-const TILED_REFUSAL: &str = "niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window";
+/// refuse with when this niri release reports no position for tiled windows:
+/// no pixel can be proven to be the window's.
+const TILED_REFUSAL: &str = "this niri release does not report where a tiled window is; upgrade niri, or use get_desktop_state and a desktop-scope action (needs the display grant), or float the window";
 
 /// Why niri reports no on-screen place for a window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unplaced {
-    /// In the scrolling layout: niri does not report where the view is.
+    /// In the scrolling layout on a niri release that reports no position for
+    /// tiled windows.
     Tiled,
     /// On an inactive workspace, on no output, or the overview is open.
     NotShowing,
@@ -87,7 +89,9 @@ impl Unplaced {
     }
 }
 
-/// A floating window's place on screen, from one compositor snapshot.
+/// A window's place on screen, from one compositor snapshot. Tiled windows
+/// have one only on niri releases that report `tile_pos_in_workspace_view`
+/// for the scrolling layout.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placed {
     /// The window's geometry in the global logical layout, rounded to whole
@@ -173,12 +177,11 @@ pub struct Window {
     /// focused window highest. niri reports no stacking order; this is the
     /// best available "which of a process's windows is in use".
     pub focus_rank: usize,
-    /// niri shows it: a placed floating window, or the active tiled window of
-    /// an active workspace while the overview is closed.
+    /// niri shows it: a placed window, or the active tiled window of an
+    /// active workspace while the overview is closed on releases that report
+    /// no tiled position.
     pub on_screen: bool,
     /// The window's logical size, which niri reports for tiled windows too.
-    /// Identity only: a tiled window has no position, so this is never input
-    /// or capture geometry.
     pub size: Option<(u32, u32)>,
     pub placement: Result<Placed, Unplaced>,
 }
@@ -203,9 +206,7 @@ impl Scene {
 
     fn placement(&self, window: &IpcWindow) -> Result<Placed, Unplaced> {
         let layout = window.layout.as_ref().ok_or(Unplaced::NoLayout)?;
-        if layout.pos_in_scrolling_layout.is_some() {
-            return Err(Unplaced::Tiled);
-        }
+        let tiled = layout.pos_in_scrolling_layout.is_some();
         if self.overview_open {
             return Err(Unplaced::NotShowing);
         }
@@ -214,12 +215,18 @@ impl Scene {
             .filter(|workspace| workspace.is_active)
             .ok_or(Unplaced::NotShowing)?;
         let logical = self.logical(workspace).ok_or(Unplaced::NotShowing)?;
-        if self.covered(workspace, logical) {
+        if !tiled && self.covered(workspace, logical) {
             return Err(Unplaced::Covered);
         }
-        let (tile_x, tile_y) = layout
-            .tile_pos_in_workspace_view
-            .ok_or(Unplaced::NotShowing)?;
+        let Some((tile_x, tile_y)) = layout.tile_pos_in_workspace_view else {
+            // niri reports a tiled position only while the tile intersects the
+            // workspace view; older releases report none for any tiled window.
+            return Err(if tiled && !self.reports_tiled_positions() {
+                Unplaced::Tiled
+            } else {
+                Unplaced::NotShowing
+            });
+        };
         let (offset_x, offset_y) = layout.window_offset_in_tile;
         let (width, height) = layout.window_size;
         let origin = (
@@ -245,6 +252,19 @@ impl Scene {
                 height: logical.height,
             },
             others,
+        })
+    }
+
+    /// Whether this snapshot shows a position for any tiled window. niri
+    /// reports one only while the tile intersects the workspace view, so the
+    /// absence for one window does not by itself mean the release lacks the
+    /// field (niri#4711).
+    fn reports_tiled_positions(&self) -> bool {
+        self.windows.iter().any(|window| {
+            window.layout.as_ref().is_some_and(|layout| {
+                layout.pos_in_scrolling_layout.is_some()
+                    && layout.tile_pos_in_workspace_view.is_some()
+            })
         })
     }
 
@@ -452,6 +472,54 @@ mod tests {
             !scene.window(5).unwrap().on_screen,
             "an inactive tiled window is not proven on screen"
         );
+    }
+
+    #[test]
+    fn tiled_window_with_a_reported_position_is_placed() {
+        let scene = one_output(vec![tiled_at(5, 1, (16.0, 16.0), (402.0, 448.0))]);
+        let window = scene.window(5).unwrap();
+        assert!(window.on_screen);
+        let placed = window.placement.unwrap();
+        assert_eq!(
+            placed.rect,
+            Rect {
+                x: 16,
+                y: 16,
+                width: 402,
+                height: 448
+            }
+        );
+        assert_eq!(placed.origin, (16.0, 16.0));
+        assert!(!placed.overlapped());
+    }
+
+    #[test]
+    fn tiled_window_position_adds_the_output_origin() {
+        let scene = scene(
+            vec![tiled_at(5, 1, (16.0, 16.0), (402.0, 448.0))],
+            vec![workspace(1, "DP-2", true, None)],
+            vec![output("DP-2", 1920, 0, (2560, 1440), 1.25, "Normal")],
+            false,
+        );
+        assert_eq!(
+            placement(&scene, 5).unwrap().rect,
+            Rect {
+                x: 1936,
+                y: 16,
+                width: 402,
+                height: 448
+            }
+        );
+    }
+
+    #[test]
+    fn tiled_window_outside_the_view_is_not_showing() {
+        let scene = one_output(vec![
+            tiled_at(5, 1, (16.0, 16.0), (402.0, 448.0)),
+            tiled(6, 1, (402.0, 448.0)),
+        ]);
+        assert_eq!(placement(&scene, 6), Err(Unplaced::NotShowing));
+        assert!(!scene.window(6).unwrap().on_screen);
     }
 
     #[test]

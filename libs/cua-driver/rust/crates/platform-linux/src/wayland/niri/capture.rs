@@ -49,12 +49,14 @@ pub(super) fn capture_plan_in(
         .placement
         .as_ref()
         .map_err(|unplaced| unplaced.reason())?;
-    let (output, logical) = scene
-        .single_output()
-        .map_err(|_| "niri window capture supports a single output, and this layout has several")?;
-    if placed.output != output.name {
-        return Err("the window is not on the captured output");
-    }
+    let output = scene
+        .outputs
+        .get(&placed.output)
+        .ok_or("niri reports no output for the window")?;
+    let logical = output
+        .logical
+        .as_ref()
+        .ok_or("the window's output is not enabled")?;
     if !placed.rect.inside(&placed.area) {
         return Err("the window extends past its output's edge");
     }
@@ -88,14 +90,14 @@ pub(super) fn capture_plan_in(
     })
 }
 
-/// Capture one floating window by cropping a display capture. The window
+/// Capture one placed window by cropping a display capture. The window
 /// and its output must read the same before and after the capture; a move
 /// away and back between the two reads is not seen. Errors are refusal reasons for
 /// `surface_identity_unproven`.
 pub fn capture_window(
     id: u64,
     pid: Option<u32>,
-    capture_display: impl FnOnce() -> Result<DisplayCapture>,
+    capture_display: impl FnOnce(Option<&str>) -> Result<DisplayCapture>,
 ) -> Result<(Vec<u8>, CapturePlan), String> {
     let mut ipc = ipc();
     capture_window_in(
@@ -110,7 +112,7 @@ fn capture_window_in(
     mut scene: impl FnMut(Instant) -> Result<Scene>,
     id: u64,
     pid: Option<u32>,
-    capture_display: impl FnOnce() -> Result<DisplayCapture>,
+    capture_display: impl FnOnce(Option<&str>) -> Result<DisplayCapture>,
 ) -> Result<(Vec<u8>, CapturePlan), String> {
     let mut plan_now = |deadline| -> Result<CapturePlan, String> {
         Ok(capture_plan_in(
@@ -122,7 +124,7 @@ fn capture_window_in(
     let plan = settled(&mut plan_now, CapturePlan::clone, || {
         "the niri window or its output is still changing".to_owned()
     })?;
-    let capture = capture_display().map_err(|e| format!("{e:#}"))?;
+    let capture = capture_display(Some(&plan.output)).map_err(|e| format!("{e:#}"))?;
     let now = plan_now(interaction::operation_deadline(QUERY_TIMEOUT))?;
     if !interaction::policy::fresh(&plan, &interaction::facts::Fact::Known(now)) {
         return Err("the niri window or its output changed during capture".into());
@@ -188,6 +190,36 @@ mod tests {
     }
 
     #[test]
+    fn tiled_window_capture_crops_the_output() {
+        let scene = one_output(vec![tiled_at(5, 1, (16.0, 16.0), (402.0, 448.0))]);
+        assert_eq!(
+            capture_plan_in(&scene, 5, Some(105)),
+            Ok(CapturePlan {
+                // Logical output 853x480 at scale 1.5; the tile starts at 16,16.
+                pixels: Rect {
+                    x: 24,
+                    y: 24,
+                    width: 603,
+                    height: 672
+                },
+                width: 402,
+                height: 448,
+                output: "winit".into(),
+                area: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 853,
+                    height: 480
+                },
+                scale: 1.5,
+                // one_output's output is Flipped180.
+                transform: 6,
+                image: (1280, 720),
+            })
+        );
+    }
+
+    #[test]
     fn a_one_physical_pixel_overlap_at_a_fractional_scale_refuses() {
         // At 1.5 the target spans physical x 152..602 and the other tile
         // starts at physical 601. Rounded to logical pixels (101 and 401)
@@ -238,7 +270,7 @@ mod tests {
             },
             7,
             None,
-            || display("winit", (1280, 720)),
+            |_| display("winit", (1280, 720)),
         )
         .unwrap_err();
         assert_eq!(
@@ -253,7 +285,7 @@ mod tests {
         // name, area, scale and image size.
         let one = |_| Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
         assert_eq!(
-            capture_window_in(one, 7, None, || oriented("winit", 0, (1280, 720))).unwrap_err(),
+            capture_window_in(one, 7, None, |_| oriented("winit", 0, (1280, 720))).unwrap_err(),
             "the capture was oriented for output transform 0, but the window's output has 6"
         );
         let mut calls = 0;
@@ -270,7 +302,7 @@ mod tests {
             },
             7,
             None,
-            || display("winit", (1280, 720)),
+            |_| display("winit", (1280, 720)),
         )
         .unwrap_err();
         assert_eq!(
@@ -290,7 +322,7 @@ mod tests {
             },
             7,
             None,
-            || display("winit", (1280, 720)),
+            |_| display("winit", (1280, 720)),
         );
         assert_eq!(settling.unwrap().1.area.width, 853);
         let mut x = 0.0;
@@ -301,7 +333,7 @@ mod tests {
             },
             7,
             None,
-            || display("winit", (1280, 720)),
+            |_| display("winit", (1280, 720)),
         );
         assert_eq!(
             moving.unwrap_err(),
@@ -313,18 +345,18 @@ mod tests {
     fn capture_refuses_another_output_or_size() {
         let one = |_| Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
         assert_eq!(
-            capture_window_in(one, 7, None, || display("DP-1", (1280, 720))).unwrap_err(),
+            capture_window_in(one, 7, None, |_| display("DP-1", (1280, 720))).unwrap_err(),
             "the display capture copied output \"DP-1\", not the window's output \"winit\""
         );
         assert_eq!(
-            capture_window_in(one, 7, None, || display("winit", (1920, 1080))).unwrap_err(),
+            capture_window_in(one, 7, None, |_| display("winit", (1920, 1080))).unwrap_err(),
             "the capture is 1920x1080 pixels, but niri reports 1280x720 for output \"winit\""
         );
-        assert!(capture_window_in(one, 7, None, || display("winit", (1280, 720))).is_ok());
+        assert!(capture_window_in(one, 7, None, |_| display("winit", (1280, 720))).is_ok());
     }
 
     #[test]
-    fn crop_refuses_other_outputs_overlap_and_other_pids() {
+    fn crop_uses_the_window_output_and_refuses_overlap_and_other_pids() {
         let two_outputs = scene(
             vec![floating(7, 2, (100.0, 60.0), (300, 200))],
             vec![
@@ -337,9 +369,16 @@ mod tests {
             ],
             false,
         );
+        let plan = capture_plan_in(&two_outputs, 7, None).unwrap();
+        assert_eq!(plan.output, "DP-2");
         assert_eq!(
-            capture_plan_in(&two_outputs, 7, None),
-            Err("niri window capture supports a single output, and this layout has several")
+            plan.pixels,
+            Rect {
+                x: 100,
+                y: 60,
+                width: 300,
+                height: 200
+            }
         );
         let overlapped = one_output(vec![
             floating(7, 1, (100.0, 60.0), (300, 200)),

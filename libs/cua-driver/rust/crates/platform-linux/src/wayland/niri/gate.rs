@@ -441,7 +441,7 @@ mod tests {
             pointer_admission(&tiled, &[aimed_on((150, 100), rect)])
                 .unwrap_err()
                 .to_string(),
-            "foreground_unavailable: niri window 5: niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
+            "foreground_unavailable: niri window 5: this niri release does not report where a tiled window is; upgrade niri, or use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
         );
     }
 
@@ -452,13 +452,33 @@ mod tests {
         let scene = tiled_scene(Some(5));
         assert_eq!(
             capture_plan_in(&scene, 5, Some(105)),
-            Err("niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window")
+            Err("this niri release does not report where a tiled window is; upgrade niri, or use get_desktop_state and a desktop-scope action (needs the display grant), or float the window")
         );
         let window = scene.window(5).unwrap();
         assert_eq!(
             aim_at(&window, 10, 20).unwrap_err().to_string(),
-            "foreground_unavailable: niri window 5: niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
+            "foreground_unavailable: niri window 5: this niri release does not report where a tiled window is; upgrade niri, or use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
         );
+    }
+
+    #[test]
+    fn a_placed_tiled_window_accepts_window_coordinates() {
+        let scene = one_output(vec![tiled_at(5, 1, (100.0, 60.0), (300.0, 200.0))]);
+        let window = scene.window(5).unwrap();
+        let aimed = aim_at(&window, 10, 20).unwrap();
+        assert_eq!(
+            aimed,
+            AimedPoint {
+                point: (110, 80),
+                rect: Some(Rect {
+                    x: 100,
+                    y: 60,
+                    width: 300,
+                    height: 200
+                })
+            }
+        );
+        pointer_admission(&window, &[aimed]).unwrap();
     }
 
     #[test]

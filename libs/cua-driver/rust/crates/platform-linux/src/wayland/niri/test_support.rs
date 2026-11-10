@@ -26,6 +26,18 @@ pub(super) fn tiled(id: u64, workspace: u64, tile: (f64, f64)) -> Value {
         "focus_timestamp": {"secs": 805, "nanos": 828275861}})
 }
 
+/// A tiled window from a niri release that reports its position in the
+/// workspace view (niri#4711).
+pub(super) fn tiled_at(id: u64, workspace: u64, at: (f64, f64), tile: (f64, f64)) -> Value {
+    json!({"id": id, "title": "Tiled", "app_id": "tiled.b", "pid": 100 + id,
+        "workspace_id": workspace, "is_focused": false, "is_floating": false, "is_urgent": false,
+        "layout": {"pos_in_scrolling_layout": [1, 1], "tile_size": [tile.0, tile.1],
+            "window_size": [tile.0 as i32, tile.1 as i32],
+            "tile_pos_in_workspace_view": [at.0, at.1],
+            "window_offset_in_tile": [0.0, 0.0]},
+        "focus_timestamp": {"secs": 805, "nanos": 828275861}})
+}
+
 pub(super) fn workspace(id: u64, output: &str, active: bool, active_window: Option<u64>) -> Value {
     json!({"id": id, "idx": id, "name": null, "output": output, "is_urgent": false,
         "is_active": active, "is_focused": active, "active_window_id": active_window})

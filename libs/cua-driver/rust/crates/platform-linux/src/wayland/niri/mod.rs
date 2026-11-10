@@ -9,11 +9,12 @@
 //! recognised, an IPC failure refuses instead of falling back to the generic
 //! wlr-foreign-toplevel title join, which would lose the niri id namespace.
 //!
-//! niri 26.04 reports a position only for floating windows
-//! (`tile_pos_in_workspace_view`): a tiled window's place depends on the
-//! view's scroll position, which IPC does not report. Window capture and
-//! window-coordinate pointer input therefore refuse a tiled window; the
-//! desktop scope reaches it with pixels of the single output.
+//! niri reports a position only for a window in the workspace view
+//! (`tile_pos_in_workspace_view`). Since niri#4711 (after 26.04) that
+//! includes tiled windows while they intersect the view, so window capture
+//! and window-coordinate pointer input work on them too. Releases before
+//! that field refuse a tiled window; the desktop scope reaches it with
+//! pixels of the single output.
 //!
 //! Pointer input and window capture first wait, a few short reads at most,
 //! for two consecutive reads that agree on the target, then check the layout

@@ -11,7 +11,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 VENDORED = "// Copyright (c) 2019 Some Upstream Author\n// Licensed under the Apache License, Version 2.0\n\npub fn f() {}\n"
-OWN = 'pub const COPYRIGHT: &str = "2026";\nlet copyright = 1;\n'
+COLON = "// Copyright: Some Upstream Author\n\npub fn h() {}\n"
+OWN = 'pub const COPYRIGHT: &str = "2026";\nlet total = copyright + 1;\n'
 
 
 class DriverTreeTest(unittest.TestCase):
@@ -26,6 +27,8 @@ class DriverTreeTest(unittest.TestCase):
         self.vendored = src / "vendored.rs"
         self.own = src / "own.rs"
         self.vendored.write_text(VENDORED, encoding="utf-8")
+        self.colon = src / "colon.rs"
+        self.colon.write_text(COLON, encoding="utf-8")
         self.own.write_text(OWN, encoding="utf-8")
         subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
         subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
@@ -40,6 +43,7 @@ class DriverTreeTest(unittest.TestCase):
         result = self.run_script("--apply")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.vendored.read_text(encoding="utf-8"), VENDORED)
+        self.assertEqual(self.colon.read_text(encoding="utf-8"), COLON)
         self.assertEqual(
             self.own.read_text(encoding="utf-8"),
             "// SPDX-License-Identifier: MIT\n// Copyright (c) 2026 Cua AI, Inc.\n\n" + OWN,
@@ -50,7 +54,7 @@ class DriverTreeTest(unittest.TestCase):
         result = self.run_script("--check")
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing header: libs/cua-driver/src/own.rs", result.stdout)
-        self.assertNotIn("missing header: libs/cua-driver/src/vendored.rs", result.stdout)
+        self.assertEqual(result.stdout.count("missing header:"), 1, result.stdout)
 
 
 if __name__ == "__main__":

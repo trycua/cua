@@ -6386,6 +6386,10 @@ export type WindowElement = {
     selected?: boolean,
     inWebContent?: boolean,
     actions?: Array<string>,
+    /**
+     * macOS only: application-defined actions, with a readable name and the
+     * exact action envelope accepted by `click`. Windows and Linux omit this.
+     */
     customActions?: Array<ElementCustomAction>,
     parentIndex?: bigint,
     frame?: ElementFrame,

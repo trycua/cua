@@ -141,11 +141,13 @@ final class HelpfulGroupView: NSView {
     var onPress: () -> Void = {}
     var onCustomAction: () -> Void = {}
 
+    private lazy var pinAction = NSAccessibilityCustomAction(name: "Pin Row", handler: { [weak self] in
+        self?.onCustomAction()
+        return true
+    })
+
     override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
-        [NSAccessibilityCustomAction(name: "Pin Row", handler: { [weak self] in
-            self?.onCustomAction()
-            return true
-        })]
+        [pinAction]
     }
 
     override func isAccessibilityElement() -> Bool { true }

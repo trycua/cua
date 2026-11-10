@@ -543,8 +543,9 @@ impl Runtime {
         self.inner.host_spaces.get().cloned()
     }
 
-    #[cfg(all(feature = "spaces", feature = "server"))]
-    pub(crate) fn set_host_spaces(&self, h: Arc<cua_spaces::host_spaces::HostSpacesServer>) {
+    #[cfg(feature = "spaces")]
+    #[doc(hidden)]
+    pub fn set_host_spaces(&self, h: Arc<cua_spaces::host_spaces::HostSpacesServer>) {
         let _ = self.inner.host_spaces.set(h);
     }
 

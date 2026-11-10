@@ -49,7 +49,8 @@ pub struct ForegroundPolicy {
     /// `double_click`, `scroll` and `drag`.
     pub gesture: RestoreMode,
     /// `right_click` and `set_value`, whose input opens a menu or popup that
-    /// giving focus back would close.
+    /// giving focus back would close. The X11 restore detects that popup and
+    /// keeps the target focused; the Wayland adapters cannot.
     pub menu: RestoreMode,
     /// The browser setup and consent flows, which act for the driver rather
     /// than the agent.
@@ -71,10 +72,19 @@ pub fn foreground_policy(desktop: Desktop) -> ForegroundPolicy {
             menu: Leave,
             setup: Restore,
         },
-        // On X11 a key or click that opens a menu still leaves it open: the
-        // restore sees the menu's popup and keeps the target focused. The
-        // Wayland adapters do not detect one and give the focus back.
-        Desktop::X11 | Desktop::XWayland(_) | Desktop::Wayland(_) => ForegroundPolicy {
+        // On X11 every foreground action gives the active window back. Input
+        // that opens a menu still leaves it open: the restore sees the menu's
+        // popup and keeps the target focused.
+        Desktop::X11 | Desktop::XWayland(_) => ForegroundPolicy {
+            typing: Restore,
+            key: Restore,
+            click: Restore,
+            gesture: Restore,
+            menu: Restore,
+            setup: Restore,
+        },
+        // The Wayland adapters do not detect a menu and would close it.
+        Desktop::Wayland(_) => ForegroundPolicy {
             typing: Restore,
             key: Restore,
             click: Restore,
@@ -446,17 +456,29 @@ mod tests {
     }
 
     #[test]
-    fn every_desktop_restores_all_but_menus_and_gestures_off_niri() {
+    fn x11_restores_every_action_and_wayland_all_but_menus_and_gestures_off_niri() {
         let compositors = [
             Compositor::Injected,
             Compositor::Hyprland,
             Compositor::Niri,
             Compositor::Other,
         ];
-        let desktops = std::iter::once(Desktop::X11)
-            .chain(compositors.map(Desktop::XWayland))
-            .chain(compositors.map(Desktop::Wayland));
-        for desktop in desktops {
+        let x11 = std::iter::once(Desktop::X11).chain(compositors.map(Desktop::XWayland));
+        for desktop in x11 {
+            let policy = foreground_policy(desktop);
+            let modes = [
+                policy.typing,
+                policy.key,
+                policy.click,
+                policy.gesture,
+                policy.menu,
+                policy.setup,
+            ];
+            for mode in modes {
+                assert_eq!(mode, RestoreMode::RestorePrevious, "{desktop:?}");
+            }
+        }
+        for desktop in compositors.map(Desktop::Wayland) {
             let policy = foreground_policy(desktop);
             for restored in [policy.typing, policy.key, policy.click, policy.setup] {
                 assert_eq!(restored, RestoreMode::RestorePrevious, "{desktop:?}");

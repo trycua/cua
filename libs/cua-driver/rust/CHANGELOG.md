@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.47.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.3...cua-driver-rs-v0.47.0) (2026-11-10)
+
+
+### Features
+
+* **cua-driver:** connect --replace switches an agent from another Cua Driver ([#7190](https://github.com/trycua/cua/issues/7190)) ([e15e9dd](https://github.com/trycua/cua/commit/e15e9dd47cdc970e7cbed5fec87e377c28ddae0f))
+
+
+### Bug Fixes
+
+* **cua-driver:** name the AXWindows read error in ax_window_unresolved ([#7192](https://github.com/trycua/cua/issues/7192)) ([0365501](https://github.com/trycua/cua/commit/0365501c94dd325bec93c3b40c51150d311ea1bf))
+
+## [0.46.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.2...cua-driver-rs-v0.46.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** release session labels when their owner transport closes ([#7083](https://github.com/trycua/cua/issues/7083)) ([a42beba](https://github.com/trycua/cua/commit/a42bebad9750217a059d849c691972baf2ec7a51))
+
 ## [0.46.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.1...cua-driver-rs-v0.46.2) (2026-11-10)
 
 

@@ -660,8 +660,11 @@ impl Plan {
         // focus, a window never captured) gets that window read at the end
         // even without `observe`, so the caller can act without another read.
         let mut recovery: Option<Recovery> = None;
+        // Whether the last step that ran was an action that succeeded.
+        let mut ended_on_action = false;
 
         for (index, step) in self.steps.into_iter().enumerate() {
+            let acts = step.action.is_some();
             if index > 0 && !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }
@@ -707,6 +710,7 @@ impl Plan {
                     last_window = Some(window.clone());
                 }
             }
+            ended_on_action = acts && outcome.ok;
             lines.push(outcome.line);
             reports.push(outcome.report);
             if !outcome.ok {
@@ -770,7 +774,7 @@ impl Plan {
         if let Some(mut args) = observe {
             let filled = fill_observed_window(&mut args, last_window.as_ref());
             let result = if filled {
-                registry.invoke(OBSERVE_TOOL, args).await
+                observe_after_settle(registry, args, ended_on_action).await
             } else {
                 ToolResult::error("no window to observe: no step resolved one")
             };
@@ -1194,6 +1198,44 @@ fn fill_observed_window(args: &mut Value, last: Option<&Window>) -> bool {
         .entry("window_id")
         .or_insert_with(|| json!(window.window_id));
     true
+}
+
+/// Longest the end-of-batch observation re-reads a window that shows no
+/// change after the last action, on platforms whose actions return at
+/// delivery.
+const OBSERVE_SETTLE: Duration = Duration::from_millis(300);
+/// Pause between those re-reads.
+const OBSERVE_SETTLE_POLL: Duration = Duration::from_millis(50);
+
+/// The end-of-batch read. macOS actions return at delivery, so the app may
+/// not have applied the last one yet: a read that says nothing changed is
+/// taken again until it shows a change, for up to [`OBSERVE_SETTLE`]. A read
+/// that shows a change, or one after a read or a failed step, returns as is.
+async fn observe_after_settle(
+    registry: &ToolRegistry,
+    mut args: Value,
+    ended_on_action: bool,
+) -> ToolResult {
+    let deadline = Instant::now() + OBSERVE_SETTLE;
+    loop {
+        let result = registry.invoke(OBSERVE_TOOL, args.clone()).await;
+        let state = result.structured_content.as_ref();
+        let unchanged = result.is_error != Some(true)
+            && state
+                .and_then(|state| state.get("since_status"))
+                .and_then(Value::as_str)
+                == Some("no_change");
+        if !(cfg!(target_os = "macos") && ended_on_action && unchanged)
+            || Instant::now() + OBSERVE_SETTLE_POLL >= deadline
+        {
+            return result;
+        }
+        // Diff the next read against the same baseline, not this read.
+        if let Some(since) = state.and_then(|state| state.get("since")).cloned() {
+            args["since"] = since;
+        }
+        tokio::time::sleep(OBSERVE_SETTLE_POLL).await;
+    }
 }
 
 /// One line saying what the end-of-batch read found.

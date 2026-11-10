@@ -614,3 +614,128 @@ async fn a_described_step_is_not_retried_for_other_refusals() {
     assert_eq!(result.is_error, Some(true));
     assert_eq!(state.lock().unwrap().click_attempts, 1);
 }
+
+/// A window whose end-of-batch reads say "no change" `unchanged_reads`
+/// times, then show a change.
+struct LateApply {
+    def: ToolDef,
+    reads: Arc<Mutex<Vec<Value>>>,
+    unchanged_reads: usize,
+}
+
+#[async_trait]
+impl Tool for LateApply {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if self.def.name != "get_window_state" {
+            return ToolResult::text(format!("{} done", self.def.name));
+        }
+        let mut reads = self.reads.lock().unwrap();
+        reads.push(args);
+        let status = if reads.len() <= self.unchanged_reads {
+            "no_change"
+        } else {
+            "diff"
+        };
+        ToolResult::text("read").with_structured(json!({
+            "pid": 42, "window_id": 7, "snapshot_id": format!("s{:08x}", reads.len()),
+            "since": "s00000100", "since_status": status,
+            "diff_counts": {"added": 1, "changed": 0, "removed": 0},
+        }))
+    }
+}
+
+fn late_apply_registry(unchanged_reads: usize) -> (Arc<ToolRegistry>, Arc<Mutex<Vec<Value>>>) {
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = ToolRegistry::new();
+    for name in ["click", "get_window_state"] {
+        registry.register(Box::new(LateApply {
+            def: ToolDef {
+                name: name.into(),
+                description: "fake".into(),
+                input_schema: json!({"type": "object", "properties": {
+                    "pid": {"type": "integer"}, "window_id": {"type": "integer"},
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "since": {"type": "string"}, "max_elements": {"type": "integer"},
+                    "include_screenshot": {"type": "boolean"}
+                }}),
+                read_only: name != "click",
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+            reads: reads.clone(),
+            unchanged_reads,
+        }));
+    }
+    registry.register_session_tools();
+    let registry = Arc::new(registry);
+    registry.init_self_weak();
+    (registry, reads)
+}
+
+async fn click_and_observe(registry: &ToolRegistry) -> ToolResult {
+    registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [{"click": {"x": 1, "y": 2}}], "observe": true}),
+        )
+        .await
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_end_read_after_an_action_is_taken_again_until_it_shows_the_change() {
+    let (registry, reads) = late_apply_registry(2);
+    let result = click_and_observe(&registry).await;
+    assert!(
+        text(&result).contains("observation: changed since s00000100"),
+        "{}",
+        text(&result)
+    );
+    let reads = reads.lock().unwrap();
+    assert_eq!(reads.len(), 3);
+    // Every re-read diffs against the batch's baseline, not the read before it.
+    assert_eq!(reads[1]["since"], "s00000100");
+    assert_eq!(reads[2]["since"], "s00000100");
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_end_read_stops_retaking_after_its_cap() {
+    let (registry, reads) = late_apply_registry(usize::MAX);
+    let started = std::time::Instant::now();
+    let result = click_and_observe(&registry).await;
+    let waited = started.elapsed();
+    assert!(
+        text(&result).contains("observation: no change since s00000100"),
+        "{}",
+        text(&result)
+    );
+    assert!(
+        waited >= std::time::Duration::from_millis(250),
+        "{waited:?}"
+    );
+    assert!(waited < std::time::Duration::from_millis(600), "{waited:?}");
+    assert!(reads.lock().unwrap().len() > 1);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tokio::test]
+async fn the_end_read_is_taken_once_where_actions_wait_for_their_report() {
+    let (registry, reads) = late_apply_registry(usize::MAX);
+    let result = click_and_observe(&registry).await;
+    assert!(text(&result).contains("no change"), "{}", text(&result));
+    assert_eq!(reads.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_end_read_after_a_change_is_taken_once() {
+    let (registry, reads) = late_apply_registry(0);
+    let result = click_and_observe(&registry).await;
+    assert!(text(&result).contains("changed since"), "{}", text(&result));
+    assert_eq!(reads.lock().unwrap().len(), 1);
+}

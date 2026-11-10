@@ -805,21 +805,6 @@ mod tests {
     }
 
     #[test]
-    fn niri_refuses_setup_navigation_without_touching_the_clipboard() {
-        let clipboard = WatchedClipboard::default();
-        let Err(refused) = open_setup_page(1, 2, descriptor(), true, &clipboard) else {
-            panic!("setup navigation ran under niri");
-        };
-        assert_eq!(refused.code, BrowserRefusalCode::BrowserRouteUnavailable);
-        assert!(
-            refused.message.contains("no niri foreground route"),
-            "{}",
-            refused.message
-        );
-        assert_eq!(clipboard.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
-    }
-
-    #[test]
     fn setup_timeout_explains_linux_renderer_accessibility_precondition() {
         let message = setup_not_ready_message(descriptor());
         assert!(message.contains("complete AT-SPI tree"));

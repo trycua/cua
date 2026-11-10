@@ -569,7 +569,12 @@ describe("screen 1, usage data", () => {
 
 describe("the step dots", () => {
   const mac: RunFacts = { os: "macos", permissions: "ask" };
-  const S = ["Step 1 of 4: Add this computer", "Step 2 of 4: Let Cua Spaces use apps", "Step 3 of 4: Which agents do you use?", "Step 4 of 4: Try your first job"];
+  const S = [
+    "Step 1 of 4: Add this computer",
+    "Step 2 of 4: Let Cua Spaces use apps",
+    "Step 3 of 4: Which agents do you use?",
+    "Step 4 of 4: Try your first job",
+  ];
   it("name each step and go back to any earlier one, but forward only to a step already reached", () => {
     const perms = stepDots(mac, "permissions", "permissions")!;
     expect(perms.map((d) => d.label)).toEqual(S);
@@ -644,7 +649,12 @@ describe("the step dots match the steps setup really shows", () => {
     return screens;
   }
   const paths: { name: string; facts: RunFacts; signIn: boolean; steps: string[] }[] = [
-    { name: "fresh Mac, signed out, no permissions yet", facts: { os: "macos", permissions: "ask" }, signIn: true, steps: ["computer", "permissions", "agents", "ready"] },
+    {
+      name: "fresh Mac, signed out, no permissions yet",
+      facts: { os: "macos", permissions: "ask" },
+      signIn: true,
+      steps: ["computer", "permissions", "agents", "ready"],
+    },
     { name: "fresh Mac, Skip for now", facts: { os: "macos", permissions: "ask" }, signIn: false, steps: ["computer", "permissions", "agents", "ready"] },
     { name: "Mac with every permission already on", facts: { os: "macos", permissions: "skip" }, signIn: true, steps: ["computer", "agents", "ready"] },
     { name: "Mac, permissions not read yet", facts: { os: "macos", permissions: null }, signIn: true, steps: ["computer", "permissions", "agents", "ready"] },

@@ -371,6 +371,8 @@ async fn every_kind_of_running_space_is_listed_and_unlisted_alike() {
 /// Only what Cua made is listed, and only if it did not opt out.
 #[tokio::test]
 async fn spaces_added_by_address_and_opted_out_ones_stay_off() {
+    // The child below needs Child Spaces, whatever this computer's switch says.
+    let _on = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::ChildSpaces, true);
     let w = World::new().await;
     // Added by address: not made by Cua.
     let by_hand = MockServer::start(MockAuth::default()).await;

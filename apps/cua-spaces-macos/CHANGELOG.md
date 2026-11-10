@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.3](https://github.com/trycua/cua/compare/cua-spaces-v0.27.2...cua-spaces-v0.27.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces:** Restart to update quits the app when it does nothing so the update installs, and the release tests the upgrade ([#7133](https://github.com/trycua/cua/issues/7133)) ([ff264dc](https://github.com/trycua/cua/commit/ff264dc99316c41e7d1c1ad95b8f5b9578a380fd))
+
 ## [0.27.2](https://github.com/trycua/cua/compare/cua-spaces-v0.27.1...cua-spaces-v0.27.2) (2026-11-10)
 
 

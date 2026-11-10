@@ -4661,14 +4661,14 @@ fn linux_x11_background_atspi_click() -> bool {
             == cua_driver_testkit::e2e::DisplayServer::X11
 }
 
-/// A transparent, non-interactive full-viewport layer: no control covers any
-/// window pixel, so the accessibility hit test resolves only to the page.
+/// The fixture page with every control hidden from the accessibility tree and
+/// a transparent layer over it: no control covers any window pixel, so the
+/// accessibility hit test resolves only to the page document.
 #[cfg(target_os = "linux")]
 fn standalone_full_viewport_inert_cover_html() -> String {
     standalone_fixture_html().replace(
         "</body>",
-        r#"<div id="pixel-inert-cover" aria-hidden="true"
-        style="position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483647;opacity:0.01"></div>
+        r#"<style>body > *:not(script):not(style) { visibility: hidden !important; }</style>
 </body>"#,
     )
 }

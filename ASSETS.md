@@ -180,3 +180,48 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 <img alt="pr7046-before-1-welcome-narrow" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-1-welcome-narrow.jpg" />
 <img alt="pr7046-before-2-signin-desktop" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-2-signin-desktop.jpg" />
 <img alt="pr7046-before-2-signin-narrow" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-2-signin-narrow.jpg" />
+<img width="2880" height="1800" alt="after-desktop-2-signin" src="https://github.com/user-attachments/assets/5a82a4d1-33d9-4a44-9aa6-a1938d611685" />
+
+
+
+<img width="2880" height="1800" alt="after-desktop-4-agents" src="https://github.com/user-attachments/assets/1bab9105-ddfd-4e9a-a84c-c5f9910bea0f" />
+
+
+
+
+
+
+
+<img width="2880" height="1800" alt="before-desktop-1-welcome" src="https://github.com/user-attachments/assets/41e84d6e-f964-4547-8d5c-500a09b9c821" />
+
+
+
+
+
+
+<img width="780" height="1688" alt="before-mobile-2-signin" src="https://github.com/user-attachments/assets/dfd288f3-bdff-46bf-a032-487f722e92e6" />
+
+<img width="780" height="1688" alt="before-mobile-3-permissions" src="https://github.com/user-attachments/assets/d49f2591-ce57-4e48-999f-9461c8654cb3" />
+
+
+
+<img width="2880" height="1800" alt="after-desktop-1-welcome" src="https://github.com/user-attachments/assets/3cca8abb-eea1-4925-8787-a8a943e0b7f7" />
+
+<img width="2880" height="1800" alt="after-desktop-3-permissions" src="https://github.com/user-attachments/assets/02e452c0-7c27-4450-a1f7-52284abb3879" />
+
+<img width="2880" height="1800" alt="after-desktop-5-ready" src="https://github.com/user-attachments/assets/9046e669-0c83-4b4b-919d-59c83c46feaa" />
+
+<img width="780" height="1688" alt="after-mobile-1-welcome" src="https://github.com/user-attachments/assets/d4a2925c-02fa-4c58-8b61-f8e90ac13775" />
+
+
+
+
+
+<img width="2880" height="1800" alt="before-desktop-2-signin" src="https://github.com/user-attachments/assets/d8363396-d8cd-46c9-8784-10aa0ee26342" />
+
+
+
+
+
+
+

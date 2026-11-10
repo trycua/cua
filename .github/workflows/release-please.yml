@@ -351,7 +351,12 @@ jobs:
                 mapfile -t BENCH_LOCK_PATHS <<< "$BENCH_LOCKS"
                 git add -- "${BENCH_LOCK_PATHS[@]}"
               fi
-              COMMIT_MESSAGE="chore(bench): synchronize release lockfiles"
+              # The generated cua-bench reference pages and the cb CLI spec
+              # record the package version: stamp the new one.
+              python3 .github/scripts/sync_bench_release_docs.py
+              git add docs/content/docs/cua-bench/reference \
+                scripts/docs-generators/cli-specs/cb.json
+              COMMIT_MESSAGE="chore(bench): synchronize release lockfiles and documentation"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
               # The hand-written SDK pages and the other lockfiles that lock the

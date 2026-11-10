@@ -200,7 +200,12 @@ async fn a_local_space_is_named_what_it_was_created_as() {
     assert_eq!(named.name, "todo7b-probe");
     let generated = spaces.create(create(None)).await.unwrap().ready().unwrap();
     let short = generated.id.strip_prefix("local:").unwrap();
-    assert!(short.starts_with("space-"), "{}", generated.id);
+    // A Space made without a name gets a friendly one (`brave-otter`).
+    assert!(
+        cua_spaces_contract::names::is_pet_name(short),
+        "{}",
+        generated.id
+    );
     assert_eq!(generated.name, short);
     let listed: BTreeMap<String, String> = spaces
         .list()
@@ -642,7 +647,9 @@ async fn a_space_that_fails_to_start_leaves_no_instance() {
     let deleted = rt.deleted.lock().unwrap().clone();
     assert!(!deleted.is_empty(), "{deleted:?}");
     assert!(
-        deleted.iter().all(|d| d.starts_with("space-")),
+        deleted
+            .iter()
+            .all(|d| cua_spaces_contract::names::is_pet_name(d)),
         "{deleted:?}"
     );
     assert!(rt.running.lock().unwrap().is_empty());

@@ -575,6 +575,29 @@ impl StepLines {
     }
 }
 
+/// Create `i`'s name on its line and record (`Space <n>` until it has one).
+fn label(labels: &[Option<String>], i: usize) -> String {
+    labels[i]
+        .clone()
+        .unwrap_or_else(|| format!("Space {}", i + 1))
+}
+
+/// The lines, over the ones drawn before when `redraw`.
+fn render(s: &Drawn, redraw: bool) -> String {
+    let labels: Vec<String> = (0..s.lines.len()).map(|i| label(&s.labels, i)).collect();
+    let width = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    // Autowrap off while drawing, so a long line cannot push the rest down.
+    let mut out = String::from("\x1b[?7l");
+    if redraw {
+        out += &format!("\r\x1b[{}A", s.lines.len());
+    }
+    for (label, (text, _)) in labels.iter().zip(&s.lines) {
+        out += format!("\x1b[2K{label:width$}  {text}").trim_end();
+        out.push('\n');
+    }
+    out + "\x1b[?7h"
+}
+
 /// `s` on one terminal line: control characters (newlines, escapes) become spaces.
 fn one_line(s: &str) -> String {
     s.replace(char::is_control, " ")
@@ -597,13 +620,14 @@ fn creating_many(n: usize, created: usize, failed: usize) -> (String, u8) {
 /// record. Never used for `--json` or when stderr is not a terminal.
 pub struct ParallelSteps {
     words: CreateWords,
-    labels: Vec<String>,
     state: std::sync::Mutex<Drawn>,
 }
 
 /// What `ParallelSteps` has drawn and reported.
 #[derive(Default)]
 struct Drawn {
+    /// Each create's name (`None` until an unnamed one's id is known).
+    labels: Vec<Option<String>>,
     /// Each create's line text and its last reported percent.
     lines: Vec<(String, Option<u8>)>,
     created: usize,
@@ -615,15 +639,22 @@ struct Drawn {
 
 impl ParallelSteps {
     /// Lines for creates of this kind, one per label.
-    pub fn new(words: CreateWords, labels: Vec<String>) -> Self {
-        let labels: Vec<String> = labels.iter().map(|l| one_line(l)).collect();
+    pub fn new(words: CreateWords, labels: Vec<Option<String>>) -> Self {
         Self {
             words,
             state: std::sync::Mutex::new(Drawn {
                 lines: vec![Default::default(); labels.len()],
+                labels: labels.iter().map(|l| l.as_deref().map(one_line)).collect(),
                 ..Default::default()
             }),
-            labels,
+        }
+    }
+
+    /// Names unnamed create `i` by the id it reported (`local:<name>`).
+    pub fn name(&self, i: usize, id: &str) {
+        let mut s = self.lock();
+        if s.labels[i].is_none() && !id.is_empty() {
+            s.labels[i] = Some(one_line(id));
         }
     }
 
@@ -668,42 +699,23 @@ impl ParallelSteps {
         }
         let redraw = std::mem::replace(&mut s.drawn, true);
         let mut err = std::io::stderr();
-        let _ = write!(err, "{}", self.render(&s.lines, redraw));
+        let _ = write!(err, "{}", render(&s, redraw));
         let _ = err.flush();
         let id = format!("space-{}", i + 1);
-        program_status_of(Some((&id, &self.labels[i])), state, progress, &s.lines[i].0);
+        let title = label(&s.labels, i);
+        program_status_of(Some((&id, &title)), state, progress, &s.lines[i].0);
         // The overall record changes only when a create starts or ends.
         if !redraw || ended {
-            let (msg, progress) = creating_many(self.labels.len(), s.created, s.failed);
+            let (msg, progress) = creating_many(s.lines.len(), s.created, s.failed);
             program_status(ProgramState::Working, Some(progress), &msg);
         }
-    }
-
-    /// The lines, over the ones drawn before when `redraw`.
-    fn render(&self, lines: &[(String, Option<u8>)], redraw: bool) -> String {
-        let width = self
-            .labels
-            .iter()
-            .map(|l| l.chars().count())
-            .max()
-            .unwrap_or(0);
-        // Autowrap off while drawing, so a long line cannot push the rest down.
-        let mut out = String::from("\x1b[?7l");
-        if redraw {
-            out += &format!("\r\x1b[{}A", self.labels.len());
-        }
-        for (label, (text, _)) in self.labels.iter().zip(lines) {
-            out += format!("\x1b[2K{label:width$}  {text}").trim_end();
-            out.push('\n');
-        }
-        out + "\x1b[?7h"
     }
 
     /// Ends the output: the lines go (the results follow on stdout), each
     /// create's record goes, and the root record says how it ended.
     pub fn finish(&self, first_error: Option<&str>) {
         let s = self.lock();
-        let n = self.labels.len();
+        let n = s.lines.len();
         if s.drawn {
             eprint!("\r\x1b[{n}A\x1b[J");
             for i in 1..=n {
@@ -954,21 +966,21 @@ mod parallel_step_tests {
     #[test]
     fn several_creates_keep_a_line_each_and_count_overall() {
         let words = super::CreateWords::for_image("linux", "", true);
-        let lines = super::ParallelSteps::new(words, vec!["web".into(), "web-2".into()]);
-        let texts = [
-            ("Starting".to_string(), None),
-            ("Created local:web-2 (web-2)".to_string(), None),
-        ];
+        let lines = super::ParallelSteps::new(words, vec![Some("web".into()), None]);
+        lines.lock().lines = vec![("Starting".into(), None), ("Preparing".into(), None)];
         assert_eq!(
-            lines.render(&texts, false),
-            "\x1b[?7l\x1b[2Kweb    Starting\n\x1b[2Kweb-2  Created local:web-2 (web-2)\n\x1b[?7h"
+            super::render(&lines.lock(), false),
+            "\x1b[?7l\x1b[2Kweb      Starting\n\x1b[2KSpace 2  Preparing\n\x1b[?7h"
+        );
+        // An unnamed create takes the id it reports; a named one keeps its name.
+        lines.name(1, "local:sb-1a2b");
+        lines.name(0, "local:other");
+        assert_eq!(
+            super::render(&lines.lock(), false),
+            "\x1b[?7l\x1b[2Kweb            Starting\n\x1b[2Klocal:sb-1a2b  Preparing\n\x1b[?7h"
         );
         // Drawn again: back up over the two lines first.
-        assert!(
-            lines
-                .render(&texts, true)
-                .starts_with("\x1b[?7l\r\x1b[2A\x1b[2Kweb ")
-        );
+        assert!(super::render(&lines.lock(), true).starts_with("\x1b[?7l\r\x1b[2A\x1b[2Kweb "));
         assert_eq!(
             super::creating_many(3, 0, 0),
             ("Creating 3 Spaces: 0 created".into(), 0)

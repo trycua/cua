@@ -1814,11 +1814,7 @@ pub async fn run_spaces_sdk(
                 true,
             );
             let steps = Arc::new(crate::util::StepLines::new(words));
-            let labels = (1..=count)
-                .zip(&names)
-                .map(|(n, name)| name.clone().unwrap_or_else(|| format!("Space {n}")))
-                .collect();
-            let many = Arc::new(crate::util::ParallelSteps::new(words, labels));
+            let many = Arc::new(crate::util::ParallelSteps::new(words, names.clone()));
             let creates = names.into_iter().enumerate().map(|(i, n)| {
                 let options = one(i as u32 + 1, n);
                 let spaces = spaces.clone();
@@ -1834,6 +1830,9 @@ pub async fn run_spaces_sdk(
                         None => Box::pin(spaces.create(options)).await,
                     };
                     if let Some(many) = many {
+                        if let Ok(Some(info)) = r.as_ref().map(|c| c.space.as_ref()) {
+                            many.name(i, &info.id);
+                        }
                         many.ended(
                             i,
                             match &r {
@@ -4495,6 +4494,7 @@ struct SpaceLine(Arc<crate::util::ParallelSteps>, usize);
 
 impl cua_sdk::SpaceCreateListener for SpaceLine {
     fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
+        self.0.name(self.1, &p.space);
         if let Some(p) = progress_of(p) {
             self.0.show(self.1, &p);
         }

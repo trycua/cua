@@ -341,6 +341,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
     desktops: flags.has("desktops"),
+    // `?demo=agent-home`: child Spaces on, so the prompt box names computers with `@`.
+    ...(flags.has("agent-home") ? { agentHome: true } : {}),
     busyComputers: flags.has("computers-busy"),
     driverUpdate: flags.has("driver-update"),
     ...(() => {

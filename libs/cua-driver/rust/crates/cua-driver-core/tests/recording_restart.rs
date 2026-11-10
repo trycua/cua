@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! A start over a live recording, and the idle stop, through the public
-//! recorder API. models/recording.tla checks the same rules.
+//! recorder API. `.cursor/skills/formally-verify-cua-driver/models/recording.tla`
+//! checks the same rules.
 
 use std::path::{Path, PathBuf};
 

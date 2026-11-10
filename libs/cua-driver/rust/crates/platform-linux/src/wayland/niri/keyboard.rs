@@ -22,10 +22,11 @@
 //! keys are released before returning: destroying the device releases
 //! nothing in niri.
 //!
-//! Text outside the Basic Multilingual Plane, such as most emoji, goes out
-//! as its Unicode keysym like any other character, as `wtype` sends it.
-//! Chromium cuts a keysym's character to 16 bits, so it types a wrong
-//! character there whatever the input route.
+//! Text outside the Basic Multilingual Plane, such as most emoji, is pasted
+//! through the clipboard: Chromium and Electron cut a Unicode keysym to 16
+//! bits, so typing it gives a wrong character. The previous clipboard text is
+//! restored after the paste; a clipboard holding non-text content is refused
+//! rather than clobbered.
 
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
@@ -350,11 +351,44 @@ pub(in crate::wayland) fn type_text(expected: Option<u64>, text: &str) -> Result
     if text.is_empty() {
         return Ok(());
     }
+    if has_non_bmp(text) {
+        return paste_non_bmp(expected, text);
+    }
     let (total, sent, typed, finished) =
         run_session(expected, text.chars().count(), |map, group| {
             plan_text(map, group, text)
         })?;
     outcome(sent, total, typed, finished)
+}
+
+/// Characters outside the BMP are a 32-bit keysym, and Chromium/Electron cut
+/// it to 16 bits, so typing them corrupts the text. Paste through the
+/// clipboard instead, then put the previous clipboard text back. A clipboard
+/// that holds non-text content is refused rather than clobbered.
+fn paste_non_bmp(expected: Option<u64>, text: &str) -> Result<()> {
+    use cua_driver_core::clipboard::ClipboardBackend;
+    let clipboard = crate::clipboard::LinuxClipboard::new();
+    let previous = clipboard.read_text().map_err(|error| {
+        anyhow!("text outside the BMP needs a clipboard paste, but the clipboard could not be read: {error}")
+    })?;
+    // None means empty or non-text. Only an empty clipboard is safe to
+    // replace: restoring a non-text selection is not possible through this API.
+    if previous.is_none() && !clipboard.available_formats().unwrap_or_default().is_empty() {
+        bail!("text outside the BMP needs a clipboard paste, but the clipboard holds non-text content; clear it and retry, or use set_value");
+    }
+    clipboard.write_text(text.to_owned()).map_err(|error| {
+        anyhow!("text outside the BMP needs a clipboard paste, but the clipboard could not be written: {error}")
+    })?;
+    let pasted = press(expected, &["ctrl".to_owned()], "v");
+    // The target reads the clipboard on the paste; keep it long enough for a
+    // slow app to consume it, then restore the user's text unconditionally.
+    std::thread::sleep(Duration::from_millis(250));
+    let _ = clipboard.write_text(previous.unwrap_or_default());
+    pasted
+}
+
+fn has_non_bmp(text: &str) -> bool {
+    text.chars().any(|ch| ch as u32 > 0xFFFF)
 }
 
 /// Press the key `name` (an X keysym name) with `modifiers` (`ctrl`,
@@ -784,6 +818,13 @@ wayland_client::delegate_noop!(State: ZwpVirtualKeyboardV1);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_outside_the_bmp_takes_the_clipboard_path() {
+        assert!(!has_non_bmp("plain text"));
+        assert!(has_non_bmp("hello 😀"));
+        assert!(has_non_bmp("U+FFFF is not enough: 𝄞"));
+    }
 
     /// niri 26.04's keymap for `layout "us,de"`, as its `wl_keyboard` sends it.
     const US_DE: &str = include_str!("../../../tests/fixtures/niri-us-de.xkb");

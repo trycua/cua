@@ -138,6 +138,18 @@ fn the_generic_snippet_and_unsupported_clients_install_nothing() {
 }
 
 #[test]
+fn the_opencode_snippet_uses_the_v2_server_shape() {
+    let sandbox = Sandbox::new();
+    let output = sandbox.run(&["--client", "opencode", "--no-skills"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = stdout(&output);
+    assert!(text.contains("\"servers\""), "{text}");
+    assert!(text.contains("\"codemode\": false"), "{text}");
+    assert!(text.contains("\"disabled\": false"), "{text}");
+    assert!(!text.contains("\"enabled\""), "{text}");
+}
+
+#[test]
 fn an_unknown_client_is_refused_before_anything_is_installed() {
     let sandbox = Sandbox::new();
     sandbox.has(".claude");

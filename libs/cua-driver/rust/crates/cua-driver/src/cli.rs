@@ -2353,14 +2353,18 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
         }
         Some("opencode") => {
             println!(
-                r#"// paste under "mcp" in opencode.json:
+                r#"// add to "mcp.servers" in opencode.json (OpenCode V2):
+// On Wayland, add "environment": {{"CUA_DRIVER_RS_ENABLE_WAYLAND": "1"}} to opt into native Wayland.
 {{
   "$schema": "https://opencode.ai/config.json",
   "mcp": {{
-    "cua-driver": {{
-      "type": "local",
-      "command": ["{binary}", "mcp"],
-      "enabled": true
+    "servers": {{
+      "cua-driver": {{
+        "type": "local",
+        "command": ["{binary}", "mcp"],
+        "codemode": false,
+        "disabled": false
+      }}
     }}
   }}
 }}"#

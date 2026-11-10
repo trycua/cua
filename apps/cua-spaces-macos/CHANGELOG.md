@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.31.1](https://github.com/trycua/cua/compare/cua-spaces-v0.31.0...cua-spaces-v0.31.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces:** an offline computer reads offline within seconds, not minutes (CUA-3981) ([#7175](https://github.com/trycua/cua/issues/7175)) ([ac7d344](https://github.com/trycua/cua/commit/ac7d344d5d7e5fedb83cf8d61f50252f49f02c52))
+* **spaces:** declutter the Computers page ([#7143](https://github.com/trycua/cua/issues/7143)) ([f0d57a5](https://github.com/trycua/cua/commit/f0d57a53ccc77ffc6a8d4d3b375649f7e83cbf24))
+* **spaces:** new-user friction from the 10 Nov device test (CUA-3980) ([#7176](https://github.com/trycua/cua/issues/7176)) ([55730e3](https://github.com/trycua/cua/commit/55730e3f48d43038276e22c6a8cf1fbf1934d9a5))
+* **spaces:** setup's step bars count the steps it really shows (CUA-3973) ([#7159](https://github.com/trycua/cua/issues/7159)) ([742d386](https://github.com/trycua/cua/commit/742d386788f43c76e7752d038dc12f9676b39717))
+
 ## [0.31.0](https://github.com/trycua/cua/compare/cua-spaces-v0.30.0...cua-spaces-v0.31.0) (2026-11-10)
 
 

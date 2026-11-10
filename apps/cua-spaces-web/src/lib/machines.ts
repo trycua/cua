@@ -34,6 +34,17 @@ export function connectionLabel(m: Pick<Machine, "connection" | "current"> & Pic
   return m.current ? t("computers.row.not_set_up") : t("computers.row.unknown");
 }
 
+/**
+ * The second line of this computer's card on a task: its model ("MacBook Pro") or else its OS, never the
+ * card's own title again ("This Mac" / "This Mac"). Null when nothing more is known.
+ */
+export function thisComputerSubtitle(machines: readonly Pick<Machine, "os" | "model" | "current">[] | undefined, title: string): string | null {
+  const m = machines?.find((x) => x.current);
+  if (!m) return null;
+  const line = m.model?.trim() || (machineOs(m) ? osName(m) : "");
+  return line && line !== title ? line : null;
+}
+
 /** The list row's second line: OS, then how it is reached. */
 export function machineSubtitle(m: Pick<Machine, "os" | "connection" | "current" | "model"> & Pick<Partial<Machine>, "device">): string {
   return [m.model ?? osName(m), connectionLabel(m)].join(", ");

@@ -10,8 +10,7 @@
 //! real input (XTest) and report where focus ended up. The transaction then
 //! gives the active window back to the one that had it, as on macOS, Windows
 //! and Wayland, unless the input opened a menu: restoring would close it, so
-//! the target keeps the focus and the report says why. `right_click`,
-//! `set_value` and the gestures leave the target active
+//! the target keeps the focus and the report says why
 //! ([`crate::interaction::foreground_policy`]).
 //!
 //! Everything here is bounded: the activation/confirmation phase and the

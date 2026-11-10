@@ -137,6 +137,17 @@ impl Tool for DoubleClickTool {
                 return refusal;
             }
 
+            // Without AXOpen the pixel fallback is the only route, so a
+            // confirmed geometry mismatch refuses before the foreground rung
+            // fronts the window.
+            if delivery_mode.is_foreground() && !has_ax_open {
+                if let Err(refusal) =
+                    super::px_frame::refuse_pixel_on_native_mismatch(pid, Some(wid)).await
+                {
+                    return refusal;
+                }
+            }
+
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
             let ck = cursor_key.clone();

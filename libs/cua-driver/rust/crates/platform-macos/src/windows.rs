@@ -236,13 +236,47 @@ pub(crate) fn all_windows_any_layer() -> Vec<WindowInfo> {
     .windows
 }
 
+/// `kCGModalPanelWindowLevel`: the layer of an app's alerts, open and save
+/// panels and other app-modal dialogs.
+const MODAL_PANEL_LAYER: i32 = 8;
+
 /// Which CGWindow layers an enumeration admits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LayerFilter {
-    /// Normal application windows only — what `list_windows` reports.
+    /// Normal application windows only.
     ZeroOnly,
+    /// Normal windows and modal panels — what `list_windows` reports without
+    /// a pid. A modal panel holds its app's key focus, so a caller that
+    /// cannot see it cannot answer it.
+    ZeroAndModalPanels,
     /// Every layer, accessory windows included.
     AnyLayer,
+}
+
+impl LayerFilter {
+    fn admits(self, layer: i32) -> bool {
+        match self {
+            LayerFilter::ZeroOnly => layer == 0,
+            LayerFilter::ZeroAndModalPanels => layer == 0 || layer == MODAL_PANEL_LAYER,
+            LayerFilter::AnyLayer => true,
+        }
+    }
+}
+
+/// The windows `list_windows` reports without a pid: normal windows and
+/// modal panels, with the Space snapshot.
+pub(crate) fn listed_windows_with_space_snapshot(on_screen_only: bool) -> WindowEnumeration {
+    let on_screen = if on_screen_only {
+        kCGWindowListOptionOnScreenOnly
+    } else {
+        0
+    };
+    enumerate_windows(
+        on_screen | kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroAndModalPanels,
+        None,
+        true,
+    )
 }
 
 /// One window as WindowServer describes it, before Space membership and
@@ -413,8 +447,7 @@ fn enumerate_windows(
             is_on_screen,
         } = description;
 
-        // Only include layer-0 windows, unless the caller asked for every layer.
-        if layer != 0 && layers == LayerFilter::ZeroOnly {
+        if !layers.admits(layer) {
             continue;
         }
         if pid_filter.is_some_and(|wanted| wanted != pid) {
@@ -730,6 +763,18 @@ fn poll_until_no_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_list_admits_modal_panels_and_no_other_accessory_layer() {
+        // Floating panels, the Dock, the menu bar, status items, pop-up menus.
+        for accessory in [-1, 3, 20, 24, 25, 101] {
+            assert!(!LayerFilter::ZeroAndModalPanels.admits(accessory));
+        }
+        assert!(LayerFilter::ZeroAndModalPanels.admits(0));
+        assert!(LayerFilter::ZeroAndModalPanels.admits(MODAL_PANEL_LAYER));
+        assert!(!LayerFilter::ZeroOnly.admits(MODAL_PANEL_LAYER));
+        assert!(LayerFilter::AnyLayer.admits(101));
+    }
 
     /// Every per-window lookup must agree with the enumeration it replaced,
     /// for every window in the live session (desktop elements included).

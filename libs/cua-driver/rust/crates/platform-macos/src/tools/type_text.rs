@@ -1264,6 +1264,7 @@ fn cgevent_type_verified(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     settle_ms: u64,
     window_id: Option<u32>,
+    is_terminal_target: bool,
 ) -> anyhow::Result<(bool, Option<usize>)> {
     // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
@@ -1309,28 +1310,54 @@ fn cgevent_type_verified(
     );
     // A batched send that a native field only partly took (an app that reads
     // just the first character of a multi-character event) is finished one
-    // paced key at a time from where it stopped. Web content never takes this
-    // branch: its read-back cannot prove how much landed, so a retype could
-    // duplicate text.
+    // paced key at a time from where it stopped. Web content and terminals never
+    // take this branch: their read-back cannot prove how much landed, so a
+    // retype could duplicate text.
     if batched {
-        if let (false, Some(done)) = outcome {
-            let total = text.chars().count();
-            let web = target_in_web_area(pid, element_ptr_and_idx, window_id);
-            if done < total && !web {
-                let tail: String = text.chars().skip(done).collect();
-                crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
-                let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-                return Ok(await_typed_delivery(
-                    before,
-                    text,
-                    deadline,
-                    || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
-                    || false,
-                ));
+        let web = || target_in_web_area(pid, element_ptr_and_idx, window_id);
+        if let Some(done) = retype_from(outcome, text.chars().count(), is_terminal_target, web) {
+            let after = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
+            if !appends_prefix(before, after.as_deref(), text, done) {
+                return Ok((false, None));
             }
+            let tail: String = text.chars().skip(done).collect();
+            crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
+            let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+            return Ok(await_typed_delivery(
+                before,
+                text,
+                deadline,
+                || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
+                || false,
+            ));
         }
     }
+    if is_terminal_target {
+        return Ok((outcome.0, outcome.1.filter(|_| outcome.0)));
+    }
     Ok(outcome)
+}
+
+/// Resumes a batched send when a native field shows its old value followed by the start of the text.
+fn retype_from(
+    outcome: (bool, Option<usize>),
+    total: usize,
+    is_terminal_target: bool,
+    is_web: impl FnOnce() -> bool,
+) -> Option<usize> {
+    let (false, Some(done)) = outcome else {
+        return None;
+    };
+    (done > 0 && done < total && !is_terminal_target && !is_web()).then_some(done)
+}
+
+fn appends_prefix(before: Option<&str>, after: Option<&str>, text: &str, done: usize) -> bool {
+    let (Some(before), Some(after)) = (before, after) else {
+        return false;
+    };
+    after
+        .strip_prefix(before)
+        .is_some_and(|added| added.chars().eq(text.chars().take(done)))
 }
 
 fn await_typed_delivery(
@@ -1532,6 +1559,7 @@ fn type_text_in_key_window(
                 element,
                 foreground_settle_ms,
                 window_id,
+                is_terminal_target,
             )
         };
         let ((verified, delivered_chars), fronted) = match window_id {
@@ -1659,6 +1687,7 @@ fn type_text_in_key_window(
             element_ptr_and_idx,
             /*settle_ms=*/ 0,
             window_id,
+            true,
         )?;
         return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
             detail: format!(" via CGEvent (terminal emulator, {delay_ms}ms delay)"),
@@ -1883,6 +1912,7 @@ fn type_text_in_key_window(
         element_ptr_and_idx,
         /*settle_ms=*/ 0,
         window_id,
+        false,
     )?;
     Ok(TypeTextDelivery::Typed(TypeTextOutcome {
         detail: format!(" via CGEvent ({delay_ms}ms delay)"),
@@ -2446,6 +2476,80 @@ mod tests {
         );
         assert_eq!(outcome, (false, Some(0)));
         assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    #[test]
+    fn a_native_field_retypes_only_a_proven_partial_tail() {
+        assert_eq!(retype_from((false, Some(1)), 5, false, || false), Some(1));
+        assert_eq!(retype_from((false, Some(4)), 5, false, || false), Some(4));
+        assert_eq!(retype_from((false, Some(4)), 5, false, || true), None);
+        assert_eq!(retype_from((false, Some(4)), 5, true, || false), None);
+        assert_eq!(retype_from((false, Some(5)), 5, false, || false), None);
+        assert_eq!(retype_from((true, Some(5)), 5, false, || false), None);
+        assert_eq!(retype_from((false, None), 5, false, || false), None);
+        assert_eq!(retype_from((false, Some(0)), 5, false, || false), None);
+    }
+
+    #[test]
+    fn a_first_character_per_event_read_back_is_not_retyped() {
+        let text = "abcdefghijklmnopq";
+        let outcome = await_typed_delivery(
+            Some(""),
+            text,
+            std::time::Instant::now(),
+            || Some("aq".to_owned()),
+            || false,
+        );
+        assert_eq!(outcome, (false, Some(2)));
+        assert_eq!(
+            retype_from(outcome, text.chars().count(), false, || false),
+            Some(2)
+        );
+        assert!(!appends_prefix(Some(""), Some("aq"), text, 2));
+    }
+
+    #[test]
+    fn a_partial_is_retyped_only_after_its_typed_prefix() {
+        for (before, after, done, appended) in [
+            (Some(""), Some("ab"), 2, true),
+            (Some("x"), Some("xab"), 2, true),
+            (Some("x"), Some("xé"), 1, false),
+            (Some("x"), Some("abx"), 2, false),
+            (Some(""), Some("ba"), 2, false),
+            (Some("x"), Some("yab"), 2, false),
+            (Some(""), Some("abc"), 2, false),
+            (None, Some("ab"), 2, false),
+            (Some(""), None, 2, false),
+        ] {
+            assert_eq!(
+                appends_prefix(before, after, "abcdef", done),
+                appended,
+                "before={before:?} after={after:?} done={done}"
+            );
+        }
+        assert!(appends_prefix(Some("x"), Some("xé"), "éabc", 1));
+    }
+
+    #[test]
+    fn a_terminal_screen_is_never_retyped() {
+        for (before, after, text) in [
+            ("$ read -s pw", "$ read -s pw", "secret"),
+            ("one\ntwo\n$ vim", "one\n$ vim", "dd"),
+            ("$ ", "$ \nfile-a  file-b", "a long command line"),
+        ] {
+            let outcome = await_typed_delivery(
+                Some(before),
+                text,
+                std::time::Instant::now(),
+                || Some(after.to_owned()),
+                || false,
+            );
+            assert_eq!(
+                retype_from(outcome, text.chars().count(), true, || false),
+                None,
+                "before={before:?} after={after:?} text={text:?}"
+            );
+        }
     }
 
     #[test]

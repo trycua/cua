@@ -16,7 +16,8 @@
 #
 #   --release            build the release configuration: Rust and Swift fully
 #                        optimised (slow, rebuilds everything). Use it to check
-#                        what ships. The app reads no dev hooks.
+#                        what ships. The app reads no dev hooks. Release-grade
+#                        builds are opt-in: nothing else asks for them.
 #   --development        the fast dev loop: Rust with the `dev-fast` Cargo profile
 #                        (target/dev-fast: opt-level 1, incremental, no LTO) and
 #                        the Swift debug configuration, so the dev hooks work
@@ -24,15 +25,15 @@
 #                        CUA_WEBUI_DEV=1 against `pnpm dev`). Still signed with
 #                        the stable local certificate. Not for anything you
 #                        hand to someone else.
-#                        Neither flag (the default): Rust release, Swift debug.
+#                        Neither flag (the default): Rust dev-fast, Swift debug.
 #   --no-launch          do not open the app when it is installed
 #   --rust-profile NAME  the Cargo profile for the Rust build, whatever the other
-#                        flags say: release (fully optimised) or dev-fast. With
-#                        `--release --rust-profile dev-fast` the app is the
-#                        release Swift build with a lightly optimised Rust core:
-#                        the Rust build after a version bump (every workspace
-#                        crate rebuilds) takes about 60% of the time. Use it for
-#                        the daily Local build; leave it out to check what ships.
+#                        flags say: release (fully optimised) or dev-fast (the
+#                        default, except with --release). `--release
+#                        --rust-profile dev-fast` is the release Swift build with
+#                        a lightly optimised Rust core: the Rust build after a
+#                        version bump (every workspace crate rebuilds) takes
+#                        about 70% of the release time.
 #   --build-only         build, stage, sign and verify the app, then stop: nothing
 #                        is installed, quit or registered (for timing a build or
 #                        checking that it builds). The app is left in
@@ -124,7 +125,7 @@ die() { err "$*"; exit 1; }
 # --- Arguments ----------------------------------------------------------------
 
 CONFIG=debug
-RUST_PROFILE=release
+RUST_PROFILE=dev-fast
 DEVELOPMENT=0
 LAUNCH=1
 PREFIX=""

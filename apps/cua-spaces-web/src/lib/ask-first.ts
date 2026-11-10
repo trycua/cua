@@ -480,6 +480,14 @@ export function taskState(
   return task.ending === "kept" ? "kept" : "done";
 }
 
+/** A task that never got a run (it did not start, or never got past starting) and is older than this is not a task any
+ * more: Home clears it itself, so an old failure does not sit on Home for days. */
+export const STALE_TASK_MS = 30 * 60_000;
+
+export function withoutStaleTasks<T extends Pick<AskTask, "runId" | "createdMs" | "ending">>(tasks: readonly T[], now = Date.now()): T[] {
+  return tasks.filter((t) => t.runId || t.ending || now - t.createdMs < STALE_TASK_MS);
+}
+
 /** An object whose values are catalog strings read when used, so a language change shows at once. */
 function lazyWords<K extends string>(keys: Record<K, string>): Record<K, string> {
   return Object.defineProperties(

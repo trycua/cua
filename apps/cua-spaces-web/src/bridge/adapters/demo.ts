@@ -495,9 +495,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     runtimes: demoRuntimesState(),
     volume: (() => {
       const v = demoVolumeState(now(), options.onboarded !== false, options.platform, options.ci !== undefined);
-      return options.shares || options.network || options.agentHome
-        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.agentHome ? { childSpaces: true } : {}) } }
-        : v;
+      return options.shares ? { ...v, experiments: { ...v.experiments, tcpShares: true } } : v;
     })(),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
@@ -1262,7 +1260,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       events.clear();
     },
   };
-  return Object.assign(self, { children: createChildrenStore(self, now) });
+  // The demo shows Child Spaces (and the agent's Home that rests on them) only for its tree demos: every other page keeps the
+  // classic Home with its where picker. A real host always has the store.
+  return options.network || options.agentHome ? Object.assign(self, { children: createChildrenStore(self, now) }) : self;
 }
 
 interface DemoLinksStateField {

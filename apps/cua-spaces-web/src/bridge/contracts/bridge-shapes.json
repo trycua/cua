@@ -2311,9 +2311,6 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "childSpaces": {
-          "type": "boolean"
-        },
         "ciRunners": {
           "type": "boolean"
         },
@@ -2321,9 +2318,6 @@
           "type": "boolean"
         },
         "mobile": {
-          "type": "boolean"
-        },
-        "warmPools": {
           "type": "boolean"
         }
       }
@@ -5988,6 +5982,9 @@
         },
         "arch": {
           "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
         },
         "reachable": {
           "type": "boolean"

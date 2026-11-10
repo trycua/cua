@@ -4595,7 +4595,7 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
 
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
@@ -14658,11 +14658,6 @@ export type AppExperiments = {
      */
     cuaVolume: boolean,
     /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned
-     * on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    childSpaces: boolean,
-    /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
      * `cua` command enforce it (the switch is kept in the cua home).
@@ -14679,13 +14674,7 @@ export type AppExperiments = {
      * push events). Off unless turned on; the daemon enforces it (the switch
      * is kept in the cua home).
      */
-    mobile: boolean,
-    /**
-     * Warm pools: one Linux Space kept ready, with its coding apps
-     * installed, so the next Create from Home starts at once. Off unless
-     * turned on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    warmPools: boolean
+    mobile: boolean
 }
 
 /**
@@ -14710,28 +14699,22 @@ const FfiConverterTypeAppExperiments = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 cuaVolume: FfiConverterBool.read(from),
-                childSpaces: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
-                mobile: FfiConverterBool.read(from),
-                warmPools: FfiConverterBool.read(from)
+                mobile: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.cuaVolume, into);
-            FfiConverterBool.write(value.childSpaces, into);
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
-            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
-             FfiConverterBool.allocationSize(value.childSpaces) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
-             FfiConverterBool.allocationSize(value.mobile) +
-             FfiConverterBool.allocationSize(value.warmPools);
+             FfiConverterBool.allocationSize(value.mobile);
 
         }
     };
@@ -71992,7 +71975,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 17320) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 62088) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {

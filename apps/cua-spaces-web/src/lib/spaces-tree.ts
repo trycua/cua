@@ -50,9 +50,12 @@ export interface TreeNode {
   tasks: string;
   /** Who's on it: the owner (or you) first, then who it's shared with. */
   people: string[];
-  /** The computer it was made on; null for a computer, or a Space whose computer isn't listed. */
+  /** What it sits under: the computer it was made on, or for a child Space the Space that made it; null for a computer, or a Space whose computer isn't listed. */
   parentKey: string | null;
+  /** For a computer, the Spaces made on it that no other Space made; for a Space, the child Spaces it made. */
   children: TreeNode[];
+  /** 0 for a computer (or a Space with no listed computer), 1 for a Space on a computer, 2 for its children, ... */
+  depth: number;
 }
 
 export interface SpacesTree {
@@ -82,6 +85,8 @@ export interface TreeInput {
    * Space id). A computer it calls offline is offline here too, so the tree never shows green where Home says offline
    * (the machines list can lag, as it also counts a connection the relay has not dropped yet). */
   relayOnline?: ReadonlyMap<string, boolean>;
+  /** Which Space made which (Child Spaces): child Space id to its parent's. A child whose parent isn't listed sits on its computer like any Space. */
+  parents?: ReadonlyMap<string, string>;
 }
 
 /** A computer's own Space id: `relay:<machine>` (This Mac's once it is on the relay), else its list row's. */
@@ -161,7 +166,16 @@ const isComputer = (m: Machine) => !m.device;
  * a computer is offline its Spaces wait for it, and their running tasks
  * read "Paused".
  */
-export function buildSpacesTree({ spaces, machines, defaultSpace, running = new Map(), me = null, now = Date.now(), relayOnline }: TreeInput): SpacesTree {
+export function buildSpacesTree({
+  spaces,
+  machines,
+  defaultSpace,
+  running = new Map(),
+  me = null,
+  now = Date.now(),
+  relayOnline,
+  parents = new Map(),
+}: TreeInput): SpacesTree {
   const ghosts = ghostMachineIds(spaces, machines);
   const onGhost = (s: Space) => [...ghosts].some((g) => s.id === `relay:${g}` || s.id.startsWith(`relay:${g}/`) || s.host === g);
   const listed = spaces.filter((s) => !isMachineDesktop(s) && !onGhost(s));
@@ -191,14 +205,31 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
 
   const runningOf = (id: string | null | undefined) => (id ? (running.get(id) ?? 0) : 0);
 
-  const spaceNode = (s: Space, parent: TreeNode | null): TreeNode => {
-    const waits = parent !== null && !parent.online;
+  // Child Spaces nest under the Space that made them, wherever the two are listed (a child is made on its parent's computer).
+  // A parent that isn't listed, or a loop, leaves the Space where its computer puts it.
+  const listedIds = new Set(listed.map((s) => s.id));
+  const madeBy = (s: Space): string | null => {
+    const p = parents.get(s.id);
+    if (!p || p === s.id || !listedIds.has(p)) return null;
+    for (let at: string | undefined = p, hops = 0; at; at = parents.get(at), hops++) {
+      if (at === s.id || hops > 32) return null;
+    }
+    return p;
+  };
+  const kidsOf = new Map<string, Space[]>();
+  for (const s of listed) {
+    const p = madeBy(s);
+    if (p) kidsOf.set(p, [...(kidsOf.get(p) ?? []), s]);
+  }
+
+  const spaceNode = (s: Space, parent: TreeNode | null, computer: TreeNode | null = parent, depth = 1): TreeNode => {
+    const waits = computer !== null && !computer.online;
     const state = spaceState(s);
     const settingsId = relayId(s.id);
     const isDefault = settingsId !== null && settingsId === defaultKey;
-    const word = waits ? t("computers.tree.waits_for", { name: parent.name }) : spaceWord(state);
+    const word = waits && computer ? t("computers.tree.waits_for", { name: computer.name }) : spaceWord(state);
     const n = runningOf(s.id);
-    return {
+    const node: TreeNode = {
       key: s.id,
       kind: "space",
       name: s.name,
@@ -225,7 +256,16 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
       people: peopleOf(s, me),
       parentKey: parent?.key ?? null,
       children: [],
+      depth: parent ? depth : 0,
     };
+    // Its child Spaces (Child Spaces) sit under it; their tasks count on it too, so a computer's total stays whole.
+    // The Spaces a Space made, in the order of their names (kid-a before kid-b), not the order the list came in.
+    const kids = [...(kidsOf.get(s.id) ?? [])].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    node.children = kids.map((c) => spaceNode(c, node, computer, node.depth + 1));
+    for (const c of node.children) placed.add(c.key);
+    node.running = n + node.children.reduce((sum, c) => sum + c.running, 0);
+    node.tasks = tasksText(node.running, waits);
+    return node;
   };
 
   const roots: TreeNode[] = [];
@@ -260,9 +300,12 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
       people: peopleOf(own, me),
       parentKey: null,
       children: [],
+      depth: 0,
     };
+    // The Spaces no other Space made sit on the computer; the children nest under their parents.
+    const top = kids.filter((s) => madeBy(s) === null);
     for (const s of kids) placed.add(s.id);
-    node.children = kids.map((s) => spaceNode(s, node));
+    node.children = top.map((s) => spaceNode(s, node));
     node.running = runningOf(id) + (m.current ? runningOf("this-mac") : 0) + node.children.reduce((sum, c) => sum + c.running, 0);
     node.tasks = tasksText(node.running, false);
     if (!online && node.running > 0) node.tasks = t("computers.tree.tasks_paused");
@@ -270,9 +313,9 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     if (node.people.length <= 1) node.people = [...new Set([...node.people, ...node.children.flatMap((c) => c.people)])];
     roots.push(node);
   }
-  const orphans = listed.filter((s) => !placed.has(s.id)).map((s) => spaceNode(s, null));
+  const orphans = listed.filter((s) => !placed.has(s.id) && madeBy(s) === null).map((s) => spaceNode(s, null));
 
-  const all = [...roots, ...roots.flatMap((r) => r.children), ...orphans];
+  const all = [...roots, ...roots.flatMap(descendants), ...orphans.flatMap((o) => [o, ...descendants(o)])];
   return {
     roots: [...roots, ...orphans],
     computers: roots.length,
@@ -281,6 +324,11 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     defaultKey: all.some((n) => n.key === defaultKey) ? defaultKey : null,
     offlineParent: roots.find((r) => !r.online && r.children.length > 0) ?? null,
   };
+}
+
+/** Every Space under `node`, children and theirs included, depth first. */
+export function descendants(node: Pick<TreeNode, "children">): TreeNode[] {
+  return node.children.flatMap((c) => [c, ...descendants(c)]);
 }
 
 /** Fewer offline computers than this stay in the list as they are. */
@@ -302,14 +350,14 @@ export function foldOffline(roots: readonly TreeNode[]): { shown: TreeNode[]; fo
 
 /** Every row, depth first. */
 export function treeRows(tree: Pick<SpacesTree, "roots">): TreeNode[] {
-  return tree.roots.flatMap((r) => [r, ...r.children]);
+  return tree.roots.flatMap((r) => [r, ...descendants(r)]);
 }
 
 /** The Computers page's line under its title. */
 export function treeSummary(tree: SpacesTree): string {
   if (tree.offlineParent) {
     const p = tree.offlineParent;
-    return t("computers.tree.summary_offline", { name: p.name, count: p.children.length });
+    return t("computers.tree.summary_offline", { name: p.name, count: descendants(p).length });
   }
   if (tree.computers === 1 && tree.spaces === 0) {
     const only = tree.roots[0]!;

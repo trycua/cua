@@ -431,7 +431,7 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:child_spaces", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"])
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"])
         #expect(toggles.allSatisfy { r in r.options.first { $0.id == "off" }?.active == true })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")

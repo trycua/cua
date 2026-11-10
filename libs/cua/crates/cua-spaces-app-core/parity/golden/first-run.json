@@ -764,7 +764,7 @@
       "art": "other on outline",
       "case": "31 offers: a Mac with room shows Linux and macOS",
       "offers": [
-        "linux linux (1.1 GB download; about 2 min)",
+        "linux linux (470 MB download; about 2 min)",
         "macos macos (23 GB download; 10 to 30 min the first time)"
       ],
       "prompts": {
@@ -812,7 +812,7 @@
       "art": "other on outline",
       "case": "32 offers: a low-disk Mac shows Linux only",
       "offers": [
-        "linux linux (1.1 GB download; about 2 min)"
+        "linux linux (470 MB download; about 2 min)"
       ],
       "prompts": {
         "caps": {
@@ -857,7 +857,7 @@
       "art": "other on outline",
       "case": "33 offers: an Intel Mac shows Linux only",
       "offers": [
-        "linux linux (1.2 GB download; about 2 min)"
+        "linux linux (471 MB download; about 2 min)"
       ],
       "prompts": {
         "caps": {
@@ -902,7 +902,7 @@
       "art": "other on outline",
       "case": "34 offers: an Intel Mac with QEMU adds Omarchy",
       "offers": [
-        "linux linux (1.2 GB download; about 2 min)",
+        "linux linux (471 MB download; about 2 min)",
         "omarchy linux (1.7 GB download; about 3 min the first time)"
       ],
       "prompts": {
@@ -949,7 +949,7 @@
       "art": "other on outline",
       "case": "35 offers: an amd64 Linux PC shows Linux and Omarchy",
       "offers": [
-        "linux linux (1.2 GB download; about 2 min)",
+        "linux linux (471 MB download; about 2 min)",
         "omarchy linux (1.7 GB download; about 3 min the first time)"
       ],
       "prompts": {
@@ -997,7 +997,7 @@
       "art": "other on outline",
       "case": "36 offers: a Mac still checking shows Linux only",
       "offers": [
-        "linux linux (1.1 GB download; about 2 min)"
+        "linux linux (470 MB download; about 2 min)"
       ],
       "prompts": {
         "caps": {

@@ -152,8 +152,7 @@ fn sink() -> &'static Mutex<Option<std::path::PathBuf>> {
 /// line each (`ts_ms`, `run`, `phase`, `ms` since the message, `cold`,
 /// `harness`), so a bench or a person can read how long a join took without
 /// telemetry (which is anonymous and goes elsewhere). The newest lines
-/// matter: the file is cut to its last 2000 lines when it passes 1 MiB. Only
-/// while the `warm-pools` experiment is on.
+/// matter: the file is cut to its last 2000 lines when it passes 1 MiB.
 pub(crate) fn set_sink(dir: &Path) {
     if let Ok(mut s) = sink().lock() {
         *s = Some(dir.join("phases.jsonl"));
@@ -161,9 +160,6 @@ pub(crate) fn set_sink(dir: &Path) {
 }
 
 fn record(run: &str, phase: &str, ms: u64, cold: bool, harness: &str) {
-    if !cua_spaces::experiments::enabled(cua_spaces::experiments::Gate::WarmPools) {
-        return;
-    }
     let Some(path) = sink().lock().ok().and_then(|s| s.clone()) else {
         return;
     };
@@ -278,9 +274,8 @@ pub(crate) fn follow(
         let mut reported: HashSet<&'static str> = HashSet::new();
         // While the first words are awaited the events are read every 25 ms
         // (a local read): the step is stamped when this host sees it, so a
-        // slow poll would be a slow step. Only with `warm-pools` on.
-        let quick = cua_spaces::experiments::enabled(cua_spaces::experiments::Gate::WarmPools);
-        let mut every = Duration::from_millis(if quick { 25 } else { 200 });
+        // slow poll would be a slow step.
+        let mut every = Duration::from_millis(25);
         while started.elapsed() < FOLLOW_FOR {
             let page = match agents.events(&join.run_id, cursor, 200).await {
                 Ok(p) => p,
@@ -374,7 +369,7 @@ pub(crate) fn follow(
                 tokio::time::sleep(every).await;
                 if started.elapsed() > Duration::from_secs(30) {
                     every = Duration::from_secs(1);
-                } else if quick && !seen_first_token && started.elapsed() > Duration::from_secs(8) {
+                } else if !seen_first_token && started.elapsed() > Duration::from_secs(8) {
                     // A slow start (a cold install): no need to read this often.
                     every = Duration::from_millis(200);
                 }
@@ -409,24 +404,14 @@ mod tests {
         assert_eq!(failure_word("boom"), "other");
     }
 
-    /// The local record of a join exists only with the `warm-pools`
-    /// experiment on: off, nothing is written.
+    /// Every step of a join is kept in the local record.
     #[test]
-    fn the_local_record_is_kept_only_with_warm_pools_on() {
+    fn the_local_record_keeps_every_step() {
         let dir = tempfile::tempdir().unwrap();
         set_sink(dir.path());
         let file = dir.path().join("phases.jsonl");
-        {
-            let _off =
-                cua_spaces::experiments::hold(cua_spaces::experiments::Gate::WarmPools, false);
-            local("run-a", "delivered", 12, false, "claude-code");
-            assert!(!file.exists(), "off: no file");
-        }
-        {
-            let _on = cua_spaces::experiments::hold(cua_spaces::experiments::Gate::WarmPools, true);
-            local("run-a", "delivered", 12, false, "claude-code");
-            local("run-a", "first_token_seen", 840, false, "claude-code");
-        }
+        local("run-a", "delivered", 12, false, "claude-code");
+        local("run-a", "first_token_seen", 840, false, "claude-code");
         let lines: Vec<serde_json::Value> = std::fs::read_to_string(&file)
             .unwrap()
             .lines()

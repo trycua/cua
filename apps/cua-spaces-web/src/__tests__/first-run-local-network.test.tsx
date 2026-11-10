@@ -30,6 +30,7 @@ const both = (on: boolean, appName = "Cua Spaces Local"): AppPermissions => ({
   ],
 });
 const net = (over: Partial<LocalNetworkState> = {}): LocalNetworkState => ({
+  loading: false,
   available: true,
   granted: false,
   asked: false,

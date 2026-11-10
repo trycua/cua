@@ -32,7 +32,6 @@ ELSEWHERE = {
     "cua-image": "needs registry and platform helpers; run by bin/ci and the image workflows",
     "cua-host": "launchd service tests; run by bin/ci on macOS, not yet checked on Linux",
     "cua-ci": "experiment (`cua ci`); no CI lane yet",
-    "cua-ci-sdk": "the cua-ci Spaces seam over the SDK; one unit test, no CI lane yet",
     "cua-replica-lab": "chaos rig, not shipped; run by hand",
     "cua-chaos": "chaos tooling, not shipped; its only lane (chaos-cua-compat.yml) was removed with the dead compat lanes (CUA-3571); run by hand with `cargo test -p cua-chaos`",
 }

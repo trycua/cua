@@ -56,7 +56,6 @@ cua-disk.workspace = true
 cua-vmm = { path = "../cua-vmm" }
 # `cua ci`: GitHub Actions jobs on Cua Spaces (an experiment).
 cua-ci.workspace = true
-cua-ci-sdk.workspace = true
 tracing.workspace = true
 cua-sandbox-core.workspace = true
 cua-repo-cache.workspace = true

@@ -11,6 +11,13 @@ record, reduced to native Wayland clients. A holder window keeps primary focus
 while background-seat KEY input over cua-input-v3 types into a separate target
 window; the target application's own output is the oracle, and primary focus
 must not move.
+
+Driver smoke (when --driver names a Cua Driver release tree): the released
+`cua-driver` serves the same session with native Wayland on and is asked for
+the four calls an agent starts with, against a fresh native window:
+list_windows finds it, get_window_state returns a screenshot, click moves the
+pointer to it, and type_text reaches the application, whose own output is again
+the oracle. A failure here fails the build's smoke.
 """
 
 import argparse
@@ -26,6 +33,8 @@ HOLDER_CLASS = "cua-requalify-holder"
 # evdev codes: c u a Enter.
 KEYS = (46, 22, 30, 28)
 TYPED = "cua"
+DRIVER_CLASS = "cua-requalify-driver"
+DRIVER_TEXT = "driver"
 CONFIG = """hl.config({
   plugin = { cua = { enabled = true } },
   input = { kb_rules = "evdev", kb_model = "pc105", kb_layout = "us",
@@ -205,6 +214,116 @@ def smoke(session):
             "typed": text, "checks": checks, "observations": observations, "transcript": lane.transcript}
 
 
+class Driver:
+    """The released cua-driver, serving this headless session."""
+
+    def __init__(self, binary, session):
+        self.binary = str(binary)
+        self.session = session
+        self.env = dict(os.environ, WAYLAND_DISPLAY=session.wayland, HYPRLAND_INSTANCE_SIGNATURE=session.instance,
+                        CUA_DRIVER_RS_ENABLE_WAYLAND="1", CUA_TELEMETRY="0", DO_NOT_TRACK="1")
+        self.env.pop("DISPLAY", None)
+        self.log = (session.out / "driver.log").open("a")
+        self.process = None
+        self.calls = []
+
+    def start(self):
+        self.process = subprocess.Popen([self.binary, "serve"], env=self.env, stdout=self.log,
+                                        stderr=subprocess.STDOUT)
+
+    def call(self, tool, args=None, *extra, timeout=60):
+        command = [self.binary, "call", tool, json.dumps({"session": "cua-requalify", **(args or {})}), *extra]
+        done = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=timeout)
+        try:
+            payload = json.loads(done.stdout)
+        except json.JSONDecodeError:
+            payload = {"raw": done.stdout[-2000:]}
+        self.calls.append({"tool": tool, "exit": done.returncode, "stderr": done.stderr[-500:],
+                           "reply": json.dumps(payload)[:1500]})
+        return done.returncode, payload
+
+    def stop(self):
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+        self.log.close()
+
+
+def find_window(node, marker):
+    """The innermost dict anywhere in a tool reply that mentions marker and carries a pid."""
+    children = node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()
+    for child in children:
+        found = find_window(child, marker)
+        if found:
+            return found
+    if isinstance(node, dict) and "pid" in node and marker in json.dumps(node):
+        return node
+    return None
+
+
+def png_size(path):
+    data = Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 33:
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"), len(data)
+
+
+def driver_smoke(session, binary):
+    typed = session.out / "driver-typed.txt"
+    window = session.spawn(DRIVER_CLASS, "sh", "-c", f'IFS= read -r line && printf %s "$line" > "{typed}"')
+    time.sleep(1)  # Let the shell reach its read.
+    driver = Driver(binary, session)
+    checks = {}
+    evidence = {}
+    try:
+        driver.start()
+
+        def listed():
+            code, reply = driver.call("list_windows", {})
+            return reply if code == 0 and DRIVER_CLASS in json.dumps(reply) else None
+
+        reply = wait_for(listed, 60, "list_windows never showed the new window")
+        entry = find_window(reply, DRIVER_CLASS) or {}
+        checks["driver_list_windows"] = bool(entry.get("pid"))
+        evidence["window"] = {k: entry.get(k) for k in ("pid", "window_id", "app_name", "title") if k in entry}
+        args = {key: entry[key] for key in ("pid", "window_id") if entry.get(key) is not None}
+
+        shot = session.out / "driver-window.png"
+        code, state = driver.call("get_window_state", args, "--screenshot-out-file", str(shot), timeout=120)
+        size = png_size(shot) if shot.is_file() else None
+        evidence["screenshot"] = {"exit": code, "png": size}
+        checks["driver_screenshot"] = code == 0 and size is not None and size[0] > 0 and size[1] > 0 and size[2] > 1000
+
+        x = round(window["at"][0] + window["size"][0] / 2)
+        y = round(window["at"][1] + window["size"][1] / 2)
+        code, clicked = driver.call("click", {"x": x, "y": y, "scope": "desktop"})
+
+        def at_point():
+            pos = session.json("cursorpos")
+            return pos if abs(pos["x"] - x) <= 2 and abs(pos["y"] - y) <= 2 else None
+
+        try:
+            evidence["cursor"] = wait_for(at_point, 10, "pointer did not reach the click point")
+            checks["driver_click"] = code == 0 and "code" not in clicked
+        except TimeoutError as error:
+            evidence["cursor"] = {"error": str(error), "wanted": [x, y], "actual": session.json("cursorpos")}
+            checks["driver_click"] = False
+
+        code, typed_reply = driver.call("type_text", {**args, "text": DRIVER_TEXT + "\n"})
+        try:
+            text = wait_for(lambda: typed.read_text() if typed.exists() else None, 10, "target wrote nothing")
+        except TimeoutError:
+            text = None
+        evidence["typed"] = text
+        checks["driver_type_text"] = code == 0 and text == DRIVER_TEXT
+    finally:
+        driver.stop()
+    return {"checks": checks, "evidence": evidence, "calls": driver.calls}
+
+
 def tail(path, lines=60):
     try:
         return path.read_text(errors="replace").splitlines()[-lines:]
@@ -216,6 +335,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--module", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--driver", type=Path, help="a released cua-driver binary to smoke-test in the session")
     args = parser.parse_args()
     result = {"load": {"status": "fail"}, "smoke": {"status": "unavailable", "reason": "plugin did not load"}}
     session = Session(args.out)
@@ -240,6 +360,14 @@ def main():
             return
         try:
             evidence = smoke(session)
+            if args.driver:
+                try:
+                    driven = driver_smoke(session, args.driver)
+                    evidence["checks"].update(driven["checks"])
+                    evidence["driver"] = {"binary": args.driver.name, **driven}
+                except Exception as error:
+                    evidence["checks"]["driver_smoke"] = False
+                    evidence["driver"] = {"error": f"{type(error).__name__}: {error}"}
             result["smoke"] = {"status": "pass" if all(evidence["checks"].values()) else "fail", **evidence}
         except Exception as error:
             result["smoke"] = {"status": "fail", "reason": f"{type(error).__name__}: {error}",

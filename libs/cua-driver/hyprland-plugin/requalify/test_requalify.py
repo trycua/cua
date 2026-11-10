@@ -335,6 +335,24 @@ class InputLaneTest(unittest.TestCase):
         self.assertEqual(sent, ["TARGET 42 55aa 2", f"KEY 1 {'f' * 32} 1 46 0", f"KEY 2 {'f' * 32} 2 28 0"])
 
 
+class DriverSmokeTest(unittest.TestCase):
+    def test_find_window_picks_the_innermost_entry_with_a_pid(self):
+        reply = {"windows": [{"pid": 1, "title": "other"},
+                             {"pid": 7, "window_id": 9, "title": "cua-requalify-driver", "bounds": {"x": 0}}]}
+        self.assertEqual(headless.find_window(reply, "cua-requalify-driver")["window_id"], 9)
+        self.assertIsNone(headless.find_window(reply, "absent"))
+        self.assertIsNone(headless.find_window({"raw": "x"}, "x"))
+
+    def test_png_size_reads_the_header(self):
+        header = b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + (640).to_bytes(4, "big") + (480).to_bytes(4, "big")
+        with tempfile.TemporaryDirectory() as directory:
+            good, bad = Path(directory, "a.png"), Path(directory, "b.png")
+            good.write_bytes(header + b"\0" * 100)
+            bad.write_bytes(b"not a png" * 10)
+            self.assertEqual(headless.png_size(good), (640, 480, len(header) + 100))
+            self.assertIsNone(headless.png_size(bad))
+
+
 def record(job, status, **checks):
     base = {"build": {"status": "pass", "module_sha256": "m" * 64, "options": qualify.BUILD_OPTIONS},
             "ctest": {"status": "pass", "total": 20, "failed": 0}, "load": {"status": "pass"},

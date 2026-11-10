@@ -2598,7 +2598,7 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
   if (api && spaces) return { api, spaces };
   const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
   const packages = [
-    ...(api || process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']),
+    ...(api || process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk-native']),
     ...(spaces || process.env.CUA_SPACES_FFI_LIBRARY ? [] : ['-p', 'cua-spaces-ffi']),
     ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen']),
   ];
@@ -2624,7 +2624,7 @@ export function loadApis(): { api: SdkApi; spaces: SdkApi } {
 export function loadApi(): SdkApi {
   if (process.env.CUA_SDK_API_JSON) return JSON.parse(fs.readFileSync(process.env.CUA_SDK_API_JSON, 'utf-8')) as SdkApi;
   const target = process.env.CARGO_TARGET_DIR ? path.resolve(process.env.CARGO_TARGET_DIR) : path.join(CUA_ROOT, 'target');
-  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
+  const packages = [...(process.env.CUA_SDK_LIBRARY ? [] : ['-p', 'cua-sdk-native']), ...(process.env.CUA_BINDGEN ? [] : ['-p', 'cua-bindgen'])];
   if (packages.length) {
     console.log(`Building ${packages.filter((p) => p !== '-p').join(', ')} (debug; UniFFI metadata is profile-independent)...`);
     execFileSync(cargo(), ['build', '--locked', ...packages], { cwd: CUA_ROOT, stdio: 'inherit' });

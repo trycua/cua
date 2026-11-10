@@ -366,7 +366,6 @@ pub(in crate::wayland) fn type_text(expected: Option<u64>, text: &str) -> Result
 /// clipboard instead, then put the previous clipboard text back. A clipboard
 /// that holds non-text content is refused rather than clobbered.
 fn paste_non_bmp(expected: Option<u64>, text: &str) -> Result<()> {
-    use cua_driver_core::clipboard::ClipboardBackend;
     let clipboard = crate::clipboard::LinuxClipboard::new();
     paste_with(&clipboard, text, || {
         press(expected, &["ctrl".to_owned()], "v")

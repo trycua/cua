@@ -260,8 +260,7 @@ export interface HostSignInFailure {
  * `adapters/tauri.ts`; the README has the full table.
  */
 export interface HostOperations
-  extends
-    NewSpaceOperations,
+  extends NewSpaceOperations,
     TeleportOperations,
     ShareOperations,
     SettingsOperations,

@@ -3829,7 +3829,10 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
                 for window in conn.query_tree(root)?.reply()?.children {
-                    let name = conn
+                    // A child can be destroyed between the tree query and this
+                    // read (the overlay's startup readback probe is one), so a
+                    // failed read is skipped, not fatal.
+                    let Ok(name) = conn
                         .get_property(
                             false,
                             window,
@@ -3838,7 +3841,10 @@ mod tests {
                             0,
                             u32::MAX,
                         )?
-                        .reply()?;
+                        .reply()
+                    else {
+                        continue;
+                    };
                     if name.value == expected_name {
                         return Ok(window);
                     }
@@ -4150,7 +4156,10 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
                 for window in conn.query_tree(root)?.reply()?.children {
-                    let name = conn
+                    // A child can be destroyed between the tree query and this
+                    // read (the overlay's startup readback probe is one), so a
+                    // failed read is skipped, not fatal.
+                    let Ok(name) = conn
                         .get_property(
                             false,
                             window,
@@ -4159,7 +4168,10 @@ mod tests {
                             0,
                             u32::MAX,
                         )?
-                        .reply()?;
+                        .reply()
+                    else {
+                        continue;
+                    };
                     if name.value == expected_name {
                         return Ok(window);
                     }

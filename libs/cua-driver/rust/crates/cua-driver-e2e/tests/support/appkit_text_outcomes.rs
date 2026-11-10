@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::*;
 
 fn fixture_state(directory: &Path) -> serde_json::Value {

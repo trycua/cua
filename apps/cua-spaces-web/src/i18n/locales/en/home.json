@@ -225,6 +225,8 @@
   "home.pool.moved": "{from} couldn’t be reached, so “{job}” moved to {to}.",
   "home.pool.show_job": "Show job",
   "home.pool.dismiss": "Dismiss",
+  "home.pool.warnings_label": "Needs attention",
+  "home.pool.see_space_use": "See what’s using space",
   "home.run.title": "Run something",
   "home.run.close": "Close",
   "home.run.agent": "Agent",

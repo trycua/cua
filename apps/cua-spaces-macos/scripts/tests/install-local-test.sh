@@ -367,13 +367,15 @@ exit 0'
 # libs/cua-spacesd it makes this checkout's daemon (FAKE_CARGO_NO_DAEMON=1:
 # a build that succeeds and makes nothing).
 write_shim cargo 'echo "cargo $* [in ${PWD##*/}]" >> "$CARGO_LOG"
+P=release; prev=""
+for a in "$@"; do [ "$prev" = --profile ] && P="$a"; prev="$a"; done
 case "$PWD" in
   */libs/cua-spacesd)
     if [ "${FAKE_CARGO_NO_DAEMON:-0}" != 1 ]; then
-      mkdir -p target/release && cp "$FAKE_CHECKOUT_DAEMON" target/release/cua-spacesd
+      mkdir -p "target/$P" && cp "$FAKE_CHECKOUT_DAEMON" "target/$P/cua-spacesd"
     fi ;;
   */libs/cua)
-    mkdir -p target/release && : > target/release/cua-spaces-cli && : > target/release/libcua_spaces_ffi.dylib ;;
+    mkdir -p "target/$P" && : > "target/$P/cua-spaces-cli" && : > "target/$P/libcua_spaces_ffi.dylib" ;;
 esac
 exit 0'
 
@@ -662,6 +664,22 @@ check "a build-app.sh that bundles the pinned cua-spacesd is refused, and the in
 reset_fixture
 FAKE_BUILD_IGNORE_SPACESD_BIN=1 install
 check "the same on a first install: nothing is installed" '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -L "$LOCAL_CLI" ]'
+
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+install --build-only
+check "--build-only builds and signs the app but installs nothing (status $RC)" \
+    '[ "$RC" = 0 ] && [ -s "$BUILD_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ ! -L "$LOCAL_CLI" ] && [ "$(snap_all)" = "$ALL_BEFORE" ] && printf "%s" "$OUT" | grep >/dev/null "nothing was installed"'
+check "the build says where the time went" 'printf "%s" "$OUT" | grep >/dev/null "built and signed in .*Rust "'
+
+reset_fixture
+: > "$CARGO_LOG"
+install --rust-profile dev-fast
+check "--rust-profile dev-fast builds both Cargo workspaces with that profile (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cargo build --locked --profile dev-fast --no-default-features -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^cargo build --locked --profile dev-fast -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG" && [ -d "$LOCAL_APP" ]'
+reset_fixture
+install --rust-profile nonsense
+check "--rust-profile refuses a name that is not release or dev-fast" '[ "$RC" = 2 ] && printf "%s" "$OUT" | grep >/dev/null "must be release or dev-fast" && [ ! -s "$CARGO_LOG" ]'
 
 reset_fixture
 FAKE_CARGO_NO_DAEMON=1 install

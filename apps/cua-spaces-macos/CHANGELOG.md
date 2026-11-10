@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.31.3](https://github.com/trycua/cua/compare/cua-spaces-v0.31.2...cua-spaces-v0.31.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.21.0 in Cua Spaces ([#7241](https://github.com/trycua/cua/issues/7241)) ([9ffb9f3](https://github.com/trycua/cua/commit/9ffb9f3234af232e0cfb38ad8650f9013bc232f3))
+* **spaces:** job Spaces show as one labeled row, not as raw runs ([#7006](https://github.com/trycua/cua/issues/7006)) ([8fe112f](https://github.com/trycua/cua/commit/8fe112f91046deb571c02bd0985d9fbbcf80e4b1))
+* **spaces:** the first-run test finds the permissions button by its mark, not its old label ([#7251](https://github.com/trycua/cua/issues/7251)) ([8c9e15d](https://github.com/trycua/cua/commit/8c9e15d0f3f199f856f998e83cdc23659c2bdebf))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua-cli:** build cua-compat beside cua-cli, not before it (CUA-3971) ([#7222](https://github.com/trycua/cua/issues/7222)) ([5bf6559](https://github.com/trycua/cua/commit/5bf6559ab9942885cb5972928dd764bca5b6f7e2))
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
 ## [0.31.2](https://github.com/trycua/cua/compare/cua-spaces-v0.31.1...cua-spaces-v0.31.2) (2026-11-10)
 
 

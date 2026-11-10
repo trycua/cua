@@ -111,6 +111,7 @@ fn admit(
     target: CaptureTarget,
     screenshot_x: f64,
     screenshot_y: f64,
+    consume: bool,
 ) -> anyhow::Result<(f64, f64)> {
     let current_native_action_dimensions = live_action_dimensions(&target)?;
     admit_with_live_dimensions(
@@ -121,6 +122,7 @@ fn admit(
         current_native_action_dimensions,
         screenshot_x,
         screenshot_y,
+        consume,
     )
 }
 
@@ -132,17 +134,23 @@ fn admit_with_live_dimensions(
     current_native_action_dimensions: NativeActionDimensions,
     screenshot_x: f64,
     screenshot_y: f64,
+    consume: bool,
 ) -> anyhow::Result<(f64, f64)> {
     let binding = service.binding_from_args(args)?;
     let capture_id = service.parse_capture_id(capture_id)?;
-    let admission = service.admit_action(CaptureActionRequest {
+    let request = CaptureActionRequest {
         capture_id,
         binding,
         target,
         current_native_action_dimensions,
         screenshot_x,
         screenshot_y,
-    })?;
+    };
+    let admission = if consume {
+        service.admit_action(request)?
+    } else {
+        service.preview_action(request)?
+    };
     Ok((admission.action_x, admission.action_y))
 }
 
@@ -216,6 +224,30 @@ pub fn admit_window_click(
         window_target(pid, window_id),
         screenshot_x,
         screenshot_y,
+        true,
+    )
+}
+
+/// [`admit_window_click`] that leaves the capture unspent, for a click that
+/// can still be refused after its point is mapped. Spend the capture with
+/// [`admit_window_click`] once the click has been dispatched.
+pub fn preview_window_click(
+    service: &CaptureService,
+    args: &Value,
+    capture_id: &str,
+    pid: u32,
+    window_id: u64,
+    screenshot_x: f64,
+    screenshot_y: f64,
+) -> anyhow::Result<(f64, f64)> {
+    admit(
+        service,
+        args,
+        capture_id,
+        window_target(pid, window_id),
+        screenshot_x,
+        screenshot_y,
+        false,
     )
 }
 
@@ -233,6 +265,7 @@ pub fn admit_desktop_click(
         CaptureTarget::PrimaryDesktop,
         screenshot_x,
         screenshot_y,
+        true,
     )
 }
 
@@ -273,6 +306,7 @@ mod tests {
             NativeActionDimensions::new(native.0, native.1).unwrap(),
             point.0,
             point.1,
+            true,
         )
     }
 
@@ -291,6 +325,7 @@ mod tests {
             NativeActionDimensions::new(native.0, native.1).unwrap(),
             point.0,
             point.1,
+            true,
         )
     }
 

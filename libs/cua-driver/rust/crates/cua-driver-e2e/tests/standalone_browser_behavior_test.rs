@@ -4853,22 +4853,10 @@ fn run_capture_bound_pixel_click_refusal(spec: &BrowserSpec, inert: bool) {
         });
         let mut foreground = click_args.expect("background click arguments");
         foreground["delivery_mode"] = serde_json::Value::String("foreground".to_owned());
-        if inert {
-            // The AT-SPI hit test ran against the admitted point, so that
-            // one-shot capture is spent; the escalation takes a fresh capture.
-            let spent = fixture.driver.call("click", foreground.clone());
-            assert!(
-                spent.is_error() && spent.structured()["code"] == "capture_not_found",
-                "a capture spent by the AT-SPI miss was accepted again: {}",
-                spent.raw
-            );
-            foreground = standalone_pixel_click_args(&mut fixture, &session);
-            foreground["delivery_mode"] = serde_json::Value::String("foreground".to_owned());
-        }
         let landed = fixture.driver.call("click", foreground.clone());
         assert!(
             !landed.is_error(),
-            "foreground retry did not land: {}",
+            "foreground retry did not reuse the refused capture: {}",
             landed.raw
         );
         if !inert {

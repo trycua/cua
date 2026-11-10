@@ -1,8 +1,0 @@
-[project]
-name = "test_notepad"
-version = "0.1.0"
-description = "Simple Notepad test task for native Windows (no webview)"
-requires-python = ">=3.10"
-
-[project.optional-dependencies]
-dev = []

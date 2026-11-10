@@ -1,4 +1,0 @@
-[bindings.swift]
-module_name = "CuaSpacesFFI"
-ffi_module_name = "cua_spaces_ffiFFI"
-ffi_module_filename = "cua_spaces_ffiFFI"

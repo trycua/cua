@@ -1,4 +1,0 @@
-{
-  "platforms": ["apple"],
-  "apple": { "modules": ["CuaVoiceModule"] }
-}

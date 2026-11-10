@@ -1,2 +1,0 @@
-include README.md
-recursive-include src/cua_driver/bin *

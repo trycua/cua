@@ -1,8 +1,0 @@
-{
-  "title": "Guides",
-  "pages": [
-    "manage-vms",
-    "gpu-passthrough",
-    "linux-guests"
-  ]
-}

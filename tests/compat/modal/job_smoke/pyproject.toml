@@ -1,5 +1,0 @@
-[project]
-name = "cua-compat-modal-job-smoke"
-version = "0"
-requires-python = ">=3.10"
-dependencies = ["modal==1.6.2"]

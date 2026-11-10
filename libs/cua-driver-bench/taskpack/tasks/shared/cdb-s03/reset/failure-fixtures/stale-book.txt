@@ -1,1 +1,0 @@
-Replace the pristine book or add a sidecar to make reset verification fail.

@@ -1,7 +1,0 @@
-# Dependencies for {{agent_name}}
-# Add your agent's dependencies here
-
-# Example dependencies:
-# openai>=1.0.0
-# anthropic>=0.18.0
-# google-generativeai>=0.4.0

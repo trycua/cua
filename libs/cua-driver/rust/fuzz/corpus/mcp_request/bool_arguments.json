@@ -1,1 +1,0 @@
-{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_session","arguments":true}}

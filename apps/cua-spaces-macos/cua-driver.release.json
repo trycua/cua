@@ -1,9 +1,0 @@
-{
-  "version": "0.45.4",
-  "tag": "cua-driver-rs-v0.45.4",
-  "asset": "cua-driver-rs-0.45.4-darwin-universal-binary.tar.gz",
-  "bytes": 54356886,
-  "sha256": "7dff49530847419828770a1737788cd50642026c0d679a9a4ef383259db94ac5",
-  "teamId": "YCK386LBJ7",
-  "files": ["cua-driver", "cua-cursor-theme"]
-}

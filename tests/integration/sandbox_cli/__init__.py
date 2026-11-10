@@ -1,1 +1,0 @@
-"""Sandbox CLI integration tests."""

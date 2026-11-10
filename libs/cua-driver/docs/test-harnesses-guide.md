@@ -662,3 +662,38 @@ Perception tests have four owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs` | The same loop with the published extension (OmniParser) and a resident Cua-S1-4B choosing the region, plus consumed and expired capture refusals | `s1-perception` lane of the Linux X11 runner, selected only by `ci-cua-s1-weights.yml` |
 
 Add a perception test to the directory that owns the code it exercises.
+
+## niri multi-output desktop frame (manual)
+
+niri 26.04 has no API to create an output. On a single-output host, load the
+kernel's virtual KMS module as a second output:
+
+```sh
+sudo modprobe vkms                 # root: creates Virtual-1
+niri msg outputs                   # eDP-2 + Virtual-1
+```
+
+niri hotplugs it automatically. To put a window on it, name its workspace and
+move the window there:
+
+```sh
+niri msg action focus-monitor-right
+niri msg action set-workspace-name multi
+niri msg action focus-window --id <window>
+niri msg action move-window-to-workspace multi
+niri msg action focus-workspace multi
+```
+
+Then `cua-driver call get_desktop_state` should report a frame spanning both
+outputs (for 1920x1080 + 1024x768 at x=1920: 2944x1080), list the window at its
+global frame coordinates, and accept a desktop-scope click there. Use a
+session label on the capture and click to exercise `capture_id` admission:
+
+```sh
+cid=$(cua-driver call get_desktop_state '{"session":"multi"}' | jq -r .capture_id)
+cua-driver call click "{\"scope\":\"desktop\",\"x\":2505,\"y\":494,\"capture_id\":\"$cid\",\"session\":\"multi\"}"
+```
+
+Turn the output off when done (`niri msg output Virtual-1 off`). The module can
+stay loaded until the compositor releases it; a reboot clears it. This is a
+manual host check, not a CI lane: CI has no second output.

@@ -1380,6 +1380,23 @@ pub(crate) fn niri_capture_output_png(name: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    // niri captures a toplevel directly once it ships
+    // ext_foreign_toplevel_image_capture_source_manager_v1 (niri #4599,
+    // merged for the release after 26.04). The toplevel identifier is the
+    // IPC window id, so this is exact: it needs no window position, works
+    // for tiled windows, and never changes focus.
+    match ext_screencopy::screenshot_toplevel_via_ext_copy(xid) {
+        Ok(Some(png)) => {
+            tracing::debug!(
+                "niri: captured window {xid} through ext-image-copy-capture toplevel source"
+            );
+            return fit_niri_window_png(xid, png);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::debug!("niri toplevel capture failed; using geometry: {error:#}");
+        }
+    }
     let (png, plan) = match niri::capture_window(xid, pid, niri_display_capture) {
         Ok(captured) => captured,
         Err(reason)
@@ -1412,6 +1429,23 @@ fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
         plan.height,
         image::imageops::FilterType::Triangle,
     );
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
+}
+
+/// niri's toplevel capture is the client content box; window bounds include
+/// the server-side border. Scale the capture to the reported window size so
+/// window-relative coordinates and the screenshot share one frame.
+fn fit_niri_window_png(xid: u64, png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let Some(size) = niri::window_for_id(xid).ok().and_then(|window| window.size) else {
+        return Ok(png);
+    };
+    let image = image::load_from_memory(&png)?;
+    if (image.width(), image.height()) == size {
+        return Ok(png);
+    }
+    let image = image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
     let mut out = std::io::Cursor::new(Vec::new());
     image.write_to(&mut out, image::ImageFormat::Png)?;
     Ok(out.into_inner())

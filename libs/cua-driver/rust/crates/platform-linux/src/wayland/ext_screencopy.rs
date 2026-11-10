@@ -29,6 +29,7 @@
 use std::time::Duration;
 
 use wayland_client::{
+    event_created_child,
     protocol::{
         wl_buffer::WlBuffer,
         wl_output::WlOutput,
@@ -36,9 +37,16 @@ use wayland_client::{
         wl_shm::{self, WlShm},
         wl_shm_pool::WlShmPool,
     },
-    Connection, Dispatch, Proxy, QueueHandle,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+};
+use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
+    ext_foreign_toplevel_handle_v1::{self as toplevel_handle, ExtForeignToplevelHandleV1},
+    ext_foreign_toplevel_list_v1::{
+        self as toplevel_list, ExtForeignToplevelListV1, EVT_TOPLEVEL_OPCODE,
+    },
 };
 use wayland_protocols::ext::image_capture_source::v1::client::{
+    ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
     ext_image_capture_source_v1::ExtImageCaptureSourceV1,
     ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
 };
@@ -54,6 +62,11 @@ struct CapState {
     source_mgr: Option<ExtOutputImageCaptureSourceManagerV1>,
     copy_mgr: Option<ExtImageCopyCaptureManagerV1>,
     shm: Option<WlShm>,
+    // Per-window capture.
+    toplevel_list: Option<ExtForeignToplevelListV1>,
+    toplevel_source_mgr: Option<ExtForeignToplevelImageCaptureSourceManagerV1>,
+    toplevels: std::collections::HashMap<u32, ToplevelEntry>,
+    pending_identifiers: std::collections::HashMap<u32, String>,
     // Buffer specs reported by the session before we allocate.
     fmt: Option<u32>,
     width: u32,
@@ -66,6 +79,14 @@ struct CapState {
     fail_reason: Option<u32>,
 }
 
+/// A foreign toplevel the compositor advertised, with the identifier the
+/// protocol uses to refer to it.
+#[derive(Clone)]
+struct ToplevelEntry {
+    identifier: String,
+    handle: ExtForeignToplevelHandleV1,
+}
+
 /// Capture the first `wl_output` via ext-image-copy-capture-v1, return raw
 /// PNG bytes. Falls back to the caller's next tier when the compositor
 /// doesn't expose the protocol — surface a typed anyhow::Error so the
@@ -73,7 +94,7 @@ struct CapState {
 pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<CapState>();
-    let qh = queue.handle();
+    let qh = queue.handle().clone();
     conn.display().get_registry(&qh, ());
 
     let mut state = CapState::default();
@@ -97,19 +118,101 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_shm"))?;
 
-    // Create source + session.
+    // Create source + capture it.
     let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&output, &qh, ());
+    let png = capture_source_png(&source, &copy_mgr, &shm, &mut state, &mut queue, &qh)?;
+    source.destroy();
+    Ok(png)
+}
+
+/// Capture one foreign toplevel by the identifier the compositor reported in
+/// `ext_foreign_toplevel_handle_v1.identifier`. niri's identifier is its IPC
+/// window id, so this captures a window exactly without knowing where it is
+/// on screen; no window needs to be focused.
+pub fn screenshot_toplevel_via_ext_copy(window_id: u64) -> anyhow::Result<Option<Vec<u8>>> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<CapState>();
+    let qh = queue.handle().clone();
+    conn.display().get_registry(&qh, ());
+
+    let mut state = CapState::default();
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+
+    let Some(source_mgr) = state.toplevel_source_mgr.clone() else {
+        return Ok(None);
+    };
+    if state.toplevel_list.is_none() {
+        return Ok(None);
+    }
+    let copy_mgr = state.copy_mgr.clone().ok_or_else(|| {
+        anyhow::anyhow!("compositor does not expose ext_image_copy_capture_manager_v1")
+    })?;
+    let shm = state
+        .shm
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_shm"))?;
+
+    let handle = find_toplevel(&state.toplevels, window_id)
+        .cloned()
+        .ok_or_else(|| {
+        anyhow::anyhow!(
+            "no foreign toplevel has identifier {:?}; compositor window ids and protocol identifiers must match",
+            window_id.to_string()
+        )
+    })?;
+
+    let source: ExtImageCaptureSourceV1 = source_mgr.create_source(&handle, &qh, ());
+    let png = capture_source_png(&source, &copy_mgr, &shm, &mut state, &mut queue, &qh);
+    source.destroy();
+    png.map(Some)
+}
+
+fn find_toplevel(
+    toplevels: &std::collections::HashMap<u32, ToplevelEntry>,
+    window_id: u64,
+) -> Option<&ExtForeignToplevelHandleV1> {
+    toplevels
+        .values()
+        .find(|entry| identifier_matches(&entry.identifier, window_id))
+        .map(|entry| &entry.handle)
+}
+
+/// niri exposes its IPC window id as the foreign-toplevel identifier so that
+/// clients can associate the two.
+fn identifier_matches(identifier: &str, window_id: u64) -> bool {
+    identifier == window_id.to_string()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn capture_source_png(
+    source: &ExtImageCaptureSourceV1,
+    copy_mgr: &ExtImageCopyCaptureManagerV1,
+    shm: &WlShm,
+    state: &mut CapState,
+    queue: &mut EventQueue<CapState>,
+    qh: &QueueHandle<CapState>,
+) -> anyhow::Result<Vec<u8>> {
+    state.width = 0;
+    state.height = 0;
+    state.fmt = None;
+    state.done = false;
+    state.ready = false;
+    state.failed = false;
+    state.fail_reason = None;
+
     let session: ExtImageCopyCaptureSessionV1 = copy_mgr.create_session(
-        &source,
+        source,
         ext_image_copy_capture_manager_v1::Options::empty(),
-        &qh,
+        qh,
         (),
     );
 
     // Wait for the session to announce buffer dimensions + format + done.
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while !state.done && std::time::Instant::now() < deadline {
-        queue.roundtrip(&mut state)?;
+        queue.roundtrip(&mut *state)?;
         if state.width > 0 && state.height > 0 && state.fmt.is_some() {
             // Some compositors don't emit `done` explicitly — proceed once
             // we have geometry + format.
@@ -180,11 +283,11 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
     let frame: ExtImageCopyCaptureFrameV1 = session.create_frame(&qh, ());
     frame.attach_buffer(&buffer);
     frame.capture();
-    queue.roundtrip(&mut state)?;
+    queue.roundtrip(&mut *state)?;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while !state.ready && !state.failed && std::time::Instant::now() < deadline {
-        queue.roundtrip(&mut state)?;
+        queue.roundtrip(&mut *state)?;
     }
     if state.failed {
         super::cleanup_mmap(ptr, size, fd);
@@ -204,9 +307,8 @@ pub fn screenshot_via_ext_copy() -> anyhow::Result<Vec<u8>> {
 
     frame.destroy();
     session.destroy();
-    source.destroy();
     pool.destroy();
-    queue.roundtrip(&mut state).ok();
+    queue.roundtrip(state).ok();
     super::cleanup_mmap(ptr, size, fd);
 
     Ok(png)
@@ -291,6 +393,20 @@ impl Dispatch<wl_registry::WlRegistry, ()> for CapState {
                 "ext_image_copy_capture_manager_v1" => {
                     state.copy_mgr =
                         Some(registry.bind::<ExtImageCopyCaptureManagerV1, _, _>(name, 1, qh, ()));
+                }
+                "ext_foreign_toplevel_list_v1" => {
+                    state.toplevel_list =
+                        Some(registry.bind::<ExtForeignToplevelListV1, _, _>(name, 1, qh, ()));
+                }
+                "ext_foreign_toplevel_image_capture_source_manager_v1" => {
+                    state.toplevel_source_mgr = Some(
+                        registry.bind::<ExtForeignToplevelImageCaptureSourceManagerV1, _, _>(
+                            name,
+                            1,
+                            qh,
+                            (),
+                        ),
+                    );
                 }
                 _ => {}
             }
@@ -422,5 +538,78 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, ()> for CapState {
             }
             _ => {}
         }
+    }
+}
+impl Dispatch<ExtForeignToplevelListV1, ()> for CapState {
+    fn event(
+        _: &mut Self,
+        _: &ExtForeignToplevelListV1,
+        _: toplevel_list::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+
+    event_created_child!(CapState, ExtForeignToplevelListV1, [
+        EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ()),
+    ]);
+}
+impl Dispatch<ExtForeignToplevelHandleV1, ()> for CapState {
+    fn event(
+        state: &mut Self,
+        handle: &ExtForeignToplevelHandleV1,
+        event: toplevel_handle::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let protocol_id = handle.id().protocol_id();
+        match event {
+            toplevel_handle::Event::Identifier { identifier } => {
+                state.pending_identifiers.insert(protocol_id, identifier);
+            }
+            toplevel_handle::Event::Done => {
+                if let Some(identifier) = state.pending_identifiers.remove(&protocol_id) {
+                    state.toplevels.insert(
+                        protocol_id,
+                        ToplevelEntry {
+                            identifier,
+                            handle: handle.clone(),
+                        },
+                    );
+                }
+            }
+            toplevel_handle::Event::Closed => {
+                state.pending_identifiers.remove(&protocol_id);
+                state.toplevels.remove(&protocol_id);
+                handle.destroy();
+            }
+            _ => {}
+        }
+    }
+}
+impl Dispatch<ExtForeignToplevelImageCaptureSourceManagerV1, ()> for CapState {
+    fn event(
+        _: &mut Self,
+        _: &ExtForeignToplevelImageCaptureSourceManagerV1,
+        _: <ExtForeignToplevelImageCaptureSourceManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifier_matches_the_window_id_only_exactly() {
+        assert!(identifier_matches("3", 3));
+        assert!(!identifier_matches("30", 3));
+        assert!(!identifier_matches("", 3));
+        assert!(!identifier_matches("03", 3));
     }
 }

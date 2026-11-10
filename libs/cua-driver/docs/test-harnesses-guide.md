@@ -745,3 +745,13 @@ tiled window rect (for example `16,16 453x998`), `get_window_state` must
 return that size with `frame_suppressed` unset, and window-coordinate typing
 and clicking must reach the app. `get_window_state` and a coordinate click
 must share a `session` label.
+
+The same niri build carries `ext_foreign_toplevel_image_capture_source_manager_v1`
+(niri#4599), which the driver prefers for every niri window. With
+`CUA_LOG=platform_linux=debug`, the daemon log must contain
+`captured window <id> through ext-image-copy-capture toplevel source` for the
+tiled window, and no screenshot file may appear in niri's `screenshot-path`.
+Browser identity has the same dependency: start Chrome with
+`--remote-debugging-port`, run `browser_prepare`, then `get_browser_state`;
+a tiled window must report `binding_quality: exact` and
+`binding_route: native_cdp_window`.

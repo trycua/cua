@@ -104,14 +104,22 @@ fn scaled_transform(
     )?)
 }
 
+/// Whether admitting a click spends its capture.
+#[derive(Clone, Copy)]
+enum CaptureSpend {
+    /// Spend the capture: the click is being dispatched.
+    Spend,
+    /// Leave the capture unspent: the click can still be refused.
+    Preview,
+}
+
 fn admit(
     service: &CaptureService,
     args: &Value,
     capture_id: &str,
     target: CaptureTarget,
-    screenshot_x: f64,
-    screenshot_y: f64,
-    consume: bool,
+    screenshot_point: (f64, f64),
+    spend: CaptureSpend,
 ) -> anyhow::Result<(f64, f64)> {
     let current_native_action_dimensions = live_action_dimensions(&target)?;
     admit_with_live_dimensions(
@@ -120,9 +128,8 @@ fn admit(
         capture_id,
         target,
         current_native_action_dimensions,
-        screenshot_x,
-        screenshot_y,
-        consume,
+        screenshot_point,
+        spend,
     )
 }
 
@@ -132,9 +139,8 @@ fn admit_with_live_dimensions(
     capture_id: &str,
     target: CaptureTarget,
     current_native_action_dimensions: NativeActionDimensions,
-    screenshot_x: f64,
-    screenshot_y: f64,
-    consume: bool,
+    (screenshot_x, screenshot_y): (f64, f64),
+    spend: CaptureSpend,
 ) -> anyhow::Result<(f64, f64)> {
     let binding = service.binding_from_args(args)?;
     let capture_id = service.parse_capture_id(capture_id)?;
@@ -146,10 +152,9 @@ fn admit_with_live_dimensions(
         screenshot_x,
         screenshot_y,
     };
-    let admission = if consume {
-        service.admit_action(request)?
-    } else {
-        service.preview_action(request)?
+    let admission = match spend {
+        CaptureSpend::Spend => service.admit_action(request)?,
+        CaptureSpend::Preview => service.preview_action(request)?,
     };
     Ok((admission.action_x, admission.action_y))
 }
@@ -222,9 +227,8 @@ pub fn admit_window_click(
         args,
         capture_id,
         window_target(pid, window_id),
-        screenshot_x,
-        screenshot_y,
-        true,
+        (screenshot_x, screenshot_y),
+        CaptureSpend::Spend,
     )
 }
 
@@ -245,9 +249,8 @@ pub fn preview_window_click(
         args,
         capture_id,
         window_target(pid, window_id),
-        screenshot_x,
-        screenshot_y,
-        false,
+        (screenshot_x, screenshot_y),
+        CaptureSpend::Preview,
     )
 }
 
@@ -263,9 +266,8 @@ pub fn admit_desktop_click(
         args,
         capture_id,
         CaptureTarget::PrimaryDesktop,
-        screenshot_x,
-        screenshot_y,
-        true,
+        (screenshot_x, screenshot_y),
+        CaptureSpend::Spend,
     )
 }
 
@@ -304,9 +306,8 @@ mod tests {
             capture_id,
             window_target(pid, window_id),
             NativeActionDimensions::new(native.0, native.1).unwrap(),
-            point.0,
-            point.1,
-            true,
+            point,
+            CaptureSpend::Spend,
         )
     }
 
@@ -323,9 +324,8 @@ mod tests {
             capture_id,
             CaptureTarget::PrimaryDesktop,
             NativeActionDimensions::new(native.0, native.1).unwrap(),
-            point.0,
-            point.1,
-            true,
+            point,
+            CaptureSpend::Spend,
         )
     }
 

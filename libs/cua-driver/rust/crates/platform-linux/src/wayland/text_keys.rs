@@ -91,7 +91,7 @@ pub(in crate::wayland) fn text_sym(c: char) -> Result<xkb::Keysym> {
             "control character U+{:04X} cannot be typed",
             u32::from(c)
         ))),
-        c => match xkb::utf32_to_keysym(u32::from(c)) {
+        c => match super::xkb_runtime::utf32_to_keysym(u32::from(c))? {
             sym if sym.raw() == 0 => Err(refused(format!("U+{:04X} has no keysym", u32::from(c)))),
             sym => Ok(sym),
         },
@@ -115,7 +115,11 @@ pub(in crate::wayland) fn level_mods(
     level: u32,
 ) -> Vec<u32> {
     let mut masks = [0_u32; 32];
-    let count = map.key_get_mods_for_level(code, layout, level, &mut masks);
+    let count =
+        match super::xkb_runtime::key_get_mods_for_level(map, code, layout, level, &mut masks) {
+            Ok(count) => count,
+            Err(_) => return Vec::new(),
+        };
     masks.iter().take(count).copied().collect()
 }
 

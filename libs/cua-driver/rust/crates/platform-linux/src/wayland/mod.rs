@@ -26,6 +26,7 @@ pub mod kwin_helper;
 mod kwin_keystate;
 pub(crate) mod kwin_layout;
 pub mod niri;
+mod xkb_runtime;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
 pub mod overlay;

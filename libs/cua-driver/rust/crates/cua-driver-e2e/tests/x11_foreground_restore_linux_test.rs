@@ -55,13 +55,14 @@ fn atom(conn: &RustConnection, name: &[u8]) -> u32 {
         .atom
 }
 
-/// A white window owned by this process (`_NET_WM_PID`), mapped.
+/// A white window owned by `owner` (`_NET_WM_PID`), mapped.
 fn map_window(
     conn: &RustConnection,
     root: Window,
     title: &str,
     (x, y, width, height): (i16, i16, u16, u16),
     aux: CreateWindowAux,
+    owner: u32,
 ) -> Window {
     let screen = &conn.setup().roots[0];
     let window = conn.generate_id().expect("allocate X11 window id");
@@ -92,7 +93,7 @@ fn map_window(
         window,
         atom(conn, b"_NET_WM_PID"),
         AtomEnum::CARDINAL,
-        &[std::process::id()],
+        &[owner],
     )
     .expect("set _NET_WM_PID");
     // USPosition | USSize: the window manager keeps the asked-for place
@@ -115,8 +116,8 @@ fn map_window(
 }
 
 /// The target toplevel on its own connection: a thread counts the key and
-/// button presses it receives and, when `opens_menu`, maps a popup menu
-/// after the first one.
+/// button presses it receives and, when `popup_owner` is set, maps a popup
+/// of that process after the first one: its own is a menu.
 struct Target {
     window: Window,
     presses: Arc<AtomicUsize>,
@@ -126,7 +127,7 @@ struct Target {
 }
 
 impl Target {
-    fn map(opens_menu: bool) -> Self {
+    fn map(popup_owner: Option<u32>) -> Self {
         let (conn, root) = connect();
         let window = map_window(
             &conn,
@@ -135,6 +136,7 @@ impl Target {
             (80, 80, 360, 240),
             CreateWindowAux::new()
                 .event_mask(EventMask::KEY_PRESS | EventMask::BUTTON_PRESS | EventMask::EXPOSURE),
+            pid(),
         );
         let presses = Arc::new(AtomicUsize::new(0));
         let menu = Arc::new(AtomicUsize::new(0));
@@ -150,11 +152,13 @@ impl Target {
                             Event::ButtonPress(press) => press.event == window,
                             _ => false,
                         };
-                        if pressed && presses.fetch_add(1, Ordering::SeqCst) == 0 && opens_menu {
-                            menu_due = Some(Instant::now() + MENU_DELAY);
+                        if pressed && presses.fetch_add(1, Ordering::SeqCst) == 0 {
+                            menu_due = popup_owner.map(|_| Instant::now() + MENU_DELAY);
                         }
                     }
-                    if menu_due.is_some_and(|due| Instant::now() >= due) {
+                    if let Some(owner) =
+                        popup_owner.filter(|_| menu_due.is_some_and(|due| Instant::now() >= due))
+                    {
                         menu_due = None;
                         let popup = map_window(
                             &conn,
@@ -162,6 +166,7 @@ impl Target {
                             "CuaForegroundRestoreMenu",
                             (120, 140, 160, 120),
                             CreateWindowAux::new().override_redirect(1),
+                            owner,
                         );
                         menu.store(popup as usize, Ordering::SeqCst);
                     }
@@ -188,6 +193,14 @@ impl Target {
 
     fn menu_open(&self) -> bool {
         self.menu.load(Ordering::SeqCst) != 0
+    }
+
+    fn wait_menu(&self) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !self.menu_open() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        self.menu_open()
     }
 }
 
@@ -287,6 +300,21 @@ enum Expect {
     Restored,
     /// The menu the input opened is up and the target kept the focus.
     MenuKeptFocus,
+    /// Another process's popup mapped after the input, and the prior window
+    /// is active again all the same.
+    RestoredPastForeignPopup,
+}
+
+impl Expect {
+    /// The pid the popup that follows the first press says it belongs to.
+    fn popup_owner(self) -> Option<u32> {
+        match self {
+            Self::Restored => None,
+            Self::MenuKeptFocus => Some(pid()),
+            // init: never the target's process.
+            Self::RestoredPastForeignPopup => Some(1),
+        }
+    }
 }
 
 fn native_x11_session() -> bool {
@@ -314,10 +342,10 @@ fn foreground_case(
     if !native_x11_session() {
         return;
     }
-    let menu = if expect == Expect::MenuKeptFocus {
-        "-menu"
-    } else {
-        ""
+    let menu = match expect {
+        Expect::Restored => "",
+        Expect::MenuKeptFocus => "-menu",
+        Expect::RestoredPastForeignPopup => "-foreign-popup",
     };
     let targeting_label = match targeting {
         Targeting::Px => "px",
@@ -342,7 +370,7 @@ fn foreground_case(
         // With the post-action window watch off, the restore runs right after
         // the input, before the menu maps: only a restore that waits for a
         // late menu keeps it open.
-        let env: &[(&str, &str)] = if expect == Expect::MenuKeptFocus {
+        let env: &[(&str, &str)] = if expect.popup_owner().is_some() {
             &[("CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS", "0")]
         } else {
             &[]
@@ -351,13 +379,14 @@ fn foreground_case(
             .expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
         let desktop = Desktop::connect();
-        let target = Target::map(expect == Expect::MenuKeptFocus);
+        let target = Target::map(expect.popup_owner());
         let prior = map_window(
             &desktop.conn,
             desktop.root,
             "CuaForegroundRestorePrior",
             (520, 80, 360, 240),
             CreateWindowAux::new().event_mask(EventMask::EXPOSURE),
+            pid(),
         );
         desktop.activate(prior);
         assert!(
@@ -380,13 +409,18 @@ fn foreground_case(
             response.text()
         );
         match expect {
-            Expect::Restored => assert_eq!(
-                desktop.active(),
-                Some(prior),
-                "foreground {tool} left the active window on the target instead of \
-                 the prior window: {}",
-                response.text()
-            ),
+            Expect::Restored | Expect::RestoredPastForeignPopup => {
+                if expect == Expect::RestoredPastForeignPopup {
+                    assert!(target.wait_menu(), "fixture: the popup never mapped");
+                }
+                assert_eq!(
+                    desktop.active(),
+                    Some(prior),
+                    "foreground {tool} left the active window on the target instead of \
+                     the prior window: {}",
+                    response.text()
+                );
+            }
             Expect::MenuKeptFocus => {
                 assert!(target.menu_open(), "fixture: the menu never mapped");
                 assert_eq!(
@@ -516,5 +550,18 @@ fn x11_foreground_type_text_that_opens_a_menu_succeeds_and_keeps_it_open() {
                 "delivery_mode": "foreground"
             })
         },
+    );
+}
+
+#[test]
+#[ignore]
+fn x11_foreground_click_restores_past_another_process_popup() {
+    foreground_case(
+        "left_click",
+        Targeting::Px,
+        "click",
+        1,
+        Expect::RestoredPastForeignPopup,
+        click_args,
     );
 }

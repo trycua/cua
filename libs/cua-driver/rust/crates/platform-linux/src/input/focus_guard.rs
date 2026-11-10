@@ -644,12 +644,16 @@ impl FocusSnapshot {
     }
 
     /// Override-redirect popups mapped since capture that hold a grab: not
-    /// the driver's own cursor overlay, not a tooltip.
-    fn new_popups(&self, x: &X) -> Vec<Window> {
+    /// the driver's own cursor overlay, not a tooltip. With `owner`, not a
+    /// popup another process says is its own either.
+    fn new_popups(&self, x: &X, owner: Option<u32>) -> Vec<Window> {
+        let foreign =
+            |w: Window| owner.is_some() && x.window_pid(w).is_some_and(|p| Some(p) != owner);
         x.mapped_popups()
             .difference(&self.popups)
             .copied()
             .filter(|w| !crate::overlay::is_x11_overlay_window(*w) && !x.passive_popup(*w))
+            .filter(|w| !foreign(*w))
             .collect()
     }
 
@@ -697,12 +701,14 @@ impl FocusSnapshot {
         }
 
         // Popups opened by the action: an open GTK/VCL menu grabs the keyboard.
-        let mut new_popups = self.new_popups(&x);
+        // A foreground action keeps the focus only for the target's own menu.
+        let popup_owner = target_pid.filter(|_| !same_app);
+        let mut new_popups = self.new_popups(&x, popup_owner);
         while new_popups.is_empty() && !changes.is_empty() && Instant::now() < menu_watch {
             std::thread::sleep(
                 SETTLE_POLL.min(menu_watch.saturating_duration_since(Instant::now())),
             );
-            new_popups = self.new_popups(&x);
+            new_popups = self.new_popups(&x, popup_owner);
         }
         if !new_popups.is_empty() {
             report.grab_held_by = new_popups

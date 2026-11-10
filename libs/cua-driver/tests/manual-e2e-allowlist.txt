@@ -54,3 +54,5 @@ authorized_live_jev_use_demo_test::authorized_visual_only_window_demo | Needs th
 
 # Packaged Notepad reads VK_PACKET ahead of translation (#4830). Manual on the Windows Space image.
 installed_app_notepad_windows_test::foreground_type_text_round_trips_through_notepad_save | Windows Space gate: packaged Notepad VK_PACKET read-ahead (#4830); record build, Notepad version, layout and IME
+
+inherited_stream_test::signed_host_owns_the_only_embedded_channel | Signed macOS fixture requires a build-bound parent requirement; run tests/runners/macos/inherited-stream.sh

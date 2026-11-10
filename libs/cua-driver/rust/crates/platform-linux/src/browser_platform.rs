@@ -660,6 +660,50 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     },
                 });
             }
+            if crate::wayland::niri::is_session() {
+                let window = tokio::task::spawn_blocking(move || {
+                    crate::wayland::niri::window_for_id(window_id)
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .ok_or_else(|| {
+                    BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "niri could not attest the exact browser window",
+                    )
+                })?;
+                if window.pid != Some(pid_u32) {
+                    return Err(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        format!("niri window {window_id} is not owned by pid {pid}"),
+                    ));
+                }
+                // A placed window (floating, or tiled on niri#4711+) has an
+                // exact rectangle. An unplaced tiled window falls through to
+                // the read-only heuristic generic route.
+                if let Ok(placed) = &window.placement {
+                    return Ok(NativeWindowInfo {
+                        pid,
+                        window_id,
+                        title: window.title,
+                        bounds: Rect::new(
+                            placed.origin.0,
+                            placed.origin.1,
+                            f64::from(placed.rect.width),
+                            f64::from(placed.rect.height),
+                        ),
+                        geometry_exact: true,
+                        ownership: NativeOwnershipProof {
+                            method: NativeOwnershipMethod::WindowServerOwner,
+                            owner_pid: pid,
+                            detail: Some(
+                                "authenticated niri IPC pid, window id, and placed rect".to_owned(),
+                            ),
+                        },
+                    });
+                }
+            }
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
                     return Err(BrowserRefusal::new(
@@ -788,6 +832,23 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                         .into_iter()
                         .map(|window| (window.pid, window.address)),
                 )));
+            }
+            if crate::wayland::niri::is_session() {
+                let windows = tokio::task::spawn_blocking(crate::wayland::niri::list_windows)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .ok_or_else(|| {
+                        BrowserRefusal::new(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "niri could not attest browser window cardinality",
+                        )
+                    })?;
+                let owned: Vec<_> = windows
+                    .iter()
+                    .filter(|window| window.pid == Some(pid_u32))
+                    .collect();
+                return Ok(Some(owned.len() == 1 && owned[0].id == window_id));
             }
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
                 if let Some(owned) =

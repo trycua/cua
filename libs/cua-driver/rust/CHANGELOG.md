@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.47.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.2...cua-driver-rs-v0.47.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** Linux X11 foreground gestures, right_click and set_value give the focus back ([#7254](https://github.com/trycua/cua/issues/7254)) ([802cf58](https://github.com/trycua/cua/commit/802cf587ebb5412fed6f69838df8c4adadfee6a5))
+* **cua-driver:** tell a live macOS app AppKit has not reported yet from an exited one in bring_to_front (CUA-3617) ([#7260](https://github.com/trycua/cua/issues/7260)) ([7ab7fe8](https://github.com/trycua/cua/commit/7ab7fe8bc1cd0e0801622077077d5ca119a2378a))
+
 ## [0.47.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.1...cua-driver-rs-v0.47.2) (2026-11-10)
 
 

@@ -118,6 +118,8 @@ export interface DemoOptions {
   noSpaces?: boolean;
   /** `?demo=desktops`: the Mac mini and the Linux box also share their desktops (Space rows of their own, `relay:mac-mini`, `relay:linux-box`). */
   desktops?: boolean;
+  /** `?demo=desktops-off`: as `desktops`, but This Mac does not share its own desktop (its switch is off). */
+  desktopOff?: boolean;
   /** `?demo=driver-update`: a newer Cua Driver is ready for This Mac. */
   driverUpdate?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
@@ -340,7 +342,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("chatgpt-signed-in") ? { chatgptLogin: true } : {}),
     ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
-    desktops: flags.has("desktops"),
+    desktops: flags.has("desktops") || flags.has("desktops-off"),
+    desktopOff: flags.has("desktops-off"),
     // `?demo=agent-home`: child Spaces on, so the prompt box names computers with `@`.
     ...(flags.has("agent-home") ? { agentHome: true } : {}),
     busyComputers: flags.has("computers-busy"),
@@ -472,7 +475,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           ...(options.network ? demoNetworkSpaceRows(now()) : []),
           ...(options.agentHome ? demoAgentHomeRows(now()) : []),
           ...demoSpaceRows(now()),
-          ...(options.desktops ? demoDesktopRows(now()) : []),
+          ...(options.desktops ? demoDesktopRows(now(), !options.desktopOff) : []),
           ...(options.busyComputers ? demoBusyRows(now()) : []),
           ...demoScaleRows(now(), options.extraSpaces ?? 0),
         ],
@@ -516,7 +519,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
-    ...demoHostSetupState(now(), options.onboarded === false),
+    ...(() => {
+      const setup = demoHostSetupState(now(), options.onboarded === false);
+      return options.desktopOff ? { ...setup, host: { ...setup.host, shareDesktop: false } } : setup;
+    })(),
     ...demoStartupState(Boolean(options.keychain)),
     ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),

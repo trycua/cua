@@ -88,7 +88,19 @@ pub(super) async fn call(
             // A call cut because the Space's mesh connection went away
             // says why, not just "broken pipe".
             let e = match &space {
-                Some(space) => spaces.explain_mesh_cut(space, e).await,
+                Some(space) => {
+                    let e = spaces.explain_mesh_cut(space, e).await;
+                    // The connection itself failed: the next call dials
+                    // again rather than reuse it (its cua-spacesd may have
+                    // restarted, and nothing resets a connection over the
+                    // mesh).
+                    if matches!(e, Error::Env(cua_spacesd_client::Error::Transport(_)))
+                        && let Ok(id) = spaces.resolve(space)
+                    {
+                        spaces.forget_stale_connection(&id.to_string()).await;
+                    }
+                    e
+                }
                 None => e,
             };
             tracing::debug!(tool, error = %e, "tool failed");
@@ -1079,6 +1091,17 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
         .ok_or_else(|| Error::invalid(format!("{tool}: `space` is required")))?
         .to_string();
     let s = space_for(spaces, tool, &space_arg).await?;
+    // Starting an agent or sending it a message is not safe to send twice,
+    // so it is never sent down a dead connection: a cached one is checked
+    // first (This Mac's cua-spacesd restarts when Set up shares its desktop,
+    // and the first job right after waited out the keepalive and failed
+    // with "http2 error (operation timed out)", CUA-3974). A Space pinned
+    // by the caller stays the one it gave.
+    let s = if matches!(tool, "agent_start" | "agent_message") && PINNED.try_with(|_| ()).is_err() {
+        spaces.checked(s).await?
+    } else {
+        s
+    };
     // `name`: an agent member of this Space in place of a run id.
     let mut a = a;
     if ag::MEMBER_RUN_TOOLS.contains(&tool) {

@@ -34,6 +34,7 @@ HOLDER_CLASS = "cua-requalify-holder"
 KEYS = (46, 22, 30, 28)
 TYPED = "cua"
 DRIVER_CLASS = "cua-requalify-driver"
+DRIVER_HOLDER_CLASS = "cua-requalify-driver-holder"
 DRIVER_TEXT = "driver"
 CONFIG = """hl.config({
   plugin = { cua = { enabled = true } },
@@ -238,8 +239,9 @@ class Driver:
             payload = json.loads(done.stdout)
         except json.JSONDecodeError:
             payload = {"raw": done.stdout[-2000:]}
-        self.calls.append({"tool": tool, "exit": done.returncode, "stderr": done.stderr[-500:],
-                           "reply": json.dumps(payload)[:1500]})
+        entry = {"tool": tool, "exit": done.returncode, "stderr": done.stderr[-500:], "reply": json.dumps(payload)[:1500]}
+        if not self.calls or {k: self.calls[-1][k] for k in entry} != entry:  # A polling loop logs one answer.
+            self.calls.append(entry)
         return done.returncode, payload
 
     def stop(self):
@@ -274,6 +276,12 @@ def png_size(path):
 def driver_smoke(session, binary):
     typed = session.out / "driver-typed.txt"
     window = session.spawn(DRIVER_CLASS, "sh", "-c", f'IFS= read -r line && printf %s "$line" > "{typed}"')
+    # A newer window holds the primary seat's focus, so typing into the target is a background
+    # delivery (the plugin refuses a target the primary seat is focused on); the click later
+    # moves focus to the target.
+    holder = session.spawn(DRIVER_HOLDER_CLASS, "sleep", "600")
+    wait_for(lambda: session.json("activewindow").get("address") == holder["address"], 10,
+             "the driver smoke's holder window did not take primary focus")
     time.sleep(1)  # Let the shell reach its read.
     driver = Driver(binary, session)
     checks, evidence = {}, {}
@@ -295,6 +303,14 @@ def driver_smoke(session, binary):
         evidence["screenshot"] = {"exit": code, "png": size}
         checks["driver_screenshot"] = code == 0 and size is not None and size[0] > 0 and size[1] > 0 and size[2] > 1000
 
+        code, _ = driver.call("type_text", {**args, "text": DRIVER_TEXT + "\n"})
+        try:
+            text = wait_for(lambda: typed.read_text() if typed.exists() else None, 10, "target wrote nothing")
+        except TimeoutError:
+            text = None
+        evidence["typed"] = text
+        checks["driver_type_text"] = code == 0 and text == DRIVER_TEXT
+
         x = round(window["at"][0] + window["size"][0] / 2)
         y = round(window["at"][1] + window["size"][1] / 2)
         code, clicked = driver.call("click", {"x": x, "y": y, "scope": "desktop"})
@@ -305,14 +321,6 @@ def driver_smoke(session, binary):
         except TimeoutError:
             evidence["cursor"] = {"wanted": [x, y], "actual": session.json("cursorpos")}
             checks["driver_click"] = False
-
-        code, _ = driver.call("type_text", {**args, "text": DRIVER_TEXT + "\n"})
-        try:
-            text = wait_for(lambda: typed.read_text() if typed.exists() else None, 10, "target wrote nothing")
-        except TimeoutError:
-            text = None
-        evidence["typed"] = text
-        checks["driver_type_text"] = code == 0 and text == DRIVER_TEXT
     except Exception as error:
         # Keep every call the driver answered: they are the diagnosis.
         checks.setdefault("driver_list_windows", False)

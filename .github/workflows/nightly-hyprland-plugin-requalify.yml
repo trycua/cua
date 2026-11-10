@@ -163,6 +163,8 @@ jobs:
           fi
           ls -l /dev/dri 2>/dev/null || true
       - name: Build and requalify in an Arch container
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           docker run --rm --privileged \
@@ -180,7 +182,16 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out"
           status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RUNNER_TEMP/out/result.json")
           echo "status: $status"
-          [ "$status" != fail ] || { echo "::error::requalification failed; see result.json and the logs"; exit 1; }
+          if [ "$status" = fail ]; then
+            # A pull request is a dry run of the tooling: the matrix result is a fact about the
+            # packages that day (reported in the summary), so only a tooling crash fails the check.
+            if [ "$EVENT" = pull_request ] && ! jq -e '.error' "$RUNNER_TEMP/out/result.json" >/dev/null; then
+              echo "::warning::requalification status is fail for this combination; see result.json (dry run on a pull request)"
+            else
+              echo "::error::requalification failed; see result.json and the logs"
+              exit 1
+            fi
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -269,10 +280,15 @@ jobs:
           DRY_RUN: ${{ github.event_name == 'pull_request' && '1' || '0' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REQUALIFY_RESULT: ${{ needs.requalify.result }}
+          EVENT: ${{ github.event_name }}
         run: |
           if [ ! -s compat/failures.md ]; then
             echo "- A requalify job ended $REQUALIFY_RESULT before writing a result; see the run logs." >compat/failures.md
           fi
           "$REQUALIFY/report_failure.sh" "$RUN_URL" compat/failures.md compat/matrix.md
+          if [ "$EVENT" = pull_request ]; then
+            echo "::warning::Hyprland plugin requalification has failing combinations (dry run on a pull request); see the matrix in the summary."
+            exit 0
+          fi
           echo "::error::Hyprland plugin requalification failed; see the matrix in the summary."
           exit 1

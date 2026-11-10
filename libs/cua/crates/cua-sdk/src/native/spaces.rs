@@ -5251,8 +5251,10 @@ impl Spaces {
     }
 
     /// Calls any Spaces MCP tool with JSON arguments (the implementation
-    /// `cua daemon mcp` serves), or one of the app's methods
-    /// (`agent_keys.*`, `spaces.reach`). Tool errors are returned, not raised.
+    /// `cua daemon mcp` serves). Tool errors are returned, not raised.
+    // It also serves the app's own methods (`agent_keys.*`, `spaces.reach`).
+    // A plain comment, not a doc comment: UniFFI's API checksum covers doc
+    // comments, so editing one makes the checked-in bindings stale.
     pub async fn call_tool_json(
         &self,
         tool: String,

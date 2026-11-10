@@ -11,7 +11,6 @@ import { useStartTask } from "@/components/ask-first/use-start-task";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { PrepareLine } from "@/components/prepare/prepare-line";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
-import { ComputerWarnings } from "@/components/resources/computer-resources";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { askTaskTitle, useAskTasks, type AskTask } from "@/lib/ask-first";
@@ -21,6 +20,7 @@ import { usePrepare } from "@/lib/prepare/store";
 import { thisComputerText } from "@/lib/host-labels";
 
 import { AddComputerTile, ComputerCard } from "./computer-card";
+import { ComputerWarnings } from "./computer-warnings";
 import { Dots } from "./keys";
 import { RunSomethingSheet, useRunPick, type RunRequest } from "./run-something";
 import { useHomeComputers } from "./use-home-computers";

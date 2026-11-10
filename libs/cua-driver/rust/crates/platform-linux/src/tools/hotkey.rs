@@ -422,12 +422,18 @@ impl Tool for HotkeyTool {
             foreground_budget(1),
             move || -> anyhow::Result<KeyRoute> {
                 if crate::wayland::is_wayland() {
-                    // Native Wayland: route the modifier combo through wtype's
-                    // -M/-k/-m sequence — the closest equivalent to the X11
-                    // state-mask path. window_id is irrelevant once focused.
+                    // Native Wayland: focus the exact target, send the chord to
+                    // the focused surface, and give the focus back, as
+                    // press_key does.
                     let mut combo: Vec<String> = mods_for_wayland.clone();
                     combo.push(key_for_wayland.clone());
-                    return crate::wayland::hotkey(xid, &combo).map(|()| KeyRoute::Synthetic);
+                    return crate::interaction::with_target_foreground(
+                        pid,
+                        xid,
+                        crate::interaction::session_policy().key,
+                        || crate::wayland::hotkey_focused(&combo),
+                    )
+                    .map(|()| KeyRoute::Synthetic);
                 }
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
                 // foreground: activate the target first, then inject the accelerator
@@ -438,7 +444,7 @@ impl Tool for HotkeyTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
-                        crate::interaction::session_policy().menu,
+                        crate::interaction::session_policy().key,
                         || crate::input::send_key_xtest(&key, &m),
                     )
                     .map(|((), report)| KeyRoute::Foreground(report));

@@ -856,8 +856,9 @@ impl Tool for TypeTextTool {
                     ToolResult::text(format!(
                         "Typed {text_len} character(s) as real key events \
                          (delivery_mode=foreground, focus_after={}); not verified — \
-                         confirm with a screenshot.",
-                        report.focus_after.as_str()
+                         confirm with a screenshot.{}",
+                        report.focus_after.as_str(),
+                        report.focus_note()
                     ))
                     .with_structured(foreground_structured(
                         "key_events_fg",

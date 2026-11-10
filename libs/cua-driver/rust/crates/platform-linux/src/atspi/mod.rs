@@ -470,7 +470,9 @@ pub fn perform_action_at_point_in(
                 if skip_focus_roles && is_focus_taking_role(&element.role) {
                     return Ok(None);
                 }
-                if native::is_container_role(&element.role) {
+                if native::is_container_role(&element.role)
+                    || native::is_web_document_role(&element.role)
+                {
                     // The cached snapshot's smallest covering element is a
                     // container (list / icon view / pane): its activation
                     // opens the current selection, not the item under the

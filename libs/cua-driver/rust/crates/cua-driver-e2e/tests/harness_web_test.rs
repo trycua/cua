@@ -107,7 +107,7 @@ where
         toolkit,
         host_exe,
         title_substr,
-        |_, _, _, _| {},
+        |_, _, _, _, _| {},
         |pid, wid, driver, _| f(pid, wid, driver),
         |(), passed| Observation::delivered_with_fixture_state(passed),
     );
@@ -122,7 +122,7 @@ fn run_web_case_with_preparation<P, F, R, O>(
     f: F,
     observe: O,
 ) where
-    P: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal),
+    P: FnOnce(i64, u64, u16, &mut McpDriver, &FixtureJournal),
     F: FnOnce(i64, u64, &mut McpDriver, &FixtureJournal) -> R,
     O: FnOnce(R, Vec<OracleKind>) -> Observation,
 {
@@ -211,7 +211,7 @@ fn run_web_case_with_preparation<P, F, R, O>(
             );
             std::thread::sleep(Duration::from_millis(50));
         }
-        prepare(pid, wid, &mut driver, &journal);
+        prepare(pid, wid, cdp_port, &mut driver, &journal);
         let (result, passed) = run_with_background_oracles(
             &mut driver,
             TargetWindow {
@@ -264,32 +264,149 @@ fn window_bounds(driver: &mut McpDriver, pid: i64, wid: u64) -> (f64, f64, f64, 
     )
 }
 
-fn pixel_from_screen(
-    state: &ToolResponse,
-    screen_x: f64,
-    screen_y: f64,
+#[derive(Debug, serde::Deserialize)]
+struct ViewportGeometry {
+    viewport_x: f64,
+    viewport_y: f64,
+    inner_width: f64,
+    inner_height: f64,
+    dpr: f64,
+}
+
+fn webview_viewport_bounds(window_id: u64) -> (f64, f64, f64, f64) {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{LPARAM, RECT, TRUE};
+    use windows::Win32::UI::HiDpi::{
+        SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumChildWindows, GetClassNameW, GetWindowRect, IsWindowVisible,
+    };
+
+    struct DpiContext(DPI_AWARENESS_CONTEXT);
+    impl Drop for DpiContext {
+        fn drop(&mut self) {
+            unsafe { SetThreadDpiAwarenessContext(self.0) };
+        }
+    }
+
+    unsafe extern "system" fn collect(hwnd: HWND, state: LPARAM) -> BOOL {
+        if IsWindowVisible(hwnd).as_bool() {
+            let mut name = [0u16; 256];
+            let length = GetClassNameW(hwnd, &mut name).max(0) as usize;
+            if String::from_utf16_lossy(&name[..length]).starts_with("Chrome_WidgetWin_") {
+                let mut rect = RECT::default();
+                if GetWindowRect(hwnd, &mut rect).is_ok()
+                    && rect.right > rect.left
+                    && rect.bottom > rect.top
+                {
+                    let viewports = &mut *(state.0 as *mut Vec<[i32; 4]>);
+                    viewports.push([rect.left, rect.top, rect.right, rect.bottom]);
+                }
+            }
+        }
+        TRUE
+    }
+
+    let previous =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    assert!(!previous.0.is_null(), "enter physical-pixel DPI context");
+    let _dpi = DpiContext(previous);
+    let mut viewports = Vec::<[i32; 4]>::new();
+    unsafe {
+        let _ = EnumChildWindows(
+            Some(HWND(window_id as *mut _)),
+            Some(collect),
+            LPARAM(&mut viewports as *mut Vec<[i32; 4]> as isize),
+        );
+    }
+    viewports.sort_unstable();
+    viewports.dedup();
+    assert_eq!(
+        viewports.len(),
+        1,
+        "WebView2 fixture needs one visible Chromium viewport: {viewports:?}"
+    );
+    let [left, top, right, bottom] = viewports[0];
+    (
+        f64::from(left),
+        f64::from(top),
+        f64::from(right - left),
+        f64::from(bottom - top),
+    )
+}
+
+fn pixel_from_viewport(
+    geometry: &ViewportGeometry,
+    screenshot: (f64, f64),
     window: (f64, f64, f64, f64),
+    viewport: (f64, f64, f64, f64),
 ) -> (f64, f64) {
     let (window_x, window_y, window_w, window_h) = window;
     assert!(
         window_w > 0.0 && window_h > 0.0,
         "WebView2 window needs positive geometry: {window:?}"
     );
-    let screenshot_w = state.structured()["screenshot_width"]
-        .as_f64()
-        .expect("PX targeting requires screenshot_width");
-    let screenshot_h = state.structured()["screenshot_height"]
-        .as_f64()
-        .expect("PX targeting requires screenshot_height");
-    let scale_x = screenshot_w / window_w;
-    let scale_y = screenshot_h / window_h;
-    let x = (screen_x - window_x) * scale_x;
-    let y = (screen_y - window_y) * scale_y;
+    assert!(geometry.dpr > 0.0, "WebView2 DOM needs positive DPR");
+    assert!(
+        (viewport.2 - geometry.inner_width * geometry.dpr).abs() <= geometry.dpr
+            && (viewport.3 - geometry.inner_height * geometry.dpr).abs() <= geometry.dpr,
+        "WebView2 native viewport {viewport:?} must match the DOM viewport size"
+    );
+    let (screenshot_w, screenshot_h) = screenshot;
+    // Native origins are physical pixels; DOM-local offsets scale with DPR.
+    let x = (viewport.0 - window_x + geometry.viewport_x * geometry.dpr) * screenshot_w / window_w;
+    let y = (viewport.1 - window_y + geometry.viewport_y * geometry.dpr) * screenshot_h / window_h;
     assert!(
         x >= 0.0 && x < screenshot_w && y >= 0.0 && y < screenshot_h,
         "WebView2 PX target center ({x:.1}, {y:.1}) is outside the capture ({screenshot_w:.1}x{screenshot_h:.1})"
     );
     (x, y)
+}
+
+#[test]
+fn webview_viewport_point_uses_native_host_origin() {
+    for (dpr, screenshot, window, viewport, expected) in [
+        (
+            1.0,
+            (888.0, 634.0),
+            (46.0, 40.0, 888.0, 634.0),
+            (47.0, 101.0, 886.0, 572.0),
+            (57.3125, 172.66666666666666),
+        ),
+        (
+            1.5,
+            (1332.0, 951.0),
+            (69.0, 60.0, 1332.0, 951.0),
+            (70.5, 151.5, 1329.0, 858.0),
+            (85.96875, 259.0),
+        ),
+        (
+            1.5,
+            (1330.0, 949.0),
+            (-1200.0, 700.0, 1332.0, 951.0),
+            (-1198.5, 791.5, 1329.0, 858.0),
+            (85.96875 * 1330.0 / 1332.0, 259.0 * 949.0 / 951.0),
+        ),
+    ] {
+        let geometry = ViewportGeometry {
+            viewport_x: 56.3125,
+            viewport_y: 111.66666666666666,
+            inner_width: 886.0,
+            inner_height: 572.0,
+            dpr,
+        };
+        let (x, y) = pixel_from_viewport(&geometry, screenshot, window, viewport);
+        assert!(
+            (x - expected.0).abs() < 1e-6,
+            "x={x}, expected={expected:?}"
+        );
+        assert!(
+            (y - expected.1).abs() < 1e-6,
+            "y={y}, expected={expected:?}"
+        );
+    }
 }
 
 fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
@@ -324,7 +441,7 @@ fn harness_webview_left_click_px_background() {
         "webview2",
         webview_exe(),
         "CuaTestHarness WebView [ready",
-        |pid, wid, driver, journal| {
+        |pid, wid, cdp_port, driver, journal| {
             wait_for_journal_text(journal, "lbl-counter", "counter=0");
             let bounds = window_bounds(driver, pid, wid);
             let ready_state = snapshot(driver, pid, wid);
@@ -342,14 +459,53 @@ fn harness_webview_left_click_px_background() {
                 "WebView2 DOM geometry probe failed: {}",
                 dom_probe.text()
             );
-            let screen_x = dom_probe.structured()["screen_x"]
-                .as_f64()
-                .expect("WebView2 DOM probe needs screen_x");
-            let screen_y = dom_probe.structured()["screen_y"]
-                .as_f64()
-                .expect("WebView2 DOM probe needs screen_y");
             wait_for_journal_text(journal, "lbl-counter", "counter=1");
-            let (x, y) = pixel_from_screen(&ready_state, screen_x, screen_y, bounds);
+            let viewport_probe = driver.call(
+                "page",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "action": "execute_javascript",
+                    "cdp_port": cdp_port,
+                    "target_url_contains": "harness-webview/web/index.html",
+                    "javascript": r#"(() => {
+                        const r = document.getElementById('btn-increment').getBoundingClientRect();
+                        return JSON.stringify({
+                            viewport_x: r.left + r.width / 2,
+                            viewport_y: r.top + r.height / 2,
+                            inner_width: window.innerWidth,
+                            inner_height: window.innerHeight,
+                            dpr: window.devicePixelRatio
+                        });
+                    })()"#
+                }),
+            );
+            assert!(
+                !viewport_probe.is_error(),
+                "WebView2 read-only DOM geometry failed: {}",
+                viewport_probe.text()
+            );
+            let encoded = viewport_probe
+                .text()
+                .strip_prefix("cdp.runtime.evaluate.user_gesture: ")
+                .expect("WebView2 DOM geometry requires the explicit CDP result");
+            let geometry_json: String =
+                serde_json::from_str(encoded).expect("WebView2 CDP geometry must be a JSON string");
+            let geometry: ViewportGeometry = serde_json::from_str(&geometry_json)
+                .expect("WebView2 DOM geometry must contain the required numeric metrics");
+            let screenshot = (
+                ready_state.structured()["screenshot_width"]
+                    .as_f64()
+                    .expect("PX targeting requires screenshot_width"),
+                ready_state.structured()["screenshot_height"]
+                    .as_f64()
+                    .expect("PX targeting requires screenshot_height"),
+            );
+            let viewport = webview_viewport_bounds(wid);
+            let (x, y) = pixel_from_viewport(&geometry, screenshot, bounds, viewport);
+            eprintln!(
+                "WebView2 PX geometry={geometry:?} viewport={viewport:?} window={bounds:?} screenshot={screenshot:?} point=({x}, {y})"
+            );
             let geometry_probe = driver.call(
                 "click",
                 serde_json::json!({
@@ -584,7 +740,7 @@ fn harness_electron_minimized_snapshot_click_refuses_without_side_effects() {
         "electron",
         electron_exe(),
         "CuaTestHarness Electron",
-        |pid, wid, driver, journal| {
+        |pid, wid, _, driver, journal| {
             wait_for_journal_text(journal, "lbl-counter", "counter=0");
             // A visible read first, so the minimized read below sees the
             // renderer's accessibility tree.

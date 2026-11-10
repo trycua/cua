@@ -1553,53 +1553,85 @@ fn harness_wpf_press_key_accelerator() {
     // WPF's InputManager ignores posted key messages while another native
     // window owns foreground, even for an unmodified F5 binding. The driver
     // must refuse before posting instead of returning an unverifiable success.
-    execute_case(
+    run_accelerator_case(
         background_case("keyboard", DriverRoute::PostMessage)
             .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]),
-        |evidence| {
-            with_named_session("windows-wpf-keyboard-ax-background", |pid, wid, driver| {
-                *evidence = recording_evidence(driver.recording_dir());
-                let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
-                    driver.call(
-                        "press_key",
-                        serde_json::json!({
-                            "pid": pid as i64, "window_id": wid, "key": "f5",
-                            "delivery_mode": "background"
-                        }),
-                    )
-                });
-                assert!(
-                    response.is_error(),
-                    "WPF background press_key unexpectedly reported delivery: {}",
-                    response.text()
-                );
-                let code = response.structured()["code"]
-                    .as_str()
-                    .and_then(RefusalCode::from_driver_code)
-                    .expect("WPF background key refusal needs a structured code");
-                let post = snapshot(driver, pid, wid);
-                assert!(
-                    post.text().contains("accel_fired=0"),
-                    "refused WPF key mutated fixture state: {}",
-                    post.text().chars().take(500).collect::<String>()
-                );
-                passed.push(OracleKind::FixtureState);
-                Observation::refused(code, passed, response.text(), Evidence::default())
-            })
-            .expect("required WPF session did not start")
+        |pid, wid, state_path, driver| {
+            let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
+                driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": pid as i64, "window_id": wid, "key": "f5",
+                        "delivery_mode": "background"
+                    }),
+                )
+            });
+            assert!(
+                response.is_error(),
+                "WPF background press_key unexpectedly reported delivery: {}",
+                response.text()
+            );
+            let code = response.structured()["code"]
+                .as_str()
+                .and_then(RefusalCode::from_driver_code)
+                .expect("WPF background key refusal needs a structured code");
+            assert_eq!(
+                stable_text(state_path, "lbl-accel-count"),
+                "accel_fired=0",
+                "refused WPF key changed the fixture accelerator count"
+            );
+            passed.push(OracleKind::FixtureState);
+            Observation::refused(code, passed, response.text(), Evidence::default())
         },
     );
+}
+
+fn run_accelerator_case(
+    case: CaseSpec,
+    test: impl FnOnce(u32, u64, &std::path::Path, &mut McpDriver) -> Observation,
+) {
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("accelerator fixture state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        driver.set_behavior_recording_state_timeout_ms(5_000);
+        *evidence = recording_evidence(driver.recording_dir());
+        let pid = launch_harness_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WPF harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WPF")
+            .expect("WPF main window not found");
+        assert_eq!(
+            stable_text(&state_path, "lbl-accel-count"),
+            "accel_fired=0",
+            "accelerator fixture must start at zero"
+        );
+        if let Some(dir) = driver.recording_dir() {
+            std::fs::copy(&state_path, dir.join("fixture-before.json"))
+                .expect("persist accelerator fixture baseline");
+        }
+        let observed = test(pid, wid, &state_path, &mut driver);
+        if let Some(dir) = driver.recording_dir() {
+            std::fs::copy(&state_path, dir.join("fixture-after.json"))
+                .expect("persist accelerator fixture result");
+        }
+        observed
+    });
 }
 
 #[test]
 #[ignore]
 fn harness_wpf_press_key_letter_accelerator() {
-    run_foreground_case(
-        "press_key",
-        Targeting::Ax,
-        DriverRoute::WindowsSendInput,
-        Vec::new(),
-        |pid, wid, driver| {
+    run_accelerator_case(
+        native_foreground_case(
+            "wpf",
+            "press_key",
+            Targeting::Ax,
+            DriverRoute::WindowsSendInput,
+        ),
+        |pid, wid, state_path, driver| {
             focus_harness(driver, pid, wid);
             let response = driver.call(
                 "press_key",
@@ -1616,14 +1648,12 @@ fn harness_wpf_press_key_letter_accelerator() {
                 "WPF foreground letter press_key failed: {}",
                 response.text()
             );
-            std::thread::sleep(Duration::from_millis(300));
-            let post = snapshot(driver, pid, wid);
-            assert!(
-                post.text().contains("accel_fired=1"),
-                "WPF letter press_key did not fire Ctrl+Shift+H: {}",
-                snapshot_lines_containing(post.text(), &["accel_fired"])
+            assert_eq!(
+                stable_text(state_path, "lbl-accel-count"),
+                "accel_fired=1",
+                "WPF letter press_key did not fire Ctrl+Shift+H"
             );
-            Vec::new()
+            delivered_with_fixture_state(Vec::new())
         },
     );
 }

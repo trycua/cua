@@ -46,6 +46,7 @@ public partial class MainWindow : Window
         {
             _accelCount++;
             LblAccelCount.Text = $"accel_fired={_accelCount}";
+            PublishFixtureState();
         }));
 
         Loaded += OnLoaded;
@@ -247,6 +248,7 @@ public partial class MainWindow : Window
             ["lbl-counter"] = new { text = LblCounter?.Text ?? "counter=0" },
             ["lbl-last-action"] = new { text = LblLastAction?.Text ?? "last_action=none" },
             ["lbl-click-count"] = new { text = LblClickCount?.Text ?? "clicks=0" },
+            ["lbl-accel-count"] = new { text = LblAccelCount?.Text ?? "accel_fired=0" },
             ["txt-input"] = new { text = TxtInput?.Text ?? "" },
             ["txt-deferred-input"] = new { text = TxtDeferredInput?.Text ?? "" },
             ["txt-multiline-input"] = new { text = TxtMultilineInput?.Text ?? "" },

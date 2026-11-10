@@ -171,6 +171,11 @@ export function updateAskTask(id: string, patch: Partial<AskTask> | ((t: AskTask
   save(load().map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch) } : t)));
 }
 
+/** Forgets a task's record on this device (a run that never started). Nothing else is touched: a Space, an agent or its thread stay. */
+export function removeAskTask(id: string): void {
+  save(load().filter((t) => t.id !== id));
+}
+
 /**
  * A new Home task for one of the agent's own chats (Continue in Cua). Nothing
  * runs: the task waits for the person's next message. Picking the same chat

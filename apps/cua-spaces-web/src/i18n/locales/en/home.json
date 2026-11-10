@@ -250,5 +250,9 @@
   "home.run.more_options": "More options",
   "home.run.cancel": "Cancel",
   "home.run.run_on": "Run on {computer}",
-  "home.run.no_computer": "No computer can take it now"
+  "home.run.no_computer": "No computer can take it now",
+  "home.ask_box.at_label": "Computers",
+  "home.ask_box.at_none": "No computers yet",
+  "home.ask_box.at_none_match": "No computer matches",
+  "home.ask_box.at_clear": "Remove {place}"
 }

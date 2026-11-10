@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.46.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.1...cua-driver-rs-v0.46.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** connect says when an agent uses another Cua Driver ([#7165](https://github.com/trycua/cua/issues/7165)) ([18daa98](https://github.com/trycua/cua/commit/18daa98ad304a35802981281adc55a82bb4c3d77))
+* **cua-driver:** deliver a background left click on a Chromium control on Linux X11 ([#7157](https://github.com/trycua/cua/issues/7157)) ([7ce38f7](https://github.com/trycua/cua/commit/7ce38f70bb2d60fd173561f45895172662e13dc8))
+* **cua-driver:** Linux foreground press_key, hotkey and click give the focus back ([#7164](https://github.com/trycua/cua/issues/7164)) ([7bdd2b4](https://github.com/trycua/cua/commit/7bdd2b44a7cc7adde73e076540f53d926a5bb3c4))
+
 ## [0.46.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.0...cua-driver-rs-v0.46.1) (2026-11-10)
 
 

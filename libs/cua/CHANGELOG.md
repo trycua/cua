@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/trycua/cua/compare/cua-sdk-v0.18.0...cua-sdk-v0.18.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-vmm:** one constant for the oldest Lume cua runs on ([#6946](https://github.com/trycua/cua/issues/6946)) ([311d525](https://github.com/trycua/cua/commit/311d525ab705dcebdc82dceefa175c32d2da1e18))
+
 ## [0.18.0](https://github.com/trycua/cua/compare/cua-sdk-v0.17.1...cua-sdk-v0.18.0) (2026-11-09)
 
 

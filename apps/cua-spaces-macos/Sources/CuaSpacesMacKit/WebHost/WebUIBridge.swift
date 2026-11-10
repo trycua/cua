@@ -612,9 +612,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
-        // The first run's sign-in set this Mac up to provide Spaces: ask for
-        // Local Network now that it is over.
-        if model.host.providesSpaces { model.askLocalNetworkForHosting() }
+        // Local Network is not asked here: the first run's permissions step
+        // asks for it, with its reason, and a dialog as Home opens was a
+        // surprise with no context (device test, 10 Nov). Left off there,
+        // it is asked when it is needed: the first macOS Space on this Mac,
+        // or turning on Spaces from other computers (`askLocalNetworkForHosting`).
         return onboarding()
     }
 

@@ -166,6 +166,8 @@ export interface DemoOptions {
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
   cli?: "local" | "missing";
+  /** No coding agent installed on this computer (`?demo=no-agents`): the first run's "Install a coding agent". */
+  noAgents?: boolean;
   /** The channel and environment the demo host reports (`settings.get`'s
    * `target`): the released app on production unless set; `?demo=local-staging`,
    * `?demo=local-prod` and `?demo=stable-staging` show the title bar's tag. */
@@ -385,6 +387,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    ...(flags.has("no-agents") ? { noAgents: true } : {}),
     ...(flags.has("local-staging")
       ? { target: { channel: "local" as const, env: "staging" as const } }
       : flags.has("local-prod")
@@ -1043,7 +1046,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       emit({ type: "agents.changed" });
       return null;
     },
-    "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
+    "agents.setup": () => state.agentSetup.map((r) => ({ ...r, ...(options.noAgents ? { installed: false } : {}) })),
     "agents.status": () => options.connections ?? demoConnections(state.agentSetup, state.imported, now()),
     "agents.connect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);

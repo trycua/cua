@@ -503,7 +503,7 @@ public final class AppModel {
         let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
             : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
         return AppMachinesViewAbout(
-            computerName: Foundation.Host.current().localizedName ?? "",
+            computerName: ComputerName.current ?? "",
             appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
             osVersion: os)
     }()
@@ -1309,10 +1309,11 @@ public final class AppModel {
     /// The Local Network steps for a Mac that accepts Spaces from your other
     /// computers: the explanation, then macOS's prompt, or the fix when access
     /// was turned off. Never for a sign-in's setup, nor a setup during the
-    /// first run (its page sets this Mac up as it signs in): finishing the
-    /// first run asks instead (`onboarding.complete`). The switch and a join
-    /// code always ask. Cancel or a refusal changes nothing else; a local
-    /// macOS create asks again.
+    /// first run (its page sets this Mac up as it signs in): the first run's
+    /// permissions step asks instead, and finishing the first run asks
+    /// nothing (no dialog as Home opens). The switch and a join code always
+    /// ask. Cancel or a refusal changes nothing else; a local macOS create
+    /// asks again.
     func askLocalNetworkForHosting(bySetup: Bool = false) {
         guard onboarding.completed || !bySetup, hostingLocalNetworkCheck == nil, let gate = localNetworkGate,
               appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }

@@ -181,17 +181,17 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     ],
   };
 
-  it("is one screen with two Allow buttons and Later, and names Cua Driver", () => {
+  it("is one screen with two Allow buttons and a way on without them, and names Cua Driver", () => {
     const allow = vi.fn(async () => {});
     const onContinue = vi.fn();
     render(
       <PermissionsScreen view={permissionsStepView({ appName: "Cua Spaces", allGranted: false })} perms={{ data: missing, allow }} onContinue={onContinue} />,
     );
     const buttons = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(buttons).toEqual(["Allow", "Allow", "Later"]);
+    expect(buttons).toEqual(["Allow", "Allow", "Continue without them", "Still off: See the screen and Use the mouse and keyboard"]);
     expect(all("[data-app-permission]").map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
     expect(document.body.textContent).toContain("Cua Driver");
-    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue without them" }));
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
@@ -218,7 +218,7 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
     note();
     await waitFor(() => expect(all("[data-app-permission]").length).toBe(2));
-    fireEvent.click(q("[data-new-run-permissions-next=Later]")!);
+    fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     note();
     fireEvent.click(q("[data-onboarding-primary]")!);

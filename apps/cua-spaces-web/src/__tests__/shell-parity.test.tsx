@@ -84,7 +84,7 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
   });
 
   it("gives a Space's tile on Home the core's power button, and pressing it turns the Space off", async () => {
-    const { calls } = await mount("/home");
+    const { calls } = await mount("/home/ask");
     const tile = (await found<HTMLElement>('[data-space-id][data-state="running"]')).parentElement!;
     const power = await waitFor(() => {
       const b = tile.querySelector<HTMLButtonElement>("[data-tile-power]");

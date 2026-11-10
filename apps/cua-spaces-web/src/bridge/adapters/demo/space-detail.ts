@@ -94,12 +94,17 @@ export function demoSpaceDetailHandlers({
   state,
   findRow,
 }: DemoContext): DemoHandlers<
-  "spaces.usage" | "spaces.windows" | "stream.pip" | "spaces.thumbnail" | "spaces.chooseFiles" | "spaces.droppedFiles" | "spaces.sendFiles"
+  "spaces.usage" | "spaces.reach" | "spaces.windows" | "stream.pip" | "spaces.thumbnail" | "spaces.chooseFiles" | "spaces.droppedFiles" | "spaces.sendFiles"
 > {
   return {
     "spaces.usage": ({ spaceId }) => {
       const row = findRow(spaceId);
       return running(row) ? usageOf(row) : null;
+    },
+    // The demo's Spaces answer when they run.
+    "spaces.reach": ({ spaceId }) => {
+      const row = findRow(spaceId);
+      return running(row) ? { reachable: true, listedOffline: false, reason: null } : { reachable: false, listedOffline: false, reason: offline(row).message };
     },
     "spaces.windows": ({ spaceId }) => {
       const row = findRow(spaceId);

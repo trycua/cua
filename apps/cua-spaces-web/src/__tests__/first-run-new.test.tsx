@@ -898,7 +898,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home asks for the rest only once the first job is done, and Not now puts it away for good", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
     await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     // The demo's agent runs all started before setup ended: no job yet.
@@ -915,7 +915,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home has no Terminal row when the command is already on this computer", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
     await waitFor(() => expect(document.querySelector("[data-bring-rest]")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(document.querySelector("[data-bring-rest-row=cli]")).toBeNull();
@@ -924,7 +924,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
   it("Home offers Use Cua from Terminal where the app carries the command, and Install installs it", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", {
+    await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       demo: { signedIn: true, onboarded: true, cli: "missing" },
@@ -971,7 +971,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     it(`Home shows the apps row at launch while a permission is missing, each switch live (offer ${offer ?? "none"})`, { timeout: 60_000 }, async () => {
       let on = false;
       writeFirstRunForTest({ restOffer: offer, restSinceMs: Date.now() });
-      await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
+      await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
       await waitFor(() => expect(document.querySelector("[data-home-apps]")).not.toBeNull(), { timeout: 15_000 });
       expect(document.querySelector("#home-apps-heading")!.textContent).toBe("Let agents use apps on this Mac");
       expect(document.querySelector("[data-home-apps]")!.textContent).toContain("One switch in System Settings is still off.");
@@ -988,7 +988,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home's apps row stays away while both permissions are on", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
     await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(document.querySelector("[data-home-apps]")).toBeNull();
@@ -996,7 +996,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("with 'Now bring the rest in' showing, its apps row opens by itself while a permission is missing", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
     await waitFor(() => expect(document.querySelector("[data-bring-rest-apps]")).not.toBeNull(), { timeout: 15_000 });
     expect(document.querySelector("[data-bring-rest-row=apps]")!.getAttribute("aria-expanded")).toBe("true");
     expect(

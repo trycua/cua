@@ -161,6 +161,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.acknowledgeLinkNotice": {},
   "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
+  "spaces.reach": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
   "spaces.thumbnail": { spaceId: "s1" },

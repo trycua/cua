@@ -191,6 +191,10 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func primaryDisplay(id: String) async -> AppStreamDisplay?
     /// Memory and storage use now (the SDK's `Space.usage`), or `nil`.
     func usage(id: String) async -> AppSpaceUsage?
+    /// Whether the Space can take work now (the SDK's app method
+    /// `spaces.reach`: the relay's word and a health check), as the SDK
+    /// answers it (`reachable`, `listed_offline`, `reason`).
+    func reach(id: String) async throws -> [String: Any]
     /// Processor, memory and disk (the SDK's `Spaces.resources`, the
     /// daemon's one sampler): this Mac, its Spaces, your other computers'
     /// summaries and what your Spaces there take on them. `visible` says a
@@ -407,6 +411,8 @@ public struct SpaceBulkResult: Equatable, Sendable {
 }
 
 public extension SpacesBackend {
+    /// A backend without the SDK can't tell: it says reachable, so no job is held back.
+    func reach(id: String) async throws -> [String: Any] { ["reachable": true, "listed_offline": false] }
     /// A backend that lists complete lists only.
     func listRead() async throws -> AppListRead { AppListRead(rows: try await rows()) }
     /// A backend that cannot push: the list poll alone keeps it fresh.
@@ -1175,6 +1181,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         }
         guard let icons = try? result.get() else { return requests.map { _ in nil } }
         return icons.map { $0?.bytes }
+    }
+
+    public func reach(id: String) async throws -> [String: Any] {
+        (try await agentsTool("spaces.reach", ["space": id]) as? [String: Any]) ?? [:]
     }
 
     public func usage(id: String) async -> AppSpaceUsage? {

@@ -70,7 +70,7 @@ describe.skipIf(!wasmBuilt)("the app makes the warm home and no other Space on i
       }),
     );
     const calls: Call[] = [];
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(homeCreates(calls)).toHaveLength(1), { timeout: 20_000 });
     await settle();

@@ -719,3 +719,29 @@ LD_LIBRARY_PATH=/tmp/libxkb-old/usr/lib/x86_64-linux-gnu \
 `ldd` should resolve `libxkbcommon.so.0` from `/tmp/libxkb-old`; the driver
 must print its version and list tools. `readelf -V` on the binary must show no
 `V_1.0.0` requirement for `libxkbcommon.so.0`.
+
+## niri tiled windows (manual, niri#4711+)
+
+Release 26.04 does not populate `tile_pos_in_workspace_view` for tiled
+windows. To exercise that path before the next niri release, build niri `main`
+and run it nested inside the current session:
+
+```sh
+git clone --depth 1 https://github.com/niri-wm/niri.git /tmp/niri-main
+cd /tmp/niri-main && cargo build --release
+```
+
+Start it with a script that launches a normal (not dialog) app and runs the
+driver, using the nested session's `WAYLAND_DISPLAY`/`NIRI_SOCKET`:
+
+```sh
+env WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+  NIRI_CONFIG=/tmp/niri-nested.kdl \
+  /tmp/niri-main/target/release/niri -- /tmp/nested-test.sh
+```
+
+Inside the nested session, `cua-driver list_windows` must report a non-zero
+tiled window rect (for example `16,16 453x998`), `get_window_state` must
+return that size with `frame_suppressed` unset, and window-coordinate typing
+and clicking must reach the app. `get_window_state` and a coordinate click
+must share a `session` label.

@@ -575,6 +575,11 @@ impl StepLines {
     }
 }
 
+/// `s` on one terminal line: control characters (newlines, escapes) become spaces.
+fn one_line(s: &str) -> String {
+    s.replace(char::is_control, " ")
+}
+
 /// The overall line for `n` creates at once, and its percent (the share ended).
 fn creating_many(n: usize, created: usize, failed: usize) -> (String, u8) {
     let failed_ = if failed > 0 {
@@ -593,31 +598,45 @@ fn creating_many(n: usize, created: usize, failed: usize) -> (String, u8) {
 pub struct ParallelSteps {
     words: CreateWords,
     labels: Vec<String>,
-    /// Each create's line text, and how many have ended (created, failed).
-    state: std::sync::Mutex<(Vec<String>, usize, usize)>,
-    drawn: std::sync::atomic::AtomicBool,
-    /// Ctrl-C: the lines stay as they are, so the cancel's own output is not drawn over.
-    stopped: std::sync::atomic::AtomicBool,
+    state: std::sync::Mutex<Drawn>,
+}
+
+/// What `ParallelSteps` has drawn and reported.
+#[derive(Default)]
+struct Drawn {
+    /// Each create's line text and its last reported percent.
+    lines: Vec<(String, Option<u8>)>,
+    created: usize,
+    failed: usize,
+    drawn: bool,
+    /// Ctrl-C: nothing more is drawn, so the cancel's own output stays.
+    stopped: bool,
 }
 
 impl ParallelSteps {
     /// Lines for creates of this kind, one per label.
     pub fn new(words: CreateWords, labels: Vec<String>) -> Self {
+        let labels: Vec<String> = labels.iter().map(|l| one_line(l)).collect();
         Self {
             words,
-            state: std::sync::Mutex::new((vec![String::new(); labels.len()], 0, 0)),
+            state: std::sync::Mutex::new(Drawn {
+                lines: vec![Default::default(); labels.len()],
+                ..Default::default()
+            }),
             labels,
-            drawn: Default::default(),
-            stopped: Default::default(),
         }
     }
 
-    /// Stops drawing (Ctrl-C).
-    pub fn stop(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
+    fn lock(&self) -> std::sync::MutexGuard<'_, Drawn> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Create `i` reported `p`: redraws the lines when its step text changed.
+    /// Stops drawing (Ctrl-C); a draw under way finishes first.
+    pub fn stop(&self) {
+        self.lock().stopped = true;
+    }
+
+    /// Create `i` reported `p`: redraws the lines when its step changed.
     pub fn show(&self, i: usize, p: &cua_sandbox_core::progress::Progress) {
         let Some(text) = self.words.line(p) else {
             return;
@@ -635,32 +654,33 @@ impl ParallelSteps {
     }
 
     fn update(&self, i: usize, text: String, state: ProgramState, progress: Option<u8>) {
-        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let line = (one_line(&text), progress);
+        let mut s = self.lock();
         let ended = state != ProgramState::Working;
-        if (s.0[i] == text && !ended) || self.stopped.load(Ordering::SeqCst) {
+        if (s.lines[i] == line && !ended) || s.stopped {
             return;
         }
-        s.0[i] = text;
+        s.lines[i] = line;
         match state {
-            ProgramState::Done => s.1 += 1,
-            ProgramState::Error => s.2 += 1,
+            ProgramState::Done => s.created += 1,
+            ProgramState::Error => s.failed += 1,
             _ => {}
         }
-        let redraw = self.drawn.swap(true, Ordering::SeqCst);
+        let redraw = std::mem::replace(&mut s.drawn, true);
         let mut err = std::io::stderr();
-        let _ = write!(err, "{}", self.render(&s.0, redraw));
+        let _ = write!(err, "{}", self.render(&s.lines, redraw));
         let _ = err.flush();
         let id = format!("space-{}", i + 1);
-        program_status_of(Some((&id, &self.labels[i])), state, progress, &s.0[i]);
+        program_status_of(Some((&id, &self.labels[i])), state, progress, &s.lines[i].0);
         // The overall record changes only when a create starts or ends.
         if !redraw || ended {
-            let (msg, progress) = creating_many(self.labels.len(), s.1, s.2);
+            let (msg, progress) = creating_many(self.labels.len(), s.created, s.failed);
             program_status(ProgramState::Working, Some(progress), &msg);
         }
     }
 
     /// The lines, over the ones drawn before when `redraw`.
-    fn render(&self, texts: &[String], redraw: bool) -> String {
+    fn render(&self, lines: &[(String, Option<u8>)], redraw: bool) -> String {
         let width = self
             .labels
             .iter()
@@ -672,7 +692,7 @@ impl ParallelSteps {
         if redraw {
             out += &format!("\r\x1b[{}A", self.labels.len());
         }
-        for (label, text) in self.labels.iter().zip(texts) {
+        for (label, (text, _)) in self.labels.iter().zip(lines) {
             out += format!("\x1b[2K{label:width$}  {text}").trim_end();
             out.push('\n');
         }
@@ -682,20 +702,20 @@ impl ParallelSteps {
     /// Ends the output: the lines go (the results follow on stdout), each
     /// create's record goes, and the root record says how it ended.
     pub fn finish(&self, first_error: Option<&str>) {
-        if self.drawn.load(Ordering::SeqCst) {
-            eprint!("\r\x1b[{}A\x1b[J", self.labels.len());
-            for i in 1..=self.labels.len() {
+        let s = self.lock();
+        let n = self.labels.len();
+        if s.drawn {
+            eprint!("\r\x1b[{n}A\x1b[J");
+            for i in 1..=n {
                 clear_program_record(&format!("space-{i}"));
             }
         }
-        let s = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let n = self.labels.len();
         match first_error {
             None => program_status(ProgramState::Done, None, &format!("Created {n} Spaces")),
             Some(e) => program_status(
                 ProgramState::Error,
                 None,
-                &format!("Created {} of {n} Spaces: {e}", s.1),
+                &format!("Created {} of {n} Spaces: {e}", s.created),
             ),
         }
     }
@@ -936,8 +956,8 @@ mod parallel_step_tests {
         let words = super::CreateWords::for_image("linux", "", true);
         let lines = super::ParallelSteps::new(words, vec!["web".into(), "web-2".into()]);
         let texts = [
-            "Starting".to_string(),
-            "Created local:web-2 (web-2)".to_string(),
+            ("Starting".to_string(), None),
+            ("Created local:web-2 (web-2)".to_string(), None),
         ];
         assert_eq!(
             lines.render(&texts, false),
@@ -958,6 +978,8 @@ mod parallel_step_tests {
             ("Creating 3 Spaces: 1 created, 1 failed".into(), 66)
         );
         assert_eq!(super::creating_many(3, 3, 0).1, 100);
+        // An error's newline or escape cannot add a line or reach the terminal.
+        assert_eq!(super::one_line("no room\n\x1b[2Jhere"), "no room  [2Jhere");
     }
 }
 

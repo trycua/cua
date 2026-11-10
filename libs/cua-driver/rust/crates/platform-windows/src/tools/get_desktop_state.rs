@@ -113,6 +113,37 @@ impl Tool for GetDesktopStateTool {
             Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
         };
 
+        let capture_id = if let Some(bridge) = &self.state.capture_bridge {
+            let geometry = match crate::capture_admission::CaptureGeometry::new(
+                screenshot_width,
+                screenshot_height,
+                full_size.0,
+                full_size.1,
+            ) {
+                Ok(geometry) => geometry,
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Desktop capture geometry is invalid: {error}"
+                    ))
+                }
+            };
+            match bridge.publish(
+                &binding_args,
+                png,
+                crate::capture_admission::WindowsCaptureTarget::PrimaryDesktop,
+                geometry,
+            ) {
+                Ok(capture_id) => capture_id,
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Desktop capture publication failed: {error}"
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+
         let mut content: Vec<Content> = Vec::new();
         if let Some(b64) = b64_opt {
             content.push(Content::image_png(b64));
@@ -121,6 +152,9 @@ impl Tool for GetDesktopStateTool {
             "desktop screenshot {screenshot_width}x{screenshot_height} px \
              (screen {screen_width}x{screen_height} px)"
         );
+        if let Some(capture_id) = capture_id.as_deref() {
+            cua_driver_core::window_state_view::append_capture_id(&mut summary, capture_id);
+        }
         cursor_overlay::capture_exclusion::append_summary_note(&mut summary, &overlay_capture);
         content.push(Content::text(summary));
 
@@ -142,34 +176,8 @@ impl Tool for GetDesktopStateTool {
             structured["screenshot_original_width"] = json!(full_size.0);
             structured["screenshot_original_height"] = json!(full_size.1);
         }
-        if let Some(bridge) = &self.state.capture_bridge {
-            let geometry = match crate::capture_admission::CaptureGeometry::new(
-                screenshot_width,
-                screenshot_height,
-                full_size.0,
-                full_size.1,
-            ) {
-                Ok(geometry) => geometry,
-                Err(error) => {
-                    return ToolResult::error(format!(
-                        "Desktop capture geometry is invalid: {error}"
-                    ))
-                }
-            };
-            match bridge.publish(
-                &binding_args,
-                png,
-                crate::capture_admission::WindowsCaptureTarget::PrimaryDesktop,
-                geometry,
-            ) {
-                Ok(Some(capture_id)) => structured["capture_id"] = json!(capture_id),
-                Ok(None) => {}
-                Err(error) => {
-                    return ToolResult::error(format!(
-                        "Desktop capture publication failed: {error}"
-                    ))
-                }
-            }
+        if let Some(capture_id) = capture_id {
+            structured["capture_id"] = json!(capture_id);
         }
         if let Some(ref fp) = file_path {
             structured["screenshot_file_path"] = json!(fp);

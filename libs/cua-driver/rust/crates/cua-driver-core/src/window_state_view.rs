@@ -13,6 +13,8 @@
 //! * a stated truncation line when the walk hit the `max_elements` budget,
 //! * with `since: <snapshot_id>`, only the rows that changed against that
 //!   snapshot, falling back to a full read when the snapshot is unknown.
+//! * `capture_id=<id>` on the text header when this read registered a capture,
+//!   next to `snapshot_id` when that id is present.
 //!
 //! `full_output: true` restores the previous payload byte for byte (both
 //! representations, all metadata, the platform walk caps).
@@ -277,12 +279,16 @@ pub fn apply(
         return;
     }
     trim_metadata(opts, structured);
+    let capture_id = registered_capture_id(structured);
     let Some(md) = structured
         .get("tree_markdown")
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
         drop_walk_diagnostics(opts, structured);
+        if let Some(cid) = capture_id.as_deref() {
+            stamp_capture_id(content, cid);
+        }
         return;
     };
     let snapshot_id = structured
@@ -313,6 +319,9 @@ pub fn apply(
     let mut header_extra = String::new();
     if let Some(sid) = &snapshot_id {
         header_extra.push_str(&format!(" snapshot_id={sid}"));
+    }
+    if let Some(cid) = &capture_id {
+        header_extra.push_str(&format!(" capture_id={cid}"));
     }
     let truncation = truncation_line(structured, &ctx.key);
     if let Some(line) = &truncation {
@@ -415,8 +424,52 @@ pub fn apply(
         }
     }
 
-    rewrite_tree_block(content, &md, &header_extra, &body);
+    // A capture-only read has no tree block to rewrite. The id still has to
+    // land on the existing summary line, or a text-only host cannot call
+    // `parse_visual_regions`.
+    if !rewrite_tree_block(content, &md, &header_extra, &body) {
+        if let Some(cid) = capture_id.as_deref() {
+            stamp_capture_id(content, cid);
+        }
+    }
     drop_walk_diagnostics(opts, structured);
+}
+
+/// `capture_id` already published on this observation, when it is a non-empty string.
+fn registered_capture_id(structured: &Value) -> Option<String> {
+    structured
+        .get("capture_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// Add ` capture_id=<id>` to the first line of an observation summary.
+///
+/// `get_window_state` and `get_desktop_state` use the same spelling, so a
+/// text-only MCP host can read the id that `structuredContent` already carries.
+pub fn append_capture_id(summary: &mut String, capture_id: &str) {
+    if capture_id.is_empty() {
+        return;
+    }
+    let field = format!("capture_id={capture_id}");
+    let newline = summary.find('\n').unwrap_or(summary.len());
+    let insertion = if summary[..newline].is_empty() {
+        field
+    } else {
+        format!(" {field}")
+    };
+    summary.insert_str(newline, &insertion);
+}
+
+fn stamp_capture_id(content: &mut [Content], capture_id: &str) {
+    for part in content.iter_mut() {
+        let Content::Text { text, .. } = part else {
+            continue;
+        };
+        append_capture_id(text, capture_id);
+        return;
+    }
 }
 
 /// Walk diagnostics cost every read context and no caller acts on them:
@@ -497,9 +550,9 @@ fn fallback_text(reason: &str) -> &'static str {
 
 /// Replace the markdown inside the platform's text block with `body`, and add
 /// `header_extra` to the end of that block's first line.
-fn rewrite_tree_block(content: &mut [Content], md: &str, header_extra: &str, body: &str) {
+fn rewrite_tree_block(content: &mut [Content], md: &str, header_extra: &str, body: &str) -> bool {
     if md.is_empty() {
-        return;
+        return false;
     }
     for part in content.iter_mut() {
         let Content::Text { text, .. } = part else {
@@ -524,8 +577,9 @@ fn rewrite_tree_block(content: &mut [Content], md: &str, header_extra: &str, bod
         out.push_str(body);
         out.push_str(suffix);
         *text = out;
-        return;
+        return true;
     }
+    false
 }
 
 fn trim_metadata(opts: &ViewOptions, structured: &mut Value) {
@@ -1306,6 +1360,87 @@ mod tests {
         assert!(text.contains("row [1] is \"s000000a1:1\""));
         assert!(!text.contains("this read stops at row"));
         assert!(text.ends_with(OLD));
+        assert!(!text.contains("capture_id="));
+    }
+
+    #[test]
+    fn header_includes_capture_id_beside_snapshot_id() {
+        let (mut content, mut s) = payload("s000000b1", OLD);
+        s["capture_id"] = json!("cap_00000001");
+        apply(&opts(json!({})), &ctx(7301), &mut content, &mut s);
+        let text = text_of(&content);
+        assert!(text.starts_with(
+            "window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000b1 capture_id=cap_00000001\n"
+        ));
+        assert!(text.contains("element_token for row [N] = s000000b1:N"));
+        assert_eq!(s["capture_id"], "cap_00000001");
+        assert_eq!(s["snapshot_id"], "s000000b1");
+        assert_eq!(s["tree_markdown"], OLD);
+    }
+
+    #[test]
+    fn capture_only_header_includes_capture_id_without_a_tree() {
+        let mut content = vec![
+            Content::image_png("AAAA".into()),
+            Content::text("window_id=7 pid=9 size=10x10"),
+        ];
+        let mut structured = json!({
+            "window_id": 7,
+            "pid": 9,
+            "capture_id": "cap_00000001"
+        });
+        apply(&opts(json!({})), &ctx(7302), &mut content, &mut structured);
+        assert_eq!(
+            text_of(&content),
+            "window_id=7 pid=9 size=10x10 capture_id=cap_00000001"
+        );
+        assert_eq!(structured["capture_id"], "cap_00000001");
+    }
+
+    #[test]
+    fn empty_tree_markdown_still_puts_capture_id_on_the_header() {
+        let mut content = vec![Content::text("window_id=7 pid=9 size=10x10 elements=0\n\n")];
+        let mut structured = json!({
+            "window_id": 7,
+            "pid": 9,
+            "snapshot_id": "s000000b3",
+            "tree_markdown": "",
+            "capture_id": "cap_00000001",
+            "elements": []
+        });
+        apply(&opts(json!({})), &ctx(7304), &mut content, &mut structured);
+        assert!(text_of(&content)
+            .starts_with("window_id=7 pid=9 size=10x10 elements=0 capture_id=cap_00000001\n"));
+        assert!(!text_of(&content).contains("snapshot_id="));
+        assert_eq!(structured["capture_id"], "cap_00000001");
+        assert_eq!(structured["snapshot_id"], "s000000b3");
+    }
+
+    #[test]
+    fn blank_capture_id_is_left_off_the_header() {
+        let (mut content, mut s) = payload("s000000b2", OLD);
+        s["capture_id"] = json!("");
+        apply(&opts(json!({})), &ctx(7303), &mut content, &mut s);
+        let text = text_of(&content);
+        assert!(text.starts_with("window_id=7 pid=9 size=10x10 elements=4 snapshot_id=s000000b2\n"));
+        assert!(!text.contains("capture_id="));
+        assert_eq!(s["capture_id"], "");
+    }
+
+    #[test]
+    fn append_capture_id_stays_on_the_summary_header_line() {
+        let mut summary =
+            "desktop screenshot 10x10 px (screen 20x20 px)\nVisible windows:".to_owned();
+        append_capture_id(&mut summary, "cap_00000001");
+        assert_eq!(
+            summary,
+            "desktop screenshot 10x10 px (screen 20x20 px) capture_id=cap_00000001\nVisible windows:"
+        );
+        append_capture_id(&mut summary, "");
+        assert_eq!(
+            summary,
+            "desktop screenshot 10x10 px (screen 20x20 px) capture_id=cap_00000001\nVisible windows:"
+        );
     }
 
     #[test]

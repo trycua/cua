@@ -209,11 +209,11 @@
       "step": "a team is refused",
       "view": {
         "busy": false,
-        "buttons": "Share off / Remove / Done",
+        "buttons": "Share on / Remove / Done",
         "disabled": null,
         "empty": "Only you",
         "error": null,
-        "field": "Email or account ID [team:design] Teams isn't available yet. Share with people, one at a time. as editor",
+        "field": "Email or account ID [team:design] - as editor",
         "request": null,
         "roles": "viewer=Can view, editor=Can edit",
         "rows": [],

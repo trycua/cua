@@ -86,8 +86,8 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     /// every click on a desktop stream went nowhere. The desktop is driven
     /// like a physical mouse and keyboard, which is `allow_activation`: the
     /// same policy the Tauri and HTML5 viewers use for it. A window whose
-    /// input the Space can only deliver by activating it (Hyprland outside
-    /// its qualified apps, X11 toolkits that drop synthetic events) is
+    /// input the Space can only deliver by activating it (an XWayland window
+    /// on Hyprland, X11 toolkits that drop synthetic events) is
     /// refused as would-require-activation; `LiveStreamSession` then reopens
     /// that window with `allow_activation`.
     public static func inputPolicy(for source: StreamSource) -> String {

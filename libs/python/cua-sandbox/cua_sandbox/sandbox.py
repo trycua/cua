@@ -3,9 +3,9 @@
 Exposes .mouse, .keyboard, .screen, .clipboard, .shell, .window, .terminal
 as interface objects backed by a Transport.
 
-cua-sandbox is a thin wrapper over the ``cua`` SDK: Fleet claims, the
-Docker/QEMU/Lume runtimes and cua-spacesd (the interfaces) all go through
-it. Sandboxes are daemon-agnostic: creating, connecting and deleting one never
+cua-sandbox is a thin wrapper over the ``cua`` SDK: the Docker/QEMU/Lume
+runtimes and cua-spacesd (the interfaces) go through it. Sandboxes are
+daemon-agnostic: creating, connecting and deleting one never
 assumes a guest agent; the interfaces use cua-spacesd when the image has it
 and an agentless path (QMP, VNC, SSH, ADB) otherwise.
 
@@ -13,16 +13,14 @@ Usage::
 
     from cua_sandbox import Image, Sandbox, http
 
-    # Any image, local or cloud: the same code, flip on= (or local=).
-    # Unset, `cua config set default.on cloud` / CUA_DEFAULT_ON decide.
     sb = await Sandbox.create(
         Image.from_registry("python:3.12-slim"),
         command=["python", "-m", "my_mcp", "--port", "8765"],
         services={"mcp": 8765},
         wait_for=http("mcp", "/health"),
-        on="local",          # "local" | "cloud"
+        on="local",
         kind="container",    # "auto" | "container" | "vm"
-        runtime="gvisor",    # the engine: "auto", gvisor/runc/qemu/lume, kubevirt
+        runtime="gvisor",    # the engine: "auto", gvisor, runc, qemu, lume
     )
     r = await sb.service("mcp").request("POST", "/mcp", json={...}, headers={...})
     url = await sb.public_url("mcp", ttl=3600)
@@ -52,10 +50,9 @@ import os
 import random
 import time
 import warnings
-from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -81,7 +78,7 @@ except ImportError:
 
 
 from cua_sandbox import _placement, _refs
-from cua_sandbox._config import has_fleet_access
+from cua_sandbox._ended import CloudEnded
 from cua_sandbox._refs import AmbiguousSandbox  # noqa: F401 - re-exported
 from cua_sandbox._sdk import (  # noqa: F401 - InvalidPlacement is re-exported
     ENV_SERVICE,
@@ -108,7 +105,6 @@ from cua_sandbox.interfaces import (
 from cua_sandbox.interfaces import mcp as _mcp
 from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.options import (
-    CloudOptions,
     Probe,
     PublicUrl,
     WaitFor,
@@ -117,22 +113,13 @@ from cua_sandbox.options import (
     parse_memory,
     probes,
 )
-from cua_sandbox.spec import SandboxSpec
 from cua_sandbox.transport.base import Transport
-from cua_sandbox.transport.cloud import CloudTransport
 from cua_sandbox.transport.env import EnvTransport, env_url
-from cua_sandbox.transport.fleet_cloud import (
-    FleetCloudTransport,
-    OSWorldFleetCloudTransport,
-    validate_server_port,
-)
-from cua_sandbox.transport.osworld import OSWORLD_SERVER_PORT
 
 if TYPE_CHECKING:
     from cua_sandbox.interfaces.services import ServiceHandle
-    from cua_sandbox.pool import Pool
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
-    from cua_sandbox.transport.fleet_cloud import FleetRuntime
+    from cua_sandbox.sandbox_pool import SandboxPool
 
 logger = logging.getLogger(__name__)
 
@@ -174,76 +161,66 @@ async def _with_overlays(sandbox: "Sandbox", overlay: Any) -> "Sandbox":
     return sandbox
 
 
-async def _keep_alive_or_close(sandbox: Any, minutes: float | None) -> None:
-    if minutes is None:
+def validate_server_port(server_port: Any) -> None:
+    """``None`` (daemon-agnostic default) or a TCP port."""
+    if server_port is None:
         return
+    if (
+        isinstance(server_port, bool)
+        or not isinstance(server_port, int)
+        or server_port < 1
+        or server_port > 65535
+    ):
+        raise ValueError("server_port must be an integer between 1 and 65535")
+
+
+async def _sandbox_pool(pool: Any, *, on: Optional[str], local: Optional[bool]) -> "Any":
+    """The pool of this machine ``pool`` names (a :class:`SandboxPool`, or
+    the name of one) when the create runs here, else ``None`` (a name
+    nothing here has, or a create elsewhere; :func:`_reject_pool` then
+    refuses it)."""
+    from cua_sandbox.sandbox_pool import SandboxPool, get_pool
+
+    if isinstance(pool, SandboxPool):
+        if local is False or (on is not None and str(on).strip().lower() not in ("", "local")):
+            raise InvalidArgument(
+                f"pool {pool.name!r} runs on this machine; drop on=/local= or use on='local'"
+            )
+        return pool
+    if not isinstance(pool, str) or local is False:
+        return None
+    if on is not None and str(on).strip().lower() not in ("", "local"):
+        return None
     try:
-        await sandbox.keep_alive(minutes=minutes)
-    except BaseException as keep_alive_error:
-        try:
-            await sandbox.close()
-        except BaseException as close_error:
-            logger.warning("Failed to close Fleet claim after keep-alive failure: %s", close_error)
-            raise keep_alive_error from close_error
-        raise
+        return await get_pool(pool)
+    except Exception:  # noqa: BLE001 - no daemon: no pools here
+        return None
 
 
-async def _save_fleet_claim_or_close(
-    sandbox: Any,
-    claim_name: str,
-    pool_name: str,
-    **extra: Any,
-) -> None:
-    from cua_sandbox import sandbox_state
-
-    try:
-        sandbox_state.save_fleet_claim(claim_name, pool_name, **extra)
-    except BaseException as state_error:
-        try:
-            await sandbox.close()
-        except BaseException as close_error:
-            raise state_error from close_error
-        raise
+def _pool_args(sp: Any, image: Any, cpu: Any, memory_mb: Any, kind: Any, runtime: Any) -> Any:
+    """A create's image, size, kind and runtime from pool ``sp`` (the daemon
+    refuses an image or size other than the pool's)."""
+    if image is None:
+        image = Image.from_registry(sp.image)
+    return (
+        image,
+        cpu if cpu is not None else sp.cpus,
+        memory_mb if memory_mb is not None else sp.memory_mb,
+        kind or (sp.kind or None),
+        runtime if runtime is not None else (sp.runtime or None),
+    )
 
 
-def _reject_managed_options_for_pool(
-    warm: Optional[bool], max_pool_size: Optional[int], claim_ttl: Any
-) -> None:
-    if warm is not None or max_pool_size is not None or claim_ttl is not None:
-        raise ValueError(
-            "warm, max_pool_size and claim_ttl configure managed pools (image "
-            "without pool=). An explicit pool keeps its own configuration: size it "
-            "with Pool.apply(..., autoscaling=...) and set a claim TTL with "
-            "claim_spec= or pool.claim(ttl_seconds_after_created=...)."
-        )
-
-
-def _check_managed_options(
-    *,
-    replicas: int,
-    claim_spec: Any,
-    disk_gb: Optional[int],
-    region: str,
-    request_timeout: Optional[float],
-) -> None:
-    if replicas != 1:
-        raise ValueError(
-            "replicas= sizes an explicit pool. Managed pools autoscale from zero: "
-            "use warm=True and max_pool_size= instead, or Pool.apply(image, "
-            "name=..., replicas=...) and pass it as pool="
-        )
-    if claim_spec is not None:
-        raise ValueError(
-            "claim_spec= needs an explicit pool=. Managed pools set the claim "
-            "TTL from claim_ttl= and renew it while the sandbox is held"
-        )
-    if disk_gb is not None or region != "us-east-1" or request_timeout is not None:
-        raise NotImplementedError("the requested option is not supported by Fleet")
+def _reject_pool(pool: Optional[str]) -> None:
+    """``pool=`` named no pool of this machine: only a Cua Cloud pool could
+    be meant, and Cua Cloud has ended."""
+    if pool is not None:
+        raise CloudEnded()
 
 
 def _is_local_sandbox(name: str) -> bool:
-    """Whether ``name`` is a local sandbox (a state file that is not a Fleet
-    claim)."""
+    """Whether ``name`` is a local sandbox (a state file that is not a stale
+    record of a Cua Cloud claim, which an older release left behind)."""
     from cua_sandbox import sandbox_state
 
     state = sandbox_state.load(name)
@@ -254,149 +231,52 @@ async def _lookup(name: str, local: Optional[bool]) -> tuple[str, bool]:
     """``(plain name, local)`` for a sandbox ref or bare name (see
     :func:`cua_sandbox._refs.resolve`). A ``direct:`` machine is not managed
     here: connect to it with ``Sandbox.connect(url=...)``."""
-    plain, is_local, direct = await _refs.resolve(name, local)
+    plain, _, direct = await _refs.resolve(name, local)
     if direct is not None:
         raise Unsupported(
-            f"{name}: a direct machine is not managed by cua-sandbox; connect to it with "
+            f"{name}: a direct computer is not managed by cua-sandbox; connect to it with "
             f"Sandbox.connect({name!r})"
         )
-    return plain, bool(is_local)
-
-
-def _fleet_lifecycle_unsupported(name: str, operation: str) -> Unsupported:
-    """Fleet has no per-sandbox suspend: a claim is running or released, and
-    scaling its pool would touch every sandbox in it."""
-    return Unsupported(
-        f"{operation} is not supported for cloud sandboxes ({name!r}): Fleet cannot "
-        "suspend a single sandbox. Hold it with keep_alive(), or release it with "
-        "Sandbox.delete(name) and create a new one"
-    )
-
-
-async def _acquire_managed(
-    image: Image,
-    *,
-    name: Optional[str],
-    service: str,
-    cpu: Optional[int],
-    memory_mb: Optional[int],
-    server_port: Optional[int],
-    time_to_start: Optional[float],
-    warm: Optional[bool],
-    max_pool_size: Optional[int],
-    claim_ttl: Any,
-    progress: Optional[Callable[[Any], Any]],
-    telemetry_enabled: bool,
-    ephemeral: bool = False,
-    fleet_runtime: Optional[str] = None,
-    command: Optional[list[str]] = None,
-    sidecars: Optional[list] = None,
-    env: Optional[dict[str, str]] = None,
-    services: Optional[dict[str, int]] = None,
-    wait_for: Optional[list[Probe]] = None,
-    hint: Optional[str] = None,
-) -> "Sandbox":
-    """Claim ``image`` from this account's managed cloud capacity. ``hint``
-    (the cloud came from a user default) is added to a missing-credentials
-    error."""
-    from cua_sandbox import _autopool
-
-    validate_server_port(server_port)
-    t_start = time.monotonic()
-    sandbox = await _autopool.acquire(
-        image,
-        name=name,
-        cpu=cpu,
-        memory_mb=memory_mb,
-        server_port=server_port,
-        service=service,
-        time_to_start=time_to_start,
-        cfg=_autopool.config(warm=warm, max_pool_size=max_pool_size, claim_ttl=claim_ttl),
-        progress=progress,
-        runtime=fleet_runtime,
-        command=command,
-        sidecars=sidecars,
-        env=env,
-        services=services,
-        wait_for=wait_for,
-        hint=hint,
-    )
-    sandbox._ephemeral = ephemeral
-    sandbox.telemetry_enabled = telemetry_enabled
-    _record_sandbox_create(sandbox, image=image, local=False, ephemeral=ephemeral, t_start=t_start)
-    return sandbox
-
-
-async def _cleanup_ephemeral_fleet(
-    sandbox: Any | None,
-    pool: Any | None,
-    *,
-    suppress_errors: bool,
-) -> None:
-    cleanup_error: BaseException | None = None
-    cleanup_operations = (
-        ("claim", sandbox.close if sandbox is not None else None),
-        ("pool", pool.delete if pool is not None else None),
-    )
-    for resource, cleanup in cleanup_operations:
-        if cleanup is None:
-            continue
-        try:
-            await cleanup()
-        except BaseException as error:
-            if suppress_errors or cleanup_error is not None:
-                logger.warning("Failed to clean up ephemeral Fleet %s: %s", resource, error)
-            else:
-                cleanup_error = error
-    if cleanup_error is not None:
-        raise cleanup_error
+    # A bare name is a local sandbox (an unknown one fails as "not found" in the
+    # local path); a cloud ref or ``local=False`` already raised CloudEnded.
+    return plain, True
 
 
 @dataclass
 class SandboxInfo:
-    """Metadata for a local or cloud sandbox.
+    """Metadata for a local sandbox.
 
     ``status`` from :meth:`Sandbox.info` is portable: ``provisioning``,
     ``starting``, ``ready`` or ``stopped``. Listings keep the provider's word
-    (``running``, ``suspended``, ...). Provider internals (the cloud pool,
-    namespace and claim; the local backend) are in ``provider_details``.
+    (``running``, ``suspended``, ...). Provider internals (the local backend)
+    are in ``provider_details``.
     """
 
     name: str
     status: str
-    source: str  # "cloud" | "fleet" | "lume" | "docker" | "qemu-baremetal" | ...
+    source: str  # "lume" | "docker" | "qemu-baremetal" | ...
     os_type: Optional[str] = None
     host: Optional[str] = None
     vnc_url: Optional[str] = None
     api_url: Optional[str] = None
     created_at: Optional[str] = None
-    #: The qualified ref: ``local:<name>``, ``cloud:<name>`` or
-    #: ``direct:<host:port>`` (what ``Sandbox.connect`` / ``delete`` take).
+    #: The qualified ref: ``local:<name>`` or ``direct:<host:port>`` (what
+    #: ``Sandbox.connect`` / ``delete`` take).
     id: Optional[str] = None
-    location: Optional[str] = None  # "local" | "cloud" | "direct"
+    location: Optional[str] = None  # "local" | "direct"
     services: dict = field(default_factory=dict)
     expires_at: Optional[str] = None
     provider_details: dict = field(default_factory=dict)
     #: What kind of machine: ``container`` or ``vm`` (``None`` when unknown).
     kind: Optional[str] = None
-    #: Which engine runs it: ``gvisor``, ``runc``, ``qemu``, ``lume`` (local),
-    #: ``gvisor``, ``kubevirt`` (cloud); ``None`` when unknown.
+    #: Which engine runs it: ``gvisor``, ``runc``, ``qemu``, ``lume``;
+    #: ``None`` when unknown.
     runtime: Optional[str] = None
 
     def __post_init__(self) -> None:
-        # The qualified ref (`local:<name>`, `cloud:<name>`) when not given.
+        # The qualified ref (`local:<name>`) when not given.
         if self.id is None and self.location and self.name:
             self.id = f"{self.location}:{self.name}"
-
-    def __getattr__(self, name: str) -> Any:
-        if name == "pool":
-            warnings.warn(
-                "SandboxInfo.pool is deprecated; use provider_details.get('pool')",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return self.__dict__.get("provider_details", {}).get("pool")
-        raise AttributeError(name)
 
 
 _PHASE_WORDS = {
@@ -407,126 +287,36 @@ _PHASE_WORDS = {
 }
 
 
-def _merge_cloud(
-    cloud: Optional[CloudOptions],
-    *,
-    pool: Any,
-    warm: Optional[bool],
-    max_pool_size: Optional[int],
-    claim_ttl: Any,
-) -> tuple[Any, Optional[bool], Optional[int], Any]:
-    """``cloud=`` merged with the deprecated flat kwargs (pool, warm,
-    max_pool_size, claim_ttl)."""
-    old = {
-        "pool": pool,
-        "warm": warm,
-        "max_pool_size": max_pool_size,
-        "claim_ttl": claim_ttl,
-    }
-    given = [k for k, v in old.items() if v is not None]
-    if given:
-        warnings.warn(
-            f"{', '.join(given)}= {'is' if len(given) == 1 else 'are'} deprecated; pass "
-            f"cloud=CloudOptions({', '.join(f'{k}=...' for k in given)})",
-            DeprecationWarning,
-            stacklevel=4,
-        )
-    if cloud is None:
-        return pool, warm, max_pool_size, claim_ttl
-    if not isinstance(cloud, CloudOptions):
-        raise TypeError("cloud= takes a CloudOptions")
-    merged = []
-    for key in ("pool", "warm", "max_pool_size", "claim_ttl"):
-        new, previous = getattr(cloud, key), old[key]
-        if new is not None and previous is not None and new != previous:
-            raise ValueError(f"{key} is set both in cloud= and as a keyword argument")
-        merged.append(new if new is not None else previous)
-    return tuple(merged)  # type: ignore[return-value]
-
-
-#: How long the default ``Sandbox.list()`` waits for the cloud.
-_LIST_CLOUD_TIMEOUT = 5.0
-
-
-def _cloud_only_args(
-    *,
-    pool: Any = None,
-    warm: Any = None,
-    max_pool_size: Any = None,
-    claim_ttl: Any = None,
-    claim_spec: Any = None,
-    api_key: Any = None,
-    replicas: int = 1,
-    service: str = ENV_SERVICE,
-    region: str = "us-east-1",
-    keep_alive_minutes: Any = None,
-    progress: Any = None,
-) -> list[str]:
-    """The keyword arguments given that only mean something in the cloud."""
-    given = {
-        "pool": pool is not None,
-        "warm": warm is not None,
-        "max_pool_size": max_pool_size is not None,
-        "claim_ttl": claim_ttl is not None,
-        "claim_spec": claim_spec is not None,
-        "api_key": api_key is not None,
-        "replicas": replicas != 1,
-        "service": service != ENV_SERVICE,
-        "region": region != "us-east-1",
-        "keep_alive_minutes": keep_alive_minutes is not None,
-        "progress": progress is not None,
-    }
-    return [k for k, v in given.items() if v]
-
-
-def _requested_placement(kind: Any, runtime: Any) -> str:
-    """The explicit ``kind=``/engine ``runtime=`` the caller passed, as text
-    (``""`` when neither; ``"auto"`` counts as unset)."""
-    parts = []
-    if isinstance(kind, str) and kind.strip().lower() not in ("", "auto"):
-        parts.append(f"kind={kind.strip().lower()!r}")
-    if isinstance(runtime, str) and runtime.strip().lower() not in ("", "auto"):
-        parts.append(f"runtime={runtime.strip().lower()!r}")
-    return ", ".join(parts)
-
-
 def _apply_on(
     on: Optional[str],
     local: Optional[bool],
     runtime: Any,
     *,
-    cloud: Optional[CloudOptions] = None,
-    pool: Any = None,
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
     time_to_start: Optional[float] = None,
 ) -> "tuple[Optional[str], Optional[bool], Any]":
     """Route ``on=`` to a provider when it names one: a contrib platform
     (``"e2b"``, ``"daytona"``, ``"modal"``; opt-in SDK builds) or your own
-    cloud (``"aws"``, ``"gcp"``, ``"modal"``; connect it with ``cua cloud
-    connect``). ``"local"``, ``"cloud"``,
-    ``"direct:<addr>"`` and ``"relay:<id>"`` fall through to the placement
-    model (:mod:`cua_sandbox._placement`). Returns ``(on, local, runtime)``; a
-    contrib provider becomes ``(None, True, ContribRuntime(...))``, a local
-    sandbox served through the provider's SDK handle."""
+    cloud (``"aws"``, ``"gcp"``, ``"hetzner"``, ``"modal"``; connect it with ``cua cloud
+    connect``). ``"local"``, ``"direct:<addr>"`` and ``"relay:<id>"`` fall
+    through to the placement model (:mod:`cua_sandbox._placement`); so does
+    ``"cloud"``, which raises :class:`CloudEnded`. Returns
+    ``(on, local, runtime)``; a contrib provider becomes ``(None, True,
+    ContribRuntime(...))``, a local sandbox served through the provider's SDK
+    handle."""
     if on is None or not str(on).strip():
         return on, local, runtime
     word = str(on).strip().lower()
-    if (
-        word in ("local", "cloud", "fleet")
-        or word.startswith("direct:")
-        or word.startswith("relay:")
-    ):
+    if word in ("local", "cloud") or word.startswith("direct:") or word.startswith("relay:"):
         return on, local, runtime
     from cua_sandbox.runtime.contrib import ContribRuntime, contrib_locations
 
     if word not in contrib_locations():
         # Not a known provider: let the placement model raise the proper error.
         return on, local, runtime
-    if local is not None or runtime is not None or cloud is not None or pool is not None:
-        raise InvalidArgument(
-            f"on={word!r} picks the provider; drop local=, runtime=, cloud= and pool="
-        )
+    if local is not None or runtime is not None:
+        raise InvalidArgument(f"on={word!r} picks the provider; drop local= and runtime=")
     kwargs: dict[str, Any] = {"ephemeral": True, "cpus": cpu, "memory_mb": memory_mb}
     if time_to_start is not None:
         kwargs["ready_timeout"] = float(time_to_start)
@@ -540,8 +330,6 @@ def _place_new(
     local: Optional[bool],
     kind: Optional[str],
     runtime: Any,
-    cloud: Optional[CloudOptions],
-    cloud_only: list[str],
 ) -> "tuple[_placement.Placement, Optional[Image]]":
     """Where, what kind and which engine for a new sandbox (see
     :mod:`cua_sandbox._placement`), and the image with the resolved kind."""
@@ -550,23 +338,11 @@ def _place_new(
         local=local,
         kind=kind,
         runtime=runtime,
-        cloud=cloud,
-        cloud_only=cloud_only,
         image_kind=image.kind if image is not None else None,
-        stacklevel=5,
     )
     if image is not None and place.kind and place.kind != image.kind:
         image = image._with(kind=place.kind)
     return place, image
-
-
-def _reject_cloud_network(network: Optional[str], local: bool) -> None:
-    """``network="none"`` is a local QEMU feature; the cloud refuses it."""
-    if network == "none" and not local:
-        raise Unsupported(
-            "network='none' needs a local QEMU VM (local=True); cloud sandboxes always "
-            "have outbound network"
-        )
 
 
 def _sdk_backed(runtime: Any) -> bool:
@@ -736,10 +512,10 @@ def _pick_runtime(
     from cua_sandbox.runtime.qemu import QEMURuntime
 
     if image.os_type == "linux":
-        # A Linux VM boots the pinned containerDisk under bare-metal QEMU — the
-        # same disk Fleet cloud boots. Docker-wrapped QEMU cannot reach that path
-        # at all: resolve_image() hands it the XFCE *container* image, so asking
-        # for a VM used to quietly get you a container.
+        # A Linux VM boots the pinned containerDisk under bare-metal QEMU.
+        # Docker-wrapped QEMU cannot reach that path at all: resolve_image()
+        # hands it the XFCE *container* image, so asking for a VM used to
+        # quietly get you a container.
         from cua_sandbox.runtime.compat import _has_qemu
 
         if not _has_qemu():
@@ -863,13 +639,10 @@ class Sandbox:
     ):
         self._transport = transport
         self.name = name
-        """The sandbox name (`None` until a cloud sandbox is bound)."""
+        """The sandbox name."""
         self._runtime = _runtime
         self._runtime_info = _runtime_info
         self._ephemeral = _ephemeral
-        self._has_snapshots = False
-        self._claim_handle: Any = None
-        self._claim_released = False
         # Image info the Python side resolved (runtimes with no SDK handle).
         self._image_info_fallback: Optional[ImageInfo] = None
         # Set for a machine reached by URL (``direct:<host:port>``).
@@ -906,20 +679,9 @@ class Sandbox:
 
     async def _connect(self) -> None:
         await self._transport.connect()
-        # Update name from transport (e.g. CloudTransport resolves name after creating a VM)
-        if self.name is None and isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
-            self.name = self._transport.name
 
     async def disconnect(self) -> None:
-        """Drop the transport connection. The sandbox keeps running.
-
-        A claim on a managed Fleet pool stops being renewed and lives until
-        its shutdown time (``claim_ttl``, or later if ``keep_alive`` was
-        called).
-        """
-        detach = getattr(self._claim_handle, "detach", None)
-        if callable(detach):
-            detach()
+        """Drop the transport connection. The sandbox keeps running."""
         await self.driver.close()
         await self._transport.disconnect()
 
@@ -931,8 +693,7 @@ class Sandbox:
         so the mapping is only knowable at runtime. Reading it from the saved
         state as well means a reconnecting caller can still find the port rather
         than it living only on the object create() returned. Empty when the
-        runtime forwards nothing (Fleet publishes services instead — use
-        tunnel.forward()).
+        runtime forwards nothing (use tunnel.forward()).
         """
         info = getattr(self, "_runtime_info", None)
         ports = getattr(info, "exposed_ports", None) if info else None
@@ -955,9 +716,7 @@ class Sandbox:
     def image_info(self) -> Optional[ImageInfo]:
         """The image this sandbox runs, as resolved and pinned at create time
         (digest, variant, arch), or ``None`` when unknown: direct (URL)
-        connections, images not resolved from a registry. A claim on a named
-        Fleet pool reports its template's image (``pinned_ref``/``digest``
-        empty when the registry could not be read).
+        connections, images not resolved from a registry.
 
         The SDK handle's ``image_info()`` is the source of truth; runtimes
         without one report what was resolved at create or claim time. Never
@@ -975,51 +734,31 @@ class Sandbox:
     def _native_candidates(self) -> list:
         """SDK sandbox handles this sandbox holds, without any I/O."""
         info = getattr(self, "_runtime_info", None)
-        claim = getattr(self, "_claim_handle", None)
         transport = getattr(self, "_transport", None)
         found = [
             getattr(info, "native", None) if info is not None else None,
-            getattr(claim, "_native", None) if claim is not None else None,
-            getattr(transport, "_native_fleet_sandbox", None),
             getattr(transport, "_native_sandbox", None),
         ]
         return [h for h in found if h is not None]
 
     @property
-    def claim_name(self) -> str | None:
-        """Fleet claim name, distinct from the bound sandbox name."""
-        return self._claim_handle.name if self._claim_handle is not None else None
-
-    @property
-    def pool_name(self) -> str | None:
-        """Fleet pool that owns this claim (advanced; see
-        ``(await sb.info()).provider_details``)."""
-        return self._claim_handle.pool_name if self._claim_handle is not None else None
-
-    @property
     def location(self) -> str:
-        """Where it runs: ``local``, ``cloud`` or ``direct``."""
+        """Where it runs: ``local`` or ``direct``."""
         if self._direct_url is not None:
             return "direct"
-        if self._claim_handle is not None or isinstance(
-            self._transport, (CloudTransport, FleetCloudTransport)
-        ):
-            return "cloud"
         return "local"
 
     @property
     def id(self) -> str | None:
-        """The qualified ref, the same kind of value local and in the cloud:
-        ``local:<name>``, ``cloud:<name>`` or ``direct:<host:port>``. It is
-        what ``Sandbox.connect(id)`` and ``Sandbox.delete(id)`` take, and
+        """The qualified ref: ``local:<name>`` or ``direct:<host:port>``. It
+        is what ``Sandbox.connect(id)`` and ``Sandbox.delete(id)`` take, and
         what listings print."""
         if self._direct_url is not None:
             try:
                 return _refs.parse(self._direct_url).id
             except Exception:  # noqa: BLE001 - an unparsable URL keeps its name
                 return self.name
-        name = self.claim_name or self.name
-        return _refs.qualified(self.location, name) if name else None
+        return _refs.qualified(self.location, self.name) if self.name else None
 
     async def _native_handle(self) -> Any:
         """The ``cua.Sandbox`` handle (services, forwards, public URLs)."""
@@ -1048,8 +787,8 @@ class Sandbox:
 
     async def info(self) -> SandboxInfo:
         """Portable info: ``status`` (provisioning, starting, ready, stopped),
-        ``location`` (local, cloud or direct), ``services`` (name -> guest
-        port), ``expires_at`` (cloud) and ``provider_details``."""
+        ``location`` (local or direct), ``services`` (name -> guest port),
+        ``expires_at`` and ``provider_details``."""
         handle = await self._native_handle()
         record = await handle.refresh()
         expires = (
@@ -1061,7 +800,7 @@ class Sandbox:
         return SandboxInfo(
             name=self.name or record.name,
             status=phase,
-            source="cloud" if record.location == "cloud" else record.runtime_type,
+            source=record.runtime_type,
             os_type=getattr(self._runtime_info, "environment", None),
             id=record.id or self.id,
             location=record.location,
@@ -1074,8 +813,7 @@ class Sandbox:
 
     def service(self, name: str) -> "ServiceHandle":
         """A named service (``services={"mcp": 8765}`` at create):
-        ``request``, ``url`` and ``public_url``, the same local and in the
-        cloud."""
+        ``request``, ``url`` and ``public_url``."""
         from cua_sandbox.interfaces.services import ServiceHandle
 
         return ServiceHandle(self, name)
@@ -1084,9 +822,8 @@ class Sandbox:
         self, service: str, *, ttl: float = 3600, label: Optional[str] = None
     ) -> PublicUrl:
         """A shareable URL for ``service`` that stops working after ``ttl``
-        seconds (60 s to 24 h). Cloud: a signed service URL. Local: a
-        loopback URL with its own token, served by the cua daemon (started
-        if needed)."""
+        seconds (60 s to 24 h): a loopback URL with its own token, served by
+        the cua daemon (started if needed)."""
         from cua_sandbox.interfaces.services import public_url_from_native
 
         handle = await self._native_handle()
@@ -1097,123 +834,16 @@ class Sandbox:
         handle = await self._native_handle()
         await handle.revoke_public_url(url if isinstance(url, str) else url.id)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize a durable Fleet sandbox reference."""
-        if self._claim_handle is None:
-            raise NotImplementedError("serialization is only supported for Fleet claims")
-        return self._claim_handle.to_dict()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "_ConnectResult":
-        """Reconnect to a serialized Fleet claim reference."""
-
-        async def factory() -> "Sandbox":
-            from cua_sandbox.pool import _ClaimHandle
-
-            handle = _ClaimHandle.from_dict(data)
-            if handle.namespace != handle.pool_name:
-                raise ValueError("serialized claim does not belong to the requested pool")
-            return await handle.wait()
-
-        return _ConnectResult(factory)
-
-    async def keep_alive(self, *, minutes: float) -> None:
-        """Push a Fleet claim's controller-enforced shutdown time forward."""
-        if self._claim_handle is None:
-            raise NotImplementedError("keep_alive is only supported for Fleet claims")
-        if minutes <= 0:
-            raise ValueError("minutes must be positive")
-        shutdown_time = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
-        await self._claim_handle.renew(shutdown_time.replace("+00:00", "Z"))
-
-    async def close(self) -> None:
-        """Release this Fleet claim; repeated calls are safe."""
-        if self._claim_released:
-            return
-        if self._claim_handle is None:
-            raise NotImplementedError("close is only supported for Fleet claims")
-        await self.driver.close()
-        claim_name = self.claim_name
-        try:
-            await self._claim_handle.release()
-            self._claim_released = True
-            if claim_name is not None:
-                from cua_sandbox import sandbox_state
-
-                try:
-                    sandbox_state.delete(claim_name)
-                except OSError as error:
-                    logger.warning("Failed to remove Fleet claim state %r: %s", claim_name, error)
-        finally:
-            await self.disconnect()
-
-    async def snapshot(self, name: str | None = None, stateful: bool = False) -> "Image":
-        """Snapshot this sandbox's current state. Returns an Image.
-
-        The returned Image can be passed to Sandbox.create() or Sandbox.ephemeral()
-        to boot a new sandbox from the snapshot (COW fork — instant on btrfs).
-
-        Args:
-            name: Optional human-readable name for the snapshot.
-            stateful: Whether to capture memory state (VMs only).
-
-        Returns:
-            An Image with _snapshot_source set, ready to pass to Sandbox.ephemeral().
-        """
-        from cua_sandbox.transport.cloud import CloudTransport
-
-        if not isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
-            raise NotImplementedError("Snapshots are only supported for cloud sandboxes")
-
-        image_desc = await self._transport.create_snapshot(name=name, stateful=stateful)
-        self._has_snapshots = True
-        from cua_sandbox.image import Image as ImageCls
-
-        # Get the original image from the transport for os_type/distro/version
-        src_image = getattr(self._transport, "_image", None)
-
-        # Prefer the original image's os_type/distro/version — image_desc["kind"]
-        # is the snapshot kind (e.g. "vm"), not the OS type, and would misclassify
-        # the image for OS-gated builder methods and compat checks.
-        return ImageCls(
-            os_type=src_image.os_type if src_image else image_desc.get("os_type", "linux"),
-            distro=src_image.distro if src_image else image_desc.get("distro", "ubuntu"),
-            version=src_image.version if src_image else image_desc.get("version", "24.04"),
-            kind=src_image.kind if src_image else image_desc.get("kind"),
-            _snapshot_source=image_desc,
-        )
-
     async def destroy(self) -> None:
         """Disconnect and permanently delete the sandbox (VM/container)."""
-        if self._has_snapshots:
-            logger.warning(
-                "Destroying sandbox %s which has snapshots — "
-                "forks referencing those snapshots will break. "
-                "Use Sandbox.ephemeral() which auto-stops instead of deleting "
-                "when snapshots exist.",
-                self.name,
-            )
         if self.telemetry_enabled and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
             record_event("sandbox_destroy", {"ephemeral": self._ephemeral})
-        if self._claim_handle is not None and not self._claim_released:
-            # A Fleet claim (managed or explicit pool): release it; managed
-            # pools themselves are reused and reclaimed by idle GC.
-            try:
-                await self.close()
-            except Exception:
-                logger.warning("Failed to release Fleet claim for sandbox %r", self.name)
-            return
         # Run each cleanup step independently so a failure in one
         # (e.g. disconnect timeout) doesn't prevent the VM from being deleted.
         try:
             await self.disconnect()
         except Exception:
             logger.warning("Failed to disconnect transport for sandbox %r", self.name)
-        if isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
-            try:
-                await self._transport.delete_vm()
-            except Exception:
-                logger.warning("Failed to delete cloud VM %r", self.name)
         if self._runtime and self._runtime_info:
             vm_name = self._runtime_info.name or self.name or "cua-sandbox"
             try:
@@ -1281,16 +911,16 @@ class Sandbox:
                 tools = await client.list_tools()
                 result = await client.call_tool("add", {"a": 2, "b": 3})
 
-        Requests go through the sandbox's service route (loopback locally, the
-        Fleet gateway in the cloud), streamed both ways, so every protocol
-        feature and content block works unchanged. No cua-spacesd needed.
+        Requests go through the sandbox's service route (loopback), streamed
+        both ways, so every protocol feature and content block works
+        unchanged. No cua-spacesd needed.
         """
         return _mcp.open_mcp(lambda: self._transport.native_service(service), path)
 
     async def mcp_config(self, service: str, *, path: str = "/mcp") -> dict:
         """``{"url": ..., "headers": {...}}`` of ``service``'s MCP endpoint, for
         any MCP client (Claude Code, Cursor, other SDKs). The headers can carry
-        a short-lived Fleet bearer: fetch a fresh config per connection."""
+        a short-lived bearer: fetch a fresh config per connection."""
         return await _mcp.mcp_config(lambda: self._transport.native_service(service), path)
 
     async def spacesd(self) -> Any:
@@ -1323,13 +953,8 @@ class Sandbox:
         cls,
         image: Image | None = None,
         *,
-        pool: "Pool | str | None" = None,
+        pool: "SandboxPool | str | None" = None,
         name: Optional[str] = None,
-        replicas: int = 1,
-        service: str = ENV_SERVICE,
-        claim_spec: Any = None,
-        keep_alive_minutes: float | None = None,
-        api_key: Optional[str] = None,
         on: Optional[str] = None,
         local: Optional[bool] = None,
         kind: Optional[str] = None,
@@ -1337,57 +962,47 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: Optional[int] = None,
         telemetry_enabled: bool = True,
-        warm: Optional[bool] = None,
-        max_pool_size: Optional[int] = None,
-        claim_ttl: "float | timedelta | None" = None,
-        progress: Optional[Callable[[Any], Any]] = None,
         command: Optional[list[str]] = None,
         sidecars: Optional[list] = None,
         env: Optional[dict[str, str]] = None,
         services: Optional[dict[str, int]] = None,
         wait_for: WaitFor = None,
-        cloud: Optional[CloudOptions] = None,
         memory: "str | int | None" = None,
         network: Optional[str] = None,
         overlay: "dict[str, Any] | list | None" = None,
     ) -> "Sandbox":
-        """Provision or claim a persistent sandbox and return it connected.
+        """Provision a persistent local sandbox and return it connected.
 
         Where, what kind and which engine are three separate choices:
 
-        * ``on``: ``"local"`` or ``"cloud"``. ``local=True``/``False`` is the
-          same switch; ``on`` and a contradicting ``local`` is an
-          :class:`InvalidArgument`, and so is ``local=True`` with ``cloud=``.
-          Unset, ``cloud=`` implies the cloud; a cloud-only argument (a
-          Fleet ``pool``, ``warm``, ``max_pool_size``, ``claim_ttl``,
-          ``claim_spec``, ``api_key``, ...) still implies it with a
-          ``DeprecationWarning``; otherwise the user default applies
-          (``CUA_DEFAULT_ON``, else ``cua config set default.on cloud`` in
-          ``$CUA_HOME/config.toml``, else local, with a one-time notice that
-          ``CUA_QUIET_DEFAULT=1`` hides).
+        * ``on``: ``"local"``. ``local=True`` is the same switch; ``on`` and a
+          contradicting ``local`` is an :class:`InvalidArgument`. Unset, the
+          user default applies (``CUA_DEFAULT_ON``, else ``cua config set
+          default.on`` in ``$CUA_HOME/config.toml``, else local, with a
+          one-time notice that ``CUA_QUIET_DEFAULT=1`` hides). Cua Cloud has
+          ended: ``on="cloud"``, ``local=False`` and ``pool=`` naming no pool
+          of this machine raise :class:`CloudEnded`.
         * ``kind``: ``"auto"``, ``"container"`` or ``"vm"``. Unset: the
           image's ``kind`` when it has one, else ``default.kind``, else auto
           (macOS and Windows images are VMs, a container rootfs is a
           container, a disk-only image is a VM).
         * ``runtime``: the engine, ``"auto"`` or one the location offers for
-          the kind: locally ``"gvisor"``/``"runc"`` (containers) and
-          ``"qemu"``/``"lume"`` (VMs); in the cloud ``"gvisor"`` and
-          ``"kubevirt"``. Unset: ``default.runtime``, else auto. A local
-          sandbox with ``sidecars`` needs ``"runc"`` where gVisor would run
+          the kind: ``"gvisor"``/``"runc"`` (containers) and
+          ``"qemu"``/``"lume"`` (VMs). Unset: ``default.runtime``, else auto.
+          A sandbox with ``sidecars`` needs ``"runc"`` where gVisor would run
           (separate gVisor containers cannot share a network namespace).
           A :class:`Runtime` object (``DockerRuntime()``, ``TartRuntime()``,
           ...) still picks a local adapter, as before.
 
         A combination that does not exist (``kind="container",
-        runtime="qemu"``, or ``runtime="kubevirt"`` locally) raises
-        :class:`InvalidPlacement`, listing the valid values.
+        runtime="qemu"``) raises :class:`InvalidPlacement`, listing the valid
+        values.
 
-        The same options mean the same thing local and in the cloud:
+        Options:
 
         * ``command``: argv replacing the image's entrypoint.
         * ``env``: environment variables.
@@ -1396,15 +1011,11 @@ class Sandbox:
           ``sb.tunnel.forward(8765)``.
         * ``wait_for``: ``tcp("mcp")`` / ``http("mcp", "/health")`` (or a
           list); readiness otherwise is "the sandbox is running".
-        * ``cloud``: :class:`CloudOptions` (warm capacity, limits, TTL, a
-          dedicated pool). The flat ``pool``, ``warm``, ``max_pool_size`` and
-          ``claim_ttl`` keywords are deprecated aliases.
         * ``memory``: ``"4GB"`` / ``"512MB"`` (or ``memory_mb``).
         * ``network``: ``"default"`` (outbound network, like a Docker
           container) or ``"none"`` (no egress; the SDK still reaches the
           guest's published ports). ``"none"`` needs a local QEMU VM;
-          containers, Lume and cloud sandboxes raise :class:`Unsupported`.
-
+          containers and Lume raise :class:`Unsupported`.
         * ``overlay``: binaries to inject once it is up, so tests run the
           build under test and not the copy the image bundles:
           ``{"cua-driver": "./target/release/cua-driver"}`` (``cua-driver`` and
@@ -1414,80 +1025,37 @@ class Sandbox:
           it is restarted. If it fails, the sandbox is deleted and the error
           raised. See :meth:`overlay`.
 
-        Supplying ``pool`` claims from an existing Fleet pool without changing
-        its configuration.
+        ``pool``: a pool of this machine (a :class:`SandboxPool` from
+        :func:`create_pool`, or its name) gives the sandbox the pool's image
+        and size and takes one of its ready sandboxes (about 0.1 s).
 
-        A Fleet registry image without ``pool`` is claimed from this
-        account's managed pool for that image spec (``cua-auto-*``), created
-        on first use and reused afterwards. The first start of an image can
-        take a few minutes; later starts reuse its capacity. Fleet-only
-        options:
-
-        * ``warm``: seed one ready replica when the pool is first created.
-        * ``max_pool_size``: autoscaling ceiling (default 10).
-        * ``claim_ttl``: seconds (or a timedelta) the claim outlives this
-          process; it is renewed while the process holds it (default 15 min).
-          Use ``keep_alive(minutes=...)`` to keep a sandbox longer.
-        * ``progress``: callback receiving ``AcquireProgress`` events.
-
-        Without ``on``/``local``, passing one of them keeps the sandbox in
-        the cloud (deprecated: pass ``local=False``); with ``local=True`` they
-        are ignored. An existing ``pool`` keeps its own kind and runtime
-        (``Pool.apply(..., runtime=)``).
-
-        ``server_port`` names a port your image serves itself: it is exposed
-        (Fleet: as the ``server`` service) and becomes the readiness probe.
-        Leave it unset for the default, daemon-agnostic readiness (the
-        provider reports the sandbox running; cua-spacesd on 3211 is used
-        by the interfaces when the image has it).
+        ``server_port`` names a port your image serves itself: it becomes the
+        readiness probe. Leave it unset for the default, daemon-agnostic
+        readiness (the provider reports the sandbox running; cua-spacesd on
+        3211 is used by the interfaces when the image has it).
         """
-        from cua_sandbox.pool import Pool
-
         validate_server_port(server_port)
+        # A pool of this machine: the sandbox gets its image and size and
+        # takes one of its ready sandboxes.
+        local_pool = await _sandbox_pool(pool, on=on, local=local)
+        if local_pool is not None:
+            image, cpu, memory_mb, kind, runtime = _pool_args(
+                local_pool, image, cpu, memory_mb, kind, runtime
+            )
+            pool, local = None, True
+        _reject_pool(pool)
         on, local, runtime = _apply_on(
             on,
             local,
             runtime,
-            cloud=cloud,
-            pool=pool,
             cpu=cpu,
             memory_mb=memory_mb,
             time_to_start=time_to_start,
         )
-        asked = _requested_placement(kind, runtime)
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=cloud,
-            cloud_only=_cloud_only_args(
-                pool=pool,
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                claim_spec=claim_spec,
-                api_key=api_key,
-                replicas=replicas,
-                service=service,
-                region=region,
-                keep_alive_minutes=keep_alive_minutes,
-                progress=progress,
-            ),
-        )
-        local = place.local
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         # The engine (a string) and a legacy local Runtime object.
         engine, runtime = place.runtime, place.legacy_runtime
         network = check_network(network)
-        _reject_cloud_network(network, local)
-        pool, warm, max_pool_size, claim_ttl = _merge_cloud(
-            cloud,
-            pool=pool,
-            warm=warm,
-            max_pool_size=max_pool_size,
-            claim_ttl=claim_ttl,
-        )
         if memory is not None:
             if memory_mb is not None:
                 raise ValueError("pass memory= or memory_mb=, not both")
@@ -1495,145 +1063,18 @@ class Sandbox:
         wait = probes(wait_for)
         services = check_services(services, wait)
 
-        apply_template = bool(cloud is not None and cloud.apply)
-        if apply_template and pool is None:
-            raise ValueError("CloudOptions(apply=True) updates a named pool; pass pool= too")
-        if pool is not None:
-            if wait:
-                raise ValueError(
-                    "wait_for belongs to the image's template; an existing pool keeps its own "
-                    "readiness (omit the pool to get a sandbox with it)"
-                )
-            if replicas != 1 or disk_gb is not None:
-                raise ValueError("configuration cannot be supplied for an existing pool")
-            pool_name = pool if isinstance(pool, str) else pool.name
-            # The given sandbox fields must be the pool's template (never
-            # silently ignored), or apply=True updates it.
-            requested = SandboxSpec(
-                image=image,
-                command=command,
-                env=dict(env or {}),
-                services=dict(services or {}),
-                cpu=cpu,
-                memory_mb=memory_mb,
-                sidecars=list(sidecars or ()),
-            )
-            if image is not None or command or env or services or sidecars or cpu or memory_mb:
-                if apply_template:
-                    if pool_name.startswith("cua-auto-"):
-                        raise ValueError(
-                            f"{pool_name} is a managed pool (its template is its key); "
-                            "apply=True updates only pools you own (omit the pool to get a "
-                            "sandbox with these fields)"
-                        )
-                    await Pool.apply_template(pool_name, requested)
-                else:
-                    await Pool.check(pool_name, requested)
-            _reject_managed_options_for_pool(warm, max_pool_size, claim_ttl)
-            if asked:
-                raise ValueError(
-                    f"an existing pool already has its kind and runtime ({asked}); pass "
-                    "runtime= to Pool.apply(image, name=..., runtime=...) instead"
-                )
-            if (
-                local
-                or runtime is not None
-                or api_key is not None
-                or region != "us-east-1"
-                or request_timeout is not None
-                or server_port is not None
-            ):
-                raise NotImplementedError("the requested option is not supported with Fleet pools")
-            resolved_pool = await Pool.get(pool) if isinstance(pool, str) else pool
-            sandbox = await resolved_pool.claim(
-                name=name, spec=claim_spec, service=service, time_to_start=time_to_start
-            )
-            sandbox_claim_name = getattr(sandbox, "claim_name", None)
-            sandbox_pool_name = getattr(sandbox, "pool_name", None)
-            claim_name = (
-                sandbox_claim_name
-                if isinstance(sandbox_claim_name, str) and sandbox_claim_name
-                else name
-            )
-            pool_name = (
-                sandbox_pool_name
-                if isinstance(sandbox_pool_name, str) and sandbox_pool_name
-                else resolved_pool.name
-            )
-            await _keep_alive_or_close(sandbox, keep_alive_minutes)
-            if claim_name is not None:
-                await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
-            return await _with_overlays(sandbox, overlay)
-
-        from cua_sandbox.image import cloud_registry_image
-
-        fleet_image = (
-            image is not None
-            and cloud_registry_image(image) is not None
-            and cls._uses_fleet(api_key)
-            and not local
-            and runtime is None
-        )
-        if fleet_image:
-            assert image is not None
-            _check_managed_options(
-                replicas=replicas,
-                claim_spec=claim_spec,
-                disk_gb=disk_gb,
-                region=region,
-                request_timeout=request_timeout,
-            )
-            sandbox = await _acquire_managed(
-                image,
-                name=name,
-                service=service,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                server_port=server_port,
-                time_to_start=time_to_start,
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                progress=progress,
-                telemetry_enabled=telemetry_enabled,
-                fleet_runtime=engine,
-                command=command,
-                sidecars=sidecars,
-                env=env,
-                services=services,
-                wait_for=wait,
-                hint=place.cloud_default_hint(),
-            )
-            await _keep_alive_or_close(sandbox, keep_alive_minutes)
-            await _save_fleet_claim_or_close(
-                sandbox,
-                sandbox.claim_name,
-                sandbox.pool_name,
-                **sandbox._claim_handle.state_fields(),
-            )
-            return await _with_overlays(sandbox, overlay)
-
         if image is None:
-            raise ValueError("image is required when pool is omitted")
-        if not local and engine is not None and "runtime" in asked:
-            raise ValueError(
-                f"runtime={engine!r} in the cloud applies to registry images only "
-                "(Image.from_registry, Image.linux(), Image.windows(), Image.macos())"
-            )
-        if replicas != 1 or service != ENV_SERVICE or claim_spec is not None:
-            raise NotImplementedError("claim options are only supported by Fleet")
+            raise ValueError("image is required")
         created = await cls._create(
             image=image,
             name=name,
-            pool=pool,
+            local_pool=local_pool.name if local_pool is not None else None,
             ephemeral=False,
-            api_key=api_key,
-            local=local,
+            local=True,
             runtime=runtime,
             cpu=cpu,
             memory_mb=memory_mb,
             disk_gb=disk_gb,
-            region=region,
             time_to_start=time_to_start,
             request_timeout=request_timeout,
             server_port=server_port,
@@ -1645,7 +1086,6 @@ class Sandbox:
             env=env,
             services=services,
             wait_for=wait,
-            hint=place.cloud_default_hint(),
         )
         return await _with_overlays(created, overlay)
 
@@ -1664,7 +1104,6 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         telemetry_enabled: bool = True,
     ) -> "_ConnectResult":
         """Connect to an existing sandbox by name.
@@ -1673,21 +1112,19 @@ class Sandbox:
         manager, ``disconnect()`` is called on exit — the sandbox keeps running.
 
         Args:
-            name: A sandbox ref (``local:<name>``, ``cloud:<name>``,
-                ``direct:<host:port>``, a legacy id) or a name. A bare name
-                must be unique across locations, else
-                :class:`AmbiguousSandbox` lists the refs it matches.
-            local: ``None`` (default): search every location. ``True``/
-                ``False`` narrow a bare name to local or cloud.
+            name: A sandbox ref (``local:<name>``, ``direct:<host:port>``, a
+                legacy id) or a name. A ``cloud:<name>`` ref raises
+                :class:`CloudEnded`: Cua Cloud has ended.
+            local: ``None`` (default): the local sandbox ``name``.
+                ``False`` raises :class:`CloudEnded`.
             url: A cua-spacesd URL to connect to directly
-                (``http://host:3211``, a relay URL or a Fleet service URL).
+                (``http://host:3211`` or a relay URL).
             token: The spacesd token for ``url``.
-            api_key: Legacy CUA API key (API-key cloud VMs were removed; see
-                :mod:`cua_sandbox.transport.cloud`).
+            api_key: Used as the spacesd token for ``url`` when ``token`` is
+                not given.
             ws_url: Removed (the computer-server WebSocket protocol is gone).
             http_url: Base URL of a cua-spacesd (same as ``url``).
             container_name: Unused; kept for compatibility.
-            region: Cloud region (default ``"us-east-1"``).
 
         Examples::
 
@@ -1705,18 +1142,16 @@ class Sandbox:
             raise ValueError("Sandbox.connect needs a sandbox name or url=")
 
         async def _factory() -> "Sandbox":
-            # A ref decides the location; a bare name is the local sandbox
-            # when one exists (and no cloud sandbox has the name too, else
-            # AmbiguousSandbox), else the cloud.
-            target, is_local, direct = name, bool(local), None
+            # A ref decides the location; a bare name is the local sandbox.
+            target, direct = name, None
             if name and not (url or http_url):
-                target, is_local, direct = await _refs.resolve(name, local)
+                target, _, direct = await _refs.resolve(name, local)
             return await cls._create(
                 name=target if direct is None else None,
                 url=url or direct,
                 token=token,
                 ephemeral=False,
-                local=bool(is_local),
+                local=True,
                 api_key=api_key,
                 ws_url=ws_url,
                 http_url=http_url,
@@ -1724,7 +1159,6 @@ class Sandbox:
                 cpu=cpu,
                 memory_mb=memory_mb,
                 disk_gb=disk_gb,
-                region=region,
                 telemetry_enabled=telemetry_enabled,
             )
 
@@ -1736,14 +1170,8 @@ class Sandbox:
         cls,
         image: Image | None = None,
         *,
-        pool: "Pool | str | None" = None,
+        pool: "SandboxPool | str | None" = None,
         name: Optional[str] = None,
-        replicas: int = 1,
-        service: str = ENV_SERVICE,
-        claim_spec: Any = None,
-        keep_alive_minutes: float | None = None,
-        keep_pool: bool = False,
-        api_key: Optional[str] = None,
         on: Optional[str] = None,
         local: Optional[bool] = None,
         kind: Optional[str] = None,
@@ -1751,207 +1179,64 @@ class Sandbox:
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: Optional[int] = None,
         telemetry_enabled: bool = True,
-        warm: Optional[bool] = None,
-        max_pool_size: Optional[int] = None,
-        claim_ttl: "float | timedelta | None" = None,
-        progress: Optional[Callable[[Any], Any]] = None,
         command: Optional[list[str]] = None,
         sidecars: Optional[list] = None,
         env: Optional[dict[str, str]] = None,
         services: Optional[dict[str, int]] = None,
         wait_for: WaitFor = None,
-        cloud: Optional[CloudOptions] = None,
         memory: "str | int | None" = None,
         network: Optional[str] = None,
     ) -> AsyncIterator["Sandbox"]:
-        """A sandbox that is released when the ``async with`` block exits.
+        """A local sandbox that is deleted when the ``async with`` block exits.
 
-        Takes the same ``on``/``local``, ``kind``, ``runtime``, ``command``,
-        ``env``, ``services``, ``wait_for``, ``cloud``, ``memory`` and
-        ``network`` options as :meth:`create`.
-
-        A Fleet registry image without ``pool`` is claimed from this
-        account's reusable managed pool (see :meth:`create` for ``warm``,
-        ``max_pool_size``, ``claim_ttl`` and ``progress``). Exiting releases
-        the claim; the pool stays for the next run and idle GC deletes it
-        once unused. If the process dies, the claim expires after
-        ``claim_ttl``. ``keep_pool`` is deprecated and has no effect.
+        Takes the same ``pool``, ``on``/``local``, ``kind``, ``runtime``, ``command``,
+        ``env``, ``services``, ``wait_for``, ``memory`` and ``network``
+        options as :meth:`create`.
         """
-        from cua_sandbox.image import cloud_registry_image
-
+        # A pool of this machine: the sandbox gets its image and size and
+        # takes one of its ready sandboxes.
+        local_pool = await _sandbox_pool(pool, on=on, local=local)
+        if local_pool is not None:
+            image, cpu, memory_mb, kind, runtime = _pool_args(
+                local_pool, image, cpu, memory_mb, kind, runtime
+            )
+            pool, local = None, True
+        _reject_pool(pool)
         on, local, runtime = _apply_on(
             on,
             local,
             runtime,
-            cloud=cloud,
-            pool=pool,
             cpu=cpu,
             memory_mb=memory_mb,
             time_to_start=time_to_start,
         )
-        asked = _requested_placement(kind, runtime)
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=cloud,
-            cloud_only=_cloud_only_args(
-                pool=pool,
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                claim_spec=claim_spec,
-                api_key=api_key,
-                replicas=replicas,
-                service=service,
-                region=region,
-                keep_alive_minutes=keep_alive_minutes,
-                progress=progress,
-            ),
-        )
-        local = place.local
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         # The engine (a string) and a legacy local Runtime object.
         engine, runtime = place.runtime, place.legacy_runtime
         network = check_network(network)
-        _reject_cloud_network(network, local)
-        pool, warm, max_pool_size, claim_ttl = _merge_cloud(
-            cloud,
-            pool=pool,
-            warm=warm,
-            max_pool_size=max_pool_size,
-            claim_ttl=claim_ttl,
-        )
         if memory is not None:
             if memory_mb is not None:
                 raise ValueError("pass memory= or memory_mb=, not both")
             memory_mb = parse_memory(memory)
         wait = probes(wait_for)
         services = check_services(services, wait)
-        custom = bool(command) or bool(env) or bool(services) or bool(wait) or bool(sidecars)
-
-        fleet_image = (
-            image is not None
-            and cloud_registry_image(image) is not None
-            and cls._uses_fleet(api_key)
-            and not local
-            and runtime is None
-        )
-        if keep_pool:
-            warnings.warn(
-                "keep_pool is deprecated and has no effect: managed Fleet pools are "
-                "reused automatically and deleted by idle GC once unused",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        if asked and pool is not None:
-            raise ValueError(
-                f"an existing pool already has its kind and runtime ({asked}); pass "
-                "runtime= to Pool.apply(image, name=..., runtime=...) instead"
-            )
-        if not local and "runtime" in asked and not fleet_image:
-            raise ValueError(
-                f"runtime={engine!r} in the cloud applies to registry images only "
-                "(Image.from_registry, Image.linux(), Image.windows(), Image.macos())"
-            )
-
-        if pool is not None:
-            if custom:
-                raise ValueError(
-                    "command, env, services, sidecars and wait_for belong to the image's "
-                    "template; an existing pool keeps its own (omit the pool to get a sandbox "
-                    "with them)"
-                )
-            _reject_managed_options_for_pool(warm, max_pool_size, claim_ttl)
-            sandbox = await cls.create(
-                image,
-                cloud=CloudOptions(pool=pool),
-                name=name,
-                replicas=replicas,
-                service=service,
-                claim_spec=claim_spec,
-                keep_alive_minutes=keep_alive_minutes,
-                api_key=api_key,
-                local=local,
-                runtime=runtime,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                disk_gb=disk_gb,
-                region=region,
-                time_to_start=time_to_start,
-                request_timeout=request_timeout,
-                server_port=server_port,
-                telemetry_enabled=telemetry_enabled,
-            )
-            try:
-                yield sandbox
-            except BaseException:
-                await _cleanup_ephemeral_fleet(sandbox, None, suppress_errors=True)
-                raise
-            else:
-                await _cleanup_ephemeral_fleet(sandbox, None, suppress_errors=False)
-            return
-
-        if fleet_image:
-            assert image is not None
-            _check_managed_options(
-                replicas=replicas,
-                claim_spec=claim_spec,
-                disk_gb=disk_gb,
-                region=region,
-                request_timeout=request_timeout,
-            )
-            sandbox = await _acquire_managed(
-                image,
-                name=name,
-                service=service,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                server_port=server_port,
-                time_to_start=time_to_start,
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                progress=progress,
-                telemetry_enabled=telemetry_enabled,
-                ephemeral=True,
-                fleet_runtime=engine,
-                command=command,
-                sidecars=sidecars,
-                env=env,
-                services=services,
-                wait_for=wait,
-                hint=place.cloud_default_hint(),
-            )
-            await _keep_alive_or_close(sandbox, keep_alive_minutes)
-            try:
-                yield sandbox
-            except BaseException:
-                await _cleanup_ephemeral_fleet(sandbox, None, suppress_errors=True)
-                raise
-            else:
-                await _cleanup_ephemeral_fleet(sandbox, None, suppress_errors=False)
-            return
 
         if image is None:
-            raise ValueError("image is required when pool is omitted")
+            raise ValueError("image is required")
         sandbox = await cls._create(
             image=image,
             name=name,
             ephemeral=True,
-            api_key=api_key,
-            local=local,
+            local_pool=local_pool.name if local_pool is not None else None,
+            local=True,
             runtime=runtime,
             cpu=cpu,
             memory_mb=memory_mb,
             disk_gb=disk_gb,
-            region=region,
             time_to_start=time_to_start,
             request_timeout=request_timeout,
             server_port=server_port,
@@ -1963,15 +1248,11 @@ class Sandbox:
             env=env,
             services=services,
             wait_for=wait,
-            hint=place.cloud_default_hint(),
         )
         try:
             yield sandbox
         finally:
-            if sandbox._has_snapshots and sandbox.name:
-                await cls.suspend(sandbox.name, local=local, api_key=api_key)
-            else:
-                await sandbox.destroy()
+            await sandbox.destroy()
 
     # ── Lifecycle management ─────────────────────────────────────────────
 
@@ -1984,26 +1265,20 @@ class Sandbox:
         all: Optional[bool] = None,  # noqa: A002 - deprecated
         api_key: Optional[str] = None,
     ) -> "list[SandboxInfo]":
-        """List sandboxes, each with its ``location``, ``kind`` and
-        ``runtime``: local and cloud ones by default.
+        """List the local sandboxes (containers, QEMU, Lume, Android), each
+        with its ``location``, ``kind`` and ``runtime``.
 
         Args:
-            location: ``None`` (default): local and cloud. ``"local"``: only
-                the local ones (containers, QEMU, Lume, Android).
-                ``"cloud"``: only the cloud ones.
+            location: ``None`` (default) or ``"local"``: the local sandboxes.
+                ``"cloud"`` raises :class:`CloudEnded`: Cua Cloud has ended.
             local: The same switch as a bool (``True`` is ``"local"``,
                 ``False`` is ``"cloud"``).
             all: Deprecated; everything is the default.
-            api_key: Legacy CUA API key for api.cua.ai VMs.
-
-        The cloud part never fails the default listing: without cloud
-        credentials it is left out silently, and when the cloud fails or does
-        not answer within 5 s the local rows come back with a logged warning
-        ("cloud sandboxes not listed: ...").
+            api_key: Unused; kept for compatibility.
         """
         if all is not None:
             warnings.warn(
-                "Sandbox.list(all=...) is deprecated: local and cloud is the default",
+                "Sandbox.list(all=...) is deprecated: everything is the default",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -2012,47 +1287,15 @@ class Sandbox:
         if location is not None:
             where = str(location).strip().lower()
             if where not in _placement.LOCATIONS:
-                raise InvalidArgument(
-                    f"location={location!r}: cua-sandbox lists 'local' and 'cloud' sandboxes"
-                )
+                raise InvalidArgument(f"location={location!r}: cua-sandbox lists 'local' sandboxes")
             if local is not None and (where == "local") != bool(local):
                 raise InvalidArgument(
                     f"location={location!r} and local={local!r} contradict each other"
                 )
             local = where == "local"
-        if local is True:
-            return await cls._list_local()
         if local is False:
-            return await cls._list_cloud(api_key=api_key)
-        rows = await cls._list_local()
-        from cua_sandbox._config import (
-            get_api_key,
-            has_fleet_auth,
-            may_have_fleet_session,
-        )
-
-        if not (api_key or has_fleet_auth() or get_api_key() or may_have_fleet_session()):
-            # No cloud credentials that can be read without the OS keychain:
-            # nothing to list in the cloud (``local=False`` also uses a
-            # keychain session).
-            return rows
-        try:
-            cloud = await asyncio.wait_for(
-                cls._list_cloud(api_key=api_key), timeout=_LIST_CLOUD_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "cloud sandboxes not listed: the cloud did not answer within %ss",
-                int(_LIST_CLOUD_TIMEOUT),
-            )
-            cloud = []
-        except Exception as error:  # noqa: BLE001 - the cloud never fails the listing
-            if "credentials missing" not in str(error).lower():
-                logger.warning("cloud sandboxes not listed: %s", error)
-            cloud = []
-        # One row per ref: a local and a cloud sandbox may share a name.
-        ids = {r.id for r in rows}
-        return rows + [r for r in cloud if r.id not in ids]
+            raise CloudEnded()
+        return await cls._list_local()
 
     @classmethod
     async def _list_local(cls) -> "list[SandboxInfo]":
@@ -2131,92 +1374,6 @@ class Sandbox:
             )
         return results
 
-    @staticmethod
-    def _uses_fleet(api_key: Optional[str]) -> bool:
-        """Fleet for every call without an explicit (legacy) API key: with
-        client credentials or a token, else the ``cua auth login`` session;
-        with neither, the Fleet path raises "Fleet credentials missing"."""
-        if api_key is not None:
-            return False
-        if has_fleet_access():
-            return True
-        from cua_sandbox._config import get_api_key
-
-        # A legacy api.cua.ai key only lists/deletes old VMs; without one
-        # (and without Fleet credentials) Fleet explains what to configure.
-        return get_api_key() is None
-
-    @classmethod
-    async def _list_cloud(cls, *, api_key: Optional[str] = None) -> "list[SandboxInfo]":
-        if not cls._uses_fleet(api_key):
-            from cua_sandbox.transport.cloud import cloud_list_vms
-
-            vms = await cloud_list_vms(api_key=api_key)
-            return [
-                SandboxInfo(
-                    location="cloud",
-                    id=_refs.qualified("cloud", vm.get("name", "")),
-                    name=vm.get("name", ""),
-                    status=vm.get("status", "unknown"),
-                    source="cloud",
-                    os_type=vm.get("os_type") or vm.get("os"),
-                    created_at=vm.get("created_at"),
-                )
-                for vm in vms
-            ]
-
-        from cua_sandbox import _autopool
-
-        # Every claim in every pool this account can see: managed
-        # (cua-auto-*) and explicit pools alike.
-        claims = await _autopool.list_claims()
-        return [cls._fleet_claim_info(claim) for claim in claims]
-
-    @staticmethod
-    def _fleet_claim_info(claim: Any) -> SandboxInfo:
-        phase = (claim.phase or "").lower()
-        status = {"bound": "running", "pending": "provisioning", "": "provisioning"}.get(
-            phase, phase
-        )
-        return SandboxInfo(
-            name=claim.name,
-            status=status,
-            source="fleet",
-            created_at=claim.created_at,
-            id=_refs.qualified("cloud", claim.name),
-            location="cloud",
-            provider_details={"pool": claim.pool, "namespace": claim.pool},
-        )
-
-    @staticmethod
-    def _fleet_sandbox_info(pool: Any) -> SandboxInfo:
-        if isinstance(pool, Mapping):
-            metadata = pool.get("metadata") or {}
-            spec = pool.get("spec") or {}
-            status = pool.get("status") or {}
-            name = metadata.get("name", "")
-            replicas = spec.get("replicas", 1)
-            ready = status.get("readyReplicas", 0)
-            created_at = metadata.get("creationTimestamp")
-        else:
-            metadata = pool.metadata
-            spec = pool.spec
-            status = pool.status
-            name = metadata.name
-            replicas = spec.replicas
-            ready = status.ready_replicas if status else 0
-            created_at = metadata.creation_timestamp
-        state = "suspended" if replicas == 0 else "running" if ready else "provisioning"
-        return SandboxInfo(
-            name=name,
-            status=state,
-            source="fleet",
-            created_at=created_at,
-            id=_refs.qualified("cloud", name),
-            location="cloud",
-            provider_details={"pool": name},
-        )
-
     @classmethod
     async def get_info(
         cls,
@@ -2228,64 +1385,37 @@ class Sandbox:
         """Get metadata for a specific sandbox.
 
         Args:
-            name: Sandbox ref (``local:<name>``, ``cloud:<name>``) or a name
-                unique across locations.
-            local: ``True``/``False`` narrow a bare name to local or cloud.
-                ``None`` (default): the local sandbox ``name`` when one
-                exists (and no cloud sandbox shares it), else the cloud.
-            api_key: CUA API key for cloud.
+            name: Sandbox ref (``local:<name>``) or a name. A ``cloud:<name>``
+                ref raises :class:`CloudEnded`: Cua Cloud has ended.
+            local: ``None`` (default) or ``True``: the local sandbox ``name``.
+                ``False`` raises :class:`CloudEnded`.
+            api_key: Unused; kept for compatibility.
         """
-        name, local = await _lookup(name, local)
-        if local:
-            sandboxes = await cls._list_local()
-            match = next((s for s in sandboxes if s.name == name), None)
-            if match:
-                return match
-            # Fall back to state file
-            from cua_sandbox import sandbox_state
-
-            state = sandbox_state.load(name)
-            if state:
-                location = "cloud" if state.get("runtime_type") == "fleet" else "local"
-                return SandboxInfo(
-                    location=location,
-                    id=_refs.qualified(location, name),
-                    name=name,
-                    status=state.get("status", "unknown"),
-                    source=state.get("runtime_type", "unknown"),
-                    os_type=state.get("os_type"),
-                    host=state.get("host"),
-                    api_url=(
-                        f"http://{state['host']}:{state['api_port']}"
-                        if state.get("host") and state.get("api_port")
-                        else None
-                    ),
-                )
-            raise ValueError(f"Local sandbox '{name}' not found.")
-        if not cls._uses_fleet(api_key):
-            from cua_sandbox.transport.cloud import cloud_get_vm
-
-            vm = await cloud_get_vm(name, api_key=api_key)
-            return SandboxInfo(
-                location="cloud",
-                id=_refs.qualified("cloud", vm.get("name", name)),
-                name=vm.get("name", name),
-                status=vm.get("status", "unknown"),
-                source="cloud",
-                os_type=vm.get("os_type") or vm.get("os"),
-                created_at=vm.get("created_at"),
-            )
+        name, _ = await _lookup(name, local)
+        sandboxes = await cls._list_local()
+        match = next((s for s in sandboxes if s.name == name), None)
+        if match:
+            return match
+        # Fall back to state file
         from cua_sandbox import sandbox_state
 
-        state = sandbox_state.load(name) or {}
-        if state.get("runtime_type") == "fleet" and state.get("pool_name"):
-            from cua_sandbox import _autopool
-
-            for claim in await _autopool.list_claims():
-                if claim.name == name and claim.pool == state["pool_name"]:
-                    return cls._fleet_claim_info(claim)
-            raise ValueError(f"Fleet sandbox {name!r} not found in pool {state['pool_name']!r}")
-        return cls._fleet_sandbox_info(await FleetCloudTransport.get_sandbox_info(name))
+        state = sandbox_state.load(name)
+        if state:
+            return SandboxInfo(
+                location="local",
+                id=_refs.qualified("local", name),
+                name=name,
+                status=state.get("status", "unknown"),
+                source=state.get("runtime_type", "unknown"),
+                os_type=state.get("os_type"),
+                host=state.get("host"),
+                api_url=(
+                    f"http://{state['host']}:{state['api_port']}"
+                    if state.get("host") and state.get("api_port")
+                    else None
+                ),
+            )
+        raise ValueError(f"Local sandbox '{name}' not found.")
 
     @classmethod
     async def suspend(
@@ -2295,31 +1425,21 @@ class Sandbox:
         local: Optional[bool] = None,
         api_key: Optional[str] = None,
     ) -> None:
-        """Suspend the sandbox ``name``, keeping its state; :meth:`resume`
-        continues it. Only that sandbox is affected.
+        """Suspend the local sandbox ``name``, keeping its state;
+        :meth:`resume` continues it. Only that sandbox is affected.
 
-        Local: the SDK suspends it on its backend (a container is paused or
+        The SDK suspends it on its backend (a container is paused or
         checkpointed, a QEMU VM snapshotted, a Lume VM stopped with its
-        disk). Cloud: a Fleet sandbox cannot be suspended on its own, so this
-        raises :class:`Unsupported`; keep it with ``keep_alive()`` or release
-        it with :meth:`delete`. A legacy api.cua.ai VM (an API key) stops.
+        disk).
 
         Args:
             name: Sandbox name.
-            local: ``None`` (default): the local sandbox ``name`` when one
-                exists, else the cloud. ``True``/``False`` decide.
-            api_key: Legacy CUA API key (api.cua.ai VMs).
+            local: ``None`` (default) or ``True``: the local sandbox ``name``.
+                ``False`` raises :class:`CloudEnded`: Cua Cloud has ended.
+            api_key: Unused; kept for compatibility.
         """
-        name, local = await _lookup(name, local)
-        if local:
-            await cls._suspend_local(name)
-            return
-        if not cls._uses_fleet(api_key):
-            from cua_sandbox.transport.cloud import cloud_vm_action
-
-            await cloud_vm_action(name, "stop", api_key=api_key)
-            return
-        raise _fleet_lifecycle_unsupported(name, "suspend")
+        name, _ = await _lookup(name, local)
+        await cls._suspend_local(name)
 
     @classmethod
     async def _suspend_local(cls, name: str) -> None:
@@ -2354,37 +1474,20 @@ class Sandbox:
         local: Optional[bool] = None,
         api_key: Optional[str] = None,
     ) -> "Sandbox":
-        """Resume the suspended sandbox ``name`` and return it connected.
-
-        Local: the backend resumes it. Cloud: a running sandbox just
-        reconnects (a Fleet sandbox is never suspended); one that is gone
-        raises :class:`Unsupported`. A legacy api.cua.ai VM (an API key)
-        starts.
+        """Resume the suspended local sandbox ``name`` and return it
+        connected. The backend resumes it.
 
         Args:
             name: Sandbox name.
-            local: ``None`` (default): the local sandbox ``name`` when one
-                exists, else the cloud.
-            api_key: Legacy CUA API key (api.cua.ai VMs).
+            local: ``None`` (default) or ``True``: the local sandbox ``name``.
+                ``False`` raises :class:`CloudEnded`: Cua Cloud has ended.
+            api_key: Unused; kept for compatibility.
 
         Returns:
             A connected Sandbox ready to use.
         """
-        name, local = await _lookup(name, local)
-        if local:
-            return await cls._resume_local(name)
-        if not cls._uses_fleet(api_key):
-            from cua_sandbox.transport.cloud import cloud_vm_action
-
-            await cloud_vm_action(name, "run", api_key=api_key)
-        else:
-            try:
-                return await cls._create(name=name, ephemeral=False, api_key=api_key)
-            except Exception as error:  # noqa: BLE001 - re-raised typed
-                raise _fleet_lifecycle_unsupported(name, "resume") from error
-        # Connect to the now-running cloud sandbox.
-        sb = await cls._create(name=name, ephemeral=False, api_key=api_key)
-        return sb
+        name, _ = await _lookup(name, local)
+        return await cls._resume_local(name)
 
     @classmethod
     async def _resume_local(cls, name: str) -> "Sandbox":
@@ -2437,31 +1540,21 @@ class Sandbox:
         local: Optional[bool] = None,
         api_key: Optional[str] = None,
     ) -> "Sandbox":
-        """Restart the sandbox ``name`` (suspend then resume) and return it
-        connected. Local only (see :meth:`suspend`): a Fleet sandbox raises
-        :class:`Unsupported`.
+        """Restart the local sandbox ``name`` (suspend then resume) and return
+        it connected (see :meth:`suspend`).
 
         Args:
             name: Sandbox name.
-            local: ``None`` (default): the local sandbox ``name`` when one
-                exists, else the cloud.
-            api_key: Legacy CUA API key (api.cua.ai VMs).
+            local: ``None`` (default) or ``True``: the local sandbox ``name``.
+                ``False`` raises :class:`CloudEnded`: Cua Cloud has ended.
+            api_key: Unused; kept for compatibility.
 
         Returns:
             A connected Sandbox ready to use.
         """
-        name, local = await _lookup(name, local)
-        if local:
-            await cls._suspend_local(name)
-            return await cls._resume_local(name)
-        if not cls._uses_fleet(api_key):
-            from cua_sandbox.transport.cloud import cloud_vm_action
-
-            await cloud_vm_action(name, "restart", api_key=api_key)
-        else:
-            raise _fleet_lifecycle_unsupported(name, "restart")
-        sb = await cls._create(name=name, ephemeral=False, api_key=api_key)
-        return sb
+        name, _ = await _lookup(name, local)
+        await cls._suspend_local(name)
+        return await cls._resume_local(name)
 
     @classmethod
     async def delete(
@@ -2471,33 +1564,17 @@ class Sandbox:
         local: Optional[bool] = None,
         api_key: Optional[str] = None,
     ) -> None:
-        """Permanently delete a sandbox.
-
-        For local sandboxes, stops the VM and removes the state file.
-        For cloud sandboxes, calls DELETE /v1/vms/{name}.
+        """Permanently delete a local sandbox: stops the VM or container and
+        removes the state file.
 
         Args:
             name: Sandbox name.
-            local: If True, delete a local sandbox. ``None`` (default): the
-                local sandbox ``name`` when one exists, else the cloud.
-            api_key: CUA API key for cloud.
+            local: ``None`` (default) or ``True``: the local sandbox ``name``.
+                ``False`` raises :class:`CloudEnded`: Cua Cloud has ended.
+            api_key: Unused; kept for compatibility.
         """
-        name, local = await _lookup(name, local)
-        if local:
-            await cls._delete_local(name)
-            return
-        if not cls._uses_fleet(api_key):
-            from cua_sandbox.transport.cloud import cloud_vm_action
-
-            await cloud_vm_action(name, "delete", api_key=api_key)
-            return
-        from cua_sandbox import sandbox_state
-
-        state = sandbox_state.load(name)
-        pool_name = state.get("pool_name") if state else None
-        await FleetCloudTransport.delete_sandbox(name, pool_name=pool_name)
-        if pool_name:
-            sandbox_state.delete(name)
+        name, _ = await _lookup(name, local)
+        await cls._delete_local(name)
 
     @classmethod
     async def _delete_local(cls, name: str) -> None:
@@ -2542,22 +1619,16 @@ class Sandbox:
         api_key: Optional[str] = None,
         container_name: Optional[str] = None,
         image: Optional[Image] = None,
-        runtime: Optional["Runtime | FleetRuntime"] = None,
+        runtime: Optional["Runtime"] = None,
         name: Optional[str] = None,
-        pool: Optional[str] = None,
         ephemeral: Optional[bool] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
-        region: str = "us-east-1",
         time_to_start: Optional[float] = None,
         request_timeout: Optional[float] = None,
         server_port: Optional[int] = None,
         telemetry_enabled: bool = True,
-        warm: Optional[bool] = None,
-        max_pool_size: Optional[int] = None,
-        claim_ttl: Any = None,
-        progress: Optional[Callable[[Any], Any]] = None,
         command: Optional[list[str]] = None,
         sidecars: Optional[list] = None,
         engine: Optional[str] = None,
@@ -2565,24 +1636,16 @@ class Sandbox:
         env: Optional[dict[str, str]] = None,
         services: Optional[dict[str, int]] = None,
         wait_for: Optional[list[Probe]] = None,
-        hint: Optional[str] = None,
+        local_pool: Optional[str] = None,
     ) -> "Sandbox":
         """Internal factory that validates server_port before selecting a transport.
 
         ``runtime`` is a legacy local :class:`Runtime` object; ``engine`` the
         engine name the placement resolved (``gvisor``, ``qemu``, ...), with
-        ``image.kind`` already set to the resolved kind. ``hint`` is added to
-        a missing-credentials error when the cloud came from a user default.
+        ``image.kind`` already set to the resolved kind.
         """
         validate_server_port(server_port)
         auto_adapter = runtime is None
-
-        if image is not None and pool is not None:
-            raise ValueError("Specify exactly one of image or pool")
-        if pool and not name:
-            raise ValueError("Pool-backed sandboxes require a name")
-        if pool and local:
-            raise ValueError("Pool-backed sandboxes are cloud-only")
 
         _t_start = time.monotonic()
         if ephemeral is None:
@@ -2648,98 +1711,20 @@ class Sandbox:
             _record_sandbox_create(sb, image=None, local=local, ephemeral=False, t_start=_t_start)
             return sb
 
-        if pool:
-            transport = FleetCloudTransport(
-                image=None,
-                name=name,
-                pool_name=pool,
-                create_claim=True,
-                region=region,
-                time_to_start=time_to_start,
-                request_timeout=request_timeout,
-                server_port=server_port,
-            )
-            sb = cls(transport, name=name, _ephemeral=False, _telemetry_enabled=telemetry_enabled)
-            await sb._connect()
-            from cua_sandbox import sandbox_state
+        if not local:
+            # Cua Cloud has ended (CUA-1854): a cloud create and a connect by
+            # cloud name stop here.
+            raise CloudEnded()
 
-            sandbox_state.save_fleet_claim(name, pool)
-            _record_sandbox_create(sb, image=None, local=False, ephemeral=False, t_start=_t_start)
-            return sb
-
-        if image and not runtime and local:
+        if image and not runtime:
             # local=True with no runtime → auto-select based on image type
             runtime = _auto_runtime(
                 image, cpu=cpu, memory_mb=memory_mb, server_port=server_port, engine=engine
             )
-        if image and not runtime and not local:
-            # image without runtime and not local → cloud creation
-            _reject_cloud_network(network, False)
-            if not any([ws_url, http_url]) and cls._uses_fleet(api_key):
-                # Claimed from the account's managed pool for this image.
-                _check_managed_options(
-                    replicas=1,
-                    claim_spec=None,
-                    disk_gb=disk_gb,
-                    region=region,
-                    request_timeout=request_timeout,
-                )
-                sb = await _acquire_managed(
-                    image,
-                    name=name,
-                    service=ENV_SERVICE,
-                    cpu=cpu,
-                    memory_mb=memory_mb,
-                    server_port=server_port,
-                    time_to_start=time_to_start,
-                    warm=warm,
-                    max_pool_size=max_pool_size,
-                    claim_ttl=claim_ttl,
-                    progress=progress,
-                    telemetry_enabled=telemetry_enabled,
-                    ephemeral=bool(ephemeral),
-                    fleet_runtime=engine,
-                    command=command,
-                    sidecars=sidecars,
-                    env=env,
-                    services=services,
-                    wait_for=wait_for,
-                    hint=hint,
-                )
-                if not ephemeral:
-                    await _save_fleet_claim_or_close(
-                        sb, sb.claim_name, sb.pool_name, **sb._claim_handle.state_fields()
-                    )
-                return sb
-            if not any([ws_url, http_url]):
-                if command or env or services or wait_for or sidecars:
-                    raise NotImplementedError(
-                        "command, env, services, sidecars and wait_for need a cloud sandbox (Fleet "
-                        "credentials: `cua auth login` or CUA_CLIENT_ID/CUA_CLIENT_SECRET) "
-                        "or local=True"
-                    )
-                transport = _make_transport(
-                    api_key=api_key,
-                    image=image,
-                    name=name,
-                    cpu=cpu,
-                    memory_mb=memory_mb,
-                    disk_gb=disk_gb,
-                    region=region,
-                )
-                sb = cls(
-                    transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled
-                )
-                await sb._connect()
-                _record_sandbox_create(
-                    sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start
-                )
-                return sb
-            runtime = _auto_runtime(image, cpu=cpu, memory_mb=memory_mb, server_port=server_port)
         if image and runtime:
             sb_name = name or _random_name()
             # Forward the sizing knobs the caller gave Sandbox.create/ephemeral so a
-            # local VM honours cpu= and memory_mb= the same way a Fleet pool does.
+            # local VM honours cpu= and memory_mb=.
             start_opts: dict = {}
             if cpu is not None:
                 start_opts["cpu_count"] = cpu
@@ -2763,7 +1748,7 @@ class Sandbox:
                     wait_for=list(wait_for or []),
                     sidecars=list(sidecars or []),
                 )
-            if auto_adapter and local and _sdk_backed(runtime):
+            if auto_adapter and _sdk_backed(runtime):
                 # The adapter was picked from the placement: the SDK gets the
                 # kind and engine too (and checks them against the image).
                 if image.kind:
@@ -2773,6 +1758,15 @@ class Sandbox:
             if network == "none":
                 _require_network_none_support(runtime)
                 start_opts["network"] = "none"
+            if local_pool is not None:
+                # A pool of this machine (`create_pool`) to take a ready
+                # sandbox from.
+                if not _sdk_backed(runtime):
+                    raise Unsupported(
+                        f"{type(runtime).__name__} does not take sandboxes from a pool; "
+                        "omit runtime= to use the pool"
+                    )
+                start_opts["pool"] = local_pool
             rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral), **start_opts)
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
@@ -2843,39 +1837,15 @@ class Sandbox:
                 )
         else:
             if ws_url:
-                _make_transport(ws_url=ws_url)  # raises: the WebSocket protocol is gone
-            if name and cls._uses_fleet(api_key):
-                from cua_sandbox import sandbox_state
-
-                state = sandbox_state.load(name)
-                pool_name = state.get("pool_name") if state else None
-                osworld = bool(state) and state.get("agent_type") == "osworld"
-                transport_cls = OSWorldFleetCloudTransport if osworld else FleetCloudTransport
-                transport = transport_cls(
-                    image=None,
-                    name=name,
-                    pool_name=pool_name,
-                    cpu=cpu,
-                    memory_mb=memory_mb,
-                    disk_gb=disk_gb,
-                    region=region,
-                    **({"server_port": OSWORLD_SERVER_PORT} if osworld else {}),
+                raise ValueError(
+                    "ws_url= spoke the computer-server WebSocket protocol, which was removed. "
+                    "Connect to the sandbox's cua-spacesd instead: "
+                    "Sandbox.connect(url='http://host:3211', token=...)"
                 )
-            else:
-                transport = _make_transport(
-                    ws_url=ws_url,
-                    http_url=http_url,
-                    api_key=api_key,
-                    container_name=container_name,
-                    name=name,
-                    cpu=cpu,
-                    memory_mb=memory_mb,
-                    disk_gb=disk_gb,
-                    region=region,
-                )
+            raise ValueError("a sandbox needs an image, a name or a url")
         # Write persistent state for local (non-ephemeral) sandboxes. Runtimes
         # on the cua SDK persisted it themselves, in the same format.
-        if not ephemeral and rt_info and local and rt_info.native is None:
+        if not ephemeral and rt_info and rt_info.native is None:
             from cua_sandbox import sandbox_state
 
             runtime_type = type(runtime).__name__.lower().replace("runtime", "")
@@ -2985,7 +1955,7 @@ _ADJECTIVES = [
     "chilly",
     "dim",
     "eerie",
-    "fleet",
+    "frosty",
     "gnarly",
     "hushed",
     "inky",
@@ -3141,44 +2111,6 @@ def _random_name() -> str:
     return f"{random.choice(_ADJECTIVES)}-{random.choice(_NOUNS)}"
 
 
-def _make_transport(
-    *,
-    ws_url: Optional[str] = None,
-    http_url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    container_name: Optional[str] = None,
-    image: Optional[Image] = None,
-    name: Optional[str] = None,
-    cpu: Optional[int] = None,
-    memory_mb: Optional[int] = None,
-    disk_gb: Optional[int] = None,
-    region: str = "us-east-1",
-) -> Transport:
-    """Transport for a non-Fleet, non-local target.
-
-    ``http_url`` names a cua-spacesd; ``ws_url`` (the computer-server
-    WebSocket protocol) is gone; with neither, the legacy API-key cloud shim
-    is returned (it explains the move to Fleet on connect).
-    """
-    if ws_url:
-        raise ValueError(
-            "ws_url= spoke the computer-server WebSocket protocol, which was removed. "
-            "Connect to the sandbox's cua-spacesd instead: "
-            "Sandbox.connect(url='http://host:3211', token=...)"
-        )
-    if http_url:
-        return EnvTransport(url=http_url, token=api_key)
-    return CloudTransport(
-        name=name,
-        api_key=api_key,
-        image=image,
-        cpu=cpu,
-        memory_mb=memory_mb,
-        disk_gb=disk_gb,
-        region=region,
-    )
-
-
 def _fallback_transport(
     host: str,
     *,
@@ -3306,11 +2238,6 @@ async def sandbox(
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
     disk_gb: Optional[int] = None,
-    region: str = "us-east-1",
-    warm: Optional[bool] = None,
-    max_pool_size: Optional[int] = None,
-    claim_ttl: Any = None,
-    progress: Optional[Callable[[Any], Any]] = None,
 ) -> AsyncIterator[Sandbox]:
     """Async context manager for a sandboxed environment.
 
@@ -3321,28 +2248,12 @@ async def sandbox(
         Prefer ``Sandbox.create()``, ``Sandbox.connect()``, or
         ``Sandbox.ephemeral()`` instead.
     """
-    engine, hint = None, None
+    engine = None
     if image is not None and not (url or http_url or ws_url):
         # A new sandbox: the same placement rules as Sandbox.create.
         on, local, runtime = _apply_on(on, local, runtime, cpu=cpu, memory_mb=memory_mb)
-        place, image = _place_new(
-            image,
-            on=on,
-            local=local,
-            kind=kind,
-            runtime=runtime,
-            cloud=None,
-            cloud_only=_cloud_only_args(
-                warm=warm,
-                max_pool_size=max_pool_size,
-                claim_ttl=claim_ttl,
-                api_key=api_key,
-                region=region,
-                progress=progress,
-            ),
-        )
+        place, image = _place_new(image, on=on, local=local, kind=kind, runtime=runtime)
         local, engine, runtime = place.local, place.runtime, place.legacy_runtime
-        hint = place.cloud_default_hint()
     elif on is not None:
         local = _placement.resolve(on=on, local=local).local
     sb = await Sandbox._create(
@@ -3360,13 +2271,7 @@ async def sandbox(
         cpu=cpu,
         memory_mb=memory_mb,
         disk_gb=disk_gb,
-        region=region,
-        warm=warm,
-        max_pool_size=max_pool_size,
-        claim_ttl=claim_ttl,
-        progress=progress,
         engine=engine,
-        hint=hint,
     )
     try:
         yield sb

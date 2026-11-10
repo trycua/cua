@@ -116,9 +116,8 @@ pub(super) async fn call_on(space: &Space, tool: &str, mut arguments: Value) -> 
 }
 
 /// One `phase` vocabulary for every provider (the client's `SpaceState`):
-/// `ready` once the Space answered its handshake (direct, relay), its claim
-/// bound (Fleet) or its instance runs (local); `starting` while a claim is
-/// pending or an instance is provisioning.
+/// `ready` once the Space answered its handshake (direct, relay) or its
+/// instance runs (local); `starting` while an instance is provisioning.
 pub const PHASE_READY: &str = "ready";
 /// See [`PHASE_READY`].
 pub const PHASE_STARTING: &str = "starting";
@@ -130,9 +129,35 @@ pub const PHASE_OFFLINE: &str = "offline";
 async fn dispatch(
     spaces: &Spaces,
     tool: &str,
-    a: Value,
+    mut a: Value,
     broker: Option<&std::sync::Arc<dyn crate::teleport_broker::SessionBroker>>,
 ) -> Result<ToolOutcome> {
+    // A thread or agent member call for a Space whose thread lives on
+    // another machine (one that provides it) runs there, as this device's
+    // signed-in account. Only this machine's own user is forwarded: a
+    // caller someone else's machine vouched for never is.
+    if crate::thread_route::routed(tool, &a)
+        && PINNED.try_with(|_| ()).is_err()
+        && matches!(
+            crate::extension::Caller::current(),
+            crate::extension::Caller::Owner
+        )
+        && let Some(space) = a.get("space").and_then(Value::as_str).map(str::to_owned)
+    {
+        match spaces.thread_home(&space).await? {
+            crate::thread_route::ThreadHome::Owner {
+                host,
+                space,
+                granted,
+            } => {
+                return spaces
+                    .call_thread_owner(&host, &space, tool, granted, a)
+                    .await;
+            }
+            crate::thread_route::ThreadHome::Here(Some(here)) => a["space"] = json!(here),
+            crate::thread_route::ThreadHome::Here(None) => {}
+        }
+    }
     // Tools a registered extension serves (teleport, the Cua Volume,
     // persistent agents): see `crate::extension`.
     if let Some(ext) = spaces.extension_for(tool) {
@@ -144,6 +169,7 @@ async fn dispatch(
                 args: if a.is_null() { json!({}) } else { a },
                 broker,
                 pinned: pinned.as_ref(),
+                caller: crate::extension::Caller::current(),
             })
             .await;
     }
@@ -168,7 +194,8 @@ async fn dispatch(
             Ok(ToolOutcome::json(&json!({"removed": info})))
         }
         "list_spaces" => {
-            let _: i::ListSpaces = args(tool, a)?;
+            let filter: i::ListSpaces = args(tool, a)?;
+            let want = filter.labels.unwrap_or_default();
             // `phase` is the state at the last handshake: a registered Space
             // answered GetCapabilities when it was added.
             // Includes the signed-in account's relay machines (refreshed).
@@ -181,10 +208,12 @@ async fn dispatch(
                 .into_iter()
                 .map(|h| h.space)
                 .collect();
+            let default = spaces.default_space_id().await;
             let rows: Vec<Value> = spaces
                 .list_all()
                 .await?
                 .iter()
+                .filter(|info| want.iter().all(|(k, v)| info.labels.get(k) == Some(v)))
                 .map(|info| {
                     // A relay machine the relay cannot reach is not ready (a
                     // Space that is gone left its record; a host is off or
@@ -194,7 +223,10 @@ async fn dispatch(
                     } else {
                         PHASE_READY
                     };
-                    with(info, row_extra(info, &direct_hosts, phase))
+                    with(
+                        info,
+                        row_extra(info, &direct_hosts, phase, default.as_deref()),
+                    )
                 })
                 .collect();
             Ok(ToolOutcome::json(&rows))
@@ -226,7 +258,23 @@ async fn dispatch(
                     "count {count}: create 1 to {MAX_CREATE_COUNT} Spaces at a time"
                 )));
             }
+            // The network: tightening only (anything opening more than
+            // Internet only is the user's to choose).
+            let network_settings = match (&a.network, &a.allow, &a.deny) {
+                (None, None, None) => None,
+                _ => {
+                    let s = crate::network::parse_network(
+                        a.network.as_deref().unwrap_or("internet"),
+                        a.allow.as_deref().unwrap_or_default(),
+                        a.deny.as_deref().unwrap_or_default(),
+                    )?;
+                    crate::network::refuse_widening_by_agent(&s, None)?;
+                    Some(s)
+                }
+            };
             let one = |name: Option<String>| SpaceCreate {
+                network_settings: network_settings.clone(),
+                parent: a.parent.clone(),
                 image: a.image.clone(),
                 on: on.clone(),
                 kind,
@@ -239,11 +287,15 @@ async fn dispatch(
                 command: a.workload.command.clone(),
                 env: a.workload.env.clone().unwrap_or_default(),
                 services: a.workload.services.clone().unwrap_or_default(),
+                durable: a.durable.unwrap_or(false),
+                instance_type: a.instance_type.clone(),
+                region: a.region.clone(),
+                labels: a.labels.clone().unwrap_or_default(),
                 ..Default::default()
             };
             let row = |created: SpaceCreated| match created {
                 SpaceCreated::Ready { info, reused } => {
-                    let mut extra = row_extra(&info, &[], PHASE_READY);
+                    let mut extra = row_extra(&info, &[], PHASE_READY, None);
                     extra["reused"] = json!(reused);
                     with(&info, extra)
                 }
@@ -294,9 +346,31 @@ async fn dispatch(
             let a: i::SpaceOnly = args(tool, a)?;
             Ok(ToolOutcome::text(spaces.delete(&a.space).await?))
         }
-        "stop_space" => {
+        "network_show" => {
             let a: i::SpaceOnly = args(tool, a)?;
-            Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
+            Ok(ToolOutcome::json(&spaces.network_info(&a.space).await?))
+        }
+        "network_log" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_events(&a.space).await?))
+        }
+        // Boxed: its locals stay out of this function's frame.
+        "network_set" => Box::pin(network_set(spaces, tool, a)).await,
+        "stop_space" => {
+            let a: i::StopSpace = args(tool, a)?;
+            if a.suspend.unwrap_or(false) {
+                Ok(ToolOutcome::json(&spaces.suspend(&a.space).await?))
+            } else {
+                Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
+            }
+        }
+        "resize_space" => {
+            let a: i::ResizeSpace = args(tool, a)?;
+            Ok(ToolOutcome::json(
+                &spaces
+                    .resize(&a.space, a.cpus, a.memory_mb, a.disk_gb)
+                    .await?,
+            ))
         }
         "start_space" => {
             let a: i::SpaceOnly = args(tool, a)?;
@@ -316,19 +390,254 @@ async fn dispatch(
         "cloud_connect" => {
             let a: i::CloudConnect = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
+            let req = cua_sandbox_core::byoc::ConnectRequest {
+                target: cloud_target(a.target),
+                make_default: a.make_default.unwrap_or(false),
+                ttl_hours: a.ttl_hours,
+                auth: a.auth,
+                budget_usd_month: a.budget_usd_month,
+                max_size: a.max_size,
+                account_id: a.account_id,
+                role_arn: a.role_arn,
+                project_number: a.project_number,
+                service_account: a.service_account,
+                subscription_id: a.subscription_id,
+                tenant_id: a.tenant_id,
+                client_id: a.client_id,
+                resource_group: a.resource_group,
+                check: a.check.unwrap_or(false),
+                // The caller's word, else the agent this daemon runs for.
+                agent: a
+                    .agent
+                    .filter(|x| !x.trim().is_empty())
+                    .or_else(cua_sandbox_core::byoc::cua_agent),
+            };
+            Ok(json_of(&c.connect_with(&req).await?))
+        }
+        "cloud_approve" => {
+            let a: i::CloudApprove = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
             Ok(json_of(
-                &c.connect(
-                    &cloud_target(a.target),
-                    a.make_default.unwrap_or(false),
-                    a.ttl_hours,
-                )
-                .await?,
+                &c.approve(&a.provider, a.deny.unwrap_or(false)).await?,
             ))
         }
         "cloud_disconnect" => {
             let a: i::CloudDisconnect = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
-            Ok(json_of(&c.disconnect(&a.provider).await?))
+            Ok(json_of(
+                &c.disconnect(&a.provider, a.delete.unwrap_or(false)).await?,
+            ))
+        }
+        // --- the elastic pool --------------------------------------------
+        "cloud_plan" => {
+            let a: i::CloudPlan = args(tool, a)?;
+            let caller = match a.caller.as_deref().map(str::trim) {
+                None | Some("") => {
+                    if a.count.unwrap_or(1) > 1 {
+                        cua_cluster::elastic::detect::Caller::Batch
+                    } else {
+                        cua_cluster::elastic::detect::Caller::Interactive
+                    }
+                }
+                Some("interactive") => cua_cluster::elastic::detect::Caller::Interactive,
+                Some("batch") => cua_cluster::elastic::detect::Caller::Batch,
+                Some("compat") => cua_cluster::elastic::detect::Caller::Compat,
+                Some("persistent_agent") => cua_cluster::elastic::detect::Caller::PersistentAgent,
+                Some(o) => {
+                    return Err(Error::invalid(format!(
+                        "caller {o:?}: interactive, batch, compat or persistent_agent"
+                    )));
+                }
+            };
+            let req = crate::elastic::ElasticRequest {
+                image: a.image.clone().unwrap_or_default(),
+                kind: a.kind.clone().unwrap_or_default(),
+                cpus: a.cpus,
+                memory_mb: a.memory_mb,
+                count: a.count.unwrap_or(1).clamp(1, 4096),
+                whole: a.together.unwrap_or(false),
+                caller,
+                duration_secs: a.duration_secs,
+                profile: String::new(),
+                pins: cua_cluster::elastic::Pins {
+                    provider: a.provider.clone().filter(|p| !p.trim().is_empty()),
+                    region: a.region.clone().filter(|p| !p.trim().is_empty()),
+                    type_name: a.instance_type.clone().filter(|p| !p.trim().is_empty()),
+                    new_hosts: a.hosts,
+                    no_scale: a.no_scale.unwrap_or(false),
+                    devices_only: a.devices_only.unwrap_or(false),
+                },
+                pin_host: String::new(),
+                arch: String::new(),
+                clouds_only: false,
+            };
+            let mut plan = spaces.elastic_plan(std::slice::from_ref(&req)).await?;
+            if let Some(cap) = a.max_usd_per_hour {
+                plan.pool.constraints.max_usd_per_hour = Some(cap);
+                plan.plan = cua_cluster::elastic::solve(
+                    &plan.groups,
+                    &plan.pool.hosts,
+                    &plan.pool.offers,
+                    &plan.pool.constraints,
+                );
+            }
+            let mut v = serde_json::to_value(&plan).unwrap_or(Value::Null);
+            if a.apply.unwrap_or(false) {
+                let added = spaces.elastic_apply(&plan.plan).await?;
+                v["added"] = json!(added.into_iter().flatten().collect::<Vec<_>>());
+            }
+            Ok(ToolOutcome::json(&v))
+        }
+        "cloud_hosts" => {
+            let _: i::CloudHosts = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
+            Ok(json_of(&c.hosts().await?))
+        }
+        "cloud_add_host" => {
+            let a: i::CloudAddHost = args(tool, a)?;
+            let n = a.count.unwrap_or(1);
+            if !(1..=10).contains(&n) {
+                return Err(Error::invalid("count is 1 to 10"));
+            }
+            let ttl = a.ttl_hours.unwrap_or(24);
+            if !(1..=168).contains(&ttl) {
+                return Err(Error::invalid("ttl_hours is 1 to 168"));
+            }
+            let c = spaces.sandboxes().clouds()?;
+            let mut out = Vec::new();
+            for _ in 0..n {
+                let h = c
+                    .add_host(&cua_sandbox_core::byoc::AddHost {
+                        provider: a.provider.trim().to_ascii_lowercase(),
+                        type_name: a.instance_type.trim().to_string(),
+                        region: a.region.clone().unwrap_or_default(),
+                        name: String::new(),
+                        pinned: true,
+                        ttl_secs: u64::from(ttl) * 3600,
+                        prepull: vec![],
+                    })
+                    .await?;
+                crate::elastic::ledger_append(
+                    spaces.home_dir(),
+                    &crate::elastic::LedgerLine {
+                        at: h.started,
+                        event: "add".into(),
+                        host: h.name.clone(),
+                        provider: h.provider.clone(),
+                        type_name: h.type_name.clone(),
+                        region: h.region.clone(),
+                        usd_per_hour: h.usd_per_hour,
+                        billing_step_secs: h.billing_step_secs,
+                        billing_min_secs: h.billing_min_secs,
+                        reason: "added by hand".into(),
+                        count: 0,
+                    },
+                );
+                out.push(h);
+            }
+            Ok(json_of(&out))
+        }
+        "cloud_remove_host" => {
+            let a: i::CloudRemoveHost = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
+            let (mut removed, mut failed) = (Vec::new(), Vec::new());
+            let before = c.hosts().await.unwrap_or_default();
+            for name in &a.names {
+                match c.remove_host(name).await {
+                    Ok(()) => {
+                        for h in before.iter().filter(|h| &h.name == name) {
+                            spaces.forget_routing_host(&h.machine).await;
+                        }
+                        crate::elastic::ledger_append(
+                            spaces.home_dir(),
+                            &crate::elastic::LedgerLine {
+                                at: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                                event: "remove".into(),
+                                host: name.clone(),
+                                reason: "removed by hand".into(),
+                                ..Default::default()
+                            },
+                        );
+                        removed.push(name.clone());
+                    }
+                    Err(e) => failed.push(json!({"name": name, "error": e.to_string()})),
+                }
+            }
+            Ok(ToolOutcome::json(
+                &json!({"removed": removed, "failed": failed}),
+            ))
+        }
+        "cloud_budget" => {
+            let a: i::CloudBudget = args(tool, a)?;
+            let mut p = spaces.elastic_policy();
+            if let Some(v) = a.max_usd_per_hour {
+                if !(v >= 0.0 && v.is_finite()) {
+                    return Err(Error::invalid("max_usd_per_hour is 0 or more"));
+                }
+                p.max_usd_per_hour = v;
+                p.budget_set = true;
+            }
+            if let Some(v) = a.monthly_usd {
+                if !(v >= 0.0 && v.is_finite()) {
+                    return Err(Error::invalid("monthly_usd is 0 or more"));
+                }
+                p.monthly_usd = v;
+                p.budget_set = true;
+            }
+            if let Some(v) = a.autoscale {
+                p.autoscale = v;
+            }
+            if let Some(v) = a.max_new_hosts {
+                p.max_new_hosts = v.min(100);
+            }
+            if let Some(v) = a.warm {
+                p.warm = v;
+            }
+            if let Some(v) = a.allow_metal {
+                p.allow_metal = v;
+            }
+            spaces.set_elastic_policy(&p)?;
+            let view = spaces.elastic_view().await?;
+            Ok(ToolOutcome::json(&json!({
+                "policy": p,
+                "month_usd": view.month_usd,
+                "running_usd_per_hour": view.constraints.running_usd_per_hour,
+                "hosts": view.cloud.iter().filter(|h| h.state != "gone").count(),
+            })))
+        }
+        "prewarm" => {
+            let a: i::Prewarm = args(tool, a)?;
+            let p = spaces
+                .prewarm(crate::prewarm::PrewarmRequest {
+                    image: a.image,
+                    count: a.count.unwrap_or(1),
+                    on: a.on,
+                    kind: a.kind,
+                    cpus: a.cpus,
+                    memory_mb: a.memory_mb,
+                    ttl_secs: a.ttl_secs,
+                    instance_type: a.instance_type,
+                    region: a.region,
+                })
+                .await?;
+            Ok(json_of(&p))
+        }
+        "prewarm_list" => {
+            let _: i::PrewarmList = args(tool, a)?;
+            Ok(json_of(&spaces.prewarms().await?))
+        }
+        "prewarm_remove" => {
+            let a: i::PrewarmRemove = args(tool, a)?;
+            let removed = spaces.remove_prewarm(&a.id).await?;
+            Ok(json_of(&serde_json::json!({ "removed": removed })))
+        }
+        "cloud_reconcile" => {
+            let _: i::CloudReconcile = args(tool, a)?;
+            let d = spaces.elastic_reconcile().await?;
+            Ok(json_of(&d))
         }
         "cloud_sweep" => {
             let a: i::CloudSweep = args(tool, a)?;
@@ -342,12 +651,44 @@ async fn dispatch(
                 .await?,
             ))
         }
+        "cloud_audit" => {
+            let a: i::CloudAudit = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
+            let limit = a.limit.unwrap_or(50).clamp(1, 1000) as usize;
+            Ok(json_of(&c.audit_for(a.provider.as_deref(), limit).await?))
+        }
+        "cloud_cost" => {
+            let a: i::CloudCost = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
+            Ok(json_of(
+                &c.cost(
+                    a.provider.as_deref(),
+                    a.by.as_deref().unwrap_or("space"),
+                    a.since.as_deref(),
+                )
+                .await?,
+            ))
+        }
         // --- execution --------------------------------------------------------
         "space_bash" => {
             let a: i::SpaceBash = args(tool, a)?;
             let s = space_for(spaces, tool, &a.space).await?;
             let t = Duration::from_secs(a.timeout.unwrap_or(60).clamp(1, 24 * 3600));
             Ok(ToolOutcome::text(s.bash(&a.command, t).await?.render()))
+        }
+        "space_service" => {
+            let a: i::SpaceService = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            Ok(ToolOutcome::json(&space_service(&s, a).await?))
+        }
+        "space_job" => {
+            let a: i::SpaceJob = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            let mut out = s.job(&a).await?;
+            if a.action == "start" && a.notify.unwrap_or(false) {
+                out["notify"] = crate::space_jobs::watch(spaces, &s, &out, &a).await;
+            }
+            Ok(json_of(&out))
         }
         "space_write" => {
             let a: i::SpaceWrite = args(tool, a)?;
@@ -579,7 +920,7 @@ async fn dispatch(
         // --- agents -----------------------------------------------------------
         #[cfg(feature = "spaces-agents")]
         "agent_start" | "agent_message" | "agent_status" | "agent_events" | "agent_interrupt"
-        | "agent_stop" | "agent_list" => agents(spaces, tool, a).await,
+        | "agent_stop" | "agent_list" | "agent_sign_in" => agents(spaces, tool, a).await,
         #[cfg(feature = "spaces-agents")]
         "agent_capabilities" => {
             let _: i::AgentCapabilities = args(tool, a)?;
@@ -587,7 +928,9 @@ async fn dispatch(
         }
         #[cfg(not(feature = "spaces-agents"))]
         "agent_start" | "agent_message" | "agent_status" | "agent_events" | "agent_interrupt"
-        | "agent_stop" | "agent_list" | "agent_capabilities" => Err(unavailable("spaces-agents")),
+        | "agent_stop" | "agent_list" | "agent_capabilities" | "agent_sign_in" => {
+            Err(unavailable("spaces-agents"))
+        }
         // --- keyvault ---------------------------------------------------------
         "request_site_login" => {
             let a: i::RequestSiteLogin = args(tool, a)?;
@@ -598,21 +941,7 @@ async fn dispatch(
         }
         // --- hotspot ----------------------------------------------------------
         #[cfg(feature = "spaces-hotspot")]
-        "hotspot_start" => {
-            let a: i::HotspotStart = args(tool, a)?;
-            space_for(spaces, tool, &a.space).await?;
-            let status = spaces
-                .hotspot_start(
-                    &a.space,
-                    crate::hotspot::HotspotOptions {
-                        set_system_proxy: a.set_system_proxy.unwrap_or(true),
-                        bypass: a.bypass.unwrap_or_default(),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(ToolOutcome::json(&status))
-        }
+        "hotspot_start" => Box::pin(hotspot_start(spaces, tool, a)).await,
         #[cfg(feature = "spaces-hotspot")]
         "hotspot_stop" => {
             let a: i::HotspotTarget = args(tool, a)?;
@@ -660,8 +989,10 @@ async fn dispatch(
         }
         #[cfg(feature = "spaces-agents")]
         "relay_unregister_space" => {
-            let a: i::SpaceOnly = args(tool, a)?;
-            let unregistered = spaces.relay_unregister(&a.space).await?;
+            let a: i::RelayUnregisterSpace = args(tool, a)?;
+            let unregistered = spaces
+                .remove_computer(&a.space, a.delete_spaces.unwrap_or(false))
+                .await?;
             let space = spaces.resolve(&a.space)?.to_string();
             Ok(ToolOutcome::json(
                 &json!({"space": space, "unregistered": unregistered}),
@@ -680,8 +1011,83 @@ async fn dispatch(
 /// `phase`, and for a host added by its direct address or a Space on a
 /// host, `via`: `direct` (its Tailscale or LAN address, no relay) or
 /// `relay`.
-fn row_extra(info: &crate::SpaceInfo, direct_hosts: &[String], phase: &str) -> Value {
-    let mut extra = json!({ "phase": phase });
+async fn network_set(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::NetworkSet = args(tool, a)?;
+    let current = spaces.network_info(&a.space).await?.settings;
+    let mut s = crate::network::parse_network(
+        &a.network,
+        a.allow.as_deref().unwrap_or_default(),
+        a.deny.as_deref().unwrap_or_default(),
+    )?;
+    // The exit: as asked, else the one it has.
+    s = match a.via.as_deref() {
+        Some(word) => crate::network::with_via(s, word)?,
+        None => crate::network::with_via(
+            s,
+            &current
+                .via
+                .as_ref()
+                .map(|v| v.as_word())
+                .unwrap_or_default(),
+        )?,
+    };
+    crate::network::refuse_widening_by_agent(&s, Some(&current))?;
+    crate::network::refuse_exit_by_agent(&s, Some(&current))?;
+    let tree = a.tree.unwrap_or(false);
+    let applied = spaces.set_network(&a.space, &s, false, tree).await?;
+    Ok(ToolOutcome::json(&json!({
+        "applied": match applied {
+            crate::network::Applied::Now => "now",
+            crate::network::Applied::NextStart => "next_start",
+        },
+        "network": spaces.network_info(&a.space).await?,
+    })))
+}
+
+#[cfg(feature = "spaces-hotspot")]
+async fn hotspot_start(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::HotspotStart = args(tool, a)?;
+    space_for(spaces, tool, &a.space).await?;
+    crate::hotspot::require_confirmed(a.confirm)?;
+    let secure = cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure;
+    // Under Secure Spaces, "this computer" is the exit for this run:
+    // the Space's own rules apply first (the internet only unless
+    // they allow more). Without the experiment it is as it was.
+    let dialer = if secure {
+        let rules = match spaces.network_info(&a.space).await {
+            Ok(info) => crate::exit::ExitPolicy::of(&info.settings)?,
+            Err(_) => crate::exit::ExitPolicy::default_internet(),
+        };
+        crate::exit::this_machine(std::sync::Arc::new(rules))
+    } else {
+        crate::hotspot::direct_dialer()
+    };
+    let status = spaces
+        .hotspot_start(
+            &a.space,
+            crate::hotspot::HotspotOptions {
+                set_system_proxy: a.set_system_proxy.unwrap_or(!secure),
+                bypass: a.bypass.unwrap_or_default(),
+                dialer,
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(ToolOutcome::json(&status))
+}
+
+fn row_extra(
+    info: &crate::SpaceInfo,
+    direct_hosts: &[String],
+    phase: &str,
+    default: Option<&str>,
+) -> Value {
+    let mut extra = json!({
+        "phase": phase,
+        "clipboard": info.clipboard.as_str(),
+        "parent": info.parent_space_id(),
+        "default": default == Some(info.id.as_str()),
+    });
     let via = if direct_hosts.contains(&info.id) || info.host.starts_with("direct:") {
         Some("direct")
     } else if !info.host.is_empty() {
@@ -719,6 +1125,7 @@ fn cloud_target(t: i::CloudTarget) -> cua_sandbox_core::byoc::CloudTarget {
         zone: some(t.zone),
         project: some(t.project),
         environment: some(t.environment),
+        token: some(t.token),
     }
 }
 
@@ -730,6 +1137,7 @@ fn extension_capability(tool: &str) -> Option<&'static str> {
         Category::Teleport => Some("teleport"),
         Category::Volume => Some("Cua Volume"),
         Category::PersistentAgents => Some("persistent agents"),
+        Category::Thread => Some("the Space thread and agent members"),
         _ => None,
     }
 }
@@ -743,6 +1151,53 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
         .ok_or_else(|| Error::invalid(format!("{tool}: `space` is required")))?
         .to_string();
     let s = space_for(spaces, tool, &space_arg).await?;
+    // `name`: an agent member of this Space in place of a run id.
+    let mut a = a;
+    if ag::MEMBER_RUN_TOOLS.contains(&tool) {
+        let name = a.get("name").and_then(Value::as_str).map(str::to_owned);
+        let run_id = a
+            .get("run_id")
+            .and_then(Value::as_str)
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned);
+        match (name, run_id) {
+            (Some(_), Some(_)) => {
+                return Err(Error::invalid(format!(
+                    "{tool}: give `run_id` or `name`, not both"
+                )));
+            }
+            (None, None) => {
+                return Err(Error::invalid(format!(
+                    "{tool}: `run_id` (or an agent member's `name`) is required"
+                )));
+            }
+            (Some(name), None) => {
+                let ext = spaces
+                    .extension_for(ag::MEMBER_OP)
+                    .ok_or_else(|| Error::needs_cua_spaces("agent members"))?;
+                let mut op = a.clone();
+                op["tool"] = json!(tool);
+                op["space"] = json!(s.id().to_string());
+                op["name"] = json!(name);
+                let out = ext
+                    .call_tool(crate::extension::ToolCall {
+                        spaces,
+                        tool: ag::MEMBER_OP,
+                        args: op,
+                        broker: None,
+                        pinned: Some(&s),
+                        caller: crate::extension::Caller::current(),
+                    })
+                    .await?;
+                if tool == "agent_message" {
+                    return Ok(out);
+                }
+                let v = crate::extension::outcome_json(out)?;
+                a["run_id"] = v["run_id"].clone();
+            }
+            (None, Some(_)) => {}
+        }
+    }
     let agents = match s.agents().await {
         Ok(agents) => agents,
         Err(e) => {
@@ -778,6 +1233,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                             args: a,
                             broker: None,
                             pinned: Some(&s),
+                            caller: crate::extension::Caller::current(),
                         })
                         .await
                     }
@@ -788,6 +1244,16 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             // The caller's env, the env_from_host keys, and the keys saved
             // in Cua Spaces that this harness reads.
             let (opts, missing) = ag::start_options(&a)?;
+            // An agent run may make child Spaces of its own Space: this
+            // machine keeps the Space's spawn channel while that is on
+            // (only for a Space this computer runs).
+            let id = s.id().to_string();
+            if id.starts_with("local:")
+                && spaces.registry().get(&id).ok().flatten().is_some()
+                && let Err(e) = spaces.set_children(&id, true)
+            {
+                tracing::warn!(space = %id, error = %e, "could not turn on child Spaces");
+            }
             let started = agents.start(&a.agent, &a.prompt, opts).await;
             // The MCP `agent_start`, the SDKs' `Space.agent_start` and the
             // Spaces app all arrive here.
@@ -825,6 +1291,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                                  "agent": started.harness}),
                     broker: None,
                     pinned: Some(&s),
+                    caller: crate::extension::Caller::current(),
                 };
                 if let Err(e) = ext.call_tool(call).await {
                     tracing::warn!(run = %started.run_id, error = %e, "agent run not watched");
@@ -847,9 +1314,13 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             if a.force.unwrap_or(false) {
                 agents.interrupt(&a.run_id).await?;
             }
+            let steered = a.force.unwrap_or(false);
             let st = agents.send(&a.run_id, &a.text, vec![]).await?;
             Ok(ToolOutcome::json(&json!({
                 "delivered": true, "run_id": a.run_id, "status": st.status, "phase": st.phase,
+                // `queued` behind the running turn, `steered` (the running turn
+                // was interrupted first) or `started` (a turn of its own).
+                "mode": if steered { "steered" } else if st.phase == "working" { "queued" } else { "started" },
                 "reason": if st.phase == "working" { "queued after the running turn" } else { "a new turn in the same session" },
             })))
         }
@@ -870,6 +1341,21 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                 "events": page.events.iter().map(|e| compact(e, raw)).collect::<Vec<_>>(),
                 "cursor": page.cursor, "caught_up": page.caught_up,
             })))
+        }
+        "agent_sign_in" => {
+            let a: i::AgentSignIn = args(tool, a)?;
+            let action = ag::remote_login::Action::parse(
+                a.action.as_deref().unwrap_or("status"),
+                a.code.clone(),
+            )
+            .ok_or_else(|| {
+                Error::invalid("agent_sign_in: action is status, start, code (with code) or cancel")
+            })?;
+            let state = agents.sign_in(&a.agent, action, a.after_refusal).await?;
+            let mut out = serde_json::to_value(&state)?;
+            out["space"] = json!(s.id().to_string());
+            out["agent"] = json!(a.agent);
+            Ok(ToolOutcome::json(&out))
         }
         "agent_status" => {
             let a: i::AgentStatus = args(tool, a)?;
@@ -994,4 +1480,65 @@ async fn show(s: &crate::Space, run_dir: &str, run_id: &str) {
     {
         h.detach();
     }
+}
+
+/// `space_service`.
+async fn space_service(s: &crate::Space, a: i::SpaceService) -> Result<Value> {
+    use crate::keep::{Probe, Restart, ServiceControl, ServiceDef};
+    let name = || {
+        a.name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .ok_or_else(|| Error::InvalidArgument(format!("{} needs `name`", a.action)))
+    };
+    Ok(match a.action.as_str() {
+        "add" => {
+            let restart = match a.restart.as_deref() {
+                None => Restart::Always,
+                Some(r) => Restart::parse(r).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "restart {r:?}: use always, on-failure or never"
+                    ))
+                })?,
+            };
+            let probe = (a.http.is_some() || a.tcp.is_some() || a.check.is_some()).then(|| Probe {
+                http: a.http.clone(),
+                tcp: a.tcp.clone(),
+                command: a.check.clone(),
+                ..Default::default()
+            });
+            let def = ServiceDef {
+                name: name()?,
+                command: a
+                    .command
+                    .clone()
+                    .ok_or_else(|| Error::InvalidArgument("add needs `command`".into()))?,
+                restart,
+                probe,
+                start_on_boot: a.start_on_boot.unwrap_or(true),
+                ..Default::default()
+            };
+            serde_json::to_value(s.put_service(&def).await?).unwrap_or(Value::Null)
+        }
+        "list" => json!({ "services": s.kept_services().await? }),
+        "start" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Start).await?)
+            .unwrap_or(Value::Null),
+        "stop" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Stop).await?)
+            .unwrap_or(Value::Null),
+        "restart" => {
+            serde_json::to_value(s.control_service(&name()?, ServiceControl::Restart).await?)
+                .unwrap_or(Value::Null)
+        }
+        "remove" => {
+            let n = name()?;
+            s.delete_service(&n).await?;
+            json!({ "removed": n })
+        }
+        "logs" => json!({ "logs": s.service_logs(&name()?, a.tail_bytes.unwrap_or(0)).await? }),
+        other => {
+            return Err(Error::InvalidArgument(format!(
+                "action {other:?}: use add, list, start, stop, restart, remove or logs"
+            )));
+        }
+    })
 }

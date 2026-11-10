@@ -7,7 +7,7 @@
  * The page is always served one level below a spacesd-shaped origin:
  *
  * - embedded: `http://host:3211/viewer/` (base `/`);
- * - Fleet signed service URL: `/api/signed-svc/<token>/viewer/`;
+ * - behind a gateway that serves it under a path: `/<prefix>/viewer/`;
  * - standalone multi-sandbox server: `/s/<id>/viewer/`.
  *
  * So the base is the page's parent directory in every mode, and gRPC-Web
@@ -27,7 +27,7 @@ import { PresenceService } from "./gen/cua/env/v1/presence_pb";
 import { StreamService } from "./gen/cua/env/v1/stream_pb";
 import { SystemService } from "./gen/cua/env/v1/system_pb";
 
-/** Header the viewer sends its ticket in (the Fleet gateway strips
+/** Header the viewer sends its ticket in (a gateway may strip
  * `authorization`, so the alternate header works on every path). */
 export const ENV_AUTHORIZATION = "x-cua-env-authorization";
 const STORAGE_KEY = "cua.viewer.ticket";

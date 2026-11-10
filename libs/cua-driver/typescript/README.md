@@ -14,11 +14,8 @@ import { CuaDriver } from "@trycua/cua-driver"
 organizational `/embedded` entrypoint; they are the same generated Rust object.
 The `/electron` entrypoint is a thin compatibility naming layer over the same
 generated macOS permission functions. The package does not contain a TypeScript
-MCP protocol implementation. The optional `/fleet` entrypoint forwards service
-bytes to the shared Rust typed-MCP client and returns the canonical Driver.
-See [the candidate Fleet connection guide](../docs/shared-fleet-mcp-client.md)
-for prerequisites, ownership, and release limits. Agents already have
-runtime-neutral MCP clients and should configure the executable directly:
+MCP protocol implementation. Agents already have runtime-neutral MCP clients
+and should configure the executable directly:
 
 ```text
 cua-driver mcp
@@ -203,6 +200,15 @@ for its generation, observe unexpected termination with
 `waitForExit(connection.generation)`, and stop new work before teardown. The
 Rust host also closes a parent-liveness pipe on normal destruction so the daemon
 cannot remain orphaned after a host crash.
+
+For startup troubleshooting, create the host with
+`EmbeddedCuaDriverHost.withOptions()` and set `captureStderr: true`. After a
+failed start, `lastDiagnostics()` returns the generation-scoped final 65,536
+bytes, exit code, and truncation state; a successful start clears the previous
+diagnostics. Captured text is raw child stderr and can contain application data,
+so do not place secrets in daemon stderr or forward diagnostics to telemetry.
+When `inheritStderr` is also enabled, the host tees output on a bounded
+best-effort path so a blocked terminal cannot stop diagnostic collection.
 
 The npm package installs one optional native package selected for the current
 OS and CPU. It does not bundle the `cua-driver` executable: ship that executable

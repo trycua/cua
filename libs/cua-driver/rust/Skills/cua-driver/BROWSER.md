@@ -159,6 +159,18 @@ or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
+The result's optional `lifecycle` object describes how long the browser
+process lives: `owner` is `session`, `idle_expires_in_seconds` is how long the
+session may stay idle after this call before it and the browser end,
+`process_ends_with_session` is `true`, and
+`profile_persists_after_session` is `true` only for `isolated_named`. The
+value is advisory, not a lease. `get_session` reports the remaining time later
+but does not keep the browser alive, and explicit `end_session`, disconnect,
+revocation, or shutdown ends the browser earlier. A named profile keeps its
+files, not the process or its open pages. Attachments to an existing profile
+or endpoint the driver did not launch, and sessions already ending, have no
+`lifecycle`.
+
 ### Existing profile
 
 Attaching to an authenticated profile requires explicit trusted launch or host
@@ -508,6 +520,14 @@ operator can enable the temporary compatibility path with
 `CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1` before daemon startup. Restart Cua
 Driver after changing the flag. It does not add typed endpoint ownership,
 capabilities, or existing-profile consent.
+
+On macOS, legacy `page.get_text` and `page.query_dom` keep their original text
+payload but also report read provenance in `structuredContent.source`:
+`javascript`, `cdp`, or `ax_fallback`. When JavaScript or CDP fails and the AX
+fallback succeeds, `structuredContent.fallback_error` preserves the triggering
+error and `structuredContent.truncated` reports whether the bounded AX walk was
+cut short. A direct WKWebView/Tauri AX read has no `fallback_error` because no
+JavaScript or CDP route was attempted.
 
 ## Support boundaries
 

@@ -1,0 +1,8 @@
+{
+  "devices.banner.label": "デバイスの登録",
+  "devices.section.label": "デバイス",
+  "devices.section.title": "デバイス",
+  "devices.recent.not_yours_label": "あなたのデバイスではありません",
+  "devices.enroll.code_label": "ワンタイムコード",
+  "devices.approve.passphrase_label": "Keyvaultのパスフレーズ"
+}

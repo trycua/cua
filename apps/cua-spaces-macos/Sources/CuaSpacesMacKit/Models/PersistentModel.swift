@@ -8,6 +8,10 @@ import Foundation
 import Observation
 import UserNotifications
 
+/// What every feature that needs this app's background service (`cua daemon`)
+/// says when it isn't running: one plain line, never "daemon".
+public let serviceDownMessage = "Cua\u{2019}s background service isn\u{2019}t running. Reopen Cua Spaces."
+
 /// Runs one Spaces tool (the daemon's `CallSpaceTool`) and answers its JSON.
 public protocol AgentsToolRunning: AnyObject, Sendable {
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any
@@ -58,6 +62,9 @@ public final class PersistentModel {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
     }
     public private(set) var feed: [AppNotificationInput] = []
+    /// The Space each feed entry is about, by id (the core's input has no
+    /// Space; the web page's Open Space reads it).
+    private var feedSpaces: [String: String] = [:]
     /// Cua Volume's sync status (the menu bar's sync line), when read.
     public private(set) var driveSync: AppDriveSyncInput?
     /// `volume_storage`'s backend (the menu hides sync on this Mac's store
@@ -103,7 +110,7 @@ public final class PersistentModel {
     // MARK: - Agents
 
     private func call(_ tool: String, _ args: [String: Any] = [:]) async throws -> [String: Any] {
-        guard let tools else { throw AgentsToolError(message: "Agents need the cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         return (try await tools.agentsTool(tool, args) as? [String: Any]) ?? [:]
     }
 
@@ -135,7 +142,7 @@ public final class PersistentModel {
     /// One of the daemon's tools, its answer as is (the web UI's Volume,
     /// Storage and Notifications read the same tools this model runs).
     func daemonTool(_ tool: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard let tools else { throw AgentsToolError(message: "This needs the cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         return try await tools.agentsTool(tool, args)
     }
 
@@ -144,6 +151,33 @@ public final class PersistentModel {
         var args: [String: Any] = ["space": space, "run_id": runId, "cursor": cursor]
         if let max { args["max"] = max }
         return try await call("agent_events", args)
+    }
+
+    /// Starts a coding agent in a Space (`agent_start`): its answer as is
+    /// (`run_id`, `agent`, `space`, ...). Saved provider keys the harness
+    /// reads are forwarded by the daemon without being named here.
+    /// With `resumeSession`, the run continues that session of the agent's
+    /// own (a chat from `agent_threads`) in `cwd`, its folder.
+    func startRun(space: String, agent: String, prompt: String, repo: String?, branch: String?, model: String?,
+                  envFromHost: [String], cwd: String? = nil, resumeSession: String? = nil,
+                  resumeContext: String? = nil) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "agent": agent, "prompt": prompt]
+        if let repo { args["repo"] = repo }
+        if let branch { args["branch"] = branch }
+        if let model { args["model"] = model }
+        if !envFromHost.isEmpty { args["env_from_host"] = envFromHost }
+        if let cwd { args["cwd"] = cwd }
+        if let resumeSession { args["resume_session"] = resumeSession }
+        if let resumeContext { args["resume_context"] = resumeContext }
+        return try await call("agent_start", args)
+    }
+
+    /// Sends a reply to a run (`agent_message`): queued while a turn runs,
+    /// or the turn is interrupted first with `force`.
+    func sendMessage(space: String, runId: String, text: String, force: Bool) async throws -> [String: Any] {
+        var args: [String: Any] = ["space": space, "run_id": runId, "text": text]
+        if force { args["force"] = true }
+        return try await call("agent_message", args)
     }
 
     /// The selected agent's home (`agents/<name>/`, recursively, files only),
@@ -295,6 +329,10 @@ public final class PersistentModel {
         }
         guard let typed = try? appNotificationsFromJson(json: json(rows)) else { return }
         feed = typed
+        feedSpaces = Dictionary(r.arr("notifications").compactMap { n -> (String, String)? in
+            guard let id = n["id"] as? String, let space = n["space"] as? String, !space.isEmpty else { return nil }
+            return (id, space)
+        }, uniquingKeysWith: { a, _ in a })
         let seen = seenMs()
         let plan = appNotificationsPlan(feed: typed, seenMs: seen)
         plan.post.forEach { post?($0) }
@@ -304,6 +342,24 @@ public final class PersistentModel {
     public func markAllRead() async {
         _ = try? await call("notifications_ack", ["ids": [String]()])
         await pollNotifications()
+    }
+
+    /// Marks these entries read (one was opened); none marks nothing, never
+    /// all (the daemon reads an empty list as every entry).
+    public func markRead(ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        _ = try? await call("notifications_ack", ["ids": ids])
+        await pollNotifications()
+    }
+
+    /// The feed as the web page reads it (`NotificationInput`): the core's
+    /// entries, each with the Space it is about when it has one.
+    func feedRows() -> [[String: Any]] {
+        feed.map { n in
+            var row = (BridgeValue.encode(n) as? [String: Any]) ?? [:]
+            row["space"] = feedSpaces[n.id] ?? NSNull()
+            return row
+        }
     }
 
     /// Polls every `seconds` while the app runs (the daemon owns the feed).
@@ -323,7 +379,6 @@ public final class PersistentModel {
 @MainActor
 final class AgentNotifier {
     static let shared = AgentNotifier()
-    private var authorized: Bool?
 
     func post(_ note: AppSystemNote) {
         guard DeviceNotifier.available else { return }
@@ -335,10 +390,7 @@ final class AgentNotifier {
         content.body = note.body
         let request = UNNotificationRequest(identifier: "agent-\(note.id)", content: content, trigger: nil)
         Task {
-            if authorized == nil {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized == true else { return }
+            guard await PermissionRequester.notificationsAuthorized(center) else { return }
             try? await center.add(request)
         }
     }

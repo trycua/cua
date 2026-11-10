@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared test harness for cua-driver integration tests.
 //!
 //! Before this crate, every `tests/*.rs` re-implemented the same machinery:

@@ -1,4 +1,4 @@
-//! gVisor/container rootfs images (the Fleet `docker-*` tags): pack a rootfs
+//! gVisor/container rootfs images (the `docker-*` tags): pack a rootfs
 //! tar as a single-layer OCI image, and unpack OCI layers (with whiteouts)
 //! into a directory.
 
@@ -163,16 +163,19 @@ pub fn apply_layer(layer: impl Read, root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Unpack a list of (possibly gzipped) layer files, bottom first.
+/// Unpack a list of (possibly gzip or zstd compressed) layer files, bottom first.
 pub fn unpack_layers(layers: &[PathBuf], root: &Path) -> Result<()> {
     std::fs::create_dir_all(root)?;
     for l in layers {
         let mut f = std::fs::File::open(l)?;
-        let mut magic = [0u8; 2];
+        let mut magic = [0u8; 4];
         let n = f.read(&mut magic)?;
         let f = BufReader::with_capacity(1 << 20, std::fs::File::open(l)?);
-        if n == 2 && magic == [0x1f, 0x8b] {
+        if n >= 2 && magic[..2] == [0x1f, 0x8b] {
             apply_layer(GzDecoder::new(f), root)?;
+        } else if n == 4 && magic == [0x28, 0xb5, 0x2f, 0xfd] {
+            // A zstd layer (the headless image's, which downloads about 30 percent fewer bytes).
+            apply_layer(zstd::stream::read::Decoder::new(f)?, root)?;
         } else {
             apply_layer(f, root)?;
         }
@@ -226,6 +229,265 @@ pub async fn pull(
     cache.record_ref(reference, &digest)?;
     cua_vmm::disk::mark_used(&dest);
     Ok(dest)
+}
+
+/// The run config (`Entrypoint`, `Cmd`, `Env`, `WorkingDir`, `User`) in an
+/// OCI image config blob.
+pub fn run_config(config_json: &[u8]) -> Result<cua_vmm::OciRunConfig> {
+    let v: serde_json::Value = serde_json::from_slice(config_json)
+        .map_err(|e| ImageError::Registry(format!("image config: {e}")))?;
+    let c = &v["config"];
+    let strings = |k: &str| -> Vec<String> {
+        c[k].as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let text = |k: &str| c[k].as_str().map(String::from).filter(|s| !s.is_empty());
+    Ok(cua_vmm::OciRunConfig {
+        entrypoint: strings("Entrypoint"),
+        cmd: strings("Cmd"),
+        env: strings("Env"),
+        working_dir: text("WorkingDir"),
+        user: text("User"),
+    })
+}
+
+/// Pulls a rootfs image's layer blobs (into the blob cache, not unpacked)
+/// and its run config: what the microVM backend builds its root filesystem
+/// from.
+pub async fn pull_layers(
+    client: &RegistryClient,
+    cache: &ImageCache,
+    reference: &str,
+    arch: &str,
+) -> Result<cua_vmm::RootfsLayers> {
+    let (pinned, manifest, digest) = client.resolve_platform(reference, arch).await?;
+    let config = match &manifest.config {
+        Some(d) => run_config(&client.blob_bytes(&pinned, d).await?)?,
+        None => cua_vmm::OciRunConfig::default(),
+    };
+    let files = fetch_layers(client, cache, reference, &pinned, &manifest).await?;
+    cache.record_ref(reference, &digest)?;
+    Ok(cua_vmm::RootfsLayers {
+        digest,
+        layers: files,
+        config,
+    })
+}
+
+/// Downloads the layer blobs of `manifest` that the cache lacks (checking
+/// the disk first, reporting progress) and returns their files, bottom
+/// first.
+async fn fetch_layers(
+    client: &RegistryClient,
+    cache: &ImageCache,
+    reference: &str,
+    pinned: &str,
+    manifest: &crate::manifest::ImageManifest,
+) -> Result<Vec<PathBuf>> {
+    let missing: u64 = manifest
+        .layers
+        .iter()
+        .filter(|l| !cache.has_blob(&l.digest))
+        .map(|l| l.size)
+        .sum();
+    if missing > 0 {
+        cua_vmm::disk::ensure_space(cache.root(), missing, &format!("pull {reference}"))
+            .map_err(cua_vmm::VmmError::from)?;
+    }
+    let total: u64 = manifest.layers.iter().map(|l| l.size).sum::<u64>().max(1);
+    let mut done = 0u64;
+    let mut files = Vec::new();
+    for layer in &manifest.layers {
+        if !is_container_layer(&layer.media_type) {
+            return Err(ImageError::WrongFormat {
+                reference: reference.into(),
+                expected: "container rootfs",
+                detail: format!("layer media type {}", layer.media_type),
+            });
+        }
+        let blob = cache.blob_path(&layer.digest)?;
+        if !blob.exists() {
+            cua_vmm::progress::report(
+                cua_vmm::progress::Progress::phase(cua_vmm::progress::Phase::Pulling)
+                    .fraction(done as f64 / total as f64)
+                    .detail(reference),
+            );
+            client.blob_to_file(pinned, layer, &blob).await?;
+        }
+        done += layer.size;
+        files.push(blob);
+    }
+    Ok(files)
+}
+
+/// `reference` as a runtime's image store names it: registry, repository
+/// and tag (or digest), the registry spelled out (`alpine` is
+/// `docker.io/library/alpine:latest`).
+pub fn image_name(reference: &str) -> Result<String> {
+    let r = crate::registry::parse_ref(reference)?;
+    Ok(r.whole())
+}
+
+/// One regular file of an archive.
+fn add_bytes<W: Write>(b: &mut tar::Builder<W>, name: &str, bytes: &[u8]) -> Result<()> {
+    let mut h = tar::Header::new_gnu();
+    h.set_size(bytes.len() as u64);
+    h.set_mode(0o644);
+    h.set_entry_type(tar::EntryType::Regular);
+    b.append_data(&mut h, name, bytes)?;
+    Ok(())
+}
+
+/// Pulls `reference` (the layers into the blob cache, as [`pull_layers`])
+/// and writes it to `out` as an OCI image layout archive: `oci-layout`,
+/// `index.json` naming the platform manifest as [`image_name`] says, and
+/// every blob (manifest, config, layers) byte for byte as the registry
+/// served it, so each digest holds. Returns the platform manifest's digest.
+/// `out` is written whole or not at all.
+pub async fn pull_oci_archive(
+    client: &RegistryClient,
+    cache: &ImageCache,
+    reference: &str,
+    arch: &str,
+    out: &Path,
+) -> Result<String> {
+    let (pinned, manifest, digest) = client.resolve_platform(reference, arch).await?;
+    let (raw_manifest, raw_digest) = client.manifest_bytes(&pinned).await?;
+    if raw_digest != digest {
+        return Err(ImageError::Registry(format!(
+            "{reference}: the registry served manifest {raw_digest}, not {digest}"
+        )));
+    }
+    let config_desc = manifest
+        .config
+        .clone()
+        .ok_or_else(|| ImageError::Registry(format!("{reference}: the manifest has no config")))?;
+    let config = client.blob_bytes(&pinned, &config_desc).await?;
+    let layers = fetch_layers(client, cache, reference, &pinned, &manifest).await?;
+    cache.record_ref(reference, &digest)?;
+    let name = image_name(reference)?;
+    let tag = crate::registry::parse_ref(reference)?
+        .tag()
+        .map(str::to_string);
+    let media_type = if manifest.media_type.is_empty() {
+        crate::media_types::OCI_MANIFEST.to_string()
+    } else {
+        manifest.media_type.clone()
+    };
+    let mut annotations = serde_json::Map::new();
+    annotations.insert("io.containerd.image.name".into(), name.into());
+    if let Some(t) = tag {
+        annotations.insert("org.opencontainers.image.ref.name".into(), t.into());
+    }
+    let index = serde_json::json!({
+        "schemaVersion": 2,
+        "manifests": [{
+            "mediaType": media_type,
+            "digest": digest,
+            "size": raw_manifest.len(),
+            "annotations": annotations,
+        }]
+    });
+    let total: u64 = manifest.layers.iter().map(|l| l.size).sum();
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir)?;
+        cua_vmm::disk::ensure_space(dir, total, &format!("pack {reference}"))
+            .map_err(cua_vmm::VmmError::from)?;
+    }
+    let partial = out.with_extension("partial");
+    let blob_name = |d: &str| -> Result<String> {
+        Ok(format!(
+            "blobs/sha256/{}",
+            cache
+                .blob_path(d)?
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+        ))
+    };
+    let result = (|| -> Result<()> {
+        let mut b = tar::Builder::new(std::io::BufWriter::with_capacity(
+            1 << 20,
+            std::fs::File::create(&partial)?,
+        ));
+        add_bytes(&mut b, "oci-layout", br#"{"imageLayoutVersion":"1.0.0"}"#)?;
+        add_bytes(&mut b, "index.json", &serde_json::to_vec(&index)?)?;
+        add_bytes(&mut b, &blob_name(&digest)?, &raw_manifest)?;
+        add_bytes(&mut b, &blob_name(&config_desc.digest)?, &config)?;
+        for (desc, file) in manifest.layers.iter().zip(&layers) {
+            let mut f = std::fs::File::open(file)?;
+            let mut h = tar::Header::new_gnu();
+            h.set_size(f.metadata()?.len());
+            h.set_mode(0o644);
+            h.set_entry_type(tar::EntryType::Regular);
+            b.append_data(&mut h, blob_name(&desc.digest)?, &mut f)?;
+        }
+        b.into_inner()?.into_inner().map_err(|e| e.into_error())?;
+        std::fs::rename(&partial, out)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result?;
+    Ok(digest)
+}
+
+/// [`cua_vmm::RootfsResolver`] over the image cache (microVM rootfs
+/// images).
+#[derive(Clone, Default)]
+pub struct RootfsLayerResolver {
+    pub client: RegistryClient,
+    pub cache: ImageCache,
+}
+
+impl RootfsLayerResolver {
+    pub fn shared() -> std::sync::Arc<dyn cua_vmm::RootfsResolver> {
+        std::sync::Arc::new(Self::default())
+    }
+}
+
+#[async_trait::async_trait]
+impl cua_vmm::RootfsResolver for RootfsLayerResolver {
+    async fn resolve_rootfs(
+        &self,
+        reference: &str,
+        arch: cua_vmm::Arch,
+        creds: Option<&cua_vmm::RegistryCredentials>,
+    ) -> cua_vmm::Result<cua_vmm::RootfsLayers> {
+        let scoped;
+        let client = match creds {
+            Some(c) => {
+                scoped = RegistryClient::with_credentials(c.clone());
+                &scoped
+            }
+            None => &self.client,
+        };
+        Ok(pull_layers(client, &self.cache, reference, arch.oci()).await?)
+    }
+
+    async fn pull_oci_archive(
+        &self,
+        reference: &str,
+        arch: cua_vmm::Arch,
+        creds: Option<&cua_vmm::RegistryCredentials>,
+        out: &Path,
+    ) -> cua_vmm::Result<String> {
+        let scoped;
+        let client = match creds {
+            Some(c) => {
+                scoped = RegistryClient::with_credentials(c.clone());
+                &scoped
+            }
+            None => &self.client,
+        };
+        Ok(pull_oci_archive(client, &self.cache, reference, arch.oci(), out).await?)
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +552,29 @@ mod tests {
     }
 
     #[test]
+    fn a_zstd_layer_unpacks_like_a_gzip_one() {
+        let d = tempfile::tempdir().unwrap();
+        let tar_bytes = layer(&[
+            ("etc/a", Some(b"zstd layer")),
+            ("bin/", None),
+            ("bin/b", Some(b"b")),
+        ]);
+        let z = d.path().join("z.tar.zst");
+        std::fs::write(&z, zstd::stream::encode_all(&tar_bytes[..], 3).unwrap()).unwrap();
+        let g = d.path().join("g.tar.gz");
+        let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+        gz.write_all(&layer(&[("etc/c", Some(b"gzip layer"))]))
+            .unwrap();
+        std::fs::write(&g, gz.finish().unwrap()).unwrap();
+        let root = d.path().join("root");
+        // A gzip layer under a zstd one (and the other way round) in one image.
+        unpack_layers(&[g, z], &root).unwrap();
+        assert_eq!(std::fs::read(root.join("etc/a")).unwrap(), b"zstd layer");
+        assert_eq!(std::fs::read(root.join("etc/c")).unwrap(), b"gzip layer");
+        assert_eq!(std::fs::read(root.join("bin/b")).unwrap(), b"b");
+    }
+
+    #[test]
     fn traversal_is_rejected() {
         let d = tempfile::tempdir().unwrap();
         let mut b = tar::Builder::new(Vec::new());
@@ -340,5 +625,18 @@ mod tests {
                 .join(&img.layers[0].0.digest[7..])
                 .exists()
         );
+    }
+
+    #[test]
+    fn run_config_reads_the_image_config() {
+        let cfg = br#"{"architecture":"amd64","config":{"Env":["PATH=/bin","DISPLAY=:1"],
+            "Cmd":["/opt/cua/desktop/entrypoint.sh"],"WorkingDir":"","User":"cua"}}"#;
+        let r = run_config(cfg).unwrap();
+        assert_eq!(r.cmd, ["/opt/cua/desktop/entrypoint.sh"]);
+        assert!(r.entrypoint.is_empty());
+        assert_eq!(r.env, ["PATH=/bin", "DISPLAY=:1"]);
+        assert_eq!(r.working_dir, None);
+        assert_eq!(r.user.as_deref(), Some("cua"));
+        assert_eq!(run_config(b"{}").unwrap(), cua_vmm::OciRunConfig::default());
     }
 }

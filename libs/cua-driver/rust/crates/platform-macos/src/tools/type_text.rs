@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! type_text tool — matches the Swift reference TypeTextTool.swift.
 //!
 //! Inserts text via `AXSelectedText` attribute write — an atomic single-call
@@ -78,7 +81,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 200,
-                    "description": "Ms between characters in the CGEvent fallback. Default 30."
+                    "description": "Ms between characters in the CGEvent fallback. Default 0: characters go in batched key events, fast. Set a positive value for one paced key per character (debounced search boxes)."
                 },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id types into the frontmost app." },
                 "delivery_mode": {
@@ -141,7 +144,7 @@ impl Tool for TypeTextTool {
             let text =
                 cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
                     .into_owned();
-            let delay_ms = args.u64_or("delay_ms", 30).min(200);
+            let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS).min(200);
             if let Some(refusal) = synthesis_preflight(
                 TextDeliveryRoute::UnicodeSynthesis,
                 text.chars().count(),
@@ -188,7 +191,7 @@ impl Tool for TypeTextTool {
             Ok(window_id) => window_id,
             Err(error) => return error,
         };
-        let delay_ms = args.u64_or("delay_ms", 30);
+        let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         if let Some(error) = screen_sharing_delivery_error(
             crate::input::keyboard::is_screen_sharing_pid(pid),
@@ -228,6 +231,19 @@ impl Tool for TypeTextTool {
             }
             _ => (None, BackgroundKeyboardPolicy::Allowed),
         };
+        if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                element,
+                "type_text",
+                delivery_mode.is_foreground(),
+            )
+            .await
+            {
+                return refusal;
+            }
+        }
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_token) for an *element px action*: pixel-click the
@@ -378,6 +394,7 @@ impl Tool for TypeTextTool {
                             window_id,
                             keyboard_policy: blocking_policy,
                             explicit_target: element_ptr.is_some() || used_pixel_focus,
+                            key_window_confirmed: false,
                         },
                     )
                 })
@@ -556,7 +573,11 @@ impl Tool for TypeTextTool {
                     s
                 })
             }
-            Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
+            Ok(Err(e)) => window_id
+                .and_then(|wid| {
+                    super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+                })
+                .unwrap_or_else(|| ToolResult::error(format!("type_text failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -570,7 +591,7 @@ const PATH_AX: &str = "ax";
 const PATH_KEY_EVENTS: &str = "key_events";
 const PATH_KEY_EVENTS_FG: &str = "key_events_fg";
 
-// The daemon transport has a 120-second request deadline. Character synthesis
+// The daemon transport has a 150-second reply deadline. Character synthesis
 // is synchronous and costs at least one 8ms key-down gap plus either the
 // requested delay or an 8ms key-up gap per character. Keep the complete
 // scheduled synthesis sleeps + read-back estimate within 100 seconds, reserving
@@ -791,8 +812,20 @@ fn chromium_native_field_submit_refusal(
     })
 }
 
+/// Default `delay_ms`. Zero selects batched key events (see
+/// `keyboard::type_text_batched`); a positive value keeps per-character pacing.
+const DEFAULT_DELAY_MS: u64 = 0;
+
+/// Pace used to retype the undelivered tail when a batched send did not land.
+const RETYPE_TAIL_DELAY_MS: u64 = 30;
+
+/// A readable field that has not changed at all after this long is not going
+/// to (an app ignoring synthesized keys, or web content echoing a stale
+/// AXValue). Stop polling instead of burning the whole drain timeout.
+const UNCHANGED_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(500);
+
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
 /// an app that installs its own first responder just after activation is
@@ -859,7 +892,10 @@ async fn background_keyboard_policy(
         }
     };
     let target = ExactWindowTarget { pid, window_id };
-    match decide_background_input(target, &facts, BackgroundAction::InsertText) {
+    // The exact window is made key for the key post (see
+    // `super::post_keys_to_window`), so a sibling window is not ambiguous.
+    let action = super::window_keyboard_action(BackgroundAction::InsertText);
+    match decide_background_input(target, &facts, action) {
         BackgroundInputDecision::Execute { .. } => Ok((lease, BackgroundKeyboardPolicy::Allowed)),
         BackgroundInputDecision::Refuse(refusal) => {
             let semantic_available = element_ptr.is_some()
@@ -1246,6 +1282,7 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
     // particular, Chromium can acknowledge the posting process while a long
@@ -1253,9 +1290,37 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    Ok(await_typed_delivery(before, text, deadline, || {
-        read_axvalue_bound(pid, element_ptr_and_idx, window_id)
-    }))
+    let outcome = await_typed_delivery(
+        before,
+        text,
+        deadline,
+        || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
+        || target_in_web_area(pid, element_ptr_and_idx, window_id),
+    );
+    // A batched send that a native field only partly took (an app that reads
+    // just the first character of a multi-character event) is finished one
+    // paced key at a time from where it stopped. Web content never takes this
+    // branch: its read-back cannot prove how much landed, so a retype could
+    // duplicate text.
+    if batched {
+        if let (false, Some(done)) = outcome {
+            let total = text.chars().count();
+            let web = target_in_web_area(pid, element_ptr_and_idx, window_id);
+            if done < total && !web {
+                let tail: String = text.chars().skip(done).collect();
+                crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
+                let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+                return Ok(await_typed_delivery(
+                    before,
+                    text,
+                    deadline,
+                    || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
+                    || false,
+                ));
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 fn await_typed_delivery(
@@ -1263,8 +1328,11 @@ fn await_typed_delivery(
     text: &str,
     deadline: std::time::Instant,
     mut read_value: impl FnMut() -> Option<String>,
+    is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
     let mut best_partial = None;
+    let started = std::time::Instant::now();
+    let mut deadline = deadline;
     loop {
         let after = read_value();
         match typed_progress(before, after.as_deref(), text) {
@@ -1278,9 +1346,15 @@ fn await_typed_delivery(
                 // A readable unchanged value is an observed zero-character
                 // delivery, not an unverifiable success.
                 best_partial.get_or_insert(0);
+                if best_partial == Some(0) && started.elapsed() >= UNCHANGED_GIVE_UP {
+                    deadline = std::time::Instant::now();
+                }
             }
         }
         if std::time::Instant::now() >= deadline {
+            if best_partial == Some(0) && is_web() {
+                best_partial = None;
+            }
             return (false, best_partial);
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
@@ -1296,6 +1370,10 @@ struct KeyboardRoute {
     /// The caller chose where the text goes: an `element_token`, or `x,y`
     /// that pixel-focused a field first.
     explicit_target: bool,
+    /// The addressed window was confirmed as the app's key window before this
+    /// call. An app that is not active reports no focused element even then
+    /// (LibreOffice), so a missing focus is not a reason to refuse.
+    key_window_confirmed: bool,
 }
 
 /// Best-effort-background ladder for `type_text`.
@@ -1316,11 +1394,54 @@ fn type_text_blocking(
     is_terminal_target: bool,
     route: KeyboardRoute,
 ) -> anyhow::Result<TypeTextDelivery> {
+    // A window-addressed background insert first makes that window the app's
+    // key window, proven by re-reading the app's focused window, BEFORE the
+    // focused element is read or any key is posted. Unconfirmed: refuse
+    // (CUA-1767: with Find & Replace open the keys went into its Find field).
+    let _scope = if !route.delivery_mode.is_foreground()
+        && matches!(route.keyboard_policy, BackgroundKeyboardPolicy::Allowed)
+    {
+        match super::key_scope(pid, route.window_id) {
+            Ok(scope) => scope,
+            Err(reason) => {
+                return Ok(TypeTextDelivery::Refused(BackgroundRefusal {
+                    code: super::WINDOW_NOT_KEY,
+                    reason,
+                    advice: Some("foreground"),
+                }))
+            }
+        }
+    } else {
+        None
+    };
+    let route = KeyboardRoute {
+        key_window_confirmed: _scope.is_some(),
+        ..route
+    };
+    type_text_in_key_window(
+        pid,
+        text,
+        element_ptr_and_idx,
+        delay_ms,
+        is_terminal_target,
+        route,
+    )
+}
+
+fn type_text_in_key_window(
+    pid: i32,
+    text: &str,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    delay_ms: u64,
+    is_terminal_target: bool,
+    route: KeyboardRoute,
+) -> anyhow::Result<TypeTextDelivery> {
     let KeyboardRoute {
         delivery_mode,
         window_id,
         keyboard_policy,
         explicit_target,
+        key_window_confirmed,
     } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
@@ -1379,7 +1500,17 @@ fn type_text_blocking(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
+        // The caller's early AXEnabled read skips a foreground call into a
+        // background app; read it here, after activation, before any key.
+        let ensure_enabled = || match element_ptr_and_idx {
+            Some((ptr, _)) => crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+                ptr,
+                "type_text",
+            ),
+            None => Ok(()),
+        };
         let do_type = |element: Option<(usize, Option<usize>)>| {
+            ensure_enabled()?;
             cgevent_type_verified(
                 pid,
                 text,
@@ -1402,6 +1533,7 @@ fn type_text_blocking(
                     pid as libc::pid_t,
                     wid,
                     || {
+                        ensure_enabled()?;
                         if foreground_settle_ms > 0 {
                             std::thread::sleep(std::time::Duration::from_millis(
                                 foreground_settle_ms,
@@ -1543,10 +1675,16 @@ fn type_text_blocking(
     // selection to another file, and the next Return renamed the wrong
     // item). Refuse before anything is sent.
     if !explicit_target && window_id.is_some() {
-        let accepts_text = ax_target.is_some_and(|(element, _, _)| unsafe {
-            focused_accepts_text(element)
-                || target_in_web_area(pid, Some((element as usize, None)), window_id)
-        });
+        let accepts_text = match ax_target {
+            Some((element, _, _)) => unsafe {
+                focused_accepts_text(element)
+                    || focused_is_editor_surface(pid, element)
+                    || target_in_web_area(pid, Some((element as usize, None)), window_id)
+            },
+            // No focused element, but the window is the confirmed key window:
+            // post the keys to it, as press_key does.
+            None => unfocused_window_accepts_keys(key_window_confirmed, &bundle_id_of(pid)),
+        };
         if !accepts_text {
             if let Some((element, true, _)) = ax_target {
                 unsafe { CFRelease(element as _) };
@@ -1686,6 +1824,52 @@ fn is_text_input_role(role: &str) -> bool {
     )
 }
 
+/// Roles of a focused element that is an editing surface without being a text
+/// field: a spreadsheet grid or cell, a document canvas, the scroll view that
+/// hosts one (LibreOffice Calc and Writer, Numbers, Pages). Keys typed into
+/// them edit the document, so a pid-routed key post is the right route.
+/// Lists and outlines stay out: there typed keys move the selection.
+fn is_editor_surface_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXLayoutArea" | "AXLayoutItem" | "AXScrollArea" | "AXTable" | "AXCell" | "AXGroup"
+    )
+}
+
+/// Apps whose focused views of those roles are file or item browsers, where
+/// typed keys drive type-to-select rather than edit.
+/// A window with no focused element takes keys only when it is the confirmed
+/// key window and the app is not an item browser.
+fn unfocused_window_accepts_keys(key_window_confirmed: bool, bundle_id: &str) -> bool {
+    key_window_confirmed && !is_item_browser_app(bundle_id)
+}
+
+fn bundle_id_of(pid: i32) -> String {
+    crate::apps::bundle_id_for_pid(pid).unwrap_or_default()
+}
+
+fn is_item_browser_app(bundle_id: &str) -> bool {
+    matches!(bundle_id, "com.apple.finder" | "com.apple.dock")
+}
+
+fn editor_surface_accepts_keys(role: &str, bundle_id: &str) -> bool {
+    is_editor_surface_role(role) && !is_item_browser_app(bundle_id)
+}
+
+/// Whether the focused element is an editing surface that takes typed keys
+/// even though it is not a text field (CUA-1767).
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn focused_is_editor_surface(pid: i32, element: AXUIElementRef) -> bool {
+    let role = copy_string_attr(element, "AXRole").unwrap_or_default();
+    if !is_editor_surface_role(&role) {
+        return false;
+    }
+    let bundle_id = crate::apps::bundle_id_for_pid(pid).unwrap_or_default();
+    editor_surface_accepts_keys(&role, &bundle_id)
+}
+
 const NO_FOCUSED_TEXT_INPUT: &str = "no_focused_text_input";
 
 fn no_focused_text_input_refusal(
@@ -1710,6 +1894,46 @@ fn no_focused_text_input_refusal(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unfocused_window_needs_a_confirmed_key_window() {
+        assert!(super::unfocused_window_accepts_keys(
+            true,
+            "org.libreoffice.script"
+        ));
+        assert!(!super::unfocused_window_accepts_keys(
+            false,
+            "org.libreoffice.script"
+        ));
+        assert!(!super::unfocused_window_accepts_keys(
+            true,
+            "com.apple.finder"
+        ));
+    }
+
+    #[test]
+    fn editor_surfaces_take_keys_but_item_browsers_do_not() {
+        for role in ["AXLayoutArea", "AXScrollArea", "AXTable", "AXCell"] {
+            assert!(super::editor_surface_accepts_keys(
+                role,
+                "org.libreoffice.script"
+            ));
+            assert!(super::editor_surface_accepts_keys(
+                role,
+                "com.apple.iWork.Numbers"
+            ));
+            assert!(!super::editor_surface_accepts_keys(
+                role,
+                "com.apple.finder"
+            ));
+        }
+        for role in ["AXOutline", "AXList", "AXRow", "AXButton", "AXMenuItem", ""] {
+            assert!(!super::editor_surface_accepts_keys(
+                role,
+                "org.libreoffice.script"
+            ));
+        }
+    }
+
     #[test]
     fn chromium_native_field_refuses_only_background_submits() {
         let refusal = super::chromium_native_field_submit_refusal(true, "file:///tmp/report.log\n")
@@ -1768,6 +1992,7 @@ mod tests {
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
+                key_window_confirmed: false,
             },
         );
         match r {
@@ -1780,7 +2005,7 @@ mod tests {
     /// window is refused before any key event (Finder type-to-select).
     #[test]
     fn untargeted_text_without_a_focused_text_input_is_refused() {
-        let result = type_text_blocking(
+        let result = type_text_in_key_window(
             -1,
             "renamed.txt",
             None,
@@ -1791,6 +2016,7 @@ mod tests {
                 window_id: Some(7),
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
+                key_window_confirmed: false,
             },
         )
         .expect("the refusal is a delivery outcome");
@@ -1834,6 +2060,7 @@ mod tests {
                 window_id: None,
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
+                key_window_confirmed: false,
             },
         )
         .expect("preflight refusal must not attempt the invalid pid");
@@ -1940,6 +2167,7 @@ mod tests {
                 reads += 1;
                 values.pop_front().flatten()
             },
+            || false,
         );
         assert_eq!(delivery, (true, Some(text.chars().count())));
         assert_eq!(reads, 2, "completion must wait past the prefix readback");
@@ -1952,8 +2180,93 @@ mod tests {
             "BEGIN-payload-END",
             std::time::Instant::now(),
             || Some("BEGIN".to_owned()),
+            || false,
         );
         assert_eq!(delivery, (false, Some(5)));
+    }
+
+    #[test]
+    fn zero_progress_stops_polling_after_the_give_up_window() {
+        let started = std::time::Instant::now();
+        let outcome = await_typed_delivery(
+            Some("abc"),
+            "xyz",
+            started + DELIVERY_DRAIN_TIMEOUT,
+            || Some("abc".to_string()),
+            || false,
+        );
+        assert_eq!(outcome, (false, Some(0)));
+        assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    #[test]
+    fn default_delay_selects_batched_typing() {
+        assert_eq!(DEFAULT_DELAY_MS, 0);
+    }
+
+    #[test]
+    fn delivery_unchanged_web_is_unverifiable() {
+        for web in [true, false] {
+            assert_eq!(
+                await_typed_delivery(
+                    Some(""),
+                    "hello",
+                    std::time::Instant::now(),
+                    || Some(String::new()),
+                    || web,
+                ),
+                (false, if web { None } else { Some(0) }),
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_web_keeps_polling_and_preserves_positive_progress() {
+        for complete in [true, false] {
+            let mut reads = 0;
+            let result = await_typed_delivery(
+                Some(""),
+                "hello",
+                std::time::Instant::now() + std::time::Duration::from_millis(30),
+                || {
+                    reads += 1;
+                    Some(
+                        if reads == 1 {
+                            ""
+                        } else if complete {
+                            "hello"
+                        } else {
+                            "he"
+                        }
+                        .to_owned(),
+                    )
+                },
+                || panic!("positive progress must not probe ancestry"),
+            );
+            assert!(reads >= 2);
+            assert_eq!(
+                result,
+                if complete {
+                    (true, Some(5))
+                } else {
+                    (false, Some(2))
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_unreadable_does_not_probe_ancestry() {
+        assert_eq!(
+            await_typed_delivery(
+                Some(""),
+                "hello",
+                std::time::Instant::now(),
+                || None,
+                || panic!("unreadable values must not probe ancestry"),
+            ),
+            (false, None),
+        );
     }
 
     #[test]

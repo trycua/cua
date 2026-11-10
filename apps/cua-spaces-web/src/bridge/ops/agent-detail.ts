@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * One persistent agent's Memory, Routines and Access to this computer: the
+ * One persistent agent's Memory, Routines and Access to this machine: the
  * commands the app core's Agents page asks for (`AgentsRequest` in
  * `cua-spaces-app-core/src/persistent.rs`), one operation each. Every one is
  * a daemon Spaces tool the SwiftUI app's `PersistentModel.send` already
@@ -124,7 +124,13 @@ export async function agentDetailFromTools(tool: Tool, name: string, thisMachine
     home,
     routines,
     grants: rows(access, "grants").map((g) => ({ agent: str(g.agent), machine: str(g.machine), revoked: g.revoked === true })),
-    audit: rows(access, "audit").map((a) => ({ tsMs: num(a.ts_ms), action: str(a.action), principal: str(a.principal), path: str(a.path), detail: str(a.detail) })),
+    audit: rows(access, "audit").map((a) => ({
+      tsMs: num(a.ts_ms),
+      action: str(a.action),
+      principal: str(a.principal),
+      path: str(a.path),
+      detail: str(a.detail),
+    })),
     thisMachine,
   };
 }
@@ -138,7 +144,12 @@ export async function agentFileFromTools(tool: Tool, path: string): Promise<Agen
     path,
     text: binary ? "" : str(f.content),
     binary,
-    versions: rows(history, "versions").map((v) => ({ version: str(v.version), modifiedMs: num(v.modified_ms), deleted: v.deleted === true, latest: v.latest === true })),
+    versions: rows(history, "versions").map((v) => ({
+      version: str(v.version),
+      modifiedMs: num(v.modified_ms),
+      deleted: v.deleted === true,
+      latest: v.latest === true,
+    })),
   };
 }
 

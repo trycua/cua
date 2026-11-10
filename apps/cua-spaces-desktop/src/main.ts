@@ -6,10 +6,13 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
+import { initCrashReporting } from "./crash-reporting-main";
 import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
+import { channel, localCuaHome } from "./channel";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
+import { applyChromiumKeychainSwitches } from "./chromium-keychain";
 import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
@@ -22,22 +25,25 @@ import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
+import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
-import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
+import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
 import { readSettings, writeSettings } from "./settings";
+import { DEEP_LINK_SCHEME, deepLinkInArgv, routeForDeepLink } from "./deep-link";
 import { makeSystem } from "./system";
 import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
 import { createViewerWindows } from "./viewer";
-import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
+import { LinuxRuntime, nodeLinuxSystem } from "./model/linux-runtime";
+import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleOverlaySurface, handleViewerKeyboard, setWindowBackground } from "./window";
 import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
-// Linux desktop entry in electron-builder.config.cjs.
-const APP_USER_MODEL_ID = "ai.cua.spaces.desktop";
+// Linux desktop entry in electron-builder.config.cjs. Cua Spaces Local has its
+// own (src/channel.ts, packaging/electron-builder.local.cjs).
+const APP_USER_MODEL_ID = channel.appUserModelId;
 const LINUX_ID = "cua-spaces";
 
 /**
@@ -47,7 +53,15 @@ const LINUX_ID = "cua-spaces";
  */
 const E2E_DEMO = process.env.CUA_SPACES_E2E_DEMO === "1";
 
-app.setName("Cua Spaces");
+if (channel.isLocal) {
+  // Cua Spaces Local (a Windows build from scripts/install-local.ps1) shares nothing with the
+  // released app: its own cua home, channel (ports, names, sign-in), user data and URL scheme.
+  // Set before anything starts, so the native library and every child process inherit them; a
+  // variable that is already set wins.
+  process.env.CUA_CHANNEL = "local";
+  process.env.CUA_HOME ||= localCuaHome(process.env.USERPROFILE || homedir(), process.env);
+}
+app.setName(channel.appName);
 // Windows groups taskbar buttons and toasts by this id; the NSIS shortcuts carry the same one.
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 // Linux: WM_CLASS (X11) and the Wayland app id must match the desktop entry's
@@ -57,8 +71,14 @@ if (process.platform === "linux") {
   app.setDesktopName(`${LINUX_ID}.desktop`);
 }
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
+else if (channel.isLocal) app.setPath("userData", path.join(app.getPath("appData"), channel.userDataDirName));
+// Crash reporting as early as the app's name and data folder are settled (Sentry keeps its queue
+// and the Crashpad reports there) and before the native library loads, which reads CUA_CRASH_*.
+initCrashReporting();
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
+// macOS: Chromium's cookie key stays out of the keychain, so its prompt can't freeze the app (chromium-keychain.ts).
+applyChromiumKeychainSwitches(app.commandLine, process.platform);
 const VIDEO_BENCH = videoBenchEnv(process.env);
 // The Spaces' viewer windows ("Open in window"); the bench's own placement is never remembered.
 const viewers = createViewerWindows({ remember: !VIDEO_BENCH.bench });
@@ -117,6 +137,13 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     appRoot: path.join(__dirname, ".."),
     override: process.env.CUA_SPACES_NATIVE_DIR,
   });
+  // The browser sign-in's loopback listener lives as long as the app waits
+  // for it (SignInRuns.timeoutMs), not the CLI's 5 minutes: a browser slow to
+  // start (Edge's first run) must not find the port closed while the app
+  // still offers its link.
+  process.env.CUA_OIDC_LOGIN_TIMEOUT_SECS ??= "600";
+  // The browser's sign-in page says where to go back to.
+  process.env.CUA_AUTH_RETURN_TO ??= "Cua Spaces";
   const native = await loadNative(dir);
   // False without a browser here: the sign-in then uses the device flow.
   const openUrl = async (url: string) => {
@@ -132,11 +159,18 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   // first launch after taking over its settings is no update unless the build changed.
   const build = appBuild({ platform: process.platform, packaged: app.isPackaged, resourcesPath: process.resourcesPath, read: (f) => readFileSync(f, "utf8") });
   const refresh = recordLaunch(native, core.settings, app.getVersion(), build, readOnboardingCompleted(core.onboarding) ?? false);
-  const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl });
+  const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl, relaunch: relaunchApp });
   const pip = createPipWindows();
   app.on("will-quit", () => {
     pip.closeAll();
     viewers.closeAll();
+    // Closing the last window quits on Windows and Linux: send the usage
+    // events still queued (at most 1 s; the rest go with the next launch).
+    try {
+      native.telemetryFlush(1000);
+    } catch {
+      // Usage data never holds up quitting.
+    }
   });
   const prompts = await electronKeyvaultPrompts(native);
   // macOS: a real window dragged onto a Space tile in the main window (the
@@ -155,7 +189,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute, globalShortcut }),
+    system: makeSystem({ native, showRoute, webRoot: resolveWebRoot(), globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
@@ -177,6 +211,11 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
           process.platform === "darwin" ? ["openFile", "openDirectory", "multiSelections"] : ["openFile", "multiSelections"];
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, { properties }) : await dialog.showOpenDialog({ properties });
         return r.canceled ? null : r.filePaths;
+      },
+      chooseProgram: async (win) => {
+        const options = { properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[], defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin", buttonLabel: "Use" };
+        const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+        return r.canceled ? null : (r.filePaths[0] ?? null);
       },
       pip,
       ...prompts,
@@ -230,10 +269,16 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   });
   if (notch) {
     feedNotch(notch, model);
-    // Window drags need the SDK: look again once it is in.
-    if (!model.startup.isReady) model.startup.onReady.push(() => notch.recheckPermission());
+    // Window drags need the SDK: look now and whenever the launch is (again) ready, whichever of the two came first.
+    followDragReadiness(notch, model.startup);
   }
   return { env, bridge, background };
+}
+
+/** Starts `spec` once this app has exited, and exits (Linux: this app again under `sg docker`, CUA-1763). */
+function relaunchApp(spec: { execPath: string; args: string[] }): void {
+  app.relaunch(spec);
+  app.exit(0);
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -284,24 +329,59 @@ if (!app.requestSingleInstanceLock()) {
   const openSettings = () => tellMain("settings.openRequested");
   const gettingStarted = () => tellMain("checklist.openRequested");
 
-  app.on("second-instance", showMain);
+  // A `cua://add/<code>` link: the app on Machines, Join with a code filled in. Links that
+  // arrive before the app is ready wait for it.
+  let ready = false;
+  const pendingLinks: string[] = [];
+  const openLink = (link: string) => {
+    if (!ready) {
+      pendingLinks.push(link);
+      return;
+    }
+    const route = routeForDeepLink(link);
+    if (route) {
+      app.focus({ steal: true });
+      showRoute(route);
+    }
+  };
+  // Windows and Linux start a second copy with the link as an argument; macOS sends open-url.
+  app.on("second-instance", (_event, argv) => {
+    const link = deepLinkInArgv(argv);
+    if (link) openLink(link);
+    else showMain();
+  });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    openLink(url);
+  });
+  const firstLink = deepLinkInArgv(process.argv);
+  if (firstLink) pendingLinks.push(firstLink);
 
   app.whenReady().then(async () => {
+    // Docker was installed and the user added to its group after this session began: start again with the group, so no logout or reboot is needed.
+    if (process.platform === "linux" && !E2E_DEMO && (await new LinuxRuntime(nodeLinuxSystem(relaunchApp)).relaunchIfNeeded().catch(() => false))) return;
     migrateSwiftApp();
     initTheme();
     installMenu({ newSpace, settings: openSettings, gettingStarted });
     handleViewerKeyboard();
-    if (process.platform !== "darwin") handleOverlayDim();
+    if (process.platform !== "darwin") {
+      handleOverlayDim();
+      handleOverlaySurface();
+    }
     const { webRoot } = handleAppProtocol();
     if (process.env.CUA_SPACES_LOG_STARTUP) console.log(`[cua-spaces] serving ${webRoot}`);
 
     // ⌘⇧Space from any app: the main window, in front (never under the e2e switch).
     const shortcut = E2E_DEMO
       ? null
-      : installGlobalShortcut(process.platform, () => {
-          app.focus({ steal: true });
-          showMain();
-        });
+      : installGlobalShortcut(
+          process.platform,
+          () => {
+            app.focus({ steal: true });
+            showMain();
+          },
+          { read: () => readSettings().globalShortcut, write: (accelerator) => writeSettings({ globalShortcut: accelerator }) },
+        );
     let host: Awaited<ReturnType<typeof startNativeHost>> | null = null;
     if (!E2E_DEMO) {
       try {
@@ -325,6 +405,7 @@ if (!app.requestSingleInstanceLock()) {
       // The parity flows' traces are a Mac's: under the e2e switch the page can play another platform.
       platform: (E2E_DEMO ? demoPlatform() : null) ?? process.platform,
       videoStats: countsVideo(VIDEO_BENCH),
+      languages: () => app.getPreferredSystemLanguages(),
     });
 
     nativeTheme.on("updated", () => {
@@ -358,6 +439,12 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     app.on("activate", showMain);
+
+    // Make this app the one `cua://` links open (the installer registers it on macOS and in the Linux
+    // package; Windows only learns it here). A development run is not an installed app: leave links alone.
+    if (app.isPackaged) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+    ready = true;
+    for (const link of pendingLinks.splice(0)) openLink(link);
   });
 
   app.on("window-all-closed", () => {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Callable visual perception must advertise and preserve one contract across
 //! the live MCP inventory and the CLI/MCP invocation transports.
 

@@ -20,6 +20,7 @@ import { APP_ORIGIN } from "./protocol";
 import { aspectOf, fitToStream, initialPipBounds, pipPath, PIP_DEFAULT_ASPECT, PIP_MIN_WIDTH, type Rect } from "./pip-layout";
 import { readSettings, writeSettings } from "./settings";
 import { appWindow } from "./window";
+import { showWhenReady } from "./show-when-ready";
 
 export interface PipWindows extends PipPresenter {
   /** Closes every panel (the app quits). */
@@ -98,7 +99,7 @@ export function createPipWindows(): PipWindows {
         if (open.get(k) === win) open.delete(k);
         closed();
       });
-      win.once("ready-to-show", () => win.show());
+      showWhenReady(win, () => win.show());
       void win.loadURL(`${APP_ORIGIN}${pipPath(spec)}`);
     },
     close(spaceId: string, key: string) {

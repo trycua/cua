@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0](https://github.com/trycua/cua/compare/lume-v0.6.1...lume-v0.7.0) (2026-11-06)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **lume:** add `lume cp` for host↔guest file transfer ([#4896](https://github.com/trycua/cua/issues/4896)) ([be898dc](https://github.com/trycua/cua/commit/be898dc7fc0034222aa7c75887dcd419e464befb))
+* **lume:** install source builds as lume-local, beside the released lume ([#5804](https://github.com/trycua/cua/issues/5804)) ([86aae66](https://github.com/trycua/cua/commit/86aae66ff31135ef6ba1036315b55b5f8892fc15))
+* **spaces:** ask first, CI runners, TCP shares, secure networks and the phone app, behind experiments ([#6355](https://github.com/trycua/cua/issues/6355)) ([8cfff8e](https://github.com/trycua/cua/commit/8cfff8ef0e4a904c1534eac44cea3d65e741e6fd))
+
+
+### Bug Fixes
+
+* **lume:** preserve background service during updates ([#4337](https://github.com/trycua/cua/issues/4337)) ([faa52c9](https://github.com/trycua/cua/commit/faa52c949a6b225332c9be428a2c8f5115f90fab))
+* **lume:** preserve legacy multipart disk bytes during assembly ([#4714](https://github.com/trycua/cua/issues/4714)) ([ffaa073](https://github.com/trycua/cua/commit/ffaa073ad9a291ee112d1761d8e01d20917d5fd3))
+* **lume:** print VM details as labeled fields in terminals ([#5358](https://github.com/trycua/cua/issues/5358)) ([d9998fb](https://github.com/trycua/cua/commit/d9998fb4af5d94f784209b0129b9f98c80088d5d))
+* **lume:** pull parameterized OCI tar disk parts ([9c97c20](https://github.com/trycua/cua/commit/9c97c20ad8908bb9fbd26683f618253b7ca37c1c))
+* **lume:** refuse a macOS guest start at the host's macOS guest limit ([#3958](https://github.com/trycua/cua/issues/3958)) ([69ca401](https://github.com/trycua/cua/commit/69ca401e2d6dcd713ba6ec5c52b9a2580a339625))
+* **lume:** report a VM stopped once its guest stops on its own ([#4853](https://github.com/trycua/cua/issues/4853)) ([3d9879e](https://github.com/trycua/cua/commit/3d9879ee54e728d4a2fa2f787f0a7353d412a7a8)), closes [#4704](https://github.com/trycua/cua/issues/4704)
+* **lume:** shell-escape remote command arguments in lume ssh ([#3879](https://github.com/trycua/cua/issues/3879)) ([#3911](https://github.com/trycua/cua/issues/3911)) ([b1c38d2](https://github.com/trycua/cua/commit/b1c38d2af14295c372f585c560612a9ab28cae91))
+* **lume:** stop a VM in lume serve without ending the server ([#4662](https://github.com/trycua/cua/issues/4662)) ([25f63ee](https://github.com/trycua/cua/commit/25f63eea951c1ac31f7b71357ba4c9f849199cec))
+* **lume:** verify VM owner before stopping ([524b7c4](https://github.com/trycua/cua/commit/524b7c43276fef51f9f01d9d74e6dfc2f6d9d519))
+* **spaces:** reach macOS VMs over vsock, not Local Network or VPN routes (CUA-3139) ([#6380](https://github.com/trycua/cua/issues/6380)) ([37af9df](https://github.com/trycua/cua/commit/37af9dffdd0a79d9bcbcee0667832272b556435a))
+
 ## [0.6.1](https://github.com/trycua/cua/compare/lume-v0.6.0...lume-v0.6.1) (2026-10-04)
 
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux adapter of `cursor_overlay::capture_exclusion`.
 //!
 //! X11 has no per-window capture exclusion: a root `GetImage` returns whatever

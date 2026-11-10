@@ -413,7 +413,7 @@ public struct AgentStartRequest: Sendable, Hashable {
     /// likewise defaults true server-side, so an older server that does not
     /// know the key behaves as it always did.
     ///
-    /// See `samples/openkoalabots/FRICTION.md` §54.
+    /// See `examples/openkoalabots/FRICTION.md` §54.
     public var showsWindow: Bool
 
     /// How long the **server** should let this run live.

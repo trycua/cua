@@ -53,6 +53,22 @@ out_dir="$here/src-tauri/binaries"
 out="$out_dir/cua-$target$ext"
 mkdir -p "$out_dir"
 
+# rustc holds several GB while it compiles the big CLI crates, and each cargo
+# job may run a dozen codegen threads. On a 7 GB hosted Linux runner four jobs
+# thrashed memory until the runner stopped answering and was reclaimed (exit
+# 143, "received shutdown signal"). Two jobs still lost the runner on a cold
+# build (main run 42333464235, 7 Nov: "runner lost communication" an hour into
+# this step). Keep one job per 4 GB of RAM on Linux: one on a 7 GB runner.
+if [ "$(uname -s)" = Linux ] && [ -r /proc/meminfo ]; then
+    mem_gb=$(awk '/^MemTotal:/ { print int($2 / 1048576) }' /proc/meminfo)
+    max_jobs=$((mem_gb / 4))
+    [ "$max_jobs" -ge 1 ] || max_jobs=1
+    if [ "${CARGO_BUILD_JOBS:-$max_jobs}" -gt "$max_jobs" ]; then
+        export CARGO_BUILD_JOBS="$max_jobs"
+    fi
+    echo "cargo jobs: ${CARGO_BUILD_JOBS:-default} (${mem_gb} GB RAM)" >&2
+fi
+
 build_one() { # triple -> prints path
     flag=""
     [ "$profile" = release ] && flag="--release"

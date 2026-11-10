@@ -8,7 +8,7 @@ a requested lane has no result, or only failing ones, so a tagged block can
 never be silently dropped. Lanes map to the e2e lane that runs them through
 ``docs/code-block-policy.json`` (``lanes.<name>.e2e``).
 
-    coverage.py --results DIR --lanes docs[,fleet] [--summary FILE]
+    coverage.py --results DIR --lanes docs[,container] [--summary FILE]
 
 Writes ``docs-coverage.json`` into DIR and a per-page Markdown table to
 ``--summary`` (e.g. $GITHUB_STEP_SUMMARY). Stdlib only.

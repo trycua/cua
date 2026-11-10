@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { creatingLine, globalShortcutLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
+import { creatingLine, leavesLine, globalShortcutLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
 
 describe("host labels", () => {
   it("names the local machine after its system", () => {
@@ -32,18 +32,25 @@ describe("host labels", () => {
     expect(showsMacShellSettings("Linux x86_64")).toBe(false);
   });
 
-  it("names this computer in a Space being created here", () => {
+  it("names this machine in a Space being created here", () => {
     const line = "This Mac \u00b7 Downloading image\u2026";
     expect(creatingLine(line, "darwin")).toBe(line);
     expect(creatingLine(line, "linux")).toBe("This computer \u00b7 Downloading image\u2026");
     expect(creatingLine(line, "win32")).toBe("This PC \u00b7 Downloading image\u2026");
     // Elsewhere, or a failure in the core's own words: as it is.
-    expect(creatingLine("Cua Cloud \u00b7 Starting\u2026", "linux")).toBe("Cua Cloud \u00b7 Starting\u2026");
+    expect(creatingLine("Studio \u00b7 Starting\u2026", "linux")).toBe("Studio \u00b7 Starting\u2026");
     expect(creatingLine("This Mac can't reach its new VM", "linux")).toBe("This Mac can't reach its new VM");
   });
 
+  it("names this machine in what leaves it on teleport", () => {
+    expect(leavesLine("191 KB leaves this Mac", "darwin")).toBe("191 KB leaves this Mac");
+    expect(leavesLine("191 KB leaves this Mac", "win32")).toBe("191 KB leaves this PC");
+    expect(leavesLine("191 KB leaves this Mac", "linux")).toBe("191 KB leaves this computer");
+    expect(leavesLine("3 saved items from the Keyvault", "win32")).toBe("3 saved items from the Keyvault");
+  });
+
   it("says what the global shortcut does, or why it does nothing", () => {
-    expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: true })).toBe("Brings Cua Spaces to the front from any app.");
+    expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: true })).toBeNull();
     expect(globalShortcutLine({ label: "\u2318\u21e7Space", registered: false })).toBe(
       "Another app is using \u2318\u21e7Space, so it does nothing here. Free it in that app, then open Settings again.",
     );

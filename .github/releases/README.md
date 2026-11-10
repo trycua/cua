@@ -39,13 +39,12 @@ contributor notes** with the tag.
 | cua SDK and `cua` CLI | `libs/cua` | `cua-sdk-v*` | `cd-cua-sdk.yml` |
 | cua-spacesd | `libs/cua-spacesd` | `cua-spacesd-v*` | `cd-cua-spacesd.yml` |
 | cua-sandbox (PyPI) | `libs/python/cua-sandbox` | `sandbox-v*` | publish the draft; `cd-py-sandbox.yml` |
-| cua-agent (PyPI) | `libs/python/agent` | `agent-v*` | `cd-py-agent.yml` |
-| cua-core (PyPI) | `libs/python/core` | `core-v*` | `cd-py-core.yml` |
+| cua-agent (PyPI) | `libs/python/agent` | `agent-v*` | none: deprecated, its CD workflow was removed (CUA-3571) |
+| cua-core (PyPI) | `libs/python/core` | `core-v*` | none: deprecated, its CD workflow was removed (CUA-3571) |
 | cua-bench (PyPI) | `libs/cua-bench` | `bench-v*` | `cd-py-bench.yml` |
-| cua-bench-ui (PyPI) | `libs/python/bench-ui` | `bench-ui-v*` | `cd-py-bench-ui.yml` |
+| cua-bench-ui (PyPI) | `libs/python/bench-ui` | `bench-ui-v*` | none: deprecated, its CD workflow was removed (CUA-3571) |
 | cua-som (PyPI) | `libs/python/som` | `som-v*` | `cd-py-som.yml` |
 | cua-sandbox-apps (PyPI) | `libs/python/cua-sandbox-apps` | `sandbox-apps-v*` | `cd-py-sandbox-apps.yml` |
-| cua-train (PyPI) | `libs/python/cua-train` | `train-v*` | `cd-py-train.yml` |
 | @trycua/core (npm) | `libs/typescript/core` | `npm-core-v*` | `cd-ts-core.yml` |
 | @trycua/playground (npm) | `libs/typescript/playground` | `npm-playground-v*` | `cd-ts-playground.yml` |
 | cuabot (npm) | `libs/cuabot` | `cuabot-v*` | `cd-ts-cuabot.yml` |
@@ -78,8 +77,8 @@ and bump type. Cua Sandbox's draft is published by hand, which starts its PyPI
 workflow; the others publish themselves.
 
 Not on Release Please: the Docker images (`docker-*-v*`, still on
-**Legacy packages: Bump Version**, with no GitHub release pages), `@trycua/fleet`
-and `cua-fleet` (Fleets is shut down), the OS images (`linux-image-v*`,
+**Legacy packages: Bump Version**, with no GitHub release pages), `cua-fleet`
+(Fleets is shut down), the OS images (`linux-image-v*`,
 `omarchy-image-v*` and the image pipelines' own date versions), and the
 `cua-install-latest`/`cua-spaces-latest` rolling feeds.
 
@@ -124,9 +123,7 @@ and source file must be declared with its exact size, SHA-256, license source,
 target, and protocol version as applicable. Models and bundled source also need
 complete ledgers. The workflow emits a deterministic archive, SPDX SBOM, signed
 catalog, redacted provenance, and checksums as retained CI artifacts; only the
-release workflow publishes them. `cd-cua-perception-candidate-manual.yml`
-remains for staging candidates from a reviewed pull request head and never
-publishes.
+release workflow publishes them.
 
 Candidate catalogs use the same Ed25519 envelope consumed by Cua Driver's
 extension manager: `{ "payload": <compact catalog payload>,
@@ -166,12 +163,24 @@ The first nightly is bounded by the component's current stable tag; later
 nightlies are bounded by the previous published nightly. A component therefore
 needs a reachable stable tag before its nightly channel is enabled.
 
-Before starting platform builds, the nightly planner scans that exact range for
-unresolved human coauthors. It returns `reason=held-attribution` and creates or
-refreshes one component-specific maintainer issue instead of spending build and
-signing capacity on a candidate that cannot be published. Resolve the identity
-through a linked GitHub email or a verified `identityOverrides` entry; never use
-wildcard or human-email ignores to clear a hold.
+Attribution is best effort everywhere: it never fails a pull request check, a
+nightly or a stable release. `release_attribution.py` resolves each identity
+automatically, in this order: the pull request author login from the API; the
+trusted `coauthorOverrides` and `identityOverrides`; a GitHub noreply email;
+the merging maintainer's squash trailer; the commits API `author.login` and
+`committer.login` of the pull request's commits (which covers every email
+GitHub has linked); and a GitHub search by public email. Whatever is still
+unresolved is credited by display name, without an @-mention, in the release
+notes and the manifest's `unresolvedIdentities`, and is added (deduplicated by
+email) to one rolling maintainer issue titled "Contributor attribution:
+unresolved identities". Stable and nightly runs publish regardless.
+
+The nightly planner still scans its range up front, sets
+`attributionWarning=true`, writes a step summary and refreshes that same
+rolling issue; the build continues. To credit someone by handle, link their
+email to GitHub or add a verified `identityOverrides` entry (resolved entries
+drop off the issue on the next refresh); never use wildcard or human-email
+ignores.
 
 ## Persistent consumer selection
 
@@ -193,5 +202,5 @@ Store the preference as a validated one-line `release-channel` file in the
 component's existing product home. A missing file means stable; invalid or
 unreadable state fails closed with a repair command. Product-home overrides must
 relocate the file so installer and updater tests remain isolated. Cua Driver and
-Lume are the reference implementations; [RFC 3101](../../rfcs/3101-persistent-release-channel-selection.md)
+Lume are the reference implementations; [RFC 3101](../../docs/rfcs/3101-persistent-release-channel-selection.md)
 records the full rationale and acceptance matrix.

@@ -14,6 +14,7 @@
 // Quit is this app's own item rather than the `quit` role, and the app
 // registers `ApplePersistenceIgnoreState` as the Swift app does, so macOS
 // adds no "Quit and Keep Windows" beside it (this app restores no windows).
+import { channel } from "./channel";
 import { app, Menu, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
 
 /** The docs "Cua Spaces Help" opens. */
@@ -31,8 +32,10 @@ export interface MenuActions {
 /** The menu for `platform`; `dev` (an unpackaged build) adds Reload and the developer tools. */
 export function menuTemplate(platform: NodeJS.Platform, actions: MenuActions, { dev = false, appName = "Cua Spaces" } = {}): MenuItemConstructorOptions[] {
   const mac = platform === "darwin";
-  const newSpace: MenuItemConstructorOptions = { label: "New Space", accelerator: "CmdOrCtrl+N", click: () => actions.newSpace() };
-  const settings: MenuItemConstructorOptions = { label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => actions.settings() };
+  // Spelled out per platform (not `CmdOrCtrl`): the Windows and Linux menus
+  // drew the shortcut with no modifier ("+N") for the portable alias.
+  const newSpace: MenuItemConstructorOptions = { label: "New Space", accelerator: mac ? "CmdOrCtrl+N" : "Ctrl+N", click: () => actions.newSpace() };
+  const settings: MenuItemConstructorOptions = { label: "Settings…", accelerator: mac ? "CmdOrCtrl+," : "Ctrl+,", click: () => actions.settings() };
   const quit: MenuItemConstructorOptions = mac
     ? { label: `Quit ${appName}`, accelerator: "Command+Q", click: () => app.quit() }
     : { label: "Exit", click: () => app.quit() };
@@ -78,5 +81,5 @@ export function menuTemplate(platform: NodeJS.Platform, actions: MenuActions, { 
 export function installMenu(actions: MenuActions): void {
   // AppKit offers "Quit and Keep Windows" to apps that restore their windows; this one doesn't.
   if (process.platform === "darwin") systemPreferences.registerDefaults({ ApplePersistenceIgnoreState: true });
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(process.platform, actions, { dev: !app.isPackaged })));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(process.platform, actions, { dev: !app.isPackaged, appName: channel.appName })));
 }

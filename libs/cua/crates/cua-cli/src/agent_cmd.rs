@@ -1,7 +1,12 @@
-//! `cua agent`: coding agents inside sandboxes (`cua agents` is host
-//! onboarding: skills and the cua MCP server in your local agents).
+//! `cua agent`: agents inside Spaces (`cua connect` is host onboarding:
+//! skills and the cua MCP server in your local agents).
 //!
 //! ```text
+//! cua agent add ada --harness claude-code --in local:dev "say hello"
+//! cua agent send ada "what changed since yesterday?"
+//! cua agent ls
+//! cua agent schedule add ada --title Morning --prompt "Plan the day" --daily 08:00
+//! cua agent rm ada
 //! cua agent run local:dev claude-code "fix the failing test" --env-from-host ANTHROPIC_API_KEY --follow
 //! cua agent ls local:dev
 //! cua agent logs local:dev run-1a2b3c4d --follow
@@ -21,31 +26,48 @@ use std::time::Duration;
 
 #[derive(Subcommand, Debug)]
 pub enum AgentCmd {
+    /// Add an agent: a name, a harness and a Space.
+    ///
+    /// With PROMPT it starts at once. --daily, --every or --weekly schedule
+    /// PROMPT instead; --once runs PROMPT as a one-off task; --durable keeps
+    /// it running through crashes.
+    #[command(after_help = "Examples:
+  cua agent add ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+  cua agent add ada --harness claude-code --in local:dev \"summarize the repo\"
+  cua agent add ada --harness claude-code --in local:dev --daily 08:00 \"plan the day\"
+  cua agent add fix-1 --harness claude-code --in local:dev --once \"fix the failing test\"
+  cua agent add nightly --harness claude-code --durable --on auto \"refactor the parser\"")]
+    Add(Box<AddArgs>),
     /// Start a coding agent in a sandbox (returns at once unless --follow).
     #[command(after_help = "Examples:
   cua agent run local:dev claude-code \"fix the failing test\" --env-from-host ANTHROPIC_API_KEY -f
-  cua agent run cloud:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle")]
+  cua agent run local:ci openai-codex \"add tests\" --repo https://github.com/org/repo --exit-when-idle")]
     Run(Box<RunArgs>),
-    /// List runs in a sandbox.
+    /// List your agents, or with SANDBOX the runs in it.
     #[command(
         visible_alias = "list",
         after_help = "Examples:
+  cua agent ls
   cua agent ls local:dev"
     )]
     Ls {
         #[command(flatten)]
         at: Narrow,
-        /// Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME).
-        sandbox: String,
+        /// Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME). Without it:
+        /// your named agents.
+        sandbox: Option<String>,
     },
     /// Print a run's normalized events (--follow to stream).
     #[command(after_help = "Examples:
-  cua agent logs local:dev run-1a2b3c4d -f")]
+  cua agent logs local:dev run-1a2b3c4d -f
+  cua agent logs session:refactor -f")]
     Logs {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
         /// Keep streaming until the turn ends.
         #[arg(long, short)]
         follow: bool,
@@ -53,15 +75,23 @@ pub enum AgentCmd {
         #[arg(long)]
         raw: bool,
     },
-    /// Send a follow-up (queued while a turn runs).
+    /// Message a named agent (`send NAME TEXT`), or send a follow-up to a
+    /// run (`send SANDBOX RUN_ID TEXT`, queued while a turn runs).
     #[command(after_help = "Examples:
+  cua agent send ada \"what did you learn yesterday?\"
   cua agent send local:dev run-1a2b3c4d \"now add a regression test\" -f")]
     Send {
         #[command(flatten)]
         at: Narrow,
+        /// A named agent, or the sandbox of a run.
+        #[arg(value_name = "NAME|SANDBOX")]
         sandbox: String,
+        /// The message for a named agent, or the run.
+        #[arg(value_name = "TEXT|RUN_ID")]
         run_id: String,
-        text: String,
+        /// The message for a run.
+        text: Option<String>,
+        /// Follow a run's turn (`send SANDBOX RUN_ID TEXT` only).
         #[arg(long, short)]
         follow: bool,
     },
@@ -76,30 +106,42 @@ pub enum AgentCmd {
     },
     /// Stop a run and verify it is gone.
     #[command(after_help = "Examples:
-  cua agent stop local:dev run-1a2b3c4d")]
+  cua agent stop local:dev run-1a2b3c4d
+  cua agent stop session:refactor")]
     Stop {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
     },
     /// A run's status and last result.
     #[command(after_help = "Examples:
-  cua agent status local:dev run-1a2b3c4d")]
+  cua agent status local:dev run-1a2b3c4d
+  cua agent status session:refactor")]
     Status {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
     },
-    /// Stop a run and delete its record (secrets included).
+    /// Remove a named agent (its home stays in the Cua Volume), or stop a
+    /// run and delete its record (secrets included).
     #[command(after_help = "Examples:
-  cua agent rm local:dev run-1a2b3c4d")]
+  cua agent rm ada
+  cua agent rm local:dev run-1a2b3c4d
+  cua agent rm session:refactor")]
     Rm {
         #[command(flatten)]
         at: Narrow,
+        /// A named agent, a sandbox, or `session:NAME` for a durable session.
+        #[arg(value_name = "NAME|SANDBOX")]
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
     },
     /// Install harnesses or apps now (`claude-code`, `blender`, ...).
     #[command(after_help = "Examples:
@@ -111,13 +153,22 @@ pub enum AgentCmd {
         #[arg(required = true)]
         ids: Vec<String>,
     },
+    /// A named agent's schedules: turns the daemon starts with or without
+    /// the app open.
+    #[command(subcommand)]
+    Schedule(crate::persistent_cmd::RoutineCmd),
+    /// Durable sessions: agents your machines keep alive (`run --durable`).
+    #[command(after_help = "Examples:
+  cua agent sessions
+  cua --json agent sessions")]
+    Sessions,
     /// The harnesses: readiness, installs, key variables, limits.
     #[command(after_help = "Examples:
   cua agent harnesses
   cua --json agent harnesses")]
     Harnesses,
     /// The provider keys agents get, kept in the Keychain by the Cua daemon
-    /// (Cua Spaces → Settings → Agents). Values are read from stdin and never
+    /// (Cua Spaces → Settings → Connections). Values are read from stdin and never
     /// printed.
     #[command(after_help = "Examples:
   cua agent keys
@@ -134,57 +185,252 @@ pub enum AgentCmd {
 #[derive(clap::Args, Debug)]
 pub struct RunArgs {
     #[command(flatten)]
-    at: Narrow,
-    /// Sandbox (`local:NAME`, `cloud:NAME`, `direct:HOST:PORT`, or NAME).
-    sandbox: String,
+    pub(crate) at: Narrow,
+    /// Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME).
+    pub(crate) sandbox: String,
     /// Harness (`cua agent harnesses`).
-    harness: String,
+    pub(crate) harness: String,
     /// The task.
-    prompt: String,
+    pub(crate) prompt: String,
     /// Forward a provider key from this shell's environment (repeatable),
     /// for example ANTHROPIC_API_KEY. The value never appears in argv.
     #[arg(long = "env-from-host", value_name = "VAR")]
-    env_from_host: Vec<String>,
+    pub(crate) env_from_host: Vec<String>,
     /// Git repository cloned into the working directory first.
     #[arg(long)]
-    repo: Option<String>,
+    pub(crate) repo: Option<String>,
     #[arg(long)]
-    branch: Option<String>,
+    pub(crate) branch: Option<String>,
     /// Working directory in the sandbox.
     #[arg(long)]
-    cwd: Option<String>,
+    pub(crate) cwd: Option<String>,
     #[arg(long)]
-    model: Option<String>,
+    pub(crate) model: Option<String>,
     /// A custom model endpoint (proxy or compatible server).
     #[arg(long)]
-    base_url: Option<String>,
+    pub(crate) base_url: Option<String>,
     /// Its wire format: anthropic, openai-responses, openai-chat, gemini.
     #[arg(long)]
-    wire: Option<String>,
+    pub(crate) wire: Option<String>,
     /// An MCP server for the agent: NAME=URL (HTTP, as reachable inside the
     /// sandbox) or NAME=cmd:COMMAND ARGS... (stdio, run in the sandbox).
     #[arg(long = "mcp", value_name = "NAME=URL")]
-    mcp: Vec<String>,
+    pub(crate) mcp: Vec<String>,
     /// Attach a local file to the prompt (repeatable).
     #[arg(long = "file", value_name = "PATH")]
-    files: Vec<std::path::PathBuf>,
+    pub(crate) files: Vec<std::path::PathBuf>,
     /// Do not give the agent the sandbox's own MCP tools.
     #[arg(long)]
-    no_sandbox_mcp: bool,
+    pub(crate) no_sandbox_mcp: bool,
     /// Do not copy the cua skills into the harness.
     #[arg(long)]
-    no_skills: bool,
+    pub(crate) no_skills: bool,
     /// Stop (resumably) once the prompt is answered.
     #[arg(long)]
-    exit_when_idle: bool,
+    pub(crate) exit_when_idle: bool,
     #[arg(long)]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
     /// Stream events until the turn ends.
     #[arg(long, short)]
-    follow: bool,
+    pub(crate) follow: bool,
+    /// Keep the agent alive across a lost driver or machine: your machines'
+    /// coordinator starts it again (a higher epoch each time, with backoff
+    /// and a cap). SANDBOX is then a durable Space by name, or `auto` for
+    /// none.
+    #[arg(long)]
+    pub(crate) durable: bool,
+    /// With --durable: the machine the driver runs on (`auto`, or a
+    /// machine's name; default: this machine).
+    #[arg(long, value_name = "MACHINE", requires = "durable")]
+    pub(crate) on: Option<String>,
+    /// With --durable: drives allowed in total before the session fails
+    /// (default 5).
+    #[arg(long, value_name = "N", requires = "durable")]
+    pub(crate) max_attempts: Option<u32>,
+    /// With --durable: seconds the driver may write no output before it
+    /// counts as wedged, is cancelled and started again (default 120; 0:
+    /// never). Drivers print a heartbeat every quarter of it.
+    #[arg(long, value_name = "SECS", requires = "durable")]
+    pub(crate) stall_secs: Option<u32>,
+    /// With --durable: the session's name (default: generated).
+    #[arg(long, requires = "durable")]
+    pub(crate) name: Option<String>,
+    #[arg(long, hide = true, requires = "durable")]
+    pub(crate) driver_cmd: Option<String>,
+    #[arg(long, hide = true, requires = "durable")]
+    pub(crate) driver_bundle: Option<std::path::PathBuf>,
 }
 
-fn mcp_arg(s: &str) -> Result<AgentRunMcpServer, CuaError> {
+/// `cua agent add`.
+#[derive(clap::Args, Debug)]
+pub struct AddArgs {
+    /// The agent's name: 1-63 of a-z, 0-9, `.`, `_`, `-`.
+    pub(crate) name: String,
+    /// What it starts on: a first message, a scheduled task (with
+    /// --daily/--every/--weekly) or the task (--once, --durable).
+    pub(crate) prompt: Option<String>,
+    /// Harness id (`cua agent harnesses`).
+    #[arg(long)]
+    pub(crate) harness: String,
+    /// The Space it works in (with --durable: a durable Space by name;
+    /// default `auto`, none).
+    #[arg(long = "in", value_name = "SPACE", required_unless_present = "durable")]
+    pub(crate) space: Option<String>,
+    #[arg(long)]
+    pub(crate) model: Option<String>,
+    #[arg(long)]
+    pub(crate) base_url: Option<String>,
+    /// Provider key variable to forward at each start. Repeatable.
+    #[arg(long = "env-from-host", value_name = "VAR")]
+    pub(crate) env_from_host: Vec<String>,
+    /// A one-off task: run PROMPT and stop when it is answered (no name
+    /// kept, no memory).
+    #[arg(long, requires = "prompt", conflicts_with_all = ["durable", "every", "daily", "weekly"])]
+    pub(crate) once: bool,
+    /// Keep it running through crashes: your machines' coordinator starts
+    /// it again (a durable session, `cua agent run --durable`).
+    #[arg(long, requires = "prompt", conflicts_with_all = ["every", "daily", "weekly"])]
+    pub(crate) durable: bool,
+    /// With --durable: the machine the driver runs on (`auto`, or a
+    /// machine's name; default: this machine).
+    #[arg(long, value_name = "MACHINE", requires = "durable")]
+    pub(crate) on: Option<String>,
+    /// With --durable: drives allowed in total before the session fails
+    /// (default 5).
+    #[arg(long, value_name = "N", requires = "durable")]
+    pub(crate) max_attempts: Option<u32>,
+    /// With --durable: seconds the driver may write no output before it
+    /// counts as wedged, is cancelled and started again (default 120; 0:
+    /// never). Drivers print a heartbeat every quarter of it.
+    #[arg(long, value_name = "SECS", requires = "durable")]
+    pub(crate) stall_secs: Option<u32>,
+    /// Schedule PROMPT every N minutes.
+    #[arg(long, value_name = "MINUTES", requires = "prompt", conflicts_with_all = ["daily", "weekly"])]
+    pub(crate) every: Option<i64>,
+    /// Schedule PROMPT every day at HH:MM.
+    #[arg(
+        long,
+        value_name = "HH:MM",
+        requires = "prompt",
+        conflicts_with = "weekly"
+    )]
+    pub(crate) daily: Option<String>,
+    /// Schedule PROMPT every week, `mon 09:00`.
+    #[arg(long, value_name = "DAY HH:MM", requires = "prompt")]
+    pub(crate) weekly: Option<String>,
+    /// The schedule's title (default: the agent's name).
+    #[arg(long, requires = "prompt")]
+    pub(crate) title: Option<String>,
+}
+
+/// A `cua agent` command the new names (`add`, `send NAME`, `ls`, `rm
+/// NAME`, `schedule`) spell, as the commands that already do it, in order.
+/// The new names are aliases: they run exactly these.
+pub(crate) fn desugar(cmd: AgentCmd) -> Result<Vec<AgentCmd>, CuaError> {
+    use crate::persistent_cmd::{PersistentCmd as P, RoutineCmd};
+    Ok(match cmd {
+        AgentCmd::Add(a) => {
+            let a = *a;
+            let run = |sandbox: String, durable: bool| RunArgs {
+                at: Narrow::default(),
+                sandbox,
+                harness: a.harness.clone(),
+                prompt: a.prompt.clone().unwrap_or_default(),
+                env_from_host: a.env_from_host.clone(),
+                repo: None,
+                branch: None,
+                cwd: None,
+                model: a.model.clone(),
+                base_url: a.base_url.clone(),
+                wire: None,
+                mcp: vec![],
+                files: vec![],
+                no_sandbox_mcp: false,
+                no_skills: false,
+                exit_when_idle: !durable,
+                label: (!durable).then(|| a.name.clone()),
+                follow: false,
+                durable,
+                on: a.on.clone(),
+                max_attempts: a.max_attempts,
+                stall_secs: a.stall_secs,
+                name: durable.then(|| a.name.clone()),
+                driver_cmd: None,
+                driver_bundle: None,
+            };
+            if a.once {
+                let space = a.space.clone().unwrap_or_default();
+                return Ok(vec![AgentCmd::Run(Box::new(run(space, false)))]);
+            }
+            if a.durable {
+                let space = a.space.clone().unwrap_or_else(|| "auto".into());
+                return Ok(vec![AgentCmd::Run(Box::new(run(space, true)))]);
+            }
+            let mut steps = vec![AgentCmd::Persistent(P::Create {
+                name: a.name.clone(),
+                harness: a.harness,
+                space: a.space.unwrap_or_default(),
+                model: a.model,
+                base_url: a.base_url,
+                env_from_host: a.env_from_host,
+            })];
+            let scheduled = a.every.is_some() || a.daily.is_some() || a.weekly.is_some();
+            match a.prompt {
+                Some(prompt) if scheduled => {
+                    steps.push(AgentCmd::Persistent(P::Routine(RoutineCmd::Add {
+                        title: a.title.unwrap_or_else(|| a.name.clone()),
+                        agent: a.name,
+                        prompt,
+                        every: a.every,
+                        daily: a.daily,
+                        weekly: a.weekly,
+                    })));
+                }
+                Some(text) => steps.push(AgentCmd::Persistent(P::Tell { name: a.name, text })),
+                None => {}
+            }
+            steps
+        }
+        AgentCmd::Send {
+            sandbox,
+            run_id,
+            text: None,
+            follow,
+            at,
+        } => {
+            if follow || at.is_narrowed() {
+                return Err(CuaError::InvalidArgument(
+                    "`cua agent send NAME TEXT` messages a named agent; --follow and --local \
+                     take `cua agent send SANDBOX RUN_ID TEXT`"
+                        .into(),
+                ));
+            }
+            vec![AgentCmd::Persistent(P::Tell {
+                name: sandbox,
+                text: run_id,
+            })]
+        }
+        AgentCmd::Ls { sandbox: None, at } => {
+            if at.is_narrowed() {
+                return Err(CuaError::InvalidArgument(
+                    "--local narrows a sandbox: `cua agent ls --local NAME`".into(),
+                ));
+            }
+            vec![AgentCmd::Persistent(P::Persistent)]
+        }
+        AgentCmd::Rm {
+            sandbox,
+            run_id: None,
+            at,
+        } if !at.is_narrowed() && !sandbox.contains(':') => {
+            vec![AgentCmd::Persistent(P::Forget { name: sandbox })]
+        }
+        AgentCmd::Schedule(r) => vec![AgentCmd::Persistent(P::Routine(r))],
+        other => vec![other],
+    })
+}
+
+pub(crate) fn mcp_arg(s: &str) -> Result<AgentRunMcpServer, CuaError> {
     let (name, rest) = s
         .split_once('=')
         .ok_or_else(|| CuaError::InvalidArgument(format!("--mcp {s:?}: expected NAME=URL")))?;
@@ -219,15 +465,26 @@ async fn follow(
     };
     let mut shown = (ProgramState::Working, "working".to_string());
     // Bounded: at most 24 h of polling at 500 ms.
+    let mut last_event = std::time::Instant::now();
+    let mut warned = false;
     for _ in 0..172_800 {
         let page = run.events(cursor, Some(500)).await?;
         cursor = page.cursor;
         let mut done = false;
+        if !page.events.is_empty() {
+            last_event = std::time::Instant::now();
+            warned = false;
+        }
         for e in &page.events {
             if json || raw {
                 line(out, &e.json);
             } else if let Some(l) = &e.line {
                 line(out, l);
+            }
+            if e.kind == "error"
+                && let Some(h) = auth_hint(e.line.as_deref().unwrap_or(&e.json))
+            {
+                eprintln!("{}", crate::util::hint(h));
             }
             if matches!(e.kind.as_str(), "turn_ended" | "exited") {
                 done = true;
@@ -243,6 +500,25 @@ async fn follow(
             if s.status != "running" && !done {
                 report(&run_state(shown, &s.status, None, Some(&s.reason)));
                 break;
+            }
+            match silence(last_event.elapsed(), warned) {
+                Silence::Fine => {}
+                Silence::Warn => {
+                    warned = true;
+                    eprintln!(
+                        "{}",
+                        crate::util::hint(&format!(
+                            "No output for {}s and the run still says \"working\". {SILENCE_NEXT_STEP}",
+                            SILENCE_WARN.as_secs()
+                        ))
+                    );
+                }
+                Silence::Fail => {
+                    return Err(CuaError::Env(format!(
+                        "The agent has said nothing for {}s, so it is probably stuck (a model key it could not use is the usual cause). {SILENCE_NEXT_STEP}",
+                        SILENCE_FAIL.as_secs()
+                    )));
+                }
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
@@ -272,7 +548,7 @@ fn run_state(
 
 /// The harnesses with the readiness the Spaces server reports
 /// (`agent_capabilities`, which counts the keys saved in Cua Spaces →
-/// Settings → Agents and the server's environment), so `cua agent
+/// Settings → Connections and the server's environment), so `cua agent
 /// harnesses`, MCP and the app agree. Without a server: the static list.
 async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
     let caps = cua
@@ -290,7 +566,7 @@ async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
 }
 
 /// The provider key variables `--env-from-host` may name.
-fn provider_key_names() -> Vec<String> {
+pub(crate) fn provider_key_names() -> Vec<String> {
     let v: serde_json::Value =
         serde_json::from_str(&cua_sdk::agent_harnesses()).unwrap_or_default();
     let mut names: Vec<String> = v
@@ -333,8 +609,64 @@ fn split_env_from_host(
     Ok((env, server))
 }
 
+/// `--wire` only describes `--base-url`; alone it would be ignored without a
+/// word, so refuse it.
+fn check_endpoint_flags(a: &RunArgs) -> Result<(), CuaError> {
+    if a.wire.is_some() && a.base_url.is_none() {
+        return Err(CuaError::InvalidArgument(
+            "--wire describes a custom endpoint, so it needs --base-url too (it would be ignored on its own)"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// How long a followed run may say nothing before the CLI speaks up, and
+/// before it stops waiting. Claude Code retries a rejected key for about
+/// three minutes without a word; a run that is working prints within seconds.
+const SILENCE_WARN: Duration = Duration::from_secs(60);
+const SILENCE_FAIL: Duration = Duration::from_secs(240);
+
+#[derive(Debug, PartialEq, Eq)]
+enum Silence {
+    Fine,
+    Warn,
+    Fail,
+}
+
+/// What to do about `silent` time without an event; warns only once.
+fn silence(silent: Duration, warned: bool) -> Silence {
+    if silent >= SILENCE_FAIL {
+        Silence::Fail
+    } else if silent >= SILENCE_WARN && !warned {
+        Silence::Warn
+    } else {
+        Silence::Fine
+    }
+}
+
+const SILENCE_NEXT_STEP: &str = "If the provider key was not accepted, check it with `cua agent keys` \
+(replace it with `cua agent keys set anthropic`, or pass a valid one with --env-from-host), and check \
+--base-url/--wire if you set them. See what the agent did with `cua agent logs <space> <run> --raw`; \
+stop it with `cua agent stop <space> <run>`.";
+
+/// A plain-language next step for an authentication failure in `line`.
+fn auth_hint(line: &str) -> Option<&'static str> {
+    let l = line.to_ascii_lowercase();
+    let auth = l.contains("authenticat")
+        || l.contains("invalid x-api-key")
+        || l.contains("invalid api key")
+        || l.contains("incorrect api key")
+        || l.contains("api error: 401")
+        || l.contains("unauthorized");
+    auth.then_some(
+        "Your model key was not accepted. Run `cua agent keys set anthropic` (or openai, gemini) to save a valid one, or pass it with --env-from-host. If you use --base-url, the key must be one that endpoint accepts.",
+    )
+}
+
 /// The `agent_start` arguments for `cua agent run`.
 fn start_args(a: &RunArgs, space: &str) -> Result<serde_json::Value, CuaError> {
+    check_endpoint_flags(a)?;
     let (env, env_from_host) = split_env_from_host(&a.env_from_host, |n| std::env::var(n).ok())?;
     let mut files = vec![];
     for p in &a.files {
@@ -434,9 +766,18 @@ async fn start(
                 eprintln!("note: {n}");
             }
         }
+        if let Some(b) = &a.base_url {
+            eprintln!(
+                "note: using the model endpoint {b} (wire: {})",
+                a.wire.as_deref().unwrap_or("the harness's default")
+            );
+        }
         eprintln!(
-            "{run_id} started ({harness}); follow with: cua agent logs {} {run_id} -f",
-            a.sandbox
+            "{}",
+            crate::util::hint(&format!(
+                "{run_id} started ({harness}); follow with: cua agent logs {} {run_id} -f",
+                a.sandbox
+            ))
         );
     }
     if !a.follow {
@@ -510,11 +851,14 @@ async fn start_direct(
         );
     } else {
         eprintln!(
-            "{} started ({}); follow with: cua agent logs {} {} -f",
-            run.run_id(),
-            run.harness(),
-            a.sandbox,
-            run.run_id()
+            "{}",
+            crate::util::hint(&format!(
+                "{} started ({}); follow with: cua agent logs {} {} -f",
+                run.run_id(),
+                run.harness(),
+                a.sandbox,
+                run.run_id()
+            ))
         );
     }
     if a.follow {
@@ -524,6 +868,22 @@ async fn start_direct(
 }
 
 pub async fn run(
+    cua: &Arc<Cua>,
+    cmd: AgentCmd,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let mut code = 0;
+    for step in desugar(cmd)? {
+        code = run_one(cua, step, json, out).await?;
+        if code != 0 {
+            break;
+        }
+    }
+    Ok(code)
+}
+
+async fn run_one(
     cua: &Arc<Cua>,
     cmd: AgentCmd,
     json: bool,
@@ -567,11 +927,42 @@ pub async fn run(
         }
         return Ok(0);
     }
+    if let AgentCmd::Sessions = cmd {
+        return crate::agent_session_cmd::sessions(json, out).await;
+    }
     if let AgentCmd::Run(a) = cmd {
+        if a.durable {
+            return crate::agent_session_cmd::start(cua, *a, json, out).await;
+        }
         return start(cua, *a, json, out).await;
     }
+    // `session:NAME` where a sandbox goes: a durable session.
+    match &cmd {
+        AgentCmd::Logs { sandbox, .. }
+        | AgentCmd::Status { sandbox, .. }
+        | AgentCmd::Stop { sandbox, .. }
+        | AgentCmd::Rm { sandbox, .. } => {
+            if let Some(name) = crate::agent_session_cmd::session_of(sandbox) {
+                let name = name.to_string();
+                return match &cmd {
+                    AgentCmd::Logs { follow: f, .. } => {
+                        crate::agent_session_cmd::logs(&name, *f, json, out).await
+                    }
+                    AgentCmd::Status { .. } => {
+                        crate::agent_session_cmd::status(&name, json, out).await
+                    }
+                    AgentCmd::Stop { .. } => crate::agent_session_cmd::stop(&name, json, out).await,
+                    _ => crate::agent_session_cmd::rm(&name, json, out).await,
+                };
+            }
+        }
+        _ => {}
+    }
     let (at, sandbox) = match &cmd {
-        AgentCmd::Ls { at, sandbox }
+        AgentCmd::Ls {
+            at,
+            sandbox: Some(sandbox),
+        }
         | AgentCmd::Logs { at, sandbox, .. }
         | AgentCmd::Send { at, sandbox, .. }
         | AgentCmd::Interrupt { at, sandbox, .. }
@@ -580,9 +971,13 @@ pub async fn run(
         | AgentCmd::Rm { at, sandbox, .. }
         | AgentCmd::Ensure { at, sandbox, .. } => (*at, sandbox.clone()),
         AgentCmd::Run(_)
+        | AgentCmd::Add(_)
+        | AgentCmd::Schedule(_)
+        | AgentCmd::Ls { sandbox: None, .. }
+        | AgentCmd::Sessions
         | AgentCmd::Harnesses
         | AgentCmd::Keys { .. }
-        | AgentCmd::Persistent(_) => unreachable!(),
+        | AgentCmd::Persistent(_) => unreachable!("desugared or handled above"),
     };
     let guest = env_of(cua, &at.apply(&sandbox)?).await?;
     let agents = guest.agents().await?;
@@ -604,6 +999,15 @@ pub async fn run(
                 .take(60)
                 .collect::<String>()
         )
+    };
+    let need_run = |r: Option<String>| {
+        r.ok_or_else(|| {
+            CuaError::InvalidArgument(
+                "name the run (`cua agent ls SANDBOX` lists them), or use session:NAME for a \
+                 durable session"
+                    .into(),
+            )
+        })
     };
     match cmd {
         AgentCmd::Ls { .. } => {
@@ -628,7 +1032,7 @@ pub async fn run(
             raw,
             ..
         } => {
-            let run = agents.get(run_id).await?;
+            let run = agents.get(need_run(run_id)?).await?;
             follow(&run, 0, f, raw, json, out).await?;
         }
         AgentCmd::Send {
@@ -637,6 +1041,8 @@ pub async fn run(
             follow: f,
             ..
         } => {
+            // `send NAME TEXT` (no third word) was desugared to `tell`.
+            let text = text.unwrap_or_default();
             let run = agents.get(run_id).await?;
             let start = run.events(0, Some(1_000_000)).await?.cursor;
             let s = run.send(text, None).await?;
@@ -651,12 +1057,12 @@ pub async fn run(
             line(out, info_line(&s));
         }
         AgentCmd::Stop { run_id, .. } => {
-            let s = agents.get(run_id).await?.stop().await?;
+            let s = agents.get(need_run(run_id)?).await?.stop().await?;
             line(out, info_line(&s));
             return Ok(if s.alive == Some(false) { 0 } else { 1 });
         }
         AgentCmd::Status { run_id, .. } => {
-            let run = agents.get(run_id).await?;
+            let run = agents.get(need_run(run_id)?).await?;
             let s = run.status().await?;
             let r = run.result().await?;
             if json {
@@ -678,6 +1084,7 @@ pub async fn run(
             }
         }
         AgentCmd::Rm { run_id, .. } => {
+            let run_id = need_run(run_id)?;
             agents.get(run_id.clone()).await?.remove().await?;
             line(out, format!("removed {run_id}"));
         }
@@ -687,6 +1094,9 @@ pub async fn run(
             }
         }
         AgentCmd::Run(_)
+        | AgentCmd::Add(_)
+        | AgentCmd::Schedule(_)
+        | AgentCmd::Sessions
         | AgentCmd::Harnesses
         | AgentCmd::Keys { .. }
         | AgentCmd::Persistent(_) => {}
@@ -703,6 +1113,390 @@ mod tests {
     struct Cli {
         #[command(subcommand)]
         cmd: AgentCmd,
+    }
+
+    fn parse(argv: &[&str]) -> Result<AgentCmd, clap::Error> {
+        let mut v = vec!["agent"];
+        v.extend_from_slice(argv);
+        Cli::try_parse_from(v).map(|c| c.cmd)
+    }
+
+    /// The commands a spelling runs, as text (the commands compare by it).
+    fn runs(argv: &[&str]) -> String {
+        let cmd = parse(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        format!("{:?}", desugar(cmd).unwrap())
+    }
+
+    /// `agent add --durable` takes the same `--max-attempts` and
+    /// `--stall-secs` as `agent run --durable`, and they reach the session.
+    #[test]
+    fn add_durable_passes_max_attempts_and_stall_secs() {
+        let argv = [
+            "add",
+            "nightly",
+            "fix the tests",
+            "--harness",
+            "claude-code",
+            "--durable",
+            "--on",
+            "auto",
+            "--max-attempts",
+            "8",
+            "--stall-secs",
+            "45",
+        ];
+        let steps = desugar(parse(&argv).unwrap()).unwrap();
+        let [AgentCmd::Run(r)] = steps.as_slice() else {
+            panic!("one run: {steps:?}")
+        };
+        assert!(r.durable);
+        assert_eq!((r.max_attempts, r.stall_secs), (Some(8), Some(45)));
+        // Left out, they stay unset (the coordinator's defaults apply).
+        let steps =
+            desugar(parse(&["add", "n", "x", "--harness", "claude-code", "--durable"]).unwrap())
+                .unwrap();
+        let [AgentCmd::Run(r)] = steps.as_slice() else {
+            panic!("one run: {steps:?}")
+        };
+        assert_eq!((r.max_attempts, r.stall_secs), (None, None));
+        // Without --durable they mean nothing, so they are refused.
+        for flag in ["--max-attempts", "--stall-secs"] {
+            assert!(
+                parse(&["add", "n", "x", "--harness", "h", "--once", flag, "3"]).is_err(),
+                "{flag} needs --durable"
+            );
+        }
+    }
+
+    /// Alias equivalence: each new spelling runs exactly what the old
+    /// commands it stands for run.
+    #[test]
+    fn new_names_run_the_old_commands() {
+        let same = |new: &[&str], old: &[&[&str]]| {
+            let old: Vec<String> = old.iter().map(|o| runs(o)).collect();
+            // One step each: join the old commands' single steps.
+            let joined = format!(
+                "[{}]",
+                old.iter()
+                    .map(|o| o.trim_start_matches('[').trim_end_matches(']').to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            assert_eq!(runs(new), joined, "{new:?}");
+        };
+        let create = [
+            "create",
+            "ada",
+            "--harness",
+            "hermes",
+            "--in",
+            "local:dev",
+            "--model",
+            "m",
+            "--base-url",
+            "http://127.0.0.1:9",
+            "--env-from-host",
+            "OPENAI_API_KEY",
+        ];
+        same(
+            &[
+                "add",
+                "ada",
+                "--harness",
+                "hermes",
+                "--in",
+                "local:dev",
+                "--model",
+                "m",
+                "--base-url",
+                "http://127.0.0.1:9",
+                "--env-from-host",
+                "OPENAI_API_KEY",
+            ],
+            &[&create],
+        );
+        same(
+            &[
+                "add",
+                "ada",
+                "hello",
+                "--harness",
+                "hermes",
+                "--in",
+                "local:dev",
+                "--model",
+                "m",
+                "--base-url",
+                "http://127.0.0.1:9",
+                "--env-from-host",
+                "OPENAI_API_KEY",
+            ],
+            &[&create, &["tell", "ada", "hello"]],
+        );
+        let create = ["create", "ada", "--harness", "hermes", "--in", "local:dev"];
+        same(
+            &[
+                "add",
+                "ada",
+                "--harness",
+                "hermes",
+                "--in",
+                "local:dev",
+                "--daily",
+                "08:00",
+                "--title",
+                "Morning",
+                "plan the day",
+            ],
+            &[
+                &create,
+                &[
+                    "routine",
+                    "add",
+                    "ada",
+                    "--title",
+                    "Morning",
+                    "--prompt",
+                    "plan the day",
+                    "--daily",
+                    "08:00",
+                ],
+            ],
+        );
+        same(
+            &[
+                "add",
+                "ada",
+                "--harness",
+                "hermes",
+                "--in",
+                "local:dev",
+                "--every",
+                "60",
+                "triage",
+            ],
+            &[
+                &create,
+                &[
+                    "routine", "add", "ada", "--title", "ada", "--prompt", "triage", "--every",
+                    "60",
+                ],
+            ],
+        );
+        same(
+            &[
+                "add",
+                "ada",
+                "--harness",
+                "hermes",
+                "--in",
+                "local:dev",
+                "--weekly",
+                "mon 09:00",
+                "plan",
+            ],
+            &[
+                &create,
+                &[
+                    "routine",
+                    "add",
+                    "ada",
+                    "--title",
+                    "ada",
+                    "--prompt",
+                    "plan",
+                    "--weekly",
+                    "mon 09:00",
+                ],
+            ],
+        );
+        same(
+            &[
+                "add",
+                "fix-1",
+                "--harness",
+                "claude-code",
+                "--in",
+                "local:dev",
+                "--once",
+                "fix the test",
+                "--env-from-host",
+                "ANTHROPIC_API_KEY",
+            ],
+            &[&[
+                "run",
+                "local:dev",
+                "claude-code",
+                "fix the test",
+                "--label",
+                "fix-1",
+                "--exit-when-idle",
+                "--env-from-host",
+                "ANTHROPIC_API_KEY",
+            ]],
+        );
+        same(
+            &[
+                "add",
+                "nightly",
+                "--harness",
+                "claude-code",
+                "--durable",
+                "--on",
+                "auto",
+                "refactor",
+            ],
+            &[&[
+                "run",
+                "--durable",
+                "auto",
+                "claude-code",
+                "refactor",
+                "--name",
+                "nightly",
+                "--on",
+                "auto",
+            ]],
+        );
+        same(
+            &[
+                "add",
+                "nightly",
+                "--harness",
+                "claude-code",
+                "--durable",
+                "--in",
+                "build-box",
+                "refactor",
+            ],
+            &[&[
+                "run",
+                "--durable",
+                "build-box",
+                "claude-code",
+                "refactor",
+                "--name",
+                "nightly",
+            ]],
+        );
+        same(&["send", "ada", "hi"], &[&["tell", "ada", "hi"]]);
+        same(&["ls"], &[&["persistent"]]);
+        same(&["list"], &[&["persistent"]]);
+        same(&["rm", "ada"], &[&["forget", "ada"]]);
+        for sub in [
+            &["ls"][..],
+            &["ls", "ada"],
+            &["rm", "0F3A"],
+            &["enable", "0F3A"],
+            &["disable", "0F3A"],
+            &[
+                "add", "ada", "--title", "t", "--prompt", "p", "--daily", "08:00",
+            ],
+        ] {
+            let mut new = vec!["schedule"];
+            new.extend_from_slice(sub);
+            let mut old = vec!["routine"];
+            old.extend_from_slice(sub);
+            same(&new, &[&old]);
+        }
+    }
+
+    /// The run, sandbox and session spellings keep their meaning.
+    #[test]
+    fn run_spellings_are_unchanged() {
+        for argv in [
+            &["send", "local:dev", "run-1", "more", "-f"][..],
+            &["ls", "local:dev"],
+            &["ls", "--local", "dev"],
+            &["rm", "local:dev", "run-1"],
+            &["rm", "dev", "run-1"],
+            &["rm", "--local", "dev"],
+            &["rm", "session:refactor"],
+            &["run", "local:dev", "claude-code", "x"],
+        ] {
+            let cmd = parse(argv).unwrap();
+            let before = format!("{cmd:?}");
+            assert_eq!(runs(argv), format!("[{before}]"), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn new_names_refuse_what_they_cannot_mean() {
+        // A one-off, durable or scheduled agent needs its task.
+        for argv in [
+            &["add", "a", "--harness", "h", "--in", "s", "--once"][..],
+            &["add", "a", "--harness", "h", "--durable"],
+            &[
+                "add",
+                "a",
+                "--harness",
+                "h",
+                "--in",
+                "s",
+                "--daily",
+                "08:00",
+            ],
+            // Placement is for durable agents today.
+            &[
+                "add",
+                "a",
+                "--harness",
+                "h",
+                "--in",
+                "s",
+                "--on",
+                "auto",
+                "x",
+            ],
+            &[
+                "add",
+                "a",
+                "--harness",
+                "h",
+                "--in",
+                "s",
+                "--once",
+                "--durable",
+                "x",
+            ],
+            &[
+                "add",
+                "a",
+                "--harness",
+                "h",
+                "--in",
+                "s",
+                "--durable",
+                "--daily",
+                "08:00",
+                "x",
+            ],
+            &[
+                "add",
+                "a",
+                "--harness",
+                "h",
+                "--in",
+                "s",
+                "--daily",
+                "08:00",
+                "--every",
+                "5",
+                "x",
+            ],
+            // A plain agent needs its Space.
+            &["add", "a", "--harness", "h"],
+        ] {
+            assert!(parse(argv).is_err(), "{argv:?} parsed");
+        }
+        for argv in [
+            &["send", "ada", "hi", "-f"][..],
+            &["send", "--local", "ada", "hi"],
+            &["ls", "--local"],
+        ] {
+            let e = desugar(parse(argv).unwrap()).unwrap_err();
+            assert!(matches!(e, CuaError::InvalidArgument(_)), "{argv:?}: {e}");
+        }
     }
 
     fn run_args(argv: &[&str]) -> RunArgs {
@@ -812,6 +1606,8 @@ mod tests {
             "--exit-when-idle",
             "--label",
             "e2e",
+            "--base-url",
+            "http://127.0.0.1:9",
             "--wire",
             "anthropic",
         ]);
@@ -836,5 +1632,44 @@ mod tests {
         assert_eq!(parsed.exit_when_idle, Some(true));
         let missing = run_args(&["local:dev", "claude-code", "x", "--file", "/no/such/file"]);
         assert!(start_args(&missing, "local:dev").is_err());
+    }
+
+    #[test]
+    fn base_url_and_wire_reach_agent_start_and_wire_alone_is_refused() {
+        let a = run_args(&[
+            "local:dev",
+            "claude-code",
+            "hi",
+            "--base-url",
+            "http://gw:4000",
+            "--wire",
+            "anthropic",
+            "--model",
+            "m",
+        ]);
+        let v = start_args(&a, "local:dev").unwrap();
+        let parsed: cua_spaces::contract::inputs::AgentStart = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed.base_url.as_deref(), Some("http://gw:4000"));
+        assert_eq!(parsed.wire.as_deref(), Some("anthropic"));
+        let alone = run_args(&["local:dev", "claude-code", "hi", "--wire", "anthropic"]);
+        let e = start_args(&alone, "local:dev").unwrap_err().to_string();
+        assert!(e.contains("--base-url"), "{e}");
+    }
+
+    #[test]
+    fn a_silent_run_is_called_out_then_given_up_on() {
+        let s = Duration::from_secs;
+        assert_eq!(silence(s(5), false), Silence::Fine);
+        assert_eq!(silence(SILENCE_WARN, false), Silence::Warn);
+        assert_eq!(silence(SILENCE_WARN, true), Silence::Fine);
+        assert_eq!(silence(SILENCE_FAIL, true), Silence::Fail);
+    }
+
+    #[test]
+    fn an_auth_error_gets_a_plain_next_step() {
+        let h = auth_hint("Failed to authenticate. Anthropic API Error: 401 invalid x-api-key")
+            .unwrap();
+        assert!(h.contains("cua agent keys set"));
+        assert!(auth_hint("Rate limited, retry in 5s").is_none());
     }
 }

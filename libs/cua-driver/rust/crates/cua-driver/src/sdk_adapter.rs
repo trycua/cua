@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-facing adapter over the public Cua Driver SDK contract.
 //!
 //! The daemon, MCP transports, and finite CLI inspection commands all consume
@@ -151,18 +154,13 @@ impl SdkAdapter {
         self.driver.local_history_manager()
     }
 
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        self.driver.permissions_pending_result()
+    }
+
     pub fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars"
-            || cua_driver_core::tool::renamed_tool(name).is_some()
-            || self
-                .tools_list
-                .get("tools")
-                .and_then(Value::as_array)
-                .is_some_and(|tools| {
-                    tools
-                        .iter()
-                        .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-                })
+        cua_driver_core::tool::renamed_tool(name).is_some()
+            || self.driver.local_is_known_tool(name).unwrap_or(false)
     }
 
     pub fn describe(&self, name: &str) -> Option<Value> {
@@ -467,6 +465,10 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
 impl ToolProvider for SdkAdapter {
     fn tools_list(&self) -> Value {
         self.tools_list()
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        SdkAdapter::is_known_tool(self, name)
     }
 
     async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<Value, String> {

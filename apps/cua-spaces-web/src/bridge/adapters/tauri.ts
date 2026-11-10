@@ -22,7 +22,7 @@ import type {
   CreateProgress,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -36,6 +36,7 @@ import { newSpaceTauriOps } from "../ops/new-space";
 import { tauriShareOps } from "../ops/share";
 import { tauriAgentDetailOps } from "../ops/agent-detail";
 import { tauriAgentKeysOps } from "../ops/agent-keys";
+import { tauriGithubOps } from "../ops/github";
 import { KEYVAULT_MANAGE_TAURI_UNSUPPORTED } from "../ops/keyvault-manage";
 import { tauriKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { TELEPORT_TAURI_UNSUPPORTED, tauriTeleportOps } from "../ops/teleport";
@@ -57,7 +58,21 @@ import { tauriHostSetupOps } from "../ops/host-setup";
 import { TAURI_SPACE_DETAIL_UNSUPPORTED, tauriSpaceDetailOps } from "../ops/space-detail";
 import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
+import { NUDGES_OPERATIONS } from "../ops/nudges";
+import { AGENT_THREADS_OPERATIONS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_OPERATIONS } from "../ops/agent-sign-in";
+import { RESOURCES_OPERATIONS } from "../ops/resources";
+import { MACHINES_OPERATIONS } from "../ops/machines";
+import { SPACES_SETTINGS_OPERATIONS } from "../ops/spaces-settings";
+import { CHECKLIST_OPERATIONS } from "../ops/checklist";
+import { LINKS_OPERATIONS } from "../ops/links";
+import { CLI_OPERATIONS } from "../ops/cli";
+import { CI_OPERATIONS } from "../ops/ci";
+import { THREAD_OPERATIONS } from "../ops/thread";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
+import { cloudApproveTauriOps } from "../ops/cloud-approve";
+import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
+import { DRIVER_OPERATIONS } from "../ops/driver";
 import { tauriTelemetryOps } from "../ops/telemetry";
 import { tauriStartupOps } from "../ops/startup";
 
@@ -81,15 +96,53 @@ export const TAURI_EVENTS = {
 /** Operations the Tauri shell has no command for; they reject with `UnsupportedOperationError`. */
 export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
+  "network.get",
+  "network.set",
+  "network.log",
+  "network.ackNotice",
+  "spaces.setAccess",
+  "spaces.tree",
+  "children.set",
+  "budget.get",
+  "budget.set",
+  "services.list",
+  "services.control",
+  "spaces.deleteMany",
+  "spaces.leave",
+  "spaces.rename",
   "agents.events",
+  "agents.start",
+  "agents.message",
   "agents.setupDriver",
+  "agents.signIn",
+  "agents.status",
+  "agents.connect",
+  "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
+  "host.joinWithCode",
+  "host.limits",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
   ...TAURI_SETTINGS_UNSUPPORTED,
   ...TAURI_SPACE_DETAIL_UNSUPPORTED,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
+  ...AGENT_THREADS_OPERATIONS,
+  ...AGENT_SIGN_IN_OPERATIONS,
+  ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
+  ...CHECKLIST_OPERATIONS,
+  ...LINKS_OPERATIONS,
+  ...CLI_OPERATIONS,
+  ...CI_OPERATIONS,
+  ...THREAD_OPERATIONS,
+  "crashReporting.config",
   ...PRESENCE_OPERATIONS,
+  ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
 ];
 
 /** `persistent_agent_list`'s snake_case agents, as `PersistentAgent`s (as `src/native/persistent.ts` maps them). */
@@ -178,7 +231,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       const selfId = status?.machineId ?? "local";
       const self: MachineRow = {
         id: selfId,
-        name: status?.name ?? "This machine",
+        name: status?.name ?? "This computer",
         via: "local",
         online: true,
         os: env?.platform ?? "macos",
@@ -213,6 +266,11 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
           break;
         case "updateChannel":
           throw new UnsupportedOperationError("tauri", "settings.set updateChannel");
+        // The app core's own settings file is the Mac and Electron apps'; the page keeps this for the session.
+        case "tips":
+        case "notchPinned":
+        case "agentMenu":
+          throw new UnsupportedOperationError("tauri", `settings.set ${key}`);
       }
       return readSettings();
     },
@@ -223,8 +281,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       else await invoke("keyvault_unlock");
       return null;
     },
-    "keyvault.setUnattended": ({ itemIds, unattended }) =>
-      invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
+    "keyvault.setUnattended": ({ itemIds, unattended }) => invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
     "keyvault.setDisabled": async ({ disabled }) => {
       await invoke("keyvault_set_disabled", { disabled });
       return null;
@@ -237,12 +294,12 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     "keyvault.revokeGrant": ({ id }) => invoke("keyvault_revoke_grant", { id }),
 
     "session.get": async () => {
-      const [fleet, onboarding, daemon] = await Promise.all([
-        invoke<FleetStatus>("fleet_status", { probe: false }),
+      const [account, onboarding, daemon] = await Promise.all([
+        invoke<AccountStatus>("account_status", { probe: false }),
         invoke<OnboardingState>("onboarding_state").catch((): OnboardingState => ({ completed: true })),
         invoke<DaemonStatus>("daemon_status").catch(() => null),
       ]);
-      return { fleet, onboarding, daemon };
+      return { account, onboarding, daemon };
     },
     "session.signIn": () => invoke("begin_sign_in"),
     "session.signOut": async () => {
@@ -251,6 +308,10 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     },
     "session.completeOnboarding": async ({ mode }) => {
       await invoke("complete_onboarding", { mode });
+      return null;
+    },
+    "session.resetOnboarding": async () => {
+      await invoke("reset_onboarding");
       return null;
     },
     "session.openExternal": async ({ url }) => {
@@ -271,10 +332,12 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
     "agents.setup": () => invoke<AgentSetupRow[]>("agent_setup_detect"),
     "agents.configure": ({ agents }) => invoke<AgentSetupRow[]>("agent_setup_configure", { agents }),
     ...newSpaceTauriOps(invoke, readUi),
+    ...cloudApproveTauriOps(invoke),
     ...tauriTeleportOps(invoke, win.__TAURI_INTERNALS__, (e) => events.emit(e)),
     ...tauriShareOps(invoke),
     ...tauriAgentDetailOps(invoke),
     ...tauriAgentKeysOps(invoke),
+    ...tauriGithubOps(invoke),
     ...tauriKeyvaultSetupOps(invoke),
     ...tauriVolumeOps(invoke, win),
     ...tauriSettingsOps(invoke, { read: readUi, write: writeUi }),

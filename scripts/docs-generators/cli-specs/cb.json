@@ -1,5 +1,5 @@
 {
- "abstract": "cua-bench: run computer-use tasks and benchmark datasets on local and cloud sandboxes",
+ "abstract": "cua-bench: run computer-use tasks and benchmark datasets on sandboxes",
  "after_help": "Examples:\n  # Run a task with its oracle solution\n  cb run ./tasks/hello_file_env\n\n  # List the tasks in a directory\n  cb task list ./tasks",
  "commands": [
   {
@@ -15,7 +15,7 @@
    "subcommands": [
     {
      "abstract": "Run one task variant",
-     "after_help": "Examples:\n  # Run variant 0 with the oracle solution\n  cb run task ./tasks/hello_file_env\n\n  # Run variant 2 with an agent in the cloud\n  cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent --model anthropic/claude-sonnet-4-20250514 --on cloud\n\n  # Show what would run without starting a sandbox\n  cb run ./tasks/hello_file_env --dry-run",
+     "after_help": "Examples:\n  # Run variant 0 with the oracle solution\n  cb run task ./tasks/hello_file_env\n\n  # Run variant 2 with an agent on this machine\n  cb run task ./tasks/hello_file_env --variant-id 2 --agent cua-agent --model anthropic/claude-sonnet-4-20250514 --on local\n\n  # Show what would run without starting a sandbox\n  cb run ./tasks/hello_file_env --dry-run",
      "arguments": [
       {
        "default_value": null,
@@ -47,17 +47,6 @@
        "help": "Set up and evaluate with no actions (the null baseline for eval parity)",
        "hidden": false,
        "name": "noop",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
-       "help": "cloud: keep one replica ready when the managed pool is first created",
-       "hidden": false,
-       "name": "warm",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -199,7 +188,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -219,12 +208,13 @@
         "codesandbox",
         "northflank",
         "aws",
-        "gcp"
+        "gcp",
+        "hetzner"
        ],
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp | hetzner",
        "value_name": null
       },
       {
@@ -251,7 +241,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Which engine: gvisor or runc (local containers), qemu or lume (local VMs), gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+       "help": "Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -261,20 +251,19 @@
         "gvisor",
         "runc",
         "qemu",
-        "lume",
-        "kubevirt"
+        "lume"
        ],
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "auto | gvisor | runc | qemu | lume | kubevirt",
+       "type": "auto | gvisor | runc | qemu | lume",
        "value_name": null
       },
       {
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+       "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest. Env: CUA_BENCH_IMAGE",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -311,22 +300,6 @@
        "is_optional": true,
        "multiple_values": false,
        "name": "memory",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": null
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "claim-ttl",
        "possible_values": [],
        "repeatable": false,
        "short_name": null,
@@ -544,17 +517,6 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "cloud: keep one replica ready when the managed pool is first created",
-       "hidden": false,
-       "name": "warm",
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": false
-      },
-      {
-       "aliases": [],
-       "default_value": false,
-       "env": null,
        "help": "Run in the background and return (follow with cb run watch <id>)",
        "hidden": false,
        "name": "detach",
@@ -592,7 +554,7 @@
        "aliases": [],
        "default_value": "4",
        "env": null,
-       "help": "Variants running at once; in the cloud also the managed pool's max size (default: 4)",
+       "help": "Variants running at once (default: 4)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -704,7 +666,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+       "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -724,12 +686,13 @@
         "codesandbox",
         "northflank",
         "aws",
-        "gcp"
+        "gcp",
+        "hetzner"
        ],
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+       "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp | hetzner",
        "value_name": null
       },
       {
@@ -756,7 +719,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Which engine: gvisor or runc (local containers), qemu or lume (local VMs), gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+       "help": "Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -766,20 +729,19 @@
         "gvisor",
         "runc",
         "qemu",
-        "lume",
-        "kubevirt"
+        "lume"
        ],
        "repeatable": false,
        "short_name": null,
        "takes_value": true,
-       "type": "auto | gvisor | runc | qemu | lume | kubevirt",
+       "type": "auto | gvisor | runc | qemu | lume",
        "value_name": null
       },
       {
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+       "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest. Env: CUA_BENCH_IMAGE",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -816,22 +778,6 @@
        "is_optional": true,
        "multiple_values": false,
        "name": "memory",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": null
-      },
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "claim-ttl",
        "possible_values": [],
        "repeatable": false,
        "short_name": null,
@@ -1191,17 +1137,6 @@
      "repeatable": false,
      "short_name": null,
      "takes_value": false
-    },
-    {
-     "aliases": [],
-     "default_value": false,
-     "env": null,
-     "help": "cloud: keep one replica ready when the managed pool is first created",
-     "hidden": false,
-     "name": "warm",
-     "repeatable": false,
-     "short_name": null,
-     "takes_value": false
     }
    ],
    "hidden": false,
@@ -1307,7 +1242,7 @@
      "aliases": [],
      "default_value": null,
      "env": null,
-     "help": "Where sandboxes run: local (this machine), cloud, your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
+     "help": "Where sandboxes run: local (this machine), your own cloud account (aws, gcp, hetzner, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local",
      "hidden": false,
      "is_optional": true,
      "multiple_values": false,
@@ -1327,12 +1262,13 @@
       "codesandbox",
       "northflank",
       "aws",
-      "gcp"
+      "gcp",
+      "hetzner"
      ],
      "repeatable": false,
      "short_name": null,
      "takes_value": true,
-     "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp",
+     "type": "local | cloud | e2b | daytona | modal | cloudflare | vercel | morph | runloop | fly | blaxel | codesandbox | northflank | aws | gcp | hetzner",
      "value_name": null
     },
     {
@@ -1359,7 +1295,7 @@
      "aliases": [],
      "default_value": null,
      "env": null,
-     "help": "Which engine: gvisor or runc (local containers), qemu or lume (local VMs), gvisor or kubevirt (cloud containers, VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
+     "help": "Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`)",
      "hidden": false,
      "is_optional": true,
      "multiple_values": false,
@@ -1369,20 +1305,19 @@
       "gvisor",
       "runc",
       "qemu",
-      "lume",
-      "kubevirt"
+      "lume"
      ],
      "repeatable": false,
      "short_name": null,
      "takes_value": true,
-     "type": "auto | gvisor | runc | qemu | lume | kubevirt",
+     "type": "auto | gvisor | runc | qemu | lume",
      "value_name": null
     },
     {
      "aliases": [],
      "default_value": null,
      "env": null,
-     "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest, or pool:<name> for an existing Fleet pool. Env: CUA_BENCH_IMAGE",
+     "help": "Image for every task (overrides the task's setup_config.image): an OS alias (linux, windows, macos:tahoe), ghcr.io/trycua/<os>, any registry ref or a digest. Env: CUA_BENCH_IMAGE",
      "hidden": false,
      "is_optional": true,
      "multiple_values": false,
@@ -1419,22 +1354,6 @@
      "is_optional": true,
      "multiple_values": false,
      "name": "memory",
-     "possible_values": [],
-     "repeatable": false,
-     "short_name": null,
-     "takes_value": true,
-     "type": "string",
-     "value_name": null
-    },
-    {
-     "aliases": [],
-     "default_value": null,
-     "env": null,
-     "help": "cloud: how long a claim outlives a crashed run (default 15m; renewed while running)",
-     "hidden": false,
-     "is_optional": true,
-     "multiple_values": false,
-     "name": "claim-ttl",
      "possible_values": [],
      "repeatable": false,
      "short_name": null,
@@ -1564,45 +1483,6 @@
        "possible_values": [],
        "repeatable": false,
        "short_name": "t",
-       "takes_value": true,
-       "type": "string",
-       "value_name": null
-      }
-     ],
-     "subcommands": []
-    },
-    {
-     "abstract": "Deprecated: agent images are no longer used",
-     "after_help": "Examples:\n  # Push an agent image (deprecated)\n  cb agent push my-agent:dev",
-     "arguments": [
-      {
-       "default_value": "cua-bench:latest",
-       "help": "Docker image to push (default: cua-bench:latest)",
-       "hidden": false,
-       "is_optional": true,
-       "name": "image_name",
-       "possible_values": [],
-       "repeatable": false,
-       "type": "string"
-      }
-     ],
-     "discussion": "Push a Docker image through the CUA API proxy with workspace namespacing.",
-     "flags": [],
-     "hidden": false,
-     "name": "push",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": null,
-       "env": null,
-       "help": "Custom API proxy URL (default: https://api.cua.ai)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "registry",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
        "takes_value": true,
        "type": "string",
        "value_name": null
@@ -2664,8 +2544,8 @@
    "subcommands": []
   },
   {
-   "abstract": "List or garbage-collect sandboxes and pools",
-   "after_help": "Examples:\n  # List managed cloud pools and claims\n  cb env ls\n\n  # Delete pools idle for an hour\n  cb env gc --idle 1h",
+   "abstract": "List local sandboxes",
+   "after_help": "Examples:\n  # List local sandboxes\n  cb env ls",
    "arguments": [],
    "flags": [],
    "hidden": false,
@@ -2674,8 +2554,8 @@
    "subcommand_optional": true,
    "subcommands": [
     {
-     "abstract": "List managed cloud pools and claims",
-     "after_help": "Examples:\n  # List managed cloud pools and claims\n  cb env ls\n\n  # List local sandboxes\n  cb env ls --local",
+     "abstract": "List local sandboxes",
+     "after_help": "Examples:\n  # List local sandboxes\n  cb env ls",
      "aliases": [
       "list"
      ],
@@ -2685,7 +2565,7 @@
        "aliases": [],
        "default_value": false,
        "env": null,
-       "help": "List local sandboxes instead",
+       "help": "List local sandboxes (the default; kept as a no-op)",
        "hidden": false,
        "name": "local",
        "repeatable": false,
@@ -2697,57 +2577,8 @@
      "name": "ls",
      "options": [],
      "subcommands": []
-    },
-    {
-     "abstract": "Delete idle managed pools and stuck claims",
-     "after_help": "Examples:\n  # Delete pools unused for 30 minutes\n  cb env gc\n\n  # Delete pools idle for two hours\n  cb env gc --idle 2h",
-     "arguments": [],
-     "flags": [],
-     "hidden": false,
-     "name": "gc",
-     "options": [
-      {
-       "aliases": [],
-       "default_value": "30m",
-       "env": null,
-       "help": "Delete pools unused for this long (default 30m)",
-       "hidden": false,
-       "is_optional": true,
-       "multiple_values": false,
-       "name": "idle",
-       "possible_values": [],
-       "repeatable": false,
-       "short_name": null,
-       "takes_value": true,
-       "type": "string",
-       "value_name": null
-      }
-     ],
-     "subcommands": []
     }
    ]
-  },
-  {
-   "abstract": "Sign in for --on cloud (runs `cua auth login`)",
-   "after_help": "Examples:\n  # Sign in with a browser\n  cb login\n\n  # Print the sign-in URL instead of opening a browser\n  cb login --no-browser",
-   "arguments": [],
-   "flags": [
-    {
-     "aliases": [],
-     "default_value": false,
-     "env": null,
-     "help": "Print the sign-in URL only",
-     "hidden": false,
-     "name": "no-browser",
-     "repeatable": false,
-     "short_name": null,
-     "takes_value": false
-    }
-   ],
-   "hidden": false,
-   "name": "login",
-   "options": [],
-   "subcommands": []
   }
  ],
  "exit_codes": [
@@ -2771,5 +2602,5 @@
  "global_options": [],
  "name": "cb",
  "usage": "cb <COMMAND> [OPTIONS]",
- "version": "0.3.0"
+ "version": "0.3.1"
 }

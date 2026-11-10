@@ -2,18 +2,9 @@
   "title": "Reference",
   "pages": [
     "index",
-    "lifecycle",
-    "commands-and-files",
-    "streams-and-display",
-    "services",
+    "spaces",
+    "sharing-and-clouds",
     "agents",
-    "persistent-agents",
-    "teleport",
-    "keyvault",
-    "hotspot",
-    "volume",
-    "sharing",
-    "cloud",
-    "errors"
+    "threads"
   ]
 }

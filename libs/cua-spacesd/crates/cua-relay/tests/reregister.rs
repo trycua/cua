@@ -173,7 +173,7 @@ async fn reregistering_needs_proof_only_while_the_host_is_live() {
         body["error"]
             .as_str()
             .unwrap()
-            .contains("needs its machine token or an enrolled device"),
+            .contains("needs its computer token or an enrolled device"),
         "{body}"
     );
     let lines = reregister_lines();

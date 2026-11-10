@@ -1,0 +1,9 @@
+{
+  "name": "cua-compat-modal-js",
+  "private": true,
+  "type": "module",
+  "description": "The unmodified modal npm SDK against the cua-compat Modal gateway (hermetic, over mock Spaces).",
+  "dependencies": {
+    "modal": "0.11.1"
+  }
+}

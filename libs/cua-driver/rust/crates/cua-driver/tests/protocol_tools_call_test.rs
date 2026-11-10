@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-tool `tools/call` integration tests.
 //!
 //! Drives the real tools end-to-end over JSON-RPC: list_apps, get_config /

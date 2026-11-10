@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import CuaSpacesFFI
+@testable import CuaSpacesMacKit
+import Foundation
+import Testing
+
+/// Tips (CUA-2204): the sidebar's tip in the classic UI, Settings' Show
+/// tips and Reset tips, and the New UI saving them through the bridge.
+/// The rules are the core's (`tips::view`, `settings::choose`); these check
+/// the app asks with the right facts and keeps what comes back.
+@MainActor
+struct TipsTests {
+    private func settingsOnDisk(_ m: AppModel) -> AppSettings { appSettingsLoad(path: m.settingsPath) }
+
+    @Test func theSidebarHasNoTip() {
+        // Its only tip was a CLI flag (`cua create --on auto`): it lives in the CLI docs now.
+        let none = AppTipsState(off: false, done: [])
+        #expect(AppModel.sidebarTip(machinesOnline: 1, tips: none) == nil)
+        #expect(AppModel.sidebarTip(machinesOnline: 2, tips: none) == nil)
+    }
+
+    @Test func closingTheTipKeepsItClosedAcrossLaunches() async {
+        let m = ViewModelTests().makeModel()
+        await m.refresh()
+        #expect(m.sidebarTip == nil, "the fixtures have one computer online")
+        m.sendTips(.close(id: "on-auto"))
+        #expect(m.settings.tips.done == ["on-auto"])
+        #expect(settingsOnDisk(m).tips.done == ["on-auto"])
+        #expect(AppModel.sidebarTip(machinesOnline: 3, tips: m.settings.tips) == nil)
+    }
+
+    @Test func sharingASpaceFinishesTheShareTip() {
+        let m = ViewModelTests().makeModel()
+        m.sendTips(.shared)
+        #expect(m.settings.tips.done == ["share"])
+        m.sendTips(.shared)
+        #expect(m.settings.tips.done == ["share"], "once")
+    }
+
+    @Test func showTipsAndResetTipsInSettings() async {
+        let m = ViewModelTests().makeModel()
+        m.sendTips(.close(id: "power"))
+        await m.choose(row: "tips", option: "off")
+        #expect(m.settings.tips.off)
+        #expect(settingsOnDisk(m).tips.off)
+        #expect(m.settingsPage.sections.flatMap(\.rows).first { $0.id == "tips" }?.options.first { $0.active }?.id == "off")
+        await m.choose(row: "tips", option: "on")
+        #expect(!m.settings.tips.off)
+        #expect(m.settings.tips.done == ["power"], "turning them on brings back only the ones not done")
+        await m.press(row: "reset-tips")
+        #expect(m.settings.tips == AppTipsState(off: false, done: []))
+        #expect(settingsOnDisk(m).tips.done.isEmpty)
+    }
+
+    @Test func theNewUISavesTipsThroughTheBridge() async throws {
+        let m = ViewModelTests().makeModel()
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let before = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        let tips = try #require(before["tips"] as? [String: Any])
+        #expect(tips["off"] as? Bool == false)
+        #expect(tips["done"] as? [String] == [])
+
+        let after = try #require(try await bridge.handle("settings.update", [
+            "tips": ["off": true, "done": ["try-agent"]],
+        ]) as? [String: Any])
+        #expect((after["tips"] as? [String: Any])?["done"] as? [String] == ["try-agent"])
+        #expect(settingsOnDisk(m).tips == AppTipsState(off: true, done: ["try-agent"]))
+
+        // A key left out stays.
+        _ = try await bridge.handle("settings.update", [:])
+        #expect(m.settings.tips.done == ["try-agent"])
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["tips": "on"]) }
+
+        // The core's rows through `settings.choose`, as the New UI's Settings page may send them.
+        _ = try await bridge.handle("settings.choose", ["row": "reset-tips", "option": "press"])
+        #expect(m.settings.tips == AppTipsState(off: false, done: []))
+    }
+
+    /// Which coding apps the agent menu shows rides the same settings path
+    /// (`agentMenu`): the page reads and saves it and it survives a restart.
+    /// The rule (defaults, the last app, a connect that shows an app again)
+    /// is the core's `agent_menu`.
+    @Test func theNewUISavesTheAgentMenuChoiceThroughTheBridge() async throws {
+        let m = ViewModelTests().makeModel()
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let before = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        let none = try #require(before["agentMenu"] as? [String: Any])
+        #expect(none["hidden"] as? [String] == [])
+
+        let after = try #require(try await bridge.handle("settings.update", [
+            "agentMenu": ["shown": ["goose"], "hidden": ["hermes"], "seen": ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"]],
+        ]) as? [String: Any])
+        #expect((after["agentMenu"] as? [String: Any])?["hidden"] as? [String] == ["hermes"])
+        #expect(settingsOnDisk(m).agentMenuHidden == ["hermes"])
+        #expect(settingsOnDisk(m).agentMenuShown == ["goose"])
+        #expect(settingsOnDisk(m).agentMenuSeen == ["claude-code|CLAUDE_CODE_OAUTH_TOKEN|"])
+        // The tips are untouched, and a malformed choice is refused.
+        #expect(m.settings.tips == AppTipsState(off: false, done: []))
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["agentMenu": ["hidden": "hermes"]]) }
+    }
+
+    /// The notch's pins ride the same settings path as the tips: the page reads
+    /// and saves them (`notchPinned`), the notch lists the pinned first at once,
+    /// and they survive a restart.
+    @Test func theNewUISavesTheNotchPinsThroughTheBridge() async throws {
+        let m = ViewModelTests().makeModel()
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        let before = try #require(try await bridge.handle("settings.get", [:]) as? [String: Any])
+        #expect(before["notchPinned"] as? [String] == [])
+
+        let after = try #require(try await bridge.handle("settings.update", [
+            "notchPinned": ["relay:wsl", "local:aurora"],
+        ]) as? [String: Any])
+        #expect(after["notchPinned"] as? [String] == ["relay:wsl", "local:aurora"])
+        #expect(settingsOnDisk(m).notchPinned == ["relay:wsl", "local:aurora"])
+        #expect(m.notch.state.pinned == ["relay:wsl", "local:aurora"], "the notch follows at once")
+        #expect(m.settings.tips == AppTipsState(off: false, done: []), "the tips are untouched")
+
+        // A key left out stays; a wrong one is refused.
+        _ = try await bridge.handle("settings.update", [:])
+        #expect(m.settings.notchPinned == ["relay:wsl", "local:aurora"])
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["notchPinned": "relay:wsl"]) }
+        await #expect(throws: (any Error).self) { try await bridge.handle("settings.update", ["notchPinned": [1]]) }
+    }
+}

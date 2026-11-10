@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg(target_os = "linux")]
 
-use platform_linux::wayland::kwin_helper::{available, parse_snapshot, with_focused_window};
+use platform_linux::wayland::kwin_helper::{available, parse_snapshot};
 
 #[test]
 fn parses_versioned_kwin_snapshot() {
@@ -70,22 +73,9 @@ fn rejects_multiple_active_records() {
 }
 
 #[test]
-fn raw_kwin_input_is_refused_before_dispatch() {
+fn kwin_reports_no_target_bound_input() {
     assert!(
         !available(),
         "focus-bound KWin input must not be advertised as safe"
     );
-
-    let called = std::cell::Cell::new(false);
-    let error = with_focused_window(1200, 41, || {
-        called.set(true);
-        Ok(())
-    })
-    .expect_err("focus-bound KWin input must refuse");
-
-    assert!(
-        !called.get(),
-        "input body must not run on the focus-only KWin path"
-    );
-    assert!(error.to_string().contains("target-bound KWin input path"));
 }

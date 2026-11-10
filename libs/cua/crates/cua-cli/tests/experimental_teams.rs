@@ -1,10 +1,10 @@
-//! Teams are experimental: `cua team`, `cua host pair --team` and sharing
-//! with `team:<id>` stay out of help and are refused unless
-//! CUA_EXPERIMENTAL_TEAMS is set.
+//! Teams are on by default; `CUA_EXPERIMENTAL_TEAMS=0` is the kill switch:
+//! `cua team`, `cua host pair --team` and sharing with `team:<id>` then
+//! stay out of help and are refused.
 
 use std::process::{Command, Output, Stdio};
 
-const UNAVAILABLE: &str = "Teams isn't available yet.";
+const UNAVAILABLE: &str = "Teams is turned off (CUA_EXPERIMENTAL_TEAMS=0).";
 
 fn cua(teams: Option<&str>, args: &[&str]) -> Output {
     let home = tempfile::tempdir().unwrap();
@@ -37,8 +37,8 @@ fn lists_team(help: &str) -> bool {
 }
 
 #[test]
-fn without_the_flag_teams_are_hidden_and_refused() {
-    for off in [None, Some("0")] {
+fn with_the_kill_switch_teams_are_hidden_and_refused() {
+    for off in [Some("0"), Some("false")] {
         let help = text(&cua(off, &["--help"]));
         assert!(help.contains("spaces"), "{help}");
         assert!(!lists_team(&help), "{help}");
@@ -65,10 +65,12 @@ fn without_the_flag_teams_are_hidden_and_refused() {
 }
 
 #[test]
-fn with_the_flag_teams_work_as_before() {
-    let help = text(&cua(Some("1"), &["--help"]));
-    assert!(lists_team(&help), "{help}");
-    assert!(text(&cua(Some("1"), &["host", "pair", "--help"])).contains("--team"));
+fn by_default_teams_are_listed_and_pass_the_gate() {
+    for on in [None, Some("1")] {
+        let help = text(&cua(on, &["--help"]));
+        assert!(lists_team(&help), "{help}");
+        assert!(text(&cua(on, &["host", "pair", "--help"])).contains("--team"));
+    }
     // Past the gate: they fail here only for want of a sign-in or relay.
     for args in [
         &["team", "ls"][..],
@@ -81,7 +83,7 @@ fn with_the_flag_teams_work_as_before() {
             "--yes",
         ][..],
     ] {
-        let out = cua(Some("1"), args);
+        let out = cua(None, args);
         assert!(
             !text(&out).contains(UNAVAILABLE),
             "{args:?}: {}",

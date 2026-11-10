@@ -6,7 +6,7 @@ If you've been following Cua from the start, you may remember that it began with
 
 A macOS guest running through Apple's `Virtualization.framework` uses a virtual GPU backed by the host's Apple GPU. In our stock Tahoe VM, that device reported a conservative Metal capability profile. Applications use those answers to select kernels and rendering paths, which left llama.cpp running much slower GPU code.
 
-We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist).
+We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) and [Cua Spaces](https://cua.ai/spaces).
 
 We're releasing this work today as a research release under the same permissive license as Lume and Cua, so others can reproduce the results and help map which Apple Silicon chips, macOS releases, and Metal workloads benefit.
 
@@ -82,7 +82,7 @@ Values below are medians of the ten samples emitted for each benchmark row:
 
 Prompt processing nearly reached the host result. Generation reached 72.06% of host speed, leaving a measurable VM gap. The gain depends on the host GPU, guest version, application, and workload shape.
 
-The [TinyLlama raw results and environment record](https://github.com/trycua/cua/tree/main/evidence/lume-metal-capability-shim/2026-08-09-m1-ultra) include the exact image digest, model and binary hashes, commands, JSON output, stderr, and checksums. These release-candidate results certify the reduced shim used in this post.
+The [TinyLlama raw results and environment record](https://github.com/trycua/cua/tree/main/libs/lume/metal-capability-shim/evidence/2026-08-09-m1-ultra) include the exact image digest, model and binary hashes, commands, JSON output, stderr, and checksums. These release-candidate results certify the reduced shim used in this post.
 
 ### A current 12B model
 
@@ -95,7 +95,7 @@ The host, VM, shim, benchmark shape, and ten-sample method stayed the same. We d
 | Prompt processing, 512 tokens |    517.88 tok/s | 71.66 tok/s |   **515.76 tok/s** |     **7.20×** |      **99.59%** |
 | Token generation, 128 tokens  |     52.38 tok/s |  3.41 tok/s |    **49.67 tok/s** |    **14.54×** |      **94.82%** |
 
-The [Gemma 4 evidence](https://github.com/trycua/cua/tree/main/evidence/lume-metal-capability-shim/2026-08-10-m1-ultra-gemma4) pins Google's model revision and SHA-256 alongside the final raw samples. We discarded and reran a preliminary stock series after detecting another host compute workload. The retained stock, unlocked, and bare-metal files come from the same uncontended window and show tight sample ranges.
+The [Gemma 4 evidence](https://github.com/trycua/cua/tree/main/libs/lume/metal-capability-shim/evidence/2026-08-10-m1-ultra-gemma4) pins Google's model revision and SHA-256 alongside the final raw samples. We discarded and reran a preliminary stock series after detecting another host compute workload. The retained stock, unlocked, and bare-metal files come from the same uncontended window and show tight sample ranges.
 
 ### A 30B text model in a 64 GiB guest
 
@@ -108,7 +108,7 @@ Muse Glimmer let us test the same capability path with a larger model. We used M
 
 These values are medians of three llama-bench samples. The built-in same-process warmup ran before each row and is excluded from the samples. All four processes exited successfully. Before and after every arm, the guest reported 98% free memory, zero swap, and zero compressor use. Stock stderr reported Apple family 5 with the newer SIMD-group and bfloat paths disabled; unlocked stderr reported Apple family 9 with those paths enabled.
 
-The host was shared with another VM that showed intermittent CPU activity, so the [Muse Glimmer evidence](https://github.com/trycua/cua/tree/main/evidence/lume-metal-capability-shim/2026-08-11-m1-ultra-muse-glimmer-64g) preserves that boundary. The pp512 samples were tight, and the stock tg128 median agreed within 5.6% of an earlier independent run. The public evidence includes the official model revision and SHA-256, llama.cpp and shim hashes, path-sanitized raw JSON, capability logs, exact arguments, telemetry summaries, and checksums.
+The host was shared with another VM that showed intermittent CPU activity, so the [Muse Glimmer evidence](https://github.com/trycua/cua/tree/main/libs/lume/metal-capability-shim/evidence/2026-08-11-m1-ultra-muse-glimmer-64g) preserves that boundary. The pp512 samples were tight, and the stock tg128 median agreed within 5.6% of an earlier independent run. The public evidence includes the official model revision and SHA-256, llama.cpp and shim hashes, path-sanitized raw JSON, capability logs, exact arguments, telemetry summaries, and checksums.
 
 This result applies to the text-only GGUF through llama.cpp. It should not be read as Ollama throughput or as a result for Muse Glimmer's multimodal and speculative-decoding components.
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.driver.plist:
+  Cua Driver for the coding agents on this Mac, as the app's login item,
+  registered with SMAppService.agent(plistName:) by the app at launch
+  (DriverService). It runs the app's own executable (`--driver-helper run`),
+  which keeps Contents/Helpers/cua-driver serve --embedded running as its
+  child, so the driver uses the app's Screen Recording and Accessibility
+  grants: one name, "Cua Spaces", in System Settings. It runs whether or not
+  this Mac is set up, shared or signed in (CUA-3638); only "Let agents use
+  apps on this Mac" turns the driver off. Exit 0 (stopped, or the app was
+  removed) stays stopped; any other exit (an update) is restarted.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.trycua.spaces.driver</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/CuaSpacesMac</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>CuaSpacesMac</string>
+		<string>--driver-helper</string>
+		<string>run</string>
+	</array>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.trycua.spaces.macos</string>
+	</array>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>

@@ -7,9 +7,11 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { TeleportPicker } from "./components/TeleportPicker";
 import { MainWindow } from "./components/desktop/MainWindow";
+import "./i18n";
+import { reportUiLocale } from "./i18n/reportLocale";
 import { initCore } from "./core";
 import { createBridge, hasTauri } from "./native/bridge";
-import { createFleetBridge } from "./native/fleet";
+import { createSpacesBridge } from "./native/spacesBridge";
 import { declareExperiments } from "./state/experiments";
 import { SpaceViewer } from "./viewer/SpaceViewer";
 import { WindowStream } from "./viewer/WindowStream";
@@ -29,13 +31,13 @@ async function pickSurface(): Promise<React.ReactElement> {
     const label = getCurrentWindow().label;
     if (label.startsWith("space-") || label.startsWith("pip-")) {
       document.documentElement.classList.add("is-viewer");
-      return <SpaceViewer fleet={createFleetBridge()} />;
+      return <SpaceViewer bridge={createSpacesBridge()} />;
     }
     if (label.startsWith("win-") || label.startsWith("winone-")) {
       // Per-window RCDP client: `win-*` hosts one panel per remote
       // window; `winone-*` is a single dedicated OS window for one remote window.
       document.documentElement.classList.add("is-viewer", "is-window-stream");
-      return <WindowStream fleet={createFleetBridge()} />;
+      return <WindowStream bridge={createSpacesBridge()} />;
     }
     if (label === "main") {
       // The main window: an ordinary, opaque desktop window (sidebar, toolbar,
@@ -65,19 +67,16 @@ async function pickSurface(): Promise<React.ReactElement> {
   if (hasTauri()) {
     // Only the portal reaches this point; kick off a background auto-update
     // check so long-lived installs pick up new releases without user action.
-    void import("./native/updater").then(({ checkForUpdateSilently }) =>
-      checkForUpdateSilently(),
-    );
+    void import("./native/updater").then(({ checkForUpdateSilently }) => checkForUpdateSilently());
   }
   return <App bridge={createBridge()} />;
 }
 
 // The app core (wasm) loads before anything renders: every surface's models
 // call it synchronously.
+reportUiLocale();
 void initCore()
   .then(pickSurface)
   .then((surface) => {
-  ReactDOM.createRoot(document.getElementById("root")!).render(
-    <React.StrictMode>{surface}</React.StrictMode>,
-  );
-});
+    ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode>{surface}</React.StrictMode>);
+  });

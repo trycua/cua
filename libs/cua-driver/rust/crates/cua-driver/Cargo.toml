@@ -35,6 +35,9 @@ ureq = { version = "3", features = ["json"] }
 # `[telemetry] enabled` in $CUA_HOME/config.toml). Only its config reader
 # is used; no sender.
 cua-telemetry = { path = "../../../../cua/crates/cua-telemetry", default-features = false }
+# Reads Codex's config.toml in `connect`. Already in the tree through
+# cua-telemetry, at the same version.
+toml_edit = "0.25"
 # Strict semver comparison for the startup update-available banner so that
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".

@@ -5,9 +5,9 @@
 //!   under hvf/kvm with a cloud-init seed carrying an SSH key, checks
 //!   `uname -m` over SSH, QMP screendump, suspend/resume, live checkpoint
 //!   (savevm), stop, stopped checkpoint + fork + boot of the fork.
-//! * `CUA_E2E_QEMU_X86=1`: boots a Fleet x86_64 containerDisk under TCG and
+//! * `CUA_E2E_QEMU_X86=1`: boots an x86_64 containerDisk under TCG and
 //!   waits for the kernel boot log on the serial console
-//!   (`CUA_E2E_QEMU_X86_DISK=/path/disk.qcow2`, pulled by the image test).
+//!   (`CUA_E2E_QEMU_X86_DISK=/path/disk.qcow2`).
 
 use std::path::PathBuf;
 use std::time::Duration;

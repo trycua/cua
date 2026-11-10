@@ -253,9 +253,10 @@ of bounded cleanup latency.
 
 ## Compatibility and build gates
 
-For background `TARGET`, Driver restricts app/package/version/operation
-eligibility before connecting. Its qualification scope remains native Calc and
-Inkscape. Foreground `FOREGROUND_TARGET` has no Calc/Inkscape package gate; its
+For background `TARGET`, Driver admits a native Wayland window of the exact
+process before connecting, and refuses XWayland windows and inputs a toolkit is
+known to drop (Qt 6 keys). The plugin refuses `client_not_bound` when the client
+never bound the lane seat's pointer or keyboard. Foreground `FOREGROUND_TARGET`
 scope is ordinary native top-level surfaces. Native GTK3, Electron, and Tauri
 foreground coverage is planned and still requires certification. The plugin checks
 native surface identity, geometry, client conflicts, and exact compiled XKB

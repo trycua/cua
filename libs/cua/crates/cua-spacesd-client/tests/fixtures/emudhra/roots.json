@@ -1,0 +1,109 @@
+[
+  {
+    "name": "emSign Root TLS CA - G3",
+    "operator": "eMudhra",
+    "role": "direct_issuer",
+    "subject": "CN=emSign Root TLS CA - G3,O=eMudhra Technologies Limited,C=IN",
+    "serial_hex": "0E760672F143459FC8FE0AB0BC05E394",
+    "sha256": "7DD78D5F4F13459A83DFF9ABBBA62EDBAF6F2D102BF257FD712F4D9F2746ED8D",
+    "spki_sha256": "C619E4780ED8E0ABEDA24AD732567DE4383A7EA941338F6D1A7D1B49AC792FE9",
+    "subject_key_identifier": "E13AAB217CF1E34D54AED472B7FD8B5942209054",
+    "authority_key_identifier": null,
+    "key": {
+      "algorithm": "EC",
+      "curve": "secp384r1",
+      "bits": 384
+    },
+    "signature_algorithm": "ecdsa-with-SHA384",
+    "not_before": "2024-02-08T08:19:32Z",
+    "not_after": "2049-02-07T08:19:32Z",
+    "root_store_status": {
+      "apple": "Not Included",
+      "chrome": "Not Included",
+      "microsoft": "Included",
+      "mozilla": "Not Included"
+    },
+    "crl_url": "http://crl.emsign.com/?roottlscag3.crl",
+    "pem": "-----BEGIN CERTIFICATE-----\nMIICKTCCAa+gAwIBAgIQDnYGcvFDRZ/I/gqwvAXjlDAKBggqhkjOPQQDAzBWMQsw\nCQYDVQQGEwJJTjElMCMGA1UECgwcZU11ZGhyYSBUZWNobm9sb2dpZXMgTGltaXRl\nZDEgMB4GA1UEAwwXZW1TaWduIFJvb3QgVExTIENBIC0gRzMwHhcNMjQwMjA4MDgx\nOTMyWhcNNDkwMjA3MDgxOTMyWjBWMQswCQYDVQQGEwJJTjElMCMGA1UECgwcZU11\nZGhyYSBUZWNobm9sb2dpZXMgTGltaXRlZDEgMB4GA1UEAwwXZW1TaWduIFJvb3Qg\nVExTIENBIC0gRzMwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAARfD9w/q1cWxL6D9bMG\nH6CQ4u+gAV6GN9s+PwQx9Bl4hC+0iU8QOk8mWO/RwXQy10DCSxT8vSIJClHKp+Ao\n4qJKdYeV0SwZ7LMQziyLfxIUOY6Grja/sQFwLKYf8EdDXAyjQjBAMB0GA1UdDgQW\nBBThOqshfPHjTVSu1HK3/YtZQiCQVDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/\nBAUwAwEB/zAKBggqhkjOPQQDAwNoADBlAjBhCFTkly7Yl7+s4hiw+k6ZJTXT2AiI\nrvmsmfqPr5E7ecwXb6kXA5LTFd6rjwTuV3sCMQC9w6ZSbVq1mveMO6dKFziOzClT\nKCT2RFT6yXtq6nzgRICgBmiXbJAXsmZ8yAwjyWc=\n-----END CERTIFICATE-----"
+  },
+  {
+    "name": "emSign Root CS CA - G3",
+    "operator": "eMudhra",
+    "role": "direct_issuer",
+    "subject": "CN=emSign Root CS CA - G3,O=eMudhra Technologies Limited,C=IN",
+    "serial_hex": "018FCEC927C116F59C997EDC0CCD2E2B",
+    "sha256": "F2EDAAFF3D9B701FB4D14C9F285F8C0BAD90FC3BCC1FA07D47F4718EDABA34A5",
+    "spki_sha256": "0A6C2B2CA5B364207954171987AC9D2178561569D8205457E77CA90C32EDE282",
+    "subject_key_identifier": "687403F885CA8D5450571D16E0C8DE450DABCD2D",
+    "authority_key_identifier": null,
+    "key": {
+      "algorithm": "EC",
+      "curve": "secp384r1",
+      "bits": 384
+    },
+    "signature_algorithm": "ecdsa-with-SHA384",
+    "not_before": "2024-02-08T08:33:14Z",
+    "not_after": "2049-02-07T08:33:14Z",
+    "root_store_status": {
+      "apple": "Not Included",
+      "chrome": "Not Included",
+      "microsoft": "Included",
+      "mozilla": "Not Included"
+    },
+    "crl_url": "http://crl.emsign.com/?rootcscag3.crl",
+    "pem": "-----BEGIN CERTIFICATE-----\nMIICKDCCAa2gAwIBAgIQAY/OySfBFvWcmX7cDM0uKzAKBggqhkjOPQQDAzBVMQsw\nCQYDVQQGEwJJTjElMCMGA1UECgwcZU11ZGhyYSBUZWNobm9sb2dpZXMgTGltaXRl\nZDEfMB0GA1UEAwwWZW1TaWduIFJvb3QgQ1MgQ0EgLSBHMzAeFw0yNDAyMDgwODMz\nMTRaFw00OTAyMDcwODMzMTRaMFUxCzAJBgNVBAYTAklOMSUwIwYDVQQKDBxlTXVk\naHJhIFRlY2hub2xvZ2llcyBMaW1pdGVkMR8wHQYDVQQDDBZlbVNpZ24gUm9vdCBD\nUyBDQSAtIEczMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAESl9kM5D0VA/Og76dz5Xz\nw1hnGQ4fSR9993/qBkkvI48pXQVKOdyHCgAZThgWejQ8OpFRiTISjpabn4tfRFOY\nuzhApR/XxGbkg9X+2cEtbyghF9CdoF91W22V/R2EVe4xo0IwQDAdBgNVHQ4EFgQU\naHQD+IXKjVRQVx0W4MjeRQ2rzS0wDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwMDaQAwZgIxAK9OlACrFod3UgWY1ai+DF9sGFhahU59\nrv4jJyV01QaxGn0HErZ8gjHkngqe+tcFogIxAPTdW0hBmrGjhxBWdv9mZNdVFiJ4\nlrZ3ahvimsLhTQpnDBgiGKv6Ov1Fx/CE6yjIAg==\n-----END CERTIFICATE-----"
+  },
+  {
+    "name": "AAA Certificate Services",
+    "operator": "Sectigo",
+    "role": "direct_issuer",
+    "subject": "CN=AAA Certificate Services,O=Comodo CA Limited,L=Salford,ST=Greater Manchester,C=GB",
+    "serial_hex": "01",
+    "sha256": "D7A7A0FB5D7E2731D771E9484EBCDEF71D5F0C3E0A2948782BC83EE0EA699EF4",
+    "spki_sha256": "BD153ED7B0434F6886B17BCE8BBE84ED340C7132D702A8F4FA318F756ECBD6F3",
+    "subject_key_identifier": "A0110A233E96F107ECE2AF29EF82A57FD030A4B4",
+    "authority_key_identifier": null,
+    "key": {
+      "algorithm": "RSA",
+      "bits": 2048
+    },
+    "signature_algorithm": "sha1WithRSAEncryption",
+    "not_before": "2004-01-01T00:00:00Z",
+    "not_after": "2028-12-31T23:59:59Z",
+    "root_store_status": {
+      "apple": "Included",
+      "chrome": "Removed",
+      "microsoft": "Included",
+      "mozilla": "Removed"
+    },
+    "crl_url": "http://crl.comodoca.com/AAACertificateServices.crl",
+    "pem": "-----BEGIN CERTIFICATE-----\nMIIEMjCCAxqgAwIBAgIBATANBgkqhkiG9w0BAQUFADB7MQswCQYDVQQGEwJHQjEb\nMBkGA1UECAwSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHDAdTYWxmb3JkMRow\nGAYDVQQKDBFDb21vZG8gQ0EgTGltaXRlZDEhMB8GA1UEAwwYQUFBIENlcnRpZmlj\nYXRlIFNlcnZpY2VzMB4XDTA0MDEwMTAwMDAwMFoXDTI4MTIzMTIzNTk1OVowezEL\nMAkGA1UEBhMCR0IxGzAZBgNVBAgMEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UE\nBwwHU2FsZm9yZDEaMBgGA1UECgwRQ29tb2RvIENBIExpbWl0ZWQxITAfBgNVBAMM\nGEFBQSBDZXJ0aWZpY2F0ZSBTZXJ2aWNlczCCASIwDQYJKoZIhvcNAQEBBQADggEP\nADCCAQoCggEBAL5AnfRu4ep2hxxNRUSOvkbIgwadwSr+GB+O5AL686tdUIoWMQua\nBtDFcCLNSS1UY8y2bmhGC1Pqy0wkwLxyTurxFa70VJoSCsN6sjNg4tqJVfMiWPPe\n3M/vg4aijJRPn2jymJBGhCfHdr/jzDUsi14HZGWCwEiwqJH5YZ92IFCokcdmtet4\nYgNW8IoaE+oxox6gmf049vYnMlhvB/VruPsUK6+3qszWY19zjNoFmag4qMsXeDZR\nrOme9Hg6jc8P2ULimAyrL58OAd7vn5lJ8S3frHRNG5i1R8XlKdH5kBjHYpy+g8cm\nez6KJcfA3Z3mNWgQIJ2P2N7Sw4ScDV7oL8kCAwEAAaOBwDCBvTAdBgNVHQ4EFgQU\noBEKIz6W8Qfs4q8p74Klf9AwpLQwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQF\nMAMBAf8wewYDVR0fBHQwcjA4oDagNIYyaHR0cDovL2NybC5jb21vZG9jYS5jb20v\nQUFBQ2VydGlmaWNhdGVTZXJ2aWNlcy5jcmwwNqA0oDKGMGh0dHA6Ly9jcmwuY29t\nb2RvLm5ldC9BQUFDZXJ0aWZpY2F0ZVNlcnZpY2VzLmNybDANBgkqhkiG9w0BAQUF\nAAOCAQEACFb8AvCb6P+k+tZ7xkSAzk/ExfYAWMymtrwUSWgEdujm7l3sAg9g1o1Q\nGE8mTgHj5rCl7r+8dFRBv/38ErjHT1r0iWAFf2C3BUrz9vHCv8S5dIa2LX1rzNLz\nRt0vxuBqw8M0Ayx9lt1awg6nCpnBBYurDC/zXDrPbDdVCYfeU0BsWO/8tqtlbgT2\nG9w84FoVxp7Z8VlIMCFlA2zs6SFz7JsDoeA3raAVGI/6ugLOpyypEBMs1OUIJqsi\nl2D4kF501KKaU73yqWjgom7C12yxow+ev+to51byrvLjKzg6CYG1a4XXvi3tPxq3\nsmPi9WIsgtRqAEFQ8TmDn5XpNpaYbg==\n-----END CERTIFICATE-----"
+  },
+  {
+    "name": "emSign ECC Root CA - G3",
+    "operator": "eMudhra",
+    "role": "cross_signer",
+    "subject": "CN=emSign ECC Root CA - G3,O=eMudhra Technologies Limited,OU=emSign PKI,C=IN",
+    "serial_hex": "3CF607A968700EDA8B84",
+    "sha256": "86A1ECBA089C4A8D3BBE2734C612BA341D813E043CF9E8A862CD5C57A36BBE6B",
+    "spki_sha256": "8D417DB2DD8BF5E3084D1E3F196D583849D81BDD4C00C70B9D39369E96B8C782",
+    "subject_key_identifier": "7C5D028413D4CC8A9B81CE171C2E291E9C486342",
+    "authority_key_identifier": null,
+    "key": {
+      "algorithm": "EC",
+      "curve": "secp384r1",
+      "bits": 384
+    },
+    "signature_algorithm": "ecdsa-with-SHA384",
+    "not_before": "2018-02-18T18:30:00Z",
+    "not_after": "2043-02-18T18:30:00Z",
+    "root_store_status": {
+      "apple": "Included",
+      "chrome": "Included",
+      "microsoft": "Included",
+      "mozilla": "Included"
+    },
+    "crl_url": "http://crl.emsign.com/?RootCAG3.crl",
+    "pem": "-----BEGIN CERTIFICATE-----\nMIICTjCCAdOgAwIBAgIKPPYHqWhwDtqLhDAKBggqhkjOPQQDAzBrMQswCQYDVQQG\nEwJJTjETMBEGA1UECxMKZW1TaWduIFBLSTElMCMGA1UEChMcZU11ZGhyYSBUZWNo\nbm9sb2dpZXMgTGltaXRlZDEgMB4GA1UEAxMXZW1TaWduIEVDQyBSb290IENBIC0g\nRzMwHhcNMTgwMjE4MTgzMDAwWhcNNDMwMjE4MTgzMDAwWjBrMQswCQYDVQQGEwJJ\nTjETMBEGA1UECxMKZW1TaWduIFBLSTElMCMGA1UEChMcZU11ZGhyYSBUZWNobm9s\nb2dpZXMgTGltaXRlZDEgMB4GA1UEAxMXZW1TaWduIEVDQyBSb290IENBIC0gRzMw\ndjAQBgcqhkjOPQIBBgUrgQQAIgNiAAQjpQy4LRL1KPOxst3iAhKAnjlfSU2fySU0\nWXTsuwYc58Byr+iuL+FBVIcUqEqy6HyC5ltqtdyzdc6LBtCGI79G1Y4PPwT01xyS\nfvalY8L1X44uT6EYGQIrMgqCZH0Wk9GjQjBAMB0GA1UdDgQWBBR8XQKEE9TMipuB\nzhccLikenEhjQjAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUwAwEB/zAKBggq\nhkjOPQQDAwNpADBmAjEAvvNhzwIQHWSVB7gYboiFBS+DCBeQyh+KTOgNG3qxrdWB\nCUfvO6wIBHxcmbHtRwfSAjEAnbpV/KlK6O3t5nYBQnvI+GDZjVGLVTv7jHvrZQnD\n+JbNR6iC8hZVdyR+EhCVBCyj\n-----END CERTIFICATE-----"
+  }
+]

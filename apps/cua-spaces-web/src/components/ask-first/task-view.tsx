@@ -26,6 +26,7 @@ import {
   useAgents,
   useAgentTimeline,
   useBridge,
+  useMachines,
   useSession,
   useShareSheet,
   useSpaceDetail,
@@ -67,7 +68,7 @@ import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
 import { hostOs, thisComputerLabel, thisComputerText } from "@/lib/host-labels";
-import { THIS_COMPUTER } from "@/lib/machines";
+import { THIS_COMPUTER, thisComputerSubtitle } from "@/lib/machines";
 
 /** What the agent is told when the person hands the computer back. */
 /** How long a sent reply may take to show in the run before the thread trusts the run's status again (ms). */
@@ -374,7 +375,7 @@ export function StartFailed({
   onRetry: (where?: TaskWhere) => void;
 }) {
   const t = useT();
-  const view = startErrorView(error, name);
+  const view = startErrorView(error, name, host);
   const { core } = useBridge();
   const connectors = useConnectors();
   // "Connect <app>" in place of Add your key: Settings, Connections' Connect, here; then it starts again by itself.
@@ -582,9 +583,10 @@ function Screen({
   const detail = useSpaceDetail(space, null).detail;
   // A task that never started shows no screen: there is nothing of its to watch.
   const on = space && state !== "didnt-start" ? spaceState(space) === "running" : false;
+  // The header already says "Didn't start": the empty screen only says nothing ran there.
   const caption =
     state === "didnt-start"
-      ? TASK_STATE_TEXT["didnt-start"]
+      ? t("home.task.nothing_ran")
       : !space
         ? task.ending === "thrown"
           ? t("home.task.thrown")
@@ -628,43 +630,44 @@ function Screen({
           {!space && task.onHost && (state === "working" || state === "stuck") ? <span data-ask-no-asking="">{t("home.task.wont_ask")}</span> : null}
         </div>
       )}
-      <div className="flex min-h-12 items-center gap-2 px-3">
-        <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">{caption}</span>
-        {space && on ? (
-          <>
-            <div className="flex rounded-lg border p-0.5 text-[13px]" role="group" aria-label={t("home.task.screen")}>
-              <button
-                type="button"
-                aria-pressed={mode === "watch"}
-                onClick={() => onMode("watch")}
-                className={cn("flex h-8 items-center gap-1.5 rounded-md px-2.5", mode === "watch" && "bg-foreground/[0.08] font-medium")}
-              >
-                <EyeIcon className="size-3.5" /> {t("home.task.watch")}
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === "control"}
-                onClick={() => onMode("control")}
-                className={cn("flex h-8 items-center gap-1.5 rounded-md px-2.5", mode === "control" && "bg-brand-surface font-medium")}
-              >
-                <HandIcon className="size-3.5" /> {t("home.task.take_over")}
-              </button>
-            </div>
-            <Button variant="ghost" size="icon" aria-label={big ? t("home.task.make_smaller") : t("home.task.make_bigger")} onClick={onBig}>
-              {big ? <Minimize2Icon /> : <Maximize2Icon />}
-            </Button>
-          </>
-        ) : null}
-      </div>
+      {/* The empty screen shows the caption already: the bar under it carries the live controls only. */}
+      {space && on ? (
+        <div className="flex min-h-12 items-center gap-2 px-3">
+          <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">{caption}</span>
+          <div className="flex rounded-lg border p-0.5 text-[13px]" role="group" aria-label={t("home.task.screen")}>
+            <button
+              type="button"
+              aria-pressed={mode === "watch"}
+              onClick={() => onMode("watch")}
+              className={cn("flex h-8 items-center gap-1.5 rounded-md px-2.5", mode === "watch" && "bg-foreground/[0.08] font-medium")}
+            >
+              <EyeIcon className="size-3.5" /> {t("home.task.watch")}
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "control"}
+              onClick={() => onMode("control")}
+              className={cn("flex h-8 items-center gap-1.5 rounded-md px-2.5", mode === "control" && "bg-brand-surface font-medium")}
+            >
+              <HandIcon className="size-3.5" /> {t("home.task.take_over")}
+            </button>
+          </div>
+          <Button variant="ghost" size="icon" aria-label={big ? t("home.task.make_smaller") : t("home.task.make_bigger")} onClick={onBig}>
+            {big ? <Minimize2Icon /> : <Maximize2Icon />}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined }) {
   const t = useT();
+  const { data: machines } = useMachines();
   const os = task.os === "macos" ? "Mac" : task.os === "windows" ? "Windows" : "Linux";
+  // This computer's card says what it is (its model, or its OS), not its title a second time.
   const line = task.onHost
-    ? thisComputerLabel()
+    ? thisComputerSubtitle(machines, thisComputerLabel())
     : !space
       ? task.ending === "thrown"
         ? t("home.task.thrown")
@@ -680,7 +683,7 @@ function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined
         <OsIcon os={task.os} className="size-4 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="font-medium">{task.onHost ? thisComputerLabel() : space ? space.name : t("home.task.computer_for_task", { os })}</div>
-          <div className="text-muted-foreground">{line}</div>
+          {line ? <div className="text-muted-foreground">{line}</div> : null}
         </div>
         {space ? (
           <Button variant="ghost" size="sm" render={<Link to="/spaces/$spaceId" params={{ spaceId: space.id }} />}>

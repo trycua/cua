@@ -748,12 +748,22 @@ export const PAGES: PageSpec[] = [
     ],
   },
   {
+    slug: 'spaces/presence',
+    title: 'Joining presence',
+    description: 'Join a Space\'s presence, or the presence of a window another Space shows, so each viewer is one avatar and one cursor.',
+    intro: '`join_presence` joins the Space\'s channel. `join_presence_for` takes the window being watched: a window another Space shows here, streamed straight from its origin, joins the origin\'s channel and this Space\'s and reads them as one. The types are on [Streams and presence](/cua-sdk/reference/spaces/streams).',
+    members: [
+      { object: 'Space', title: 'Joining presence', methods: ['join_presence', 'join_presence_for'] },
+    ],
+    items: [],
+  },
+  {
     slug: 'spaces/streams',
     title: 'Streams and presence',
     description: 'Media sessions of a Space and presence (who is connected, and their cursors).',
     intro: 'Open a media session for another client, stream frames to callbacks, and join presence. `PresenceView` and the `presence_cursor_art*` functions draw the cursors the same way in every Cua UI.',
     members: [
-      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows', 'join_presence'] },
+      { object: 'Space', title: 'Space streams', methods: ['open_stream', 'attach_stream', 'stream_session', 'close_stream', 'websocket_headers', 'windows'] },
     ],
     items: [
       'SpaceStreamSession',

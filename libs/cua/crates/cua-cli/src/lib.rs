@@ -42,7 +42,6 @@ mod ci_overview;
 mod ci_signin;
 mod ci_targets;
 mod cloud_cmd;
-mod compat_cmd;
 mod computer;
 mod config_cmd;
 mod connections_cmd;
@@ -296,7 +295,7 @@ enum Command {
     /// Run another provider's SDK unchanged on Cua Spaces: a local gateway
     /// that speaks its wire protocol (`cua compat serve --provider e2b`).
     #[command(subcommand)]
-    Compat(compat_cmd::CompatCmd),
+    Compat(cua_compat_cmd::CompatCmd),
     /// Disk used by images, sandboxes, builds and logs, and its cleanup.
     #[command(subcommand)]
     Cache(cache::CacheCmd),
@@ -1708,7 +1707,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Bench(cmd) => return bench_cmd::run(cmd.clone(), json, out),
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
         Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
-        Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
+        Command::Compat(cmd) => return extension::compat(cmd.clone(), json, out).await,
         Command::Cache(cmd) => {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
@@ -2598,7 +2597,7 @@ async fn daemon_start(
     if foreground {
         // Job members that ask for `compat:e2b` / `compat:daytona` reach a
         // cua-compat gateway this daemon runs (shared, started on first use).
-        compat_cmd::register_job_services();
+        extension::register_compat_job_services();
     }
     if !foreground {
         if let Some(d) = cua_daemon::Discovery::read(&discovery)

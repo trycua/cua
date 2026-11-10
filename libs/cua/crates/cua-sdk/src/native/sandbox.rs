@@ -4,7 +4,7 @@
 use super::{Backend, SpacesdClient, ms, run};
 use crate::types::{ExitInfo, ImageFormat, ProcessOutput, Screenshot};
 use crate::{CuaError, Result};
-use cua_daemon::{CreateRequest, SandboxRecord};
+use cua_daemon_core::{CreateRequest, SandboxRecord};
 use cua_sandbox_core::{Probe, ProviderKind as CoreProvider, Status};
 use std::{collections::HashMap, sync::Arc};
 
@@ -926,8 +926,8 @@ pub struct PublicUrl {
     pub provider_details: HashMap<String, String>,
 }
 
-impl From<cua_daemon::shares::PublicUrl> for PublicUrl {
-    fn from(u: cua_daemon::shares::PublicUrl) -> Self {
+impl From<cua_daemon_core::shares::PublicUrl> for PublicUrl {
+    fn from(u: cua_daemon_core::shares::PublicUrl) -> Self {
         PublicUrl {
             id: u.id,
             url: u.url,
@@ -1593,8 +1593,8 @@ pub struct SandboxPool {
     pub status: String,
 }
 
-impl From<cua_daemon::PoolInfo> for SandboxPool {
-    fn from(p: cua_daemon::PoolInfo) -> Self {
+impl From<cua_daemon_core::PoolInfo> for SandboxPool {
+    fn from(p: cua_daemon_core::PoolInfo) -> Self {
         Self {
             name: p.name,
             image: p.image,
@@ -2176,13 +2176,13 @@ impl GuestDisplay {
 }
 
 fn core_err(e: cua_sandbox_core::Error) -> CuaError {
-    cua_daemon::Error::from(e).into()
+    cua_daemon_core::Error::from(e).into()
 }
 
 /// The agentless fallback in the daemon topology: the daemon runs on this
 /// machine, and Lume's `lume ssh` and VNC endpoint are host facilities, so
 /// the client reaches them itself for a local sandbox.
-fn daemon_local(info: &SandboxInfo, op: &str) -> Result<cua_daemon::local::VmmLocal> {
+fn daemon_local(info: &SandboxInfo, op: &str) -> Result<cua_daemon_core::local::VmmLocal> {
     if info.location != "local" {
         return Err(CuaError::Unsupported(format!(
             "{op} without cua-spacesd is only available for local Lume sandboxes \
@@ -2190,7 +2190,7 @@ fn daemon_local(info: &SandboxInfo, op: &str) -> Result<cua_daemon::local::VmmLo
             info.name, info.location
         )));
     }
-    Ok(cua_daemon::local::VmmLocal::default())
+    Ok(cua_daemon_core::local::VmmLocal::default())
 }
 
 /// Agentless access for sandboxes without cua-spacesd (Rust hosts; the
@@ -2494,7 +2494,7 @@ impl Service {
 #[derive(uniffi::Object)]
 pub struct PortForward {
     backend: Option<Backend>,
-    info: cua_daemon::ForwardInfo,
+    info: cua_daemon_core::ForwardInfo,
     /// A forward over a Space's own connection ([`super::Space::forward`]),
     /// relayed by this process.
     tunnel: std::sync::Mutex<Option<cua_spacesd_client::TcpForward>>,
@@ -2507,7 +2507,7 @@ impl PortForward {
         let local = fwd.local_addr().to_string();
         Self {
             backend: None,
-            info: cua_daemon::ForwardInfo {
+            info: cua_daemon_core::ForwardInfo {
                 id: String::new(),
                 guest_port: fwd.guest_port(),
                 url: Some(format!("http://{local}")),
@@ -2783,7 +2783,7 @@ pub fn sandbox_locations() -> Vec<String> {
 /// `contrib` feature).
 #[uniffi::export]
 pub fn contrib_providers_built() -> Vec<String> {
-    cua_daemon::contrib_provider_names()
+    cua_daemon_core::contrib_provider_names()
 }
 
 /// Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
@@ -3092,7 +3092,7 @@ enum BatchStream {
     #[cfg(feature = "spaces")]
     Embedded(
         tokio::sync::mpsc::Receiver<
-            cua_daemon::Result<cua_proto::daemon::v1::ForkSandboxBatchResponse>,
+            cua_daemon_core::Result<cua_proto::daemon::v1::ForkSandboxBatchResponse>,
         >,
     ),
     Daemon(Box<tonic::Streaming<cua_proto::daemon::v1::ForkSandboxBatchResponse>>),

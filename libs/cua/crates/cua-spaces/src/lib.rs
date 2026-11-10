@@ -158,6 +158,8 @@ pub mod site_login;
 pub mod spawn;
 #[cfg(feature = "spaces-stream")]
 pub mod stream;
+#[cfg(feature = "spaces-stream")]
+pub mod stream_registry;
 /// The Keyvault broker seam the `teleport_app` MCP tool routes delivery
 /// through (the daemon supplies the implementation).
 pub mod teleport_broker;

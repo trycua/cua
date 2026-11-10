@@ -1,5 +1,5 @@
 //! The Spaces calls the reconciler makes: the seam between the pool and
-//! Cua Spaces. [`crate::sdk::SdkSpaces`] implements it over the cua SDK
+//! Cua Spaces. `SdkSpaces` in cua-cli implements it over the cua SDK
 //! (the cua daemon, or a runtime in this process); the tests use an
 //! in-memory fake.
 

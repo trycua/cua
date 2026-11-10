@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
-import { ArrowUpIcon, CheckIcon, ChevronDownIcon, EllipsisIcon, LaptopIcon, LoaderCircleIcon, MonitorIcon, SparklesIcon } from "lucide-react";
-import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
+import { ArrowUpIcon, CheckIcon, ChevronDownIcon, EllipsisIcon, LaptopIcon, LoaderCircleIcon, MonitorIcon, SparklesIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 
 import type { AgentAccount, AgentGroup, AgentsView, Space, SpaceOs } from "@/bridge";
 import { AppMarkImage } from "@/components/agents/harness-mark";
@@ -15,6 +15,8 @@ import { useT, t } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AgentPicker } from "./agent-picker";
+import { AtPicker, atPlaces, matchPlaces, type AtPlace, type NameableMachine } from "./at-picker";
+import { activeMention } from "@/lib/mentions";
 import { RepoChip } from "./repo-chip";
 import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { thisMacChipText, type ThisMacReadiness } from "@/lib/this-mac-target";
@@ -48,13 +50,7 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
 /** A new Space's row: just its system ("Linux", "macOS"); the section label says it's new, on this computer. */
 const NEW_KIND_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "macOS", windows: "Windows", unknown: "" };
 
-/** A computer the person can name for the agent to use (agent homes). */
-export interface NameableMachine {
-  id: string;
-  name: string;
-  current: boolean;
-  online: boolean;
-}
+export type { NameableMachine };
 
 function Picker({
   trigger,
@@ -145,6 +141,7 @@ export function AskBox({
   onSubmit,
   compact,
   autoFocus,
+  pickerSide = "down",
 }: {
   text: string;
   onText: (t: string) => void;
@@ -184,6 +181,8 @@ export function AskBox({
   onSubmit: () => void;
   compact?: boolean;
   autoFocus?: boolean;
+  /** Which way the `@` list opens: up for a box at the bottom of a page. */
+  pickerSide?: "up" | "down";
 }) {
   const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -199,13 +198,63 @@ export function AskBox({
   // text, or by picking one (the "..." button then shows).
   const placed = where.kind !== "agent" || Boolean(where.reuse);
   const naming = placed || /(^|\s)@/.test(text);
+  // `@` opens your computers: Esc closes, arrows move, Enter or a click picks, and the pick is the where chip
+  // (the same choice the picker on the chip makes), not text.
+  const [caret, setCaret] = useState(0);
+  const [index, setIndex] = useState(0);
+  const [closedAt, setClosedAt] = useState<number | null>(null);
+  const places = atPlaces({ agentHome, machines, computers });
+  const mention = activeMention(text, caret);
+  const shown = mention && closedAt !== mention.start ? matchPlaces(mention.query, places) : null;
+  const open = shown !== null;
+  const at = Math.min(index, Math.max(0, (shown?.length ?? 1) - 1));
+  const pickPlace = (p: AtPlace) => {
+    if (!mention || !p.online) return;
+    const after = text.slice(caret).replace(/^[\w.-]*/, "");
+    const next = (text.slice(0, mention.start) + after.replace(/^ /, "")).replace(/^\s+/, "");
+    onText(next);
+    onWhere(p.where);
+    setCaret(Math.max(0, mention.start));
+    setIndex(0);
+    ref.current?.focus();
+  };
+  const chosen =
+    agentHome && placed
+      ? places.find((p) =>
+          where.kind === "machine" ? p.where.kind === "machine" && p.where.machine.id === where.machine.id : where.kind === "this-mac" && p.current,
+        )
+      : undefined;
   return (
-    <div data-ask-box="" className="rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
+    <div data-ask-box="" className="relative rounded-2xl border bg-card shadow-xs dark:bg-white/[0.03]">
+      {open ? <AtPicker places={shown} index={at} onIndex={setIndex} onPick={pickPlace} side={pickerSide} filtered={places.length > 0} /> : null}
       <textarea
         ref={ref}
         value={text}
-        onChange={(e) => onText(e.target.value)}
+        onChange={(e) => {
+          onText(e.target.value);
+          setCaret(e.target.selectionStart ?? e.target.value.length);
+          setIndex(0);
+        }}
+        onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
         onKeyDown={(e) => {
+          if (shown && mention && !e.nativeEvent.isComposing) {
+            const n = shown.length;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (n) setIndex((at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setClosedAt(mention.start);
+              return;
+            }
+            if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+              e.preventDefault();
+              if (shown[at]) pickPlace(shown[at]);
+              return;
+            }
+          }
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             if (ready) onSubmit();
@@ -231,8 +280,20 @@ export function AskBox({
         />
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
-          <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">
-            {t("home.ask_box.in_place", { place: label.title })}
+          <span className={cn(whereChip, "gap-1.5 pr-0.5 pl-2.5 text-[13px]")} data-ask-where-chip="at">
+            {chosen ? <OsIcon os={chosen.os} className="size-3.5 text-muted-foreground" /> : null}
+            <span className="max-w-64 truncate" data-ask-where="">
+              {t("home.ask_box.in_place", { place: label.title })}
+            </span>
+            <button
+              type="button"
+              data-ask-where-clear=""
+              aria-label={t("home.ask_box.at_clear", { place: label.title })}
+              onClick={() => onWhere({ kind: "agent" })}
+              className="flex size-7 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <XIcon className="size-3.5" />
+            </button>
           </span>
         ) : null}
         {agentHome ? null : (

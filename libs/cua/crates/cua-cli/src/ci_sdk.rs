@@ -10,8 +10,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cua_sdk::{Cua, CuaError, Space};
 
-use crate::egress::EgressPolicy;
-use crate::spaces::{ShOutput, SpaceRow, SpaceSpec, Spaces, SpacesError};
+use cua_ci::egress::EgressPolicy;
+use cua_ci::spaces::{ShOutput, SpaceRow, SpaceSpec, Spaces, SpacesError};
 
 /// The cua SDK's Spaces.
 pub struct SdkSpaces {
@@ -117,10 +117,10 @@ impl Spaces for SdkSpaces {
             // the limit, not a broken image.
             Err(SpacesError::Other(m)) if m.contains("stopped while booting") => {
                 return Err(match self.macos_vms_running().await {
-                    Some(n) if n >= crate::config::MACOS_VMS_PER_HOST => {
+                    Some(n) if n >= cua_ci::config::MACOS_VMS_PER_HOST => {
                         SpacesError::LimitExceeded(format!(
                             "{m} (this Mac runs {n} macOS VMs; Apple allows {})",
-                            crate::config::MACOS_VMS_PER_HOST
+                            cua_ci::config::MACOS_VMS_PER_HOST
                         ))
                     }
                     _ => SpacesError::Other(m),

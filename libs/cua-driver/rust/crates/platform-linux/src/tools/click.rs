@@ -1474,24 +1474,43 @@ impl Tool for ClickTool {
         let native_refusal = (!isolated_background)
             .then(|| unavailable_wayland_focused_input_background(delivery, true))
             .flatten();
+        // The screenshot point the capture was bound to, before it is mapped.
+        let capture_point = (x, y);
         if desktop_frame {
             // Desktop pixels: no zoom/screenshot scaling; translated once below.
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-        } else if let Some(capture_id) = capture_id_arg {
+        } else if let Some(capture_id) = capture_id_arg.clone() {
             if let Some(refusal) = native_refusal {
                 return refusal;
             }
-            match crate::capture_action_frame::admit_window_click(
-                &self.state.capture_service,
-                &args,
-                &capture_id,
-                pid,
-                xid,
-                x,
-                y,
-            ) {
+            // A click that may still be refused after its point is mapped (a
+            // Chromium background click that finds no accessible control)
+            // must not spend the one-shot capture: the foreground retry
+            // reuses it. Spend it once the click is dispatched.
+            let admitted = if chromium_atspi_only {
+                crate::capture_action_frame::preview_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            } else {
+                crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    &capture_id,
+                    pid,
+                    xid,
+                    x,
+                    y,
+                )
+            };
+            match admitted {
                 Ok(point) => (x, y) = point,
                 Err(error) => return capture_admission_error(error),
             }
@@ -1770,6 +1789,26 @@ impl Tool for ClickTool {
         } else {
             "background"
         };
+        if chromium_atspi_only
+            && !matches!(
+                &result,
+                Ok(Ok(("background_unavailable_chromium", _, _, _)))
+            )
+        {
+            if let Some(capture_id) = capture_id_arg.as_deref() {
+                // Dispatched (or failed after dispatch): the capture is spent
+                // exactly as a plain admission would have spent it.
+                let _ = crate::capture_action_frame::admit_window_click(
+                    &self.state.capture_service,
+                    &args,
+                    capture_id,
+                    pid,
+                    xid,
+                    capture_point.0,
+                    capture_point.1,
+                );
+            }
+        }
         let outcome = match result {
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(

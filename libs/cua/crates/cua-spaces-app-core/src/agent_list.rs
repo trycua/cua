@@ -74,6 +74,8 @@ pub struct ListAttempt {
 pub struct AgentListInput {
     pub spaces: Vec<ListSpace>,
     pub attempts: Vec<ListAttempt>,
+    /// One row per agent in each Space (the Agents tab), not one row per agent across its Spaces (Home).
+    pub per_space: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,7 +132,12 @@ pub struct AgentListView {
 
 /// One agent across Spaces: the same owner, kind and name. Without an owner, its handle in its Space.
 pub fn member_key(space_id: &str, m: &ListMember) -> String {
-    if m.owner_id.is_empty() {
+    member_key_in(space_id, m, false)
+}
+
+/// `member_key`, or with `per_space` the agent's handle in its Space (one row for each place it is).
+pub fn member_key_in(space_id: &str, m: &ListMember, per_space: bool) -> String {
+    if per_space || m.owner_id.is_empty() {
         return format!("{space_id}/{}", m.handle);
     }
     let kind = if m.harness.is_empty() {
@@ -176,7 +183,7 @@ pub fn view(input: &AgentListInput) -> AgentListView {
     let mut by: std::collections::HashMap<String, Acc> = Default::default();
     for sp in &input.spaces {
         for m in sp.members.iter().filter(|m| !m.pending) {
-            let key = member_key(&sp.space_id, m);
+            let key = member_key_in(&sp.space_id, m, input.per_space);
             let acc = by.entry(key.clone()).or_insert_with(|| {
                 order.push(key.clone());
                 Acc {
@@ -402,6 +409,7 @@ mod tests {
                 }],
             }],
             attempts: vec![attempt("a", "not-connected"), attempt("b", "creating")],
+            ..Default::default()
         });
         let tones: Vec<_> = v.rows.iter().map(|r| r.tone.as_str()).collect();
         assert_eq!(tones, ["not-connected", "working", "creating"]);
@@ -433,6 +441,7 @@ mod tests {
                 ],
             }],
             attempts: vec![attempt("c", "failed")],
+            ..Default::default()
         });
         let lines: Vec<_> = v.rows.iter().map(|r| r.line.as_str()).collect();
         assert!(lines.contains(&"Failed in web"));
@@ -440,6 +449,35 @@ mod tests {
         assert!(lines.contains(&"Didn't start in space-1"));
         let retry = v.rows.iter().find(|r| r.kind == "attempt").unwrap();
         assert_eq!(retry.action.as_ref().unwrap().id, "retry");
+    }
+
+    #[test]
+    fn per_space_lists_each_agent_in_each_space() {
+        let input = |per_space| AgentListInput {
+            spaces: vec![
+                ListSpace {
+                    space_id: "s1".into(),
+                    space_name: "one".into(),
+                    members: vec![member("hermes", "asleep")],
+                },
+                ListSpace {
+                    space_id: "s2".into(),
+                    space_name: "two".into(),
+                    members: vec![member("hermes", "idle")],
+                },
+            ],
+            attempts: vec![],
+            per_space,
+        };
+        assert_eq!(view(&input(false)).rows.len(), 1);
+        let v = view(&input(true));
+        assert_eq!(v.rows.len(), 2);
+        assert_eq!(v.see_all_label, "See all 2");
+        let mut lines: Vec<_> = v.rows.iter().map(|r| r.line.as_str()).collect();
+        lines.sort();
+        assert_eq!(lines, ["Asleep in one", "In two"]);
+        assert!(v.rows.iter().all(|r| r.places.len() == 1));
+        assert_ne!(v.rows[0].key, v.rows[1].key);
     }
 
     #[test]
@@ -466,6 +504,7 @@ mod tests {
                 },
             ],
             attempts: vec![],
+            ..Default::default()
         });
         assert_eq!(v.rows.len(), 2);
         assert_eq!(v.rows[0].tone, "you");

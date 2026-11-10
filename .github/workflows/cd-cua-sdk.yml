@@ -789,12 +789,16 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         if: always() && github.repository == 'trycua/cua'
         with:
+          # A separate path: a sparse re-checkout of the workspace removes
+          # scripts/install and the untracked release-artifacts.json that the
+          # installer-feed step below needs (it failed every release 7-10 Nov).
+          path: latest-guard
           sparse-checkout: .github/scripts
       - name: Keep Latest on Cua Spaces
         if: always() && github.repository == 'trycua/cua'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/pin_latest_release.py
+        run: python3 latest-guard/.github/scripts/pin_latest_release.py
       # A prerelease on trycua/cua stays off the rolling feed; on any other
       # repository the feed is that repository's own and follows every release.
       - name: Update the rolling installer manifest (cua-install-latest)

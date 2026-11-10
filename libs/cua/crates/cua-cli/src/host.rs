@@ -1831,7 +1831,7 @@ pub async fn run_spaces_sdk(
                     };
                     if let Some(many) = many {
                         if let Ok(Some(info)) = r.as_ref().map(|c| c.space.as_ref()) {
-                            many.name(i, &info.id);
+                            many.name(i, &info.name, true);
                         }
                         many.ended(
                             i,
@@ -4494,7 +4494,7 @@ struct SpaceLine(Arc<crate::util::ParallelSteps>, usize);
 
 impl cua_sdk::SpaceCreateListener for SpaceLine {
     fn on_progress(&self, p: cua_sdk::SpaceCreateProgress) {
-        self.0.name(self.1, &p.space);
+        self.0.name(self.1, &p.space, false);
         if let Some(p) = progress_of(p) {
             self.0.show(self.1, &p);
         }

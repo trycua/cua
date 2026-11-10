@@ -650,11 +650,12 @@ impl ParallelSteps {
         }
     }
 
-    /// Names unnamed create `i` by the id it reported (`local:<name>`).
-    pub fn name(&self, i: usize, id: &str) {
+    /// Names create `i`: by the id an unnamed one reports while it runs
+    /// (`local:<id>`), then by its name once `created` (`final_`).
+    pub fn name(&self, i: usize, name: &str, final_: bool) {
         let mut s = self.lock();
-        if s.labels[i].is_none() && !id.is_empty() {
-            s.labels[i] = Some(one_line(id));
+        if (final_ || s.labels[i].is_none()) && !name.is_empty() {
+            s.labels[i] = Some(one_line(name));
         }
     }
 
@@ -973,12 +974,15 @@ mod parallel_step_tests {
             "\x1b[?7l\x1b[2Kweb      Starting\n\x1b[2KSpace 2  Preparing\n\x1b[?7h"
         );
         // An unnamed create takes the id it reports; a named one keeps its name.
-        lines.name(1, "local:sb-1a2b");
-        lines.name(0, "local:other");
+        lines.name(1, "local:sb-1a2b", false);
+        lines.name(0, "local:other", false);
         assert_eq!(
             super::render(&lines.lock(), false),
             "\x1b[?7l\x1b[2Kweb            Starting\n\x1b[2Klocal:sb-1a2b  Preparing\n\x1b[?7h"
         );
+        // Once created, it takes its name.
+        lines.name(1, "sb-1a2b", true);
+        assert!(super::render(&lines.lock(), false).contains("\x1b[2Ksb-1a2b  Preparing\n"));
         // Drawn again: back up over the two lines first.
         assert!(super::render(&lines.lock(), true).starts_with("\x1b[?7l\r\x1b[2A\x1b[2Kweb "));
         assert_eq!(

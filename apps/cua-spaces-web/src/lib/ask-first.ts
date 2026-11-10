@@ -69,6 +69,17 @@ export interface AskTask {
   model?: string;
   /** The repo the task starts from, when one was chosen. */
   repo?: { url: string; label: string };
+  /** The computer Home's "Run something" placed it on (`pool.place`). */
+  computer?: TaskComputer;
+  /** The computer it was meant for, which couldn't be reached, so it moved to `computer`. */
+  movedFrom?: TaskComputer;
+}
+
+/** One of your computers, as a task remembers it. */
+export interface TaskComputer {
+  /** The account's id for it (`machines.list`). */
+  id: string;
+  name: string;
 }
 
 /** Which of the agent's own chats a task continues. */
@@ -397,6 +408,11 @@ export function thisMacConfirmText(agent: string): { title: string; description:
   };
 }
 
+/** A start that failed because its computer (or Space) couldn't be reached: another computer can take the job. */
+export function isUnreachableError(raw: string): boolean {
+  return /not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(raw.toLowerCase());
+}
+
 /** What a failed start offers in its card. */
 export type StartErrorAction = "change-computer" | "add-key" | "retry" | "set-up-host";
 
@@ -446,7 +462,7 @@ export function startErrorView(raw: string, agent: string, onHost = false): Star
     return { title: t("home.start_error.not_found_title"), body: t("home.start_error.not_found_body"), action: "change-computer", retry: false };
   if (/api key|key|sign in|signed in|auth|login|credential|unauthori[sz]ed|401/.test(e))
     return { title: t("home.start_error.key_title", { agent }), body: t("home.start_error.key_body"), action: "add-key", retry: true };
-  if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
+  if (isUnreachableError(e))
     // This computer is plainly on: "Check it's on" would send the person looking for nothing.
     return onHost
       ? {

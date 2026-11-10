@@ -4,7 +4,7 @@
 // The last onboarding page of an ask-first run ends on Home (the prompt box and the suggestions), not inside a
 // Space: the nothing is made in the background: a Space exists only when the person chooses one.
 
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -61,20 +61,15 @@ async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] =
   return router;
 }
 
-// The welcome's example jobs are still there (Home's own suggestions).
-const expectCards = () => {
-  expect(document.querySelectorAll("[data-home-card]").length).toBeGreaterThanOrEqual(2);
-};
-
 describe.skipIf(!wasmBuilt)("where the first run ends", () => {
-  it("lands on Home with the prompt box and the suggestions, and makes no Space the person did not choose", { timeout: 60_000 }, async () => {
+  it("lands on Home with your computers and Run something, and makes no Space the person did not choose", { timeout: 60_000 }, async () => {
     const calls: { op: string }[] = [];
     const router = await throughOnboarding(undefined, calls);
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
-    // The prompt box and the suggestions are there, not a Space's page.
-    expect(await screen.findByLabelText("What should it do?")).not.toBeNull();
-    expectCards();
-    expect(document.querySelector("[data-ask-first-home]")).not.toBeNull();
+    // Your computers as one pool, with Run something and Add a computer, not a Space's page.
+    await waitFor(() => expect(document.querySelector("[data-pool-grid]")).not.toBeNull());
+    expect(document.querySelector("[data-pool-run]")).not.toBeNull();
+    expect(document.querySelector("[data-pool-add-tile]")).not.toBeNull();
     // Nothing is warming in the background: no Space is created and nothing is being prepared.
     await act(async () => {
       await new Promise((r) => setTimeout(r, 1_500));

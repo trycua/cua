@@ -47,7 +47,7 @@ describe.skipIf(!wasmBuilt)("no Space is made unless the person chooses one", ()
     expect(getDriver()?.state?.wanted ?? false).toBe(false);
     cleanup();
     resetPrepare();
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
     await screen.findByLabelText("What should it do?");
     await settle();
     expect(creates(calls)).toHaveLength(0);
@@ -69,7 +69,7 @@ describe.skipIf(!wasmBuilt)("no Space is made unless the person chooses one", ()
       }),
     );
     const calls: Call[] = [];
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
     await screen.findByLabelText("What should it do?");
     await settle();
     expect(creates(calls)).toHaveLength(0);
@@ -78,7 +78,7 @@ describe.skipIf(!wasmBuilt)("no Space is made unless the person chooses one", ()
 
   it("makes one Space when the person targets New computer and sends a job", { timeout: 60_000 }, async () => {
     const calls: Call[] = [];
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
     await screen.findByLabelText("What should it do?");
     await settle();
     expect(creates(calls)).toHaveLength(0);

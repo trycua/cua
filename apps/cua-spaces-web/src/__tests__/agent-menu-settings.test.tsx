@@ -52,7 +52,7 @@ const sw = (app: string) => found(`[data-agent-menu-switch="${app}"]`);
 
 describe.skipIf(!wasmBuilt)("the agent menu's apps", () => {
   it("ends with a Manage agents and sign-ins button that opens Settings, Connections", async () => {
-    const { router } = await mountApp("/home", HOST);
+    const { router } = await mountApp("/home/ask", HOST);
     await screen.findByLabelText("What should it do?");
     await openMenu();
     const button = await found("[data-agent-configure]");
@@ -81,7 +81,7 @@ describe.skipIf(!wasmBuilt)("the agent menu's apps", () => {
     await click(await sw("codex"));
     await waitFor(() => expect(q('[data-agent-menu-switch="codex"]')!.getAttribute("aria-checked")).toBe("false"));
     await act(async () => {
-      await router.navigate({ to: "/home" });
+      await router.navigate({ to: "/home/ask" });
     });
     await screen.findByLabelText("What should it do?");
     // Codex was the default pick; it is hidden, so the chip falls to the next connected app.
@@ -94,7 +94,7 @@ describe.skipIf(!wasmBuilt)("the agent menu's apps", () => {
     });
     await click(await sw("codex"));
     await act(async () => {
-      await router.navigate({ to: "/home" });
+      await router.navigate({ to: "/home/ask" });
     });
     await openMenu();
     await waitFor(() => expect(groups()).toEqual(["codex", "hermes", "claude-code", "opencode"]));
@@ -105,7 +105,7 @@ describe.skipIf(!wasmBuilt)("the agent menu's apps", () => {
     await click(await sw("goose"));
     await waitFor(() => expect(q('[data-agent-menu-switch="goose"]')!.getAttribute("aria-checked")).toBe("true"));
     await act(async () => {
-      await router.navigate({ to: "/home" });
+      await router.navigate({ to: "/home/ask" });
     });
     await openMenu();
     await waitFor(() => expect(groups()).toContain("goose"));

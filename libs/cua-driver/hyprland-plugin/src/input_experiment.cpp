@@ -404,9 +404,10 @@ struct InputExperiment::Impl {
         if (physical_keymap) xkb_keymap_unref(physical_keymap);
         if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
         physical_keyboard_state = state; physical_keymap = map; physical_xkb_context = context;
-        // Keyboard qualification: every key the KEY command can press must type the
-        // same keysym as the canonical agent keymap. Checked once per keymap, so a
-        // different layout refuses before activation rather than mid-string.
+        // Keyboard qualification: every chord Driver types text with must mean the
+        // same under this keymap as under the canonical agent keymap. Checked once
+        // per keymap, so a different layout refuses before activation rather than
+        // mid-string.
         typing_keymap = !kProduction || typing_keymap_equivalent(map, keymap);
         physical_keymap_text = keyboard->m_xkbKeymapV1String;
     }

@@ -262,7 +262,8 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
             message(FATAL_ERROR
                 "Hyprland ${HYPRLAND_VERSION} headers expose no supported window input API")
         endif()
-        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp src/user_seat_guard.cpp)
+        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp src/user_seat_guard.cpp
+            src/ime_popup_guard.cpp)
         target_compile_definitions(cua_hyprland_plugin PRIVATE
             CUA_HYPRLAND_WINDOW_BACKEND_API=${cua_hyprland_window_backend_api})
     endif()

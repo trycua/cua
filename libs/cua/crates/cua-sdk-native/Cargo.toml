@@ -25,6 +25,10 @@ host = ["cua-sdk/host"]
 media = ["cua-sdk/media"]
 byoc = ["cua-sdk/byoc"]
 aws = ["cua-sdk/aws"]
+# The browser (wasm32) build's host library: scripts/build-wasm.mjs builds
+# it with `--no-default-features --features web` so the bindings generator
+# reads the web surface.
+web = ["cua-sdk/web"]
 contrib = ["cua-sdk/contrib"]
 contrib-e2b = ["cua-sdk/contrib-e2b"]
 contrib-daytona = ["cua-sdk/contrib-daytona"]

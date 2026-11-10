@@ -1266,6 +1266,7 @@ const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mill
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
+#[allow(clippy::too_many_arguments)]
 fn cgevent_type_verified(
     pid: i32,
     text: &str,

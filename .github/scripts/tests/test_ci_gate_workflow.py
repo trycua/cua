@@ -89,6 +89,7 @@ MOCK = '''
 set -uo pipefail
 api() {
   case "$*" in
+    *'/check-runs?'*) printf 'check-runs\n' >&2; printf '%s' "${CHECK_RUNS:-}" ;;
     *'/jobs?'*)
       if [[ "$*" == *'/10/jobs?'* ]]; then
         printf '%s' "$OLDER_JOBS"
@@ -120,7 +121,7 @@ sleep() {
 
 
 def run_gate(rows, jobs='test\tsuccess', older_jobs=None, rows_dir=None,
-             max_sleeps=4, max_seconds=10**9, queue_ref=''):
+             max_sleeps=4, max_seconds=10**9, queue_ref='', check_runs='', extra_env=None):
     # Mirrors the runner: GitHub runs a bare `run:` step with `bash -e`. The mocked
     # sleep advances SECONDS, so the poll schedule is observable without waiting.
     return subprocess.run(
@@ -130,7 +131,8 @@ def run_gate(rows, jobs='test\tsuccess', older_jobs=None, rows_dir=None,
              'ROWS': rows, 'JOBS': jobs,
              'OLDER_JOBS': jobs if older_jobs is None else older_jobs,
              'ROWS_DIR': str(rows_dir) if rows_dir else '',
-             'MAX_SLEEPS': str(max_sleeps), 'MAX_SECONDS': str(max_seconds)},
+             'MAX_SLEEPS': str(max_sleeps), 'MAX_SECONDS': str(max_seconds),
+             'CHECK_RUNS': check_runs, **(extra_env or {})},
         capture_output=True, text=True, timeout=10,
     )
 
@@ -463,13 +465,13 @@ QUEUE_MOCK = MOCK.replace("""    *'head_sha='*)""", """    *'head_sha=queue'*) p
     *'head_sha='*)""")
 
 
-def run_queue_gate(rows, qrows, queue_runs, jobs='test\tsuccess'):
+def run_queue_gate(rows, qrows, queue_runs, jobs='test\tsuccess', check_runs=''):
     return subprocess.run(
         ['bash', '-e', '-c', QUEUE_MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
         env={**os.environ, 'PR_SHA': '', 'QUEUE_REF': 'refs/heads/gh-readonly-queue/main/pr-7-abc',
              'QUEUE_SHA': 'queue', 'QUEUE_RUNS': queue_runs, 'GITHUB_REPOSITORY': 'test/repo',
              'GITHUB_RUN_ID': '99', 'ROWS': rows, 'QROWS': qrows, 'JOBS': jobs, 'OLDER_JOBS': jobs,
-             'ROWS_DIR': '', 'MAX_SLEEPS': '6', 'MAX_SECONDS': str(10**9)},
+             'ROWS_DIR': '', 'MAX_SLEEPS': '6', 'MAX_SECONDS': str(10**9), 'CHECK_RUNS': check_runs},
         capture_output=True, text=True, timeout=10,
     )
 
@@ -489,3 +491,63 @@ def test_merge_queue_passes_on_green_queue_runs():
     completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '1\t12\tbuild\tsuccess\tcompleted', 'true')
     assert completed.returncode == 0, completed.stderr
     assert 'build: pass' in completed.stdout
+
+
+# Fail fast (10 Nov 2026): a job that already failed in a run that is still going fails the gate at once.
+# The check-runs listing answers CHECK_RUNS as "<run id>\t<job id>\t<job name>" rows (the jq is mocked away).
+STILL_GOING = '1\t11\tbuild\tsuccess\tcompleted\n2\t21\tmacOS\t\tin_progress'
+
+
+def test_gate_fails_at_once_on_a_failed_job_in_a_run_that_is_still_going():
+    completed = run_gate(STILL_GOING, check_runs='21\t501\tapp core + FFI mirror gate', max_sleeps=100)
+    assert completed.returncode == 1, completed.stderr
+    assert 'macOS: fail (job app core + FFI mirror gate failed' in completed.stdout
+    # The first poll after the minimum window decides; no waiting for the macOS run to finish.
+    assert sleeps_of(completed) == [MIN_WINDOW]
+
+
+def test_merge_queue_gate_fails_at_once_on_the_pull_request_runs_failed_job():
+    # #7136: QUEUE_RUNS off, so the queue entry is judged by the pull request's own runs; one of them
+    # had a failed job and a 180-minute job still running. The entry must leave the queue now.
+    completed = run_queue_gate(STILL_GOING, '', '', check_runs='21\t501\tapp core + FFI mirror gate')
+    assert completed.returncode == 1, completed.stderr
+    assert 'macOS: fail' in completed.stdout
+
+
+@pytest.mark.parametrize('check_runs', [
+    '',                                  # nothing failed yet
+    '11\t401\tlint',                    # a completed run: judged by the full verdict, not here
+    '77\t701\tunrelated',               # a run the gate does not wait on (another scope, an older run)
+])
+def test_gate_keeps_waiting_without_a_failed_job_in_a_run_it_waits_on(check_runs):
+    completed = run_gate(STILL_GOING, check_runs=check_runs, max_sleeps=6)
+    assert completed.returncode == 124
+    assert ': fail' not in completed.stdout
+
+
+def test_gate_only_reads_the_newest_run_of_a_workflow_that_is_still_going():
+    rows = '2\t20\tmacOS\t\tin_progress\n2\t21\tmacOS\t\tin_progress'
+    old = run_gate(rows, check_runs='20\t500\tbuild', max_sleeps=6)
+    assert old.returncode == 124 and ': fail' not in old.stdout
+    new = run_gate(rows, check_runs='21\t501\tbuild', max_sleeps=6)
+    assert new.returncode == 1 and 'macOS: fail' in new.stdout
+
+
+def test_gate_waits_for_the_full_verdict_on_a_quarantined_early_failure(tmp_path):
+    stub = tmp_path / 'flaky.py'
+    stub.write_text("import sys; sys.stdin.read(); print('all')\n")
+    completed = run_gate(STILL_GOING, check_runs='21\t501\tlinux-kvm (concurrent)', max_sleeps=6,
+                         extra_env={'FLAKY_PY': str(stub), 'QUARANTINE_FILE': 'q.json'})
+    assert completed.returncode == 124
+    assert ': fail' not in completed.stdout
+
+
+def test_fail_fast_reads_check_runs_at_most_once_a_minute():
+    completed = run_gate(STILL_GOING, max_sleeps=1000, max_seconds=3600)
+    assert completed.returncode == 124
+    reads = completed.stderr.count('check-runs')
+    assert 50 <= reads <= 61
+
+
+def test_gate_may_read_check_runs():
+    assert GATE['permissions']['checks'] == 'read'

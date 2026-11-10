@@ -208,7 +208,12 @@ export function MembersPanel({
                         <WindowMark row={w} />
                         <span className="min-w-0 flex-1 truncate">
                           <span>{name}</span>
-                          {!isDesktop && appOf(w) && w.label && w.label !== appOf(w) ? (
+                          {/* A window another Space shows here says which Space it lives in; its own title is in the tooltip. */}
+                          {w.origin ? (
+                            <span data-stream-origin={w.origin.spaceId} className="ml-1.5 font-normal text-muted-foreground">
+                              {w.origin.name}
+                            </span>
+                          ) : !isDesktop && appOf(w) && w.label && w.label !== appOf(w) ? (
                             <span className="ml-1.5 font-normal text-muted-foreground">{w.label}</span>
                           ) : null}
                         </span>
@@ -289,7 +294,9 @@ export const osOfIcon = (id: string): "macos" | "windows" | "linux" => (/mac/i.t
 function WindowMark({ row }: { row: StreamRow }) {
   return (
     <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-[5px] bg-muted text-[10px] font-semibold text-muted-foreground">
-      {row.icon.kind === "app" ? (
+      {row.origin ? (
+        <OsIcon os={osOfIcon(row.origin.osIcon)} className="size-3" />
+      ) : row.icon.kind === "app" ? (
         (row.icon.appName || row.icon.appId).trim().charAt(0).toUpperCase() || "?"
       ) : (
         <OsIcon os={osOfIcon(row.icon.id)} className="size-3" />

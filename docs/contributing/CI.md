@@ -208,7 +208,10 @@ request's run otherwise. Turn it on after one queue entry has gone through green
 
 ### When a rerun turns green
 
-The gate is one job that gives one verdict after every other workflow finishes. If a job fails, the gate fails.
+The gate is one job that gives one verdict after every other workflow finishes. If a job fails, the gate fails,
+at once: it does not wait for the rest of that job's run (unless the failure is a quarantined flake). In the merge
+queue this drops a failing entry within about a minute, so the entries behind it are not held until the queue's
+60-minute timeout.
 [`ci-gate-recheck.yml`](../../.github/workflows/ci-gate-recheck.yml) reruns the gate when a workflow it waits for
 completes green (a first run or a rerun) or the `local-ci` sign-off turns green, if the newest gate run for that
 commit failed before that result arrived and the commit is still the head of an open pull request without a

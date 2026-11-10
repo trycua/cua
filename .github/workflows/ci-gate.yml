@@ -10,6 +10,8 @@ permissions:
   # flake (.github/flaky/quarantine.json), once. Fork PRs get a read-only token; their
   # quarantined failures are reported without the rerun.
   actions: write
+  # read: the check runs (jobs) on the commit, so a job that already failed fails the gate at once.
+  checks: read
   contents: read
   pull-requests: read
   statuses: read
@@ -237,6 +239,39 @@ jobs:
               qv=quarantined
             fi
           }
+          # Fail fast: a job that has already failed decides the verdict, so the gate does not wait
+          # for the rest of its run. On 10 Nov 2026 one job of a pull request's macOS workflow failed
+          # after 4 minutes while another job (180-minute timeout) kept the run open; the gate kept
+          # waiting, and in the merge queue that held every entry behind it until the queue's
+          # 60-minute timeout. Only the newest run of a workflow that is still going counts (a
+          # completed run gets the full verdict below), and a failure that is a quarantined flake
+          # waits for that verdict and its one rerun. One check-runs listing per commit (a job's
+          # check run id is its job id), at most once a minute.
+          early_checked=-60
+          early_failure() {
+            local open failed s rows run name jobs result
+            (( SECONDS - early_checked >= 60 )) || return 1
+            early_checked=$SECONDS
+            open=$(sort -t$'\t' -k1,1 -k2,2nr <<<"$current" | awk -F'\t' '$1 != "" && !seen[$1]++ && $NF != "completed" {print $2 "\t" $3}')
+            [[ -n "$open" ]] || return 1
+            failed=
+            for s in "$sha" ${queue_sha:+"$queue_sha"}; do
+              rows=$(api --paginate "repos/$GITHUB_REPOSITORY/commits/$s/check-runs?status=completed&filter=latest&per_page=100" \
+                --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | (.details_url // "" | capture("/actions/runs/(?<r>[0-9]+)/job/").r) as $run | "\($run)\t\(.id)\t\(.name)"') || return 1
+              failed+=$rows$'\n'
+            done
+            while IFS=$'\t' read -r run name; do
+              jobs=$(awk -F'\t' -v r="$run" '$1 == r {print $2 "\t" $3}' <<<"$failed")
+              [[ -n "$jobs" ]] || continue
+              if [[ -n "${FLAKY_PY:-}" && -f "$FLAKY_PY" ]]; then
+                result=$(python3 "$FLAKY_PY" gate-check --workflow "$name" --quarantine "$QUARANTINE_FILE" <<<"$jobs") || result=
+                if [[ "$result" == all ]]; then continue; fi
+              fi
+              echo "$name: fail (job $(cut -f2 <<<"$jobs" | paste -sd, -) failed; not waiting for the rest of run $run)"
+              return 0
+            done <<<"$open"
+            return 1
+          }
           started=$SECONDS
           sleep 120
           while :; do
@@ -247,6 +282,7 @@ jobs:
               break
             fi
             previous=$current
+            if early_failure; then exit 1; fi
             # Everything finished: the next listing only has to confirm the same set, so look again
             # in 10 s instead of after a full poll interval (up to 60 s). That wait, twice, was most
             # of the gate's median 1.9 min after the last check (CUA-3558).

@@ -35,6 +35,9 @@ struct VideoSurfaceUpdate: Equatable {
     var spaceId: String
     var tier: VideoTier
     var interactive: Bool
+    /// One window of the Space instead of its desktop: the handle from its window list
+    /// (a window another Space shows here is `xs:…`). nil is the desktop.
+    var windowId: String? = nil
     var rect: CGRect
     /// The visible part of `rect`; nil when none of it is.
     var clip: CGRect?
@@ -54,6 +57,7 @@ struct VideoSurfaceUpdate: Equatable {
         self.spaceId = spaceId
         tier = (json["tier"] as? String).flatMap(VideoTier.init(rawValue:)) ?? .full
         interactive = json["interactive"] as? Bool ?? false
+        windowId = (json["windowId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.rect = rect
         clip = Self.rect(json["clip"])
         radius = Self.number(json["radius"])
@@ -62,8 +66,9 @@ struct VideoSurfaceUpdate: Equatable {
         visible = json["visible"] as? Bool ?? true
     }
 
-    init(surfaceId: String, spaceId: String, tier: VideoTier, interactive: Bool, rect: CGRect,
+    init(surfaceId: String, spaceId: String, tier: VideoTier, interactive: Bool, windowId: String? = nil, rect: CGRect,
          clip: CGRect?, radius: CGFloat = 0, occluded: Bool = false, holes: [CGRect] = [], visible: Bool = true) {
+        self.windowId = windowId
         self.surfaceId = surfaceId
         self.spaceId = spaceId
         self.tier = tier

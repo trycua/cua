@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Wayland/Hyprland capture backend for the RCDP CUA adapter.
+//! Wayland (Hyprland and niri) capture backend for the RCDP CUA adapter.
 //!
 //! The sibling [`super::linux_capture`] backend targets a plain X11 server and
 //! enumerates windows through the EWMH `_NET_CLIENT_LIST` property. That does
@@ -16,6 +16,10 @@
 //!     per-window geometry. Windows are addressed by their Hyprland `address`
 //!     (a hex pointer, e.g. `0x55…`), which round-trips through the shared
 //!     `NativeTarget.window_id: u64`.
+//!   * niri's IPC (`niri msg --json outputs|windows|focused-window`) for
+//!     displays, enumeration and the focused window. niri has no per-toplevel
+//!     capture protocol, so display streams work and window streams refuse;
+//!     niri window ids are already `u64`.
 //!   * `wlr-screencopy` ([`super::linux_screencopy`]) for pixels: one
 //!     persistent Wayland connection per stream copies the output region
 //!     covering the window (or the whole monitor) into shared memory,
@@ -72,13 +76,33 @@ const MAX_GRIM_CAPTURE_FPS: u16 = 10;
 // Backend selection
 // ----------------------------------------------------------------------------
 
-/// Whether this process is inside a Hyprland Wayland session, in which case the
-/// provider must use this backend instead of the X11 one. Keyed on
-/// `HYPRLAND_INSTANCE_SIGNATURE`, which Hyprland exports into the graphical
-/// session (and thus into the computer-server / cua-spacesd user services running in
-/// it) and which no X11 session sets.
+/// Whether this process is inside a Hyprland or niri Wayland session, in which
+/// case the provider must use this backend instead of the X11 one. Hyprland
+/// exports `HYPRLAND_INSTANCE_SIGNATURE` and niri exports `NIRI_SOCKET` into
+/// the graphical session (and thus into the cua-spacesd user services running
+/// in it); no X11 session sets either.
 pub(super) fn active() -> bool {
-    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+    is_niri() || std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+}
+
+/// Whether this is a niri session. niri has its own IPC and no `hyprctl`.
+pub(super) fn is_niri() -> bool {
+    std::env::var_os("NIRI_SOCKET").is_some_and(|socket| !socket.is_empty())
+}
+
+/// One `niri msg --json` query. Bounded by `Command`'s own wait; a failed
+/// command is `None`, which callers treat as an enumeration failure rather
+/// than an empty desktop.
+fn niri_json(args: &[&str]) -> Option<Value> {
+    let output = Command::new("niri")
+        .args(["msg", "--json"])
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
 }
 
 // ----------------------------------------------------------------------------
@@ -227,7 +251,93 @@ fn client_rect(client: &Value) -> Option<WinRect> {
 /// handle a caller holds goes stale ("window is gone") and focus or input
 /// meant for one window silently lands on another.
 pub(super) fn enumerate_windows(on_screen_only: bool) -> Result<Vec<NativeWindow>, String> {
+    if is_niri() {
+        let windows = niri_json(&["windows"])
+            .ok_or_else(|| "niri did not answer `niri msg --json windows`".to_string())?;
+        let workspaces = niri_json(&["workspaces"]).unwrap_or_else(|| Value::Array(Vec::new()));
+        return Ok(windows_from_niri(&windows, &workspaces, on_screen_only));
+    }
     enumerate_windows_with(|| hyprctl_json(&["clients"]), on_screen_only)
+}
+
+/// Pure mapping of `niri msg --json windows` plus `workspaces` onto the shared
+/// window model. niri reports a tiled position only on releases with #4711;
+/// before that, the focused tiled window is the one we can prove is showing.
+fn windows_from_niri(
+    windows: &Value,
+    workspaces: &Value,
+    on_screen_only: bool,
+) -> Vec<NativeWindow> {
+    let active_workspaces: std::collections::HashSet<u64> = workspaces
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|workspace| workspace.get("is_active").and_then(Value::as_bool) == Some(true))
+        .filter_map(|workspace| workspace.get("id").and_then(Value::as_u64))
+        .collect();
+    let Some(array) = windows.as_array() else {
+        return Vec::new();
+    };
+    let mut result = Vec::with_capacity(array.len());
+    for window in array {
+        let Some(window_id) = window.get("id").and_then(Value::as_u64) else {
+            continue;
+        };
+        let title = window
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if title.trim().is_empty() {
+            continue;
+        }
+        let Some(layout) = window.get("layout") else {
+            continue;
+        };
+        let Some(size) = layout.get("window_size").and_then(Value::as_array) else {
+            continue;
+        };
+        let width = size.first().and_then(Value::as_i64).unwrap_or(1).max(1) as u32;
+        let height = size.get(1).and_then(Value::as_i64).unwrap_or(1).max(1) as u32;
+        let workspace = window.get("workspace_id").and_then(Value::as_u64);
+        let focused = window.get("is_focused").and_then(Value::as_bool) == Some(true);
+        let floating = layout
+            .get("pos_in_scrolling_layout")
+            .map_or(true, Value::is_null);
+        let placed = layout
+            .get("tile_pos_in_workspace_view")
+            .is_some_and(|position| !position.is_null());
+        let visible = focused
+            || workspace.is_some_and(|workspace| {
+                active_workspaces.contains(&workspace) && (floating || placed)
+            });
+        if on_screen_only && !visible {
+            continue;
+        }
+        let app_id = window
+            .get("app_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let pid = window
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0)
+            .unwrap_or(0);
+        result.push(NativeWindow {
+            native: NativeTarget { pid, window_id },
+            application_id: (!app_id.is_empty()).then(|| app_id.clone()),
+            app_name: app_id,
+            title,
+            geometry: SurfaceGeometry {
+                width_px: width,
+                height_px: height,
+                scale_factor: 1.0,
+            },
+            visible,
+        });
+    }
+    result
 }
 
 /// Attempts at `hyprctl clients` before an enumeration counts as failed.
@@ -407,6 +517,15 @@ pub(super) fn start(
     sink: Arc<dyn CaptureSink>,
     native_geometry: Arc<dyn Fn(u32, u32) + Send + Sync>,
 ) -> Result<Arc<dyn CaptureLease>, ProviderError> {
+    if is_niri() {
+        // niri has no per-toplevel capture protocol, and tiled windows report
+        // no position before niri#4711. Display streams work; window streams
+        // need the driver's desktop-scope path instead.
+        return Err(ProviderError::new(
+            ProviderErrorCode::TargetUnavailable,
+            "niri window streams are not supported; stream a display instead",
+        ));
+    }
     let address = id_to_addr(target.window_id);
 
     // Validate the target synchronously so a missing window reports an error to
@@ -906,9 +1025,75 @@ fn grab_region(rect: &WinRect) -> Result<(Vec<u8>, u32, u32), String> {
 /// the output name, bounds are logical (pixels / scale), the focused monitor
 /// (else the first) is primary.
 pub(super) fn displays() -> Vec<cua_spacesd_provider_api::ProviderDisplay> {
+    if is_niri() {
+        let Some(outputs) = niri_json(&["outputs"]) else {
+            return Vec::new();
+        };
+        let focused = niri_json(&["focused-output"])
+            .and_then(|value| value.get("name").and_then(Value::as_str).map(str::to_owned));
+        return displays_from_niri_outputs(&outputs, focused.as_deref());
+    }
     hyprctl_json(&["monitors"])
         .map(|monitors| displays_from_monitors(&monitors))
         .unwrap_or_default()
+}
+
+/// Pure mapping of `niri msg --json outputs` onto the shared display model.
+/// niri's `logical` rectangle is already in logical coordinates; the mode is
+/// the native pixel size.
+fn displays_from_niri_outputs(
+    outputs: &Value,
+    focused_name: Option<&str>,
+) -> Vec<cua_spacesd_provider_api::ProviderDisplay> {
+    let Some(object) = outputs.as_object() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (index, (name, output)) in object.iter().enumerate() {
+        let Some(logical) = output.get("logical") else {
+            continue;
+        };
+        let Some(modes) = output.get("modes").and_then(Value::as_array) else {
+            continue;
+        };
+        let mode_index = output
+            .get("current_mode")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        let Some(mode) = modes.get(mode_index) else {
+            continue;
+        };
+        let native_width = mode.get("width").and_then(Value::as_u64).unwrap_or(0) as u32;
+        let native_height = mode.get("height").and_then(Value::as_u64).unwrap_or(0) as u32;
+        let width = logical.get("width").and_then(Value::as_u64).unwrap_or(0) as u32;
+        let height = logical.get("height").and_then(Value::as_u64).unwrap_or(0) as u32;
+        if native_width == 0 || native_height == 0 || width == 0 || height == 0 {
+            continue;
+        }
+        let scale = logical
+            .get("scale")
+            .and_then(Value::as_f64)
+            .filter(|scale| *scale > 0.0)
+            .unwrap_or(1.0);
+        let x = logical.get("x").and_then(Value::as_i64).unwrap_or(0) as f64;
+        let y = logical.get("y").and_then(Value::as_i64).unwrap_or(0) as f64;
+        out.push(cua_spacesd_provider_api::ProviderDisplay {
+            id: name.clone(),
+            name: name.clone(),
+            primary: focused_name.map_or(index == 0, |focused| focused == name),
+            bounds: (x, y, f64::from(width), f64::from(height)),
+            native_width_px: native_width,
+            native_height_px: native_height,
+            scale_factor: scale,
+            refresh_rate_hz: mode
+                .get("refresh_rate")
+                .and_then(Value::as_u64)
+                // niri reports millihertz.
+                .map(|rate| (rate / 1000).max(1) as u32)
+                .unwrap_or(60),
+        });
+    }
+    out
 }
 
 fn displays_from_monitors(monitors: &Value) -> Vec<cua_spacesd_provider_api::ProviderDisplay> {
@@ -959,6 +1144,9 @@ fn displays_from_monitors(monitors: &Value) -> Vec<cua_spacesd_provider_api::Pro
 /// The focused window's `(pid, window id)` (`hyprctl activewindow`), where
 /// a desktop stream's keys go.
 pub(super) fn focused_window() -> Option<(i64, u64)> {
+    if is_niri() {
+        return niri_focused_window();
+    }
     let active = hyprctl_json(&["activewindow"])?;
     let window_id = active
         .get("address")
@@ -969,6 +1157,46 @@ pub(super) fn focused_window() -> Option<(i64, u64)> {
         .and_then(Value::as_i64)
         .filter(|pid| *pid > 0)?;
     Some((pid, window_id))
+}
+
+fn niri_focused_window() -> Option<(i64, u64)> {
+    let focused = niri_json(&["focused-window"])?;
+    let window_id = focused.get("id").and_then(Value::as_u64)?;
+    let pid = focused
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|pid| *pid > 0)?;
+    Some((pid, window_id))
+}
+
+/// niri's window-manager side for the gRPC backend. niri exposes the focused
+/// window through IPC; window actions and arbitrary geometry are left to the
+/// driver's own niri tools.
+pub(crate) struct NiriWindowManager;
+
+impl crate::grpc::tool_backend::WindowManager for NiriWindowManager {
+    fn focused_window_id(&self) -> Option<u64> {
+        niri_focused_window().map(|(_, window_id)| window_id)
+    }
+
+    fn window_action(
+        &self,
+        _window_id: u64,
+        _action: &crate::grpc::backend::WindowAction,
+    ) -> Option<Result<(), String>> {
+        None
+    }
+
+    fn set_bounds(
+        &self,
+        _window_id: u64,
+        _x: f64,
+        _y: f64,
+        _width: f64,
+        _height: f64,
+    ) -> Result<(), String> {
+        Err("niri manages window geometry through its layout; set_bounds is not supported".into())
+    }
 }
 
 /// Hyprland's window-manager side for the gRPC backend: the active window and
@@ -1188,6 +1416,12 @@ pub(super) fn resize(
     width_points: u32,
     height_points: u32,
 ) -> Result<AppliedWindowGeometry, ProviderError> {
+    if is_niri() {
+        return Err(ProviderError::new(
+            ProviderErrorCode::Unsupported,
+            "niri manages window geometry through its layout; resize is not supported",
+        ));
+    }
     let address = id_to_addr(window_id);
     let width = clamp_dimension(width_points, MIN_WINDOW_WIDTH);
     let height = clamp_dimension(height_points, MIN_WINDOW_HEIGHT);
@@ -1797,5 +2031,73 @@ mod tests {
             height: 10,
         };
         assert_eq!(monitor_for(&monitors, off).unwrap().name, "DP-1");
+    }
+    #[test]
+    fn niri_outputs_map_to_displays() {
+        let outputs = serde_json::json!({
+            "eDP-2": {
+                "name": "eDP-2",
+                "modes": [{"width": 1920, "height": 1080, "refresh_rate": 144003, "is_preferred": true}],
+                "current_mode": 0,
+                "logical": {"x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0, "transform": "Normal"}
+            }
+        });
+        let displays = displays_from_niri_outputs(&outputs, Some("eDP-2"));
+        assert_eq!(displays.len(), 1);
+        let display = &displays[0];
+        assert_eq!((display.id.as_str(), display.primary), ("eDP-2", true));
+        assert_eq!(display.bounds, (0.0, 0.0, 1920.0, 1080.0));
+        assert_eq!(
+            (display.native_width_px, display.native_height_px),
+            (1920, 1080)
+        );
+        assert_eq!(display.scale_factor, 1.0);
+        assert_eq!(display.refresh_rate_hz, 144);
+    }
+
+    #[test]
+    fn niri_live_displays_when_the_session_is_available() {
+        if !is_niri() {
+            return;
+        }
+        let displays = displays();
+        assert!(!displays.is_empty(), "niri live displays");
+        assert!(displays.iter().any(|display| display.native_width_px > 0));
+    }
+
+    #[test]
+    fn niri_windows_map_and_drop_other_workspaces_when_asked() {
+        let windows = serde_json::json!([
+            {"id": 8, "title": "T3", "app_id": "com.t3", "pid": 35795, "workspace_id": 1,
+             "is_focused": true,
+             "layout": {"pos_in_scrolling_layout": [1, 1], "window_size": [1912, 1030],
+                        "tile_pos_in_workspace_view": null}},
+            {"id": 9, "title": "Float", "app_id": "float", "pid": 100, "workspace_id": 1,
+             "is_focused": false,
+             "layout": {"pos_in_scrolling_layout": null, "window_size": [300, 200],
+                        "tile_pos_in_workspace_view": [10.0, 20.0]}},
+            {"id": 10, "title": "Elsewhere", "app_id": "other", "pid": 101, "workspace_id": 2,
+             "is_focused": false,
+             "layout": {"pos_in_scrolling_layout": [1, 1], "window_size": [400, 300],
+                        "tile_pos_in_workspace_view": null}}
+        ]);
+        let workspaces = serde_json::json!([
+            {"id": 1, "is_active": true},
+            {"id": 2, "is_active": false}
+        ]);
+        let on_screen = windows_from_niri(&windows, &workspaces, true);
+        assert_eq!(
+            on_screen
+                .iter()
+                .map(|w| w.native.window_id)
+                .collect::<Vec<_>>(),
+            vec![8, 9]
+        );
+        assert_eq!(on_screen[0].geometry.width_px, 1912);
+        assert_eq!(on_screen[1].app_name, "float");
+        assert!(on_screen[1].visible);
+        let all = windows_from_niri(&windows, &workspaces, false);
+        assert_eq!(all.len(), 3);
+        assert!(!all[2].visible);
     }
 }

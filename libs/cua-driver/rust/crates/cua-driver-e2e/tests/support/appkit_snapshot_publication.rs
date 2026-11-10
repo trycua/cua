@@ -396,7 +396,7 @@ fn save_geometry_transitions(output: &Path, mismatched: &ToolResponse, aligned: 
 
 fn sdk_capture(
     runtime: &tokio::runtime::Runtime,
-    sdk: Arc<cua_driver_sdk::CuaDriver>,
+    sdk: Arc<cua_driver_sdk::CuaDriverSession>,
     directory: &Path,
     pid: u32,
     window: u64,
@@ -481,6 +481,18 @@ fn harness_appkit_cancelled_geometry_capture_preserves_published_token() {
                 activity_observer: None,
             })
             .unwrap();
+        // Captures bind to a session, so the embedded host acts through one.
+        let host = sdk;
+        let sdk = host
+            .create_trusted_session(cua_driver_sdk::TrustedSessionOptions {
+                public_session: "appkit-geometry-cancellation".into(),
+                mode: cua_driver_sdk::SessionPermissionMode::Unrestricted,
+                ttl_seconds: 300,
+                idle_ttl_seconds: 300,
+                capability_manifest_path: None,
+                bounded_manifest_path: None,
+            })
+            .unwrap();
         recording.start_behavior_recording();
         let first = runtime.block_on(sdk.call_tool("get_window_state".to_owned(), serde_json::json!({
             "pid":harness.pid, "window_id":window, "screenshot_out_file":output.join("sdk-initial.png")
@@ -533,7 +545,8 @@ fn harness_appkit_cancelled_geometry_capture_preserves_published_token() {
             serde_json::to_vec_pretty(&after).unwrap(),
         )
         .unwrap();
-        runtime.block_on(sdk.shutdown()).unwrap();
+        sdk.close();
+        runtime.block_on(host.shutdown()).unwrap();
         Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }

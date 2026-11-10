@@ -20,8 +20,8 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-vmm/src/cloudinit.rs"
-      - "libs/cua/crates/cua-daemon/src/guest_identity.rs"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/guest_identity.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - "libs/cua/crates/cua-sdk/tests/vm_ready_after_boot.rs"
       - "libs/images/common/boot-qemu.sh"
       - ".github/workflows/nightly-qemu-ready.yml"

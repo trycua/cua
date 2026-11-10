@@ -425,16 +425,6 @@ impl Spaces {
             .filter(|m| !m.is_empty())
     }
 
-    /// The relay machines Cua listed itself for Spaces on this computer
-    /// ([`publish`]): the Space is listed once, as the local one.
-    pub(crate) fn auto_published_machines(&self) -> std::collections::HashSet<String> {
-        self.attached()
-            .into_values()
-            .filter(|a| a.auto)
-            .map(|a| a.machine)
-            .collect()
-    }
-
     /// Changes the attached Spaces under a lock, so Spaces attached side by
     /// side do not overwrite each other.
     fn update_attached(&self, f: impl FnOnce(&mut BTreeMap<String, Attached>)) -> Result<()> {

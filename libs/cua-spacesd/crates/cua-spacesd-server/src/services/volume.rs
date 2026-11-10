@@ -453,10 +453,16 @@ async fn clear_stale_mounts() {
     }
 }
 
+/// Runs a mount tool within [`MOUNT_TIMEOUT`]. One that does not finish
+/// (a `umount` of a mount whose server stopped answering) is killed, not
+/// left behind holding the mount point.
 async fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
     let out = tokio::time::timeout(
         MOUNT_TIMEOUT,
-        tokio::process::Command::new(cmd).args(args).output(),
+        tokio::process::Command::new(cmd)
+            .args(args)
+            .kill_on_drop(true)
+            .output(),
     )
     .await
     .map_err(|_| format!("{cmd} timed out"))?

@@ -1127,7 +1127,8 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     click("[data-onboarding-later]");
     await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
     check();
-    click("[data-new-run-permissions-next=Later]");
+    // The button names what is still off ("Continue without it", "Still off: ..."), so it is found by its mark.
+    click("[data-new-run-permissions-next]");
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     check();
     click("[data-onboarding-primary]");

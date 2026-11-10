@@ -21,7 +21,7 @@ default = ["local", "spaces", "host", "media", "byoc", "aws"]
 local = []
 # `Cua.spaces()`: the Spaces registry and primitives (cua-spaces), embedded
 # or through `cua daemon`'s SpaceService.
-spaces = ["dep:cua-spaces", "cua-daemon/spaces", "dep:pbjson-types"]
+spaces = ["dep:cua-spaces", "cua-daemon-core/spaces", "dep:pbjson-types"]
 # `Relay` (the account's machines on a cua-relay) and `Host` (set this
 # machine up for unattended access): cua-host.
 host = ["dep:cua-host"]
@@ -29,22 +29,22 @@ host = ["dep:cua-host"]
 media = []
 # Your own cloud account as a location (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`) for
 # sandboxes and Spaces: the cua-byoc providers and `cua cloud`.
-byoc = ["cua-daemon/byoc"]
+byoc = ["cua-daemon-core/byoc"]
 # AWS (EC2 and S3) in the byoc providers and the checkpoint fallback; see
-# cua-daemon's `aws`.
-aws = ["byoc", "cua-daemon/aws"]
+# cua-daemon-core's `aws`.
+aws = ["byoc", "cua-daemon-core/aws"]
 # Contrib sandbox providers (`on="e2b"`, ...), off by default.
-contrib = ["cua-daemon/contrib"]
-contrib-e2b = ["cua-daemon/contrib-e2b"]
-contrib-daytona = ["cua-daemon/contrib-daytona"]
-contrib-modal = ["cua-daemon/contrib-modal"]
+contrib = ["cua-daemon-core/contrib"]
+contrib-e2b = ["cua-daemon-core/contrib-e2b"]
+contrib-daytona = ["cua-daemon-core/contrib-daytona"]
+contrib-modal = ["cua-daemon-core/contrib-modal"]
 # The browser API on the host (UBRN reads its metadata to generate the
 # browser bindings); wasm32 builds always use it.
 web = ["dep:tonic-web-wasm-client"]
 
 [dependencies]
 # Contract types (both targets). The server half never builds for wasm32.
-cua-proto = { path = "../cua-proto", version = "0.20.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
+cua-proto = { path = "../cua-proto", version = "0.21.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
 uniffi.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -71,7 +71,7 @@ tar = "0.4"
 flate2 = "1"
 async-trait.workspace = true
 cua-host = { workspace = true, optional = true }
-cua-daemon = { workspace = true, features = ["client"] }
+cua-daemon-core = { workspace = true, features = ["client"] }
 cua-home.workspace = true
 cua-spaces = { workspace = true, optional = true }
 pbjson-types = { workspace = true, optional = true }
@@ -102,7 +102,8 @@ cua-host = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 humantime.workspace = true
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+# Path only: cua-daemon is not published, so the published manifest drops this line.
+cua-daemon = { path = "../cua-daemon", default-features = false, features = ["server", "client", "test-fixtures"] }
 tempfile.workspace = true
 # Paused time for the keyframe ticker test.
 tokio = { workspace = true, features = ["test-util"] }

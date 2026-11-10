@@ -29,7 +29,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
-use crate::vfs::{Attr, FsOps, errno, error_from_errno, libc_errno};
+use crate::vfs::{
+    Attr, FLUSH_DEADLINE, FsOps, OP_DEADLINE, errno, error_from_errno, libc_errno, not_answering,
+};
 use crate::{Error, Result};
 
 /// Largest frame accepted (a read or write carries at most 1 MiB of data
@@ -169,6 +171,30 @@ async fn answer(fs: &dyn FsOps, q: &Request, data: Vec<u8>) -> (Reply, Vec<u8>) 
     }
 }
 
+/// [`answer`] within [`OP_DEADLINE`] ([`FLUSH_DEADLINE`] for an upload):
+/// a store that does not answer (sync stalled) fails the request with EIO
+/// rather than leaving the guest's kernel waiting on it.
+async fn answer_in_time(fs: Arc<dyn FsOps>, q: Request, data: Vec<u8>) -> (Reply, Vec<u8>) {
+    let limit = match q.op.as_str() {
+        "flush" | "flush_all" => FLUSH_DEADLINE,
+        _ => OP_DEADLINE,
+    };
+    let (id, op) = (q.id, q.op.clone());
+    let work = tokio::spawn(async move { answer(fs.as_ref(), &q, data).await });
+    let message = match tokio::time::timeout(limit, work).await {
+        Ok(Ok(answered)) => return answered,
+        Ok(Err(e)) => format!("{op}: {e}"),
+        Err(_) => not_answering(&op, limit),
+    };
+    let reply = Reply {
+        id,
+        errno: libc_errno::EIO,
+        message,
+        ..Default::default()
+    };
+    (reply, vec![])
+}
+
 /// Serves `fs` on one stream until it closes. Every request runs as its
 /// own task (bounded), so a slow read never holds up the others.
 pub async fn serve<S>(stream: S, fs: Arc<dyn FsOps>) -> std::io::Result<()>
@@ -201,7 +227,7 @@ where
         let (fs, tx) = (fs.clone(), tx.clone());
         tokio::spawn(async move {
             let _permit = permit;
-            let (reply, bytes) = answer(fs.as_ref(), &q, data).await;
+            let (reply, bytes) = answer_in_time(fs, q, data).await;
             if let Ok(json) = serde_json::to_vec(&reply) {
                 let _ = tx.send((json, bytes)).await;
             }
@@ -841,5 +867,80 @@ mod tests {
         let e = fs.getattr(ROOT).await.unwrap_err();
         assert_eq!(e.tag(), "backend");
         assert!(fs.is_closed());
+    }
+
+    /// Answers the root at once; everything else waits forever (a store
+    /// whose sync with the other computer has stalled).
+    struct Stalled;
+
+    #[async_trait::async_trait]
+    impl FsOps for Stalled {
+        async fn getattr(&self, ino: u64) -> Result<Attr> {
+            Ok(Attr {
+                ino,
+                is_dir: true,
+                size: 0,
+                mtime_ms: 0,
+                writable: true,
+            })
+        }
+        async fn lookup(&self, _: u64, _: &str) -> Result<Attr> {
+            std::future::pending().await
+        }
+        async fn readdir(&self, _: u64) -> Result<Vec<(String, Attr)>> {
+            std::future::pending().await
+        }
+        async fn read(&self, _: u64, _: u64, _: u64) -> Result<(Vec<u8>, bool)> {
+            std::future::pending().await
+        }
+        async fn write(&self, _: u64, _: u64, _: &[u8]) -> Result<Attr> {
+            std::future::pending().await
+        }
+        async fn create(&self, _: u64, _: &str) -> Result<Attr> {
+            std::future::pending().await
+        }
+        async fn truncate(&self, _: u64, _: u64) -> Result<Attr> {
+            std::future::pending().await
+        }
+        async fn mkdir(&self, _: u64, _: &str) -> Result<Attr> {
+            std::future::pending().await
+        }
+        async fn unlink(&self, _: u64, _: &str) -> Result<()> {
+            std::future::pending().await
+        }
+        async fn rmdir(&self, _: u64, _: &str) -> Result<()> {
+            std::future::pending().await
+        }
+        async fn rename(&self, _: u64, _: &str, _: u64, _: &str) -> Result<()> {
+            std::future::pending().await
+        }
+        async fn flush_ino(&self, _: u64) -> Result<()> {
+            std::future::pending().await
+        }
+        async fn flush_all(&self) -> Result<()> {
+            std::future::pending().await
+        }
+    }
+
+    /// CUA-4002: a stalled store fails each request of a guest's mount in
+    /// time with an I/O error that says why, and never holds up the
+    /// requests that can be answered.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_store_answers_the_guest_in_time() {
+        let (host, guest) = tokio::io::duplex(1 << 20);
+        tokio::spawn(serve(host, Arc::new(Stalled)));
+        let fs = RemoteFs::new(guest);
+        let t0 = tokio::time::Instant::now();
+        let (mkdir, root) = tokio::join!(fs.mkdir(ROOT, "agents"), fs.getattr(ROOT));
+        assert!(root.is_ok());
+        let e = mkdir.unwrap_err();
+        assert_eq!(errno(&e), libc_errno::EIO);
+        assert!(e.to_string().contains("did not answer mkdir"), "{e}");
+        let took = t0.elapsed();
+        assert!(took >= OP_DEADLINE && took < FLUSH_DEADLINE, "{took:?}");
+        // An upload gets longer, and an answer too.
+        let t0 = tokio::time::Instant::now();
+        assert!(fs.flush_all().await.is_err());
+        assert!(t0.elapsed() >= FLUSH_DEADLINE);
     }
 }

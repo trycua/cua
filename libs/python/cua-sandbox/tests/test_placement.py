@@ -152,6 +152,19 @@ async def test_local_kind_and_runtime_reach_the_sdk(local_sdk):
     assert (vm.kind, vm.runtime) == ("vm", None) and vm.image.startswith("vm:")
 
 
+async def test_time_to_start_is_the_sdk_readiness_budget(local_sdk):
+    """A slow VM (QEMU without KVM) boots past the runtime's 900 s default:
+    ``time_to_start`` must reach the SDK, or the cua-spacesd wait gets the
+    scraps of the default budget (CI: "did not answer within 0ns")."""
+    with pytest.raises(_Captured):
+        await Sandbox.create(ROOTFS, on="local", time_to_start=1500, telemetry_enabled=False)
+    with pytest.raises(_Captured):
+        await Sandbox.create(ROOTFS, on="local", telemetry_enabled=False)
+    chosen, default = local_sdk
+    assert chosen.ready_timeout_ms == 1_500_000
+    assert default.ready_timeout_ms == 900_000
+
+
 async def test_ephemeral_takes_the_same_placement(local_sdk):
     with pytest.raises(_Captured):
         async with Sandbox.ephemeral(ROOTFS, on="local", runtime="gvisor", telemetry_enabled=False):

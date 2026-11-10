@@ -890,3 +890,60 @@ jobs:
           (cd release && sha256sum -- CuaSDKFFI.xcframework.zip CuaSDKFFI.xcframework.zip.sigstore.json) > new.txt
           grep -v ' CuaSDKFFI\.xcframework\.zip' previous/checksums.txt | cat - new.txt | sort > release/checksums.txt
           gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [version, publish]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.publish.result == 'success' && needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}
+            ${{ needs.version.outputs.prerelease != 'true' && 'cua-install-latest' || '' }}
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish-xcframework:
+    name: Copy to the downloads CDN
+    needs: [version, attach-xcframework]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.attach-xcframework.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}

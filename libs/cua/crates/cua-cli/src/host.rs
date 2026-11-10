@@ -3,7 +3,7 @@
 //! machines; `add` / `rm`: register or forget a Space).
 
 use crate::auth;
-use crate::util::{hint_line, line};
+use crate::util::{ProgramState, hint_line, line, program_status};
 use clap::Subcommand;
 use cua_host::{
     AccountTokens, DeviceAuth, Host, HostStatus, MachinePatch, RelayClient, RunnerKind,
@@ -1835,6 +1835,7 @@ pub async fn run_spaces_sdk(
                 r = &mut all => r,
                 _ = tokio::signal::ctrl_c() => {
                     // Ctrl-C: stop every create and remove what it made.
+                    crate::util::clear_program_status();
                     eprintln!("\nCancelling...");
                     let mut messages = Vec::new();
                     for n in 1..=count {
@@ -1870,20 +1871,21 @@ pub async fn run_spaces_sdk(
                         if !info.cloud.is_empty() {
                             in_cloud.push((info.cloud.clone(), info.cloud_place.clone()));
                         }
+                        let text = format!(
+                            "Created {} ({}{})",
+                            info.id,
+                            info.name,
+                            if info.host_name.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", on {}", info.host_name)
+                            }
+                        );
+                        if show {
+                            program_status(ProgramState::Done, None, &text);
+                        }
                         if !json {
-                            line(
-                                out,
-                                format!(
-                                    "Created {} ({}{})",
-                                    info.id,
-                                    info.name,
-                                    if info.host_name.is_empty() {
-                                        String::new()
-                                    } else {
-                                        format!(", on {}", info.host_name)
-                                    }
-                                ),
-                            );
+                            line(out, text);
                         }
                         rows.push(space_json(&info));
                     }
@@ -1891,6 +1893,9 @@ pub async fn run_spaces_sdk(
                         failed += 1;
                         if failed == 1 {
                             first_failure = crate::exit_code(&e);
+                        }
+                        if show {
+                            program_status(ProgramState::Error, None, &e.to_string());
                         }
                         if !json {
                             eprintln!("cua: {e}");
@@ -4468,7 +4473,10 @@ impl cua_sdk::SpaceCreateListener for StepListener {
                 per_second: p.bytes_per_second,
             });
         }
-        self.0.show(&out);
+        if let Some(text) = self.0.show(&out) {
+            let progress = p.fraction.map(|f| (f * 100.0) as u8);
+            program_status(ProgramState::Working, progress, &text);
+        }
     }
 }
 

@@ -1457,12 +1457,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "cua-daemon"
+name = "cua-daemon-core"
 version = "0.20.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
- "bytes",
  "cua-agents",
  "cua-byoc",
  "cua-cluster",
@@ -1479,26 +1478,19 @@ dependencies = [
  "cua-spacesd-client",
  "cua-vmm",
  "futures-util",
- "hmac 0.12.1",
  "http",
- "http-body-util",
  "humantime",
  "hyper-util",
  "libc",
  "pbjson-types",
  "prost",
- "prost-types",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
- "tokio-stream",
- "tokio-tungstenite",
  "tonic",
- "tonic-prost",
- "tonic-web",
  "tower",
  "tracing",
  "url",
@@ -1713,7 +1705,7 @@ dependencies = [
  "cua-agents",
  "cua-auth",
  "cua-create-failure",
- "cua-daemon",
+ "cua-daemon-core",
  "cua-home",
  "cua-host",
  "cua-image",

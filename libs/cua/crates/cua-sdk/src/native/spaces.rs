@@ -15,7 +15,7 @@
 use super::teleport_types::TeleportManifest;
 use super::{AudioSink, Backend, CheckpointSummary, FrameSink, MediaEvent, run};
 use crate::{CuaError, Result};
-use cua_daemon::client::DaemonClient;
+use cua_daemon_core::client::DaemonClient;
 use cua_proto::daemon::v1 as dpb;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -2976,7 +2976,7 @@ fn refused(e: cua_spaces::Error) -> CuaError {
 }
 
 fn daemon_err(s: tonic::Status) -> CuaError {
-    cua_daemon::client::status_error(s).into()
+    cua_daemon_core::client::status_error(s).into()
 }
 
 /// A Spaces tool the running daemon does not have: it is another app's
@@ -2989,7 +2989,7 @@ async fn missing_tool(d: &DaemonClient, tool: &str, e: CuaError) -> CuaError {
         return e;
     }
     match d.info().await {
-        Ok(info) => CuaError::NotFound(cua_daemon::identity::missing_tool_error(tool, &info)),
+        Ok(info) => CuaError::NotFound(cua_daemon_core::identity::missing_tool_error(tool, &info)),
         Err(_) => e,
     }
 }
@@ -3629,10 +3629,10 @@ impl Spaces {
 fn local_sandbox_of(id: &str, op: &str) -> Result<String> {
     match cua_spaces::SpaceId::parse(id) {
         Ok(local @ cua_spaces::SpaceId::Local { .. }) => Ok(local.to_string()),
-        _ => Err(
-            cua_daemon::Error::Unsupported(format!("{op} local sandboxes ({id} is not one)"))
-                .into(),
-        ),
+        _ => Err(cua_daemon_core::Error::Unsupported(format!(
+            "{op} local sandboxes ({id} is not one)"
+        ))
+        .into()),
     }
 }
 
@@ -4897,7 +4897,7 @@ impl Spaces {
         run(async move {
             let machine = machine.filter(|m| !m.trim().is_empty());
             let r = match (&host, machine) {
-                (Host::Embedded(_), None) => cua_daemon::machine_doctor::response().await,
+                (Host::Embedded(_), None) => cua_daemon_core::machine_doctor::response().await,
                 (Host::Embedded(s), Some(m)) => s.machine_health(&m).await?,
                 (Host::Daemon(d), m) => d.diagnose_host(m.unwrap_or_default()).await?,
             };

@@ -20,6 +20,10 @@ use crate::{Error, Result, SpaceId, Spaces};
 
 /// The label that carries a Space's sleep setting.
 pub const LABEL_SLEEP: &str = "cua.sleep";
+/// Marks an agent home (also the agent home label).
+const LABEL_HOME: &str = "cua.home";
+/// Marks a Space kept out of the lists (the home warming for Home).
+const LABEL_HIDDEN: &str = "cua.hidden";
 
 /// How long an agent run waits for its next message before it exits, in a
 /// Space that sleeps on its own. Elsewhere it is 30 minutes
@@ -92,13 +96,18 @@ impl Sleep {
         }
     }
 
-    /// The setting a Space's labels carry; `never` when there is none or it
-    /// does not read.
+    /// The setting a Space's labels carry. With no (readable) `cua.sleep`
+    /// label a Space a helper made for a task, an agent home (`cua.home`) or
+    /// the hidden home warming for Home (`cua.hidden`), is `auto`, so homes
+    /// made before the setting existed pick it up without being recreated;
+    /// any other Space is `never`.
     pub fn from_labels(labels: &BTreeMap<String, String>) -> Sleep {
-        labels
-            .get(LABEL_SLEEP)
-            .and_then(|w| Sleep::parse(w))
-            .unwrap_or(Sleep::Never)
+        if let Some(s) = labels.get(LABEL_SLEEP).and_then(|w| Sleep::parse(w)) {
+            return s;
+        }
+        let helper =
+            labels.get(LABEL_HOME).is_some_and(|v| v == "1") || labels.contains_key(LABEL_HIDDEN);
+        if helper { Sleep::Auto } else { Sleep::Never }
     }
 
     /// Whether the host may put the Space to sleep at all.
@@ -137,14 +146,165 @@ impl Spaces {
         Ok(())
     }
 
-    /// The sleep setting of the Space `id`, from its labels.
+    /// The sleep setting of the Space `id`: what `set_sleep` stored for this
+    /// very Space, else the label it was created with, else `never`.
     pub fn sleep_of(&self, id: &str) -> Sleep {
-        self.list()
+        let labels = self
+            .list()
             .ok()
             .and_then(|l| l.into_iter().find(|s| s.id == id))
-            .map(|s| Sleep::from_labels(&s.labels))
-            .unwrap_or_default()
+            .map(|s| s.labels)
+            .unwrap_or_default();
+        self.sleep_with_labels(id, &labels)
     }
+
+    /// [`Self::sleep_of`] when the caller already has the Space's labels.
+    pub fn sleep_with_labels(&self, id: &str, labels: &BTreeMap<String, String>) -> Sleep {
+        match self.stored(id).and_then(|e| e.sleep) {
+            Some(w) => Sleep::parse(&w).unwrap_or_default(),
+            None => Sleep::from_labels(labels),
+        }
+    }
+
+    /// Changes the sleep setting of a registered Space. `never` is stored
+    /// too, so it wins over a label that said `auto`.
+    pub fn set_sleep(&self, id: &str, sleep: Sleep) -> Result<()> {
+        let id = self.resolve(id)?.to_string();
+        self.update_stored(&id, |e| e.sleep = Some(sleep.word()))
+    }
+
+    /// Keeps a Space awake for `dur` (at most [`MAX_KEEP_AWAKE`] from now),
+    /// whatever its sleep setting says. Says until when. The reason is shown
+    /// to the person.
+    pub fn keep_awake(&self, id: &str, dur: Duration, reason: &str) -> Result<KeepAwake> {
+        let id = self.resolve(id)?.to_string();
+        let capped = dur > MAX_KEEP_AWAKE;
+        let until = now_unix() + dur.min(MAX_KEEP_AWAKE).as_secs();
+        let reason: String = reason.chars().take(200).collect();
+        self.update_stored(&id, |e| {
+            e.keep_until_unix = Some(until);
+            e.keep_reason = Some(reason.clone());
+        })?;
+        Ok(KeepAwake {
+            until_unix: until,
+            reason,
+            capped,
+        })
+    }
+
+    /// Ends a keep-awake early.
+    pub fn clear_keep_awake(&self, id: &str) -> Result<()> {
+        let id = self.resolve(id)?.to_string();
+        self.update_stored(&id, |e| {
+            e.keep_until_unix = None;
+            e.keep_reason = None;
+        })
+    }
+
+    /// The keep-awake of `id` while it holds.
+    pub fn keep_awake_of(&self, id: &str) -> Option<KeepAwake> {
+        let e = self.stored(id)?;
+        let until = e.keep_until_unix.filter(|u| *u > now_unix())?;
+        Some(KeepAwake {
+            until_unix: until,
+            reason: e.keep_reason.unwrap_or_default(),
+            capped: false,
+        })
+    }
+
+    fn stored(&self, id: &str) -> Option<Entry> {
+        let at = self.sleep_created_at(id);
+        let mut all = load(self.home_dir());
+        all.spaces.remove(id).filter(|e| e.created == at)
+    }
+
+    fn sleep_created_at(&self, id: &str) -> u64 {
+        self.registry()
+            .meta(id)
+            .map(|m| m.created_at_unix)
+            .unwrap_or(0)
+    }
+
+    fn update_stored(&self, id: &str, f: impl FnOnce(&mut Entry)) -> Result<()> {
+        let at = self.sleep_created_at(id);
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = load(self.home_dir());
+        let mut e = all
+            .spaces
+            .remove(id)
+            .filter(|e| e.created == at)
+            .unwrap_or(Entry {
+                created: at,
+                ..Default::default()
+            });
+        f(&mut e);
+        all.spaces.insert(id.to_owned(), e);
+        save(self.home_dir(), &all)
+            .map_err(|e| Error::invalid(format!("could not save the sleep setting: {e}")))
+    }
+}
+
+/// The longest a keep-awake lasts.
+pub const MAX_KEEP_AWAKE: Duration = Duration::from_secs(2 * 3600);
+
+/// A keep-awake that holds.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct KeepAwake {
+    /// When it ends (Unix seconds).
+    pub until_unix: u64,
+    /// Why, in the words of whoever asked.
+    pub reason: String,
+    /// The ask was longer than [`MAX_KEEP_AWAKE`] and was cut.
+    pub capped: bool,
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Entry {
+    /// When the Space was created: a Space of the same name made later does
+    /// not inherit the setting.
+    created: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sleep: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keep_until_unix: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    keep_reason: Option<String>,
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct File {
+    #[serde(default)]
+    spaces: BTreeMap<String, Entry>,
+}
+
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn path(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("sleep.json")
+}
+
+fn load(home: &std::path::Path) -> File {
+    std::fs::read(path(home))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save(home: &std::path::Path, f: &File) -> std::io::Result<()> {
+    let p = path(home);
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let tmp = p.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_vec_pretty(f).unwrap_or_default())?;
+    std::fs::rename(&tmp, &p)
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -180,6 +340,21 @@ mod tests {
         for w in ["", "soon", "5", "5x", "-3m", "1s", "99d", "m"] {
             assert_eq!(Sleep::parse(w), None, "{w:?}");
         }
+    }
+
+    #[test]
+    fn helper_made_spaces_sleep_unless_they_say_otherwise() {
+        let mut l = BTreeMap::new();
+        l.insert("cua.home".to_string(), "1".to_string());
+        assert_eq!(Sleep::from_labels(&l), Sleep::Auto);
+        l.insert(LABEL_SLEEP.into(), "never".into());
+        assert_eq!(Sleep::from_labels(&l), Sleep::Never);
+        let mut w = BTreeMap::new();
+        w.insert("cua.hidden".to_string(), "home".to_string());
+        assert_eq!(Sleep::from_labels(&w), Sleep::Auto);
+        let mut u = BTreeMap::new();
+        u.insert("team".to_string(), "research".to_string());
+        assert_eq!(Sleep::from_labels(&u), Sleep::Never);
     }
 
     #[test]

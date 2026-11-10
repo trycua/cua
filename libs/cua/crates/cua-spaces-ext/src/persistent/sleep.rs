@@ -23,7 +23,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
-use cua_spaces::sleep::Sleep;
 use cua_spacesd_client::Command;
 
 use super::{AgentRecord, Persistent, RunStatus, TickReport};
@@ -121,7 +120,7 @@ impl Persistent {
                 l.into_iter()
                     .filter(|s| {
                         super::space_is_off(&s.power_state)
-                            && Sleep::from_labels(&s.labels).sleeps()
+                            && self.spaces.sleep_with_labels(&s.id, &s.labels).sleeps()
                     })
                     .map(|s| s.id)
                     .collect()
@@ -161,7 +160,7 @@ impl Persistent {
         let now = Instant::now();
         let mut seen = BTreeSet::new();
         for row in rows {
-            let sleep = Sleep::from_labels(&row.labels);
+            let sleep = self.spaces.sleep_with_labels(&row.id, &row.labels);
             if !row.id.starts_with("local:") || !sleep.sleeps() {
                 continue;
             }
@@ -175,21 +174,33 @@ impl Persistent {
                 continue;
             }
             // Cheap reasons first, from the records alone.
-            let held = members.iter().find_map(|r| {
-                let why = if r.paused {
-                    "is paused"
-                } else if r.relaunch {
-                    "is waiting to be relaunched"
-                } else if r.policy.standby {
-                    "is on standby"
-                } else if r.policy.durable {
-                    "is durable"
-                } else if r.session_views().iter().any(|s| s.task.is_some()) {
-                    "has a task in flight"
-                } else {
-                    return None;
-                };
-                Some(format!("{} {why}", r.name))
+            let kept = self.spaces.keep_awake_of(&row.id).map(|k| {
+                format!(
+                    "kept awake: {}",
+                    if k.reason.is_empty() {
+                        "no reason given"
+                    } else {
+                        &k.reason
+                    }
+                )
+            });
+            let held = kept.or_else(|| {
+                members.iter().find_map(|r| {
+                    let why = if r.paused {
+                        "is paused"
+                    } else if r.relaunch {
+                        "is waiting to be relaunched"
+                    } else if r.policy.standby {
+                        "is on standby"
+                    } else if r.policy.durable {
+                        "is durable"
+                    } else if r.session_views().iter().any(|s| s.task.is_some()) {
+                        "has a task in flight"
+                    } else {
+                        return None;
+                    };
+                    Some(format!("{} {why}", r.name))
+                })
             });
             let due = {
                 let mut live = self.live.lock().await;

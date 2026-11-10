@@ -845,7 +845,7 @@ impl VmmLocal {
     /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
     /// create of [`warm_pools_image`] (the size a create without one gets),
     /// so the create that Home makes claims it. It is kept ready after each
-    /// claim at once, and drains after [`WARM_POOLS_IDLE`] without a create.
+    /// claim at once, and drains after [`HOME_WARM_IDLE`] without a create.
     async fn keep_warm_space(
         &self,
         pool: &crate::pool::WarmPool,
@@ -878,7 +878,7 @@ impl VmmLocal {
                 1,
                 Some(1),
                 None,
-                Some(WARM_POOLS_IDLE),
+                Some(HOME_WARM_IDLE),
                 Some(harnesses),
             )
             .ok_or_else(|| "this shape does not pool".to_string())?;
@@ -928,7 +928,7 @@ impl VmmLocal {
                         1,
                         Some(1),
                         None,
-                        Some(WARM_POOLS_IDLE),
+                        Some(HOME_WARM_IDLE),
                         Some(harnesses),
                     )
                     .ok_or_else(|| "this shape does not pool".to_string())?;
@@ -1485,7 +1485,12 @@ fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
     (ordered, n)
 }
 
-/// How long the warm Space sits unused before it is given back.
+/// How long the warm Space that is claimed as an agent's home sits unused
+/// before it is given back: the same idle class as a home that sleeps on its
+/// own. No other warm pool uses it ([`WARM_POOLS_IDLE`]).
+pub const HOME_WARM_IDLE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// How long any other warm pool sits unused before it is given back.
 pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 
 /// What the warm pool asks of this machine: cua-spacesd of its members, and

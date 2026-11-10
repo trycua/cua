@@ -20,7 +20,7 @@ Or open Settings, Advanced, Labs and turn on Warm start. Turn it off the same wa
 - Keeps at most one Linux Space ready. It is hidden: it is on no list and costs nothing you see until Create takes it.
 - Installs the coding apps in it while it waits, so Create does not wait for an install. By default these are Codex, Hermes, Claude Code and OpenCode, the four people run most. To choose others, set `CUA_WARM_POOLS_HARNESSES` for the cua daemon to a comma separated list of app ids, or to `none` to keep a bare Space.
 - Starts the next one at once after Create takes it. If you create again before it is ready, that Create waits for the one that is starting, which began before it, instead of starting another from scratch.
-- Gives the Space back after two hours without a Create, and whenever this computer needs the memory or CPUs for work you started. A warm Space never makes a Create fail: if there is no room, or anything goes wrong, Create starts a Space the way it does without the experiment.
+- Gives the Space back after thirty minutes without a Create, and whenever this computer needs the memory or CPUs for work you started. A warm Space never makes a Create fail: if there is no room, or anything goes wrong, Create starts a Space the way it does without the experiment.
 - Holds only what [`pool.memory_percent`](/cua-cli/reference/cli/account-and-setup) allows (15 percent of this computer's memory by default).
 
 ## Where it works

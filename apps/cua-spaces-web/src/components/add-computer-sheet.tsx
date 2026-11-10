@@ -213,11 +213,7 @@ export function AddComputerSheet({
                 {titles(t)[view]}
               </DialogTitle>
               {view === "pick" ? (
-                <Pick
-                  pairing={pairing}
-                  noCode={noCode}
-                  onPick={setView}
-                />
+                <Pick pairing={pairing} noCode={noCode} onPick={setView} />
               ) : view === "signin" ? (
                 <SignInThere identity={session?.identity ?? null} done={added !== null} />
               ) : (
@@ -243,7 +239,10 @@ export function AddComputerSheet({
                     aria-label={t("computers.add.add_it_for")}
                     className="h-7 min-w-0 border-transparent bg-transparent text-xs text-muted-foreground shadow-none"
                     value={chosen ?? "me"}
-                    options={[{ value: "me", label: t("computers.add.for_just_me") }, ...choices.teams.map((c) => ({ value: c.id, label: t("computers.add.for_team", { team: teamName(c) }) }))]}
+                    options={[
+                      { value: "me", label: t("computers.add.for_just_me") },
+                      ...choices.teams.map((c) => ({ value: c.id, label: t("computers.add.for_team", { team: teamName(c) }) })),
+                    ]}
                     onValueChange={(v) => setPicked(v === "me" ? null : v)}
                   />
                 ) : null
@@ -312,7 +311,11 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
             <label htmlFor="add-agent-prompt" className="text-[13px] font-medium">
               {t("computers.add.paste_into_agent")}
             </label>
-            <CopyButton text={code ? agentPrompt(code, pairing.code?.url ?? null) : ""} label={t("computers.add.copy_prompt")} disabled={!code || pairing.phase !== "ready"} />
+            <CopyButton
+              text={code ? agentPrompt(code, pairing.code?.url ?? null) : ""}
+              label={t("computers.add.copy_prompt")}
+              disabled={!code || pairing.phase !== "ready"}
+            />
           </div>
           <textarea
             id="add-agent-prompt"
@@ -493,31 +496,31 @@ function Footer({
     }
     return (
       <>
-      {asCard ? <UpgradeCard reason={cardReason} className="mx-4 mb-3" /> : null}
-      <FooterBar>
-        <Status kind={team?.phase === "failed" ? "ended" : "ok"} data={{ "data-pairing-added": "", "data-pairing-team": team?.phase ?? "" }}>
-          {team?.phase === "failed"
-            ? t("computers.add.added_not_on_team", { name: added, team: forTeam ?? t("computers.add.your_team"), error: team.error ?? "" }).trim()
-            : forTeam
-              ? t("computers.add.added_for_team", { name: added, team: forTeam })
-              : t("computers.add.added", { name: added })}
-        </Status>
-        {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-brand"
-            data-pairing-upgrade=""
-            onClick={() => {
-              plans.opened("app_team", { kind: team.kind ?? "other", plan });
-              void openExternal(plans.link(team.upgradeUrl!, "app_team")).catch(() => {});
-            }}
-          >
-            {t("computers.add.upgrade")}
-          </Button>
-        ) : null}
-        {done}
-      </FooterBar>
+        {asCard ? <UpgradeCard reason={cardReason} className="mx-4 mb-3" /> : null}
+        <FooterBar>
+          <Status kind={team?.phase === "failed" ? "ended" : "ok"} data={{ "data-pairing-added": "", "data-pairing-team": team?.phase ?? "" }}>
+            {team?.phase === "failed"
+              ? t("computers.add.added_not_on_team", { name: added, team: forTeam ?? t("computers.add.your_team"), error: team.error ?? "" }).trim()
+              : forTeam
+                ? t("computers.add.added_for_team", { name: added, team: forTeam })
+                : t("computers.add.added", { name: added })}
+          </Status>
+          {team?.phase === "failed" && team.upgradeUrl && !asCard ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-brand"
+              data-pairing-upgrade=""
+              onClick={() => {
+                plans.opened("app_team", { kind: team.kind ?? "other", plan });
+                void openExternal(plans.link(team.upgradeUrl!, "app_team")).catch(() => {});
+              }}
+            >
+              {t("computers.add.upgrade")}
+            </Button>
+          ) : null}
+          {done}
+        </FooterBar>
       </>
     );
   }
@@ -649,9 +652,7 @@ function EnterCode({
           </Button>
           {t("computers.add.method_code")}
         </DialogTitle>
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-          {t("computers.add.enter_trust")}
-        </DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("computers.add.enter_trust")}</DialogDescription>
         {relay ? (
           <p className="mt-2 text-xs text-muted-foreground" data-join-relay="">
             <Trans i18nKey="computers.add.own_relay" ns="computers" values={{ relay }} components={{ host: <span className="text-foreground" /> }} />
@@ -751,7 +752,16 @@ export function QrCode({ text, size = 148 }: { text: string; size?: number }) {
     }),
   );
   return (
-    <svg role="img" aria-label={t("computers.add.qr_alt")} data-pairing-qr="" width={size} height={size} viewBox={`0 0 ${qr.size} ${qr.size}`} shapeRendering="crispEdges" className="rounded-lg bg-white">
+    <svg
+      role="img"
+      aria-label={t("computers.add.qr_alt")}
+      data-pairing-qr=""
+      width={size}
+      height={size}
+      viewBox={`0 0 ${qr.size} ${qr.size}`}
+      shapeRendering="crispEdges"
+      className="rounded-lg bg-white"
+    >
       <path d={d} fill="#000" />
     </svg>
   );

@@ -32,8 +32,9 @@ export function homeBrief(setup: HomeSetup, abilities: readonly AbilityDescripto
     ...abilities.map((a) => `- ${a.summary} Run: ${a.call}`),
     '- Run training or any GPU or heavy work on the person\'s own computers, which have the GPUs, with no questions asked: put it on the best of them yourself. Write a Python function in a file, `@app.function(gpu="nvidia", gpu_memory="16GB", image=cua.Image.python().uv_pip_install("torch"))` (`gpu="apple", kind="machine"` for a Mac), with no parameters, and run `cua run file.py::fn`. Only what the function returns comes back: return a file or folder path to get files (`cua computers` shows the computers, `cua jobs` your runs). Make a first run about 60 to 90 seconds. Your runs end when this Space does. To show a window, start the program in this Space and open it with the stream_space_window tool: it appears in the person\'s Stream.',
     "",
-    "Before an ability that needs the person's OK, ask in this thread with an approval whose action is the ability, for example",
-    `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details, and wait for the answer. Do not look for another way around a refusal.`,
+    "Before an ability that needs the person's OK, ask with the thread_post tool: give it an approval whose action is the ability and whose details say what for, for example",
+    `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details. That puts a card in front of the person; asking in plain words does not, and nothing will answer it. Do not look for another way around a refusal.`,
+    "After you ask, end your turn: the person's answer arrives as a new message to you, so do not poll for it. If it says no, do not ask again or work around it; say what you will do instead. If it says yes, do the thing, then say plainly how it went. If making a Space fails, tell the person the reason the command printed, in your own words, and offer a real next step.",
   ];
   const named = [...setup.mentions.spaces.map((s) => `the Space "${s.name}"`), ...setup.mentions.machines.map((m) => `the computer "${m.name}"`)];
   lines.push("");

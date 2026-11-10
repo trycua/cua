@@ -46,6 +46,8 @@ export interface SpaceTileProps {
   topLeft?: ReactNode;
   /** After the text, on hover (the "⋯" menu). */
   more?: ReactNode;
+  /** A quiet line under where it runs ("2 child Spaces", "parent removed"). */
+  note?: string;
   /** A machine's desktop: Hide, in place of the power button, on hover. */
   hide?: () => void;
   /** A click on the tile; call `preventDefault` to keep it from opening. */
@@ -61,7 +63,7 @@ export interface SpaceTileProps {
  */
 export const TILE_CELL = "-m-1 p-1 [content-visibility:auto] [contain-intrinsic-size:auto_240px]";
 
-export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick }: SpaceTileProps) {
+export function SpaceTile({ item, accessKey, selected = false, busy = false, topLeft, more, hide, onClick, note }: SpaceTileProps) {
   const t = useT();
   const { space, state, access } = item;
   const drop = useTileDrop(space, state === "running" && item.desktop !== "off");
@@ -122,6 +124,11 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
               </span>
               <PeopleStack access={access} />
             </p>
+            {note ? (
+              <p data-tile-note="" className="mt-0.5 truncate text-xs text-muted-foreground">
+                {note}
+              </p>
+            ) : null}
             {/* Downloading: how far, how fast, how long is left. */}
             {creating && space.progress?.transfer ? (
               <p data-create-transfer="" className="mt-0.5 truncate text-xs tabular-nums text-muted-foreground">

@@ -156,7 +156,7 @@
   "current": {
     "arch": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-11-10T14:47:33Z",
+        "checked_at": "2026-11-10T18:47:27Z",
         "status": "fail",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
@@ -173,7 +173,7 @@
     },
     "omarchy-edge": {
       "cua-driver-rs-v0.33.2": {
-        "checked_at": "2026-11-10T14:47:33Z",
+        "checked_at": "2026-11-10T18:47:27Z",
         "status": "fail",
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
@@ -242,7 +242,7 @@
         "arch",
         "omarchy-edge"
       ],
-      "checked_at": "2026-11-10T14:47:33Z",
+      "checked_at": "2026-11-10T18:47:27Z",
       "checks": {
         "build": {
           "status": "fail",
@@ -282,7 +282,7 @@
         ],
         "tree": "5b3d63841bb61cf07d20f964e545bed5e23dd787"
       },
-      "run_url": "https://github.com/trycua/cua/actions/runs/42837326543",
+      "run_url": "https://github.com/trycua/cua/actions/runs/42878407557",
       "runtime": {
         "basename": "libstdc++.so.6.0.36",
         "packages": {
@@ -366,7 +366,7 @@
           "xcb-util-errors": "1.0.1-2",
           "xcb-util-wm": "0.4.2-2",
           "xz": "5.8.4-1",
-          "zlib": "1:1.3.2-4",
+          "zlib": "1:1.4-1",
           "zstd": "1.5.7-3"
         },
         "sha256": "f5fc7380f2ae46fa4053a64be04e7b98109f1066a4bbfff3c37042488aa0be0e"
@@ -3963,9 +3963,9 @@
       }
     }
   ],
-  "generated_at": "2026-11-10T14:47:58Z",
+  "generated_at": "2026-11-10T18:47:59Z",
   "note": "CI requalification of the Cua Hyprland plugin per Hyprland build. Not native certification and not a package: the reviewed kit/profile process stays the release gate.",
-  "run_url": "https://github.com/trycua/cua/actions/runs/42837326543",
+  "run_url": "https://github.com/trycua/cua/actions/runs/42878407557",
   "schema": 1,
   "tracked_packages": [
     "hyprland",

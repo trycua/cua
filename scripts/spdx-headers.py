@@ -102,7 +102,8 @@ def declared_id(head: str) -> str | None:
 def foreign_notice(head: str) -> bool:
     """Another party's copyright or license notice (adapted or vendored code)."""
     for line in head.splitlines()[:40]:
-        if re.search(r"\bcopyright\b", line, re.I) and COPYRIGHT_HOLDER not in line:
+        # A notice names a holder after the word; `COPYRIGHT: &str = ...` is code.
+        if re.search(r"\bcopyright\s+(?![:=])\S", line, re.I) and COPYRIGHT_HOLDER not in line:
             return True
         if re.search(r"licensed under", line, re.I):
             return True

@@ -11,7 +11,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 VENDORED = "// Copyright (c) 2019 Some Upstream Author\n// Licensed under the Apache License, Version 2.0\n\npub fn f() {}\n"
-OWN = "pub fn g() {}\n"
+OWN = 'pub const COPYRIGHT: &str = "2026";\nlet copyright = 1;\n'
 
 
 class DriverTreeTest(unittest.TestCase):

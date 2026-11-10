@@ -67,7 +67,9 @@ that keeps failing, still fails the run.
 --retry-harness names the harness that owns the retried cell and must match the
 failing row. --retry-attempts bounds the retries (1-3, default 1). --retry-only
 skips the full matrix and runs just the selection, starting and verifying the
-unrestricted worker daemon first.
+unrestricted worker daemon first. AppKit cells require --retry-only and use
+scripts/ci/macos/appkit-cells.tsv; use --retry-attempts 1 for focused development.
+A selected-cell pass is not full-matrix certification.
 EOF
 }
 
@@ -150,7 +152,17 @@ validate_arguments() {
     return 2
   fi
 
-  if [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
+  if [[ "${RETRY_CELL}" == macos-appkit-* ]]; then
+    if [[ "${RETRY_ONLY}" != 1 || ( -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != appkit ) ]]; then
+      echo "AppKit selection requires --retry-only and the appkit harness" >&2
+      return 2
+    fi
+    RETRY_HARNESS=appkit
+    RETRY_INTERNAL_LANE=native
+  elif [[ "${RETRY_HARNESS}" == appkit ]]; then
+    echo "the appkit harness requires a macos-appkit-* retry cell" >&2
+    return 2
+  elif [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
     if [[ -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != swiftui ]]; then
       echo "${RETRY_CELL} belongs to the swiftui harness, not ${RETRY_HARNESS}" >&2
       return 2

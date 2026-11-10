@@ -1003,6 +1003,128 @@ def test_swiftui_retry_cell_and_harness_must_agree(args: list[str]) -> None:
     assert _parse(args)["status"] == "2"
 
 
+APPKIT_CELLS = REPO_ROOT / "scripts/ci/macos/appkit-cells.tsv"
+APPKIT_TESTS = REPO_ROOT / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/harness_appkit_test.rs"
+APPKIT_SNAPSHOT_PUBLICATION = (
+    REPO_ROOT
+    / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/support/appkit_snapshot_publication.rs"
+)
+
+
+def _appkit_rows() -> list[list[str]]:
+    return [line.split("\t") for line in APPKIT_CELLS.read_text(encoding="utf-8").splitlines()]
+
+
+def _ignored_tests(source: Path) -> set[str]:
+    return set(
+        re.findall(r"#\[test\]\s*#\[ignore\]\s*fn (harness_appkit_\w+)", source.read_text())
+    )
+
+
+def test_appkit_manifest_registers_every_ignored_appkit_test_once() -> None:
+    rows = _appkit_rows()
+    assert all(len(row) == 2 for row in rows)
+    cells = [row[0] for row in rows]
+    tests = [row[1] for row in rows]
+    assert all(re.fullmatch(r"macos-appkit-[a-z0-9]+(?:-[a-z0-9]+)*", cell) for cell in cells)
+    assert len(set(cells)) == len(cells)
+    assert len(set(tests)) == len(tests)
+    expected = _ignored_tests(APPKIT_TESTS) | {
+        f"snapshot_publication::{name}" for name in _ignored_tests(APPKIT_SNAPSHOT_PUBLICATION)
+    }
+    assert set(tests) == expected
+
+
+def test_appkit_single_cell_is_routed_to_the_native_lane() -> None:
+    fields = _parse(
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable", "--retry-only"]
+    )
+    assert fields["status"] == "0"
+    assert fields["harness"] == "appkit"
+    assert fields["lane"] == "native"
+    assert fields["attempts"] == "1"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable"],
+        [
+            "--retry-cell", "macos-appkit-ax-tree-ax-not-applicable",
+            "--retry-only", "--retry-harness", "swiftui",
+        ],
+        [
+            "--retry-cell", "macos-swiftui-left-click-ax-background",
+            "--retry-only", "--retry-harness", "appkit",
+        ],
+    ],
+)
+def test_appkit_selection_cannot_change_harness_or_retry_a_full_matrix(
+    args: list[str],
+) -> None:
+    assert _parse(args)["status"] == "2"
+
+
+def _dispatch_appkit(tmp_path: Path, harness: str, cell: str) -> list[str]:
+    cargo = tmp_path / "bin/cargo"
+    commands = tmp_path / "commands.txt"
+    _write_executable(cargo, 'printf "%s\\n" "$*" >> "$CUA_TEST_NATIVE_COMMANDS"\n')
+    completed = _run(
+        RUN_RUST_E2E,
+        'ARTIFACT_DIR="$CUA_TEST_ARTIFACTS"\nNATIVE_FILTER_MATCHES=0\nrun_appkit_cells\n'
+        'printf "matches=%s\\n" "$NATIVE_FILTER_MATCHES"\n',
+        env={
+            "PATH": f"{cargo.parent}:{os.environ['PATH']}",
+            "CUA_TEST_NATIVE_COMMANDS": str(commands),
+            "CUA_TEST_ARTIFACTS": str(tmp_path),
+            "CUA_E2E_HARNESS_FILTER": harness,
+            "CUA_E2E_CELL_FILTER": cell,
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    calls = commands.read_text().splitlines() if commands.exists() else []
+    assert _fields(completed.stdout)["matches"] == str(len(calls))
+    return calls
+
+
+def _appkit_command(test_name: str) -> str:
+    return (
+        f"test -p cua-driver-e2e --test harness_appkit_test -- --ignored --exact {test_name} "
+        "--nocapture --test-threads=1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("cell", "test_name"),
+    [
+        ("macos-appkit-ax-tree-ax-not-applicable", "harness_appkit_smoke"),
+        (
+            "macos-appkit-snapshot-publication-ax-foreground",
+            "snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token",
+        ),
+    ],
+)
+def test_appkit_selection_invokes_only_the_exact_native_test(
+    tmp_path: Path, cell: str, test_name: str
+) -> None:
+    assert _dispatch_appkit(tmp_path, "appkit", cell) == [_appkit_command(test_name)]
+
+
+def test_appkit_full_lane_runs_every_registered_test_in_manifest_order(tmp_path: Path) -> None:
+    expected = [_appkit_command(row[1]) for row in _appkit_rows()]
+    assert _dispatch_appkit(tmp_path, "", "") == expected
+
+
+@pytest.mark.parametrize(
+    ("harness", "cell"),
+    [("appkit", "unknown-cell"), ("swiftui", ""), ("swiftui", "macos-appkit-ax-tree-ax-not-applicable")],
+)
+def test_appkit_dispatch_never_falls_back_on_no_match(
+    tmp_path: Path, harness: str, cell: str
+) -> None:
+    assert _dispatch_appkit(tmp_path, harness, cell) == []
+
+
 def test_native_swiftui_selector_matches_exactly_one_owned_cell() -> None:
     completed = _run(
         RUN_RUST_E2E,

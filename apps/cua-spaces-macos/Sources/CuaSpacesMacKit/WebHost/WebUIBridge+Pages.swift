@@ -738,7 +738,7 @@ extension WebUIBridge {
             var input = BridgeValue.encode(devices.input) as? [String: Any] ?? [:]
             input["readError"] = devices.error ?? NSNull()
             // What the native page names this Mac before the relay does.
-            input["deviceName"] = Foundation.Host.current().localizedName ?? NSNull()
+            input["deviceName"] = ComputerName.current ?? NSNull()
             return input
         case "devices.enroll":
             let r = try await relay.enroll()

@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use cua_driver_core::mcp_wire::{self, ProtocolSession};
 use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
-use cua_driver_core::protocol::{initialize_result, Request, Response};
+use cua_driver_core::protocol::{initialize_result_for, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
     StdioExecutionPath,
@@ -814,7 +814,7 @@ fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
 
 /// JSON-RPC method dispatcher for the proxy. Mirrors
 /// `cua_driver_core::server::handle_request`:
-/// - `initialize` → static `initialize_result()` (same envelope as the core
+/// - `initialize` → `initialize_result_for` the daemon's tool list (same envelope as the core
 ///   protocol server; the daemon's identity is hidden from the MCP client).
 /// - `tools/list` → return the cached daemon tool list.
 /// - `tools/call` → forward to the daemon and reshape the response into MCP's
@@ -836,7 +836,9 @@ async fn handle_proxy_request(
         return response;
     }
     let method = req.method.clone();
-    let response = if let Some(response) = mcp_wire::handle_metadata_request(&req, id.clone()) {
+    let response = if let Some(response) =
+        mcp_wire::handle_metadata_request(&req, id.clone(), cached_tools_list)
+    {
         response
     } else {
         handle_proxy_tool_request(
@@ -864,7 +866,7 @@ async fn handle_proxy_tool_request(
         "initialize"
             if mcp_wire::classify_request(&req).ok() == Some(mcp_wire::ProtocolEra::Legacy) =>
         {
-            Response::ok(id, initialize_result())
+            Response::ok(id, initialize_result_for(cached_tools_list))
         }
 
         "tools/list" => Response::ok(id, (**cached_tools_list).clone()),

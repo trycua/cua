@@ -344,11 +344,25 @@ impl ToolResult {
 // ── Initialize result ─────────────────────────────────────────────────────────
 
 pub fn initialize_result() -> Value {
+    initialize_result_with(agent_instructions())
+}
+
+/// The initialize result for a server that advertises `tools_list`: the
+/// script-only instructions exactly when `run_script` is the only tool, so a
+/// proxy describes the daemon's mode, not its own environment.
+pub fn initialize_result_for(tools_list: &Value) -> Value {
+    let script_only = tools_list["tools"]
+        .as_array()
+        .is_some_and(|tools| tools.len() == 1 && tools[0]["name"] == "run_script");
+    initialize_result_with(agent_instructions_for(script_only))
+}
+
+fn initialize_result_with(instructions: String) -> Value {
     serde_json::json!({
         "protocolVersion": "2025-06-18",
         "capabilities": crate::mcp_wire::server_capabilities(),
         "serverInfo": { "name": "cua-driver", "version": env!("CARGO_PKG_VERSION") },
-        "instructions": agent_instructions()
+        "instructions": instructions
     })
 }
 
@@ -364,6 +378,14 @@ pub fn initialize_result() -> Value {
 /// Goose uses in its `ComputerController` extension and Open
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
+    #[cfg(feature = "script")]
+    let script_only = crate::script_tool::script_only();
+    #[cfg(not(feature = "script"))]
+    let script_only = false;
+    agent_instructions_for(script_only)
+}
+
+fn agent_instructions_for(script_only: bool) -> String {
     // macOS needs no platform pointer: its permission line below names MACOS.md.
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
         ("AX", "")
@@ -389,8 +411,7 @@ fn agent_instructions() -> String {
     };
 
     // Script-only mode lists run_script alone, so name nothing else.
-    #[cfg(feature = "script")]
-    if crate::script_tool::script_only() {
+    if script_only {
         return format!(
             r#"cua-driver: background GUI automation through one tool, `run_script`: a sandboxed JavaScript async function body with the `cua` API (see its description). No shell.
 
@@ -546,6 +567,32 @@ mod agent_instruction_tests {
         assert!(
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"
+        );
+    }
+
+    #[test]
+    fn script_only_instructions_name_only_run_script_and_stay_in_budget() {
+        let instructions = super::agent_instructions_for(true);
+        assert!(instructions.contains("one tool, `run_script`"));
+        for direct in [
+            "`run_steps(",
+            "`list_windows(",
+            "`verify_state(",
+            "`browser_click`",
+        ] {
+            assert!(!instructions.contains(direct), "{direct}");
+        }
+        assert!(instructions.split_whitespace().count() <= 200);
+        assert_ne!(instructions, super::agent_instructions_for(false));
+        let only = serde_json::json!({"tools": [{"name": "run_script"}]});
+        let both = serde_json::json!({"tools": [{"name": "run_script"}, {"name": "click"}]});
+        assert_eq!(
+            super::initialize_result_for(&only)["instructions"],
+            instructions
+        );
+        assert_eq!(
+            super::initialize_result_for(&both)["instructions"],
+            super::agent_instructions_for(false)
         );
     }
 

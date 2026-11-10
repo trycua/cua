@@ -1672,7 +1672,11 @@ impl ToolRegistry {
 
     /// `tools/list`; in script-only mode only `run_script`, when registered.
     pub(crate) fn tools_list_for(&self, script_only: bool) -> Value {
-        let script_only = script_only && self.tools.contains_key("run_script");
+        // Script-only applies only when run_script is registered and policy
+        // lists it, so the list is never emptied.
+        let script_only = script_only
+            && self.tools.contains_key("run_script")
+            && crate::policy::is_tool_listable("run_script");
         let list: Vec<Value> = self
             .order
             .iter()

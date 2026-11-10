@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1](https://github.com/trycua/cua/compare/cua-spaces-v0.28.0...cua-spaces-v0.28.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-desktop:** bundle the web app's packages by their exports so the Electron shell boots ([#7194](https://github.com/trycua/cua/issues/7194)) ([8ed14fe](https://github.com/trycua/cua/commit/8ed14fe24bd2d253ed4486e33e6bede9294a73bd))
+
 ## [0.28.0](https://github.com/trycua/cua/compare/cua-spaces-v0.27.3...cua-spaces-v0.28.0) (2026-11-10)
 
 

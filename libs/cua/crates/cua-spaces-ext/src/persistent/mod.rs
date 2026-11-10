@@ -2880,6 +2880,30 @@ enum Activity {
     Line(String),
 }
 
+/// An MCP tool's name (`mcp__cua__stream_space_window`) in plain words for the chip, or `None` for any other title.
+fn plain_tool(title: &str) -> Option<&'static str> {
+    // The harness looking up which tools it has: not something the person needs to read as a tool name.
+    if title == "ToolSearch" {
+        return Some("getting ready");
+    }
+    let name = title.rsplit("__").next().unwrap_or(title);
+    if !title.starts_with("mcp__") {
+        return None;
+    }
+    Some(match name {
+        "list_space_windows" => "looking at the windows",
+        "stream_space_window" => "showing a window",
+        "launch_space_app" => "opening an app",
+        "create_space" => "making a Space",
+        "delete_space" => "removing a Space",
+        "start_space" | "stop_space" => "changing a Space's power",
+        "list_spaces" => "looking at its Spaces",
+        "space_bash" => "running a command",
+        "thread_post" | "thread_reply" => "replying",
+        _ => return None,
+    })
+}
+
 /// The stage `events` put the turn in, in a few plain words: `installing`,
 /// `starting`, `thinking`, `replying` or `using <tool>` (never the task's
 /// text, never a secret). `Cleared` when the turn ended or failed after it.
@@ -2899,6 +2923,8 @@ fn activity_line(events: &[ag::AgentEvent]) -> Activity {
                     "working".to_string()
                 } else if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
                     "using a tool".to_string()
+                } else if let Some(plain) = plain_tool(&one) {
+                    plain.to_string()
                 } else {
                     format!("using {}", members::clip_line(&one, 48))
                 })
@@ -3346,5 +3372,25 @@ mod voice_tests {
         ] {
             assert!(!is_process_narration(ok), "{ok}");
         }
+    }
+}
+
+#[cfg(test)]
+mod plain_tool_tests {
+    use super::plain_tool;
+
+    #[test]
+    fn the_chip_names_what_the_agent_does_not_the_tool() {
+        assert_eq!(
+            plain_tool("mcp__cua__stream_space_window"),
+            Some("showing a window")
+        );
+        assert_eq!(
+            plain_tool("mcp__cua__launch_space_app"),
+            Some("opening an app")
+        );
+        assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
+        assert_eq!(plain_tool("Terminal"), None);
+        assert_eq!(plain_tool("mcp__other__thing"), None);
     }
 }

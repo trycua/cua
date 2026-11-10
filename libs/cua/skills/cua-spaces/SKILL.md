@@ -72,7 +72,7 @@ agents in child Spaces gives each one the parent thread's join link (see
 |---|---|
 | `open_space_viewer` | Open the full desktop viewer. |
 | `show_space_pip` / `hide_space_pip` | Picture-in-picture on the user's screen. |
-| `list_space_windows` / `stream_space_window` | Show one window from the Space. |
+| `list_space_windows` / `stream_space_window` | Show one window of a Space in your own Space's Stream section (`space=<child>`; `into` defaults to the Space that made it; `into=desktop` for the user's desktop). To drive a child you made, pass `space=<child>` to `space_bash` and `call_tool`. |
 | `stream_endpoint` | Get a ticketed media URL for the desktop or a window. |
 
 ## Agents, apps and network

@@ -8,7 +8,10 @@
 //! has one, by merging into its JSON config otherwise) and installs the skill
 //! pack for each that has a skills folder. Running it twice changes nothing: a server already registered under
 //! `cua-driver`, or under the old Claude Code name `cua-computer-use`, is left
-//! alone. A failure for one agent never stops the others.
+//! alone. When that server launches a different Cua Driver (Cua Spaces' Set up
+//! writes the same name for the one it carries), the agent is reported as
+//! using another Cua Driver instead of as connected. A failure for one agent
+//! never stops the others.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -63,6 +66,8 @@ impl Agent {
 pub enum Status {
     Connected,
     AlreadyConnected,
+    /// The agent's `cua-driver` server launches a different Cua Driver.
+    OtherDriver,
     WouldConnect,
     NotInstalled,
     Failed,
@@ -73,6 +78,7 @@ impl Status {
         match self {
             Status::Connected => "connected",
             Status::AlreadyConnected => "already_connected",
+            Status::OtherDriver => "other_driver",
             Status::WouldConnect => "would_connect",
             Status::NotInstalled => "not_installed",
             Status::Failed => "failed",
@@ -85,6 +91,8 @@ pub struct AgentResult {
     pub agent: Agent,
     pub status: Status,
     pub detail: Option<String>,
+    /// The name the agent lists the server under.
+    pub server: &'static str,
 }
 
 impl AgentResult {
@@ -93,6 +101,7 @@ impl AgentResult {
             agent,
             status,
             detail: None,
+            server: SERVER_NAME,
         }
     }
     fn failed(agent: Agent, why: impl Into<String>) -> Self {
@@ -100,6 +109,7 @@ impl AgentResult {
             agent,
             status: Status::Failed,
             detail: Some(why.into()),
+            server: SERVER_NAME,
         }
     }
 
@@ -109,6 +119,12 @@ impl AgentResult {
         match self.status {
             Status::Connected => format!("{label}: connected"),
             Status::AlreadyConnected => format!("{label}: already connected"),
+            Status::OtherDriver => format!(
+                "{label}: uses another Cua Driver ({}); left as is. To use this one, remove its \
+                 `{}` server and run `cua-driver connect` again.",
+                self.detail.as_deref().unwrap_or("unknown"),
+                self.server
+            ),
             Status::WouldConnect => format!("{label}: would connect"),
             Status::NotInstalled => format!("{label}: not installed"),
             Status::Failed => format!(
@@ -121,8 +137,73 @@ impl AgentResult {
     pub fn ok(&self) -> bool {
         matches!(
             self.status,
-            Status::Connected | Status::AlreadyConnected | Status::WouldConnect
+            Status::Connected
+                | Status::AlreadyConnected
+                | Status::OtherDriver
+                | Status::WouldConnect
         )
+    }
+}
+
+/// The server an agent already has under one of our names, and the command
+/// it launches when the entry names one.
+struct Existing {
+    server: &'static str,
+    command: Option<String>,
+}
+
+impl Existing {
+    /// The server in an `mcpServers` map (Claude Code, Cursor, Droid).
+    fn in_json(text: &str, names: &[&'static str]) -> Option<Existing> {
+        let json = serde_json::from_str::<serde_json::Value>(text).ok()?;
+        let servers = json.get("mcpServers")?.as_object()?;
+        let (server, entry) = names
+            .iter()
+            .find_map(|name| Some((*name, servers.get(*name)?)))?;
+        let command = entry.get("command").and_then(|c| c.as_str());
+        Some(Existing {
+            server,
+            command: command.map(str::to_owned),
+        })
+    }
+
+    /// The `[mcp_servers.<name>]` table in Codex's `config.toml`. `Err` when
+    /// the file is not TOML, so nothing is registered into a file we cannot
+    /// read.
+    fn in_toml(text: &str, names: &[&'static str]) -> Result<Option<Existing>, String> {
+        let config = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|_| "config.toml is not valid TOML; left unchanged".to_owned())?;
+        let servers = config.get("mcp_servers").and_then(|s| s.as_table_like());
+        Ok(names.iter().find_map(|name| {
+            let command = servers?.get(name)?.get("command");
+            Some(Existing {
+                server: name,
+                command: command.and_then(|c| c.as_str()).map(str::to_owned),
+            })
+        }))
+    }
+
+    /// Already connected, unless the entry names an absolute path that is a
+    /// different file from `bin` once links are resolved (`~/.local/bin`
+    /// links to the installed driver). An entry that names no path, or a
+    /// `bin` we could not resolve, is not evidence of another driver.
+    fn result(self, agent: Agent, bin: &str) -> AgentResult {
+        let resolved = |path: &str| std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
+        let other = self.command.filter(|command| {
+            Path::new(command).is_absolute()
+                && Path::new(bin).is_absolute()
+                && resolved(command) != resolved(bin)
+        });
+        AgentResult {
+            agent,
+            status: match other {
+                Some(_) => Status::OtherDriver,
+                None => Status::AlreadyConnected,
+            },
+            detail: other,
+            server: self.server,
+        }
     }
 }
 
@@ -238,22 +319,14 @@ fn run_cli(program: &Path, args: &[&str]) -> Result<(), String> {
 
 // ── Claude Code ───────────────────────────────────────────────────────────
 
-fn claude_registered(env: &Env) -> bool {
-    let path = env.claude_config_dir.join(".claude.json");
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return false;
-    };
-    json.get("mcpServers")
-        .and_then(|v| v.as_object())
-        .is_some_and(|m| m.contains_key(SERVER_NAME) || m.contains_key(LEGACY_CLAUDE_NAME))
+fn claude_existing(env: &Env) -> Option<Existing> {
+    let text = std::fs::read_to_string(env.claude_config_dir.join(".claude.json")).ok()?;
+    Existing::in_json(&text, &[SERVER_NAME, LEGACY_CLAUDE_NAME])
 }
 
 fn connect_claude(env: &Env, cli: &Path, bin: &str, dry_run: bool) -> AgentResult {
-    if claude_registered(env) {
-        return AgentResult::new(Agent::Claude, Status::AlreadyConnected);
+    if let Some(existing) = claude_existing(env) {
+        return existing.result(Agent::Claude, bin);
     }
     if dry_run {
         return AgentResult::new(Agent::Claude, Status::WouldConnect);
@@ -273,23 +346,18 @@ fn connect_claude(env: &Env, cli: &Path, bin: &str, dry_run: bool) -> AgentResul
 
 // ── Codex ─────────────────────────────────────────────────────────────────
 
-fn codex_registered(env: &Env) -> bool {
-    let Ok(text) = std::fs::read_to_string(env.codex_home.join("config.toml")) else {
-        return false;
-    };
-    text.lines().any(|line| {
-        let line = line.trim();
-        [SERVER_NAME, LEGACY_CLAUDE_NAME].iter().any(|n| {
-            line == format!("[mcp_servers.{n}]")
-                || line == format!("[mcp_servers.\"{n}\"]")
-                || line.starts_with(&format!("[mcp_servers.{n}."))
-        })
-    })
+fn codex_existing(env: &Env) -> Result<Option<Existing>, String> {
+    match std::fs::read_to_string(env.codex_home.join("config.toml")) {
+        Ok(text) => Existing::in_toml(&text, &[SERVER_NAME, LEGACY_CLAUDE_NAME]),
+        Err(_) => Ok(None),
+    }
 }
 
 fn connect_codex(env: &Env, cli: &Path, bin: &str, dry_run: bool) -> AgentResult {
-    if codex_registered(env) {
-        return AgentResult::new(Agent::Codex, Status::AlreadyConnected);
+    match codex_existing(env) {
+        Ok(None) => {}
+        Ok(Some(existing)) => return existing.result(Agent::Codex, bin),
+        Err(e) => return AgentResult::failed(Agent::Codex, e),
     }
     if dry_run {
         return AgentResult::new(Agent::Codex, Status::WouldConnect);
@@ -333,6 +401,16 @@ pub fn merge_mcp_json(existing: Option<&str>, bin: &str) -> Result<Option<String
     Ok(Some(out))
 }
 
+/// The result for an `mcp.json` that already lists the server.
+fn already(agent: Agent, mcp_json: Option<&str>, bin: &str) -> AgentResult {
+    mcp_json
+        .and_then(|text| Existing::in_json(text, &[SERVER_NAME]))
+        .map_or_else(
+            || AgentResult::new(agent, Status::AlreadyConnected),
+            |existing| existing.result(agent, bin),
+        )
+}
+
 fn connect_cursor(env: &Env, bin: &str, dry_run: bool) -> AgentResult {
     let dir = env.cursor_dir();
     let path = dir.join("mcp.json");
@@ -344,7 +422,7 @@ fn connect_cursor(env: &Env, bin: &str, dry_run: bool) -> AgentResult {
         }
     };
     let merged = match merge_mcp_json(existing.as_deref(), bin) {
-        Ok(None) => return AgentResult::new(Agent::Cursor, Status::AlreadyConnected),
+        Ok(None) => return already(Agent::Cursor, existing.as_deref(), bin),
         Ok(Some(text)) => text,
         Err(e) => return AgentResult::failed(Agent::Cursor, e),
     };
@@ -435,13 +513,23 @@ fn connect_droid(env: &Env, bin: &str, tools: &serde_json::Value, dry_run: bool)
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("could not read {name}: {e}")),
     };
-    let merged = read("mcp.json")
-        .and_then(|t| merge_mcp_json(t.as_deref(), bin))
-        .and_then(|mcp| {
-            read("settings.json")
-                .and_then(|t| merge_droid_settings(t.as_deref(), tools))
-                .map(|settings| [("mcp.json", mcp), ("settings.json", settings)])
-        });
+    let mcp_json = match read("mcp.json") {
+        Ok(text) => text,
+        Err(e) => return AgentResult::failed(Agent::Droid, e),
+    };
+    // Another driver's server is left as is, ratings included.
+    let listed = mcp_json
+        .as_deref()
+        .and_then(|text| Existing::in_json(text, &[SERVER_NAME]))
+        .map(|existing| existing.result(Agent::Droid, bin));
+    if let Some(other) = listed.filter(|r| r.status == Status::OtherDriver) {
+        return other;
+    }
+    let merged = merge_mcp_json(mcp_json.as_deref(), bin).and_then(|mcp| {
+        read("settings.json")
+            .and_then(|t| merge_droid_settings(t.as_deref(), tools))
+            .map(|settings| [("mcp.json", mcp), ("settings.json", settings)])
+    });
     let writes = match merged {
         Ok(files) => files,
         Err(e) => return AgentResult::failed(Agent::Droid, e),
@@ -539,10 +627,13 @@ pub fn run_connect(clients: &[String], tools: &serde_json::Value, dry_run: bool,
     let bin = stable_binary_path();
     let results = connect_agents(&env, &agents, &bin, tools, dry_run);
 
-    // Skill pack, for every agent that is now connected.
+    // Skill pack, for every agent that is now connected to this driver.
     let mut skills: Vec<(Agent, String)> = Vec::new();
     if !dry_run {
-        for r in results.iter().filter(|r| r.ok()) {
+        for r in results
+            .iter()
+            .filter(|r| r.ok() && r.status != Status::OtherDriver)
+        {
             let note = match crate::skills::install_for_client(r.agent.id()) {
                 Ok(crate::skills::ClientSkills::Installed(_)) => "installed",
                 Ok(crate::skills::ClientSkills::NotFound(_)) => "folder_not_found",
@@ -717,6 +808,144 @@ mod tests {
         let r = connect_agents(&f.env, &[Agent::Codex], "/b/cua-driver", &no_tools(), false);
         assert_eq!(by(&r, Agent::Codex).status, Status::AlreadyConnected);
         assert!(!calls(&f).contains("add"), "{}", calls(&f));
+    }
+
+    /// What Cua Spaces' Set up writes: the driver it carries, by absolute
+    /// path, under the same server name.
+    const SPACES_DRIVER: &str = "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver";
+
+    #[cfg(unix)]
+    #[test]
+    fn a_server_that_launches_another_driver_is_reported_and_left_alone() {
+        let f = fixture();
+        fake_cli(&f, "claude", "exit 0");
+        fake_cli(&f, "codex", "exit 0");
+        let ours = f.bin_dir.join("cua-driver");
+        std::fs::write(&ours, "").unwrap();
+        let ours = ours.to_str().unwrap();
+        let entry = serde_json::json!({ "mcpServers": { "cua-driver": {
+            "command": SPACES_DRIVER, "args": ["mcp", "--embedded"] } } })
+        .to_string();
+        std::fs::write(f.env.home.join(".claude.json"), &entry).unwrap();
+        std::fs::create_dir_all(&f.env.codex_home).unwrap();
+        let toml =
+            format!("[mcp_servers.cua-driver]\ncommand = \"{SPACES_DRIVER}\"\nargs = [\"mcp\"]\n");
+        std::fs::write(f.env.codex_home.join("config.toml"), &toml).unwrap();
+        for dir in [".cursor", ".factory"] {
+            std::fs::create_dir_all(f.env.home.join(dir)).unwrap();
+            std::fs::write(f.env.home.join(dir).join("mcp.json"), &entry).unwrap();
+        }
+        for dry_run in [true, false] {
+            let r = connect_agents(&f.env, &[], ours, &droid_tools(), dry_run);
+            for agent in Agent::ALL {
+                let result = by(&r, agent);
+                assert_eq!(result.status, Status::OtherDriver, "{agent:?}");
+                assert_eq!(result.detail.as_deref(), Some(SPACES_DRIVER));
+                assert!(result.ok());
+            }
+        }
+        assert_eq!(
+            by(
+                &connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false),
+                Agent::Codex
+            )
+            .line(),
+            format!(
+                "Codex: uses another Cua Driver ({SPACES_DRIVER}); left as is. To use this one, \
+                 remove its `cua-driver` server and run `cua-driver connect` again."
+            )
+        );
+        assert!(!calls(&f).contains("add"), "{}", calls(&f));
+        for path in [".claude.json", ".cursor/mcp.json", ".factory/mcp.json"] {
+            assert_eq!(
+                std::fs::read_to_string(f.env.home.join(path)).unwrap(),
+                entry
+            );
+        }
+        assert!(!f.env.home.join(".factory/settings.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(f.env.codex_home.join("config.toml")).unwrap(),
+            toml
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_config_is_read_as_toml_and_the_listed_name_is_the_one_to_remove() {
+        let f = fixture();
+        fake_cli(&f, "claude", "exit 0");
+        fake_cli(&f, "codex", "exit 0");
+        let ours = f.bin_dir.join("cua-driver");
+        std::fs::write(&ours, "").unwrap();
+        let ours = ours.to_str().unwrap();
+        std::fs::create_dir_all(&f.env.codex_home).unwrap();
+        for toml in [
+            format!("[mcp_servers.cua-driver] # Cua Spaces\ncommand = \"{SPACES_DRIVER}\" # theirs\n"),
+            format!("[mcp_servers.cua-driver.env]\nA = \"b\"\n\n[mcp_servers.cua-driver]\ncommand = '{SPACES_DRIVER}'\n"),
+            format!("[mcp_servers.\"cua-driver\"]\nargs = [\"mcp\"]\ncommand = \"{SPACES_DRIVER}\"\n"),
+            format!("mcp_servers = {{ cua-driver = {{ command = \"{SPACES_DRIVER}\" }} }}\n"),
+        ] {
+            std::fs::write(f.env.codex_home.join("config.toml"), &toml).unwrap();
+            let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false);
+            assert_eq!(by(&r, Agent::Codex).status, Status::OtherDriver, "{toml}");
+        }
+        std::fs::write(
+            f.env.codex_home.join("config.toml"),
+            "[mcp_servers.other]\ncommand = \"/x/cua-driver\"\n",
+        )
+        .unwrap();
+        let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), true);
+        assert_eq!(by(&r, Agent::Codex).status, Status::WouldConnect);
+
+        let broken = "[mcp_servers.cua-driver]\ncommand = \"/x\n";
+        std::fs::write(f.env.codex_home.join("config.toml"), broken).unwrap();
+        let r = connect_agents(&f.env, &[Agent::Codex], ours, &no_tools(), false);
+        assert_eq!(
+            by(&r, Agent::Codex).line(),
+            "Codex: could not connect (config.toml is not valid TOML; left unchanged)"
+        );
+
+        std::fs::write(
+            f.env.home.join(".claude.json"),
+            serde_json::json!({ "mcpServers": { "cua-computer-use": { "command": SPACES_DRIVER } } })
+                .to_string(),
+        )
+        .unwrap();
+        let r = connect_agents(&f.env, &[Agent::Claude], ours, &no_tools(), false);
+        assert!(
+            by(&r, Agent::Claude).line().ends_with(
+                "remove its `cua-computer-use` server and run `cua-driver connect` again."
+            ),
+            "{}",
+            by(&r, Agent::Claude).line()
+        );
+        assert!(!calls(&f).contains("add"), "{}", calls(&f));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_server_that_reaches_this_driver_through_a_link_is_already_connected() {
+        let f = fixture();
+        fake_cli(&f, "claude", "exit 0");
+        fake_cli(&f, "codex", "exit 0");
+        let ours = f.bin_dir.join("cua-driver-0.1");
+        std::fs::write(&ours, "").unwrap();
+        let link = f.bin_dir.join("cua-driver");
+        std::os::unix::fs::symlink(&ours, &link).unwrap();
+        std::fs::write(
+            f.env.home.join(".claude.json"),
+            serde_json::json!({ "mcpServers": { "cua-driver": { "command": link } } }).to_string(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(&f.env.codex_home).unwrap();
+        std::fs::write(
+            f.env.codex_home.join("config.toml"),
+            format!("[mcp_servers.cua-driver]\ncommand = '{}'\n", link.display()),
+        )
+        .unwrap();
+        let r = connect_agents(&f.env, &[], ours.to_str().unwrap(), &no_tools(), false);
+        assert_eq!(by(&r, Agent::Claude).status, Status::AlreadyConnected);
+        assert_eq!(by(&r, Agent::Codex).status, Status::AlreadyConnected);
     }
 
     #[cfg(unix)]

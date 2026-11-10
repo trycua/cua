@@ -45,6 +45,7 @@ fn connect_reports_an_agent_that_uses_the_driver_inside_cua_spaces() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["agents"][0]["status"], "other_driver", "{report}");
     assert_eq!(report["agents"][0]["detail"], SPACES_DRIVER, "{report}");
+    assert!(report["agents"][0]["skills"].is_null(), "{report}");
 
     let output = run(&["connect", "--client", "claude"]);
     assert!(output.status.success(), "{output:?}");
@@ -55,6 +56,13 @@ fn connect_reports_an_agent_that_uses_the_driver_inside_cua_spaces() {
              remove its `cua-driver` server and run `cua-driver connect` again."
         )
     );
+    // Nothing but the config the test wrote: no skill pack, no links.
+    let left: Vec<_> = std::fs::read_dir(&home)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name != ".cua-driver")
+        .collect();
+    assert_eq!(left, [".claude.json"]);
     assert_eq!(
         std::fs::read_to_string(home.join(".claude.json")).unwrap(),
         config

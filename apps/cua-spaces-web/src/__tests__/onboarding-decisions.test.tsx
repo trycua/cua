@@ -99,7 +99,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     "shows on the setup's Ready screen without a flag or a question, and is hidden when there are no chats",
     { timeout: 60_000 },
     async () => {
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
       await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
       // Listed straight away: nothing to press first, and no Labs flag in the way. Only Codex's chats: Codex was picked.
@@ -107,7 +107,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
       expect(screen.queryByRole("button", { name: /show my recent chats/i })).toBeNull();
       cleanup();
       resetFirstRunCache();
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true, noChats: true } });
       await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
       await new Promise((r) => setTimeout(r, 200));
@@ -122,7 +122,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     { timeout: 60_000 },
     async () => {
       const calls: Calls = [];
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       const { router } = await mountApp("/onboarding", {
         failsCreates: false,
         listsGhost: false,

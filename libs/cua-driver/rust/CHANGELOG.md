@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.2...cua-driver-rs-v0.46.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** release session labels when their owner transport closes ([#7083](https://github.com/trycua/cua/issues/7083)) ([a42beba](https://github.com/trycua/cua/commit/a42bebad9750217a059d849c691972baf2ec7a51))
+
 ## [0.46.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.1...cua-driver-rs-v0.46.2) (2026-11-10)
 
 

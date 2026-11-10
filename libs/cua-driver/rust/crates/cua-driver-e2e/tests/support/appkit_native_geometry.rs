@@ -189,6 +189,15 @@ fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
         let directory = driver.recording_dir().unwrap().join("native-geometry");
         let (harness, wid) = launch_fixture(&directory, false);
         driver.start_behavior_recording();
+        // Window-local pixels need a read of the window first, so the
+        // inferred-window click follows one aligned snapshot.
+        let before = snapshot_elements(&mut driver, harness.pid, wid);
+        assert_eq!(
+            before.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        save_response(&directory, "availability-initial.json", &before);
+        let scale = before.structured()["screenshot_width"].as_f64().unwrap() / 360.0;
         std::fs::write(directory.join("command"), "mismatch").unwrap();
         fixture_state(&directory, |state| state["mismatched"] == true);
         let target = TargetWindow {
@@ -199,7 +208,8 @@ fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
             let implicit = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid":harness.pid, "x":300.0, "y":130.0, "delivery_mode":"foreground"
+                    "pid":harness.pid, "x":300.0*scale, "y":130.0*scale,
+                    "delivery_mode":"foreground"
                 }),
             );
             assert_geometry_refusal(&directory, "implicit-window", &implicit);
@@ -207,13 +217,6 @@ fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
         .expect("inferred window refusal must preserve desktop state");
         std::fs::write(directory.join("command"), "align").unwrap();
         fixture_state(&directory, |state| state["mismatched"] == false);
-        let before = snapshot_elements(&mut driver, harness.pid, wid);
-        assert_eq!(
-            before.structured()["native_window_geometry"]["status"],
-            "aligned"
-        );
-        save_response(&directory, "availability-initial.json", &before);
-        let scale = before.structured()["screenshot_width"].as_f64().unwrap() / 360.0;
         std::fs::write(directory.join("command"), "unavailable").unwrap();
         fixture_state(&directory, |state| state["unavailable"] == true);
         let missing = driver.call("get_window_state", serde_json::json!({

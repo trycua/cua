@@ -1936,7 +1936,7 @@ async fn create(
             match &steps {
                 Some(steps) => {
                     let steps = steps.clone();
-                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| drop(steps.show(p)))))
                 }
                 None => Box::pin(sandboxes.create(o)),
             };

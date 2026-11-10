@@ -175,8 +175,11 @@ impl Tool for RightClickTool {
                                         )
                                     },
                                 )
-                                .map(|(value, _report)| value)
-                                .map(|()| PointerRoute::Foreground);
+                                .map(|((), report)| {
+                                    PointerRoute::Foreground {
+                                        menu_open: report.menu_open,
+                                    }
+                                });
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
                         },
@@ -304,8 +307,9 @@ impl Tool for RightClickTool {
                                 .map(|_| ())
                         },
                     )
-                    .map(|(value, _report)| value)
-                    .map(|()| PointerRoute::Foreground);
+                    .map(|((), report)| PointerRoute::Foreground {
+                        menu_open: report.menu_open,
+                    });
                 }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
             },

@@ -99,10 +99,16 @@ def declared_id(head: str) -> str | None:
     return match.group(1) if match else None
 
 
+# The word "copyright" anywhere, except where it is plainly an identifier
+# (`COPYRIGHT: &str = ...`, `copyright + 1`). Anything else counts as a notice,
+# so a doubtful file is left alone and listed, never stamped.
+NOTICE = re.compile(r"\bcopyright\b(?!\s*(?:[=+;]|:\s*&))", re.I)
+
+
 def foreign_notice(head: str) -> bool:
     """Another party's copyright or license notice (adapted or vendored code)."""
     for line in head.splitlines()[:40]:
-        if re.search(r"\bcopyright\b", line, re.I) and COPYRIGHT_HOLDER not in line:
+        if NOTICE.search(line) and COPYRIGHT_HOLDER not in line:
             return True
         if re.search(r"licensed under", line, re.I):
             return True
@@ -221,7 +227,7 @@ def main() -> int:
         if (
             GENERATED_ELSEWHERE.search(path.name)
             or rel.as_posix().startswith(GENERATED_DIRS)
-            or (args.fsl and foreign_notice(head))
+            or foreign_notice(head)
         ):
             foreign.append(rel)
             continue

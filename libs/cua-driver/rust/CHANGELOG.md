@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.4...cua-driver-rs-v0.47.5) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** list windows when Hyprland omits a workspace id (from [#6268](https://github.com/trycua/cua/issues/6268)) ([#7305](https://github.com/trycua/cua/issues/7305)) ([caaa8ac](https://github.com/trycua/cua/commit/caaa8acb5817c613d24b2beca9abe20b5f9253e8))
+
 ## [0.47.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.3...cua-driver-rs-v0.47.4) (2026-11-10)
 
 

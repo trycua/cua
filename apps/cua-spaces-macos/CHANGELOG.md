@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.29.0](https://github.com/trycua/cua/compare/cua-spaces-v0.28.1...cua-spaces-v0.29.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** show each Space's progress when spaces create makes several ([#7185](https://github.com/trycua/cua/issues/7185)) ([c4403a6](https://github.com/trycua/cua/commit/c4403a69674986ac086666b3108903cd60e1ab46))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.20.0 in Cua Spaces ([#7199](https://github.com/trycua/cua/issues/7199)) ([4b867b2](https://github.com/trycua/cua/commit/4b867b2dc7c03ee6db90a543a956b73d6fb35456))
+
 ## [0.28.1](https://github.com/trycua/cua/compare/cua-spaces-v0.28.0...cua-spaces-v0.28.1) (2026-11-10)
 
 

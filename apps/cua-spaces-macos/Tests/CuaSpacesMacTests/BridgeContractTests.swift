@@ -637,3 +637,16 @@ enum JSONShape {
         return errors
     }
 }
+
+/// The core reads a failed create's fix action in kebab case; the page gets it that way.
+@Suite("Bridge values")
+struct BridgeValueFixTests {
+    @Test("a fix action crosses the bridge in the case the core reads")
+    func fixActionIsKebabCase() {
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let out = BridgeValue.encode(fix) as? [String: Any]
+        #expect(out?["action"] as? String == "copy-command")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
+    }
+}

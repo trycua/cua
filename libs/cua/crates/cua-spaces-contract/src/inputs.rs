@@ -671,6 +671,10 @@ pub struct AgentStart {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Reasoning level: `low`, `medium`, `high`, `xhigh` or `max`. Taken by Claude Code and Codex;
+    /// other agents ignore it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// A custom model endpoint base URL (a proxy or compatible server).
     #[serde(default)]
     pub base_url: Option<String>,
@@ -876,6 +880,9 @@ pub struct PersistentAgentCreate {
     /// Model id.
     #[serde(default)]
     pub model: Option<String>,
+    /// Reasoning level (see `agent_start`'s `effort`).
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Standing instructions: the first message each run takes carries them
     /// in front of its text (the thread shows only the message).
     #[serde(default)]

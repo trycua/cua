@@ -29813,6 +29813,10 @@ public struct AppPendingCreate: Equatable, Hashable {
      */
     public var hostName: String?
     /**
+     * The Space it is a child of (an agent made it): the row nests under it.
+     */
+    public var parent: String?
+    /**
      * How many times the app ran this create again by itself: 0, or 1
      * after a failure that usually passes ([`fail_decision`]).
      */
@@ -29915,6 +29919,9 @@ public struct AppPendingCreate: Equatable, Hashable {
          * That machine's name, for the row and for a failure that names it.
          */hostName: String?,
         /**
+         * The Space it is a child of (an agent made it): the row nests under it.
+         */parent: String?,
+        /**
          * How many times the app ran this create again by itself: 0, or 1
          * after a failure that usually passes ([`fail_decision`]).
          */attempt: UInt32,
@@ -29954,6 +29961,7 @@ public struct AppPendingCreate: Equatable, Hashable {
         self.gpu = gpu
         self.host = host
         self.hostName = hostName
+        self.parent = parent
         self.attempt = attempt
         self.retryPending = retryPending
         self.retriedSubclass = retriedSubclass
@@ -29999,6 +30007,7 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
                 gpu: FfiConverterBool.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
                 hostName: FfiConverterOptionString.read(from: &buf),
+                parent: FfiConverterOptionString.read(from: &buf),
                 attempt: FfiConverterUInt32.read(from: &buf),
                 retryPending: FfiConverterBool.read(from: &buf),
                 retriedSubclass: FfiConverterOptionString.read(from: &buf),
@@ -30030,6 +30039,7 @@ public struct FfiConverterTypeAppPendingCreate: FfiConverterRustBuffer {
         FfiConverterBool.write(value.gpu, into: &buf)
         FfiConverterOptionString.write(value.host, into: &buf)
         FfiConverterOptionString.write(value.hostName, into: &buf)
+        FfiConverterOptionString.write(value.parent, into: &buf)
         FfiConverterUInt32.write(value.attempt, into: &buf)
         FfiConverterBool.write(value.retryPending, into: &buf)
         FfiConverterOptionString.write(value.retriedSubclass, into: &buf)
@@ -38539,6 +38549,11 @@ public struct AppSpace: Equatable, Hashable {
      * SDK and `cua spaces ls` still return it, marked.
      */
     public var hidden: Bool
+    /**
+     * The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+     * top-level Space.
+     */
+    public var parent: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -38636,7 +38651,11 @@ public struct AppSpace: Equatable, Hashable {
          * sidebar, the palette, the menu bar item or the notch; see
          * [`crate::spaces::openable_spaces`]). Its own page still opens. The
          * SDK and `cua spaces ls` still return it, marked.
-         */hidden: Bool) {
+         */hidden: Bool,
+        /**
+         * The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+         * top-level Space.
+         */parent: String?) {
         self.id = id
         self.name = name
         self.os = os
@@ -38664,6 +38683,7 @@ public struct AppSpace: Equatable, Hashable {
         self.cloudDelete = cloudDelete
         self.access = access
         self.hidden = hidden
+        self.parent = parent
     }
 
 
@@ -38708,7 +38728,8 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
                 cloudDelete: FfiConverterOptionString.read(from: &buf),
                 access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf),
-                hidden: FfiConverterBool.read(from: &buf)
+                hidden: FfiConverterBool.read(from: &buf),
+                parent: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -38740,6 +38761,7 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
         FfiConverterOptionTypeAppSpaceAccess.write(value.access, into: &buf)
         FfiConverterBool.write(value.hidden, into: &buf)
+        FfiConverterOptionString.write(value.parent, into: &buf)
     }
 }
 
@@ -40369,6 +40391,10 @@ public struct AppSpaceRow: Equatable, Hashable {
      * A relay Space: who owns it and who else has it.
      */
     public var sharing: AppSpaceSharingFacts?
+    /**
+     * The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+     */
+    public var parent: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -40459,7 +40485,10 @@ public struct AppSpaceRow: Equatable, Hashable {
          */stopReason: String?,
         /**
          * A relay Space: who owns it and who else has it.
-         */sharing: AppSpaceSharingFacts?) {
+         */sharing: AppSpaceSharingFacts?,
+        /**
+         * The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+         */parent: String?) {
         self.id = id
         self.name = name
         self.displayName = displayName
@@ -40486,6 +40515,7 @@ public struct AppSpaceRow: Equatable, Hashable {
         self.cloudDelete = cloudDelete
         self.stopReason = stopReason
         self.sharing = sharing
+        self.parent = parent
     }
 
 
@@ -40529,7 +40559,8 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
                 cloudDelete: FfiConverterOptionString.read(from: &buf),
                 stopReason: FfiConverterOptionString.read(from: &buf),
-                sharing: FfiConverterOptionTypeAppSpaceSharingFacts.read(from: &buf)
+                sharing: FfiConverterOptionTypeAppSpaceSharingFacts.read(from: &buf),
+                parent: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -40560,6 +40591,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
         FfiConverterOptionString.write(value.stopReason, into: &buf)
         FfiConverterOptionTypeAppSpaceSharingFacts.write(value.sharing, into: &buf)
+        FfiConverterOptionString.write(value.parent, into: &buf)
     }
 }
 
@@ -55645,7 +55677,10 @@ public enum AppCreateAction: Equatable, Hashable {
          */host: String?,
         /**
          * That machine's name.
-         */hostName: String?
+         */hostName: String?,
+        /**
+         * The Space it is a child of (an agent made it): its id.
+         */parent: String?
     )
     /**
      * The SDK reported progress.
@@ -55834,7 +55869,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .start(id: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf), os: try FfiConverterTypeAppSpaceOs.read(from: &buf), provider: try FfiConverterTypeAppSpaceProvider.read(from: &buf), now: try FfiConverterInt64.read(from: &buf), image: try FfiConverterOptionString.read(from: &buf), kind: try FfiConverterOptionTypeAppSpaceKind.read(from: &buf), hostArch: try FfiConverterOptionString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), host: try FfiConverterOptionString.read(from: &buf), hostName: try FfiConverterOptionString.read(from: &buf)
+        case 1: return .start(id: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf), os: try FfiConverterTypeAppSpaceOs.read(from: &buf), provider: try FfiConverterTypeAppSpaceProvider.read(from: &buf), now: try FfiConverterInt64.read(from: &buf), image: try FfiConverterOptionString.read(from: &buf), kind: try FfiConverterOptionTypeAppSpaceKind.read(from: &buf), hostArch: try FfiConverterOptionString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), host: try FfiConverterOptionString.read(from: &buf), hostName: try FfiConverterOptionString.read(from: &buf), parent: try FfiConverterOptionString.read(from: &buf)
         )
 
         case 2: return .progress(id: try FfiConverterString.read(from: &buf), phase: try FfiConverterString.read(from: &buf), fraction: try FfiConverterOptionDouble.read(from: &buf), now: try FfiConverterOptionInt64.read(from: &buf), bytesDone: try FfiConverterOptionUInt64.read(from: &buf), bytesTotal: try FfiConverterOptionUInt64.read(from: &buf), bytesPerSecond: try FfiConverterOptionDouble.read(from: &buf)
@@ -55887,7 +55922,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
         switch value {
 
 
-        case let .start(id,name,os,provider,now,image,kind,hostArch,gpu,host,hostName):
+        case let .start(id,name,os,provider,now,image,kind,hostArch,gpu,host,hostName,parent):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(id, into: &buf)
             FfiConverterString.write(name, into: &buf)
@@ -55900,6 +55935,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
             FfiConverterBool.write(gpu, into: &buf)
             FfiConverterOptionString.write(host, into: &buf)
             FfiConverterOptionString.write(hostName, into: &buf)
+            FfiConverterOptionString.write(parent, into: &buf)
 
 
         case let .progress(id,phase,fraction,now,bytesDone,bytesTotal,bytesPerSecond):
@@ -78424,6 +78460,31 @@ fileprivate struct FfiConverterSequenceTypeAppChecklistStep: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppCreateAction: FfiConverterRustBuffer {
+    typealias SwiftType = [AppCreateAction]
+
+    public static func write(_ value: [AppCreateAction], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppCreateAction.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppCreateAction] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppCreateAction]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppCreateAction.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppDeviceAction: FfiConverterRustBuffer {
     typealias SwiftType = [AppDeviceAction]
 
@@ -78917,6 +78978,38 @@ public func appAckShareRemovals(accountToken: String)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCuaError_lift
         )
+}
+/**
+ * Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
+ */
+public func appAgentCreateIsAgents(id: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_create_is_agents(
+        FfiConverterString.lower(id),$0
+    )
+})
+}
+/**
+ * The person removed an agent's failed create from the list: it is not drawn again.
+ */
+public func appAgentCreateRemove(pendingId: String)  {try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_create_remove(
+        FfiConverterString.lower(pendingId),$0
+    )
+}
+}
+/**
+ * The actions that make the pending rows show the Spaces agents asked this
+ * computer to make (read from this computer's cua home, which the daemon writes):
+ * run each through `app_creates_reduce` on every list refresh.
+ */
+public func appAgentCreatesActions(state: AppCreatesState, nowMs: Int64) -> [AppCreateAction]  {
+    return try!  FfiConverterSequenceTypeAppCreateAction.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_creates_actions(
+        FfiConverterTypeAppCreatesState_lower(state),
+        FfiConverterInt64.lower(nowMs),$0
+    )
+})
 }
 /**
  * The add or replace sheet.
@@ -82633,6 +82726,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() != 16071) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents() != 22242) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove() != 26467) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions() != 65187) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() != 42778) {

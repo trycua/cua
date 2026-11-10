@@ -76,6 +76,18 @@ An agent gets the same as tools in its Space's own MCP server:
 - **Limited depth.** A child may make children of its own, two levels
   below the Space you made. Deeper requests are refused.
 
+## What you see
+
+When an agent makes a Space, the thread shows one row for it, like a subagent's: the OS logo, the
+Space's name and where it is ("Cloning the disk", "Ready in 54s", or why it could not be made).
+The row opens the child's page. The page exists from the moment the create starts, with its
+progress and Cancel, and a failed create stays with its reason and Remove from list. The agent
+is told the outcome too. If you say no to its request, it is told you said no and does not ask
+again; a request nobody answers for 30 minutes is closed the same way, with a note.
+
+Deleting a Space deletes the child Spaces under it first (`--keep-children` keeps them). Stopping
+a Space does not stop its children: they keep running until their own limit.
+
 ## A budget per tree
 
 Each tree has a budget: how many child Spaces, vCPUs and memory its

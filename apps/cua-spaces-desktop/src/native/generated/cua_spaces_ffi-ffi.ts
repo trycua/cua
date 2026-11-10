@@ -432,6 +432,21 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_agent_create_is_agents": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Int8,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_agent_create_remove": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_agent_creates_actions": {
+      args: [FfiType.RustBuffer, FfiType.Int64],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_agent_key_form": {
       args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2358,6 +2373,21 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4452,6 +4482,9 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_account_app_url(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_account_menu(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_ack_share_removals(accountToken: Uint8Array): bigint;
+    uniffi_cua_spaces_ffi_fn_func_app_agent_create_is_agents(id: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
+    uniffi_cua_spaces_ffi_fn_func_app_agent_create_remove(pendingId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_spaces_ffi_fn_func_app_agent_creates_actions(state: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_form(input: Uint8Array, form: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_form_input_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_agent_key_name_problem(name: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4838,6 +4871,9 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_account_app_url(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_account_menu(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form_input_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_agent_key_name_problem(): number;

@@ -157,8 +157,7 @@ export function createDemoBackend(opts: DemoOptions = {}): Backend & { inputs: I
         spaceId,
         (st.members.get(spaceId) ?? []).map((x) => (x.name === to ? { ...x, status: "working", activity: "reading your message" } : x)),
       );
-      const e = st.entries.get(spaceId)!;
-      e.push(D.entry(nextSeq(spaceId), now(), D.CUA, `${m.identity?.displayName ?? to} woke up`, { kind: "system" }));
+      // No thread note: a start the person asked for shows as the starting row.
     }
     const text = `Got it: "${ask.text
       .split("\n")[0]!

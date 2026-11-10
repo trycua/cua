@@ -138,7 +138,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     // The Spaces page's tiles.
     expect(qa("[data-home-spaces] [data-space-id]").length).toBeGreaterThan(0);
     // The composer: the agent and its account (the demo has an OpenAI key saved), and This Mac, already in the account.
-    expect(q("[data-ask-agent]")?.textContent).toBe("OpenAI Codex");
+    expect(q("[data-ask-agent]")?.textContent).toBe("GPT-5.5Medium");
     await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("This Mac"));
   });
 

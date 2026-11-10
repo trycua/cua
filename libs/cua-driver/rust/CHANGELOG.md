@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.47.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.0...cua-driver-rs-v0.47.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep one fake WM in the Linux own-dialog focus test ([#7204](https://github.com/trycua/cua/issues/7204)) ([70ee3f5](https://github.com/trycua/cua/commit/70ee3f58cda0e8316dbdbfc9bbb3e6d3970abc43))
+* **hyprland-plugin:** smoke-test the released Cua Driver in the requalification session (CUA-3992) ([#7206](https://github.com/trycua/cua/issues/7206)) ([91d5f41](https://github.com/trycua/cua/commit/91d5f4134ec63b74adff4b61310c28eca826513c))
+
 ## [0.47.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.3...cua-driver-rs-v0.47.0) (2026-11-10)
 
 

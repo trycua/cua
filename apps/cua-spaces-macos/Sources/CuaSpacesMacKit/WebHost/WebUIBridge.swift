@@ -915,7 +915,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                                                  branch: text("branch"), model: text("model"),
                                                  envFromHost: (args["envFromHost"] as? [String]) ?? [],
                                                  cwd: text("cwd"), resumeSession: text("resumeSession"),
-                                                 resumeContext: text("resumeContext"))
+                                                 resumeContext: text("resumeContext"), effort: text("effort"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
             guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }

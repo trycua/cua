@@ -788,7 +788,7 @@ struct ViewModelTests {
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
                                  imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
-                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil)
         let backend = FixtureSpacesBackend(rows: [record])
         backend.holdCreates = true
         let model = makeModel(backend)
@@ -1216,7 +1216,7 @@ struct ViewModelTests {
             AppSpaceRow(id: id, name: name, displayName: nil, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
                         hidden: false, reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
-                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil)
+                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil, parent: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             cloudRow("relay:cloud-0000000000000a01", "research-box", "aws", "AWS \u{b7} us-west-2", "here"),

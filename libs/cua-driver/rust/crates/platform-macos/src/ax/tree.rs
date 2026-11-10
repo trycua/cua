@@ -878,7 +878,7 @@ fn format_node_line(node: &AXNode) -> String {
             let action_str = node
                 .custom_actions
                 .iter()
-                .map(|action| serde_json::json!(action.name).to_string())
+                .map(|action| serde_json::to_string(&action.name).expect("string serialization"))
                 .collect::<Vec<_>>()
                 .join(",");
             attrs.push(format!("custom_actions=[{}]", action_str));

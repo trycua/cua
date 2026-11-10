@@ -1762,6 +1762,7 @@ mod tests {
                 gpu: false,
                 host: None,
                 host_name: None,
+                parent: None,
             },
         );
         let p = &mut st.pending[0];
@@ -1796,6 +1797,7 @@ mod tests {
                     gpu: false,
                     host: None,
                     host_name: None,
+                    parent: None,
                 },
                 1_000,
             );
@@ -2244,11 +2246,9 @@ mod tests {
             vec![TelemetrySignal::ExperimentsOn {
                 experiments: vec![
                     "cua_volume".into(),
-                    "child_spaces".into(),
                     "ci_runners".into(),
                     "tcp_shares".into(),
-                    "mobile".into(),
-                    "warm_pools".into()
+                    "mobile".into()
                 ]
             }]
         );

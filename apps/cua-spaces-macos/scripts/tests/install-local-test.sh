@@ -72,7 +72,7 @@ CARGO_LOG="$WORK/cargo.log"
 # bundles unless it is told otherwise: two programs with different code.
 DAEMON_CHECKOUT="$WORK/daemon-checkout"
 DAEMON_PINNED="$WORK/daemon-pinned"
-FAKE_DAEMON_BUILT="$FAKE_REPO/libs/cua-spacesd/target/release/cua-spacesd"
+FAKE_DAEMON_BUILT="$FAKE_REPO/libs/cua-spacesd/target/dev-fast/cua-spacesd"
 
 mkdir -p "$FAKE_SCRIPTS" "$FAKE_REPO/libs/cua-driver/scripts" "$FAKE_REPO/libs/lume/scripts" \
     "$FAKE_REPO/libs/cua" "$FAKE_REPO/libs/cua-spacesd" "$FAKE_REPO/libs/spaces-app-swift/scripts" \
@@ -367,13 +367,15 @@ exit 0'
 # libs/cua-spacesd it makes this checkout's daemon (FAKE_CARGO_NO_DAEMON=1:
 # a build that succeeds and makes nothing).
 write_shim cargo 'echo "cargo $* [in ${PWD##*/}]" >> "$CARGO_LOG"
+P=release; prev=""
+for a in "$@"; do [ "$prev" = --profile ] && P="$a"; prev="$a"; done
 case "$PWD" in
   */libs/cua-spacesd)
     if [ "${FAKE_CARGO_NO_DAEMON:-0}" != 1 ]; then
-      mkdir -p target/release && cp "$FAKE_CHECKOUT_DAEMON" target/release/cua-spacesd
+      mkdir -p "target/$P" && cp "$FAKE_CHECKOUT_DAEMON" "target/$P/cua-spacesd"
     fi ;;
   */libs/cua)
-    mkdir -p target/release && : > target/release/cua-spaces-cli && : > target/release/libcua_spaces_ffi.dylib ;;
+    mkdir -p "target/$P" && : > "target/$P/cua-spaces-cli" && : > "target/$P/libcua_spaces_ffi.dylib" ;;
 esac
 exit 0'
 
@@ -647,10 +649,10 @@ text_hash() { otool -X -s __TEXT __text "$1" 2>/dev/null | shasum -a 256 | cut -
 echo "== the host service (cua-spacesd) =="
 reset_fixture
 install
-check "the library and CLI are built and staged" \
-    'grep >/dev/null "^cargo build --locked --profile release --no-default-features -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^stage-library" "$CARGO_LOG"'
+check "the library and CLI are built and staged, with the dev-fast profile by default" \
+    'grep >/dev/null "^cargo build --locked --profile dev-fast --no-default-features -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^stage-library" "$CARGO_LOG"'
 check "cua-spacesd is built from this checkout's libs/cua-spacesd" \
-    'grep >/dev/null "^cargo build --locked --profile release -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
+    'grep >/dev/null "^cargo build --locked --profile dev-fast -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
 check "(the checkout's and the pinned daemon of this fixture differ in code)" '[ "$(text_hash "$DAEMON_CHECKOUT")" != "$(text_hash "$DAEMON_PINNED")" ]'
 check "the bundled cua-spacesd is this checkout's build" '[ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
 check "and not the pinned release" '[ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" != "$(text_hash "$DAEMON_PINNED")" ]'
@@ -662,6 +664,27 @@ check "a build-app.sh that bundles the pinned cua-spacesd is refused, and the in
 reset_fixture
 FAKE_BUILD_IGNORE_SPACESD_BIN=1 install
 check "the same on a first install: nothing is installed" '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -L "$LOCAL_CLI" ]'
+
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+install --build-only
+check "--build-only builds and signs the app but installs nothing (status $RC)" \
+    '[ "$RC" = 0 ] && [ -s "$BUILD_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ ! -L "$LOCAL_CLI" ] && [ "$(snap_all)" = "$ALL_BEFORE" ] && printf "%s" "$OUT" | grep >/dev/null "nothing was installed"'
+check "the build says where the time went" 'printf "%s" "$OUT" | grep >/dev/null "built and signed in .*Rust "'
+
+reset_fixture
+: > "$CARGO_LOG"
+install --rust-profile dev-fast
+check "--rust-profile dev-fast builds both Cargo workspaces with that profile (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cargo build --locked --profile dev-fast --no-default-features -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^cargo build --locked --profile dev-fast -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG" && [ -d "$LOCAL_APP" ]'
+reset_fixture
+: > "$CARGO_LOG"
+install --release
+check "--release builds both Cargo workspaces fully optimised (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cargo build --locked --profile release --no-default-features -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^cargo build --locked --profile release -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
+reset_fixture
+install --rust-profile nonsense
+check "--rust-profile refuses a name that is not release or dev-fast" '[ "$RC" = 2 ] && printf "%s" "$OUT" | grep >/dev/null "must be release or dev-fast" && [ ! -s "$CARGO_LOG" ]'
 
 reset_fixture
 FAKE_CARGO_NO_DAEMON=1 install
@@ -927,8 +950,8 @@ check "it is one message (one error line), and says nothing was built or changed
 
 reset_fixture
 # Rust and the web UI already built: the only thing left to ask for is Xcode.
-mkdir -p "$FAKE_REPO/libs/cua-spacesd/target/release" "$FAKE_REPO/apps/cua-spaces-web/dist"
-cp "$DAEMON_CHECKOUT" "$FAKE_REPO/libs/cua-spacesd/target/release/cua-spacesd"
+mkdir -p "$FAKE_REPO/libs/cua-spacesd/target/dev-fast" "$FAKE_REPO/apps/cua-spaces-web/dist"
+cp "$DAEMON_CHECKOUT" "$FAKE_REPO/libs/cua-spacesd/target/dev-fast/cua-spacesd"
 echo "<!doctype html>" > "$FAKE_REPO/apps/cua-spaces-web/dist/index.html"
 SHIM_NO_XCODE=1 no_tools_install --skip-rust-build --skip-web-build
 check "without the Xcode command line tools it says to run xcode-select --install" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "xcode-select --install"'

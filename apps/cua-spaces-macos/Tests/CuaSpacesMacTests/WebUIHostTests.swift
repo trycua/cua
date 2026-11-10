@@ -47,7 +47,7 @@ struct WebUIHostTests {
     }
 
     @Test func coreRecordsEncodeAsPlainValues() {
-        let x = AppExperiments(cuaVolume: true, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
+        let x = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         let v = BridgeValue.encode(x) as? [String: Any]
         #expect(v?["cuaVolume"] as? Bool == true)
         #expect(v?["ciRunners"] as? Bool == false)

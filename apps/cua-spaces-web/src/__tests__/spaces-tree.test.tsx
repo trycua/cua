@@ -120,6 +120,12 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     await waitFor(() => expect(within(sidebar).getByRole("link", { name: /^Computers/ }).textContent).toContain(String(rows.length)));
     // The first computer that isn't this Mac is the default until one is set.
     expect(q('[data-tree-status="relay:mac-mini"]')?.textContent).toMatch(/, Default$/);
+    // The fold caret sits inside the row, in a slot of its own: no negative margin pushes it out of the row's padding.
+    for (const caret of qa("[data-tree-fold]")) {
+      expect(caret.className).not.toMatch(/(^|\s)-m[lrxtb]?-\d/);
+      expect(caret.parentElement?.className).toContain("size-5");
+      expect(caret.closest('[role="cell"]')?.contains(caret)).toBe(true);
+    }
     // Folding a computer hides its Spaces.
     fireEvent.click(q('[data-tree-fold="relay:linux-box"]')!);
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')).toBeNull();

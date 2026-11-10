@@ -85,7 +85,7 @@ describe.skipIf(!wasmBuilt)("the agent menu's apps", () => {
     });
     await screen.findByLabelText("What should it do?");
     // Codex was the default pick; it is hidden, so the chip falls to the next connected app.
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High"));
     await openMenu();
     expect(groups()).toEqual(["hermes", "claude-code", "opencode"]);
     // Showing it again puts it back at its place.

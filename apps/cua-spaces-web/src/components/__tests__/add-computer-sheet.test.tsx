@@ -34,7 +34,8 @@ function host(options: DemoOptions = {}, overrides: Override | ((base: DataAdapt
 /** A host whose other computer never uses the code (to look at a page while it waits). */
 const neverUsed = (base: DataAdapter): Override => ({
   "machines.list": async () => ((await base.call("machines.list", {})) as { id: string }[]).filter((r) => r.id !== "m_pair_demo"),
-  "devices.pairingCodes": async () => ((await base.call("devices.pairingCodes", {})) as PairingCode[]).map((c) => ({ ...c, state: c.state === "used" ? "active" : c.state, machine: null })),
+  "devices.pairingCodes": async () =>
+    ((await base.call("devices.pairingCodes", {})) as PairingCode[]).map((c) => ({ ...c, state: c.state === "used" ? "active" : c.state, machine: null })),
 });
 
 function Harness(props: { team?: string | null; initialView?: AddView; initialCode?: string; pollMs?: number; settleMs?: number }) {
@@ -74,7 +75,13 @@ describe("Add a machine: the methods", () => {
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("ready"));
     expect(view()).toBe("pick");
-    expect([...document.querySelectorAll("[data-add-method]")].map((b) => b.textContent)).toEqual(["Sign in there", "Open a link", "Scan a QR code", "Run a command", "Enter a code"]);
+    expect([...document.querySelectorAll("[data-add-method]")].map((b) => b.textContent)).toEqual([
+      "Sign in there",
+      "Open a link",
+      "Scan a QR code",
+      "Run a command",
+      "Enter a code",
+    ]);
     expect(METHODS[0]!.view).toBe("signin");
     expect(prompt().readOnly).toBe(true);
     expect(prompt().value).toMatch(/^Add this computer to my Cua Spaces: https:\/\/cua\.ai\/add\/K7QM-4XPB-[0-9A-Z]{4}$/);
@@ -309,7 +316,10 @@ describe("Add a machine: without a code", () => {
     const { adapter, calls } = host();
     const base = adapter.call.bind(adapter);
     const flaky = Object.assign(Object.create(adapter) as DataAdapter, {
-      call: ((op: string, args: never) => (op === "devices.createPairingCode" && fail ? Promise.reject(new Error("not found: relay: no such device")) : base(op as never, args))) as DataAdapter["call"],
+      call: ((op: string, args: never) =>
+        op === "devices.createPairingCode" && fail
+          ? Promise.reject(new Error("not found: relay: no such device"))
+          : base(op as never, args)) as DataAdapter["call"],
     });
     await mount(flaky);
     await waitFor(() => expect(phase()).toBe("error"));
@@ -358,13 +368,16 @@ describe("Add a machine: for a team", () => {
 
   it("shows no picker without such a team, and adds to no team", async () => {
     const shared: unknown[] = [];
-    const { adapter } = host({}, {
-      "teams.list": () => Promise.resolve({ teams: [{ id: "x", alias: "side", name: "", role: "member", plan: "teams" }], currentTeamId: null }),
-      "sharing.share": (args) => {
-        shared.push(args);
-        return Promise.resolve([]);
+    const { adapter } = host(
+      {},
+      {
+        "teams.list": () => Promise.resolve({ teams: [{ id: "x", alias: "side", name: "", role: "member", plan: "teams" }], currentTeamId: null }),
+        "sharing.share": (args) => {
+          shared.push(args);
+          return Promise.resolve([]);
+        },
       },
-    });
+    );
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("used"), { timeout: 3000 });
     expect(screen.queryByLabelText("Add it for")).toBeNull();
@@ -373,14 +386,17 @@ describe("Add a machine: for a team", () => {
 
   it("a team that never paid: says so in words, with Upgrade for the owner", async () => {
     const opened: unknown[] = [];
-    const { adapter } = host({}, {
-      "teams.list": teams(acme),
-      "sharing.share": () => Promise.reject(new Error("Admin roles need the Teams plan. https://app.cua.ai/buy/teams")),
-      "session.openExternal": (args) => {
-        opened.push(args.url);
-        return Promise.resolve(undefined);
+    const { adapter } = host(
+      {},
+      {
+        "teams.list": teams(acme),
+        "sharing.share": () => Promise.reject(new Error("Admin roles need the Teams plan. https://app.cua.ai/buy/teams")),
+        "session.openExternal": (args) => {
+          opened.push(args.url);
+          return Promise.resolve(undefined);
+        },
       },
-    });
+    );
     await mount(adapter);
     await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')).toBeTruthy(), { timeout: 3000 });
     const text = document.querySelector("[data-pairing-added]")?.textContent ?? "";
@@ -392,10 +408,13 @@ describe("Add a machine: for a team", () => {
 
   it("finishing setup while the machine joins the team", async () => {
     let finish: () => void = () => {};
-    const { adapter } = host({}, {
-      "teams.list": teams(acme),
-      "sharing.share": () => new Promise((r) => (finish = () => r([]))),
-    });
+    const { adapter } = host(
+      {},
+      {
+        "teams.list": teams(acme),
+        "sharing.share": () => new Promise((r) => (finish = () => r([]))),
+      },
+    );
     await mount(adapter);
     await waitFor(() => expect(document.querySelector('[data-pairing-team="adding"]')?.textContent).toContain("Finishing setup…"), { timeout: 3000 });
     finish();

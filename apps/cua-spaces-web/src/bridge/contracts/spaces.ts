@@ -67,6 +67,8 @@ export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume" | "firecracke
 export interface Space {
   id: string;
   name: string;
+  /** The host marks it hidden (label `cua.hidden`): the home warming for Home's prompt box, until a person writes into it. No list, count or tree shows it. */
+  hidden?: boolean;
   os: SpaceOs;
   status: SpaceStatus;
   /** Short human status detail, e.g. "Agent testing". */
@@ -101,6 +103,8 @@ export interface Space {
   /** For a Space one of your machines provides: that machine's relay id
    * (the sidebar nests it under the machine) and name. */
   host?: string;
+  /** The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a top-level Space. */
+  parent?: string;
   hostName?: string;
   /** Whether and how it turns off and on (the SDK's `power`), with a power
    * action in flight; absent when it cannot (a cloud Space). */
@@ -242,10 +246,14 @@ export interface SpaceRow {
   /** `container`, `vm` or `microvm`, and the guest's CPU architecture, when known. */
   kind?: SpaceKind;
   arch?: string;
+  /** Label `cua.hidden`: the home warming for Home's prompt box (the SDK's `SpaceInfo.hidden`). */
+  hidden?: boolean;
   reachable: boolean;
   error?: string;
   /** For a Space one of your machines provides: that machine's relay id and name. */
   host?: string;
+  /** The Space it is a child of (its id). */
+  parent?: string;
   hostName?: string;
   /** How it turns off and on (`suspend`, `stop`); absent when it cannot. */
   power?: string;

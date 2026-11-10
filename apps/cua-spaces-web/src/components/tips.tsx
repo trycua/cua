@@ -36,6 +36,7 @@ import {
   type TipPlace,
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { useChildren } from "@/components/children/use-children";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -101,7 +102,10 @@ export function useTipFacts(space?: Space): TipFacts | null {
   // The home warming for Home's box is not something to try until a person wrote into it.
   const { core: bridgeCore } = useBridge();
   const warming = useHiddenSpaceIds(bridgeCore);
-  const all = useMemo(() => everything.filter((s) => !warming.has(s.id)), [everything, warming]);
+  // An agent's own home and the child Spaces it made are the agent's working places: "Try <it> in Claude Code" would send the
+  // person's other coding agent into the Space their agent is using.
+  const tree = useChildren();
+  const all = useMemo(() => everything.filter((s) => !warming.has(s.id) && !tree?.node(s.id)?.home && !tree?.node(s.id)?.parent), [everything, warming, tree]);
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   const agents = useAgentSetup();

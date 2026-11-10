@@ -66,29 +66,12 @@ pub(crate) mod imp {
         }
     }
 
-    /// Refuses a create that asks for children while the experiment is off,
-    /// before anything is made.
-    fn children_allowed(children: bool) -> Result<(), tonic::Status> {
-        if children && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
-            return Err(tonic::Status::failed_precondition(
-                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-            ));
-        }
-        Ok(())
-    }
-
     /// Turns children on for `space`: only a Space this computer runs can
     /// hold a channel to it.
     fn turn_on_children(
         spaces: &cua_spaces::Spaces,
         space: &mut pb::Space,
     ) -> Result<(), tonic::Status> {
-        // An experiment, off unless the owner turned it on.
-        if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
-            return Err(tonic::Status::failed_precondition(
-                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-            ));
-        }
         if !space.id.starts_with("local:") {
             return Err(tonic::Status::failed_precondition(
                 "child Spaces are available for Spaces this computer runs; turn them on \
@@ -733,7 +716,6 @@ pub(crate) mod imp {
         ) -> R<pb::CreateSpaceResponse> {
             let r = req.into_inner();
             let children = r.children.unwrap_or(false);
-            children_allowed(children)?;
             let create = create_args(r)?;
             let network = create.network;
             let created = self
@@ -765,7 +747,6 @@ pub(crate) mod imp {
             // The stream runs until the Space is ready.
             r.wait = Some(true);
             let children = r.children.unwrap_or(false);
-            children_allowed(children)?;
             let mut create = create_args(r)?;
             // Bounded: a slow reader drops progress, never the result (which
             // goes out on the same channel after every report).

@@ -883,7 +883,7 @@ export class BridgeStore {
   private publishMachines(): void {
     // The home warming for Home's box is on no machine's list until a person wrote into it (the core's rule).
     const warming = new Set(hiddenSpaceIdsNow(this.core));
-    const spaces = ((this.resources.spaces.data as Space[] | undefined) ?? []).filter((s) => !warming.has(s.id));
+    const spaces = ((this.resources.spaces.data as Space[] | undefined) ?? []).filter((s) => !warming.has(s.id) && !s.hidden);
     let machines: Machine[] = toMachines(this.machineRows, spaces, this.core, this.machinesNow);
     const override = this.hostOverride;
     if (override) {

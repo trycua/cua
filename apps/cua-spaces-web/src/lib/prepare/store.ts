@@ -56,6 +56,16 @@ export function markResumed(): void {
   resumedOnce = true;
 }
 
+/**
+ * Tests that do not look at the warm home keep it from starting, so their mounts make no Space of their own (the
+ * test harness holds it for every test; the tests of the warm home let it go).
+ */
+let held = false;
+export const holdWarmStart = (on: boolean): void => {
+  held = on;
+};
+export const warmStartHeld = (): boolean => held;
+
 /** Tests start clean. */
 export function resetPrepare(): void {
   driver = null;
@@ -108,6 +118,9 @@ export function useHiddenSpaceIds(core: CoreClient): ReadonlySet<string> {
   const { data: spaces } = useSpaces();
   return useMemo(() => {
     const ids = new Set(prepareHidden(core, state));
+    // The host's own mark (label `cua.hidden`, cleared when a person writes into the home's thread) hides it even when
+    // this page holds no record of preparing it: cleared site data, another window, a home an older build made.
+    for (const s of spaces ?? []) if (s.hidden) ids.add(s.id);
     // A create that outlived the app (it was quit meanwhile) is followed before the driver knows its id: still the
     // warming home, so still off every list.
     if (state?.wanted && state.askedMs == null && state.harness) {

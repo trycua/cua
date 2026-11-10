@@ -125,11 +125,11 @@ pub fn summary(computers: &[PoolComputer]) -> PoolSummary {
             }
             _ => s.unknown += 1,
         }
-        if can_take(c) {
-            if let Some(f) = free(c) {
-                s.free_cores += f.cores;
-                s.free_memory += f.memory;
-            }
+        if can_take(c)
+            && let Some(f) = free(c)
+        {
+            s.free_cores += f.cores;
+            s.free_memory += f.memory;
         }
     }
     s
@@ -240,12 +240,11 @@ pub fn place(input: &PlaceInput) -> Placement {
         .iter()
         .find(|(_, _, r)| r.eligible)
         .map(|(_, _, r)| r.id.clone());
-    if let Some(id) = &best {
-        if let Some((_, _, r)) = rows.iter_mut().find(|(_, _, r)| &r.id == id) {
-            if r.reason == PlaceReason::Room || r.reason == PlaceReason::Unknown {
-                r.reason = PlaceReason::BestFit;
-            }
-        }
+    if let Some(id) = &best
+        && let Some((_, _, r)) = rows.iter_mut().find(|(_, _, r)| &r.id == id)
+        && (r.reason == PlaceReason::Room || r.reason == PlaceReason::Unknown)
+    {
+        r.reason = PlaceReason::BestFit;
     }
     let picked_ok = input
         .picked

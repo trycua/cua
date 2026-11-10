@@ -104,7 +104,12 @@ fn harness_appkit_text_outcomes_match_independent_state() {
                     if field == "unsupported" {
                         assert_eq!(result["route"], "synthetic_events");
                         assert_eq!(state["fields"][field]["writes"], 0);
-                        assert_eq!(state["fields"][field]["keys"], 6);
+                        // The default delay_ms of 0 batches the text into as
+                        // few key events as it fits; the value above is the
+                        // character proof.
+                        assert!(state["fields"][field]["keys"]
+                            .as_u64()
+                            .is_some_and(|keys| (1..=6).contains(&keys)));
                     } else {
                         // One AX write, no keystroke fallback: the lagging
                         // field is confirmed when it publishes, and the stale

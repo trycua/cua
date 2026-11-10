@@ -711,7 +711,7 @@ fn capture_output_png(name: &str) -> Result<Vec<u8>> {
 /// Place each output's capture at its logical rectangle inside the frame. A
 /// scaled output's capture is resized to its logical size, which must be a
 /// uniform scaling of the captured image.
-fn compose_frame(
+pub(super) fn compose_frame(
     frame: &DesktopFrame,
     mut capture: impl FnMut(&FrameOutput) -> Result<image::RgbaImage>,
 ) -> Result<image::RgbaImage> {

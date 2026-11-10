@@ -244,24 +244,18 @@ fn pointer_admission(window: &Window, points: &[AimedPoint]) -> Result<()> {
     Ok(())
 }
 
-/// Admit desktop-scope points: pixels of the single output, the frame a
-/// `get_desktop_state` screenshot shows.
+/// Admit desktop-scope points: pixels of the desktop frame a
+/// `get_desktop_state` screenshot shows. With several outputs the frame is
+/// their bounding box, so a point in a gap between outputs refuses.
 pub(super) fn desktop_admission(scene: &Scene, points: &[AimedPoint]) -> Result<()> {
-    let (output, logical) = scene.single_output().map_err(input_unavailable)?;
-    let area = Rect {
-        x: logical.x,
-        y: logical.y,
-        width: logical.width,
-        height: logical.height,
-    };
+    let frame = super::screen_frame_in(scene).map_err(input_unavailable)?;
     match points
         .iter()
         .map(|aimed| aimed.point)
-        .find(|&(x, y)| !area.contains(x, y))
+        .find(|&(x, y)| !frame.output_contains_layout(x, y))
     {
         Some((x, y)) => Err(foreground_unavailable(format!(
-            "point ({x}, {y}) is past the edge of niri output {}, which the get_desktop_state screenshot shows",
-            output.name
+            "point ({x}, {y}) is outside every niri output the get_desktop_state capture shows"
         ))),
         None => Ok(()),
     }
@@ -482,14 +476,32 @@ mod tests {
     }
 
     #[test]
-    fn desktop_pixels_are_admitted_only_on_the_single_output() {
+    fn desktop_pixels_are_admitted_on_the_outputs_the_capture_shows() {
         let scene = tiled_scene(Some(5));
         desktop_admission(&scene, &[(2500, 400).into(), (2100, 100).into()]).unwrap();
         assert_eq!(
             desktop_admission(&scene, &[(10, 100).into()])
                 .unwrap_err()
                 .to_string(),
-            "foreground_unavailable: point (10, 100) is past the edge of niri output winit, which the get_desktop_state screenshot shows"
+            "foreground_unavailable: point (10, 100) is outside every niri output the get_desktop_state capture shows"
+        );
+    }
+
+    #[test]
+    fn desktop_pixels_refuse_a_gap_between_outputs() {
+        let scene = scene(
+            vec![],
+            vec![],
+            vec![
+                output("DP-1", 0, 0, (100, 100), 1.0, "Normal"),
+                output("DP-2", 200, 0, (100, 100), 1.0, "Normal"),
+            ],
+            false,
+        );
+        desktop_admission(&scene, &[(50, 50).into(), (250, 50).into()]).unwrap();
+        assert!(
+            desktop_admission(&scene, &[(150, 50).into()]).is_err(),
+            "the bounding-box gap is not on any output"
         );
     }
 }

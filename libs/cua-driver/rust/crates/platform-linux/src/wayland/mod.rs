@@ -1372,6 +1372,12 @@ fn niri_display_capture(wanted: Option<&str>) -> anyhow::Result<niri::DisplayCap
 /// to a placed, unoverlapped floating window and scale it to the window's
 /// logical size, the window-local coordinate frame input uses. A tiled
 /// window refuses: niri does not report where it is.
+/// Capture one niri output by name as its oriented PNG, for the multi-output
+/// composer.
+pub(crate) fn niri_capture_output_png(name: &str) -> anyhow::Result<Vec<u8>> {
+    niri_display_capture(Some(name)).map(|capture| capture.png)
+}
+
 fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
     let (png, plan) = niri::capture_window(xid, pid, niri_display_capture)
         .map_err(|reason| surface_identity_unproven(xid, format!("niri: {reason}")))?;

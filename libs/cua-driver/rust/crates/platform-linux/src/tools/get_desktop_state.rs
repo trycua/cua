@@ -85,9 +85,12 @@ impl Tool for GetDesktopStateTool {
                     |hidden| {
                         // A multi-monitor layout is composed from the frame
                         // read above, so the image is exactly that frame.
-                        let png = match &hyprland_plan {
-                            Some(plan) if plan.composite => {
+                        let png = match (&hyprland_plan, &niri_frame) {
+                            (Some(plan), _) if plan.composite => {
                                 crate::wayland::hyprland::compose_desktop_capture(&plan.frame)?
+                            }
+                            (_, Some(frame)) if frame.outputs.len() > 1 => {
+                                crate::wayland::niri::compose_desktop_capture(frame)?
                             }
                             _ => crate::capture::screenshot_display_bytes()?,
                         };
@@ -110,6 +113,8 @@ impl Tool for GetDesktopStateTool {
             let (screen_w, screen_h) = if let Some(frame) = &hyprland_frame {
                 (frame.width, frame.height)
             } else if let Some(frame) = &kwin_frame {
+                (frame.width, frame.height)
+            } else if let Some(frame) = &niri_frame {
                 (frame.width, frame.height)
             } else if crate::wayland::is_wayland() {
                 crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?

@@ -105,16 +105,8 @@ pub fn desktop_snapshot() -> Result<super::hyprland::DesktopSnapshot> {
 }
 
 fn desktop_snapshot_in(scene: &Scene) -> Result<super::hyprland::DesktopSnapshot> {
-    let (output, logical) = scene.single_output()?;
     Ok(super::hyprland::DesktopSnapshot {
-        frame: super::hyprland::DesktopFrame {
-            x: logical.x,
-            y: logical.y,
-            width: logical.width,
-            height: logical.height,
-            scale: logical.scale,
-            outputs: vec![frame_output(output, logical)],
-        },
+        frame: screen_frame_in(scene)?,
         pointer: Some(scene.pointer_space()?),
     })
 }
@@ -130,8 +122,9 @@ fn frame_output(output: &IpcOutput, logical: &IpcLogical) -> super::hyprland::Fr
 }
 
 /// Every enabled output's logical rectangle, and their bounding box with the
-/// largest scale, as Hyprland reports its frame. Desktop-scope input still
-/// needs a single output; reporting sizes does not.
+/// largest scale, as Hyprland reports its frame. Desktop scope uses this
+/// frame: the capture composes every output and a point must land on one of
+/// them, not in a gap.
 fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
     let mut outputs = Vec::new();
     let mut scale: f64 = 0.0;
@@ -158,6 +151,19 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
         scale,
         outputs,
     })
+}
+
+/// Compose every output's capture into the bounding-box desktop frame niri
+/// reports. Reuse the Hyprland composer: the frame layout and scale rules are
+/// the same.
+pub fn compose_desktop_capture(frame: &super::hyprland::DesktopFrame) -> Result<Vec<u8>> {
+    let canvas = super::hyprland::compose_frame(frame, |output| {
+        let png = super::niri_capture_output_png(&output.name)?;
+        Ok(image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8())
+    })?;
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
+    Ok(encoded.into_inner())
 }
 
 /// The output frame plus the monitor list `get_screen_size` reports, in the
@@ -286,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_snapshot_uses_the_single_output_and_refuses_several() {
+    fn desktop_snapshot_spans_every_output() {
         let one = scene(
             vec![],
             vec![],
@@ -314,10 +320,18 @@ mod tests {
             ],
             false,
         );
+        let snapshot = desktop_snapshot_in(&two).unwrap();
         assert_eq!(
-            desktop_snapshot_in(&two).unwrap_err().to_string(),
-            "niri window capture and desktop input support a single output; this layout has 2"
+            (
+                snapshot.frame.x,
+                snapshot.frame.y,
+                snapshot.frame.width,
+                snapshot.frame.height
+            ),
+            (0, 0, 3840, 1080)
         );
+        assert_eq!(snapshot.frame.outputs.len(), 2);
+        assert_eq!(snapshot.frame.outputs[1].name, "DP-2");
     }
 
     #[test]

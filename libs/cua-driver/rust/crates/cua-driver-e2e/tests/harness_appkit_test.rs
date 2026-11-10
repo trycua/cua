@@ -611,7 +611,10 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
         );
         std::thread::sleep(Duration::from_millis(750));
         let events = read_events();
-        let received = &events[1..];
+        let received: Vec<&serde_json::Value> = events[1..]
+            .iter()
+            .filter(|event| event["kind"] != "moved")
+            .collect();
         assert_eq!(
         received.len(),
         2,
@@ -621,7 +624,22 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
         assert_eq!(received[1]["kind"], "up");
         let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
         let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
-        for event in received {
+        // A view that arms a control on pointer movement must see the pointer
+        // arrive at the target before the press, as with a physical mouse.
+        let down_index = events
+            .iter()
+            .position(|event| event["kind"] == "down")
+            .expect("down event");
+        assert!(
+            events[1..down_index]
+                .iter()
+                .any(|event| event["kind"] == "moved"
+                    && event["window_id"].as_u64() == Some(wid)
+                    && (event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0
+                    && (event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0),
+            "the pointer must move to the target before the press: {events:?}"
+        );
+        for event in &received {
             assert_eq!(event["window_id"].as_u64(), Some(wid));
             assert_eq!(event["click_count"], 1);
             assert!(
@@ -720,7 +738,10 @@ fn harness_appkit_middle_click_px_background_reaches_exact_window() {
                 }
                 std::thread::sleep(Duration::from_millis(750));
                 let events = read_events();
-                let received = &events[1..];
+                let received: Vec<&serde_json::Value> = events[1..]
+                    .iter()
+                    .filter(|event| event["kind"] != "moved")
+                    .collect();
                 assert_eq!(
                     received.len(),
                     2,
@@ -730,7 +751,7 @@ fn harness_appkit_middle_click_px_background_reaches_exact_window() {
                 assert_eq!(received[1]["kind"], "middle_up");
                 let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
                 let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
-                for event in received {
+                for event in &received {
                     assert_eq!(event["window_id"].as_u64(), Some(wid));
                     assert!((event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0);
                     assert!((event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0);

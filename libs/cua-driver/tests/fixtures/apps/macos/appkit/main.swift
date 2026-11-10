@@ -1056,6 +1056,14 @@ final class SingleClickReceiver: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.systemGreen.cgColor
+        // Pointer movement reaches the view only through a tracking area, the
+        // way a hover-gated control learns that the pointer arrived.
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
@@ -1073,16 +1081,21 @@ final class SingleClickReceiver: NSView {
 
     func record(_ kind: String, _ event: NSEvent) {
         guard let window else { fatalError("receiver has no window") }
-        append([
+        var entry: [String: Any] = [
             "kind": kind,
             "timestamp": event.timestamp,
             "window_id": event.windowNumber,
-            "click_count": event.clickCount,
             "x": event.locationInWindow.x,
             "y": window.frame.height - event.locationInWindow.y
-        ])
+        ]
+        // clickCount raises for events that are not button presses.
+        if event.type != .mouseMoved {
+            entry["click_count"] = event.clickCount
+        }
+        append(entry)
     }
 
+    override func mouseMoved(with event: NSEvent) { record("moved", event) }
     override func mouseDown(with event: NSEvent) { record("down", event) }
     override func mouseUp(with event: NSEvent) { record("up", event) }
     override func otherMouseDown(with event: NSEvent) { record("middle_down", event) }

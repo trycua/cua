@@ -368,6 +368,15 @@ jobs:
                 mapfile -t SANDBOX_LOCK_PATHS <<< "$SANDBOX_LOCKS"
                 git add -- "${SANDBOX_LOCK_PATHS[@]}"
               fi
+              # cua-bench and cua-agent cap cua-sandbox below the next minor; a
+              # release that crosses the cap would make the ALE jobs unsatisfiable.
+              SANDBOX_CAPS=$(python3 .github/scripts/widen_sibling_dependency_caps.py \
+                --package cua-sandbox --from "$PREVIOUS" \
+                --to "$(cat libs/python/cua-sandbox/VERSION)")
+              if [[ -n "$SANDBOX_CAPS" ]]; then
+                mapfile -t SANDBOX_CAP_PATHS <<< "$SANDBOX_CAPS"
+                git add -- "${SANDBOX_CAP_PATHS[@]}"
+              fi
               git add docs/content/docs/cua-sdk
               # The Sandbox reference records the package version, so regenerate
               # it with the release version. Lifecycle scripts stay disabled

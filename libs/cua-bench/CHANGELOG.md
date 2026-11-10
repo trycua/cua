@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/trycua/cua/compare/bench-v0.4.0...bench-v0.4.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **bench,agent:** allow cua-sandbox 0.10 and widen the cap automatically on sandbox releases ([#7282](https://github.com/trycua/cua/issues/7282)) ([8b4987f](https://github.com/trycua/cua/commit/8b4987f85923d11343727893cacc0ad0a62ae1cb))
+
 ## [0.4.0](https://github.com/trycua/cua/compare/bench-v0.3.1...bench-v0.4.0) (2026-11-10)
 
 

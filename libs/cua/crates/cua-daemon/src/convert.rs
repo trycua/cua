@@ -33,6 +33,7 @@ pub(crate) fn state_to_pb(s: &Status) -> pb::SandboxState {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 pub(crate) fn state_from_pb(s: i32, detail: &str) -> Status {
     match pb::SandboxState::try_from(s).unwrap_or_default() {
         pb::SandboxState::Running => Status::Running,
@@ -129,6 +130,7 @@ pub(crate) fn host_snapshot_to_pb(
     }
 }
 
+#[cfg(any(feature = "client", test))]
 pub(crate) fn from_ts(t: &pbjson_types::Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32)
 }
@@ -176,6 +178,7 @@ pub fn info_to_pb(r: &SandboxRecord) -> pb::Sandbox {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 /// Wire → record.
 pub fn info_from_pb(s: &pb::Sandbox) -> SandboxRecord {
     let location = if s.location.is_empty() {
@@ -230,6 +233,7 @@ pub fn public_url_to_pb(u: &crate::shares::PublicUrl) -> pb::PublicUrl {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 /// Wire → public URL.
 pub fn public_url_from_pb(u: &pb::PublicUrl) -> crate::shares::PublicUrl {
     crate::shares::PublicUrl {
@@ -663,6 +667,7 @@ pub fn pool_to_pb(p: &crate::PoolInfo) -> pb::Pool {
     }
 }
 
+#[cfg(any(feature = "client", test))]
 /// A pool from its protocol form.
 pub fn pool_from_pb(p: pb::Pool) -> crate::PoolInfo {
     crate::PoolInfo {

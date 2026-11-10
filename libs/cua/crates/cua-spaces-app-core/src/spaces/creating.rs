@@ -99,6 +99,9 @@ pub struct PendingCreate {
     /// That machine's name, for the row and for a failure that names it.
     #[serde(default)]
     pub host_name: Option<String>,
+    /// The Space it is a child of (an agent made it): the row nests under it.
+    #[serde(default)]
+    pub parent: Option<String>,
     /// How many times the app ran this create again by itself: 0, or 1
     /// after a failure that usually passes ([`fail_decision`]).
     #[serde(default)]
@@ -230,6 +233,9 @@ pub enum CreateAction {
         /// That machine's name.
         #[serde(default)]
         host_name: Option<String>,
+        /// The Space it is a child of (an agent made it): its id.
+        #[serde(default)]
+        parent: Option<String>,
     },
     /// The SDK reported progress.
     Progress {
@@ -351,6 +357,116 @@ pub enum CreateAction {
 /// Whether a power action runs for the Space `id`: its button waits.
 pub fn is_powering(state: &CreatesState, id: &str) -> bool {
     state.powering.iter().any(|p| p.id == id && p.in_flight())
+}
+
+/// The pending id an agent's create has: the same for every poll of it.
+pub fn agent_pending_id(key: &str, started_ms: u64) -> String {
+    format!("{PENDING_PREFIX}agent-{key}-{started_ms}")
+}
+
+/// Whether `id` is the pending row of a create an agent asked of this computer.
+pub fn is_agent_pending(id: &str) -> bool {
+    id.starts_with(&format!("{PENDING_PREFIX}agent-"))
+}
+
+/// One create an agent asked of this computer, as the host recorded it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentCreate {
+    /// The name the Space is made under (with `started_ms`, the create's identity).
+    pub key: String,
+    pub name: String,
+    /// `macOS`, `Windows`, `Linux` or empty.
+    pub os: String,
+    /// `creating`, `ready` or `failed`.
+    pub state: String,
+    /// The SDK's phase word, while creating.
+    pub phase: String,
+    /// 0 to 100 through the phase, when known.
+    pub percent: Option<u8>,
+    /// The Space's id once it exists.
+    pub space: String,
+    /// Why it failed, in plain words.
+    pub error: String,
+    pub started_ms: u64,
+    /// The Space that asked for it (its id; empty when unknown).
+    pub parent: String,
+}
+
+/// What the pending rows must do to show the creates agents asked for: a
+/// row starts with the create (the same row, page, progress, Cancel and
+/// Remove as a New Space made from the dialog), follows its phase, hands
+/// over to the registry's row when ready and keeps its reason when failed.
+/// Shells run the actions through [`reduce`] on each poll; running them
+/// again changes nothing.
+pub fn agent_actions(state: &CreatesState, creates: &[AgentCreate], now: i64) -> Vec<CreateAction> {
+    let mut out = vec![];
+    for c in creates {
+        let id = agent_pending_id(&c.key, c.started_ms);
+        let known = state.pending.iter().find(|p| p.id == id);
+        let os = match c.os.as_str() {
+            "macOS" => SpaceOs::Macos,
+            "Windows" => SpaceOs::Windows,
+            _ => SpaceOs::Linux,
+        };
+        let start = || CreateAction::Start {
+            parent: (!c.parent.is_empty()).then(|| c.parent.clone()),
+            id: id.clone(),
+            name: c.name.clone(),
+            os,
+            provider: SpaceProvider::Local,
+            now: c.started_ms as i64,
+            image: None,
+            kind: None,
+            host_arch: None,
+            gpu: false,
+            host: None,
+            host_name: None,
+        };
+        match c.state.as_str() {
+            "creating" => {
+                if known.is_none() {
+                    out.push(start());
+                }
+                if !c.phase.is_empty()
+                    && known.is_none_or(|p| p.error.is_none() && p.space_id.is_none())
+                {
+                    out.push(CreateAction::Progress {
+                        id: id.clone(),
+                        phase: c.phase.clone(),
+                        fraction: c.percent.map(|p| f64::from(p) / 100.0),
+                        now: Some(now),
+                        bytes_done: None,
+                        bytes_total: None,
+                        bytes_per_second: None,
+                    });
+                }
+            }
+            "ready" => {
+                if let Some(p) = known
+                    && p.space_id.is_none()
+                    && !c.space.is_empty()
+                {
+                    out.push(CreateAction::Finish {
+                        id: id.clone(),
+                        space_id: c.space.clone(),
+                    });
+                }
+            }
+            "failed" if known.is_none_or(|p| p.error.is_none()) => {
+                if known.is_none() {
+                    out.push(start());
+                }
+                out.push(CreateAction::Fail {
+                    id: id.clone(),
+                    error: c.error.clone(),
+                    error_variant: "AgentCreate".into(),
+                    now: Some(now),
+                });
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Whether `id` is a Space still being created (or one that failed).
@@ -1291,6 +1407,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
     let mut next = state.clone();
     match action {
         CreateAction::Start {
+            parent,
             id,
             name,
             os,
@@ -1336,6 +1453,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 gpu: *gpu,
                 host: machine.clone().filter(|h| !h.trim().is_empty()),
                 host_name: machine_name.clone().filter(|h| !h.trim().is_empty()),
+                parent: parent.clone().filter(|h| !h.trim().is_empty()),
                 attempt: 0,
                 retry_pending: false,
                 retried_subclass: None,
@@ -1802,6 +1920,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         arch: p.arch.clone(),
         host: None,
         host_name: p.host_name.clone(),
+        parent: p.parent.clone(),
         power: None,
         cloud: None,
         cloud_place: None,
@@ -1983,6 +2102,7 @@ mod tests {
 
     fn start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: name.into(),
             os,
@@ -2231,6 +2351,7 @@ mod tests {
 
     fn start_image(id: &str, image: &str, kind: Option<SpaceKind>) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: String::new(),
             os: SpaceOs::Linux,
@@ -2278,6 +2399,7 @@ mod tests {
             let mut s = reduce(
                 &CreatesState::default(),
                 &CreateAction::Start {
+                    parent: None,
                     id: "pending:s".into(),
                     name: String::new(),
                     os,
@@ -2354,6 +2476,7 @@ mod tests {
         let s = reduce(
             &CreatesState::default(),
             &CreateAction::Start {
+                parent: None,
                 id: "pending:r".into(),
                 name: String::new(),
                 os: SpaceOs::Macos,
@@ -3312,6 +3435,7 @@ mod tests {
     #[test]
     fn a_create_on_another_machine_waits_for_its_download_and_says_where() {
         let relay = |os| CreateAction::Start {
+            parent: None,
             id: "pending:r".into(),
             name: String::new(),
             os,
@@ -3368,6 +3492,7 @@ mod tests {
         host: Option<&str>,
     ) -> CreateAction {
         CreateAction::Start {
+            parent: None,
             id: id.into(),
             name: name.into(),
             os,
@@ -3393,6 +3518,7 @@ mod tests {
         let mut s = crate::spaces::row_to_space(
             &crate::model::SpaceRow {
                 hidden: false,
+                parent: None,
                 id: id.into(),
                 name: name.into(),
                 display_name: None,
@@ -3671,6 +3797,87 @@ mod tests {
                 false
             )
             .starts_with("This Mac is already running two macOS VMs")
+        );
+    }
+
+    #[test]
+    fn an_agents_create_gets_the_same_pending_row_then_ready_or_failed_and_polling_again_changes_nothing()
+     {
+        let mk = |state: &str, phase: &str, percent: Option<u8>, error: &str| AgentCreate {
+            key: "mac".into(),
+            name: "mac".into(),
+            os: "macOS".into(),
+            state: state.into(),
+            phase: phase.into(),
+            percent,
+            space: if state == "ready" {
+                "local:mac".into()
+            } else {
+                String::new()
+            },
+            error: error.into(),
+            started_ms: 500,
+            parent: "local:home".into(),
+        };
+        let run = |mut st: CreatesState, cs: &[AgentCreate]| {
+            for a in agent_actions(&st.clone(), cs, 900) {
+                st = reduce(&st, &a);
+            }
+            st
+        };
+        let st = run(
+            CreatesState::default(),
+            &[mk("creating", "pulling", Some(40), "")],
+        );
+        assert_eq!(st.pending.len(), 1);
+        assert_eq!(st.pending[0].id, agent_pending_id("mac", 500));
+        assert_eq!(st.pending[0].phase, "pulling");
+        assert!(is_agent_pending(&st.pending[0].id) && is_pending(&st.pending[0].id));
+        // The page of the Space opens mid-create: its row is there, being made, with its progress.
+        let rows = compose(&[], &st);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, agent_pending_id("mac", 500));
+        assert_eq!(rows[0].status, SpaceStatus::Provisioning);
+        // It nests under the Space that asked for it, from the first moment.
+        assert_eq!(rows[0].parent.as_deref(), Some("local:home"));
+        assert!(
+            rows[0]
+                .progress
+                .as_ref()
+                .is_some_and(|p| p.error.is_none() && p.phase == "pulling")
+        );
+        // The same poll again: no second row, no new actions that change it.
+        let again = run(st.clone(), &[mk("creating", "pulling", Some(40), "")]);
+        assert_eq!(again.pending.len(), 1);
+        // It fails: the row stays with the reason.
+        let failed = run(
+            again,
+            &[mk("failed", "", None, "Its network setup did not come up")],
+        );
+        assert_eq!(failed.pending.len(), 1);
+        assert_eq!(
+            failed.pending[0].error.as_deref(),
+            Some("Its network setup did not come up")
+        );
+        assert!(agent_actions(&failed, &[mk("failed", "", None, "x")], 1000).is_empty());
+        // A create that failed before the app looked still shows its row once.
+        let late = run(
+            CreatesState::default(),
+            &[mk("failed", "", None, "No disk space")],
+        );
+        assert_eq!(late.pending[0].error.as_deref(), Some("No disk space"));
+        // Ready hands over to the registry's Space.
+        let st = run(
+            CreatesState::default(),
+            &[mk("creating", "booting", None, "")],
+        );
+        let done = run(st, &[mk("ready", "", None, "")]);
+        assert_eq!(done.pending[0].space_id.as_deref(), Some("local:mac"));
+        // A ready create the app never showed adds no row.
+        assert!(
+            run(CreatesState::default(), &[mk("ready", "", None, "")])
+                .pending
+                .is_empty()
         );
     }
 }

@@ -102,6 +102,8 @@ export interface AgentStartRequest {
   repo?: string;
   branch?: string;
   model?: string;
+  /** Reasoning level (`low`, `medium`, `high`, `xhigh`, `max`) for the agents that take one. */
+  effort?: string;
   /** Provider key names to forward (values never cross the bridge). Saved keys the harness reads go without being named. */
   envFromHost?: string[];
   /** The run's folder (a continued chat's own, with `resumeSession`). */

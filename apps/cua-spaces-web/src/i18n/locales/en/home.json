@@ -195,5 +195,9 @@
   "home.this_mac.add_failed": "{computer} couldn't be added to your account.",
   "home.this_mac.setup_failed": "Couldn't set up {computer}",
   "home.where.ready_in": "{kind, select, linux {Good for code and tests. } macos {For Mac apps and Safari. } other {}}Ready in {time}{size, select, none {} other { ({size})}}.",
-  "home.where.ready_in_few_minutes": "Good for code and tests. Ready in a few minutes."
+  "home.where.ready_in_few_minutes": "Good for code and tests. Ready in a few minutes.",
+  "home.ask_box.at_label": "Computers",
+  "home.ask_box.at_none": "No computers yet",
+  "home.ask_box.at_none_match": "No computer matches",
+  "home.ask_box.at_clear": "Remove {place}"
 }

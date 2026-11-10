@@ -4,8 +4,9 @@
 //! Linux/X11 `delivery_mode:"foreground"` activates the target, sends the
 //! input, then gives the active window back to the one the user had, as on
 //! macOS, Windows and Wayland: `type_text` (CUA-3663), `press_key`, `hotkey`
-//! and `click` (CUA-3767). Input that opens a menu leaves the target focused,
-//! so the menu stays open, and the result says why.
+//! and `click` (CUA-3767), `double_click`, `scroll`, `drag` and `right_click`
+//! (CUA-3434). Input that opens a menu leaves the target focused, so the menu
+//! stays open, and the result says why.
 //!
 //! The test process maps two titled toplevels: `prior`, which it activates
 //! first, and `target`, whose own connection counts key and button presses
@@ -563,5 +564,85 @@ fn x11_foreground_click_restores_past_another_process_popup() {
         1,
         Expect::RestoredPastForeignPopup,
         click_args,
+    );
+}
+
+#[test]
+#[ignore]
+fn x11_foreground_double_click_restores_the_prior_active_window() {
+    foreground_case(
+        "double_click",
+        Targeting::Px,
+        "double_click",
+        2,
+        Expect::Restored,
+        click_args,
+    );
+}
+
+#[test]
+#[ignore]
+fn x11_foreground_right_click_restores_the_prior_active_window() {
+    foreground_case(
+        "right_click",
+        Targeting::Px,
+        "right_click",
+        1,
+        Expect::Restored,
+        click_args,
+    );
+}
+
+#[test]
+#[ignore]
+fn x11_foreground_right_click_that_opens_a_menu_keeps_the_target_focused() {
+    foreground_case(
+        "right_click",
+        Targeting::Px,
+        "right_click",
+        1,
+        Expect::MenuKeptFocus,
+        click_args,
+    );
+}
+
+#[test]
+#[ignore]
+fn x11_foreground_scroll_restores_the_prior_active_window() {
+    // Each wheel detent is a button 4/5 press on the target.
+    foreground_case(
+        "scroll",
+        Targeting::Px,
+        "scroll",
+        2,
+        Expect::Restored,
+        |target, (x, y)| {
+            serde_json::json!({
+                "pid": pid(), "window_id": u64::from(target),
+                "x": x + 100, "y": y + 100, "coordinate_frame": "desktop",
+                "direction": "down", "amount": 2,
+                "delivery_mode": "foreground"
+            })
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn x11_foreground_drag_restores_the_prior_active_window() {
+    foreground_case(
+        "drag",
+        Targeting::Px,
+        "drag",
+        1,
+        Expect::Restored,
+        |target, (x, y)| {
+            serde_json::json!({
+                "pid": pid(), "window_id": u64::from(target),
+                "from_x": x + 60, "from_y": y + 60, "to_x": x + 200, "to_y": y + 160,
+                "coordinate_frame": "desktop",
+                "delivery_mode": "foreground"
+            })
+        },
     );
 }

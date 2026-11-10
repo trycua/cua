@@ -472,6 +472,17 @@ pub(crate) fn says_stopped_sharing(space: &Space) -> bool {
         .is_some_and(|e| e.to_lowercase().contains("stopped sharing"))
 }
 
+/// A Space's error says the relay lists its computer offline (the SDK's
+/// connect reason, [`cua_spaces_contract::presence::LISTED_OFFLINE`]).
+pub(crate) fn says_listed_offline(space: &Space) -> bool {
+    space
+        .sdk
+        .as_ref()
+        .filter(|s| !s.reachable)
+        .and_then(|s| s.error.as_deref())
+        .is_some_and(cua_spaces_contract::presence::says_listed_offline)
+}
+
 /// The machine whose own desktop `space` is (`relay:<machine>`, no host
 /// above it), if it is one.
 fn own_desktop(space: &Space) -> Option<&str> {
@@ -501,6 +512,8 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
         via: &'static str,
         space_id: Option<String>,
         stopped_sharing: bool,
+        /// Its row's connect failed because the relay lists it offline.
+        listed_offline: bool,
     }
     let mut machines = vec![MachineIn {
         id: THIS_MACHINE_ID.into(),
@@ -518,6 +531,7 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
             .find(|s| s.id == THIS_MACHINE_ID)
             .map(|s| s.id.clone()),
         stopped_sharing: false,
+        listed_offline: false,
     }];
     for space in &input.spaces {
         if let Some(own) = own_desktop(space) {
@@ -537,6 +551,7 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
                 via: "relay",
                 space_id: Some(space.id.clone()),
                 stopped_sharing: stopped,
+                listed_offline: says_listed_offline(space),
             };
             match machines.iter().position(|m| m.id == own) {
                 Some(i) if !machines[i].current => {
@@ -567,14 +582,22 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
             via: "relay",
             space_id: None,
             stopped_sharing: false,
+            listed_offline: false,
         });
     }
-    for m in machines.iter_mut() {
+    for (m, e) in machines.iter_mut().zip(&extra) {
         if let Some(h) = input.hostnames.get(&m.id).filter(|h| !h.is_empty()) {
             m.hostname = Some(h.clone());
         }
         if !m.current {
-            m.presence = input.presence.get(&m.id).copied();
+            // The Spaces list read the relay just now; the shell's presence
+            // can be older (another, slower read). When the list's connect
+            // found the computer offline, that is its presence.
+            m.presence = if e.listed_offline {
+                Some(false)
+            } else {
+                input.presence.get(&m.id).copied()
+            };
         }
     }
     let merged = merge(&MachinesInput {
@@ -947,6 +970,46 @@ mod tests {
         });
         assert_eq!(rows[1].status, OFFLINE);
         assert_eq!(spaces_label(3), "3 Spaces");
+    }
+
+    /// CUA-3981: your other computer's app quit. The Spaces list read the
+    /// relay just now and its connect says the relay lists it offline, but
+    /// the shell's presence (an older read of the relay) still says online.
+    /// Home, Computers and Run something's "Where" all read Offline, and it
+    /// is no run-on choice for a live picker. A computer whose connect only
+    /// timed out while the relay sees it stays online, as before.
+    #[test]
+    fn a_computer_the_list_found_offline_is_offline_whatever_an_older_presence_says() {
+        let relay_row = |error: &str| {
+            space(serde_json::json!({
+                "id": "relay:j172", "name": "j17-2", "os": "macos",
+                "status": "suspended", "provider": "relay",
+                "sdk": {"features": [], "spacesdVersion": "", "reachable": false, "error": error}
+            }))
+        };
+        let offline = format!(
+            "relay:j172: {} and did not answer (relay: HTTP 502)",
+            cua_spaces_contract::presence::LISTED_OFFLINE
+        );
+        let stale_presence: HashMap<String, bool> = [("j172".to_string(), true)].into();
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![relay_row(&offline)],
+            presence: stale_presence.clone(),
+            now: NOW,
+            ..Default::default()
+        });
+        assert_eq!(
+            (rows[1].id.as_str(), rows[1].online, rows[1].status.as_str()),
+            ("j172", false, OFFLINE)
+        );
+        // Only a probe that timed out: the relay's word stands.
+        let rows = page_rows(&MachinesPageInput {
+            spaces: vec![relay_row("timed out")],
+            presence: stale_presence,
+            now: NOW,
+            ..Default::default()
+        });
+        assert_eq!((rows[1].online, rows[1].status.as_str()), (true, ONLINE));
     }
 
     fn label_of(spaces: Vec<serde_json::Value>, id: &str) -> (u32, String) {

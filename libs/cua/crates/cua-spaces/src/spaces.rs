@@ -330,6 +330,40 @@ pub(crate) fn session_changed(
 /// keepalive gives up (20 s + 10 s).
 pub(crate) const LIVE_CHECK: std::time::Duration = std::time::Duration::from_secs(4);
 
+/// The reason a computer the relay lists offline could not be reached,
+/// from what failed on the way.
+pub(crate) fn listed_offline_reason(failure: &str) -> String {
+    use cua_spaces_contract::presence::{LISTED_OFFLINE, says_listed_offline};
+    if says_listed_offline(failure) {
+        failure.to_string()
+    } else {
+        format!("{LISTED_OFFLINE} and did not answer ({failure})")
+    }
+}
+
+/// Whether `space`'s cua-spacesd answers a health check within `within`.
+/// Any answer, even a refusal, proves the connection; only a transport
+/// failure or silence does not. A Space without cua-spacesd has nothing to
+/// ask: it does not.
+pub(crate) async fn answers_within(space: &Space, within: Duration) -> bool {
+    let Ok(spacesd) = space.spacesd() else {
+        return false;
+    };
+    match tokio::time::timeout(within, spacesd.health()).await {
+        Ok(Ok(_)) => true,
+        Ok(Err(cua_spacesd_client::Error::Transport(_))) | Err(_) => false,
+        Ok(Err(_)) => true,
+    }
+}
+
+/// How long a cached connection to a computer the relay lists offline has
+/// to answer before it is dropped. The relay is the source of presence: a
+/// computer listed offline is used only through a connection that answers
+/// now (over the LAN mesh it may), never through one cached from before it
+/// went away. Over the mesh nothing resets such a connection, so without
+/// this check it looked alive for as long as nobody sent a call on it.
+pub(crate) const OFFLINE_LIVE_CHECK: Duration = Duration::from_secs(2);
+
 /// Builder for [`Spaces`].
 #[derive(Default)]
 pub struct SpacesBuilder {
@@ -1872,6 +1906,16 @@ impl Spaces {
             self.forget_stale_connection(&key).await;
             return None;
         }
+        // Its computer left the relay (its app quit, it slept, it lost the
+        // network): the connection stands only if it still answers.
+        if let Some(s) = &cached
+            && self.carrier_listed_offline(&key)
+            && !answers_within(s, OFFLINE_LIVE_CHECK).await
+        {
+            tracing::info!(space = %key, "its computer is offline and the connection does not answer; dropping it");
+            self.forget_stale_connection(&key).await;
+            return None;
+        }
         if let Some(s) = cached {
             let policy = |provided| {
                 if provided {
@@ -1958,12 +2002,17 @@ impl Spaces {
                 if let Some(presence) = presence
                     && !matches!(e, Error::NotFound(_) | Error::InvalidArgument(_))
                 {
+                    // Offline, and it did not answer either: it is offline,
+                    // whatever went wrong on the way (the apps read the
+                    // reason as offline: `presence::LISTED_OFFLINE`).
+                    let reason = listed_offline_reason(&e.to_string());
                     self.inner.dial_backoff.fail(
                         &key,
                         presence,
-                        e.to_string(),
+                        reason.clone(),
                         std::time::Instant::now(),
                     );
+                    return Err(Error::SpacesdNotAvailable { space: key, reason });
                 }
                 return Err(e);
             }
@@ -2062,6 +2111,22 @@ impl Spaces {
         tracing::info!(space = %key, %reason, "its connection is dead; reconnecting");
         self.forget_stale_connection(&key).await;
         self.space(&key).await
+    }
+
+    /// Whether the relay lists offline the computer that carries Space
+    /// `key`: the relay machine itself, or the host a routed Space rides
+    /// on. False when no relay computer carries it or the relay has not
+    /// listed it.
+    fn carrier_listed_offline(&self, key: &str) -> bool {
+        let machine = match SpaceId::parse(key) {
+            Ok(SpaceId::Relay { machine_id }) => machine_id,
+            Ok(SpaceId::Direct { authority }) => match crate::id::routed_host(&authority) {
+                Some((machine, _)) => machine.to_string(),
+                None => return false,
+            },
+            _ => return false,
+        };
+        matches!(self.relay_presence(&machine), Some((false, _)))
     }
 
     /// [`Spaces::resolve`], first asking where a durable Space is now when
@@ -2550,13 +2615,6 @@ impl Spaces {
         // Under the operator override that turns the secure default off, a create asks for no
         // more than the old lists. Child Spaces is an experiment: until it is on, no parent.
         crate::network::require_secure_spaces(opts.network_settings.as_ref())?;
-        if opts.parent.is_some()
-            && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
-        {
-            return Err(Error::invalid(
-                cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-            ));
-        }
         // The network it gets: what it asks, no more open than its parent.
         // Every path below carries the resolved settings.
         let network = self.create_network(&opts)?;

@@ -751,21 +751,12 @@ impl Spaces {
         settings: &NetworkSettings,
     ) -> Result<NetworkSettings> {
         let current = crate::network::settings_of(self.inner.registry.meta(key).as_ref());
-        // Choosing an exit needs the secure default; an exit that is a Space of the tree needs
-        // Child Spaces as well.
-        if settings.via.is_some() && settings.via != current.via {
-            if Mode::from_env() == Mode::Legacy {
-                return Err(Error::invalid(
-                    cua_vmm::network::secure_default_off_message(),
-                ));
-            }
-            if matches!(settings.via, Some(cua_vmm::network::EgressVia::Space(_)))
-                && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)
-            {
-                return Err(Error::invalid(
-                    cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-                ));
-            }
+        // Choosing an exit needs the secure default.
+        if settings.via.is_some() && settings.via != current.via && Mode::from_env() == Mode::Legacy
+        {
+            return Err(Error::invalid(
+                cua_vmm::network::secure_default_off_message(),
+            ));
         }
         let Some(cua_vmm::network::EgressVia::Space(name)) = &settings.via else {
             return Ok(settings.clone());

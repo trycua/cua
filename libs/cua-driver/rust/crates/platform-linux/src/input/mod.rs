@@ -4751,16 +4751,26 @@ mod own_dialog_tests {
         conn.get_input_focus().unwrap().reply().unwrap();
         let cname = std::ffi::CString::new(name.clone()).unwrap();
         let display = open_named_display(cname.as_ptr()).unwrap();
+        // One fake WM for the whole test. Only one client may select
+        // SubstructureRedirect on the root, and the server releases a closed
+        // client's selection when it gets to that disconnect, not when the
+        // client drops it, so a second WM connection can get BadAccess.
+        let wm = std::sync::Arc::new(RustConnection::connect(Some(&name)).unwrap().0);
+        wm.change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        // Each case starts with no activation left over from the one before.
+        let drain = |wm: &RustConnection| {
+            wm.get_input_focus().unwrap().reply().unwrap();
+            while wm.poll_for_event().unwrap().is_some() {}
+        };
         // The WM honors every activation, except the first delayed request opens a dialog.
         for delayed in [false, true] {
-            let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
-            wm.change_window_attributes(
-                root,
-                &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
-            )
-            .unwrap()
-            .check()
-            .unwrap();
+            drain(&wm);
             set32(
                 &conn,
                 root,
@@ -4773,6 +4783,7 @@ mod own_dialog_tests {
             conn.get_input_focus().unwrap().reply().unwrap();
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let done = stop.clone();
+            let wm = wm.clone();
             let thread = std::thread::spawn(move || {
                 let mut first = delayed;
                 while !done.load(std::sync::atomic::Ordering::Relaxed) {
@@ -4803,14 +4814,7 @@ mod own_dialog_tests {
             assert_eq!(focus, if delayed { dialog } else { main });
         }
         // A click that closed the saved window leaves nothing to re-activate.
-        let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
-        wm.change_window_attributes(
-            root,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
-        )
-        .unwrap()
-        .check()
-        .unwrap();
+        drain(&wm);
         set32(
             &conn,
             root,

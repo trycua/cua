@@ -21,7 +21,7 @@ struct MainUIRouteTests {
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
                          telemetry: FixtureTelemetry())
-        m.settings.experiments = AppExperiments(cuaVolume: true, childSpaces: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false)
+        m.settings.experiments = AppExperiments(cuaVolume: true, ciRunners: false, tcpShares: false, mobile: false)
         return m
     }
 

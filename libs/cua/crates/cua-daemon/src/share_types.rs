@@ -45,6 +45,7 @@ impl ShareTarget {
         }
     }
 
+    #[cfg(any(feature = "client", test))]
     pub(crate) fn to_pb(&self) -> pb::ShareTarget {
         match self {
             Self::Port(p) => pb::ShareTarget {
@@ -71,6 +72,7 @@ impl ShareTarget {
         }
     }
 
+    #[cfg(any(feature = "client", test))]
     pub(crate) fn from_pb(t: &pb::ShareTarget) -> Self {
         match pb::ShareTargetKind::try_from(t.kind).unwrap_or(pb::ShareTargetKind::Unspecified) {
             pb::ShareTargetKind::SpacePort => Self::SpacePort {
@@ -106,6 +108,7 @@ impl ShareAccess {
         }
     }
 
+    #[cfg(any(feature = "client", test))]
     pub(crate) fn to_pb(self) -> i32 {
         match self {
             Self::Private => pb::ShareAccess::Private as i32,
@@ -114,6 +117,7 @@ impl ShareAccess {
         }
     }
 
+    #[cfg(any(feature = "client", test))]
     pub(crate) fn from_pb(v: i32) -> Self {
         match pb::ShareAccess::try_from(v).unwrap_or(pb::ShareAccess::Unspecified) {
             pb::ShareAccess::Team => Self::Team,
@@ -221,6 +225,7 @@ impl ShareTcp {
 }
 
 impl ShareInfo {
+    #[cfg(any(feature = "client", test))]
     pub(crate) fn from_pb(s: &pb::Share) -> Self {
         let t = |t: &pbjson_types::Timestamp| crate::convert::from_ts(t);
         Self {

@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.31.0](https://github.com/trycua/cua/compare/cua-spaces-v0.30.0...cua-spaces-v0.31.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+
+## [0.30.0](https://github.com/trycua/cua/compare/cua-spaces-v0.29.0...cua-spaces-v0.30.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** agent chip shows model and reasoning level, with an inline Reasoning row ([#6861](https://github.com/trycua/cua/issues/6861)) ([bec0f80](https://github.com/trycua/cua/commit/bec0f80852f79ff8c4f6201436a10dcc29ad58d5))
+
+
+### Bug Fixes
+
+* **cua-daemon:** gate client-only code so the build without the client feature is warning-free ([#7209](https://github.com/trycua/cua/issues/7209)) ([ac6e7bf](https://github.com/trycua/cua/commit/ac6e7bff58ed7884ceb59bf6dedd74681e45e340))
+
+
+### Performance Improvements
+
+* **spaces:** install-local dev-fast by default, parallel cua-spacesd, --build-only (CUA-3971) ([#7184](https://github.com/trycua/cua/issues/7184)) ([ffb587a](https://github.com/trycua/cua/commit/ffb587a7933d535b8c2d7c11e6a6ee9e2f9fb123))
+
+## [0.29.0](https://github.com/trycua/cua/compare/cua-spaces-v0.28.1...cua-spaces-v0.29.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** show each Space's progress when spaces create makes several ([#7185](https://github.com/trycua/cua/issues/7185)) ([c4403a6](https://github.com/trycua/cua/commit/c4403a69674986ac086666b3108903cd60e1ab46))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.20.0 in Cua Spaces ([#7199](https://github.com/trycua/cua/issues/7199)) ([4b867b2](https://github.com/trycua/cua/commit/4b867b2dc7c03ee6db90a543a956b73d6fb35456))
+
 ## [0.28.1](https://github.com/trycua/cua/compare/cua-spaces-v0.28.0...cua-spaces-v0.28.1) (2026-11-10)
 
 

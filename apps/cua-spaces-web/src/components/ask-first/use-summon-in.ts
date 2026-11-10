@@ -37,25 +37,34 @@ export function useSummonIn() {
    * home's agent is kept on standby with the picked model (adding it again updates it), so its session is open
    * before the first words and the model it asks for is the one its next turn uses.
    */
-  const summonIn = async (spaceId: string, agent: string, prompt: string, model?: string, standby = false, brief?: string): Promise<boolean> => {
+  const summonIn = async (
+    spaceId: string,
+    agent: string,
+    prompt: string,
+    model?: string,
+    standby = false,
+    brief?: string,
+    effort?: string,
+  ): Promise<boolean> => {
     if (!canSummon()) return false;
     const input = await summonInput(spaceId);
     const first = firstMessage(core, input, agent, prompt);
     if (!first?.handle) return false;
-    if (standby || model || brief) {
+    if (standby || model || brief || effort) {
       await host!
         .call("thread.agentAdd", {
           spaceId,
           name: first.handle,
           harness: first.harness || agent,
           ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
           ...(standby ? { standby: true } : {}),
           ...(brief ? { brief } : {}),
         })
         .catch(() => null);
     }
     // The member is in now: the message goes with it listed.
-    await send(spaceId, standby || model || brief ? await summonInput(spaceId) : input)(first.text);
+    await send(spaceId, standby || model || brief || effort ? await summonInput(spaceId) : input)(first.text);
     return true;
   };
 

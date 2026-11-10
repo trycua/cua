@@ -57,7 +57,9 @@ describe("a Space's thread", () => {
     expect(done.contains(replyRow)).toBe(false);
     // Each row has its author and time.
     expect(replyRow.querySelector("time")).not.toBeNull();
-    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
+    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain(
+      "Hermes stopped working on \u201cwrite the 2 failures up for the changelog\u201d. It will pick it up again.",
+    );
     expect(qa("[data-unread]")).toHaveLength(1);
     await waitFor(() => expect(q("[data-member='agent:claude']")?.textContent).toContain("Claude Code"));
     // A member's @name draws as a chip once the members are known.
@@ -161,8 +163,12 @@ describe("a Space's thread", () => {
     // It streamed as whole-text snapshots (each one replaces the last), then the real reply took its place.
     expect(said).toEqual(["Done.", "Done. Nothing else"]);
     expect(q("[data-live-entry]")).toBeNull();
-    // "woke up and joined" came after the agent was up, not before.
-    expect(qa("[data-thread-note]").map((n) => n.textContent)).toContain("Hermes woke up and joined");
+    // A start the person asked for says nothing in the thread: the starting row showed it.
+    expect(
+      qa("[data-thread-note]")
+        .map((n) => n.textContent)
+        .join(" "),
+    ).not.toContain("woke up and joined");
     // No middle dot in the thread or the member list.
     expect(q("[data-thread]")!.textContent).not.toContain("\u00b7");
     expect(q("[data-members]")!.textContent).not.toContain("\u00b7");

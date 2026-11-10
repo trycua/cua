@@ -3,7 +3,7 @@ title: Experiments
 description: Features that are still being built have one switch each, off until you turn them on, with the cua experiments command or in the app's Settings.
 ---
 
-An experiment is a feature that works but is still being built. Each is off until you turn it on. Ask first and Secure Spaces used to be experiments; they are always on now and have no switch (a switch you turned off for one of them is ignored). Turning an experiment off puts everything back the way it was before: nothing the experiment made is deleted, and the commands and settings it added disappear from help and from the app.
+An experiment is a feature that works but is still being built. Each is off until you turn it on. Ask first, Secure Spaces, Child Spaces and Warm start used to be experiments; they are always on now and have no switch (a switch you turned off for one of them is ignored). Turning an experiment off puts everything back the way it was before: nothing the experiment made is deleted, and the commands and settings it added disappear from help and from the app.
 
 ## Turn one on or off
 
@@ -21,11 +21,9 @@ A command that belongs to an experiment that is off is left out of `--help`. If 
 
 | Name | What it does |
 | --- | --- |
-| `child-spaces` | A Space makes Spaces of its own, inside a budget for its tree, and keeps a command running. See [Child Spaces](/spaces/guides/child-spaces) and [Keep a command running](/spaces/guides/keep-a-command-running). |
 | `ci-runners` | GitHub Actions jobs run in a fresh Space each, on your computers, with `cua ci` and the CI Runners page. See [Cua CI](/spaces/guides/cua-ci). |
 | `tcp-shares` | Share a raw TCP service in a Space, such as a game server, at a public address. See [Share a game server](/spaces/guides/share-a-game-server). |
 | `mobile` | Your computers answer the Cua Spaces phone app: the daemon serves a phone's tools (start a task, tool rows, changes and diffs, approval scopes) and reports events for push alerts. See [Cua Spaces on your phone](/spaces/guides/phone). |
-| `warm-pools` | Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once. See [Warm start](/spaces/guides/warm-start). |
 
 ## Turning one off
 

@@ -50,7 +50,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
   it("shows no where row until a place is named with @", async () => {
     await mountApp("/home", HOME);
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     expect(q('[data-picker="where"]')).toBeNull();
     expect(q("[data-ask-where]")).toBeNull();
     fireEvent.change(box, { target: { value: "run the tests on @" } });
@@ -61,7 +61,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     const { router } = await mountApp("/home", { ...HOME, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     fireEvent.change(box, { target: { value: "test my project on a Mac and a Windows computer" } });
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
@@ -103,10 +103,10 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     const { router } = await mountApp("/home", { ...HOME, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     // The demo's Home was made for Claude Code (its label says so): the next request goes there.
     await useClaude();
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High"));
     // The tree is read from the host and the Home is found by its label.
     await new Promise((r) => setTimeout(r, 300));
     // A plain Home message makes a new Home, even though the agent already has one.
@@ -150,9 +150,9 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
       },
     });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await useClaude();
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High"));
     await new Promise((r) => setTimeout(r, 300));
     fireEvent.change(box, { target: { value: "hi" } });
     await act(async () => {

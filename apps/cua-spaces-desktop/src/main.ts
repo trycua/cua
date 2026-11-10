@@ -25,7 +25,16 @@ import { recordLaunch, refreshAfterUpdate } from "./model/update-refresh";
 import { loadNative } from "./native/load";
 import { nativeDir } from "./native/location";
 import { connectNotch, type NotchCore } from "./notch";
-import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
+import {
+  dropOnSpace,
+  feedNotch,
+  followDragReadiness,
+  notchTeleport,
+  notchThumbnail,
+  openSpaceFromNotch,
+  teleportFromNotch,
+  type NotchFeedUi,
+} from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
 import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
@@ -202,7 +211,9 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         windowDrops.set(dropWindow(win), targets);
         if (process.env.CUA_SPACES_NOTCH_DEBUG) {
           const at = win.getContentBounds();
-          console.log(`[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`);
+          console.log(
+            `[cua-spaces] notch drop targets: ${targets.map((t) => t.spaceId).join(", ") || "none"} in window ${win.getMediaSourceId()} at ${at.x},${at.y}`,
+          );
         }
       },
       chooseFiles: async (win) => {
@@ -213,7 +224,11 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
         return r.canceled ? null : r.filePaths;
       },
       chooseProgram: async (win) => {
-        const options = { properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[], defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin", buttonLabel: "Use" };
+        const options = {
+          properties: ["openFile", "showHiddenFiles", "treatPackageAsDirectory"] as ("openFile" | "showHiddenFiles" | "treatPackageAsDirectory")[],
+          defaultPath: process.platform === "win32" ? undefined : "/usr/local/bin",
+          buttonLabel: "Use",
+        };
         const r = win instanceof BrowserWindow ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
         return r.canceled ? null : (r.filePaths[0] ?? null);
       },

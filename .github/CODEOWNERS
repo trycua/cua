@@ -14,10 +14,8 @@
 /docs/content/docs/cua-driver/reference/ @f-trycua @injaneity
 /scripts/docs-generators/cua-driver.ts @f-trycua @injaneity
 /.github/release-notes/cua-driver-rs.md @f-trycua @injaneity
-/.github/scripts/sync_driver_release_docs.py @f-trycua @injaneity
 /.github/scripts/verify_cua_driver_release_archives.py @f-trycua @injaneity
 /.github/scripts/tests/test_cua_driver_release_wiring.py @f-trycua @injaneity
-/.github/scripts/tests/test_sync_driver_release_docs.py @f-trycua @injaneity
 /.github/scripts/tests/test_verify_cua_driver_release_archives.py @f-trycua @injaneity
 /.github/workflows/cd-cua-driver-docs.yml @f-trycua @injaneity
 /.github/workflows/cd-py-cua-driver.yml @f-trycua @injaneity

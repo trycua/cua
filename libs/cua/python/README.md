@@ -85,7 +85,7 @@ returns) is always `cua.SandboxHandle`.
 
 ```bash
 cd libs/cua
-cargo build --release -p cua-sdk
+cargo build --release -p cua-sdk-native
 scripts/build-test-fixtures.sh
 node scripts/stage-uniffi-library.mjs          # copies the library here
 cd python && uv run --with pytest pytest -q    # smoke tests against fixtures

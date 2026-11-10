@@ -34,6 +34,7 @@ on:
       - "libs/cua/crates/cua-teleport/**"
       - "libs/cua/crates/cua-keyvault/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       # The channel names the Local bundle is stamped from (CuaChannel).
       - "libs/cua/crates/cua-home/**"
       - "libs/cua/scripts/generate-app-core-ffi.py"
@@ -62,6 +63,7 @@ on:
       - "libs/cua/crates/cua-teleport/**"
       - "libs/cua/crates/cua-keyvault/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       # The channel names the Local bundle is stamped from (CuaChannel).
       - "libs/cua/crates/cua-home/**"
       - "libs/cua/scripts/generate-app-core-ffi.py"

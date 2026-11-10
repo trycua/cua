@@ -112,6 +112,7 @@ pub mod parity;
 pub mod paths;
 pub mod persistent;
 pub mod phone;
+pub mod pool;
 pub mod prepare;
 pub mod presence;
 pub mod profile_card;

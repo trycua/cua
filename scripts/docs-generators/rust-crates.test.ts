@@ -55,8 +55,8 @@ test('rustdoc Markdown becomes MDX-safe Markdown', () => {
 test('rendered pages are deterministic, bannered, compact and listed in meta.json', () => {
   const out = '/virtual/rust';
   const uniffi = new Map([['Sandbox', '/cua-sdk/reference/sandbox#sandbox']]);
-  const a = renderAll(dump, '9.9.9', out, uniffi);
-  const b = renderAll(dump, '9.9.9', out, uniffi);
+  const a = renderAll(dump, out, uniffi);
+  const b = renderAll(dump, out, uniffi);
   assert.deepEqual([...a], [...b]);
   const meta = JSON.parse(a.get(`${out}/meta.json`)!);
   assert.deepEqual(meta.pages, PAGES.map((p) => p.slug));
@@ -65,7 +65,7 @@ test('rendered pages are deterministic, bannered, compact and listed in meta.jso
   assert.match(index, /\| `cua-sdk` \|[^\n]*\[cua-sdk\]\(\/cua-sdk\/reference\/rust\/cua-sdk\)[,)| ]/);
   const sdk = a.get(`${out}/cua-sdk.mdx`)!;
   assert.match(sdk, /AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY/);
-  assert.match(sdk, /Version: 9\.9\.9/);
+  assert.doesNotMatch(sdk, /^\s*Version:/m);
   assert.match(sdk, /nightly-2026-09-20, format 61/);
   // A type: heading (anchor), summary line, one declaration block with its methods.
   assert.match(sdk, /### `Cua`\n\n[^\n]+\n\n```rust\npub struct Cua \{ \/\* private fields \*\/ \}\nimpl Cua \{\n  fn connect\(address: Option<String>\) -> Result<Arc<Self>>;\n\}\n```/);

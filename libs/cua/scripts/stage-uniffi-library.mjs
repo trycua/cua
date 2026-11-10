@@ -33,7 +33,7 @@ const targetDirectory = process.env.CARGO_TARGET_DIR
   : join(cuaRoot, "target")
 const source = join(targetDirectory, "release", file)
 if (!existsSync(source)) {
-  throw new Error(`missing ${source}; run cargo build --release -p cua-sdk first`)
+  throw new Error(`missing ${source}; run cargo build --release -p cua-sdk-native first`)
 }
 
 function stage(destination) {

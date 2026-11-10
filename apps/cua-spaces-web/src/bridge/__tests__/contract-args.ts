@@ -228,6 +228,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.acknowledgeLinkNotice": {},
   "crashReporting.config": {},
   "spaces.usage": { spaceId: SPACE },
+  "spaces.reach": { spaceId: SPACE },
   "spaces.windows": { spaceId: SPACE },
   "stream.pip": { spaceId: SPACE, command: { type: "open", row: "desktop" } },
   "spaces.thumbnail": { spaceId: SPACE },

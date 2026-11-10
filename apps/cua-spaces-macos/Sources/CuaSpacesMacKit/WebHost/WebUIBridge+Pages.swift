@@ -357,6 +357,10 @@ extension WebUIBridge {
         // A Space's detail
         case "spaces.usage":
             return BridgeValue.encode(await model.backend.usage(id: try spaceId(args)))
+        case "spaces.reach":
+            // Whether the Space can take work now: the relay's word and a health check
+            // (the SDK's `spaces.reach`), asked before a job is handed to it.
+            return Self.reach(try await model.backend.reach(id: try spaceId(args)))
         case "spaces.windows":
             let stream = try await stream(for: try spaceId(args))
             await stream.rows.refresh()
@@ -473,6 +477,14 @@ extension WebUIBridge {
     // MARK: - Arguments
 
     func spaceId(_ args: [String: Any]) throws -> String { try string(args, "spaceId") }
+
+    /// `spaces.reach`'s answer as the page reads it (`SpaceReach`): the SDK's snake_case in camelCase.
+    static func reach(_ answer: Any) -> [String: Any] {
+        let r = answer as? [String: Any] ?? [:]
+        return ["reachable": r["reachable"] as? Bool ?? false,
+                "listedOffline": r["listed_offline"] as? Bool ?? false,
+                "reason": (r["reason"] as? String).map { $0 as Any } ?? NSNull()]
+    }
 
     func object(_ args: [String: Any], _ key: String) throws -> [String: Any] {
         guard let v = args[key] as? [String: Any] else { throw Failure.badArgs("\(key): object") }

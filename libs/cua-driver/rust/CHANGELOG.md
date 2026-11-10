@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.47.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.1...cua-driver-rs-v0.47.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** rebuild the X11 overlay window when a compositor starts or stops ([#7217](https://github.com/trycua/cua/issues/7217)) ([78c6ecd](https://github.com/trycua/cua/commit/78c6ecd296abbc5d49814e5338fdb86efd5b3e7c))
+
+## [0.47.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.0...cua-driver-rs-v0.47.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep one fake WM in the Linux own-dialog focus test ([#7204](https://github.com/trycua/cua/issues/7204)) ([70ee3f5](https://github.com/trycua/cua/commit/70ee3f58cda0e8316dbdbfc9bbb3e6d3970abc43))
+* **hyprland-plugin:** smoke-test the released Cua Driver in the requalification session (CUA-3992) ([#7206](https://github.com/trycua/cua/issues/7206)) ([91d5f41](https://github.com/trycua/cua/commit/91d5f4134ec63b74adff4b61310c28eca826513c))
+
+## [0.47.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.3...cua-driver-rs-v0.47.0) (2026-11-10)
+
+
+### Features
+
+* **cua-driver:** connect --replace switches an agent from another Cua Driver ([#7190](https://github.com/trycua/cua/issues/7190)) ([e15e9dd](https://github.com/trycua/cua/commit/e15e9dd47cdc970e7cbed5fec87e377c28ddae0f))
+
+
+### Bug Fixes
+
+* **cua-driver:** name the AXWindows read error in ax_window_unresolved ([#7192](https://github.com/trycua/cua/issues/7192)) ([0365501](https://github.com/trycua/cua/commit/0365501c94dd325bec93c3b40c51150d311ea1bf))
+
+## [0.46.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.2...cua-driver-rs-v0.46.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** release session labels when their owner transport closes ([#7083](https://github.com/trycua/cua/issues/7083)) ([a42beba](https://github.com/trycua/cua/commit/a42bebad9750217a059d849c691972baf2ec7a51))
+
+## [0.46.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.1...cua-driver-rs-v0.46.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** connect says when an agent uses another Cua Driver ([#7165](https://github.com/trycua/cua/issues/7165)) ([18daa98](https://github.com/trycua/cua/commit/18daa98ad304a35802981281adc55a82bb4c3d77))
+* **cua-driver:** deliver a background left click on a Chromium control on Linux X11 ([#7157](https://github.com/trycua/cua/issues/7157)) ([7ce38f7](https://github.com/trycua/cua/commit/7ce38f70bb2d60fd173561f45895172662e13dc8))
+* **cua-driver:** Linux foreground press_key, hotkey and click give the focus back ([#7164](https://github.com/trycua/cua/issues/7164)) ([7bdd2b4](https://github.com/trycua/cua/commit/7bdd2b44a7cc7adde73e076540f53d926a5bb3c4))
+
+## [0.46.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.46.0...cua-driver-rs-v0.46.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** the driver inside Cua Spaces leaves updates to the app ([#7153](https://github.com/trycua/cua/issues/7153)) ([0f39fa3](https://github.com/trycua/cua/commit/0f39fa3f63b0536ec6fcf952875f8e8dc0030744))
+
+## [0.46.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.4...cua-driver-rs-v0.46.0) (2026-11-09)
+
+
+### Features
+
+* **cua-driver:** formally-verify-cua-driver skill and TLA+ models for the driver's state machines ([#7035](https://github.com/trycua/cua/issues/7035)) ([a6b4b30](https://github.com/trycua/cua/commit/a6b4b307e5524d4d0c695712ea038c19e8273638))
+
+
+### Bug Fixes
+
+* **cua-driver:** an invoke_menu worker keeps its pid lease and the desktop lane until it returns ([#7039](https://github.com/trycua/cua/issues/7039)) ([02e4aa0](https://github.com/trycua/cua/commit/02e4aa0bb947d04b9806d1b9a595c593069dafea))
+
 ## [0.45.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.3...cua-driver-rs-v0.45.4) (2026-11-09)
 
 

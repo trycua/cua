@@ -124,12 +124,16 @@ changing Hyprland configuration.
 ### Requalification for each Hyprland build
 
 [`nightly-hyprland-plugin-requalify.yml`](../../../.github/workflows/nightly-hyprland-plugin-requalify.yml)
-runs daily and can also be dispatched by hand. It detects new Hyprland builds
+runs every four hours and can also be dispatched by hand or by a
+`hyprland-build-published` repository dispatch. It detects new Hyprland builds
 in Arch and in the Omarchy edge, rc and stable channels, keyed by package
 version and package hash. For each new build it rebuilds this plugin against
 the exact headers in an Arch container, runs CTest, records the header hashes,
-and loads the module into a headless Hyprland for a window-targeted input
-smoke. The results go to the `hyprland-plugin-compat` branch as
+and loads the module into a headless Hyprland (a virtual output on vkms) for a
+window-targeted input smoke. It then runs the latest released Cua Driver in that
+session: `list_windows` finds a fresh native window, `get_window_state` returns
+a screenshot of it, `click` moves the pointer to it and `type_text` reaches the
+application. The results go to the `hyprland-plugin-compat` branch as
 `compatibility.json`. See [`requalify/COMPAT-BRANCH.md`](requalify/COMPAT-BRANCH.md).
 This is CI evidence. It is not a kit or native certification.
 

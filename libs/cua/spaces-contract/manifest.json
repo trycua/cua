@@ -2091,6 +2091,10 @@
             "description": "Working directory in the Space. Default: the run's own.",
             "type": "string"
           },
+          "effort": {
+            "description": "Reasoning level: `low`, `medium`, `high`, `xhigh` or `max`. Taken by Claude Code and Codex;\nother agents ignore it.",
+            "type": "string"
+          },
           "env": {
             "additionalProperties": {
               "type": "string"
@@ -2875,6 +2879,10 @@
           "durable": {
             "description": "Re-drive the agent's runs after a crash. Default false.",
             "type": "boolean"
+          },
+          "effort": {
+            "description": "Reasoning level (see `agent_start`'s `effort`).",
+            "type": "string"
           },
           "env": {
             "additionalProperties": {

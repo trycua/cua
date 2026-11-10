@@ -28,7 +28,7 @@ Read `<run dir>/result.json` first: `sha`, `mode`, `status`, `runner_exit`, `clo
 
 ## Seed
 
-The wrapper clones `seed` from `config.json` and records `seed_note` in every result. On the relay Mac mini the seed is `cua-driver-browser-baseline-20261104-tk86-ax`: Tk 9.1, Chrome, and the Terminal Accessibility grant below. `cua-driver-browser-baseline-20261104-tk86` is its parent and has no Terminal grant. The seed must be stopped; never boot or edit it for a run. To change it, clone it to a new name, make the one change in the clone, stop the clone, and point `config.json` at it with an updated `seed_note`.
+The wrapper clones `seed` from `config.json` and records `seed_note` in every result. On the relay Mac mini the seed is `cua-driver-browser-baseline-20261104-tk86-ax`: Tk 9.1, Chrome, and the Terminal Accessibility grant below. Its parent, `cua-driver-browser-baseline-20261104-tk86`, was deleted on 2026-11-10, and the seed still clones, and its clones boot, without it. The seed must be stopped; never boot or edit it for a run. To change it, clone it to a new name, make the one change in the clone, stop the clone, and point `config.json` at it with an updated `seed_note`.
 
 The runner stops at exit 2 when the seed lacks one of these. The seed steps are in the [runner README](../../../libs/cua-driver/tests/runners/macos-lume/README.md#create-the-private-seed):
 

@@ -125,6 +125,7 @@ export function AskBox({
   selected,
   onPickAccount,
   onModel,
+  onEffort,
   onSignIn,
   onConfigure,
   repo,
@@ -153,6 +154,7 @@ export function AskBox({
   selected: AgentSelection | null;
   onPickAccount: (group: AgentGroup, account: AgentAccount) => void;
   onModel: (model: string) => void;
+  onEffort?: (level: string) => void;
   /** Starts the sign-in of an app that has no account. */
   onSignIn: (group: AgentGroup) => void;
   /** Opens Settings, Connections, where the agents and their sign-ins are managed. */
@@ -218,7 +220,15 @@ export function AskBox({
         )}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} onConfigure={onConfigure} />
+        <AgentPicker
+          view={view}
+          selected={selected}
+          onPick={onPickAccount}
+          onModel={onModel}
+          onEffort={onEffort}
+          onSignIn={onSignIn}
+          onConfigure={onConfigure}
+        />
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
           <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">

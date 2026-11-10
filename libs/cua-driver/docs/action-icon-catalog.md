@@ -64,10 +64,19 @@ need unrelated illustrations. A maintainable asset system uses:
 | Token                   | Meaning                                                             |
 | ----------------------- | ------------------------------------------------------------------- |
 | `background`            | Targeted delivery without raising or fronting the target            |
-| `foreground`            | Briefly front target, act, then restore the previous foreground app |
+| `foreground`            | Briefly front target, act, then restore the previous foreground app[^restore] |
 | `persistent_foreground` | `bring_to_front`; target stays foreground                           |
 | `fixed_background`      | Browser or Linux low-level operation whose contract never fronts    |
 | `none`                  | Read-only or lifecycle operation with no input-delivery posture     |
+
+[^restore]: On Linux, `right_click`, `set_value` and the gestures
+    (`double_click`, `scroll`, `drag`; niri restores these) leave the target
+    focused, and the Hyprland foreground extension never restores
+    ([action support](action-support.md)). On X11, a key or click that opened
+    a menu also leaves the target focused, with `focus_outcome: "menu_open"`
+    and a sentence in the result, since giving the focus back would close
+    the menu. The Wayland restore does not detect a menu: a `press_key` or
+    `hotkey` that opens one gives the focus back, and the menu closes.
 
 The desktop input family exposing `delivery_mode` is:
 

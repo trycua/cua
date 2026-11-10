@@ -67,6 +67,8 @@ export interface AskTask {
   imported?: ImportedChat;
   /** The model the person picked (its id), when they did. */
   model?: string;
+  /** The reasoning level the person picked, when the model has levels. */
+  effort?: string;
   /** The repo the task starts from, when one was chosen. */
   repo?: { url: string; label: string };
 }
@@ -476,6 +478,14 @@ export function taskState(
   if (run.status === "running") return run.lastEventMs !== null && now - run.lastEventMs > STUCK_MS ? "stuck" : "working";
   if (run.status === "failed" || run.status === "crashed") return "failed";
   return task.ending === "kept" ? "kept" : "done";
+}
+
+/** A task that never got a run (it did not start, or never got past starting) and is older than this is not a task any
+ * more: Home clears it itself, so an old failure does not sit on Home for days. */
+export const STALE_TASK_MS = 30 * 60_000;
+
+export function withoutStaleTasks<T extends Pick<AskTask, "runId" | "createdMs" | "ending">>(tasks: readonly T[], now = Date.now()): T[] {
+  return tasks.filter((t) => t.runId || t.ending || now - t.createdMs < STALE_TASK_MS);
 }
 
 /** An object whose values are catalog strings read when used, so a language change shows at once. */

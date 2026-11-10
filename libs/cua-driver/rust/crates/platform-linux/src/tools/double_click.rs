@@ -181,8 +181,11 @@ impl Tool for DoubleClickTool {
                                         )
                                     },
                                 )
-                                .map(|(value, _report)| value)
-                                .map(|()| PointerRoute::Foreground);
+                                .map(|((), report)| {
+                                    PointerRoute::Foreground {
+                                        menu_open: report.menu_open,
+                                    }
+                                });
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
                         },
@@ -317,8 +320,9 @@ impl Tool for DoubleClickTool {
                                 .map(|_| ())
                         },
                     )
-                    .map(|(value, _report)| value)
-                    .map(|()| PointerRoute::Foreground);
+                    .map(|((), report)| PointerRoute::Foreground {
+                        menu_open: report.menu_open,
+                    });
                 }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
             },

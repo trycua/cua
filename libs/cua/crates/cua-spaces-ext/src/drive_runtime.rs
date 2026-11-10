@@ -705,6 +705,13 @@ async fn keep_attached(spaces: Spaces, key: String) {
                 let why = match r {
                     Ok(Ok(Some(_))) => return Ok(Attempt::Attached),
                     Ok(Ok(None)) => return Ok(Attempt::Unsupported),
+                    // The Space was deleted: nothing will ever mount, and retrying every minute for hours (as a deleted
+                    // Space's watcher did) only fills the log and holds a task. Stop supervising it.
+                    Ok(Err(cua_spaces::Error::NotFound(_)))
+                        if space_is_unregistered(&spaces, &key) =>
+                    {
+                        return Ok(Attempt::Unsupported);
+                    }
                     Ok(Err(e)) => format!("Cua Volume not mounted: {e}"),
                     Err(_) => format!(
                         "Cua Volume not mounted: no answer within {} s",
@@ -719,6 +726,14 @@ async fn keep_attached(spaces: Spaces, key: String) {
         }
     };
     supervise(Policy::default(), health, reattach).await;
+}
+
+/// Whether `key` is no longer in this machine's registry (deleted), as opposed to a Space still starting.
+fn space_is_unregistered(spaces: &Spaces, key: &str) -> bool {
+    spaces
+        .list()
+        .map(|rows| !rows.iter().any(|s| s.id == key))
+        .unwrap_or(false)
 }
 
 /// Whether the Space's volume is mounted and served: this side's socket is
@@ -854,5 +869,18 @@ mod volume_gone_tests {
         assert!(!is_down(&Status::Suspended));
         assert!(!is_down(&Status::Provisioning));
         assert!(!is_down(&Status::Unknown("restarting".into())));
+    }
+}
+
+#[cfg(test)]
+mod unregistered_tests {
+    use super::space_is_unregistered;
+    use cua_spaces::Spaces;
+
+    #[test]
+    fn a_deleted_space_ends_its_volume_watch() {
+        let home = tempfile::tempdir().unwrap();
+        let spaces = Spaces::builder().home(home.path()).build();
+        assert!(space_is_unregistered(&spaces, "local:gone"));
     }
 }

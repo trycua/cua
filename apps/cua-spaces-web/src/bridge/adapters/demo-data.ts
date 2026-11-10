@@ -97,6 +97,54 @@ export function demoDesktopRows(now: number): SpaceRow[] {
   ];
 }
 
+/** The busy account's extra computers (`?demo=computers-busy`): two Spaces' offline host, a Mac Studio, two idle offline ones. */
+export function demoBusyMachines(now: number): MachineRow[] {
+  const seen = (minutesAgo: number) => Math.floor((now - minutesAgo * 60_000) / 1000);
+  const m = (id: string, name: string, os: MachineRow["os"], online: boolean, minutesAgo: number): MachineRow => ({
+    id,
+    name,
+    via: "relay",
+    online,
+    os,
+    limits: [],
+    lastSeen: seen(minutesAgo),
+  });
+  return [
+    m("ip-172-31-46-222", "ip-172-31-46-222", "linux", false, 95),
+    m("mac-studio", "cua's Mac Studio", "macos", true, 1),
+    m("macbook-pro-2", "Dillon's MacBook Pro", "macos", false, 35 * 24 * 60),
+    m("updmac-vm-host", "updmac-vm-host", "macos", false, 45 * 24 * 60),
+  ];
+}
+
+/** The Spaces of the busy account (`?demo=computers-busy`): two on the offline computer, one on the Mac Studio. */
+export function demoBusyRows(now: number): SpaceRow[] {
+  const row = (host: string, hostName: string, name: string, os: SpaceRow["os"], running: boolean): SpaceRow => ({
+    id: `relay:${host}/${name}`,
+    name,
+    provider: "relay",
+    spacesdVersion: "0.6.0",
+    features: STREAMS,
+    addedAt: at(now, 300),
+    os,
+    osName: os === "linux" ? "Ubuntu" : "macOS",
+    osPrettyName: os === "linux" ? "Ubuntu 24.04.3 LTS" : "macOS Tahoe 26.0",
+    image: os === "linux" ? "ubuntu-xfce" : "macos-tahoe",
+    kind: os === "linux" ? "container" : "vm",
+    arch: "arm64",
+    reachable: running,
+    host,
+    hostName,
+    power: "suspend",
+    powerState: running ? "running" : "suspended",
+  });
+  return [
+    row("ip-172-31-46-222", "ip-172-31-46-222", "ci-runner", "linux", false),
+    row("ip-172-31-46-222", "ip-172-31-46-222", "nightly-build", "linux", false),
+    row("mac-studio", "cua's Mac Studio", "design-qa", "macos", true),
+  ];
+}
+
 export function demoSpaceRows(now: number): SpaceRow[] {
   return [
     {
@@ -332,8 +380,26 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
     totalMemoryGb: 32,
     totalDiskGb: 994,
     providedSpaces: [
-      { relayMachine: "space-build-1", localSpace: "local:build-1", name: "build-1", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Mac mini", createdAtMs: now - 40 * 60_000 },
-      { relayMachine: "space-build-2", localSpace: "local:build-2", name: "build-2", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Linux box", createdAtMs: now - 12 * 60_000 },
+      {
+        relayMachine: "space-build-1",
+        localSpace: "local:build-1",
+        name: "build-1",
+        image: "ghcr.io/trycua/linux",
+        os: "linux",
+        kind: "container",
+        createdBy: "Mac mini",
+        createdAtMs: now - 40 * 60_000,
+      },
+      {
+        relayMachine: "space-build-2",
+        localSpace: "local:build-2",
+        name: "build-2",
+        image: "ghcr.io/trycua/linux",
+        os: "linux",
+        kind: "container",
+        createdBy: "Linux box",
+        createdAtMs: now - 12 * 60_000,
+      },
     ],
     recentAccess: [
       { atMs: now - 4 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "DesktopService" },
@@ -454,7 +520,17 @@ export function demoKeyvaultOverview(now: number, items: KvItem[], locked: boole
   };
   const empty = { grants: [], rules: [], deliveries: [], audit: [], partialErrors: [] };
   if (locked) {
-    return { availability: "locked", message: "The Keyvault is locked.", status, serverVerified: true, items: [], namesVisible: false, itemsTotal: items.length, pending: [], ...empty };
+    return {
+      availability: "locked",
+      message: "The Keyvault is locked.",
+      status,
+      serverVerified: true,
+      items: [],
+      namesVisible: false,
+      itemsTotal: items.length,
+      pending: [],
+      ...empty,
+    };
   }
   const caller = {
     pid: 4242,
@@ -515,8 +591,26 @@ export function demoKeyvaultOverview(now: number, items: KvItem[], locked: boole
     deliveries: [],
     audit: [
       { seq: 1, ts_ms: now - 20 * 60_000, kind: "consent.request", actor: "Codex", caller_fp: "fp-codex", item: "kv-linear", decision: "ok" },
-      { seq: 2, ts_ms: now - 20 * 60_000 + 8_000, kind: "consent.allow", actor: "you", caller_fp: "fp-codex", item: "kv-linear", target: "relay:linux-box/ubuntu-build", decision: "allow" },
-      { seq: 3, ts_ms: now - 19 * 60_000, kind: "teleport.deliver", actor: "Codex", caller_fp: "fp-codex", item: "kv-linear", target: "relay:linux-box/ubuntu-build", decision: "ok" },
+      {
+        seq: 2,
+        ts_ms: now - 20 * 60_000 + 8_000,
+        kind: "consent.allow",
+        actor: "you",
+        caller_fp: "fp-codex",
+        item: "kv-linear",
+        target: "relay:linux-box/ubuntu-build",
+        decision: "allow",
+      },
+      {
+        seq: 3,
+        ts_ms: now - 19 * 60_000,
+        kind: "teleport.deliver",
+        actor: "Codex",
+        caller_fp: "fp-codex",
+        item: "kv-linear",
+        target: "relay:linux-box/ubuntu-build",
+        decision: "ok",
+      },
       { seq: 4, ts_ms: now - 45_000, kind: "consent.request", actor: "Claude Code", caller_fp: "fp-claude", item: "kv-gh-session", decision: "ok" },
     ],
     auditVerification: { ok: true, entries: 4, unauthenticated: 0 },

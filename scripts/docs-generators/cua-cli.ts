@@ -48,7 +48,7 @@ import {
   finish,
   isCheckMode,
   metaJson,
-  stableJson,
+  cliSpecJson,
   syncFiles,
 } from './lib/mdx';
 
@@ -307,7 +307,6 @@ export function mcpReference(mcp: McpDocumentation, spaces: SpacesLinks): McpRef
     server: 'cua mcp',
     generator: REGENERATE,
     source: 'cua dump-docs --type mcp',
-    version: mcp.version,
     description: 'Every tool the cua MCP server exposes, with its permission and parameters.',
     categories: mcpCategories(spaces),
     tools,
@@ -333,7 +332,6 @@ export function renderAll(
       description: 'Every cua command and every cua MCP tool, generated from the CLI definition.',
       generator: REGENERATE,
       source: 'cua dump-docs --type all',
-      version: docs.cli.version,
       sections: [
         { title: 'Commands', column: 'Command group', rows: cliIndexRows(cli) },
         { title: 'MCP tools', column: 'Tools', rows: mcpIndexRows(mcp) },
@@ -343,7 +341,7 @@ export function renderAll(
   rel.set('meta.json', metaJson('Reference', ['index', 'cli', 'mcp-tools']));
   const files = new Map<string, string>();
   for (const [p, content] of rel) files.set(path.join(OUT_DIR, p), content);
-  files.set(CLI_SPEC, stableJson(docs.cli));
+  files.set(CLI_SPEC, cliSpecJson(docs.cli));
   return files;
 }
 

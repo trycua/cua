@@ -21,6 +21,7 @@ import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Menu } from "@/components/ui/menu";
 import { SectionHeading } from "@/components/space-thread/section-heading";
 import { toastError } from "@/components/ui/toast";
+import { jobDetail, jobDot, jobOfSpace, jobWord, oneRowPerJob, withoutJobSpacesOf, type JobNodeView } from "@/lib/job-space";
 import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
 import { parentIdOf } from "@/lib/space-tree";
@@ -73,14 +74,13 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const tree = useChildren();
   const { data, startSpace, stopSpace, deleteSpaces } = useSpaces();
   const all = data ?? [];
-  // One row per job, however many Spaces (attempts) its run has made.
   // The jobs of this Space, wherever they run (the run ledger, not a Space record): one logical child each.
   const jobs = useMemo<JobNodeView[]>(() => (tree ? tree.childrenOf(spaceId).flatMap((id) => (tree.node(id)?.job ? [tree.node(id)?.job as JobNodeView] : [])) : []), [spaceId, tree]);
   const kids = useMemo(() => oneRowPerJob(withoutJobSpacesOf(childrenOfSpace(all, spaceId, tree), jobs)), [all, spaceId, tree, jobs]);
   const total = useMemo(() => descendantCount(all, spaceId, tree), [all, spaceId, tree]);
   const [confirm, setConfirm] = useState<"all" | string | null>(null);
   const folded = useSpaceLayoutStore((st) => st.folded.children);
-  if (!kids.length) return null;
+  if (!kids.length && !jobs.length) return null;
   const budget = tree?.budget(spaceId) ?? null;
   const one = confirm && confirm !== "all" ? kids.find((k) => k.id === confirm) : null;
   const text = confirm === "all" ? deleteAllText(spaceName, kids, total) : one ? deleteAllText(spaceName, [one], 1 + descendantCount(all, one.id, tree)) : null;
@@ -94,6 +94,22 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
       </div>
       <div id="section-children" hidden={folded}>
         <ul>
+          {jobs.map((j) => (
+            <li key={`job:${j.run}`} data-child-job-row={j.run} className="relative">
+              <div className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-2 pl-2 text-left text-[13px]">
+                <SpaceIcon os="unknown" gpu={j.gpu} className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{j.name}</span>
+                    <JobTag />
+                  </span>
+                  {jobDetail(j) ? <span className="block truncate text-[11px] text-muted-foreground">{jobDetail(j)}</span> : null}
+                  {j.state === "failed" && j.error ? <span className="block truncate text-[11px] text-destructive">{j.error}</span> : null}
+                </span>
+                <StateLabel state={jobDot(j)} word={jobWord(j)} className="shrink-0" />
+              </div>
+            </li>
+          ))}
           {kids.map((k) => {
             const state = spaceState(k);
             const off = state === "stopped";
@@ -105,9 +121,12 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
                   params={{ spaceId: k.id }}
                   className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
                 >
-                  <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />
+                  <SpaceIcon os={k.os} gpu={jobOfSpace(k)?.gpu} className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate">{k.name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate">{jobOfSpace(k)?.name ?? k.name}</span>
+                      {jobOfSpace(k) ? <JobTag /> : null}
+                    </span>
                     {createError(k) ? <span className="block truncate text-[11px] text-destructive">{createError(k)}</span> : null}
                   </span>
                   <StateLabel state={state} space={k} className="shrink-0" />

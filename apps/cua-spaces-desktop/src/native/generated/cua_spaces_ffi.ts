@@ -13359,7 +13359,19 @@ export type AppSpace = {
      * The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
      * top-level Space.
      */
-    parent?: string
+    parent?: string,
+    /**
+     * A job's Space (label `cua.job`): the name to show in its row (a pet-name shape, never an id).
+     */
+    jobName?: string,
+    /**
+     * A job's Space with a GPU: its row shows the GPU icon in place of the OS icon.
+     */
+    jobGpu: boolean,
+    /**
+     * The run a job's Space belongs to: one row per run.
+     */
+    jobRun?: string
 }
 
 /**
@@ -13410,7 +13422,10 @@ const FfiConverterTypeAppSpace = (() => {
                 cloudDelete: FfiConverterOptionalString.read(from),
                 access: FfiConverterOptionalTypeAppSpaceAccess.read(from),
                 hidden: FfiConverterBool.read(from),
-                parent: FfiConverterOptionalString.read(from)
+                parent: FfiConverterOptionalString.read(from),
+                jobName: FfiConverterOptionalString.read(from),
+                jobGpu: FfiConverterBool.read(from),
+                jobRun: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -13442,6 +13457,9 @@ const FfiConverterTypeAppSpace = (() => {
             FfiConverterOptionalTypeAppSpaceAccess.write(value.access, into);
             FfiConverterBool.write(value.hidden, into);
             FfiConverterOptionalString.write(value.parent, into);
+            FfiConverterOptionalString.write(value.jobName, into);
+            FfiConverterBool.write(value.jobGpu, into);
+            FfiConverterOptionalString.write(value.jobRun, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -13471,7 +13489,10 @@ const FfiConverterTypeAppSpace = (() => {
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
              FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access) +
              FfiConverterBool.allocationSize(value.hidden) +
-             FfiConverterOptionalString.allocationSize(value.parent);
+             FfiConverterOptionalString.allocationSize(value.parent) +
+             FfiConverterOptionalString.allocationSize(value.jobName) +
+             FfiConverterBool.allocationSize(value.jobGpu) +
+             FfiConverterOptionalString.allocationSize(value.jobRun);
 
         }
     };
@@ -44455,7 +44476,19 @@ export type AppSpaceRow = {
     /**
      * The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
      */
-    parent?: string
+    parent?: string,
+    /**
+     * A job's Space (label `cua.job`): the name to show in its row (a pet-name shape, never an id).
+     */
+    jobName?: string,
+    /**
+     * A job's Space with a GPU: its row shows the GPU icon in place of the OS icon.
+     */
+    jobGpu: boolean,
+    /**
+     * The run a job's Space belongs to: one row per run.
+     */
+    jobRun?: string
 }
 
 /**
@@ -44505,7 +44538,10 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 cloudDelete: FfiConverterOptionalString.read(from),
                 stopReason: FfiConverterOptionalString.read(from),
                 sharing: FfiConverterOptionalTypeAppSpaceSharingFacts.read(from),
-                parent: FfiConverterOptionalString.read(from)
+                parent: FfiConverterOptionalString.read(from),
+                jobName: FfiConverterOptionalString.read(from),
+                jobGpu: FfiConverterBool.read(from),
+                jobRun: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -44536,6 +44572,9 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.stopReason, into);
             FfiConverterOptionalTypeAppSpaceSharingFacts.write(value.sharing, into);
             FfiConverterOptionalString.write(value.parent, into);
+            FfiConverterOptionalString.write(value.jobName, into);
+            FfiConverterBool.write(value.jobGpu, into);
+            FfiConverterOptionalString.write(value.jobRun, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -44564,7 +44603,10 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
              FfiConverterOptionalString.allocationSize(value.stopReason) +
              FfiConverterOptionalTypeAppSpaceSharingFacts.allocationSize(value.sharing) +
-             FfiConverterOptionalString.allocationSize(value.parent);
+             FfiConverterOptionalString.allocationSize(value.parent) +
+             FfiConverterOptionalString.allocationSize(value.jobName) +
+             FfiConverterBool.allocationSize(value.jobGpu) +
+             FfiConverterOptionalString.allocationSize(value.jobRun);
 
         }
     };

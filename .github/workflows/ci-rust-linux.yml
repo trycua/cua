@@ -251,6 +251,12 @@ jobs:
             status=$?
             kill "$picom_pid"
             exit $status'
+          # A compositing manager that starts after the overlay (#6415); the
+          # test starts picom itself.
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_overlay_follows_a_compositor_that_starts_after_it \
+            --locked -- --ignored --nocapture
       - name: Run X11 desktop capture overlay-exclusion regression
         working-directory: libs/cua-driver/rust
         run: |

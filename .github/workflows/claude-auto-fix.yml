@@ -2,9 +2,7 @@ name: Claude Auto Fix
 
 on:
   pull_request:
-    types: [labeled, opened, synchronize]
-  pull_request_target:
-    types: [labeled, opened, synchronize]
+    types: [labeled]
 
 permissions:
   actions: read

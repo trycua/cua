@@ -252,14 +252,14 @@ class Driver:
         self.log.close()
 
 
-def find_window(node, marker):
-    """The innermost dict anywhere in a tool reply that mentions marker and carries a pid."""
+def find_window(node, pid):
+    """The innermost dict anywhere in a tool reply whose pid is the window's process."""
     children = node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()
     for child in children:
-        found = find_window(child, marker)
+        found = find_window(child, pid)
         if found:
             return found
-    if isinstance(node, dict) and "pid" in node and marker in json.dumps(node):
+    if isinstance(node, dict) and str(node.get("pid")) == str(pid):
         return node
     return None
 
@@ -276,19 +276,17 @@ def driver_smoke(session, binary):
     window = session.spawn(DRIVER_CLASS, "sh", "-c", f'IFS= read -r line && printf %s "$line" > "{typed}"')
     time.sleep(1)  # Let the shell reach its read.
     driver = Driver(binary, session)
-    checks = {}
-    evidence = {}
+    checks, evidence = {}, {}
     try:
         driver.start()
 
         def listed():
             code, reply = driver.call("list_windows", {})
-            return reply if code == 0 and DRIVER_CLASS in json.dumps(reply) else None
+            return find_window(reply, window["pid"]) if code == 0 else None
 
-        reply = wait_for(listed, 60, "list_windows never showed the new window")
-        entry = find_window(reply, DRIVER_CLASS) or {}
-        checks["driver_list_windows"] = bool(entry.get("pid"))
-        evidence["window"] = {k: entry.get(k) for k in ("pid", "window_id", "app_name", "title") if k in entry}
+        entry = wait_for(listed, 60, "list_windows never showed the new window")
+        checks["driver_list_windows"] = True
+        evidence["window"] = entry
         args = {key: entry[key] for key in ("pid", "window_id") if entry.get(key) is not None}
 
         shot = session.out / "driver-window.png"
@@ -300,25 +298,27 @@ def driver_smoke(session, binary):
         x = round(window["at"][0] + window["size"][0] / 2)
         y = round(window["at"][1] + window["size"][1] / 2)
         code, clicked = driver.call("click", {"x": x, "y": y, "scope": "desktop"})
-
-        def at_point():
-            pos = session.json("cursorpos")
-            return pos if abs(pos["x"] - x) <= 2 and abs(pos["y"] - y) <= 2 else None
-
         try:
-            evidence["cursor"] = wait_for(at_point, 10, "pointer did not reach the click point")
+            evidence["cursor"] = wait_for(lambda: (lambda c: c if abs(c["x"] - x) <= 2 and abs(c["y"] - y) <= 2 else None)(
+                session.json("cursorpos")), 10, "pointer did not reach the click point")
             checks["driver_click"] = code == 0 and "code" not in clicked
-        except TimeoutError as error:
-            evidence["cursor"] = {"error": str(error), "wanted": [x, y], "actual": session.json("cursorpos")}
+        except TimeoutError:
+            evidence["cursor"] = {"wanted": [x, y], "actual": session.json("cursorpos")}
             checks["driver_click"] = False
 
-        code, typed_reply = driver.call("type_text", {**args, "text": DRIVER_TEXT + "\n"})
+        code, _ = driver.call("type_text", {**args, "text": DRIVER_TEXT + "\n"})
         try:
             text = wait_for(lambda: typed.read_text() if typed.exists() else None, 10, "target wrote nothing")
         except TimeoutError:
             text = None
         evidence["typed"] = text
         checks["driver_type_text"] = code == 0 and text == DRIVER_TEXT
+    except Exception as error:
+        # Keep every call the driver answered: they are the diagnosis.
+        checks.setdefault("driver_list_windows", False)
+        checks["driver_smoke"] = False
+        evidence["error"] = f"{type(error).__name__}: {error}"
+        evidence["driver_log_tail"] = tail(session.out / "driver.log")
     finally:
         driver.stop()
     return {"checks": checks, "evidence": evidence, "calls": driver.calls}

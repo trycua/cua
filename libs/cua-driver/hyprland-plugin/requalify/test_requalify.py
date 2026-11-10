@@ -338,10 +338,10 @@ class InputLaneTest(unittest.TestCase):
 class DriverSmokeTest(unittest.TestCase):
     def test_find_window_picks_the_innermost_entry_with_a_pid(self):
         reply = {"windows": [{"pid": 1, "title": "other"},
-                             {"pid": 7, "window_id": 9, "title": "cua-requalify-driver", "bounds": {"x": 0}}]}
-        self.assertEqual(headless.find_window(reply, "cua-requalify-driver")["window_id"], 9)
-        self.assertIsNone(headless.find_window(reply, "absent"))
-        self.assertIsNone(headless.find_window({"raw": "x"}, "x"))
+                             {"pid": 7, "window_id": 9, "title": "foot", "bounds": {"x": 0}}]}
+        self.assertEqual(headless.find_window(reply, 7)["window_id"], 9)
+        self.assertIsNone(headless.find_window(reply, 8))
+        self.assertIsNone(headless.find_window({"raw": "x"}, 7))
 
     def test_png_size_reads_the_header(self):
         header = b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + (640).to_bytes(4, "big") + (480).to_bytes(4, "big")
@@ -439,8 +439,9 @@ class WorkflowContractTest(unittest.TestCase):
         self.code = "".join(line for line in self.workflow.splitlines(keepends=True)
                             if not line.lstrip().startswith("#"))
 
-    def test_daily_and_manual(self):
-        self.assertIn("  schedule:\n    # Daily", self.workflow)
+    def test_scheduled_and_manual(self):
+        self.assertIn("  schedule:\n    # Every four hours", self.workflow)
+        self.assertIn("  repository_dispatch:", self.workflow)
         self.assertIn("  workflow_dispatch:", self.workflow)
 
     def test_never_publishes_packages_or_touches_omarchy(self):

@@ -1811,6 +1811,49 @@ mod tests {
     }
 
     #[test]
+    fn compose_frame_places_each_output_at_its_logical_rect() {
+        let frame = DesktopFrame {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 2,
+            scale: 1.0,
+            outputs: vec![
+                FrameOutput {
+                    name: "A".into(),
+                    x: 0,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                },
+                FrameOutput {
+                    name: "B".into(),
+                    x: 2,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                },
+            ],
+        };
+        let canvas = compose_frame(&frame, |output| {
+            let pixel = if output.name == "A" {
+                [255, 0, 0, 255]
+            } else {
+                [0, 255, 0, 255]
+            };
+            Ok(image::RgbaImage::from_pixel(
+                output.width,
+                output.height,
+                image::Rgba(pixel),
+            ))
+        })
+        .unwrap();
+        assert_eq!(canvas.dimensions(), (4, 2));
+        assert_eq!(canvas.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(canvas.get_pixel(3, 0).0, [0, 255, 0, 255]);
+    }
+
+    #[test]
     fn display_identity_rejects_empty_oversized_and_missing_geometry() {
         for (width, height) in [(0, 1080), (1920, 0), (u32::MAX, u32::MAX)] {
             let mut monitor = display_monitor();

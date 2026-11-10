@@ -164,9 +164,41 @@ export function demoResources(rows: readonly SpaceRow[], now: number, diskFree: 
     spacesDiskBytes: 46 * GB,
     spacesDiskExact: false,
   });
+  // A Mac Studio with little disk left (`?demo=computers-busy`).
+  const studio = rows.some((r) => r.host === "mac-studio")
+    ? [
+        computer({
+          id: "mac-studio",
+          name: "cua's Mac Studio",
+          online: true,
+          sampledAtMs: now - 60_000,
+          cpuCount: 12,
+          cpuPercent: 9,
+          loadAverage1m: 1,
+          memoryTotal: 64 * GB,
+          memoryUsed: 22 * GB,
+          diskTotal: 500 * GB,
+          diskFree: 33.3 * GB,
+          spacesCount: 1,
+          spacesRunning: 1,
+          spacesCpuAllocated: 4,
+          spacesMemoryAllocated: 8 * GB,
+          spacesMemoryUsed: 3 * GB,
+          spacesDiskBytes: 24 * GB,
+          spacesDiskExact: false,
+        }),
+      ]
+    : [];
   const online = (host: string) => DEMO_MACHINES.some((m) => m.id === host && m.online);
-  const remote = rows.filter((r) => r.provider !== "local" && r.host && online(r.host)).map(remoteSpaceResources);
-  return { sequence: Math.floor(now / 10_000), sampledAtMs: now, thisMac, spaces: [...spaces, ...remote], computers: [macMini], warning: thisMac.warning };
+  const remote = rows.filter((r) => r.provider !== "local" && r.host && (online(r.host) || r.host === "mac-studio")).map(remoteSpaceResources);
+  return {
+    sequence: Math.floor(now / 10_000),
+    sampledAtMs: now,
+    thisMac,
+    spaces: [...spaces, ...remote],
+    computers: [macMini, ...studio],
+    warning: thisMac.warning,
+  };
 }
 
 export function demoResourcesHandlers({ state, now }: DemoContext): DemoHandlers<"resources.get"> {

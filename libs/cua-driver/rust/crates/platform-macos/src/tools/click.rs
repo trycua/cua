@@ -156,6 +156,24 @@ fn press_error_may_have_acted(err: crate::ax::bindings::AXError) -> bool {
         || err == kAXErrorActionUnsupported
 }
 
+/// Whether a window `exists` no longer within `timeout`, polled every `poll`.
+fn window_closes_within(
+    mut exists: impl FnMut() -> bool,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !exists() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 /// Whether a toggle's value moving from `before` to `now` is what pressing it
 /// does: a checkbox changes state; a radio button becomes selected (a radio
 /// turning off was another radio's press).
@@ -1937,6 +1955,26 @@ fn perform_ax_click(
                 ));
             }
         }
+        // A button that closes its own window (a dialog's OK, an open panel's
+        // Open) can return an error because the window is gone before the app
+        // answers. The press ran; reporting it as failed invites a retry.
+        if window_closes_within(
+            || crate::windows::describe_window(window_id).is_some(),
+            SELECTION_READBACK_TIMEOUT,
+            SELECTION_READBACK_POLL,
+        ) {
+            return Ok((
+                format!(
+                    "Performed {ax_action} on [{idx}] {role} \"{title}\"; its window {window_id} \
+                     closed, although the app returned AX error {err}. Read the app's windows \
+                     before acting again."
+                ),
+                false,
+                false,
+                false,
+                false,
+            ));
+        }
         anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
     }
 
@@ -2274,6 +2312,25 @@ mod tests {
 
     /// A checkbox press shows as any state change; a radio press only as the
     /// radio becoming selected.
+    #[test]
+    fn a_window_that_closes_late_still_counts_and_one_that_stays_does_not() {
+        let tick = std::time::Duration::from_millis(1);
+        let mut reads = 0;
+        assert!(window_closes_within(
+            || {
+                reads += 1;
+                reads < 3
+            },
+            std::time::Duration::from_millis(200),
+            tick,
+        ));
+        assert!(!window_closes_within(
+            || true,
+            std::time::Duration::from_millis(5),
+            tick
+        ));
+    }
+
     #[test]
     fn toggle_press_shows_as_the_value_the_press_produces() {
         assert!(toggle_press_shows("AXCheckBox", "0", "1"));

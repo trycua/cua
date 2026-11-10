@@ -36,6 +36,7 @@ CLAUDE_ARMS = (
     "cc-cua-driver-main",
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",  # Amendment 6
+    "cc-cua-driver-script-only",  # run_script as the only tool (codemode prototype)
     "cc-claude-cu-helper",  # Amendment 11: Claude Desktop 2.31226.0 computer-use helper via a minimal adapter
     "cc-agent-desktop",  # Vercel agent-desktop 1.2.0 behind tools/agent_desktop/ad_mcp.py
     "cc-browser-use",  # Browser Use macOS harness 0.2.1 behind tools/browser_use_harness/bu_mcp.py
@@ -59,6 +60,7 @@ PI_ARMS = (
     "pi-cua-driver-main",
     "pi-cua-driver-main-skill",
     "pi-cua-driver-script",
+    "pi-cua-driver-script-only",
 )
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS + PI_ARMS
 

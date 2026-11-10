@@ -624,10 +624,14 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.unlink(missing_ok=True)
         if source in ca.CUA_ARMS:
-            if (
+            env = ca.CUA_BUILDS[source].daemon_env
+            if ca.SCRIPT_ONLY_FLAG in env:
+                if set(tools) != {"run_script"}:
+                    raise RuntimeError("unexpected script-only Cua Driver tools/list")
+            elif (
                 "list_apps" not in tools
                 or len(tools) < 50
-                or ("run_script" in tools) != (ca.SCRIPT_FLAG in ca.CUA_BUILDS[source].daemon_env)
+                or ("run_script" in tools) != (ca.SCRIPT_FLAG in env)
             ):
                 raise RuntimeError("unexpected Cua Driver tools/list")
             call("check_permissions", {})

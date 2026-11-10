@@ -84,12 +84,12 @@ class LinuxSingleBuildTest(unittest.TestCase):
                 )  # fmt: skip
                 with mock.patch.object(rb.Ctx, "__init__", return_value=None):
                     rb.make_ctx(args)
+                script_arms = {"cc-cua-driver-script", "cc-cua-driver-script-only"}
                 for arm, build in ca.CUA_BUILDS.items():
+                    self.assertEqual(ca.SCRIPT_FLAG in build.daemon_env, arm in script_arms, arm)
+                    self.assertEqual(ca.NO_SCRIPT_FLAG in build.daemon_env, arm not in script_arms, arm)
                     self.assertEqual(
-                        ca.SCRIPT_FLAG in build.daemon_env, arm == "cc-cua-driver-script", arm
-                    )
-                    self.assertEqual(
-                        ca.NO_SCRIPT_FLAG in build.daemon_env, arm != "cc-cua-driver-script", arm
+                        ca.SCRIPT_ONLY_FLAG in build.daemon_env, arm == "cc-cua-driver-script-only", arm
                     )
             finally:
                 ca.CUA_BUILDS.clear()

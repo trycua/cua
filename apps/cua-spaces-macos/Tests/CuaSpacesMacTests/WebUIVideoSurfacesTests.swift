@@ -230,7 +230,7 @@ struct WebUIVideoSurfacesTests {
         #expect(host.opened.map(\.1).sorted { $0.rawValue < $1.rawValue } == [.full, .tile])
         #expect(Set(s.stats().map { $0["users"] as? Int }) == [1, 2])
         // Placed over the web view, and hidden until a frame draws.
-        let tile = try? #require(s.surfaces["t1"])
+        let tile = s.surfaces["t1"]
         #expect(tile?.view.superview === host.webView)
         #expect(tile?.view.frame == CGRect(x: 20, y: 30, width: 400, height: 250))
         #expect(tile?.view.isHidden == true)

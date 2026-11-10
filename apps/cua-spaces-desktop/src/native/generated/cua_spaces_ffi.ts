@@ -237,55 +237,6 @@ export async function appAckShareRemovals(accountToken: string, asyncOpts_?: { s
     }
 
 /**
- * Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
- */
-export function appAgentCreateIsAgents(id: string): boolean {
-    return FfiConverterBool.lift(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_agent_create_is_agents(
-        FfiConverterString.lower(id, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The person removed an agent's failed create from the list: it is not drawn again.
- */
-export function appAgentCreateRemove(pendingId: string): void {uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_spaces_ffi_fn_func_app_agent_create_remove(
-        FfiConverterString.lower(pendingId, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    }
-
-/**
- * The actions that make the pending rows show the Spaces agents asked this
- * computer to make (read from this computer's cua home, which the daemon writes):
- * run each through `app_creates_reduce` on every list refresh.
- */
-export function appAgentCreatesActions(state: AppCreatesState, nowMs: bigint): Array<AppCreateAction> {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterSequenceTypeAppCreateAction.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_agent_creates_actions(
-        FfiConverterTypeAppCreatesState.lower(state, nativeModule().rustbuffer_alloc),
-        FfiConverterInt64.lower(nowMs, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
  * The add or replace sheet.
  */
 export function appAgentKeyForm(input: AppAgentKeysInput, form: AppAgentKeyFormInput): AppAgentKeyFormView {
@@ -13354,12 +13305,7 @@ export type AppSpace = {
      * [`crate::spaces::openable_spaces`]). Its own page still opens. The
      * SDK and `cua spaces ls` still return it, marked.
      */
-    hidden: boolean,
-    /**
-     * The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
-     * top-level Space.
-     */
-    parent?: string
+    hidden: boolean
 }
 
 /**
@@ -13409,8 +13355,7 @@ const FfiConverterTypeAppSpace = (() => {
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
                 access: FfiConverterOptionalTypeAppSpaceAccess.read(from),
-                hidden: FfiConverterBool.read(from),
-                parent: FfiConverterOptionalString.read(from)
+                hidden: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -13441,7 +13386,6 @@ const FfiConverterTypeAppSpace = (() => {
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalTypeAppSpaceAccess.write(value.access, into);
             FfiConverterBool.write(value.hidden, into);
-            FfiConverterOptionalString.write(value.parent, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -13470,8 +13414,7 @@ const FfiConverterTypeAppSpace = (() => {
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
              FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access) +
-             FfiConverterBool.allocationSize(value.hidden) +
-             FfiConverterOptionalString.allocationSize(value.parent);
+             FfiConverterBool.allocationSize(value.hidden);
 
         }
     };
@@ -19748,10 +19691,6 @@ export type AppPendingCreate = {
      */
     hostName?: string,
     /**
-     * The Space it is a child of (an agent made it): the row nests under it.
-     */
-    parent?: string,
-    /**
      * How many times the app ran this create again by itself: 0, or 1
      * after a failure that usually passes ([`fail_decision`]).
      */
@@ -19818,7 +19757,6 @@ const FfiConverterTypeAppPendingCreate = (() => {
                 gpu: FfiConverterBool.read(from),
                 host: FfiConverterOptionalString.read(from),
                 hostName: FfiConverterOptionalString.read(from),
-                parent: FfiConverterOptionalString.read(from),
                 attempt: FfiConverterUInt32.read(from),
                 retryPending: FfiConverterBool.read(from),
                 retriedSubclass: FfiConverterOptionalString.read(from),
@@ -19849,7 +19787,6 @@ const FfiConverterTypeAppPendingCreate = (() => {
             FfiConverterBool.write(value.gpu, into);
             FfiConverterOptionalString.write(value.host, into);
             FfiConverterOptionalString.write(value.hostName, into);
-            FfiConverterOptionalString.write(value.parent, into);
             FfiConverterUInt32.write(value.attempt, into);
             FfiConverterBool.write(value.retryPending, into);
             FfiConverterOptionalString.write(value.retriedSubclass, into);
@@ -19879,7 +19816,6 @@ const FfiConverterTypeAppPendingCreate = (() => {
              FfiConverterBool.allocationSize(value.gpu) +
              FfiConverterOptionalString.allocationSize(value.host) +
              FfiConverterOptionalString.allocationSize(value.hostName) +
-             FfiConverterOptionalString.allocationSize(value.parent) +
              FfiConverterUInt32.allocationSize(value.attempt) +
              FfiConverterBool.allocationSize(value.retryPending) +
              FfiConverterOptionalString.allocationSize(value.retriedSubclass) +
@@ -44532,11 +44468,7 @@ export type AppSpaceRow = {
     /**
      * A relay Space: who owns it and who else has it.
      */
-    sharing?: AppSpaceSharingFacts,
-    /**
-     * The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
-     */
-    parent?: string
+    sharing?: AppSpaceSharingFacts
 }
 
 /**
@@ -44585,8 +44517,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
                 stopReason: FfiConverterOptionalString.read(from),
-                sharing: FfiConverterOptionalTypeAppSpaceSharingFacts.read(from),
-                parent: FfiConverterOptionalString.read(from)
+                sharing: FfiConverterOptionalTypeAppSpaceSharingFacts.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -44616,7 +44547,6 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalString.write(value.stopReason, into);
             FfiConverterOptionalTypeAppSpaceSharingFacts.write(value.sharing, into);
-            FfiConverterOptionalString.write(value.parent, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -44644,8 +44574,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
              FfiConverterOptionalString.allocationSize(value.stopReason) +
-             FfiConverterOptionalTypeAppSpaceSharingFacts.allocationSize(value.sharing) +
-             FfiConverterOptionalString.allocationSize(value.parent);
+             FfiConverterOptionalTypeAppSpaceSharingFacts.allocationSize(value.sharing);
 
         }
     };
@@ -56717,7 +56646,7 @@ export const AppCreateAction = (() => {
     type Start__interface = {
         tag: AppCreateAction_Tags.Start;
         inner:
-Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string}>
+Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string}>
     };
     /**
      * A create started: its row shows now.
@@ -56730,15 +56659,15 @@ Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; 
         readonly [uniffiTypeNameSymbol] = "AppCreateAction";
         readonly tag = AppCreateAction_Tags.Start;
         readonly inner:
-Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string}>;
+Readonly<{id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string}>;
         constructor(
-inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string }) {
+inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string }) {
             super("AppCreateAction", "Start");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string; parent?: string }): Start_ {
+inner: {id: string; name: string; os: AppSpaceOs; provider: AppSpaceProvider; now: bigint; image?: string; kind?: AppSpaceKind; hostArch?: string; gpu: boolean; host?: string; hostName?: string }): Start_ {
             return new Start_(inner);
         }
 
@@ -57268,7 +57197,7 @@ const FfiConverterTypeAppCreateAction = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
-                case 1: return new AppCreateAction.Start({id: FfiConverterString.read(from), name: FfiConverterString.read(from), os: FfiConverterTypeAppSpaceOs.read(from), provider: FfiConverterTypeAppSpaceProvider.read(from), now: FfiConverterInt64.read(from), image: FfiConverterOptionalString.read(from), kind: FfiConverterOptionalTypeAppSpaceKind.read(from), hostArch: FfiConverterOptionalString.read(from), gpu: FfiConverterBool.read(from), host: FfiConverterOptionalString.read(from), hostName: FfiConverterOptionalString.read(from), parent: FfiConverterOptionalString.read(from) });
+                case 1: return new AppCreateAction.Start({id: FfiConverterString.read(from), name: FfiConverterString.read(from), os: FfiConverterTypeAppSpaceOs.read(from), provider: FfiConverterTypeAppSpaceProvider.read(from), now: FfiConverterInt64.read(from), image: FfiConverterOptionalString.read(from), kind: FfiConverterOptionalTypeAppSpaceKind.read(from), hostArch: FfiConverterOptionalString.read(from), gpu: FfiConverterBool.read(from), host: FfiConverterOptionalString.read(from), hostName: FfiConverterOptionalString.read(from) });
                 case 2: return new AppCreateAction.Progress({id: FfiConverterString.read(from), phase: FfiConverterString.read(from), fraction: FfiConverterOptionalFloat64.read(from), now: FfiConverterOptionalInt64.read(from), bytesDone: FfiConverterOptionalUInt64.read(from), bytesTotal: FfiConverterOptionalUInt64.read(from), bytesPerSecond: FfiConverterOptionalFloat64.read(from) });
                 case 3: return new AppCreateAction.CancelStart({id: FfiConverterString.read(from) });
                 case 4: return new AppCreateAction.CancelDone({id: FfiConverterString.read(from) });
@@ -57302,7 +57231,6 @@ const FfiConverterTypeAppCreateAction = (() => {
                     FfiConverterBool.write(inner.gpu, into);
                     FfiConverterOptionalString.write(inner.host, into);
                     FfiConverterOptionalString.write(inner.hostName, into);
-                    FfiConverterOptionalString.write(inner.parent, into);
                     return;
                 }
                 case AppCreateAction_Tags.Progress: {
@@ -57425,7 +57353,6 @@ const FfiConverterTypeAppCreateAction = (() => {
                     size += FfiConverterBool.allocationSize(inner.gpu);
                     size += FfiConverterOptionalString.allocationSize(inner.host);
                     size += FfiConverterOptionalString.allocationSize(inner.hostName);
-                    size += FfiConverterOptionalString.allocationSize(inner.parent);
                     return size;
                 }
                 case AppCreateAction_Tags.Progress: {
@@ -71322,9 +71249,6 @@ const FfiConverterOptionalTypeTeleportApproval = new FfiConverterOptional(FfiCon
 // FfiConverter for Array<AppAccountMenuItem>
 const FfiConverterSequenceTypeAppAccountMenuItem = new FfiConverterArray(FfiConverterTypeAppAccountMenuItem);
 
-// FfiConverter for Array<AppCreateAction>
-const FfiConverterSequenceTypeAppCreateAction = new FfiConverterArray(FfiConverterTypeAppCreateAction);
-
 // FfiConverter for AppAgentKeyConfirm | undefined
 const FfiConverterOptionalTypeAppAgentKeyConfirm = new FfiConverterOptional(FfiConverterTypeAppAgentKeyConfirm);
 
@@ -71496,15 +71420,6 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() !== 16071) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals");
-    }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents() !== 22242) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents");
-    }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove() !== 26467) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove");
-    }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions() !== 65187) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() !== 42778) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form");

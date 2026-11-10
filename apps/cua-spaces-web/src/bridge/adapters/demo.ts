@@ -910,8 +910,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "keyvault.setUnattended": ({ itemIds, unattended }) => {
       const idp = state.items.find((i) => itemIds.includes(i.id) && i.identity_provider);
       if (unattended && idp) throw new HostError(`${idp.domain ?? idp.app_display} signs you in elsewhere, so it never runs unattended.`, "identity_provider");
-      state.items = state.items.map((i): KvItem =>
-        itemIds.includes(i.id) ? { ...i, policy: { ...i.policy, unattended }, rev: i.rev + 1, updated_ms: now() } : i,
+      state.items = state.items.map(
+        (i): KvItem => (itemIds.includes(i.id) ? { ...i, policy: { ...i.policy, unattended }, rev: i.rev + 1, updated_ms: now() } : i),
       );
       emit({ type: "keyvault.changed" });
       return state.items.filter((i) => itemIds.includes(i.id));
@@ -1287,8 +1287,7 @@ interface DemoLinksStateField {
 }
 
 export interface DemoState
-  extends
-    DemoDriverState,
+  extends DemoDriverState,
     DemoLinksStateField,
     DemoTelemetryState,
     DemoRelayUsageState,

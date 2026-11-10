@@ -1099,9 +1099,14 @@ async fn the_hosts_own_desktop_row_stays_listed_beside_the_spaces_it_lists() {
     w.spaces.relay_machines().await.unwrap();
     let ids: Vec<String> = w.spaces.list().unwrap().into_iter().map(|i| i.id).collect();
     assert!(ids.iter().any(|i| i == "relay:studio-host"), "{ids:?}");
-    assert_eq!(ids.iter().filter(|i| i.starts_with("relay:space-")).count(), 0, "{ids:?}");
+    assert_eq!(
+        ids.iter().filter(|i| i.starts_with("relay:space-")).count(),
+        0,
+        "{ids:?}"
+    );
     let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(w.home.path().join("shared-spaces.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(w.home.path().join("shared-spaces.json")).unwrap())
+            .unwrap();
     for a in saved.as_object().unwrap().values() {
         let machine = a["machine"].as_str().unwrap();
         assert!(machine.starts_with("space-"), "{machine}");

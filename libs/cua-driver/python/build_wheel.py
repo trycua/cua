@@ -95,6 +95,11 @@ def get_wheel_tag(platform_name: str, arch: str) -> str:
     raise ValueError(f"Unsupported wheel target: {platform_name}-{arch}")
 
 
+# Releases before the windowless autostart launcher do not ship it, and their
+# driver does not use it.
+OPTIONAL_BINARIES = frozenset({"cua-driver-autostart.exe"})
+
+
 def get_release_url(version: str, platform_name: str, arch: str) -> tuple[str, list[str]]:
     """Get the GitHub release URL and binary names for the platform.
 
@@ -221,6 +226,8 @@ def extract_binaries(archive_path: Path, binary_names: list[str], dest_dir: Path
                         print(f"Extracted binary to {dest_path}")
                         break
                 else:
+                    if binary_name in OPTIONAL_BINARIES:
+                        continue
                     raise ValueError(f"Binary {binary_name} not found in {archive_path}")
     else:
         # .tar.gz

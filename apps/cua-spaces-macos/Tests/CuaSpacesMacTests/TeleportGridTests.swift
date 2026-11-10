@@ -32,9 +32,9 @@ enum PickerFixture {
 
     static let remote = [
         AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
-                        targetEpoch: 3, widthPx: nil, heightPx: nil, pid: 812),
+                        targetEpoch: 3, widthPx: nil, heightPx: nil, pid: 812, origin: nil),
         AppRemoteWindow(id: "w-2", appName: "xterm", title: "", visible: true, appId: "xterm",
-                        targetEpoch: 1, widthPx: nil, heightPx: nil, pid: 904),
+                        targetEpoch: 1, widthPx: nil, heightPx: nil, pid: 904, origin: nil),
     ]
 
     /// A filled PNG of `color`, `w` x `h`.

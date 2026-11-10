@@ -224,7 +224,8 @@ async fn a_code_is_one_line_works_once_and_is_stored_hashed() {
         .iter()
         .find(|e| e["event"]["kind"] == "member_joined")
         .unwrap();
-    assert_eq!(joined["text"], "Ada's agent joined from Ada's MacBook Pro.");
+    let text = joined["text"].as_str().unwrap();
+    assert!(text.ends_with(" was added to this Space."), "{text}");
     assert_eq!(joined["event"]["member"]["owner"]["id"], "acct_ada");
 }
 
@@ -520,6 +521,10 @@ async fn redeeming_teaches_the_next_steps_and_posts_are_the_agents() {
         "thread_post",
         "never @mention yourself",
         "scheduled poll",
+        // How to wait on long work and share a Space with other agents.
+        "space_job",
+        "CLAIM <what>",
+        "BLOCKED <what>",
     ] {
         assert!(steps.contains(must), "{must}: {steps}");
     }

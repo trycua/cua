@@ -134,6 +134,39 @@ pub fn space_folder_name(space_id: &str) -> String {
     if s.is_empty() { "space".into() } else { s }
 }
 
+/// The id a Space's folder is named after: its id and its immutable `uid`
+/// (see [`valid_uid`]), as `local:work--0a1b2c3d`. Hand this to
+/// [`space_folder`] and [`space_folder_name`] (and to the access
+/// [`crate::Context`]) in place of the bare Space id: a Space made later
+/// under the same name has another `uid`, so it starts with an empty folder,
+/// and two ids that clean up to the same name stay apart. An empty `uid`
+/// gives the bare id (a Space from before folders had ids).
+pub fn space_volume_id(space_id: &str, uid: &str) -> String {
+    if uid.is_empty() {
+        space_id.to_string()
+    } else {
+        format!("{space_id}{UID_SEP}{uid}")
+    }
+}
+
+/// What comes between a Space's name and its id in its folder name.
+pub const UID_SEP: &str = "--";
+
+/// Whether `uid` is a Space uid: 8 lowercase hex digits.
+pub fn valid_uid(uid: &str) -> bool {
+    uid.len() == 8
+        && uid
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The uid of a folder name made by [`space_volume_id`] (`None` for the old
+/// layout, a folder with no id).
+pub fn folder_uid(folder_name: &str) -> Option<&str> {
+    let (_, uid) = folder_name.rsplit_once(UID_SEP)?;
+    valid_uid(uid).then_some(uid)
+}
+
 /// A Space's folder: `spaces/<folder name>/`.
 pub fn space_folder(space_id: &str) -> String {
     format!("{SPACES}{}/", space_folder_name(space_id))
@@ -249,6 +282,18 @@ mod tests {
         assert_eq!(
             space_folder("direct:10.0.0.5:3211"),
             "spaces/direct-10.0.0.5-3211/"
+        );
+        // The folder carries the Space's immutable id.
+        let v = space_volume_id("local:work", "0a1b2c3d");
+        assert_eq!(space_folder(&v), "spaces/local-work--0a1b2c3d/");
+        assert_eq!(folder_uid("local-work--0a1b2c3d"), Some("0a1b2c3d"));
+        assert_eq!(folder_uid("local-work"), None);
+        assert_eq!(folder_uid("local-work--zzzzzzzz"), None);
+        assert_eq!(space_volume_id("local:work", ""), "local:work");
+        // Two ids that clean up to one name stay apart by their uid.
+        assert_ne!(
+            space_folder(&space_volume_id("local:a b", "00000001")),
+            space_folder(&space_volume_id("local:a-b", "00000002"))
         );
         assert_eq!(parent("a/b/c"), "a/b/");
         assert_eq!(parent("a"), "");

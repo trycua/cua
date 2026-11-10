@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::GetScreenSizeInput;
 use cua_driver_core::{
@@ -53,6 +56,14 @@ impl Tool for GetScreenSizeTool {
                 // scale over attested IPC, for a single-output layout.
                 let (frame, monitors) = crate::wayland::niri::screen_report()?;
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
+            }
+            if crate::wayland::is_wayland() {
+                // KWin: its logical layout, the frame desktop capture and
+                // input use. The scale is the largest output's, like the frame
+                // get_desktop_state reports.
+                if let Some((frame, monitors)) = crate::wayland::kwin_layout::screen_report()? {
+                    return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
+                }
             }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware

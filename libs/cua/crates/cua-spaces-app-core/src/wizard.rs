@@ -1061,14 +1061,9 @@ pub fn ttl_text(ttl_hours: u32) -> String {
     }
 }
 
-/// The connected clouds the wizard offers: none while the "Your cloud"
-/// experiment is off (they stay connected; the wizard does not show them).
+/// The connected clouds the wizard offers: all of them.
 pub fn offered_clouds(env: &WizardEnv) -> &[ConnectedCloud] {
-    if env.experiments.your_cloud {
-        &env.clouds
-    } else {
-        &[]
-    }
+    &env.clouds
 }
 
 /// The connected cloud the wizard creates in: the chosen one, else the
@@ -1266,6 +1261,16 @@ fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
                 "needs passt: sudo apt-get install passt".into()
             } else {
                 "needs the microVM tools: see cua runtime doctor".into()
+            }
+        }
+        // A PC: the microVM is QEMU on the Windows Hypervisor Platform, and the
+        // doctor says which piece is missing (the feature, QEMU, the guest init).
+        SpaceOs::Windows => {
+            let fc = detail("firecracker");
+            if fc.is_empty() {
+                "needs the Windows Hypervisor Platform: see cua runtime doctor".into()
+            } else {
+                fc
             }
         }
         _ => "needs a Mac or Linux with KVM".into(),
@@ -1494,14 +1499,15 @@ fn runtime_switch(image: &SandboxImage, env: &WizardEnv) -> Option<RuntimeSwitch
 }
 
 /// The one line under "Run on" when nothing can run the Space here and
-/// none of your machines is listed: how another Mac of yours joins.
-pub const OTHER_MAC_HINT: &str = "To use another Mac, open Cua Spaces on it, choose Set up for \
-     access and turn on Spaces for your machines. It then shows up here.";
+/// none of your computers is listed: how another Mac of yours joins (the
+/// same words as the first run's "Add another computer").
+pub const OTHER_MAC_HINT: &str =
+    "To use another Mac, install Cua Spaces on it and sign in. It then shows up here.";
 
-/// [`OTHER_MAC_HINT`] on Windows and Linux, where the other machine may be
+/// [`OTHER_MAC_HINT`] on Windows and Linux, where the other computer may be
 /// any computer.
-pub const OTHER_COMPUTER_HINT: &str = "To use another computer, open Cua Spaces on it, choose \
-     Set up for access and turn on Spaces for your machines. It then shows up here.";
+pub const OTHER_COMPUTER_HINT: &str =
+    "To use another computer, install Cua Spaces on it and sign in. It then shows up here.";
 
 /// The line under "Run on" naming how another machine joins, in the words
 /// of the system the app runs on.
@@ -1589,7 +1595,7 @@ pub fn friendly_add_error(raw: &str) -> String {
     .any(|k| l.contains(k))
     {
         return format!(
-            "The Space rejected the token. Check the spacesd token (CUA_ENV_TOKEN). ({raw})"
+            "This Space didn\u{2019}t accept the access token. Add it again. (CUA_ENV_TOKEN: {raw})"
         );
     }
     if [
@@ -1687,13 +1693,13 @@ pub struct WizardEnv {
     #[serde(default)]
     pub storage: Option<LocalStorage>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
-    /// (offered only while its experiment is on: [`offered_clouds`]).
+    /// ([`offered_clouds`]).
     #[serde(default)]
     pub clouds: Vec<ConnectedCloud>,
     /// The user's machines that provide Spaces (`Spaces.hosts()`).
     #[serde(default)]
     pub hosts: Vec<SpaceHost>,
-    /// Settings, Experiments ("Your cloud" decides whether clouds show).
+    /// Settings, Experiments (the daemon-enforced switches the wizard reads).
     #[serde(default)]
     pub experiments: crate::experiments::Experiments,
     /// The GPU option of each runtime that has one (the SDK's
@@ -1791,7 +1797,7 @@ pub enum WizardMode {
 }
 
 /// The "Connect by address" form.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddressForm {
     /// `host:port`.
     pub url: String,
@@ -1803,6 +1809,18 @@ pub struct AddressForm {
     pub busy: bool,
     /// The last error, in words.
     pub error: Option<String>,
+}
+
+impl std::fmt::Debug for AddressForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddressForm")
+            .field("url", &self.url)
+            .field("token", &"<redacted>")
+            .field("name", &self.name)
+            .field("busy", &self.busy)
+            .field("error", &self.error)
+            .finish()
+    }
 }
 
 /// The wizard's state.
@@ -1906,17 +1924,15 @@ pub struct ResourceEdit {
     pub text: String,
 }
 
-/// The name an unnamed Space gets: `space-` and ten hex digits, the form
-/// the SDK gives one it names itself (`cua_spaces::Spaces::create`). The
-/// wizard picks it when it opens, shows it, and creates the Space with it.
+/// The name an unnamed Space gets: a friendly `adjective-animal`
+/// (`cua_spaces_contract::names`), the form the SDK gives one it names
+/// itself. The wizard picks it when it opens, shows it, and creates the
+/// Space with it.
 pub fn generated_space_name(seed: Option<u64>) -> String {
-    let n = seed.unwrap_or_else(|| {
-        use std::hash::{BuildHasher, Hasher};
-        std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish()
-    });
-    format!("space-{:010x}", n & 0xff_ffff_ffff)
+    match seed {
+        Some(s) => cua_spaces_contract::names::pet_name_seeded(s, |_| false),
+        None => cua_spaces_contract::names::pet_name(|_| false),
+    }
 }
 
 /// An input to the wizard.
@@ -2220,6 +2236,19 @@ fn rebase(state: &mut WizardState, image_ref: &str) {
 
 /// Advances the wizard. `env` decides whether Continue is allowed.
 pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> WizardState {
+    reduce_on(state, action, env, SpaceOs::Macos)
+}
+
+/// [`reduce`] in a shell on `os`. Continue is allowed by the view the person
+/// sees ([`view_on`]), so the shell must name its system here too: judged as
+/// a Mac, the Windows image is "coming soon" and Continue silently did
+/// nothing on a Windows PC.
+pub fn reduce_on(
+    state: &WizardState,
+    action: &WizardAction,
+    env: &WizardEnv,
+    os: SpaceOs,
+) -> WizardState {
     let mut s = state.clone();
     match action {
         WizardAction::SyncDefault { location } => {
@@ -2393,7 +2422,7 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
             // A typed value is used first (one that breaks the limits
             // keeps the step, with why).
             commit_resource(&mut s, env);
-            if s.step < 3 && view(&s, env).can_continue {
+            if s.step < 3 && view_on(&s, env, os).can_continue {
                 s.step += 1;
             }
         }
@@ -2743,7 +2772,7 @@ pub struct AddressView {
 }
 
 /// The `add` call "Add Space" makes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddressSubmit {
     /// `host:port`, trimmed.
     pub url: String,
@@ -2751,6 +2780,16 @@ pub struct AddressSubmit {
     pub token: Option<String>,
     /// Name, when given.
     pub name: Option<String>,
+}
+
+impl std::fmt::Debug for AddressSubmit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddressSubmit")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("name", &self.name)
+            .finish()
+    }
 }
 
 /// One preset in the image suggestions.
@@ -2971,9 +3010,14 @@ pub struct WizardView {
 }
 
 fn runtime_word(r: &Runtime, kind: SpaceKind, os: SpaceOs) -> String {
+    // On a PC the microVM runtime is QEMU on the Windows Hypervisor Platform.
+    let label = match (r, os) {
+        (Runtime::Firecracker, SpaceOs::Windows) => "QEMU (Windows Hypervisor Platform)".into(),
+        _ => r.label(),
+    };
     format!(
         "{} {} on {}",
-        r.label(),
+        label,
         match kind {
             SpaceKind::Vm => "virtual machine",
             SpaceKind::Microvm => "microVM",
@@ -3028,7 +3072,6 @@ fn field(id: &str, label: &str) -> WizardField {
 /// The current step's fields, in order.
 fn fields(
     state: &WizardState,
-    env: &WizardEnv,
     image_error: Option<String>,
     placement_error: Option<String>,
     name_error: Option<String>,
@@ -3079,12 +3122,7 @@ fn fields(
             },
         ]
         .into_iter()
-        // Connecting a cloud only with the "Your cloud" experiment.
-        .chain(
-            env.experiments
-                .your_cloud
-                .then(|| field("connect-cloud", CONNECT_CLOUD_LABEL)),
-        )
+        .chain(std::iter::once(field("connect-cloud", CONNECT_CLOUD_LABEL)))
         .collect(),
         // The cloud picks the machine: no sliders, its facts only.
         (WizardMode::Create, 1) if yours => vec![],
@@ -4163,7 +4201,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         fields: fields(
             state,
-            env,
             image_error,
             placement_error_for_fields,
             name_error,
@@ -4220,6 +4257,23 @@ pub(crate) fn arch_word(arch: Option<&str>) -> Option<&'static str> {
     }
 }
 
+/// The catalog's Linux slim tier as a container (about 0.5 GB to pull), when
+/// published: what the first Linux Space of Ask first is, because that is the Space
+/// the daemon keeps ready (Warm start).
+fn slim_linux_ref() -> Option<String> {
+    catalog()
+        .images
+        .iter()
+        .find(|i| {
+            i.published
+                && i.os == SpaceOs::Linux
+                && i.tier == Some(ImageTier::Slim)
+                && i.group == "canonical"
+                && !i.image_ref.ends_with("-disk")
+        })
+        .map(|i| i.image_ref.clone())
+}
+
 /// The catalog's Omarchy (an amd64 VM), when published.
 fn omarchy_ref() -> Option<String> {
     catalog()
@@ -4264,7 +4318,12 @@ pub fn first_space_offers(env: &WizardEnv, host_os: SpaceOs) -> Vec<FirstSpaceOf
         ..env.clone()
     };
     let arch = arch_word(local.host_arch.as_deref());
-    let linux = view_on(&initial(&local), &local, host_os).image.image_ref;
+    let mut linux = view_on(&initial(&local), &local, host_os).image.image_ref;
+    // The Space Warm start keeps ready is the slim tier: the first Linux Space is made
+    // from it too, so Create claims it.
+    if let Some(slim) = slim_linux_ref() {
+        linux = slim;
+    }
     let mut wanted: Vec<(&str, String)> = vec![("linux", linux)];
     if arch == Some("amd64")
         && let Some(r) = omarchy_ref()
@@ -4328,7 +4387,7 @@ pub fn first_space_offers(env: &WizardEnv, host_os: SpaceOs) -> Vec<FirstSpaceOf
 /// The wizard's own plan for `image_ref` on this machine with its defaults,
 /// and why it can't be created here (a system this machine can't run, no
 /// runtime, no room), or none. `None` when the catalog has no such image.
-fn local_plan(
+pub(crate) fn local_plan(
     env: &WizardEnv,
     host_os: SpaceOs,
     image_ref: &str,
@@ -4388,7 +4447,6 @@ mod tests {
     fn with_cloud(e: &WizardEnv) -> WizardEnv {
         WizardEnv {
             clouds: vec![aws()],
-            experiments: your_cloud_on(),
             ..e.clone()
         }
     }
@@ -4407,26 +4465,9 @@ mod tests {
             storage: None,
             clouds: vec![],
             hosts: vec![],
-            experiments: your_cloud_off(),
+            experiments: Default::default(),
             gpus: None,
             name_seed: Some(0x2a),
-        }
-    }
-
-    /// The "Your cloud" experiment turned off (the tests' baseline; it is on
-    /// by default).
-    fn your_cloud_off() -> crate::experiments::Experiments {
-        crate::experiments::Experiments {
-            your_cloud: false,
-            ..Default::default()
-        }
-    }
-
-    /// The "Your cloud" experiment on.
-    fn your_cloud_on() -> crate::experiments::Experiments {
-        crate::experiments::Experiments {
-            your_cloud: true,
-            ..Default::default()
         }
     }
 
@@ -4703,6 +4744,16 @@ mod tests {
         let offers = first_space_offers(&e, SpaceOs::Linux);
         let ids: Vec<&str> = offers.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(ids, ["linux", "omarchy"]);
+        // The Linux Space Home creates for a new agent is the slim tier, which the daemon
+        // keeps ready at the same size (Warm start; `cua_daemon::local::warm_pools_image`
+        // asserts the same reference), so a change to either must change both.
+        assert_eq!(offers[0].image, "ghcr.io/trycua/linux:24.04-slim");
+        assert_eq!(offers[0].os, SpaceOs::Linux);
+        assert_eq!(
+            (offers[0].args.cpus, offers[0].args.memory_mb),
+            (Some(2), Some(4096))
+        );
+        assert_eq!(offers[0].args.image, "ghcr.io/trycua/linux:24.04-slim");
         let o = &offers[1];
         assert_eq!(o.image, "ghcr.io/trycua/omarchy:edge");
         assert_eq!(o.os, SpaceOs::Linux);
@@ -4795,6 +4846,35 @@ mod tests {
         let win = view_on(&s, &e, SpaceOs::Windows);
         let tile = win.os_tiles.iter().find(|t| t.id == "windows").unwrap();
         assert_eq!(tile.title, "Windows");
+    }
+
+    /// Continue is judged for the system the shell runs on: on a Windows PC
+    /// the Windows image advances the wizard (judged as a Mac it silently
+    /// stayed on the first step), and on a Mac it still does not.
+    #[test]
+    fn continue_advances_a_windows_image_on_a_windows_pc() {
+        let e = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        let s = reduce_on(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/windows:2022".into(),
+            },
+            &e,
+            SpaceOs::Windows,
+        );
+        let s = reduce_on(
+            &s,
+            &WizardAction::ChoosePlacement { on: "local".into() },
+            &e,
+            SpaceOs::Windows,
+        );
+        assert!(view_on(&s, &e, SpaceOs::Windows).can_continue);
+        let next = |os| reduce_on(&s, &WizardAction::Next, &e, os).step;
+        assert_eq!(next(SpaceOs::Windows), 1);
+        assert_eq!(next(SpaceOs::Macos), 0);
     }
 
     /// A Windows VM runs on QEMU, which the app never installs: on a PC
@@ -5261,7 +5341,7 @@ mod tests {
         assert_eq!(placement_options(&s, &e)[0].label, "This Mac");
         for (os, here, lower) in [
             (SpaceOs::Windows, "This PC", "this PC"),
-            (SpaceOs::Linux, "This machine", "this machine"),
+            (SpaceOs::Linux, "This computer", "this computer"),
         ] {
             let local = &placement_options_on(&s, &e, os)[0];
             assert_eq!(local.label, here);
@@ -5462,10 +5542,9 @@ mod tests {
     }
 
     #[test]
-    fn a_linked_cloud_is_in_run_on_by_default() {
+    fn a_linked_cloud_is_in_run_on() {
         let e = WizardEnv {
             clouds: vec![aws()],
-            experiments: Default::default(),
             ..env()
         };
         let v = view(&initial(&e), &e);
@@ -5473,15 +5552,6 @@ mod tests {
             menu(&v).last().map(String::as_str),
             Some("aws [clouds] AWS \u{b7} us-west-2"),
             "a fresh install lists the linked cloud"
-        );
-        let off = WizardEnv {
-            experiments: your_cloud_off(),
-            ..e
-        };
-        assert!(
-            !menu(&view(&initial(&off), &off))
-                .iter()
-                .any(|m| m.starts_with("aws "))
         );
     }
 
@@ -5496,18 +5566,8 @@ mod tests {
         assert!(v.placements[0].selected && v.placements[0].enabled);
         assert_eq!(v.placement_id, "local");
         assert!(
-            v.fields.iter().all(|f| f.id != "connect-cloud"),
-            "Connect a cloud only with the experiment"
-        );
-        let with = WizardEnv {
-            experiments: your_cloud_on(),
-            ..e.clone()
-        };
-        assert!(
-            view(&s, &with)
-                .fields
-                .iter()
-                .any(|f| f.id == "connect-cloud")
+            v.fields.iter().any(|f| f.id == "connect-cloud"),
+            "Connect a cloud is always offered"
         );
         let picked = reduce(
             &s,
@@ -5528,7 +5588,6 @@ mod tests {
     fn a_connected_cloud_runs_what_it_offers_with_its_cost_and_lifetime() {
         let e = WizardEnv {
             clouds: vec![aws()],
-            experiments: your_cloud_on(),
             ..env()
         };
         let s = initial(&e);
@@ -5624,7 +5683,6 @@ mod tests {
         let e = WizardEnv {
             default_location: Location::Yours,
             clouds: vec![aws(), gcp],
-            experiments: your_cloud_on(),
             ..env()
         };
         let s = initial(&e);
@@ -5793,6 +5851,16 @@ mod tests {
             ("runtime.lume", "builtin", "Use built-in Lume")
         );
         assert_eq!(v.placement_hint.as_deref(), Some(OTHER_MAC_HINT));
+        // Plain words that match today's app: no Machines page, no "Set up for access" switch to find.
+        for hint in [OTHER_MAC_HINT, OTHER_COMPUTER_HINT] {
+            assert!(
+                hint.contains("install Cua Spaces on it and sign in"),
+                "{hint}"
+            );
+            for gone in ["machines", "Set up for access"] {
+                assert!(!hint.contains(gone), "{hint}");
+            }
+        }
         // Off a Mac, the other machine is any computer.
         for os in [SpaceOs::Windows, SpaceOs::Linux] {
             assert_eq!(
@@ -5915,11 +5983,11 @@ mod tests {
         );
     }
 
-    /// The "Run on" menu lists This Mac and your machines; your clouds
-    /// unless "Your cloud" was turned off (it is on by default). Disabled machines say why.
+    /// The "Run on" menu lists This Mac, your machines and your clouds.
+    /// Disabled machines say why.
     #[test]
-    fn the_run_on_menu_lists_every_machine_and_clouds_unless_the_experiment_is_off() {
-        let mut e = WizardEnv {
+    fn the_run_on_menu_lists_every_machine_and_cloud() {
+        let e = WizardEnv {
             hosts: hosts(),
             clouds: vec![aws()],
             ..env()
@@ -5934,41 +6002,27 @@ mod tests {
                 "host:m-mini [hosts] Mac mini",
                 "host:lab [hosts] lab",
                 "host:m-studio [hosts] Studio (offline) (disabled)",
-            ],
-            "no cloud with the experiment off, though AWS is connected"
+                "aws [clouds] AWS \u{b7} us-west-2",
+            ]
         );
         let studio = &v.placements[4];
         assert_eq!(studio.detail, "Studio is offline.");
         assert_eq!(v.placements[0].detail, AUTO_PLACEMENT_DETAIL);
         assert_eq!(v.placements[2].detail, "Through the Cua relay");
         assert_eq!(v.placements[3].detail, "Over Tailscale or your network");
-        // A cloud cannot be chosen while hidden, nor an offline machine.
-        let s1 = reduce(&s, &WizardAction::ChoosePlacement { on: "aws".into() }, &e);
-        assert_eq!(s1.placement, Location::Local);
+        // An offline machine cannot be chosen.
         let s1 = reduce(
-            &s1,
+            &s,
             &WizardAction::ChoosePlacement {
                 on: "host:m-studio".into(),
             },
             &e,
         );
         assert_eq!(s1.placement, Location::Local);
-        // With the experiment: the connected cloud, after the machines.
-        e.experiments = your_cloud_on();
-        let v = view(&s, &e);
-        assert_eq!(
-            menu(&v).last().map(String::as_str),
-            Some("aws [clouds] AWS \u{b7} us-west-2")
-        );
-        assert_eq!(v.placements.len(), 6);
-        // Off again while AWS is chosen: back on this Mac, AWS untouched.
+        // The connected cloud can.
         let on_aws = reduce(&s, &WizardAction::ChoosePlacement { on: "aws".into() }, &e);
         assert_eq!(view(&on_aws, &e).placement_id, "aws");
-        e.experiments = your_cloud_off();
-        let v = view(&on_aws, &e);
-        assert_eq!(v.placement_id, "local");
-        assert_eq!(create_args(&v.plan).on, "local");
-        assert_eq!(e.clouds.len(), 1, "still connected");
+        assert_eq!(v.placements.len(), 6);
     }
 
     /// Auto ("the least-loaded of your machines") is offered only while you
@@ -6209,7 +6263,7 @@ mod tests {
     /// choosing it does nothing.
     #[test]
     fn microvm_is_greyed_out_and_settings_says_why() {
-        let cases: [(WizardEnv, SpaceOs, &str); 7] = [
+        let cases: [(WizardEnv, SpaceOs, &str); 8] = [
             // A Mac before macOS 26 without cua's monitor.
             (
                 mac_env(
@@ -6267,7 +6321,18 @@ mod tests {
             (
                 mac_env(&["docker"], &[]),
                 SpaceOs::Windows,
-                "Needs a Mac or Linux with KVM.",
+                "Needs the Windows Hypervisor Platform: see cua runtime doctor.",
+            ),
+            (
+                mac_env(
+                    &["docker"],
+                    &[(
+                        "firecracker",
+                        "microVMs need the Windows feature Windows Hypervisor Platform",
+                    )],
+                ),
+                SpaceOs::Windows,
+                "MicroVMs need the Windows feature Windows Hypervisor Platform.",
             ),
             (
                 WizardEnv {
@@ -6612,7 +6677,10 @@ mod tests {
         assert!(!looks_like_address("host name"));
         assert!(!looks_like_address(""));
         assert!(!looks_like_address("host:abc"));
-        assert!(friendly_add_error("status: Unauthenticated").starts_with("The Space rejected"));
+        assert!(
+            friendly_add_error("status: Unauthenticated")
+                .starts_with("This Space didn\u{2019}t accept")
+        );
     }
 
     fn act(s: &WizardState, a: WizardAction) -> WizardState {
@@ -6874,7 +6942,17 @@ mod tests {
         let ids = |s: &WizardState| -> Vec<String> {
             view(s, &e).fields.into_iter().map(|f| f.id).collect()
         };
-        assert_eq!(ids(&s), ["os", "image", "placement", "kind", "runtime"]);
+        assert_eq!(
+            ids(&s),
+            [
+                "os",
+                "image",
+                "placement",
+                "kind",
+                "runtime",
+                "connect-cloud"
+            ]
+        );
         let s1 = reduce(&s, &WizardAction::Next, &e);
         assert_eq!(
             ids(&s1),
@@ -7068,10 +7146,10 @@ mod tests {
     fn an_unnamed_space_shows_and_gets_its_generated_name() {
         let e = env();
         let s = initial(&e);
-        assert_eq!(s.generated_name, "space-000000002a");
-        assert_eq!(generated_space_name(Some(u64::MAX)), "space-ffffffffff");
+        assert_eq!(s.generated_name, generated_space_name(Some(42)));
+        assert!(cua_spaces_contract::names::is_pet_name(&s.generated_name));
         let other = generated_space_name(None);
-        assert!(other.starts_with("space-") && other.len() == 16 && valid_space_name(&other));
+        assert!(cua_spaces_contract::names::is_pet_name(&other) && valid_space_name(&other));
         let mut s = s;
         for _ in 0..2 {
             s = reduce(&s, &WizardAction::Next, &e);
@@ -7082,22 +7160,19 @@ mod tests {
             .iter()
             .find(|f| f.id == "name")
             .and_then(|f| f.placeholder.clone());
-        assert_eq!(placeholder.as_deref(), Some("space-000000002a"));
-        assert_eq!(v.space_name, "space-000000002a");
+        assert_eq!(placeholder.as_deref(), Some("dapper-mole"));
+        assert_eq!(v.space_name, "dapper-mole");
         let name_row = |v: &WizardView| {
             v.summary
                 .iter()
                 .find(|f| f.label == "Name")
                 .map(|f| f.value.clone())
         };
-        assert_eq!(name_row(&v).as_deref(), Some("space-000000002a"));
-        assert_eq!(
-            create_args(&v.plan).name.as_deref(),
-            Some("space-000000002a")
-        );
+        assert_eq!(name_row(&v).as_deref(), Some("dapper-mole"));
+        assert_eq!(create_args(&v.plan).name.as_deref(), Some("dapper-mole"));
         assert_eq!(
             creating_text(&v.plan),
-            "Creating space-000000002a. It appears in the list when it is ready."
+            "Creating dapper-mole. It appears in the list when it is ready."
         );
         let named = view(
             &reduce(
@@ -7120,5 +7195,391 @@ mod tests {
         let v = view(&old, &e);
         assert_eq!(name_row(&v).as_deref(), Some("Chosen automatically"));
         assert_eq!(v.plan.name, None);
+    }
+
+    // ---- the example prompts, per host (`first_prompts`) -----------------------
+
+    use crate::first_prompts::{self as fp, Cap, FALLBACK, FirstPrompts, LIBRARY};
+
+    fn prompts_for(env: &WizardEnv, os: SpaceOs) -> FirstPrompts {
+        fp::choose_for(env, os)
+    }
+
+    fn example_ids(p: &FirstPrompts) -> Vec<&str> {
+        p.examples.iter().map(|e| e.id.as_str()).collect()
+    }
+
+    fn card_ids(p: &FirstPrompts) -> Vec<&str> {
+        p.suggestions.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    /// A PC (Windows or Linux) as the app sees it after its probes.
+    fn pc(arch: &str, backends: &[&str]) -> WizardEnv {
+        WizardEnv {
+            local_backends: Some(backends.iter().map(|b| b.to_string()).collect()),
+            host_arch: Some(arch.into()),
+            storage: Some(LocalStorage {
+                reserve_bytes: 5 * GIB,
+                lume: None,
+                qemu: Some(vol(200, "/")),
+                container: Some(vol(200, "/")),
+                pulled: vec![],
+                linux_runtime_download_bytes: 0,
+            }),
+            ..env()
+        }
+    }
+
+    /// Every host profile the choice is tested on, with the os it runs.
+    fn profiles() -> Vec<(&'static str, WizardEnv, SpaceOs)> {
+        let mut mac_none = probed_mac(200, "arm64");
+        mac_none.local_backends = Some(vec![]);
+        mac_none.storage = None;
+        let mut no_macos_room = probed_mac(30, "arm64");
+        no_macos_room.local_backends = Some(vec!["lume".into(), "managed".into()]);
+        let mut mac_vm = probed_mac(200, "arm64");
+        mac_vm.local_backends = Some(vec![
+            "lume".into(),
+            "managed".into(),
+            "containerization".into(),
+        ]);
+        vec![
+            (
+                "mac arm64 with macOS",
+                probed_mac(200, "arm64"),
+                SpaceOs::Macos,
+            ),
+            ("mac arm64 with microVM", mac_vm, SpaceOs::Macos),
+            (
+                "mac arm64 without room for macOS",
+                no_macos_room,
+                SpaceOs::Macos,
+            ),
+            ("mac intel", probed_mac(200, "x86_64"), SpaceOs::Macos),
+            (
+                "windows with qemu",
+                pc("amd64", &["qemu", "docker"]),
+                SpaceOs::Windows,
+            ),
+            (
+                "windows without qemu",
+                pc("amd64", &["docker"]),
+                SpaceOs::Windows,
+            ),
+            (
+                "linux with kvm",
+                pc("amd64", &["qemu", "docker", "firecracker"]),
+                SpaceOs::Linux,
+            ),
+            (
+                "linux without kvm",
+                pc("amd64", &["docker"]),
+                SpaceOs::Linux,
+            ),
+            ("linux arm64", pc("arm64", &["docker"]), SpaceOs::Linux),
+            ("no runtime read yet", env(), SpaceOs::Macos),
+            ("no runtime at all", mac_none, SpaceOs::Macos),
+        ]
+    }
+
+    #[test]
+    fn the_examples_per_host_profile() {
+        let by = |name: &str| {
+            let (_, e, os) = profiles().into_iter().find(|p| p.0 == name).unwrap();
+            prompts_for(&e, os)
+        };
+        const REAL: [&str; 3] = [FALLBACK, "trip-weekend", "two-space-load"];
+        let with = |extra: &[&str]| -> Vec<String> {
+            REAL.iter()
+                .chain(extra.iter())
+                .map(|s| s.to_string())
+                .collect()
+        };
+        let ids = |p: &FirstPrompts| {
+            example_ids(p)
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        // A Mac that can make a macOS Space, image not downloaded: the fast Linux job leads; the two-system one is still reachable.
+        let mac = by("mac arm64 with macOS");
+        assert!(mac.caps.macos && !mac.caps.windows && !mac.caps.macos_cached);
+        assert_eq!(ids(&mac), with(&["cross-os-prices-macos"]));
+        assert_eq!(
+            card_ids(&mac),
+            ["tests-linux-macos", "bug-macos", "order-tracking"]
+        );
+        let slow = mac
+            .examples
+            .iter()
+            .find(|x| x.id == "cross-os-prices-macos")
+            .unwrap();
+        assert!(slow.why.ends_with("The first run downloads an image."));
+        assert!(!mac.examples[0].why.contains("downloads an image"));
+        // The macOS image is already downloaded: the two-system job leads and says nothing of a download.
+        let mut cached = probed_mac(20, "arm64");
+        cached.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/macos:26".into()];
+        let c = prompts_for(&cached, SpaceOs::Macos);
+        assert!(c.caps.macos_cached);
+        assert_eq!(example_ids(&c)[0], "cross-os-prices-macos");
+        assert!(!c.examples[0].why.contains("downloads an image"));
+        // A Windows image already pulled leads on a PC.
+        let mut wc = pc("amd64", &["qemu", "docker"]);
+        wc.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/windows:2022".into()];
+        assert_eq!(
+            example_ids(&prompts_for(&wc, SpaceOs::Windows))[0],
+            "cross-os-prices-windows"
+        );
+        // With microVMs too: ten Spaces at once is on offer.
+        let vm = by("mac arm64 with microVM");
+        assert!(vm.caps.kvm);
+        assert_eq!(
+            ids(&vm),
+            with(&["fan-out-pricing", "cross-os-prices-macos"])
+        );
+        // No room for the macOS image, or an Intel Mac: no macOS example or card.
+        for name in ["mac arm64 without room for macOS", "mac intel"] {
+            let p = by(name);
+            assert!(!p.caps.macos, "{name}");
+            assert_eq!(ids(&p), with(&[]), "{name}");
+            assert_eq!(
+                card_ids(&p),
+                ["order-tracking", "server-ui-load", "untrusted-pr"],
+                "{name}"
+            );
+        }
+        // A Windows PC with QEMU: Linux and Windows jobs are on offer.
+        let win = by("windows with qemu");
+        assert!(win.caps.windows);
+        assert_eq!(ids(&win), with(&["cross-os-prices-windows"]));
+        assert_eq!(
+            card_ids(&win),
+            ["tests-linux-windows", "bug-windows", "order-tracking"]
+        );
+        let nowin = by("windows without qemu");
+        assert!(!nowin.caps.windows);
+        assert_eq!(ids(&nowin), with(&[]));
+        // Linux with and without KVM.
+        let kvm = by("linux with kvm");
+        assert!(kvm.caps.kvm);
+        assert_eq!(example_ids(&kvm)[0], FALLBACK);
+        let nokvm = by("linux without kvm");
+        assert!(!nokvm.caps.kvm && !nokvm.caps.macos);
+        // Nothing read yet, or no runtime: the fallback leads, alone with the plain Linux jobs.
+        for name in ["no runtime read yet", "no runtime at all"] {
+            let p = by(name);
+            assert_eq!(ids(&p), with(&[]), "{name}");
+            assert!(!p.caps.macos && !p.caps.windows && !p.caps.kvm, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_lede_names_only_a_system_this_host_can_run() {
+        const WIN: &str = "Reproduce this bug on a fresh Windows Space";
+        const MAC: &str = "Reproduce this bug on a fresh macOS Space";
+        const LIN: &str = "Reproduce this bug on a fresh Linux Space";
+        for (name, e, os) in profiles() {
+            let p = prompts_for(&e, os);
+            let want = if p.caps.windows {
+                WIN
+            } else if p.caps.macos {
+                MAC
+            } else {
+                LIN
+            };
+            assert_eq!(p.lede, want, "{name}");
+            // Never a system the host cannot make.
+            assert!(!p.lede.contains("Windows") || p.caps.windows, "{name}");
+            assert!(!p.lede.contains("macOS") || p.caps.macos, "{name}");
+        }
+        let lede = |n: &str| {
+            let (_, e, os) = profiles().into_iter().find(|p| p.0 == n).unwrap();
+            prompts_for(&e, os).lede
+        };
+        assert_eq!(lede("mac arm64 with macOS"), MAC);
+        assert_eq!(lede("windows with qemu"), WIN);
+        assert_eq!(lede("linux with kvm"), WIN);
+        for n in [
+            "mac intel",
+            "mac arm64 without room for macOS",
+            "linux without kvm",
+            "windows without qemu",
+            "no runtime read yet",
+        ] {
+            assert_eq!(lede(n), LIN, "{n}");
+        }
+    }
+
+    #[test]
+    fn every_host_always_has_the_fallback_and_never_a_job_it_cannot_do() {
+        for (name, e, os) in profiles() {
+            let p = prompts_for(&e, os);
+            assert!(
+                p.examples[0].id == FALLBACK || p.caps.macos_cached || p.caps.windows_cached,
+                "{name}"
+            );
+            assert!(p.examples.iter().any(|x| x.id == FALLBACK), "{name}");
+            assert!(p.suggestions.len() >= 3, "{name}");
+            for x in p
+                .examples
+                .iter()
+                .map(|x| (&x.id, &x.needs))
+                .chain(p.suggestions.iter().map(|s| (&s.id, &s.needs)))
+            {
+                for c in x.1 {
+                    let ok = match c {
+                        Cap::MacosSpace => p.caps.macos,
+                        Cap::WindowsSpace => p.caps.windows,
+                        Cap::Kvm => p.caps.kvm,
+                        _ => true,
+                    };
+                    assert!(ok, "{name}: {} needs {c:?}", x.0);
+                }
+            }
+            // The first example never needs a download: only an image already here leads.
+            let lead = LIBRARY.iter().find(|e| e.id == p.examples[0].id).unwrap();
+            let needs_image = (lead.needs.contains(&Cap::MacosSpace) && !p.caps.macos_cached)
+                || (lead.needs.contains(&Cap::WindowsSpace) && !p.caps.windows_cached);
+            assert!(!needs_image, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_library_is_valid_for_a_real_host_and_its_tags_match_its_words() {
+        let mut seen = std::collections::HashSet::new();
+        for e in LIBRARY {
+            assert!(seen.insert(e.id), "duplicate {}", e.id);
+            let has = |c: Cap| e.needs.contains(&c);
+            // Valid for at least one host profile.
+            let fits_some = profiles().into_iter().any(|(_, env, os)| {
+                let p = prompts_for(&env, os);
+                e.needs.iter().all(|c| match c {
+                    Cap::MacosSpace => p.caps.macos,
+                    Cap::WindowsSpace => p.caps.windows,
+                    Cap::Kvm => p.caps.kvm,
+                    _ => true,
+                })
+            });
+            assert!(fits_some, "{} fits no host profile", e.id);
+            // Tags match the words.
+            assert_eq!(
+                has(Cap::MacosSpace),
+                e.text.contains("macOS") || e.text.contains("Safari"),
+                "{}",
+                e.id
+            );
+            assert_eq!(
+                has(Cap::WindowsSpace),
+                e.text.contains("Windows") || e.text.contains("Edge"),
+                "{}",
+                e.id
+            );
+            assert_eq!(has(Cap::LinuxSpace), e.text.contains("Linux"), "{}", e.id);
+            assert_eq!(has(Cap::Kvm), e.id == "fan-out-pricing", "{}", e.id);
+            // A prompt the person completes ends with ': ' and is tagged for it; a copyable one is complete.
+            assert_eq!(e.text.ends_with(": "), has(Cap::FillIn), "{}", e.id);
+            // A login is always asked for through the Keyvault or the visible browser window, never typed to the agent.
+            assert_eq!(has(Cap::Account), e.text.contains("Keyvault"), "{}", e.id);
+            let asks_login = has(Cap::Account)
+                || (e.text.contains("sign in") && !e.text.contains("not sign in"));
+            if asks_login {
+                assert!(
+                    e.text.contains("browser window")
+                        && e.text.contains("never ask me to type a password"),
+                    "{}",
+                    e.id
+                );
+            }
+            // Real tasks, not a toy: no stand-in page that only gets fetched and described, and long enough to be specific.
+            let l = e.text.to_lowercase();
+            assert!(
+                !l.contains("example.com")
+                    && !l.contains("example.org")
+                    && !l.contains("page's title")
+                    && !l.contains("first sentence"),
+                "{} is a toy page",
+                e.id
+            );
+            assert!(
+                e.text.len() >= 200,
+                "{} is too short to be a real task",
+                e.id
+            );
+            let does = [
+                "compare",
+                "write",
+                "load test",
+                "download",
+                "reproduce",
+                "build",
+                "find out",
+                "tell me",
+                "research",
+                "watch",
+                "check",
+                "fill in",
+                "bring up",
+                "run the job",
+                "try an unfamiliar",
+            ];
+            assert!(
+                does.iter().any(|w| l.contains(w)),
+                "{} asks for no real work",
+                e.id
+            );
+            // Never a made-up issue number, repository, vendor claim, brand of model or middle dot.
+            assert!(
+                !l.contains('#')
+                    && !l.contains("issue ")
+                    && !l.contains("github.com/")
+                    && !e.text.contains('\u{b7}'),
+                "{}",
+                e.id
+            );
+            assert!(
+                !l.contains("claude")
+                    && !l.contains("gpt")
+                    && !l.contains("openai")
+                    && !l.contains("device"),
+                "{}",
+                e.id
+            );
+            assert!(
+                fp::FAMILIES
+                    .iter()
+                    .any(|f| f.0 == e.family && !f.1.is_empty()),
+                "{} has no provenance note",
+                e.id
+            );
+            // Onboarding's one example sentence: only the bug-on-platform entries have one, naming exactly their system.
+            assert_eq!(
+                e.lede.is_empty(),
+                e.family != "bug-on-platform",
+                "{} lede",
+                e.id
+            );
+            assert!(
+                e.lede.is_empty() || has(Cap::MacosSpace) == e.lede.contains("macOS"),
+                "{} lede",
+                e.id
+            );
+            assert!(
+                e.lede.is_empty() || has(Cap::WindowsSpace) == e.lede.contains("Windows"),
+                "{} lede",
+                e.id
+            );
+            assert!(!e.why.is_empty() && !e.title.is_empty() && !e.detail.is_empty());
+        }
+        assert!(fp::FAMILIES.len() >= 8 && fp::FAMILIES.len() <= 12);
+        for (f, _) in fp::FAMILIES {
+            assert!(
+                LIBRARY.iter().any(|e| e.family == *f),
+                "family {f} has no entry"
+            );
+        }
+        // The fallback: Linux only, copyable, no login, a real task.
+        let fb = LIBRARY.iter().find(|e| e.id == FALLBACK).unwrap();
+        assert_eq!(fb.needs, &[Cap::LinuxSpace]);
+        assert!(!fb.text.ends_with(": "));
     }
 }

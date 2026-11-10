@@ -7,13 +7,14 @@ import { CircleAlertIcon, TriangleAlertIcon } from "lucide-react";
 import { useDevices, useSession } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { shellDevicesBanner } from "@/lib/devices";
+import { THIS_COMPUTER } from "@/lib/machines";
 import { cn } from "@/lib/utils";
 
 /**
  * This device needs enrolling or re-verifying: one bar above every page,
  * the core's words and its Enroll… (the SwiftUI app's `DevicesBanner`).
- * This machine's page says the same under its own name, so the bar stays off
- * the Machines page.
+ * This computer's page says the same under its own name, so the bar stays off
+ * it.
  */
 export function DevicesBanner() {
   const { data: session } = useSession();
@@ -21,14 +22,14 @@ export function DevicesBanner() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const banner = shellDevicesBanner(devices.data, session?.signedIn);
-  if (!banner || pathname.startsWith("/machines")) return null;
+  if (!banner || pathname.startsWith(`/spaces/computer/${THIS_COMPUTER}`)) return null;
 
   const critical = banner.tone === "critical";
   const Icon = critical ? TriangleAlertIcon : CircleAlertIcon;
-  // The sheet is the Machines page's.
+  // The sheet is on this computer's page.
   const enroll = () => {
     devices.startEnroll();
-    void navigate({ to: "/machines" });
+    void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } });
   };
   return (
     <div role="status" data-shell-devices-banner={banner.tone} className="flex shrink-0 items-center gap-2 bg-muted/60 px-4 py-1.5 text-xs">

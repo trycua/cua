@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background mouse event synthesis via SLEventPostToPid (SkyLight SPI),
 //! with fallback to the public CGEvent::post_to_pid for older OS releases.
 //!
@@ -228,7 +231,7 @@ fn click_at_xy_desktop_inner(
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
             moved.set_flags(flags);
             moved.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(12));
+            std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
         }
 
         for pair_index in 0..count.max(1) {
@@ -240,7 +243,7 @@ fn click_at_xy_desktop_inner(
                 (pair_index + 1) as i64,
             );
             down.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(28));
+            std::thread::sleep(cua_driver_core::input_pacing::click_gap());
             let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
             up.set_flags(flags);
@@ -250,7 +253,7 @@ fn click_at_xy_desktop_inner(
             );
             up.post(CGEventTapLocation::HID);
             if count > 1 {
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(cua_driver_core::input_pacing::multi_click_gap());
             }
         }
         Ok(())
@@ -372,8 +375,8 @@ extern "C" {
 
 /// Like `click_at_xy` but also targets a specific window. Foreground delivery
 /// uses the supplied window-local point with one public pid post. Background
-/// delivery keeps the translated screen point through the SkyLight route, with
-/// a public fallback only when the private symbol is unavailable.
+/// delivery stamps the window-local point on macOS 27+, or the screen point
+/// before, through SkyLight with a public fallback if the symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -444,7 +447,7 @@ fn click_at_xy_inner(
             click_group_id,
             post_mode,
         );
-        std::thread::sleep(std::time::Duration::from_millis(12));
+        std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
         for pair_index in 0..count {
             let click_state = (pair_index + 1) as i64;
@@ -472,7 +475,7 @@ fn click_at_xy_inner(
             // 28 ms down→up gap: an NSButton's mouseDown enters a modal
             // tracking loop that polls for the matching mouseUp; too tight a
             // gap can race the loop's first poll and the click is dropped.
-            std::thread::sleep(std::time::Duration::from_millis(28));
+            std::thread::sleep(cua_driver_core::input_pacing::click_gap());
 
             let up = CGEvent::new_mouse_event(
                 source.clone(),
@@ -496,7 +499,7 @@ fn click_at_xy_inner(
             );
 
             if count > 1 {
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(cua_driver_core::input_pacing::multi_click_gap());
             }
         }
         Ok(())
@@ -546,7 +549,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
-///  - `CGEventSetWindowLocation` per-event (screen point for both routes)
+///  - `CGEventSetWindowLocation` per-event (window-local point on macOS 27+,
+///    screen point before; see `window_location_is_window_local`)
 ///
 /// Uses the SkyLight route required by Chromium-compatible targets, with the
 /// public API only as a fallback when the private symbol is unavailable.
@@ -570,22 +574,42 @@ struct ChromiumClickRouteStep {
     delay_after_ms: u64,
 }
 
+/// Whether WindowServer hands the `CGEventSetWindowLocation` stamp of a
+/// pid-routed click to the target as its window-local point. macOS 27 does:
+/// a screen-point stamp arrives as `locationInWindow == (screen_x, height -
+/// screen_y)`, so the click lands shifted by the window's origin (AppKit,
+/// Chromium and GPUI windows alike). Earlier releases derived the local point
+/// from the screen stamp themselves.
+fn window_location_is_window_local() -> bool {
+    static WINDOW_LOCAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WINDOW_LOCAL.get_or_init(|| {
+        crate::tools::macos_product_version()
+            .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
+            .is_some_and(|major| major >= 27)
+    })
+}
+
 fn chromium_click_route_plan(
     screen_x: f64,
     screen_y: f64,
     win_local_x: f64,
     win_local_y: f64,
     count: usize,
+    window_local: bool,
 ) -> Vec<ChromiumClickRouteStep> {
     let screen_target = (screen_x, screen_y);
-    let _ = (win_local_x, win_local_y);
+    let stamped_target = if window_local {
+        (win_local_x, win_local_y)
+    } else {
+        screen_target
+    };
     let off_screen = (-1.0, -1.0);
     let mut steps = vec![
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Move,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state: 0,
             phase: 2,
             button_number: 0,
@@ -622,8 +646,8 @@ fn chromium_click_route_plan(
         steps.push(ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Down,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -633,8 +657,8 @@ fn chromium_click_route_plan(
         steps.push(ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Up,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -647,9 +671,8 @@ fn chromium_click_route_plan(
 
 /// Post the route plan for the Chromium-compatible background left-click
 /// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
-/// `CGEventSetWindowLocation` uses the screen point for both SkyLight and the
-/// public PID fallback. macOS interprets the stamped location in screen space
-/// even when the public route is used for a background process.
+/// `CGEventSetWindowLocation` carries the window-local point on macOS 27+ and
+/// the screen point before, for both SkyLight and the public PID fallback.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
@@ -665,7 +688,14 @@ pub fn click_at_xy_chromium(
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
+    let route_plan = chromium_click_route_plan(
+        screen_x,
+        screen_y,
+        win_local_x,
+        win_local_y,
+        count,
+        window_location_is_window_local(),
+    );
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 
@@ -1158,7 +1188,7 @@ where
 
             match spec.kind {
                 ForegroundDragEventKind::Move => {
-                    std::thread::sleep(std::time::Duration::from_millis(12));
+                    std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
                 }
                 ForegroundDragEventKind::Down => {
                     observe(spec.point.x, spec.point.y);
@@ -1462,7 +1492,7 @@ fn right_click_at_xy_inner(
         click_group_id,
         MousePostMode::SkyLightPreferred,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
     let down = CGEvent::new_mouse_event(source.clone(), down_type, point, button)
         .map_err(|_| anyhow::anyhow!("mouse down failed"))?;
@@ -1478,7 +1508,7 @@ fn right_click_at_xy_inner(
         3,
         MousePostMode::SkyLightPreferred,
     );
-    std::thread::sleep(std::time::Duration::from_millis(28));
+    std::thread::sleep(cua_driver_core::input_pacing::click_gap());
 
     let up = CGEvent::new_mouse_event(source, up_type, point, button)
         .map_err(|_| anyhow::anyhow!("mouse up failed"))?;
@@ -1682,7 +1712,7 @@ pub fn scroll_wheel_at_xy(
         ),
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
     for _ in 0..ticks.max(1) {
         // Fresh source per event, matching the click primitives.
@@ -1967,7 +1997,7 @@ mod tests {
         assert_eq!((screen_x, screen_y), (564.0, 504.0));
         assert_eq!((local_x, local_y), capture_local);
 
-        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1);
+        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1, false);
         assert_eq!(
             plan,
             vec![
@@ -2051,6 +2081,32 @@ mod tests {
         assert_eq!(skylight_journal_point, capture_local);
         assert!((292.0..=496.0).contains(&skylight_journal_point.0));
         assert!((132.0..=310.0).contains(&skylight_journal_point.1));
+    }
+
+    #[test]
+    fn macos_27_route_stamps_the_window_local_point() {
+        // macOS 27 reads the stamp as the window-local point: a screen-point
+        // stamp at (564, 504) for a window at (170, 194) would hit (564, 504)
+        // inside the window instead of (394, 310).
+        let plan = chromium_click_route_plan(564.0, 504.0, 394.0, 310.0, 2, true);
+        let targets: Vec<_> = plan
+            .iter()
+            .filter(|step| step.phase != 1 && step.event_location != (-1.0, -1.0))
+            .collect();
+        assert_eq!(targets.len(), 5, "move + two down/up pairs");
+        for step in targets {
+            assert_eq!(step.event_location, (564.0, 504.0));
+            assert_eq!(step.skylight_window_location, (394.0, 310.0));
+            assert_eq!(step.public_window_location, (394.0, 310.0));
+        }
+        let primers: Vec<_> = plan
+            .iter()
+            .filter(|step| step.event_location == (-1.0, -1.0))
+            .collect();
+        assert_eq!(primers.len(), 2);
+        for step in primers {
+            assert_eq!(step.skylight_window_location, (-1.0, -1.0));
+        }
     }
 
     #[test]

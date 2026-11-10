@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -21,14 +24,14 @@ impl Tool for TypeTextCharsTool {
         TYPE_CHARS_DEF.get_or_init(|| ToolDef {
             name: "type_text_chars".into(),
             description: "Type text character-by-character with a configurable inter-character \
-                delay (default 30 ms). Useful for apps that miss keystrokes. \
+                delay (default 0 sends batched key events). Useful for apps that miss keystrokes. \
                 Otherwise identical to type_text (WM_CHAR, no focus steal).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
                     "pid":{"type":"integer","description":"Target process ID."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Required with element_index."},
                     "text":{"type":"string","description":"Text to type, one character at a time."},
-                    "delay_ms":{"type":"integer","description":"Milliseconds between chars (default 30)."},
+                    "delay_ms":{"type":"integer","description":"Milliseconds between chars (default 0: batched key events; a positive value sends one key per character)."},
                     "type_chars_only":{"type":"boolean","description":"Skip element focus, type directly. Default false."}
                 },"additionalProperties":false
             }),
@@ -47,7 +50,7 @@ impl Tool for TypeTextCharsTool {
         // cua_driver_core::text_sanitize for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        let delay_ms = args.u64_or("delay_ms", 30);
+        let delay_ms = cua_driver_core::type_pacing::delay_from_args(&args);
         let hwnd_opt = args.opt_u64("window_id");
         let hwnd = match hwnd_opt {
             Some(h) => h,

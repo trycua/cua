@@ -200,6 +200,48 @@ stops when none of its Spaces runs:
   is not enough it refuses with `HostCapacity`, naming the processes that
   hold the most descriptors. Fix it by stopping Spaces or VMs you do not use.
 
+## The Linux runtime on Windows
+
+A PC with no container engine runs Linux Spaces in a WSL 2 distribution that
+cua imports and starts itself; nothing is installed first, not Docker Desktop.
+The first Linux Space downloads a pinned Ubuntu 24.04 base rootfs (30 MB,
+SHA-256 checked) and Ubuntu's Docker packages (about 120 MB), shown as the
+create's progress.
+
+- **Its own distribution.** `cua-runtime-<tag>` (one per cua home, so a
+  released Cua Spaces and Cua Spaces Local never share), with its disk under
+  `<cua home>\runtimes\linux\wsl`. cua never starts, stops or changes any other
+  distribution or Docker Desktop. It cannot see your Windows drives, so a Space
+  cannot mount a Windows folder yet.
+- **A pipe, not a port.** Windows reaches Docker at the named pipe
+  `\.\pipe\cua-engine-<tag>`, served by the cua daemon for your user only.
+- **Idle stop.** The runtime stops about two minutes after the last Linux Space
+  (`CUA_RUNTIME_LINUX_IDLE_SECS`). Its memory and processors are WSL's:
+  set them in `%UserProfile%\.wslconfig`, which cua never edits.
+- **When WSL 2 cannot run.** `cua runtime doctor` and New Space say what to turn
+  on: the Windows features *Windows Subsystem for Linux* and *Virtual Machine
+  Platform* (`wsl --install --no-distribution` as administrator, then restart),
+  or virtualization in the firmware.
+- **Settings.** `runtime.linux` works as on a Mac (`auto`, `builtin`, `system`).
+  Remove host setup deletes the distribution and its disk.
+- **Network policy.** WSL 2's kernel has no nftables `bridge` family, so policy
+  is enforced on routed traffic only (internet, LAN, the PC, cloud metadata,
+  other trees); Spaces of one tree can reach each other directly, and a deny of
+  another Space of the same tree is refused. `cua runtime doctor` says so.
+- **Today.** Spaces run under `runc` (the Mac adds gVisor).
+
+## microVMs on Windows
+
+`--kind microvm` runs in QEMU on the Windows Hypervisor Platform: hardware
+acceleration only, never software emulation. `cua runtime doctor` and New Space
+say what is missing: the Windows feature (`cua runtime setup microvm` turns it on
+through one administrator prompt, then restart), QEMU 9 or later (installed with
+winget), or virtualization in the firmware. Checkpoints, forks and warm pools work on the VM's disk: Windows does not
+let QEMU save a running VM's memory, so a restore or fork boots the saved disk
+(about four seconds, or half a second from a ready standby of the checkpoint);
+claiming a pooled VM is as fast. QEMU's network enforces no rules, so a microVM has no
+network.
+
 ## Your own cloud
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),

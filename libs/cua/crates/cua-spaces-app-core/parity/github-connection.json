@@ -1,0 +1,103 @@
+{
+  "name": "github-connection",
+  "about": "Settings, Connections, GitHub: the sign-in Cua uses when an agent asks to push and open a pull request. One row per host with its state in plain words (nothing found says to run gh auth login or paste a token; signed in with gh names the account; a saved token or one in the daemon's environment; a host switched off), a quiet mark only for a state that needs a look (a chosen account that is gone, a token that can do more than push and pull requests need), and behind a row the switch, the account picker (only with several gh accounts, with a way back to gh's own), how Cua signs in in order, what to run when nothing is signed in, Rescan and Paste a token. The data is the daemon's github.status; no token is ever in it. All data here is made up.",
+  "inputs": {
+    "nothing": {
+      "ghFound": true, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": true, "line": "No GitHub sign-in found: run gh auth login or paste a token", "accounts": [],
+          "sources": [
+            { "id": "saved", "used": false, "present": false, "line": "No saved token" },
+            { "id": "env", "used": false, "present": false, "line": "No GH_TOKEN in the Cua daemon's environment" },
+            { "id": "gh", "used": false, "present": false, "line": "gh is not signed in on github.com" }
+          ] }
+      ]
+    },
+    "no-gh": {
+      "ghFound": false, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": true, "line": "No GitHub sign-in found: run gh auth login or paste a token", "accounts": [],
+          "sources": [
+            { "id": "saved", "used": false, "present": false, "line": "No saved token" },
+            { "id": "env", "used": false, "present": false, "line": "No GH_TOKEN in the Cua daemon's environment" },
+            { "id": "gh", "used": false, "present": false, "line": "gh is not signed in on github.com" }
+          ] }
+      ]
+    },
+    "gh-two": {
+      "ghFound": true, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": true, "source": "gh", "login": "ada", "line": "Signed in as ada with gh",
+          "accounts": [
+            { "login": "ada", "active": true, "selected": true, "chosen": false, "valid": true },
+            { "login": "bob", "active": false, "selected": false, "chosen": false, "valid": true }
+          ],
+          "sources": [
+            { "id": "saved", "used": false, "present": false, "line": "No saved token" },
+            { "id": "env", "used": false, "present": false, "line": "No GH_TOKEN in the Cua daemon's environment" },
+            { "id": "gh", "used": true, "present": true, "line": "gh, signed in as ada" }
+          ] },
+        { "host": "ghe.example.com", "enabled": true, "source": "gh", "login": "ada-corp", "line": "Signed in as ada-corp with gh",
+          "accounts": [ { "login": "ada-corp", "active": true, "selected": true, "chosen": false, "valid": true } ],
+          "sources": [
+            { "id": "env", "used": false, "present": false, "line": "No GH_TOKEN in the Cua daemon's environment" },
+            { "id": "gh", "used": true, "present": true, "line": "gh, signed in as ada-corp" }
+          ] }
+      ]
+    },
+    "picked-bob": {
+      "ghFound": true, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": true, "source": "gh", "login": "bob", "line": "Signed in as bob with gh",
+          "warning": "This sign-in can also change GitHub Actions workflows and administer organizations and settings. Pushing and opening pull requests only needs the repo scope: use a narrower token, or sign in to gh again with only that.",
+          "accounts": [
+            { "login": "ada", "active": true, "selected": false, "chosen": false, "valid": true },
+            { "login": "bob", "active": false, "selected": true, "chosen": true, "valid": true }
+          ],
+          "sources": [
+            { "id": "gh", "used": true, "present": true, "line": "gh, signed in as bob" }
+          ] }
+      ]
+    },
+    "picked-gone": {
+      "ghFound": true, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": true, "problem": true, "line": "The gh account you chose for github.com, bob, is no longer signed in: choose another in Settings, Connections, or run gh auth login",
+          "accounts": [ { "login": "ada", "active": true, "selected": false, "chosen": false, "valid": true } ],
+          "sources": [ { "id": "gh", "used": true, "present": true, "line": "The gh account you chose for github.com, bob, is no longer signed in: choose another in Settings, Connections, or run gh auth login" } ] }
+      ]
+    },
+    "saved": {
+      "ghFound": true, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": true, "source": "saved", "login": "carol", "line": "Signed in as carol with a saved token",
+          "accounts": [ { "login": "ada", "active": true, "selected": false, "chosen": false, "valid": true } ],
+          "sources": [
+            { "id": "saved", "used": true, "present": true, "line": "A token saved in Settings, Connections" },
+            { "id": "env", "used": false, "present": false, "line": "No GH_TOKEN in the Cua daemon's environment" },
+            { "id": "gh", "used": false, "present": true, "line": "gh, signed in as ada" }
+          ] }
+      ]
+    },
+    "off": {
+      "ghFound": true, "canSave": true,
+      "hosts": [
+        { "host": "github.com", "enabled": false, "line": "Turned off: Cua will not use GitHub on this host",
+          "accounts": [ { "login": "ada", "active": true, "selected": false, "chosen": false, "valid": true } ],
+          "sources": [ { "id": "gh", "used": false, "present": true, "line": "gh, signed in as ada" } ] }
+      ]
+    },
+    "no-daemon": { "ghFound": false, "canSave": false, "hosts": [], "error": "the Cua daemon is not running" }
+  },
+  "steps": [
+    { "step": "nothing signed in", "input": "nothing", "open": "github.com" },
+    { "step": "gh is not installed", "input": "no-gh", "open": "github.com" },
+    { "step": "gh with two accounts and an Enterprise host", "input": "gh-two", "open": "github.com" },
+    { "step": "the Enterprise host", "input": "gh-two", "open": "ghe.example.com" },
+    { "step": "an account chosen, with a scopes warning", "input": "picked-bob", "open": "github.com" },
+    { "step": "the chosen account signed out of gh", "input": "picked-gone", "open": "github.com" },
+    { "step": "a saved token wins over gh", "input": "saved", "open": "github.com" },
+    { "step": "the host switched off", "input": "off", "open": "github.com" },
+    { "step": "the daemon is not running", "input": "no-daemon" }
+  ]
+}

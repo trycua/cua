@@ -4,7 +4,7 @@
 // A Space's detail as this device sees it (the core's `sidebar::detail_for`,
 // as the SwiftUI app's `AppModel.detail` draws it): a machine on the relay
 // while this device is not enrolled, a machine that keeps its desktop
-// private, and Share only with Settings, Experiments, Sharing on.
+// private, and Share.
 
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,24 +18,41 @@ stubBrowserApis();
 const NOTICE = {
   kind: "needs-enrollment",
   status: "Not trusted yet",
-  text: "Trust this Mac to connect to your other machines.",
+  text: "Trust this Mac to connect to your other computers.",
   actionLabel: "Trust this Mac",
 };
 
 /** One of your machines on the relay, answering with `features`. */
-const machine = (features: string[]) => ({ id: "relay:studio", name: "Studio", provider: "relay", os: "macos", spacesdVersion: "0.6.0", features, reachable: true });
+const machine = (features: string[]) => ({
+  id: "relay:studio",
+  name: "Studio",
+  provider: "relay",
+  os: "macos",
+  spacesdVersion: "0.6.0",
+  features,
+  reachable: true,
+});
 /** A Space Studio provides. */
-const hosted = { id: "relay:studio/space-1", name: "Build box", provider: "relay", os: "linux", spacesdVersion: "0.6.0", features: ["desktop_stream"], reachable: true, host: "studio", hostName: "Studio" };
+const hosted = {
+  id: "relay:studio/space-1",
+  name: "Build box",
+  provider: "relay",
+  os: "linux",
+  spacesdVersion: "0.6.0",
+  features: ["desktop_stream"],
+  reachable: true,
+  host: "studio",
+  hostName: "Studio",
+};
 
 /** `over` is read on every answer: a test may change it while the page is open. */
-function host(rows: unknown[], over: { access?: boolean; sharing?: boolean } = {}): TestHost {
+function host(rows: unknown[], over: { access?: boolean } = {}): TestHost {
   return {
     failsCreates: false,
     listsGhost: false,
     answer: (op, out) => {
       if (op === "spaces.list") return [...(out as unknown[]), ...rows];
       if (op === "machines.list" && over.access) return (out as MachineRow[]).map((m) => (m.current ? { ...m, accessNotice: NOTICE } : m));
-      if (op === "experiments.get") return { ...(out as object), sharing: Boolean(over.sharing) };
       return out;
     },
   };
@@ -50,7 +67,16 @@ describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (
   // with the switch right there.
   it("says whether the desktop is shared instead of loading forever, and asks it for no windows or agents", async () => {
     // As the SwiftUI app sends This Mac while it shares its desktop (`spaceToRow`).
-    const thisMac = { id: "this-mac", name: "This Mac", provider: "local", os: "macos", spacesdVersion: "", features: [], reachable: true, powerState: "running" };
+    const thisMac = {
+      id: "this-mac",
+      name: "This Mac",
+      provider: "local",
+      os: "macos",
+      spacesdVersion: "",
+      features: [],
+      reachable: true,
+      powerState: "running",
+    };
     const asked: string[] = [];
     const { router } = await mountApp("/spaces", {
       ...host([thisMac]),
@@ -79,7 +105,7 @@ describe.skipIf(!wasmBuilt)("this machine's own desktop opened as a Space page (
 
 describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real routes, wasm core)", () => {
   it("greys out a machine's Connect, Teleport and Share while this device is not enrolled, and its action opens the enroll sheet", async () => {
-    const { router, hooks } = await mountApp("/spaces", host([machine(["desktop_stream", "window_stream", "host_spaces", "relay_attach"])], { access: true, sharing: true }));
+    const { router, hooks } = await mountApp("/spaces", host([machine(["desktop_stream", "window_stream", "host_spaces", "relay_attach"])], { access: true }));
     await waitFor(() => expect(hooks.machines.data?.find((m) => m.current)?.accessNotice).toEqual(NOTICE));
     await act(() => router.navigate({ to: "/spaces/$spaceId", params: { spaceId: "relay:studio" } }));
 
@@ -89,7 +115,7 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect((screen.getByRole("button", { name: /Share/ }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: NOTICE.actionLabel }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
     await waitFor(() => expect(document.querySelector("[data-enroll]")).not.toBeNull());
   });
 
@@ -123,15 +149,9 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (real route
     expect(screen.queryByRole("button", { name: /Teleport an app/ })).toBeNull();
   });
 
-  it("shows Share only while Settings, Experiments, Sharing is on", async () => {
-    const off = await mountApp("/spaces/local:design-review", host([]));
-    await off.router.load();
-    await screen.findByRole("button", { name: /^Teleport an app$/ });
-    expect(screen.queryByRole("button", { name: /^Share$/ })).toBeNull();
-    cleanup();
-
-    const on = await mountApp("/spaces/local:design-review", host([], { sharing: true }));
-    await on.router.load();
+  it("shows Share", async () => {
+    const view = await mountApp("/spaces/local:design-review", host([]));
+    await view.router.load();
     await screen.findByRole("button", { name: /^Share$/ });
   });
 });

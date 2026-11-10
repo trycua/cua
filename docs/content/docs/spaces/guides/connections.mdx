@@ -11,7 +11,7 @@ with nothing to set up inside the Space.
 ## Connect a provider
 
 Open **Settings, Connections** and scroll to **Providers**, below **Coding
-apps** and **On another machine**. Each row is one provider on one line: its
+apps** and **On another computer**. Each row is one provider on one line: its
 icon, its name, a grey line saying what is saved (for example **Signed in as
 you@example.com (Claude Max)** or **API key ending 4f2a**) or **Not
 connected**, and then either **Connect** or a check and **Connected**.
@@ -28,8 +28,8 @@ more than one key for the provider, it lists them, each with **Remove**, and
 such as **Work key**. The first key is the one the row shows and the one every
 app uses unless you tell an app otherwise (see [Pick which key an app uses](#pick-which-key-an-app-uses)).
 
-The sheet shows only the ways that apply on this machine. For Anthropic that
-can be your Claude sign-in (found on this machine, for Claude Code only) or an
+The sheet shows only the ways that apply on this computer. For Anthropic that
+can be your Claude sign-in (found on this computer, for Claude Code only) or an
 API key. For OpenAI it is an API key, or your ChatGPT sign-in for Codex.
 Every other provider takes an API key. Anthropic, OpenAI, OpenRouter, Google
 AI Studio, xAI, DeepSeek, Kimi and Custom endpoint are up front; press **Show
@@ -95,10 +95,10 @@ providers as fallbacks when you have not chosen one, and turns off borrowing sig
 Hermes cannot reach its provider, the run fails and the thread shows the
 **Connect** card for it.
 
-### A server on your own machine
+### A server on your own computer
 
 Use **Custom endpoint** with the server's base URL, for example LM Studio or
-Ollama. A Space that is isolated from your machine cannot reach a server on it,
+Ollama. A Space that is isolated from your computer cannot reach a server on it,
 and Cua does not change that for you: allow the port for that Space in its
 network settings first. The key is optional.
 
@@ -112,7 +112,7 @@ checked, and providers Cua has not run end to end yet, are not listed.
 
 | Provider | How to connect | Works with |
 | --- | --- | --- |
-| Anthropic | Your sign-in on this machine, A pasted Claude token, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
+| Anthropic | Your sign-in on this computer, A pasted Claude token, API key | Claude Code, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
 | OpenAI | Plan sign-in, API key | Codex, OpenCode, Goose, Pi, Hermes, OpenClaw, T3 Code |
 | OpenRouter | API key | OpenCode, Goose, Pi, Hermes, OpenClaw |
 | Google AI Studio | API key | Gemini CLI, Antigravity, OpenCode, Goose, Pi, Hermes |
@@ -142,6 +142,69 @@ checked, and providers Cua has not run end to end yet, are not listed.
 | Custom endpoint | Base URL and key | OpenCode, Goose, Pi, Hermes, OpenClaw |
 
 {/* providers:end */}
+
+## GitHub
+
+An agent in a Space holds no GitHub access. When it wants to push a branch and
+open a pull request, it asks Cua, and Cua shows you a card with what changes:
+the repository, the branch, the files and the **account that will be used**.
+Nothing is sent until you press **Push and open**. **Not now** sends nothing,
+and the agent is told you said no. The push is made from this computer; the
+sign-in never goes into a Space.
+
+Cua looks for a GitHub sign-in in this order and uses the first one it finds:
+
+1. **A token saved in Cua.** Press **Paste a token** on the GitHub row, or
+   save a key named `GITHUB_TOKEN` under **Add key**.
+2. **A token in the environment of the Cua daemon**: `GH_TOKEN` or
+   `GITHUB_TOKEN` for github.com, and `GH_ENTERPRISE_TOKEN` with `GH_HOST` for
+   a GitHub Enterprise host.
+3. **The GitHub CLI.** If you ran `gh auth login`, there is nothing to paste.
+   Cua asks `gh` for the token only at the moment you approve a push, keeps it
+   in memory for that one call, and never writes it down, logs it or puts it in
+   a card or an error. This needs gh 2.81 or later to choose between accounts.
+4. **Git's own sign-in**, for a repository whose remote is an SSH address (your
+   SSH key) or when git has a credential helper. It can push a branch but it
+   cannot open the pull request, so the card says so and you get the link.
+
+Under **Settings, Connections, GitHub** there is one row per host, github.com
+and every GitHub Enterprise host that `gh` or the environment knows. A row says
+what is signed in in plain words: **Signed in as ada with gh**, **Signed in as
+carol with a saved token**, or **No GitHub sign-in found: run gh auth login or
+paste a token**. Click a row to open it:
+
+- **Use for pushes and pull requests** turns the host off. While it is off Cua
+  uses no GitHub sign-in on that host, whatever else is set, and an agent that
+  asks gets a plain no.
+- **Account** appears when `gh` is signed in with more than one account on the
+  host. Choose the one Cua should use. If you choose none, it uses the account
+  `gh` uses itself. If the account you chose signs out of `gh`, Cua does not
+  quietly use another one: the row says so and you choose again.
+- **How Cua signs in** lists the four places above in order, with the one in use.
+- **Rescan** looks again after you ran `gh auth login` or changed a token. It
+  also asks GitHub whose account a saved or environment token is and what it may
+  do, so the row can name the account.
+
+A sign-in needs less than people usually give it. Pushing a branch and opening a
+pull request only needs the `repo` scope. When the sign-in in use can also change
+workflows or administer organizations, the row shows a warning triangle and the
+page says what the extra access is, so you can paste a narrower token or sign
+in to `gh` again with only the scope that is needed. The card names the account
+only; the warning is here. Cua uses the sign-in for the approved push and pull
+request and for nothing else.
+
+The same thing is available on the command line, and it never prints a token:
+
+```bash test="cli-shape" id="github-connection"
+cua connections github
+cua connections github rescan
+cua connections github use bob
+cua connections github use --auto
+cua connections github off --host ghe.example.com
+```
+
+Cua can later add a fifth place, a sign-in made with a Cua GitHub App, as one
+more entry in this list. Nothing about the card or the rows would change.
 
 ## Adding or hiding a provider
 

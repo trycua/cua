@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The tool call a blocking input worker serves.
 //!
 //! A tool call stops waiting for its blocking worker at its deadline, but
@@ -26,17 +29,32 @@ use cua_driver_core::tool::DesktopLease;
 /// the desktop lease of the task that started it.
 pub struct Action {
     deadline: Instant,
-    abandoned: Mutex<bool>,
-    fenced: Mutex<(bool, Vec<OwnedFd>)>,
+    phase: Mutex<ActionPhase>,
+    /// Held across each admitted send, so [`Action::abandon`] can wait for
+    /// one under way after shutting the fenced sockets under `phase`.
+    sending: Mutex<()>,
     _lease: Option<DesktopLease>,
+}
+
+enum ActionPhase {
+    /// The caller is waiting; these sockets are shut if it stops.
+    Active(Vec<OwnedFd>),
+    /// The caller stopped waiting and every fenced socket is shut.
+    Abandoned,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Action {
     pub fn new(budget: Duration) -> Arc<Self> {
         Arc::new(Self {
             deadline: Instant::now() + budget,
-            abandoned: Mutex::new(false),
-            fenced: Mutex::new((false, Vec::new())),
+            phase: Mutex::new(ActionPhase::Active(Vec::new())),
+            sending: Mutex::new(()),
             _lease: DesktopLease::current(),
         })
     }
@@ -51,11 +69,8 @@ impl Action {
     /// must not block: queue the events and flush them, then wait for the
     /// compositor outside.
     pub fn admit<T>(&self, send: impl FnOnce() -> T) -> Result<T> {
-        let abandoned = self
-            .abandoned
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *abandoned || Instant::now() >= self.deadline {
+        let _sending = lock(&self.sending);
+        if self.is_abandoned() || Instant::now() >= self.deadline {
             bail!(
                 "{}: the call ran out of time, so no further input was sent",
                 super::foreground::CODE_TIMEOUT
@@ -66,39 +81,28 @@ impl Action {
 
     /// The caller stopped waiting: refuse every later [`Action::admit`].
     pub fn abandon(&self) {
-        let mut fenced = self
-            .fenced
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        fenced.0 = true;
-        fenced.1.iter().for_each(shut_down);
-        drop(fenced);
-        *self
-            .abandoned
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        let mut phase = lock(&self.phase);
+        if let ActionPhase::Active(fenced) = &*phase {
+            fenced.iter().for_each(shut_down);
+        }
+        *phase = ActionPhase::Abandoned;
+        drop(phase);
+        drop(lock(&self.sending));
     }
 
     /// Whether the caller stopped waiting, so fenced sockets are shut.
     pub fn is_abandoned(&self) -> bool {
-        self.fenced
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .0
+        matches!(*lock(&self.phase), ActionPhase::Abandoned)
     }
 
     /// Shut `socket` down once this action is abandoned, before waiting for a
     /// send under way, so nothing queued on it is written later.
     pub fn fence(&self, socket: impl AsFd) -> std::io::Result<()> {
         let socket = socket.as_fd().try_clone_to_owned()?;
-        let mut fenced = self
-            .fenced
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if fenced.0 {
-            shut_down(&socket);
+        match &mut *lock(&self.phase) {
+            ActionPhase::Active(fenced) => fenced.push(socket),
+            ActionPhase::Abandoned => shut_down(&socket),
         }
-        fenced.1.push(socket);
         Ok(())
     }
 
@@ -239,6 +243,49 @@ mod tests {
         action.abandon();
         let abandoned_at = Instant::now();
         assert!(worker.join().unwrap() <= abandoned_at);
+    }
+
+    #[test]
+    fn once_an_action_reads_abandoned_it_admits_nothing() {
+        // The window this guards is a race, so take it many times.
+        for _ in 0..50 {
+            let action = Action::new(Duration::from_secs(60));
+            let abandoner = action
+                .admit(|| {
+                    let abandoner = {
+                        let action = action.clone();
+                        std::thread::spawn(move || action.abandon())
+                    };
+                    while !action.is_abandoned() {
+                        std::thread::yield_now();
+                    }
+                    abandoner
+                })
+                .unwrap();
+            action
+                .admit(|| panic!("sent after the action read abandoned"))
+                .unwrap_err();
+            abandoner.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn abandoned_reads_true_only_once_fenced_sockets_are_shut() {
+        use std::io::Write;
+        for _ in 0..50 {
+            let (mut socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let action = Action::new(Duration::from_secs(60));
+            action.fence(&socket).unwrap();
+            let abandoner = {
+                let action = action.clone();
+                std::thread::spawn(move || action.abandon())
+            };
+            while !action.is_abandoned() {
+                std::thread::yield_now();
+            }
+            assert!(socket.write_all(b"late").is_err());
+            abandoner.join().unwrap();
+        }
     }
 
     #[test]

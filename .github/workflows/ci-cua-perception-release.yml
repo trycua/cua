@@ -24,6 +24,7 @@ on:
       - "libs/cua-driver/rust/Cargo.lock"
       - ".release-please-manifest.json"
       - "release-please-config.json"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -63,7 +64,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   crate:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: crate (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -92,6 +100,8 @@ jobs:
         run: cargo test --locked -p cua-perception
 
   contract:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

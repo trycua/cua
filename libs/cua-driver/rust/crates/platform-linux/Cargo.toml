@@ -61,6 +61,7 @@ wayland-scanner = "0.31"
 bitflags = "2"
 socket2 = "0.6"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"] }
 # Wayland staging protocols: ext-foreign-toplevel-list-v1,
 # ext-image-capture-source-v1, ext-image-copy-capture-v1 (per-window
 # screenshot on modern wlroots/GNOME/KDE) and wp-fractional-scale-v1 +
@@ -87,16 +88,16 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 # ashpd re-exports `url` transitively; declared explicitly so ashpd
 # version bumps cannot silently break the resolver.
 url = "2"
-# PipeWire client for the ScreenCast per-window capture path — dequeues
-# frames from the node id returned by `open_pipe_wire_remote`. Pinned to
-# 0.8 (last well-documented release; 0.10 had docs.rs build failures in
-# mid-2026). Needs libpipewire-0.3 headers at build time — gated behind
-# the `portal-capture` feature.
-pipewire = { version = "0.8", optional = true }
-# Companion to pipewire 0.8 — needed to construct the SPA_PARAM_EnumFormat
-# pod (SPA_VIDEO_FORMAT_BGRx at announced width/height) we hand to
-# `Stream::connect`. Same `portal-capture` gating as `pipewire`.
-libspa = { version = "0.8", optional = true }
+# PipeWire types and constants for the ScreenCast video route, which dequeues
+# frames from the node id returned by `open_pipe_wire_remote`. libpipewire
+# itself is loaded at runtime (`wayland::libpipewire`), so builds need its
+# headers but the binary does not link it. Gated behind `portal-capture`.
+pipewire-sys = { version = "0.10", optional = true }
+libloading = { version = "0.8", optional = true }
+# SPA pods, format parsing and buffer types (header-only, compiled in): builds
+# the SPA_PARAM_EnumFormat pod (raw BGRx/BGRA/RGBx/RGBA at announced
+# width/height) handed to `pw_stream_connect`. Same `portal-capture` gating.
+libspa = { version = "0.10", optional = true }
 # Pure-Rust libei/libeis bindings for the GNOME/KDE input path (handshake
 # → seat → device → pointer_absolute/button/scroll/keyboard/text). API is
 # documented as "incomplete and subject to change" — budget for churn on
@@ -141,11 +142,13 @@ portal-input = [
     "dep:calloop",
     "dep:enumflags2",
 ]
-# PipeWire-backed per-window ScreenCast capture keeps its newer system-header
-# requirement and remains enabled by Nix/modern desktop builds.
+# PipeWire-backed ScreenCast capture (the full-desktop video route for
+# KDE/KWin and other compositors without wlr-screencopy) keeps its newer
+# system-header requirement and remains enabled by Nix/modern desktop builds.
 portal-capture = [
     "ashpd/screencast",
-    "dep:pipewire",
+    "dep:pipewire-sys",
+    "dep:libloading",
     "dep:libspa",
 ]
 # Backward-compatible full desktop feature used by the Nix package.

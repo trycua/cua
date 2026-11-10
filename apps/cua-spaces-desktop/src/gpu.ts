@@ -23,6 +23,10 @@ export function videoDecodeSwitches(platform: NodeJS.Platform, env: NodeJS.Proce
 }
 
 /** Applies them to Electron's command line (before the app is ready). */
-export function applyVideoDecodeSwitches(commandLine: { getSwitchValue(name: string): string; appendSwitch(name: string, value?: string): void }, platform: NodeJS.Platform, env: NodeJS.ProcessEnv): void {
+export function applyVideoDecodeSwitches(
+  commandLine: { getSwitchValue(name: string): string; appendSwitch(name: string, value?: string): void },
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): void {
   for (const [name, value] of videoDecodeSwitches(platform, env, commandLine.getSwitchValue("enable-features"))) commandLine.appendSwitch(name, value);
 }

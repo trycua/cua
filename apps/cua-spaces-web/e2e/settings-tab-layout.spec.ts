@@ -41,7 +41,7 @@ test("Settings: the heading, tab bar and content keep their left edge across tab
     await page.waitForTimeout(150);
     edges[label] = await page.evaluate(() => {
       const nav = document.querySelector('nav[aria-label="Settings"]')!;
-      const scroller = nav.closest(".overflow-y-auto")!;
+      const scroller = nav.closest(".scroll-y-stable")!;
       const first = nav.nextElementSibling;
       return {
         heading: document.querySelector("h1")!.getBoundingClientRect().left,

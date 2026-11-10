@@ -193,15 +193,10 @@ jobs:
           python-version: "3.12"
       - name: Install native Linux build dependencies
         if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev libwebkit2gtk-4.1-dev libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
       - name: Require the exact current pull request head
         shell: bash
         env:

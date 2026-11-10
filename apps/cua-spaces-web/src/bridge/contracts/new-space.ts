@@ -56,7 +56,7 @@ export interface LocalStatus {
 }
 
 /** `spaces.fixRuntime`'s actions. */
-export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app";
+export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app" | "open-windows-features";
 
 /** A step the host offers next to "no local runtime" (`LocalStatus.fix`). */
 export interface RuntimeFix {
@@ -431,7 +431,17 @@ export interface CloudSheetView {
   footnote: string;
   error: string | null;
   done: boolean;
-  request: { provider: string; auth?: string; region?: string; environment?: string; budget_usd_month: number; max_size?: string; account_id?: string; check?: boolean; uses_token?: boolean } | null;
+  request: {
+    provider: string;
+    auth?: string;
+    region?: string;
+    environment?: string;
+    budget_usd_month: number;
+    max_size?: string;
+    account_id?: string;
+    check?: boolean;
+    uses_token?: boolean;
+  } | null;
 }
 
 /* ---- The SDK's cloud tools (snake_case wire records) --------------------- */

@@ -96,7 +96,6 @@ export interface McpReference {
   server: string;
   generator: string;
   source: string;
-  version?: string;
   description: string;
   categories: McpCategory[];
   tools: McpToolEntry[];
@@ -436,7 +435,6 @@ export function renderMcpReference(ref: McpReference): Map<string, string> {
       description,
       generator: ref.generator,
       source: ref.source,
-      version: ref.version,
       components: text.includes('<Tabs ') ? ['Tabs'] : [],
       body: text,
     });

@@ -1,7 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    window_target::{
+        describe_candidates, resolve_pid_window_target, PidWindowTargetResolution,
+        WindowTargetCandidate,
+    },
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -40,6 +47,77 @@ fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
         edge -= 1;
     }
     Some(edge)
+}
+
+/// The pid's topmost window when the KWin adapter listed it. Other compositors,
+/// and a KWin that doesn't let this executable enumerate, keep the existing choice.
+fn kwin_topmost_window(pid: u32) -> Option<u64> {
+    if !crate::wayland::is_wayland() || !crate::wayland::kwin_capture::may_be_session() {
+        return None;
+    }
+    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
+        .filter(|window| crate::wayland::kwin_capture::knows_window(*window))
+}
+
+/// The window a pid-only read means when the input resolver chose none.
+#[derive(Debug, PartialEq)]
+enum PidRead {
+    Window(u64),
+    Ambiguous(Vec<WindowTargetCandidate>),
+    NotFound,
+}
+
+/// A pid's one listed window is read even off-screen, as `list_windows` shows
+/// it. Several with no focus or stacking to choose by are the caller's choice.
+fn listed_pid_window(candidates: Vec<WindowTargetCandidate>) -> PidRead {
+    match resolve_pid_window_target(candidates) {
+        PidWindowTargetResolution::NotFound => PidRead::NotFound,
+        PidWindowTargetResolution::Resolved(candidate) => PidRead::Window(candidate.window_id),
+        PidWindowTargetResolution::Ambiguous(candidates) => PidRead::Ambiguous(candidates),
+    }
+}
+
+fn ambiguous_pid_read(pid: u32, candidates: Vec<WindowTargetCandidate>) -> ToolResult {
+    ToolResult::error(format!(
+        "pid {pid} owns more than one window and none is known to be in use: {}. Provide \
+         window_id.",
+        describe_candidates(&candidates)
+    ))
+    .with_structured(json!({
+        "code": "ambiguous_window_target",
+        "effect": "refused",
+        "pid": pid,
+        "candidates": candidates
+    }))
+}
+
+#[cfg(test)]
+mod pid_read_tests {
+    use super::{listed_pid_window, PidRead, WindowTargetCandidate};
+
+    fn candidate(window_id: u64, is_on_screen: bool) -> WindowTargetCandidate {
+        WindowTargetCandidate {
+            window_id,
+            transient_for: None,
+            title: format!("w{window_id}"),
+            app_name: None,
+            is_on_screen,
+        }
+    }
+
+    #[test]
+    fn a_pid_s_only_listed_window_is_read_even_off_screen() {
+        assert_eq!(
+            listed_pid_window(vec![candidate(5, false)]),
+            PidRead::Window(5)
+        );
+        assert_eq!(listed_pid_window(Vec::new()), PidRead::NotFound);
+        let several = vec![candidate(5, false), candidate(6, true)];
+        assert_eq!(
+            listed_pid_window(several.clone()),
+            PidRead::Ambiguous(several)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -340,38 +418,46 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // `window_id` omitted: the open popup menu of this pid when one is
-        // mapped (a context menu the caller wants to read), else the pid's
-        // focused / dialog / active / largest window.
+        // `window_id` omitted: on KWin the pid's topmost window, else the open
+        // popup menu of this pid when one is mapped (a context menu the caller
+        // wants to read), else its focused / dialog / active / largest window.
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
+                    // A KWin handle first: X11's popup and focus reads can't choose among them.
+                    if let Some(window) = kwin_topmost_window(pid) {
+                        return PidRead::Window(window);
+                    }
                     if let Some(popup) = crate::input::mapped_popup_windows()
                         .into_iter()
                         .rev()
                         .find(|p| p.pid == Some(pid))
                     {
-                        return Some(popup.window);
+                        return PidRead::Window(popup.window);
                     }
-                    let windows = crate::x11::list_windows(Some(pid));
-                    let candidates: Vec<u64> = windows.iter().map(|w| w.xid).collect();
-                    crate::x11::pick_pid_window(
-                        &windows,
-                        crate::x11::focused_window_among(&candidates),
-                        crate::x11::transient_for,
-                        crate::x11::active_window(),
-                    )
+                    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
+                        .map(PidRead::Window)
+                        .unwrap_or_else(|| {
+                            listed_pid_window(super::impl_::pid_window_target_candidates(
+                                i64::from(pid),
+                            ))
+                        })
                 })
                 .await
-                .ok()
-                .flatten();
+                .unwrap_or(PidRead::NotFound);
                 match chosen {
-                    Some(v) => v,
-                    None => {
-                        return ToolResult::error(format!(
-                            "No windows found for pid {pid}. Provide window_id."
-                        ))
+                    PidRead::Window(v) => v,
+                    PidRead::Ambiguous(candidates) => {
+                        return ambiguous_pid_read(pid, candidates);
+                    }
+                    PidRead::NotFound => {
+                        let message = tokio::task::spawn_blocking(move || {
+                            crate::atspi::no_windows_error(pid)
+                        })
+                        .await
+                        .unwrap_or_else(|error| format!("Task error: {error}"));
+                        return ToolResult::error(message);
                     }
                 }
             }
@@ -441,16 +527,14 @@ impl Tool for GetWindowStateTool {
         });
         // Optional caps — when omitted, the AT-SPI walker uses its built-in
         // defaults (#22865).
-        let max_elements = Some(
-            view.max_elements(
-                &args,
-                LINUX_DEFAULT_MAX_ELEMENTS,
-                display_only
-                    || args
-                        .get("_observation_only")
-                        .and_then(|value| value.as_bool())
-                        == Some(true),
-            ),
+        let max_elements = view.max_elements(
+            &args,
+            LINUX_DEFAULT_MAX_ELEMENTS,
+            display_only
+                || args
+                    .get("_observation_only")
+                    .and_then(|value| value.as_bool())
+                    == Some(true),
         );
         let max_depth = args
             .get("max_depth")
@@ -545,7 +629,7 @@ impl Tool for GetWindowStateTool {
                     pid,
                     xid,
                     query_for_walk.as_deref(),
-                    max_elements,
+                    Some(max_elements),
                     max_depth,
                     walk_timeout,
                 ))
@@ -1053,7 +1137,7 @@ impl Tool for GetWindowStateTool {
                             window_id: xid,
                             key: cua_driver_core::window_state_view::ViewKey {
                                 query: query.clone(),
-                                max_elements: max_elements.unwrap_or(LINUX_DEFAULT_MAX_ELEMENTS),
+                                max_elements,
                                 max_depth,
                             },
                             focus_probe: None,

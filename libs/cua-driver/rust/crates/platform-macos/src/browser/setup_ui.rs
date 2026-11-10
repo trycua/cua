@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact macOS setup for Chrome's per-instance remote-debugging toggle.
 
 use std::time::{Duration, Instant};
@@ -2025,6 +2028,8 @@ mod tests {
             title: title.map(str::to_owned),
             value: value.map(str::to_owned),
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
@@ -2054,6 +2059,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes,
             truncated: false,
+            depth_truncated: false,
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
         }
@@ -2386,6 +2392,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes: Vec::new(),
             truncated: true,
+            depth_truncated: false,
             walk: cua_driver_core::walk_budget::WalkOutcome::timed_out(
                 1000,
                 std::time::Duration::from_millis(1000),

@@ -109,8 +109,6 @@ export function newSpaceTauriOps(invoke: Invoke, readUi: (key: string) => string
     "clouds.status": async () => (await tool<CloudStatusWire | null>("cloud_status", {})) ?? { providers: [] },
     "clouds.test": ({ target }) => tool<CloudTestWire>("cloud_test", { ...target }),
     "clouds.connect": ({ target, makeDefault }) => tool<CloudConnectWire>("cloud_connect", { ...target, make_default: makeDefault }),
-    "clouds.disconnect": ({ provider, deleteResources }) =>
-      tool<CloudDisconnectedWire>("cloud_disconnect", { provider, delete: deleteResources }),
+    "clouds.disconnect": ({ provider, deleteResources }) => tool<CloudDisconnectedWire>("cloud_disconnect", { provider, delete: deleteResources }),
   };
 }
-

@@ -21,6 +21,10 @@ hosted = []
 [dependencies]
 # The WireGuard®-based mesh protocol and node (MIT).
 cua-mesh = { path = "../../../cua/crates/cua-mesh" }
+# Push notifications for the phone app (the registry, the providers).
+cua-push = { path = "../../../cua/crates/cua-push" }
+# The viewer page the relay serves itself to a request without a credential.
+cua-spacesd-html5 = { path = "../../../cua/crates/cua-spacesd-html5" }
 axum = { version = "0.8", features = ["ws"] }
 base64.workspace = true
 bytes.workspace = true
@@ -30,7 +34,9 @@ http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
-hyper-util = { workspace = true, features = ["client-proxy"] }
+# `service`: TowerToHyperService (TCP shares serve the router in-process).
+hyper-util = { workspace = true, features = ["client-proxy", "service"] }
+tower.workspace = true
 # Account mode: OIDC access-token validation (JWKS) and relay-signed
 # EdDSA principal assertions. ring is already the workspace's TLS crypto.
 jsonwebtoken = "9"
@@ -55,6 +61,8 @@ yamux.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+# The list of calls a viewer ticket may make is the machine's: a test keeps the relay's copy equal.
+cua-proto = { path = "../../../cua/crates/cua-proto" }
 native-tls.workspace = true
 tokio-native-tls.workspace = true
 tempfile.workspace = true

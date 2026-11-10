@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-som"
-version = "0.1.4"
+version = "0.2.0"
 description = "Computer Vision and OCR library for detecting and analyzing UI elements"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
@@ -29,7 +29,7 @@ readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 keywords = ["computer-vision", "ocr", "ui-analysis", "icon-detection"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 7 - Inactive",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",

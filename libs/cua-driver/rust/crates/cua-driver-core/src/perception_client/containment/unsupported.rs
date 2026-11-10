@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Fallback for targets with no perception worker containment implementation.
 //!
 //! Launching an unconstrained worker would be a silent downgrade of the

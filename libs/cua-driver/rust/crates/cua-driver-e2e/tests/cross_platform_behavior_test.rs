@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform behavioral scenarios derived from the external CUA matrix.
 //!
 //! These are source-owned Rust tests, not a copy of a partner test runner. The
@@ -1654,8 +1657,7 @@ fn native_hyprland_semantic_input_available() -> bool {
     {
         // AT-SPI does not need an input-plugin socket. DISPLAY can coexist
         // with native Wayland for XWayland clients in the same desktop.
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::hyprland::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::hyprland::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1749,6 +1751,10 @@ fn shared_case_with_native_hyprland(
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
     let native_semantic =
         native_hyprland_semantic_case(native_hyprland, spec.name, action, targeting, delivery_kind);
+    let linux_x11 = cfg!(target_os = "linux")
+        && std::env::var_os("CUA_INJECT_SOCKET").is_none()
+        && cua_driver_testkit::e2e::DisplayServer::current()
+            == cua_driver_testkit::e2e::DisplayServer::X11;
     let expected_refusals = if native_semantic {
         Vec::new()
     } else if cfg!(target_os = "windows") && delivery_kind == Delivery::Background {
@@ -1786,15 +1792,17 @@ fn shared_case_with_native_hyprland(
         && spec.name == "electron"
         && delivery_kind == Delivery::Background
     {
-        // Chromium's X11 renderer drops synthetic input addressed to a fully
-        // occluded, unfocused toplevel. Focus-free AT-SPI button actions are
-        // the exception: they are externally verified by the fixture and the
-        // focus/z-order/leak sentinels.
+        // Chromium's X11 renderer drops synthetic input addressed to an
+        // unfocused toplevel. Focus-free AT-SPI button actions are the
+        // exception, by element or (on X11) at the button's pixel: they are
+        // externally verified by the fixture and the focus/z-order/leak
+        // sentinels.
         if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             Vec::new()
         } else {
             match (action, targeting) {
                 ("left_click" | "child_window", Targeting::Ax) => Vec::new(),
+                ("left_click" | "child_window", Targeting::Px) if linux_x11 => Vec::new(),
                 _ => vec![RefusalCode::BackgroundUnavailable],
             }
         }
@@ -1858,7 +1866,13 @@ fn shared_case_with_native_hyprland(
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    if native_semantic {
+    if native_semantic
+        || (linux_x11
+            && spec.name == "electron"
+            && targeting == Targeting::Px
+            && delivery_kind == Delivery::Background
+            && matches!(action, "left_click" | "child_window"))
+    {
         route = cua_driver_testkit::e2e::DriverRoute::LinuxAtSpiAction;
     } else if cfg!(target_os = "windows")
         && spec.name == "electron"
@@ -2276,8 +2290,7 @@ fn embedded_browser_refusal(spec: &HostSpec) -> Option<RefusalCode> {
 fn niri_session() -> bool {
     #[cfg(target_os = "linux")]
     {
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::niri::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::niri::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {

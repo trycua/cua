@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_window_state` perception contract,
 //! asserted on each platform's native controlled-harness app.
 //!

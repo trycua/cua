@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cursor configuration and runtime state.
 
 use serde::{Deserialize, Serialize};

@@ -1359,6 +1359,9 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
         f.spaces.power_of(&space.local_space),
         ("suspend".to_string(), "stopped".to_string())
     );
+    // The topology hint, exits, host ports and the tree hub all ask this: it
+    // is the state ("running"), not the power control ("suspend").
+    assert!(!f.spaces.is_running(&space.local_space));
 
     // Its driver forgot the relay when it stopped.
     *f.env.state.relay_attached.lock().unwrap() = None;
@@ -1374,6 +1377,7 @@ async fn the_host_turns_a_provided_space_off_and_on_and_it_rejoins_the_relay() {
         on.message
     );
     assert_eq!(f.rt.running.lock().unwrap().get(&name), Some(&true));
+    assert!(f.spaces.is_running(&space.local_space));
     let attached = f.env.state.relay_attached.lock().unwrap().clone().unwrap();
     assert_eq!(attached.machine_id, "space-ada00011");
     assert_eq!(attached.machine_token, attach.machine_token);
@@ -1800,8 +1804,8 @@ async fn a_create_the_host_fails_leaves_no_relay_space_behind() {
 
 /// A Space's relay entry whose Space the host does not have (left by an
 /// older client, or the host was set up again) deletes as a stale entry;
-/// one whose host left the relay too. `relay-unregister` takes one off the
-/// relay instead of calling it a host.
+/// one this device still lists after its host left the relay too.
+/// `relay-unregister` takes one off the relay instead of calling it a host.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
     let f = fixture(HostProfile::Spare).await;
@@ -1850,13 +1854,28 @@ async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
         .to_string();
     assert!(e.contains("cua host remove"), "{e}");
 
-    // Its host left the relay (removed, set up again as a new machine).
+    // Its host left the relay (removed, set up again as a new machine)
+    // after this device listed the Space. The relay detaches a removed
+    // computer's Spaces and stops listing them, so only a recent listing
+    // still names the Space; its entry goes for good, not just detached.
     register("space-00000000000000a2", host.clone()).await;
+    assert!(
+        spaces
+            .relay_machines()
+            .await
+            .unwrap()
+            .iter()
+            .any(|m| m.id == "space-00000000000000a2"),
+        "listed before its host leaves"
+    );
     relay.delete("ada-token", &host).await.unwrap();
     let msg = spaces.delete("relay:space-00000000000000a2").await.unwrap();
     assert!(msg.contains("stale entry"), "{msg}");
     assert!(msg.contains("no longer on the relay"), "{msg}");
-    assert!(provided_machines(&f).await.is_empty());
+    assert!(
+        f.relay.machine("space-00000000000000a2").is_none(),
+        "the relay forgets it"
+    );
 }
 
 /// A host that stopped sharing says so (and how to resume) instead of
@@ -2868,10 +2887,11 @@ async fn network_none_on_a_host_too_old_to_enforce_it_is_refused() {
         msg.contains("too old") && msg.contains("update cua"),
         "{msg}"
     );
-    // The host made it with outbound network, then deleted it on request.
+    // The host made it (this fixture's host runs current code, so what an old
+    // host would leave open is not simulated; the refusal is the client's),
+    // then deleted it on request.
     let started = f.rt.started.lock().unwrap().clone();
     assert_eq!(started.len(), 1, "{started:?}");
-    assert!(!started[0].restrict_network, "the old host never cut it");
     assert_eq!(
         *f.rt.deleted.lock().unwrap(),
         [started[0].name.clone()],

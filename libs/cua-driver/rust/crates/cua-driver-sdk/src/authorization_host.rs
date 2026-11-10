@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted host adapter for residual authorization boundaries.
 //!
 //! The callback is immutable constructor configuration. It is never exposed as

@@ -529,6 +529,7 @@ pub fn run() {
             commands::host_open_settings,
             commands::onboarding_state,
             commands::complete_onboarding,
+            commands::reset_onboarding,
             commands::installer_cli_plan,
             commands::installer_install_cli,
             commands::installer_detect_agents,

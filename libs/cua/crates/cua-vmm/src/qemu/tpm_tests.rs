@@ -176,6 +176,8 @@ fn launch_once_wiring() {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let output = std::process::Command::new(std::env::current_exe().unwrap())
+            // These tests are about launching QEMU, not the network gateway the secure default puts a VM behind.
+            .env("CUA_SECURE_DEFAULT", "0")
             .args([
                 "--exact",
                 "qemu::tpm_tests::launch_once_wiring_child",
@@ -440,6 +442,9 @@ async fn cancelled_launch_child() {
     // still exercise both processes after they started.
     for file in ["fake.pid", "qemu.pid"] {
         match std::fs::read_to_string(root.join(file)) {
+            // A cancel can land between the stub creating its pid file and
+            // writing the pid, so an empty file counts as "not written yet".
+            Ok(pid) if pid.trim().is_empty() && !late => {}
             Ok(pid) => assert!(!host::pid_alive(pid.trim().parse().unwrap()), "{file}"),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !late => {}
             Err(e) => panic!("{file}: {e}"),
@@ -516,6 +521,8 @@ fn cancelled_launch(late: bool) {
         ),
     );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
+        // These tests are about launching QEMU, not the network gateway the secure default puts a VM behind.
+        .env("CUA_SECURE_DEFAULT", "0")
         .args([
             "--exact",
             "qemu::tpm_tests::cancelled_launch_child",
@@ -808,6 +815,8 @@ fn failed_start_holds_the_vm_through_its_cleanup() {
         ),
     );
     let output = std::process::Command::new(std::env::current_exe().unwrap())
+        // These tests are about launching QEMU, not the network gateway the secure default puts a VM behind.
+        .env("CUA_SECURE_DEFAULT", "0")
         .args([
             "--exact",
             "qemu::tpm_tests::failed_start_child",

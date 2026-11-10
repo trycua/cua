@@ -32,26 +32,28 @@ import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permiss
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
   addingView,
-  afterSignIn,
   agentInfo,
   agentView,
   chosenAgents,
   toggleAgentOff,
   dotStep,
+  furthestStep,
   INSTALL_PAGES,
   listNames,
   NEW_RUN_EMPTY,
+  nextStepScreen,
   placeName,
-  reachedAfter,
   readyComputers,
   readyView,
   signInView,
   stepDots,
+  stepOf,
   WELCOME,
   welcomeUsage,
   type AgentView,
   type NewRunSaved,
   type ReadyView,
+  type RunFacts,
   type SignInView,
   type StepDot,
   type WelcomeUsage,
@@ -712,10 +714,37 @@ export function NewFirstRun() {
   const s: NewRunSaved = { ...NEW_RUN_EMPTY, ...(savedAll.newRun ?? {}) };
   const save = (patch: Partial<NewRunSaved>) => {
     const prev = { ...NEW_RUN_EMPTY, ...(readFirstRun().newRun ?? {}) };
-    const reached = patch.screen ? reachedAfter(reachedAfter(prev.reached, prev.screen), patch.screen) : prev.reached;
-    writeFirstRun({ newRun: { ...prev, ...patch, reached } });
+    const reachedStep = patch.screen ? furthestStep(furthestStep(prev.reachedStep, prev.screen), patch.screen) : prev.reachedStep;
+    writeFirstRun({ newRun: { ...prev, ...patch, reachedStep } });
   };
   const go = (screen: NewRunScreenName) => save({ screen });
+
+  // Which steps this run shows (`runSteps`): the step dots and every move to the next step read the same facts.
+  // On a Mac, Cua Spaces' permissions (and Local Network, where macOS Spaces runs here) are read from the first step
+  // on, so the dots know whether the permissions step asks anything; it is left out when every one is already on.
+  // Once the run leaves the first step the answer is kept (`s.permissions`), so turning them on on that step doesn't
+  // change the dots under it.
+  const readPermissions = os === "macos" && (stepOf(s.screen) === "computer" || s.screen === "permissions");
+  const perms = useAppPermissions(readPermissions);
+  const net = useLocalNetwork(readPermissions);
+  const permissionsNow: RunFacts["permissions"] = perms.loading
+    ? null
+    : !perms.available
+      ? "skip"
+      : !perms.allGranted
+        ? "ask"
+        : net.loading
+          ? null
+          : net.available && !net.granted
+            ? "ask"
+            : "skip";
+  const facts: RunFacts = { os, permissions: stepOf(s.screen) === "computer" ? permissionsNow : (s.permissions ?? permissionsNow) };
+  /** The first step is done (signed in and added) or skipped: on to the next step this run shows. */
+  const leaveFirstStep = () => {
+    const permissions = os === "macos" ? (permissionsNow ?? "ask") : undefined;
+    const screen = nextStepScreen({ os, permissions: permissions ?? null }, "welcome") ?? "agent";
+    save(permissions ? { screen, permissions } : { screen });
+  };
 
   const signedIn = Boolean(session.data?.signedIn);
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
@@ -831,13 +860,13 @@ export function NewFirstRun() {
   useEffect(() => {
     if (s.screen !== "signin" || !authed) return;
     if (thisState === "idle") void addThis();
-    else if (thisState === "added") go(afterSignIn(os));
+    else if (thisState === "added") leaveFirstStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, authed, thisState]);
 
   // A run saved on the removed "Pick where your agents work" step goes on from the step after the sign-in.
   useEffect(() => {
-    if (s.screen === "where") go(afterSignIn(os));
+    if (s.screen === "where") leaveFirstStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen]);
 
@@ -867,14 +896,12 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // 2b: Cua Spaces' permissions, read while the step shows. A host with none to give (not a Mac, an older app) has
-  // no step: it goes on to the coding agent.
-  const perms = useAppPermissions(s.screen === "permissions");
-  // A Mac that runs macOS Spaces (set up on screen 2) also needs Local Network: asked on the same step, so the issue
-  // never shows up later on its page, and its first macOS Space just starts.
-  const net = useLocalNetwork(s.screen === "permissions");
+  // 2b: Cua Spaces' permissions (`perms`, read above). A host with none to give (an older app) has no step: it goes
+  // on to the coding agent, and the dots drop the step. A Mac that runs macOS Spaces also needs Local Network (`net`):
+  // asked on the same step, so the issue never shows up later on its page, and its first macOS Space just starts.
+  const afterPermissions = nextStepScreen(facts, "permissions") ?? "agent";
   useEffect(() => {
-    if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
+    if (s.screen === "permissions" && !perms.loading && !perms.available) save({ screen: afterPermissions, permissions: "skip" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen, perms.loading, perms.available]);
 
@@ -926,7 +953,7 @@ export function NewFirstRun() {
       console.info(`first run: ${agents.join(", ")} connected in ${Math.round(performance.now() - started)} ms`);
       // Ready's line to try uses the first one that has a command to type.
       const primary = agents.find((id) => agentInfo(id).command) ?? agents[0]!;
-      save({ agent: primary, connected: agents, screen: "ready" });
+      save({ agent: primary, connected: agents, screen: nextStepScreen(facts, "agent") ?? "ready" });
       // The same connect as Settings, now with the sign-ins kept for runs in your Spaces. Nothing on Ready waits on it.
       void adapter.call("agents.connect", { agents, signIn: true }).then(
         () => console.info(`first run: sign-ins kept in ${Math.round(performance.now() - started)} ms`),
@@ -959,7 +986,7 @@ export function NewFirstRun() {
     if (s.screen === "welcome" || s.screen === "signin") {
       funnel("step_skipped", "step");
       session.cancelSignIn();
-      go(afterSignIn(os));
+      leaveFirstStep();
     } else leave();
   };
   const finished = async () => {
@@ -995,7 +1022,7 @@ export function NewFirstRun() {
     if (!signedIn) void session.signIn().catch(() => {});
   };
 
-  const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
+  const dots = stepDots(facts, s.screen, furthestStep(s.reachedStep, s.screen));
   const goDot = (i: number, viaKey: boolean) => {
     const to = dots?.[i]?.to;
     if (!to) return;
@@ -1055,7 +1082,7 @@ export function NewFirstRun() {
           perms={perms}
           net={net}
           appName={perms.data?.appName ?? "Cua Spaces"}
-          onContinue={() => go("agent")}
+          onContinue={() => go(afterPermissions)}
         />
       );
       break;

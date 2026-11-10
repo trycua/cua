@@ -3341,9 +3341,9 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
-    if crate::updater::is_pacman_managed() {
+    if let Some(owner) = crate::updater::update_owner() {
         print_check_update_state(
-            crate::version_check::check_update_state_with_ownership(false, true),
+            crate::version_check::check_update_state_with_owner(false, Some(owner)),
             json,
         );
         return;
@@ -4248,7 +4248,7 @@ pub fn run_kwin_capture_cmd(subcommand: &str, override_portal_deny: bool) {
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
-    if crate::updater::is_pacman_managed() {
+    if let Some(owner) = crate::updater::update_owner() {
         if json {
             let current =
                 crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
@@ -4258,11 +4258,11 @@ pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
                     "selected_channel": null,
                     "current_channel": current.map(|channel| channel.as_str()),
                     "current_version": env!("CARGO_PKG_VERSION"),
-                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                    "error": owner.guidance(),
                 })
             );
         } else {
-            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+            eprintln!("{}", owner.guidance());
         }
         process::exit(1);
     }

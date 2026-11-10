@@ -99,7 +99,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     "shows on the setup's Ready screen without a flag or a question, and is hidden when there are no chats",
     { timeout: 60_000 },
     async () => {
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
       await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
       // Listed straight away: nothing to press first, and no Labs flag in the way. Only Codex's chats: Codex was picked.
@@ -107,7 +107,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
       expect(screen.queryByRole("button", { name: /show my recent chats/i })).toBeNull();
       cleanup();
       resetFirstRunCache();
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true, noChats: true } });
       await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
       await new Promise((r) => setTimeout(r, 200));
@@ -122,7 +122,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     { timeout: 60_000 },
     async () => {
       const calls: Calls = [];
-      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
+      writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reachedStep: "ready" } });
       const { router } = await mountApp("/onboarding", {
         failsCreates: false,
         listsGhost: false,
@@ -181,17 +181,17 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     ],
   };
 
-  it("is one screen with two Allow buttons and Later, and names Cua Driver", () => {
+  it("is one screen with two Allow buttons and a way on without them, and names Cua Driver", () => {
     const allow = vi.fn(async () => {});
     const onContinue = vi.fn();
     render(
       <PermissionsScreen view={permissionsStepView({ appName: "Cua Spaces", allGranted: false })} perms={{ data: missing, allow }} onContinue={onContinue} />,
     );
     const buttons = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(buttons).toEqual(["Allow", "Allow", "Later"]);
+    expect(buttons).toEqual(["Allow", "Allow", "Continue without them", "Still off: See the screen and Use the mouse and keyboard"]);
     expect(all("[data-app-permission]").map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
     expect(document.body.textContent).toContain("Cua Driver");
-    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue without them" }));
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
@@ -218,7 +218,7 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
     note();
     await waitFor(() => expect(all("[data-app-permission]").length).toBe(2));
-    fireEvent.click(q("[data-new-run-permissions-next=Later]")!);
+    fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     note();
     fireEvent.click(q("[data-onboarding-primary]")!);

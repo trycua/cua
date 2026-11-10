@@ -2479,7 +2479,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "cua-home",
- "cua-sdk",
  "cua-vmm",
  "hex",
  "humantime",
@@ -2501,6 +2500,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-ci-sdk"
+version = "0.20.0"
+dependencies = [
+ "async-trait",
+ "cua-ci",
+ "cua-sdk",
+ "cua-vmm",
+ "tokio",
+]
+
+[[package]]
 name = "cua-cli"
 version = "0.20.0"
 dependencies = [
@@ -2515,6 +2525,7 @@ dependencies = [
  "cua-auth",
  "cua-byoc",
  "cua-ci",
+ "cua-ci-sdk",
  "cua-cluster",
  "cua-compat",
  "cua-compat-cmd",

@@ -37,6 +37,8 @@ members = [
     "crates/cua-cli",
     # Cua CI: GitHub Actions jobs on Cua Spaces (`cua ci`), an experiment.
     "crates/cua-ci",
+    # cua-ci over the cua SDK (the Spaces seam), split out so cua-ci builds beside cua-sdk.
+    "crates/cua-ci-sdk",
     "crates/cua-spaces-contract",
     "crates/cua-spaces-transcript",
     # Test rig for the replicated Volume (impairment proxy, replica node, chaos matrix); not shipped.
@@ -220,6 +222,7 @@ cua-volume = { path = "crates/cua-volume", version = "0.20.0" } # x-release-plea
 cua-snapshot-sync = { path = "crates/cua-snapshot-sync", version = "0.20.0", default-features = false } # x-release-please-version
 cua-sdk = { path = "crates/cua-sdk", version = "0.20.0", default-features = false } # x-release-please-version
 cua-ci = { path = "crates/cua-ci", version = "0.20.0" } # x-release-please-version
+cua-ci-sdk = { path = "crates/cua-ci-sdk", version = "0.20.0" } # x-release-please-version
 cua-teleport-bundle = { path = "crates/cua-teleport-bundle", version = "0.20.0" } # x-release-please-version
 cua-chromium-storage = { path = "crates/cua-chromium-storage", version = "0.20.0" } # x-release-please-version
 cua-teleport = { path = "crates/cua-teleport", version = "0.20.0" } # x-release-please-version

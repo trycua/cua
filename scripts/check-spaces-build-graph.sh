@@ -6,6 +6,9 @@
 # Cargo unifies features, so one dependency that asks for cua-cli's default
 # features would quietly put the gateway back in front of the CLI.
 #
+# cua-ci (the CI runner pool) does not depend on cua-sdk either: its one SDK
+# file lives in cua-ci-sdk, so cua-ci builds beside cua-sdk, not after it.
+#
 # Fails when, in the graph `install-local.sh` builds (`--no-default-features
 # -p cua-spaces-ffi -p cua-spaces-cli`), cua-cli has its `compat` feature or
 # anything but cua-spaces-cli depends on cua-compat.
@@ -29,6 +32,10 @@ users=$(grep -E '^[├└]' <<<"$dependents" | grep -v 'cua-spaces-cli' || true)
 if [ -n "$users" ]; then
   echo "check-spaces-build-graph: cua-compat has dependents besides cua-spaces-cli:" >&2
   echo "$users" >&2
+  exit 1
+fi
+if cargo tree --locked -p cua-ci -e normal --prefix none --depth 1 | grep -q "^cua-sdk v"; then
+  echo "check-spaces-build-graph: cua-ci depends on cua-sdk; keep the SDK code in cua-ci-sdk." >&2
   exit 1
 fi
 echo "check-spaces-build-graph: ok"

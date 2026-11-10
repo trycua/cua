@@ -4761,7 +4761,7 @@ fn run_capture_bound_pixel_click_background_atspi(spec: &BrowserSpec) {
 /// control under the point must not report success without an effect. The
 /// structured `background_unavailable` refusal comes before admission, and the
 /// refused capture then stays usable for the explicit foreground escalation.
-/// `inert` covers the page with a non-interactive layer (X11, where a control
+/// `inert` hides every control from the accessibility tree (X11, where a control
 /// would be clicked through AT-SPI); otherwise the cover is a button and
 /// Wayland and the inject lanes refuse the click outright.
 #[cfg(target_os = "linux")]

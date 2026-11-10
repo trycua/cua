@@ -18,8 +18,9 @@
 //!     `NativeTarget.window_id: u64`.
 //!   * niri's IPC (`niri msg --json outputs|windows|focused-window`) for
 //!     displays, enumeration and the focused window. niri has no per-toplevel
-//!     capture protocol, so display streams work and window streams refuse;
-//!     niri window ids are already `u64`.
+//!     capture protocol, so window streams crop the output region niri reports
+//!     for a placed window; an unplaced tiled window refuses. niri window ids
+//!     are already `u64`.
 //!   * `wlr-screencopy` ([`super::linux_screencopy`]) for pixels: one
 //!     persistent Wayland connection per stream copies the output region
 //!     covering the window (or the whole monitor) into shared memory,
@@ -258,6 +259,47 @@ pub(super) fn enumerate_windows(on_screen_only: bool) -> Result<Vec<NativeWindow
         return Ok(windows_from_niri(&windows, &workspaces, on_screen_only));
     }
     enumerate_windows_with(|| hyprctl_json(&["clients"]), on_screen_only)
+}
+
+/// The on-screen rectangle of one niri window, if niri reports a position.
+fn niri_window_rect(window_id: u64) -> Option<WinRect> {
+    niri_window_rect_from(&niri_json(&["windows"])?, window_id)
+}
+
+/// Pure mapping of one niri window's layout onto the shared capture rectangle.
+/// niri reports a position for floating windows, and for tiled windows only
+/// while they intersect the workspace view (niri#4711).
+fn niri_window_rect_from(windows: &Value, window_id: u64) -> Option<WinRect> {
+    let window = windows
+        .as_array()?
+        .iter()
+        .find(|window| window.get("id").and_then(Value::as_u64) == Some(window_id))?;
+    let layout = window.get("layout")?;
+    let size = layout.get("window_size")?.as_array()?;
+    let width = size.first()?.as_i64()?.max(1) as u32;
+    let height = size.get(1)?.as_i64()?.max(1) as u32;
+    let position = layout
+        .get("tile_pos_in_workspace_view")
+        .filter(|position| !position.is_null())?
+        .as_array()?;
+    let x = position.first()?.as_f64()?;
+    let y = position.get(1)?.as_f64()?;
+    let offset = layout
+        .get("window_offset_in_tile")
+        .and_then(Value::as_array)
+        .map(|offset| {
+            (
+                offset.first().and_then(Value::as_f64).unwrap_or(0.0),
+                offset.get(1).and_then(Value::as_f64).unwrap_or(0.0),
+            )
+        })
+        .unwrap_or((0.0, 0.0));
+    Some(WinRect {
+        x: (x + offset.0).round() as i32,
+        y: (y + offset.1).round() as i32,
+        width,
+        height,
+    })
 }
 
 /// Pure mapping of `niri msg --json windows` plus `workspaces` onto the shared
@@ -518,13 +560,19 @@ pub(super) fn start(
     native_geometry: Arc<dyn Fn(u32, u32) + Send + Sync>,
 ) -> Result<Arc<dyn CaptureLease>, ProviderError> {
     if is_niri() {
-        // niri has no per-toplevel capture protocol, and tiled windows report
-        // no position before niri#4711. Display streams work; window streams
-        // need the driver's desktop-scope path instead.
-        return Err(ProviderError::new(
-            ProviderErrorCode::TargetUnavailable,
-            "niri window streams are not supported; stream a display instead",
-        ));
+        let window_id = target.window_id;
+        if niri_window_rect(window_id).is_none() {
+            return Err(ProviderError::new(
+                ProviderErrorCode::TargetUnavailable,
+                "niri reports no on-screen position for this window; float it or stream a display",
+            ));
+        }
+        let rect = move || {
+            let windows = niri_json(&["windows"])
+                .ok_or_else(|| "niri did not answer `niri msg --json windows`".to_string())?;
+            Ok(niri_window_rect_from(&windows, window_id))
+        };
+        return spawn_capture(Box::new(rect), config, sink, native_geometry);
     }
     let address = id_to_addr(target.window_id);
 
@@ -2053,6 +2101,35 @@ mod tests {
         );
         assert_eq!(display.scale_factor, 1.0);
         assert_eq!(display.refresh_rate_hz, 144);
+    }
+
+    #[test]
+    fn niri_window_rect_uses_the_reported_position_and_offset() {
+        let windows = serde_json::json!([
+            {"id": 9, "layout": {"window_size": [300, 200],
+                                 "tile_pos_in_workspace_view": [10.5, 20.5],
+                                 "window_offset_in_tile": [1.5, 2.5]}}
+        ]);
+        assert_eq!(
+            niri_window_rect_from(&windows, 9),
+            Some(WinRect {
+                x: 12,
+                y: 23,
+                width: 300,
+                height: 200
+            })
+        );
+    }
+
+    #[test]
+    fn niri_window_rect_refuses_an_unplaced_tiled_window() {
+        let windows = serde_json::json!([
+            {"id": 5, "layout": {"window_size": [402, 448],
+                                 "tile_pos_in_workspace_view": null,
+                                 "window_offset_in_tile": [0.0, 0.0]}}
+        ]);
+        assert_eq!(niri_window_rect_from(&windows, 5), None);
+        assert_eq!(niri_window_rect_from(&windows, 99), None);
     }
 
     #[test]

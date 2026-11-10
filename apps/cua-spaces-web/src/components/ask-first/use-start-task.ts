@@ -24,9 +24,11 @@ import {
   HOST_NOT_SHARED,
   hostSpaceId,
   isUnreachableError,
+  onAnotherComputer,
   postToSpaceThread,
   retryTarget,
   taskTarget,
+  unreachableError,
   updateAskTask,
   whereOs,
   type AskTask,
@@ -110,6 +112,18 @@ export function useStartTask(): {
   /** What a home is made with and briefed with: the agent, what it already holds and what the person named. */
   const setupFor = (agent: string, prompt: string, where?: TaskWhere) => ({ agent, grants: grantsFor(agent), mentions: named(prompt, where) });
 
+  /**
+   * Throws when a Space on another computer can't take the job now (`spaces.reach`: the relay's word and a health
+   * check). Its thread lives on the relay, so a job handed to its agent, or a run started there, would otherwise
+   * "succeed" and wait for a computer that is gone; thrown, the start moves the job to the next computer the pool
+   * picks. A host that can't ask (an older app) lets the start go on.
+   */
+  const reachOrThrow = async (spaceId: string) => {
+    if (!host || !onAnotherComputer(spaceId, spaces)) return;
+    const reach = await host.call("spaces.reach", { spaceId }).catch(() => null);
+    if (reach && !reach.reachable) throw new Error(unreachableError(spaceId, reach));
+  };
+
   /** Posts the job to the agent's home: what the person named now is the grant, then the message goes to the agent through the thread. */
   const reuseHome = async (
     spaceId: string,
@@ -153,6 +167,9 @@ export function useStartTask(): {
           spaceId = place.reuse;
           updateAskTask(id, { spaceId, pendingId: null });
         }
+        // A Space that already exists, with an agent in it or not: its computer may have gone since it was picked.
+        // Asked before anything is handed to it (a Space made below has just answered).
+        if (spaceId && target.kind !== "host") await reachOrThrow(spaceId);
         if (!spaceId) {
           const os = target.kind === "create" ? target.os : "linux";
           const pendingId = place?.pendingId ?? newPendingId();

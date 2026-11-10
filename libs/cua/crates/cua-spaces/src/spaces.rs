@@ -2117,7 +2117,7 @@ impl Spaces {
     /// `key`: the relay machine itself, or the host a routed Space rides
     /// on. False when no relay computer carries it or the relay has not
     /// listed it.
-    fn carrier_listed_offline(&self, key: &str) -> bool {
+    pub(crate) fn carrier_listed_offline(&self, key: &str) -> bool {
         let machine = match SpaceId::parse(key) {
             Ok(SpaceId::Relay { machine_id }) => machine_id,
             Ok(SpaceId::Direct { authority }) => match crate::id::routed_host(&authority) {

@@ -1226,7 +1226,8 @@ pub(crate) mod imp {
             let caller = cua_spaces::extension::Caller::from_host(&caller);
             let r = req.into_inner();
             let app_method = cua_spaces::agents::keys::is_app_method(&r.name);
-            if !app_method && cua_spaces::contract::tool(&r.name).is_none() {
+            let reach = cua_spaces::reach::is_app_method(&r.name);
+            if !app_method && !reach && cua_spaces::contract::tool(&r.name).is_none() {
                 return Err(st(Error::NotFound(format!("Spaces tool {}", r.name))));
             }
             let args: serde_json::Value = if r.arguments_json.trim().is_empty() {
@@ -1238,7 +1239,14 @@ pub(crate) mod imp {
             };
             // The app's Settings → Connections methods: not contract tools, so no
             // MCP server lists or forwards them to an agent.
-            let out = if app_method {
+            let out = if reach {
+                // Whether a Space can take work now: the app asks before it hands a job over.
+                cua_spaces::reach::app_call(self.spaces(), &r.name, args)
+                    .await
+                    .unwrap_or_else(|| {
+                        cua_spaces::mcp::ToolOutcome::error_message("not_found", r.name.clone())
+                    })
+            } else if app_method {
                 cua_spaces::agents::keys::app_tool_async(&r.name, args)
                     .await
                     .unwrap_or_else(|| {

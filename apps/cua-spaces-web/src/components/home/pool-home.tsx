@@ -76,7 +76,7 @@ export function PoolHome() {
   const byId = (id: string | null) => (id ? latest.current.computers.find((c) => c.machine.id === id) : undefined);
   const named = (c: HomeComputer) => ({ id: c.machine.id, name: c.machine.name });
 
-  const run = (req: RunRequest) => {
+  const run = (req: RunRequest, started: () => void) => {
     setHarness(req.harness);
     // Placed again as the person presses Run: a computer that went offline since the sheet opened is skipped, and
     // the job says where it moved from.
@@ -97,10 +97,12 @@ export function PoolHome() {
           },
         },
       );
+      started();
       setRunning(false);
     };
-    // This computer asks once before an agent works on your own files and apps.
-    pick.choose(whereOn(chosen), go);
+    // This computer asks once before an agent works on your own files and apps. "Pick another" goes back to the
+    // sheet, with the task as it was.
+    pick.choose(whereOn(chosen), go, () => setRunning(true));
   };
 
   const moved = movedTask(tasks, seen, Date.now());

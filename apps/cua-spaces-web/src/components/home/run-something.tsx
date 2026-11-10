@@ -57,7 +57,8 @@ export function RunSomethingSheet({
   onOpenChange: (open: boolean) => void;
   computers: readonly HomeComputer[];
   pool: readonly PoolComputer[];
-  onRun: (req: RunRequest) => void;
+  /** Starts the job; `started` is called once it has (not when This Mac's confirm is declined), and clears the task. */
+  onRun: (req: RunRequest, started: () => void) => void;
 }) {
   const t = useT();
   const taskId = useId();
@@ -92,8 +93,8 @@ export function RunSomethingSheet({
 
   const submit = () => {
     if (!ready || !selected) return;
-    onRun({ prompt: text.trim(), harness: selected.harness, model: selected.model.id, picked: placement.chosen });
-    setText("");
+    // The task stays until the job has started: This Mac's confirm can still say "Pick another".
+    onRun({ prompt: text.trim(), harness: selected.harness, model: selected.model.id, picked: placement.chosen }, () => setText(""));
   };
 
   return (

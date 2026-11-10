@@ -410,6 +410,23 @@ export function thisMacConfirmText(agent: string): { title: string; description:
   };
 }
 
+/**
+ * A Space on one of your other computers: that computer's own desktop over the relay, or a Space it provides. It
+ * can go away between being picked and the job starting, and its thread lives on the relay, so a job posted to it
+ * would still "succeed" and wait there for a computer that is gone. A start asks it first (`spaces.reach`).
+ */
+export function onAnotherComputer(spaceId: string, spaces: readonly Pick<Space, "id" | "provider" | "host">[] | null | undefined): boolean {
+  if (spaceId.startsWith("relay:")) return true;
+  const row = spaces?.find((s) => s.id === spaceId);
+  return Boolean(row && (row.provider === "relay" || row.host));
+}
+
+/** Why a start stops before it hands the job over (`spaces.reach` said no): words `isUnreachableError` reads. */
+export function unreachableError(spaceId: string, reach: { listedOffline: boolean; reason: string | null }): string {
+  const why = reach.reason ?? (reach.listedOffline ? "its computer is offline" : "it did not answer");
+  return `${spaceId} is unreachable: ${why}`;
+}
+
 /** A start that failed because its computer (or Space) couldn't be reached: another computer can take the job. */
 export function isUnreachableError(raw: string): boolean {
   return /not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(raw.toLowerCase());

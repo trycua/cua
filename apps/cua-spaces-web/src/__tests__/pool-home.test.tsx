@@ -5,14 +5,14 @@
 // computer with its free room and its jobs, a big Add a computer tile, and Run something, which places the job on
 // the computer with the most free room (the app core's `pool.place`) and moves it when that computer can't be reached.
 
-import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetWakeNotes } from "@/components/space-thread/summon";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
-import { askTasks, resetAskTasks } from "@/lib/ask-first";
+import { askTasks, resetAskTasks, setThisMacConfirmed } from "@/lib/ask-first";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
 stubBrowserApis();
@@ -179,5 +179,112 @@ describe.skipIf(!wasmBuilt)("Home: your computers as one supercomputer", () => {
     await act(async () => void router.navigate({ to: "/home" }));
     fireEvent.click(q("[data-pool-moved] button[aria-label='Dismiss']") ?? (await found("[data-pool-moved] button[aria-label='Dismiss']")));
     await waitFor(() => expect(q("[data-pool-moved]")).toBeNull());
+  });
+
+  it("the computer goes offline between picking and starting: nothing is handed to its agent, the job moves, and Home says where", async () => {
+    // Online while the sheet is open and the Mac mini is picked; switched off just before Run is pressed. The relay
+    // still lists it online, and posting to its thread still succeeds (the thread lives on the relay): only
+    // `spaces.reach`'s health check finds it gone.
+    // Two computers: the Mac mini (most room, picked) and This Mac, which takes the job when it moves.
+    setThisMacConfirmed(true);
+    let miniOff = false;
+    const handed: string[] = [];
+    await mountApp("/home", {
+      ...HOST,
+      answer: onlyMachines(["this-mac", "mac-mini"]),
+      intercept: (op, args) => {
+        const spaceId = (args as { spaceId?: string } | undefined)?.spaceId;
+        if (op === "spaces.reach" && spaceId === "relay:mac-mini" && miniOff)
+          return { reachable: false, listedOffline: false, reason: "relay:mac-mini did not answer in 4 s" };
+        if (spaceId === "relay:mac-mini" && (op.startsWith("thread.") || op === "agents.start")) handed.push(op);
+        return undefined;
+      },
+    });
+    fireEvent.click(await found("[data-pool-run]"));
+    const sheet = await found("[data-run-sheet]");
+    await waitFor(() => expect(q("[data-run-where][aria-checked='true']", sheet)?.dataset.runWhere).toBe("mac-mini"));
+    fireEvent.change(q("[data-run-task]", sheet)!, { target: { value: "Bisect the slow build" } });
+    const submit = q<HTMLButtonElement>("[data-run-submit]", sheet)!;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    miniOff = true;
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+    await waitFor(() => expect(askTasks()[0]).toMatchObject({ movedFrom: { id: "mac-mini" }, computer: { id: "this-mac" }, error: null }), {
+      timeout: 10_000,
+    });
+    expect(askTasks()[0]!.onHost).toBe(true);
+    // It stays there: This Mac took it.
+    await act(async () => void (await new Promise((r) => setTimeout(r, 1_500))));
+    expect(askTasks()[0]).toMatchObject({ movedFrom: { id: "mac-mini" }, computer: { id: "this-mac" }, error: null });
+    // Nothing went to the Mac mini's thread or its agent: the job did not queue for a computer that is gone.
+    expect(handed.filter((op) => op === "thread.post" || op === "thread.agentAdd" || op === "agents.start")).toEqual([]);
+    const moved = await found("[data-pool-moved]");
+    expect(moved.textContent).toContain("Mac mini couldn’t be reached, so “Bisect the slow build” moved to This Mac.");
+  });
+
+  it("a computer that answers takes the job: it is asked first, then the job goes to it", async () => {
+    const calls: { op: string; spaceId?: string }[] = [];
+    await mountApp("/home", {
+      ...HOST,
+      intercept: (op, args) => (calls.push({ op, spaceId: (args as { spaceId?: string } | undefined)?.spaceId }), undefined),
+    });
+    fireEvent.click(await found("[data-pool-run]"));
+    const sheet = await found("[data-run-sheet]");
+    await waitFor(() => expect(q("[data-run-where][aria-checked='true']", sheet)?.dataset.runWhere).toBe("mac-mini"));
+    fireEvent.change(q("[data-run-task]", sheet)!, { target: { value: "Update the changelog" } });
+    const submit = q<HTMLButtonElement>("[data-run-submit]", sheet)!;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+    // The job goes to it (its thread or a run), and only after it was asked.
+    const handedAt = () => calls.findIndex((c) => c.spaceId === "relay:mac-mini" && /^thread\.(post|agentAdd)$|^agents\.start$/.test(c.op));
+    await waitFor(() => expect(handedAt()).toBeGreaterThanOrEqual(0), { timeout: 10_000 });
+    const handed = handedAt();
+    const reach = calls.findIndex((c) => c.op === "spaces.reach" && c.spaceId === "relay:mac-mini");
+    expect(reach).toBeGreaterThanOrEqual(0);
+    expect(reach).toBeLessThan(handed);
+    expect(askTasks()[0]).toMatchObject({ computer: { id: "mac-mini" }, error: null });
+    expect(askTasks()[0]!.movedFrom).toBeUndefined();
+  });
+
+  it("the task you typed stays through This Mac's confirm and Pick another, and clears once the job starts", async () => {
+    setThisMacConfirmed(false);
+    await mountApp("/home", HOST);
+    fireEvent.click(await found("[data-pool-run]"));
+    let sheet = await found("[data-run-sheet]");
+    await waitFor(() => expect(q<HTMLButtonElement>("[data-run-where='this-mac']", sheet)?.disabled).toBe(false));
+    fireEvent.click(q("[data-run-where='this-mac']", sheet)!);
+    fireEvent.change(q("[data-run-task]", sheet)!, { target: { value: "Tidy my Downloads folder" } });
+    let submit = q<HTMLButtonElement>("[data-run-submit]", sheet)!;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+    // "Work on This Mac?": the task is still there behind it.
+    await screen.findByRole("button", { name: "Pick another" });
+    expect(q<HTMLTextAreaElement>("[data-run-task]")?.value).toBe("Tidy my Downloads folder");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Pick another" }));
+    });
+    // Back on the sheet, with the task as it was, and nothing started.
+    sheet = await found("[data-run-sheet]");
+    await waitFor(() => expect(q<HTMLTextAreaElement>("[data-run-task]", sheet)?.value).toBe("Tidy my Downloads folder"));
+    expect(askTasks()).toHaveLength(0);
+    // Run again and confirm: the job starts with that task, and the field is empty for the next one.
+    fireEvent.click(q("[data-run-where='this-mac']", sheet)!);
+    submit = q<HTMLButtonElement>("[data-run-submit]", sheet)!;
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    await act(async () => {
+      fireEvent.click(submit);
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: /^Use / }));
+    });
+    await waitFor(() => expect(askTasks()[0]).toMatchObject({ prompt: "Tidy my Downloads folder", onHost: true }));
+    fireEvent.click(await found("[data-pool-run]"));
+    sheet = await found("[data-run-sheet]");
+    expect(q<HTMLTextAreaElement>("[data-run-task]", sheet)?.value).toBe("");
   });
 });

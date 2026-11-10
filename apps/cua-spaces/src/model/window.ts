@@ -172,6 +172,8 @@ export interface StreamRow {
   /** The Desktop row's display resolution ("1280×800"), its quiet right-hand detail. */
   resolution: string | null;
   icon: StreamRowIcon;
+  /** A window another Space shows here: where it lives (its OS mark and name). */
+  origin?: { spaceId: string; name: string; osIcon: string };
   actions: { id: "pip"; symbol: string; help: string; active: boolean }[];
 }
 

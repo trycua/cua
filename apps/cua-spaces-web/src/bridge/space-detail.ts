@@ -39,7 +39,8 @@ export type * from "./ops/space-detail";
 export const THIS_MACHINE_ID = "this-mac";
 
 export const USAGE_REFRESH_MS = 10_000;
-export const WINDOWS_REFRESH_MS = 5_000;
+/** An app an agent opens (here, or in a Space under this one) joins the Stream list within this long. */
+export const WINDOWS_REFRESH_MS = 2_000;
 /** The host's raw `cua:event` when its picture-in-picture panels change by
  * themselves (`{ spaceId, open: rows }`; the SwiftUI app's `stream.pipChanged`). */
 export const PIP_CHANGED_EVENT = "stream.pipChanged";

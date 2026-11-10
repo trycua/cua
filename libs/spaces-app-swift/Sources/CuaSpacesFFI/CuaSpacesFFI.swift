@@ -32979,6 +32979,11 @@ public struct AppRemoteWindow: Equatable, Hashable {
      * app up by), when the window list reports one.
      */
     public var pid: UInt32?
+    /**
+     * The Space the picture comes from, when another Space shows this
+     * window here (`stream_space_window`); absent on a Space's own windows.
+     */
+    public var origin: AppRemoteWindowOrigin?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -33010,7 +33015,11 @@ public struct AppRemoteWindow: Equatable, Hashable {
         /**
          * The owning process (what the SDK's `Space.app_icon` looks a macOS
          * app up by), when the window list reports one.
-         */pid: UInt32?) {
+         */pid: UInt32?,
+        /**
+         * The Space the picture comes from, when another Space shows this
+         * window here (`stream_space_window`); absent on a Space's own windows.
+         */origin: AppRemoteWindowOrigin?) {
         self.id = id
         self.appName = appName
         self.title = title
@@ -33020,6 +33029,7 @@ public struct AppRemoteWindow: Equatable, Hashable {
         self.widthPx = widthPx
         self.heightPx = heightPx
         self.pid = pid
+        self.origin = origin
     }
 
 
@@ -33046,7 +33056,8 @@ public struct FfiConverterTypeAppRemoteWindow: FfiConverterRustBuffer {
                 targetEpoch: FfiConverterUInt64.read(from: &buf),
                 widthPx: FfiConverterOptionUInt32.read(from: &buf),
                 heightPx: FfiConverterOptionUInt32.read(from: &buf),
-                pid: FfiConverterOptionUInt32.read(from: &buf)
+                pid: FfiConverterOptionUInt32.read(from: &buf),
+                origin: FfiConverterOptionTypeAppRemoteWindowOrigin.read(from: &buf)
         )
     }
 
@@ -33060,6 +33071,7 @@ public struct FfiConverterTypeAppRemoteWindow: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.widthPx, into: &buf)
         FfiConverterOptionUInt32.write(value.heightPx, into: &buf)
         FfiConverterOptionUInt32.write(value.pid, into: &buf)
+        FfiConverterOptionTypeAppRemoteWindowOrigin.write(value.origin, into: &buf)
     }
 }
 
@@ -33152,6 +33164,82 @@ public func FfiConverterTypeAppRemoteWindowGroup_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeAppRemoteWindowGroup_lower(_ value: AppRemoteWindowGroup) -> RustBuffer {
     return FfiConverterTypeAppRemoteWindowGroup.lower(value)
+}
+
+
+public struct AppRemoteWindowOrigin: Equatable, Hashable {
+    /**
+     * The origin Space's id.
+     */
+    public var spaceId: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Its OS (`macos`, `linux`, `windows`), when known.
+     */
+    public var os: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The origin Space's id.
+         */spaceId: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Its OS (`macos`, `linux`, `windows`), when known.
+         */os: String) {
+        self.spaceId = spaceId
+        self.name = name
+        self.os = os
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRemoteWindowOrigin: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRemoteWindowOrigin: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRemoteWindowOrigin {
+        return
+            try AppRemoteWindowOrigin(
+                spaceId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRemoteWindowOrigin, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.spaceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRemoteWindowOrigin_lift(_ buf: RustBuffer) throws -> AppRemoteWindowOrigin {
+    return try FfiConverterTypeAppRemoteWindowOrigin.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRemoteWindowOrigin_lower(_ value: AppRemoteWindowOrigin) -> RustBuffer {
+    return FfiConverterTypeAppRemoteWindowOrigin.lower(value)
 }
 
 
@@ -41583,6 +41671,12 @@ public struct AppStreamRow: Equatable, Hashable {
      */
     public var icon: AppStreamRowIcon
     /**
+     * For a window another Space shows here: the Space it lives in, drawn
+     * as its OS mark and name beside the label. Absent on a Space's own
+     * rows (older shells ignore it).
+     */
+    public var origin: AppStreamRowOrigin?
+    /**
      * Icon buttons, in order.
      */
     public var actions: [AppStreamRowAction]
@@ -41609,6 +41703,11 @@ public struct AppStreamRow: Equatable, Hashable {
          * The icon.
          */icon: AppStreamRowIcon,
         /**
+         * For a window another Space shows here: the Space it lives in, drawn
+         * as its OS mark and name beside the label. Absent on a Space's own
+         * rows (older shells ignore it).
+         */origin: AppStreamRowOrigin?,
+        /**
          * Icon buttons, in order.
          */actions: [AppStreamRowAction]) {
         self.id = id
@@ -41617,6 +41716,7 @@ public struct AppStreamRow: Equatable, Hashable {
         self.help = help
         self.resolution = resolution
         self.icon = icon
+        self.origin = origin
         self.actions = actions
     }
 
@@ -41642,6 +41742,7 @@ public struct FfiConverterTypeAppStreamRow: FfiConverterRustBuffer {
                 help: FfiConverterString.read(from: &buf),
                 resolution: FfiConverterOptionString.read(from: &buf),
                 icon: FfiConverterTypeAppStreamRowIcon.read(from: &buf),
+                origin: FfiConverterOptionTypeAppStreamRowOrigin.read(from: &buf),
                 actions: FfiConverterSequenceTypeAppStreamRowAction.read(from: &buf)
         )
     }
@@ -41653,6 +41754,7 @@ public struct FfiConverterTypeAppStreamRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.help, into: &buf)
         FfiConverterOptionString.write(value.resolution, into: &buf)
         FfiConverterTypeAppStreamRowIcon.write(value.icon, into: &buf)
+        FfiConverterOptionTypeAppStreamRowOrigin.write(value.origin, into: &buf)
         FfiConverterSequenceTypeAppStreamRowAction.write(value.actions, into: &buf)
     }
 }
@@ -41756,6 +41858,82 @@ public func FfiConverterTypeAppStreamRowAction_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeAppStreamRowAction_lower(_ value: AppStreamRowAction) -> RustBuffer {
     return FfiConverterTypeAppStreamRowAction.lower(value)
+}
+
+
+public struct AppStreamRowOrigin: Equatable, Hashable {
+    /**
+     * The origin Space's id.
+     */
+    public var spaceId: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+     */
+    public var osIcon: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The origin Space's id.
+         */spaceId: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+         */osIcon: String) {
+        self.spaceId = spaceId
+        self.name = name
+        self.osIcon = osIcon
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppStreamRowOrigin: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppStreamRowOrigin: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppStreamRowOrigin {
+        return
+            try AppStreamRowOrigin(
+                spaceId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                osIcon: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppStreamRowOrigin, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.spaceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.osIcon, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppStreamRowOrigin_lift(_ buf: RustBuffer) throws -> AppStreamRowOrigin {
+    return try FfiConverterTypeAppStreamRowOrigin.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppStreamRowOrigin_lower(_ value: AppStreamRowOrigin) -> RustBuffer {
+    return FfiConverterTypeAppStreamRowOrigin.lower(value)
 }
 
 
@@ -71828,6 +72006,30 @@ fileprivate struct FfiConverterOptionTypeAppRelayUsageView: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppRemoteWindowOrigin: FfiConverterRustBuffer {
+    typealias SwiftType = AppRemoteWindowOrigin?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRemoteWindowOrigin.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRemoteWindowOrigin.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppResourceEdit: FfiConverterRustBuffer {
     typealias SwiftType = AppResourceEdit?
 
@@ -72324,6 +72526,30 @@ fileprivate struct FfiConverterOptionTypeAppStreamDisplay: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppStreamDisplay.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppStreamRowOrigin: FfiConverterRustBuffer {
+    typealias SwiftType = AppStreamRowOrigin?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppStreamRowOrigin.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppStreamRowOrigin.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

@@ -148,6 +148,7 @@ final class StreamRowsModel: ObservableObject {
         return AppRemoteWindow(
             id: w.id, appName: w.app, title: w.title, visible: true, appId: w.appID,
             targetEpoch: w.epoch, widthPx: px(w.surfaceSize.width), heightPx: px(w.surfaceSize.height),
-            pid: w.processID > 0 ? w.processID : nil)
+            pid: w.processID > 0 ? w.processID : nil,
+            origin: w.origin.map { AppRemoteWindowOrigin(spaceId: $0.spaceID, name: $0.name, os: $0.os) })
     }
 }

@@ -452,6 +452,8 @@ impl SpacesBuilder {
         let relay_reported = load_reported(&home);
         Spaces {
             inner: Arc::new(Inner {
+                #[cfg(feature = "spaces-stream")]
+                streams: Default::default(),
                 thumbnails,
                 #[cfg(feature = "mcp")]
                 extensions: self.extensions,
@@ -685,6 +687,9 @@ pub fn is_generated_name(name: &str) -> bool {
 }
 
 pub(crate) struct Inner {
+    /// Windows shown in a Space other than their own ([`crate::stream_registry`]).
+    #[cfg(feature = "spaces-stream")]
+    pub(crate) streams: crate::stream_registry::StreamRegistry,
     pub(crate) registry: Registry,
     /// Every Space's latest thumbnail ([`crate::thumbnails`]).
     pub(crate) thumbnails: crate::thumbnails::ThumbnailCache,
@@ -859,12 +864,14 @@ impl Spaces {
         let facts = self.team_facts();
         let provided_here: std::collections::HashSet<String> =
             provided.iter().map(|p| p.relay_machine.clone()).collect();
-        // A Space this computer listed on the account itself is the local
-        // one, once.
+        // A Space of this computer that is on the account (listed by Cua
+        // itself, by hand, or kept there because it is shared with other
+        // people) is the local one, once: every attached machine, not only
+        // the ones a pass listed.
         #[cfg(feature = "spaces-agents")]
         let provided_here = {
             let mut here = provided_here;
-            here.extend(self.auto_published_machines());
+            here.extend(self.attached_machines().into_values());
             here
         };
         let cache = self.inner.relay_cache.lock().expect("relay cache");
@@ -1397,6 +1404,8 @@ impl Spaces {
     /// Forgets a Space (registry entry and stored token). The sandbox is not
     /// touched.
     pub async fn remove(&self, space: &str) -> Result<SpaceInfo> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = self.resolve(space)?;
         let info = self.info(&id).ok();
         let _ = crate::lifetimes::forget(self.home_dir(), &id.to_string());
@@ -3582,6 +3591,8 @@ impl Spaces {
     /// Space's copy: what the coordinator that keeps durable Spaces uses to
     /// remove a copy it replaced or deleted.
     pub async fn delete_copy(&self, space: &str) -> Result<String> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = match self.resolve(space) {
             Ok(id) => id,
             // A local sandbox no Space record names (a `cua sb fork`, a
@@ -3970,6 +3981,8 @@ impl Spaces {
     /// and a legacy `cloud:` Space fails with
     /// [`cua_sandbox_core::CLOUD_ENDED`].
     pub async fn stop(&self, space: &str) -> Result<SpacePower> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         // Its child Spaces first ([`crate::tree`]).
         self.power_off_children(space, false).await;
         self.set_power(space, false).await
@@ -4006,6 +4019,8 @@ impl Spaces {
 
     /// [`Spaces::suspend`] of this Space alone.
     pub(crate) async fn suspend_one(&self, space: &str) -> Result<SpacePower> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = self.resolve(space)?;
         let SpaceId::Local { name } = &id else {
             return Err(Error::WrongProvider {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/trycua/cua/compare/cua-spaces-v0.31.4...cua-spaces-v0.32.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Agents tab starts agents from the Home box, one entry per Space, easy to clear ([#7275](https://github.com/trycua/cua/issues/7275)) ([5a0b65f](https://github.com/trycua/cua/commit/5a0b65f7d6af5a1c09e7f3aced03d809cbd4d521))
+
 ## [0.31.4](https://github.com/trycua/cua/compare/cua-spaces-v0.31.3...cua-spaces-v0.31.4) (2026-11-10)
 
 

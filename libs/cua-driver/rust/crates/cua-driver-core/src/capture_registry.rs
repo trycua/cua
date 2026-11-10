@@ -737,6 +737,23 @@ impl CaptureRegistry {
         &self,
         request: CaptureActionRequest,
     ) -> Result<CaptureActionAdmission, CaptureActionError> {
+        self.admit_action_with(request, true)
+    }
+
+    /// Admission without spending the capture: the same checks and mapping,
+    /// but the capture stays usable if the action is then refused.
+    fn preview_action(
+        &self,
+        request: CaptureActionRequest,
+    ) -> Result<CaptureActionAdmission, CaptureActionError> {
+        self.admit_action_with(request, false)
+    }
+
+    fn admit_action_with(
+        &self,
+        request: CaptureActionRequest,
+        consume: bool,
+    ) -> Result<CaptureActionAdmission, CaptureActionError> {
         let now = self.clock.now();
         let mut inner = self.lock_inner();
         let capture = self.resolve_locked(&mut inner, request.capture_id, &request.binding, now)?;
@@ -771,7 +788,9 @@ impl CaptureRegistry {
             native_action_dimensions: capture.native_action_dimensions,
             digest: capture.digest,
         };
-        self.remove_capture(&mut inner, request.capture_id);
+        if consume {
+            self.remove_capture(&mut inner, request.capture_id);
+        }
         Ok(admission)
     }
 
@@ -1017,6 +1036,17 @@ impl CaptureService {
         request: CaptureActionRequest,
     ) -> Result<CaptureActionAdmission, CaptureActionError> {
         self.registry.admit_action(request)
+    }
+
+    /// [`Self::admit_action`] that leaves the capture unspent. For an action
+    /// that may still be refused after its point is mapped (a background click
+    /// that finds no accessible control): the caller spends the capture with
+    /// `admit_action` only once the action is dispatched.
+    pub fn preview_action(
+        &self,
+        request: CaptureActionRequest,
+    ) -> Result<CaptureActionAdmission, CaptureActionError> {
+        self.registry.preview_action(request)
     }
 
     /// Predict, without consuming anything, whether a capture-bound action
@@ -1356,6 +1386,28 @@ mod tests {
             admission.native_action_dimensions,
             NativeActionDimensions::new(4, 6).unwrap()
         );
+    }
+
+    #[test]
+    fn preview_leaves_the_capture_unspent_until_it_is_admitted() {
+        let service = CaptureService::new(config(2, 10_000)).unwrap();
+        let owner = service.binding("session-a", 1).unwrap();
+        let target = CaptureTarget::PrimaryDesktop;
+        let id = service
+            .publish(publication(png(2, 2, 1), target.clone(), "session-a", 1))
+            .unwrap();
+        let request = || action_request(id, owner.clone(), target.clone(), (2, 2));
+        // A previewed action that is then refused leaves the capture usable.
+        let previewed = service.preview_action(request()).unwrap();
+        service.preview_action(request()).unwrap();
+        // Admission spends it, exactly once.
+        let admitted = service.admit_action(request()).unwrap();
+        assert_eq!(
+            (previewed.action_x, previewed.action_y),
+            (admitted.action_x, admitted.action_y)
+        );
+        assert!(service.admit_action(request()).is_err());
+        assert!(service.preview_action(request()).is_err());
     }
 
     #[test]

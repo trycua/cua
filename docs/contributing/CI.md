@@ -95,9 +95,8 @@ first-time contributor's run needs a maintainer to approve it. Release Please pu
 author, labels and commit trailers are not read, and the `agent` label is only for filtering.
 
 Branches of this repository used to need a `local-ci` commit status instead, set by a Mac runner after it ran
-the same `bin/ci --quick`. That runner had one queue: its wait (8.8 minutes at the median, 132 at p90) was the
-gate's slowest step for about a third of green commits, and it never failed a commit that `CI: Quick` passed.
-The gate no longer reads that status.
+the same `bin/ci --quick`. That runner had one queue, and waiting for it was often the gate's slowest step,
+while it never failed a commit that `CI: Quick` passed. The gate no longer reads that status.
 
 The requirement is **report-only** until the repository variable `REQUIRE_LOCAL_CI` is `true`, which makes it
 blocking. It is the only switch. After a failure, fix it and push; a green `CI: Quick` rerun reruns the gate

@@ -951,7 +951,8 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
 /// the keystrokes. Only `Complete` positively confirms the text landed:
 /// - unreadable `after` (`None`) → `Unverifiable` (Catalyst case; the agent
 ///   must confirm via screenshot).
-/// - `after` contains the complete text → `Complete`; a terminal needs a copy beyond those in `before`.
+/// - `after` contains the complete text → `Complete`; a terminal needs a copy
+///   beyond those in `before`.
 /// - empty input text → trivially `Complete`.
 ///
 /// Otherwise classify an observable insertion without mistaking a prefix for
@@ -964,7 +965,7 @@ fn typed_progress(
     before: Option<&str>,
     after: Option<&str>,
     text: &str,
-    terminal: bool,
+    terminal_copies: Option<usize>,
 ) -> TypedProgress {
     if text.is_empty() {
         return TypedProgress::Complete;
@@ -972,12 +973,9 @@ fn typed_progress(
     let Some(after) = after else {
         return TypedProgress::Unverifiable;
     };
-    let shown = match before {
-        Some(before) if terminal => {
-            after != before && after.matches(text).count() > before.matches(text).count()
-        }
-        None if terminal => false,
-        _ => after.contains(text),
+    let shown = match terminal_copies {
+        Some(copies) => Some(after) != before && after.matches(text).count() > copies,
+        None => after.contains(text),
     };
     if shown {
         return TypedProgress::Complete;
@@ -1387,12 +1385,14 @@ fn await_typed_delivery(
     mut read_value: impl FnMut() -> Option<String>,
     is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
+    let terminal_copies =
+        terminal.then(|| before.map_or(usize::MAX, |before| before.matches(text).count()));
     let mut best_partial = None;
     let started = std::time::Instant::now();
     let mut deadline = deadline;
     loop {
         let after = read_value();
-        match typed_progress(before, after.as_deref(), text, terminal) {
+        match typed_progress(before, after.as_deref(), text, terminal_copies) {
             TypedProgress::Complete => return (true, Some(text.chars().count())),
             TypedProgress::Partial(delivered) => {
                 best_partial =
@@ -1789,7 +1789,7 @@ fn type_text_in_key_window(
                 before.as_deref(),
                 after.as_deref(),
                 ax_text,
-                false,
+                None,
             ))
         } else {
             None
@@ -2317,7 +2317,7 @@ mod tests {
     fn large_atomic_ax_payloads_are_not_subject_to_the_synthesis_budget() {
         assert!(synthesis_preflight(TextDeliveryRoute::AtomicAx, 100_000, 200).is_none());
         assert_eq!(
-            typed_progress(None, Some(&"x".repeat(11_500)), &"x".repeat(11_500), false),
+            typed_progress(None, Some(&"x".repeat(11_500)), &"x".repeat(11_500), None),
             TypedProgress::Complete,
             "a successful one-call AX insertion remains eligible regardless of size"
         );
@@ -2448,7 +2448,7 @@ mod tests {
             (Some(""), Some("one\ntwo"), "one\ntwo", Complete),
         ] {
             assert_eq!(
-                typed_progress(before, after, text, false),
+                typed_progress(before, after, text, None),
                 expected,
                 "before={before:?} after={after:?} text={text:?}"
             );
@@ -2607,14 +2607,26 @@ mod tests {
             (ran, "$ git push\nok\n$ git pu", false, Complete),
         ] {
             assert_eq!(
-                typed_progress(Some(before), Some(after), "git push", terminal),
+                typed_progress(
+                    Some(before),
+                    Some(after),
+                    "git push",
+                    terminal.then(|| before.matches("git push").count()),
+                ),
                 expected,
                 "before={before:?} after={after:?} terminal={terminal}"
             );
         }
         assert_eq!(
-            typed_progress(None, Some("$ git push"), "git push", true),
-            Unverifiable
+            await_typed_delivery(
+                None,
+                "git push",
+                true,
+                std::time::Instant::now(),
+                || Some("$ git push".to_owned()),
+                || false,
+            ),
+            (false, None)
         );
         assert_eq!(
             await_typed_delivery(

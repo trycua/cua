@@ -1,9 +1,11 @@
 \* SPDX-License-Identifier: MIT
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE windows_typing ----
-\* One foreground input turn on Windows: with_confirmed_foreground in
-\* src/input/keyboard.rs, after the target has been confirmed in front and the
-\* input queue attached. src/typing_turn.rs holds the restore rule.
+\* One foreground input turn on Windows: with_confirmed_foreground
+\* (platform-windows/src/input/keyboard.rs:736) and the text body of
+\* send_text_synthesized_paced_after_focus (:615), after the target has been
+\* confirmed in front and the input queue attached. The restore rule is
+\* restores_previous in platform-windows/src/typing_turn.rs.
 \* Windows: U (the user's window, foreground before the turn), T (the target),
 \* O (any other window, such as a popup that takes the foreground).
 \*
@@ -14,7 +16,7 @@
 \* The unattached fallback (no queue attachment, 40 ms settle) has no read
 \* signal and is not modelled.
 \*
-\* Check with TLC (tla2tools.jar):
+\* Check with TLC (tla2tools.jar), from this directory:
 \*   java -cp tla2tools.jar tlc2.TLC -config windows_typing.cfg windows_typing.tla
 \*     the rule in typing_turn.rs: every invariant holds
 \*   java -cp tla2tools.jar tlc2.TLC -config windows_typing_always.cfg windows_typing.tla
@@ -35,8 +37,9 @@ vars == <<front, sent, pending, reader, turn, done, userGot, stolen>>
 Init == /\ front = "T" /\ sent = 0 /\ pending = 0 /\ reader = "live"
         /\ turn = "sending" /\ done = FALSE /\ userGot = FALSE /\ stolen = FALSE
 
-\* SendInput of b events. Text sends one unit (b = 1) after checking the
-\* foreground; a key chord sends all of its events at once (b = N).
+\* SendInput of b events after checking the foreground. Paced text sends one
+\* unit (b = 1); zero-delay text sends a batch (#6892); a key chord sends all
+\* of its events at once (b = N).
 Send(b) == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ sent + b <= N
            /\ sent' = sent + b /\ pending' = b
            /\ UNCHANGED <<front, reader, turn, done, userGot, stolen>>
@@ -47,14 +50,15 @@ Short == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ sent < N
 \* SendInput inserts nothing, so nothing is pending.
 ShortNone == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ turn' = "notsent"
              /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
-\* A 2 s read wait (per text unit, or the final drain) runs out.
+\* A 2 s read wait (send_and_await_read per batch, or wait_for_drain :877) runs out.
 Timeout == /\ turn = "sending" /\ pending > 0 /\ turn' = "undrained"
            /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
 \* The final drain sees every inserted event read.
 Drained == /\ turn = "sending" /\ pending = 0 /\ sent = N /\ turn' = "drained"
            /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
-\* foreground_lost: before the next text unit, the foreground is not the target.
-Lost == /\ turn = "sending" /\ pending = 0 /\ 0 < sent /\ sent < N /\ front # "T"
+\* foreground_lost: before any text batch, the first included, the foreground
+\* is not the target (keyboard.rs:650-660).
+Lost == /\ turn = "sending" /\ pending = 0 /\ sent < N /\ front # "T"
         /\ turn' = "lost"
         /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
 \* The target's input thread reads one event in whichever window is in front.
@@ -68,6 +72,7 @@ Wake == reader = "hung" /\ reader' = "live"
 OtherTakesFront == /\ ~done /\ front = "T" /\ front' = "O"
                    /\ UNCHANGED <<sent, pending, reader, turn, done, userGot, stolen>>
 
+\* restores_previous (typing_turn.rs), applied at keyboard.rs:827
 Restores == IF RestoreRule = "always" THEN TRUE ELSE turn \in {"drained", "notsent"}
 Finish == /\ turn # "sending" /\ ~done /\ done' = TRUE
           /\ front' = IF Restores THEN "U" ELSE front

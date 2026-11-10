@@ -10,7 +10,7 @@ turns it back on, which is how #6749 (cua-spaces 0.22.0) merged while held. The 
 label is on (ci-gate.yml), so a hold also wins a race with this script.
 
     release_pr_automerge.py --repo trycua/cua                # all open release PRs
-    release_pr_automerge.py --repo trycua/cua --pr 123       # one PR (pull_request_target)
+    release_pr_automerge.py --repo trycua/cua --pr 123       # one PR (pull_request)
     release_pr_automerge.py --repo trycua/cua --alert        # also alert on stale green PRs
     release_pr_automerge.py --repo trycua/cua --guard .github/scripts/release_please_tag_guard.cjs
 

@@ -1529,13 +1529,13 @@
    "options": [],
    "subcommands": [
     {
-     "abstract": "Show the setting and the desktop entry. The default subcommand.",
+     "abstract": "Show the setting, the desktop entry and the Cua KWin helper. The default subcommand.",
      "arguments": [],
      "discussion": "",
      "examples": [
       {
        "command": "cua-driver kwin-capture status",
-       "description": "Show the setting and the desktop entry"
+       "description": "Show the setting, the desktop entry and the Cua KWin helper"
       }
      ],
      "flags": [],
@@ -1546,7 +1546,7 @@
     {
      "abstract": "Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks.",
      "arguments": [],
-     "discussion": "A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given.",
+     "discussion": "A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given. Also loads the Cua KWin helper, when it is installed, and has KWin start it with every session.",
      "examples": [
       {
        "command": "cua-driver kwin-capture on",
@@ -1566,7 +1566,7 @@
      "subcommands": []
     },
     {
-     "abstract": "Turn it off and remove the desktop entry.",
+     "abstract": "Turn it off, remove the desktop entry and unload the Cua KWin helper.",
      "arguments": [],
      "discussion": "",
      "examples": [

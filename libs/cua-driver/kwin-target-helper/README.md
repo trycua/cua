@@ -19,37 +19,38 @@ window activation.
 - CMake 3.21 or newer
 - a running Wayland KWin session for loading/testing
 
-On Arch-derived systems, install the distribution's matching packages (package
-names vary by distribution), then build from this directory:
+Install the distribution's matching development packages (their names vary;
+`tests/Containerfile*` list them for Ubuntu, Debian and Fedora), then run:
+
+```bash
+./install.sh
+```
+
+It builds the helper against this machine's KWin, installs it system-wide (it
+asks for root), and runs `cua-driver kwin-capture on`. That command loads the
+helper into the running KWin and has KWin start it with every session, so
+nothing needs repeating after a login. `cua-driver kwin-capture status` shows
+whether the helper is installed, loaded, and set to start. `./install.sh
+--uninstall` turns it off and removes it.
+
+Run `./install.sh` again after a KWin upgrade: KWin loads only a helper built
+for its own version, and the status then reads "installed but not loaded".
+
+The script installs one file in KWin's effect plugin namespace:
+
+```text
+<qt6 plugin dir>/kwin/effects/plugins/cua_kwin_target_helper.so
+```
+
+To build without installing:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-The module is installed in KWin's effect plugin namespace:
-
-```text
-kwin/effects/plugins/cua_kwin_target_helper.so
-```
-
-For a user-local installation, use a prefix supported by the local Qt/KWin
-plugin search path and verify discovery before loading:
-
-```bash
-cmake --install build --prefix "$HOME/.local"
-```
-
-If the local KWin installation does not search that prefix, use the
-distribution's native packaging mechanism or an explicitly approved
-system-local installation. Never copy the module into an arbitrary plugin
-directory and never overwrite an existing file.
-
-Load/reload through KWin's supported Effects interface where available:
-
-```bash
-qdbus6 org.kde.KWin /Effects loadEffect cua_kwin_target_helper
-```
+Never copy the module into an arbitrary plugin directory and never overwrite
+a file that is not this helper.
 
 The helper exposes the Cua-owned service `org.cua.KWinTarget` only while the
 effect is loaded by the current `kwin_wayland` process. Verify the service

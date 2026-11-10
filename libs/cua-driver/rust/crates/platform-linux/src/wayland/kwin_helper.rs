@@ -111,6 +111,14 @@ fn helper_owner() -> Option<String> {
 /// The helper's bus name, when KWin itself owns it and it speaks a protocol
 /// from `oldest` up to [`PROTOCOL_VERSION`].
 fn helper_owner_from(oldest: u32) -> Option<String> {
+    let (owner, version) = loaded()?;
+    (oldest..=PROTOCOL_VERSION)
+        .contains(&version)
+        .then_some(owner)
+}
+
+/// The bus name and protocol of the helper KWin itself has loaded.
+fn loaded() -> Option<(String, u32)> {
     let owner_raw = dbus_call("GetNameOwner", &[DEST.to_owned()]);
     let owner = parse_quoted_string(&owner_raw?)?;
     if !owner.starts_with(':') {
@@ -137,9 +145,143 @@ fn helper_owner_from(oldest: u32) -> Option<String> {
 
     let version_raw = call_to(&owner, "GetVersion", &[]);
     let version = parse_first_u32(&version_raw?)?;
-    (oldest..=PROTOCOL_VERSION)
-        .contains(&version)
-        .then_some(owner)
+    Some((owner, version))
+}
+
+/// KWin's name for the helper, as an effect and in `kwinrc`.
+const EFFECT: &str = "cua_kwin_target_helper";
+const EFFECTS_PATH: &str = "/Effects";
+const EFFECTS_IFACE: &str = "org.kde.kwin.Effects";
+/// How long KWin gets to bring a loaded helper onto the bus.
+const START_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Load the helper into the running KWin and have KWin start it with every
+/// session. Does nothing when KWin has no such effect installed.
+/// [`status_line`] tells what came of it.
+pub(crate) fn turn_on() {
+    if installed() != Some(true) {
+        return;
+    }
+    write_autostart(true);
+    if loaded().is_none() {
+        effects_call("loadEffect");
+        let deadline = std::time::Instant::now() + START_TIMEOUT;
+        while loaded().is_none() && std::time::Instant::now() < deadline {
+            crate::interaction::pause(Duration::from_millis(100));
+        }
+    }
+}
+
+/// Unload the helper and stop KWin from starting it.
+pub(crate) fn turn_off() {
+    if autostarts() {
+        write_autostart(false);
+    }
+    if loaded().is_some() {
+        effects_call("unloadEffect");
+    }
+}
+
+/// The helper's line in `cua-driver kwin-capture status`, or `None` when KWin
+/// doesn't answer.
+pub(crate) fn status_line() -> Option<String> {
+    let installed = installed()?;
+    Some(describe(
+        installed,
+        loaded().map(|(_, version)| version),
+        autostarts(),
+    ))
+}
+
+fn describe(installed: bool, protocol: Option<u32>, autostarts: bool) -> String {
+    let state = match (protocol, installed) {
+        (Some(version), _) if version < GATE_PROTOCOL_VERSION => format!(
+            "loaded with protocol {version}; foreground input needs protocol \
+             {GATE_PROTOCOL_VERSION}: build and install the current helper"
+        ),
+        (Some(version), _) if autostarts => {
+            format!("loaded (protocol {version}), starts with KWin")
+        }
+        (Some(version), _) => format!(
+            "loaded (protocol {version}) until KWin restarts; run `cua-driver kwin-capture \
+             on` to start it with KWin"
+        ),
+        (None, true) => "installed but not loaded; run `cua-driver kwin-capture on`. If it \
+                         stays unloaded, it was built for another KWin version: build and \
+                         install it again"
+            .to_owned(),
+        (None, false) => "not installed; foreground input to KWin windows needs it (see \
+                          libs/cua-driver/kwin-target-helper)"
+            .to_owned(),
+    };
+    format!("kwin helper: {state}")
+}
+
+/// Whether KWin has the helper among the effects it can load, or `None` when
+/// KWin doesn't answer.
+fn installed() -> Option<bool> {
+    let effects = gdbus_call_to(
+        KWIN_DEST,
+        EFFECTS_PATH,
+        "org.freedesktop.DBus.Properties.Get",
+        &[EFFECTS_IFACE.to_owned(), "listOfEffects".to_owned()],
+    )?;
+    Some(effects.contains(&format!("'{EFFECT}'")))
+}
+
+fn effects_call(method: &str) {
+    gdbus_call_to(
+        KWIN_DEST,
+        EFFECTS_PATH,
+        &format!("{EFFECTS_IFACE}.{method}"),
+        &[EFFECT.to_owned()],
+    );
+}
+
+/// Set or clear the `kwinrc` entry that makes KWin load the helper when it
+/// starts. `kwriteconfig6` is KDE's own writer, so KWin's file stays intact.
+fn write_autostart(on: bool) {
+    let mut command = Command::new("kwriteconfig6");
+    command.args(["--file", "kwinrc", "--group", "Plugins", "--key"]);
+    command.arg(format!("{EFFECT}Enabled"));
+    if on {
+        command.args(["--type", "bool", "true"]);
+    } else {
+        command.arg("--delete");
+    }
+    let _ = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Whether `kwinrc` tells KWin to load the helper when it starts.
+fn autostarts() -> bool {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+        });
+    config
+        .and_then(|dir| std::fs::read_to_string(dir.join("kwinrc")).ok())
+        .is_some_and(|text| autostart_set(&text))
+}
+
+fn autostart_set(kwinrc: &str) -> bool {
+    let key = format!("{EFFECT}Enabled");
+    let mut in_plugins = false;
+    kwinrc.lines().map(str::trim).any(|line| {
+        if line.starts_with('[') {
+            in_plugins = line == "[Plugins]";
+            return false;
+        }
+        in_plugins
+            && line
+                .split_once('=')
+                .is_some_and(|(name, value)| name.trim() == key && value.trim() == "true")
+    })
 }
 
 fn snapshot_for_owner(owner: &str) -> Option<Vec<KwinWindow>> {
@@ -558,6 +700,38 @@ pub(super) fn is_trusted_kwin_process(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kwinrc_starts_the_helper_only_with_its_own_key_set_true_under_plugins() {
+        assert!(autostart_set(
+            "[Plugins]\ncua_kwin_target_helperEnabled=true\n"
+        ));
+        assert!(autostart_set("[Desktops]\nRows=1\n\n[Plugins]\nblurEnabled=false\ncua_kwin_target_helperEnabled = true\n"));
+        assert!(!autostart_set(
+            "[Plugins]\ncua_kwin_target_helperEnabled=false\n"
+        ));
+        assert!(!autostart_set("[Plugins]\nblurEnabled=true\n"));
+        // The same key under another group is not KWin's plugin switch.
+        assert!(!autostart_set(
+            "[Plugins]\n[Other]\ncua_kwin_target_helperEnabled=true\n"
+        ));
+        assert!(!autostart_set(""));
+    }
+
+    #[test]
+    fn the_status_line_says_what_is_missing_and_how_to_get_it() {
+        assert_eq!(
+            describe(true, Some(2), true),
+            "kwin helper: loaded (protocol 2), starts with KWin"
+        );
+        // Loaded by hand: gone after the next login unless turned on.
+        assert!(describe(true, Some(2), false).contains("until KWin restarts"));
+        assert!(describe(true, Some(1), true).contains("needs protocol 2"));
+        let stopped = describe(true, None, true);
+        assert!(stopped.contains("installed but not loaded"));
+        assert!(stopped.contains("`cua-driver kwin-capture on`"));
+        assert!(describe(false, None, false).contains("not installed"));
+    }
 
     #[test]
     fn the_active_window_is_read_from_the_snapshot() {

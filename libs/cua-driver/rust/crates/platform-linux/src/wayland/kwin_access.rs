@@ -123,6 +123,8 @@ fn denies(permissions: &HashMap<String, Vec<String>>) -> bool {
 /// Save `setting`. On KWin 6.7 and older the desktop entry is what lets this
 /// executable reach window management and ScreenShot2, so it is written for
 /// on and removed for off; KWin 6.8 and newer don't check it.
+/// On also loads the Cua KWin helper, when it is installed, and has KWin start
+/// it with every session; off undoes both.
 pub fn save(setting: Setting) -> anyhow::Result<()> {
     let entry = desktop_entry_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
     let saved = setting_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
@@ -137,8 +139,13 @@ pub fn save(setting: Setting) -> anyhow::Result<()> {
         replace(&saved, setting.as_str())?;
     }
     refresh_service_cache();
-    if setting != Setting::Off && super::kwin_capture::may_be_session() {
-        wait_until_kwin_lists_windows();
+    if super::kwin_capture::may_be_session() {
+        if setting == Setting::Off {
+            super::kwin_helper::turn_off();
+        } else {
+            wait_until_kwin_lists_windows();
+            super::kwin_helper::turn_on();
+        }
     }
     Ok(())
 }
@@ -213,6 +220,9 @@ pub fn report() -> String {
         ),
         (None, _) => "desktop entry: none".into(),
     });
+    if super::kwin_capture::may_be_session() {
+        lines.extend(super::kwin_helper::status_line());
+    }
     lines.join("\n") + "\n"
 }
 

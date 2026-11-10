@@ -368,8 +368,8 @@ fn classify_wayland_backend(
                 ),
                 "On GNOME, install and enable the bundled WinRects Shell helper, then \
                  log out and back in. On KDE, foreground input needs the Cua KWin \
-                 helper (kwin-target-helper, protocol 2) loaded and \
-                 `cua-driver kwin-capture on`; AX actions and exact background \
+                 helper (kwin-target-helper, protocol 2) installed and \
+                 `cua-driver kwin-capture on`, which loads it; AX actions and exact background \
                  refusals remain usable.",
             );
         }

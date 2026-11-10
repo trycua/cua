@@ -49,7 +49,9 @@ pub(crate) fn unavailable(window_id: u64) -> anyhow::Error {
     anyhow::anyhow!(
         "foreground_unavailable: KWin input can be bound to window {window_id} only through \
          the Cua KWin helper's input gate (kwin-target-helper protocol {}), which is not \
-         loaded; refusing global input because it could affect the wrong application",
+         loaded; run `cua-driver kwin-capture on` to load it, or `cua-driver kwin-capture \
+         status` to see what is missing; refusing global input because it could affect the \
+         wrong application",
         kwin_helper::GATE_PROTOCOL_VERSION
     )
 }

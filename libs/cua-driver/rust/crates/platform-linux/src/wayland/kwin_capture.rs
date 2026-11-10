@@ -868,8 +868,9 @@ mod tests {
             format!(
                 "foreground_unavailable: KWin input can be bound to window {window} only \
                  through the Cua KWin helper's input gate (kwin-target-helper protocol 2), \
-                 which is not loaded; refusing global input because it could affect the \
-                 wrong application"
+                 which is not loaded; run `cua-driver kwin-capture on` to load it, or \
+                 `cua-driver kwin-capture status` to see what is missing; refusing global \
+                 input because it could affect the wrong application"
             )
         );
     }

@@ -35,6 +35,8 @@ import {
   demoKeyvaultItems,
   demoKeyvaultOverview,
   demoDesktopRows,
+  demoBusyMachines,
+  demoBusyRows,
   demoSpaceRows,
   demoTelemetry,
 } from "./demo-data";
@@ -198,6 +200,9 @@ export interface DemoOptions {
   threadPushCard?: boolean;
   /** The host asks about a push on a card and posts a notice (`?demo=thread-cards`). */
   threadCards?: boolean;
+  /** A busy account (`?demo=computers-busy`): an offline computer with two Spaces on it, an online Mac Studio with 33 GB of
+   * disk left and a Space, and two more idle offline computers. */
+  busyComputers?: boolean;
   /** Another of your computers is creating a Space (`?demo=creating-elsewhere`):
    * the Mac mini, a macOS Space 40% of the way (CUA-2349). */
   creatingElsewhere?: boolean;
@@ -334,6 +339,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
     desktops: flags.has("desktops"),
+    busyComputers: flags.has("computers-busy"),
     driverUpdate: flags.has("driver-update"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
@@ -462,6 +468,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           ...(options.agentHome ? demoAgentHomeRows(now()) : []),
           ...demoSpaceRows(now()),
           ...(options.desktops ? demoDesktopRows(now()) : []),
+          ...(options.busyComputers ? demoBusyRows(now()) : []),
           ...demoScaleRows(now(), options.extraSpaces ?? 0),
         ],
     items: demoKeyvaultItems(now()),
@@ -827,6 +834,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "machines.list": () =>
       [
         ...demoMachineRows(now(), state.host, state.platform),
+        ...(options.busyComputers ? demoBusyMachines(now()) : []),
         ...(options.manyMachines ? Array.from({ length: 14 }, (_, i) => demoExtraMachine(i)) : []),
         ...state.paired.map((m) => ({ ...m, limits: [...m.limits] })),
         ...(options.signedInMachines ? demoSignedInRows(now()) : []),

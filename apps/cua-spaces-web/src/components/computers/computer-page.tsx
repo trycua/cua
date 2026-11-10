@@ -33,6 +33,7 @@ import {
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { BackLink } from "@/components/back-link";
+import { computerWarnings } from "@/components/resources/computer-resources";
 import { DriverAttentionLabel } from "@/components/driver/attention";
 import { driverLine } from "@/components/driver/copy";
 import { EnrollSheet, RecentAccess, TrustSection, useMachinesAccount } from "@/components/machines/account-parts";
@@ -191,6 +192,7 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
 
   // What each Space takes on this computer's disk, where the host says (the low-disk warning leads here).
   const resources = useResources();
+  const diskWarning = row ? computerWarnings(resources, [row])[0] : undefined;
   const sizeOf = (id: string) => {
     const bytes = m.current ? spaceDiskBytes(resources, id) : null;
     return bytes ? size(bytes) : null;
@@ -229,6 +231,14 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
         {m.status}
         {m.sharedBy ? <span className="ml-2">{m.sharedBy}</span> : null}
       </p>
+
+      {/* The full low-disk message lives here; the Computers list only marks the row. */}
+      {diskWarning ? (
+        <p className="mt-2 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-machine-disk-warning={diskWarning.level}>
+          <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
+          {diskWarning.text}
+        </p>
+      ) : null}
 
       <MachineIssues machine={m} hidePermissions={Boolean(m.current && row?.panel?.permissionsTitle)} onFail={fail} />
 

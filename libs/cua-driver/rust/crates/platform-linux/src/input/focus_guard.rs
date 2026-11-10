@@ -883,10 +883,9 @@ pub fn guarded<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    let snapshot = FocusSnapshot::capture();
-    let value = body()?;
-    let report = snapshot.map(|s| s.restore_if_changed(target_pid));
-    Ok((value, report))
+    restore_after(FocusSnapshot::capture(), body, |s| {
+        s.restore_if_changed(target_pid)
+    })
 }
 
 /// [`guarded`] for a body that has already let the desktop settle (the MPX
@@ -896,9 +895,19 @@ pub fn guarded_settled<T>(
     target_pid: Option<u32>,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, Option<FocusGuardReport>)> {
-    let snapshot = FocusSnapshot::capture();
+    restore_after(FocusSnapshot::capture(), body, |s| {
+        s.restore_if_changed_opts(target_pid, false)
+    })
+}
+
+/// Run `body`, then `restore` the snapshot.
+fn restore_after<S, T, R>(
+    snapshot: Option<S>,
+    body: impl FnOnce() -> Result<T>,
+    restore: impl FnOnce(S) -> R,
+) -> Result<(T, Option<R>)> {
     let value = body()?;
-    let report = snapshot.map(|s| s.restore_if_changed_opts(target_pid, false));
+    let report = snapshot.map(restore);
     Ok((value, report))
 }
 
@@ -1007,6 +1016,36 @@ mod tests {
         assert!(evidence["detail"].as_str().unwrap().contains("closed"));
         assert!(report.summary().contains("window_closed"));
         assert!(!report.summary().contains("not_restored"));
+    }
+
+    #[test]
+    fn a_failed_delivery_still_restores_the_focus_and_returns_its_error() {
+        let restored = std::cell::Cell::new(false);
+        let result: Result<((), Option<()>)> = restore_after(
+            Some("snapshot"),
+            || anyhow::bail!("the combo box popup listed no options"),
+            |_| restored.set(true),
+        );
+        assert!(restored.get(), "the focus was not restored after an error");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "the combo box popup listed no options"
+        );
+    }
+
+    #[test]
+    fn a_successful_delivery_restores_once_and_returns_the_report() {
+        let restores = std::cell::Cell::new(0);
+        let (value, report) = restore_after(
+            Some("snapshot"),
+            || Ok(7),
+            |s| {
+                restores.set(restores.get() + 1);
+                s
+            },
+        )
+        .unwrap();
+        assert_eq!((value, report, restores.get()), (7, Some("snapshot"), 1));
     }
 
     #[test]

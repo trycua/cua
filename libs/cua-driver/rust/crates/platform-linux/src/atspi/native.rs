@@ -3511,13 +3511,22 @@ fn at_point_activation_index(
     actions: &[String],
     is_deepest_hit: bool,
 ) -> Option<usize> {
-    if is_container_role(role) || crate::at_point_policy::is_top_level_shell_role(role) {
+    if is_container_role(role)
+        || crate::at_point_policy::is_top_level_shell_role(role)
+        || is_web_document_role(role)
+    {
         return None;
     }
     if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
         return None;
     }
     activation_index(role, actions)
+}
+
+/// A web document's `doDefault` dispatches no DOM click (Chromium on X11
+/// answers true and the page sees nothing), so it is never an at-point target.
+pub(crate) fn is_web_document_role(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("document web")
 }
 
 /// What an at-point accessibility click did, for the tool result.
@@ -8335,6 +8344,13 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["doDefault"]), true),
             Some(0)
         );
+        // Its document is not: `doDefault` there dispatches no DOM click.
+        for deepest in [false, true] {
+            assert_eq!(
+                at_point_activation_index("document web", &acts(&["doDefault"]), deepest),
+                None
+            );
+        }
     }
 
     #[test]

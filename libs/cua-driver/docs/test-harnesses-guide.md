@@ -743,7 +743,11 @@ env WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
 Inside the nested session, `cua-driver list_windows` must report a non-zero
 tiled window rect (for example `16,16 453x998`), `get_window_state` must
 return that size with `frame_suppressed` unset, and window-coordinate typing
-and clicking must reach the app. `get_window_state` and a coordinate click
+and clicking must reach the app. On 26.04 the capture takes the screenshot
+fallback: `CUA_LOG=platform_linux=debug` must log
+`screenshotted window <id> by id into a driver-owned file`, no file may appear
+in niri's `screenshot-path`, and no `cua-driver-niri-*.png` may be left in
+`$TMPDIR`. `get_window_state` and a coordinate click
 must share a `session` label.
 
 The same niri build carries `ext_foreign_toplevel_image_capture_source_manager_v1`

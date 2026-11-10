@@ -156,9 +156,12 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
 
 /// Capture one window through niri's own screenshot action. This is the
 /// fallback for niri releases before #4711, where a tiled window has no IPC
-/// position to crop from. The action captures the focused window to the
-/// configured screenshot path; the previous focus is restored and the
-/// temporary file is removed.
+/// position to crop from. The action takes the window by id and, on releases
+/// with `--path`, writes a file the driver owns, so focus does not change.
+/// Older releases write to the configured screenshot directory, where the
+/// driver focuses the target, waits for the new file, and restores focus.
+/// Either way the temporary file is removed. niri also puts the screenshot
+/// on the clipboard; its screenshot actions have no opt-out.
 pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
     use std::time::{Duration, Instant, SystemTime};
 
@@ -169,6 +172,13 @@ pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
     let size = window
         .size
         .ok_or_else(|| anyhow!("niri reports no window size"))?;
+
+    if let Ok(bytes) = screenshot_window_to_path(id) {
+        tracing::debug!("niri: screenshotted window {id} by id into a driver-owned file");
+        return fit_window_png(bytes, size);
+    }
+    tracing::debug!("niri: screenshotted window {id} through the configured screenshot directory");
+
     let previous = focused_window_id();
     let dir = screenshot_dir()?;
     let before: std::collections::HashSet<std::path::PathBuf> = std::fs::read_dir(&dir)
@@ -193,17 +203,7 @@ pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
             if let Some(path) = newest_screenshot(&dir, &before, started) {
                 let bytes = std::fs::read(&path)?;
                 let _ = std::fs::remove_file(&path);
-                let image = image::load_from_memory(&bytes)?;
-                if (image.width(), image.height()) == size {
-                    let mut out = std::io::Cursor::new(Vec::new());
-                    image.write_to(&mut out, image::ImageFormat::Png)?;
-                    return Ok(out.into_inner());
-                }
-                let image =
-                    image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
-                let mut out = std::io::Cursor::new(Vec::new());
-                image.write_to(&mut out, image::ImageFormat::Png)?;
-                return Ok(out.into_inner());
+                return fit_window_png(bytes, size);
             }
             if Instant::now() >= deadline {
                 bail!(
@@ -218,6 +218,65 @@ pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
         let _ = run_niri_action(&["focus-window", "--id", &previous.to_string()]);
     }
     result
+}
+
+/// Screenshot a window by id into a temporary file the driver owns. niri
+/// >= 26.04 accepts `--path`; older releases reject it and the caller uses
+/// the configured screenshot directory instead. `--id` keeps focus where it
+/// is, so the window does not need to be brought forward.
+fn screenshot_window_to_path(id: u64) -> Result<Vec<u8>> {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "cua-driver-niri-{}-{unique}.png",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let path_arg = path.to_string_lossy().into_owned();
+    let result = (|| -> Result<Vec<u8>> {
+        run_niri_action(&[
+            "screenshot-window",
+            "--id",
+            &id.to_string(),
+            "--path",
+            &path_arg,
+        ])?;
+        // niri replies before it finishes writing the file, so wait for a
+        // size that stopped growing instead of reading a partial PNG.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut previous_len = 0;
+        while std::time::Instant::now() < deadline {
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                let len = metadata.len();
+                if len > 0 && len == previous_len {
+                    return Ok(std::fs::read(&path)?);
+                }
+                previous_len = len;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        bail!(
+            "niri screenshot fallback: no screenshot appeared at {}",
+            path.display()
+        );
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// Scale a capture to the window size niri reports, so window-relative
+/// coordinates and the screenshot share one frame.
+fn fit_window_png(bytes: Vec<u8>, size: (u32, u32)) -> Result<Vec<u8>> {
+    let image = image::load_from_memory(&bytes)?;
+    if (image.width(), image.height()) == size {
+        return Ok(bytes);
+    }
+    let image = image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
 }
 
 fn focused_window_id() -> Option<u64> {
@@ -504,6 +563,25 @@ mod tests {
             (0, 0, 3200, 1080, 2.0)
         );
         assert_eq!(frame.outputs.len(), 2);
+    }
+
+    #[test]
+    fn fit_window_png_scales_a_capture_to_the_reported_window_size() {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &[255, 0, 0, 255, 0, 0, 0, 255],
+                2,
+                1,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let exact = fit_window_png(png.clone(), (2, 1)).unwrap();
+        assert_eq!(&exact, &png);
+        let fitted = fit_window_png(png, (4, 2)).unwrap();
+        let image = image::load_from_memory(&fitted).unwrap();
+        assert_eq!((image.width(), image.height()), (4, 2));
     }
 
     #[test]

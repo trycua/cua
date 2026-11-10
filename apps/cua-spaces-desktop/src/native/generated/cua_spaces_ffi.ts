@@ -41963,11 +41963,13 @@ export type AppSettingsInput = {
     showTips: boolean,
     /**
      * Settings, General's "When I close the window": the window's close
-     * button keeps Cua Spaces running in the background (none: no rows).
+     * button keeps Cua Spaces running in the background (none: no rows; a
+     * shell without a background service leaves them out).
      */
     closeWindowKeepsRunning?: boolean,
     /**
-     * The notice that Cua Spaces keeps running is on.
+     * The notice that Cua Spaces keeps running is on (shown with the row
+     * above).
      */
     closeNotice: boolean
 }

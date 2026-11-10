@@ -36264,11 +36264,13 @@ public struct AppSettingsInput: Equatable, Hashable {
     public var showTips: Bool
     /**
      * Settings, General's "When I close the window": the window's close
-     * button keeps Cua Spaces running in the background (none: no rows).
+     * button keeps Cua Spaces running in the background (none: no rows; a
+     * shell without a background service leaves them out).
      */
     public var closeWindowKeepsRunning: Bool?
     /**
-     * The notice that Cua Spaces keeps running is on.
+     * The notice that Cua Spaces keeps running is on (shown with the row
+     * above).
      */
     public var closeNotice: Bool
 
@@ -36349,10 +36351,12 @@ public struct AppSettingsInput: Equatable, Hashable {
          */showTips: Bool,
         /**
          * Settings, General's "When I close the window": the window's close
-         * button keeps Cua Spaces running in the background (none: no rows).
+         * button keeps Cua Spaces running in the background (none: no rows; a
+         * shell without a background service leaves them out).
          */closeWindowKeepsRunning: Bool?,
         /**
-         * The notice that Cua Spaces keeps running is on.
+         * The notice that Cua Spaces keeps running is on (shown with the row
+         * above).
          */closeNotice: Bool) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient

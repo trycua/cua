@@ -142,7 +142,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --exclude-drafts --exclude-pre-releases \
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --exclude-drafts \
                   --json tagName --jq '[.[].tagName | select(test("^cua-driver-rs-v[0-9]+[.][0-9]+[.][0-9]+$"))][0]')
           version=${tag#cua-driver-rs-v}
           echo "Cua Driver $version"

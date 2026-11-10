@@ -442,8 +442,8 @@ that names the remedy.
   input refuse; desktop-scope pointer input and capture are not refused.
 - `coordinate_frame:"desktop"` with a window target refuses.
 - Foreground actions activate the target, act, and give focus back to the
-  window that had it. `right_click` and `hotkey` leave the target focused, as
-  on Sway: giving focus back would close the menu they opened. Text and keys
+  window that had it. `right_click` and `set_value` leave the target focused,
+  as on Sway: giving focus back would close the menu they opened. Text and keys
   use niri's own keymap, and focus is checked before every key.
 - `list_windows` gives tiled windows 0x0 bounds, and a tiled window reads
   `is_on_screen:true` only while it is the active window of a shown workspace.

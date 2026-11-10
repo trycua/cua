@@ -7,11 +7,12 @@
 //! A foreground action behaves like a user at the keyboard: activate + raise the
 //! target toplevel, wait until the window manager confirms that it is the
 //! active window AND that the core X input focus sits inside it, then inject
-//! real input (XTest) and report where focus ended up. Pointer and key actions
-//! leave the target active afterwards — restoring the previously active window
-//! would pop down any menu the click just opened and would move keyboard focus
-//! away from the widget a following `type_text` needs. `type_text` restores
-//! the prior active window once its text is in.
+//! real input (XTest) and report where focus ended up. The transaction then
+//! gives the active window back to the one that had it, as on macOS, Windows
+//! and Wayland, unless the input opened a menu: restoring would close it, so
+//! the target keeps the focus and the report says why. `right_click`,
+//! `set_value` and the gestures leave the target active
+//! ([`crate::interaction::foreground_policy`]).
 //!
 //! Everything here is bounded: the activation/confirmation phase and the
 //! post-check run on watchdog threads with hard deadlines, so a wedged X
@@ -130,6 +131,9 @@ pub struct ForegroundReport {
     /// unknown, every on-screen window; a change among those alone is not
     /// the target's own.
     pub window_change_owned: bool,
+    /// The input opened a menu, so the target was left focused rather than
+    /// restored: the pid whose new popup it is.
+    pub menu_open: Option<u32>,
 }
 
 impl ForegroundReport {
@@ -143,7 +147,16 @@ impl ForegroundReport {
         if let Some(change) = &self.window_change {
             v["window_change"] = serde_json::json!(change);
         }
+        if let Some(pid) = self.menu_open {
+            v["focus_outcome"] = serde_json::json!("menu_open");
+            v["grab_held_by"] = serde_json::json!(pid);
+        }
         v
+    }
+
+    /// [`menu_open_note`] for this report.
+    pub fn focus_note(&self) -> String {
+        menu_open_note(self.menu_open)
     }
 
     /// Focus is proven to have stayed inside the target process after the
@@ -160,6 +173,20 @@ impl ForegroundReport {
     pub fn window_change_confirms(&self) -> bool {
         self.window_change.is_some() && (self.window_change_owned || self.focus_kept())
     }
+}
+
+/// A sentence for the tool's text when a foreground action left the target
+/// focused because pid `menu_open` mapped a popup during it; empty
+/// otherwise. A new popup is read as a menu: its grab is not probed.
+pub fn menu_open_note(menu_open: Option<u32>) -> String {
+    menu_open
+        .map(|pid| {
+            format!(
+                " The target was left focused because a menu is open (a new popup of pid \
+                 {pid}); giving the focus back would close it."
+            )
+        })
+        .unwrap_or_default()
 }
 
 /// One on-screen toplevel of a window set read for a before/after diff.
@@ -832,6 +859,7 @@ impl Activated {
             focus_after,
             window_change_owned: window_change.as_ref().is_some_and(|c| c.owned),
             window_change: window_change.map(|c| c.summary),
+            menu_open: None,
         }
     }
 }
@@ -1038,6 +1066,7 @@ mod tests {
             focus_after: FocusAfter::SamePid,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
             window_change_owned: false,
+            menu_open: None,
         };
         let json = report.to_json();
         assert_eq!(json["activated"], false);
@@ -1048,6 +1077,18 @@ mod tests {
             "appeared: popup window 7 (200x300 at 1,2)"
         );
         assert!(report.focus_kept());
+        assert!(json.get("focus_outcome").is_none());
+        assert!(report.focus_note().is_empty());
+        let menu = ForegroundReport {
+            menu_open: Some(42),
+            ..report
+        };
+        let json = menu.to_json();
+        assert_eq!(json["focus_outcome"], "menu_open");
+        assert_eq!(json["grab_held_by"], 42);
+        assert!(menu
+            .focus_note()
+            .contains("left focused because a menu is open"));
     }
 
     fn entry(window: u64, description: &str, owned: bool) -> WindowEntry {

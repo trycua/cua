@@ -105,7 +105,7 @@ jobs:
       - name: Cache Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml') }}
+          primary-key: nix-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml', 'libs/cua/crates/cua-agent-setup/Cargo.toml', 'libs/cua/crates/cua-home/Cargo.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-${{ matrix.name }}-
       - name: Build ${{ matrix.name }}
         env:

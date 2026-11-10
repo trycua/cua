@@ -550,7 +550,7 @@ export class LiveSpacesBackend implements SpacesBackend {
           // The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
           hidden: Boolean(info.labels?.has("cua.hidden")),
           // A job's Space: one row with its name, a GPU mark and the run it belongs to (labels `cua.job*`).
-          jobName: info.labels?.get("cua.job") === "1" ? text(info.labels.get("cua.job.name")) ?? "job" : undefined,
+          jobName: info.labels?.get("cua.job") === "1" ? (text(info.labels.get("cua.job.name")) ?? "job") : undefined,
           jobGpu: info.labels?.get("cua.job") === "1" && info.labels.get("cua.job.gpu") === "1",
           jobRun: info.labels?.get("cua.job") === "1" ? text(info.labels.get("cua.job.run")) : undefined,
           reachable: false,

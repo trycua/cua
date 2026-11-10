@@ -45,8 +45,18 @@ describe("a job's row", () => {
 
 describe("a job row from the run ledger (logical child, wherever it runs)", () => {
   it("says the state in the list's own words and dots", () => {
-    expect([jobWord({ state: "queued" }), jobWord({ state: "starting" }), jobWord({ state: "running" }), jobWord({ state: "failed" })]).toEqual(["Queued", "Starting", "Running", "Failed"]);
-    expect([jobDot({ state: "running" }), jobDot({ state: "failed" }), jobDot({ state: "queued" }), jobDot({ state: "starting" })]).toEqual(["running", "failed", "creating", "creating"]);
+    expect([jobWord({ state: "queued" }), jobWord({ state: "starting" }), jobWord({ state: "running" }), jobWord({ state: "failed" })]).toEqual([
+      "Queued",
+      "Starting",
+      "Running",
+      "Failed",
+    ]);
+    expect([jobDot({ state: "running" }), jobDot({ state: "failed" }), jobDot({ state: "queued" }), jobDot({ state: "starting" })]).toEqual([
+      "running",
+      "failed",
+      "creating",
+      "creating",
+    ]);
   });
   it("shows where it runs only as a quiet detail, and a gang's size", () => {
     expect(jobDetail({ host: "mac-m2max", members: 1 })).toBe("on mac-m2max");

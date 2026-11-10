@@ -19,9 +19,7 @@ function homeWith(rows: unknown): string {
 
 describe("jobNodes: one logical child per run, wherever it runs", () => {
   it("puts a job on another host under its submitting Space, one level deeper", () => {
-    const home = homeWith([
-      { run: "p-1", parent: "local:home", name: "quiet-orca", gpu: true, host: "mac-m2max", state: "running", members: 1 },
-    ]);
+    const home = homeWith([{ run: "p-1", parent: "local:home", name: "quiet-orca", gpu: true, host: "mac-m2max", state: "running", members: 1 }]);
     const [n] = jobNodes([parent], home);
     if (!n) throw new Error("no job node");
     expect(n).toMatchObject({ id: "job:p-1", parent: "local:home", depth: 2, children: false });

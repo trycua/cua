@@ -86,7 +86,8 @@ const JOB_WORD: Record<JobNodeView["state"], string> = { queued: "Queued", start
 export const jobWord = (j: Pick<JobNodeView, "state">) => JOB_WORD[j.state];
 
 /** The dot of a job row, in the list's own state language. */
-export const jobDot = (j: Pick<JobNodeView, "state">): "running" | "creating" | "failed" => (j.state === "running" ? "running" : j.state === "failed" ? "failed" : "creating");
+export const jobDot = (j: Pick<JobNodeView, "state">): "running" | "creating" | "failed" =>
+  j.state === "running" ? "running" : j.state === "failed" ? "failed" : "creating";
 
 /** "on mac-m2max" / "3 members": the quiet second line of a job row; where it runs is a detail, never a place in the tree. */
 export function jobDetail(j: Pick<JobNodeView, "host" | "members">): string {

@@ -75,7 +75,10 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const { data, startSpace, stopSpace, deleteSpaces } = useSpaces();
   const all = data ?? [];
   // The jobs of this Space, wherever they run (the run ledger, not a Space record): one logical child each.
-  const jobs = useMemo<JobNodeView[]>(() => (tree ? tree.childrenOf(spaceId).flatMap((id) => (tree.node(id)?.job ? [tree.node(id)?.job as JobNodeView] : [])) : []), [spaceId, tree]);
+  const jobs = useMemo<JobNodeView[]>(
+    () => (tree ? tree.childrenOf(spaceId).flatMap((id) => (tree.node(id)?.job ? [tree.node(id)?.job as JobNodeView] : [])) : []),
+    [spaceId, tree],
+  );
   const kids = useMemo(() => oneRowPerJob(withoutJobSpacesOf(childrenOfSpace(all, spaceId, tree), jobs)), [all, spaceId, tree, jobs]);
   const total = useMemo(() => descendantCount(all, spaceId, tree), [all, spaceId, tree]);
   const [confirm, setConfirm] = useState<"all" | string | null>(null);

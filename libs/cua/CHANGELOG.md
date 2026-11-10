@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.22.0](https://github.com/trycua/cua/compare/cua-sdk-v0.21.0...cua-sdk-v0.22.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** show a child Space's window in the parent's Stream section and stream it directly from the child ([#6819](https://github.com/trycua/cua/issues/6819)) ([5f09d89](https://github.com/trycua/cua/commit/5f09d890ad10a68c02de0cfd4e3fe24096537059))
+
+
+### Bug Fixes
+
+* **cua-spaces:** read spaces.json once per connect ([#7235](https://github.com/trycua/cua/issues/7235)) ([1344c86](https://github.com/trycua/cua/commit/1344c86d1cf892002c454b5c73139b9bca62f47a))
+* **spaces:** the relay row follows the Provide Spaces setting, and a Space on the account is listed once ([#7132](https://github.com/trycua/cua/issues/7132)) ([75fff6c](https://github.com/trycua/cua/commit/75fff6c8cc827d1dd85b81a07cc849778d1f2dee))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua-cli:** build cua-compat beside cua-cli, not before it (CUA-3971) ([#7222](https://github.com/trycua/cua/issues/7222)) ([5bf6559](https://github.com/trycua/cua/commit/5bf6559ab9942885cb5972928dd764bca5b6f7e2))
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
 ## [0.21.0](https://github.com/trycua/cua/compare/cua-sdk-v0.20.0...cua-sdk-v0.21.0) (2026-11-10)
 
 

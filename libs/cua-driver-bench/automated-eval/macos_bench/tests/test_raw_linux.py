@@ -85,6 +85,19 @@ class RawLintTest(unittest.TestCase):
             "getattr(raw.x11, 'XWarp' + 'Pointer')",
             "raw.__class__.__init__",
             "raw.xdotool(sub)",
+            # private handles of the runtime (verifier round 1)
+            'raw.xtst._lib["XTestFake" + "MotionEvent"](raw.dpy, -1, 5, 5, 0)',
+            "x = raw._x",
+            'getattr(raw.xtst, "_lib")',
+            # other GObject modules: GLib/Gio spawn processes, Gdk warps the pointer (verifier round 1)
+            "import gi",
+            "from gi.repository import GLib",
+            "from gi.repository import Gdk",
+            'GLib.spawn_command_line_sync("ls")',
+            "raw.Atspi.GLib",
+            "import ctypes\nctypes.pythonapi",
+            "from ctypes import pythonapi",
+            'setattr(raw, "x", 1)',
         ):
             with self.subTest(src=src):
                 self.assertFalse(rawlint.lint(src).ok, src)

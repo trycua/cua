@@ -230,8 +230,6 @@ XDOTOOL: dict[str, str] = {
 }
 # Modules a script may import. Everything else is GUI1.
 IMPORT_OK = {
-    "gi",
-    "gi.repository",
     "ctypes",
     "time",
     "json",
@@ -247,6 +245,9 @@ IMPORT_OK = {
     "enum",
     "raw",
 }
+# Names that reach past the runtime: other GObject modules (GLib/Gio spawn processes, Gdk warps the pointer), the
+# CPython C API through ctypes, and the gi loader itself. Scripts get Atspi as a global and need none of these.
+ESCAPES = {"gi", "repository", "GLib", "Gio", "Gdk", "GObject", "Gtk", "pythonapi", "PYFUNCTYPE", "cast"}
 DYNAMIC = {
     "eval",
     "exec",
@@ -416,17 +417,24 @@ class _Walker(ast.NodeVisitor):
             for alias in node.names:
                 if alias.name in NAMES:
                     self.add(NAMES[alias.name], node, f"from ctypes import {alias.name}")
+                elif alias.name in ESCAPES or alias.name == "*":
+                    self.add("GUI1", node, f"from ctypes import {alias.name}")
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         self.name_hit(node.attr, node)
-        if node.attr.startswith("__") and node.attr not in {"__name__", "__class__", "__doc__"}:
-            self.add("GUI2", node, f"dunder attribute {node.attr}")
+        if node.attr.startswith("_"):
+            # private and dunder attributes reach the runtime's own unguarded handles (raw.x11._lib, type internals)
+            self.add("GUI2", node, f"private attribute {node.attr}")
+        elif node.attr in ESCAPES:
+            self.add("GUI1", node, f"attribute {node.attr}")
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
         if node.id in DYNAMIC:
             self.add("GUI2", node, node.id)
+        elif node.id in ESCAPES:
+            self.add("GUI1", node, f"name {node.id}")
         elif node.id in FILE_CALLS:
             self.add("GUI1", node, f"{node.id}() reads or writes files")
         elif node.id in NAMES and NAMES[node.id] != "GUI1":
@@ -447,11 +455,15 @@ class _Walker(ast.NodeVisitor):
                     self.add(rule, node, f"string {needle!r}")
             if value in NAMES and NAMES[value] != "GUI1":
                 self.add(NAMES[value], node, f"name {value!r} in a string")
+            if value.startswith("_") and value.strip("_") and value.isidentifier():
+                self.add("GUI2", node, f"private name {value!r} in a string")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         func = _dotted(node.func)
         last = func.rsplit(".", 1)[-1]
+        if last in {"getattr", "setattr", "delattr", "hasattr"} and len(node.args) >= 2 and last != "getattr":
+            self.add("GUI2", node, f"{last}")
         if last == "escalate_foreground":
             reason = _const_str(node.args[0]) if node.args else None
             if reason and reason.strip():
@@ -467,6 +479,8 @@ class _Walker(ast.NodeVisitor):
                 self.add("GUI2", node, "getattr with a computed name")
             else:
                 self.name_hit(attr, node)
+                if attr.startswith("_") or attr in ESCAPES:
+                    self.add("GUI2", node, f"getattr {attr!r}")
         if last == "xdotool":
             self.xdotool(node)
         self.generic_visit(node)

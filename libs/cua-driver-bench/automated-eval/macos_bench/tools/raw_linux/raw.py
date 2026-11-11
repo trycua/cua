@@ -295,30 +295,38 @@ class State:
 STATE = State()
 
 
-class _GuardedLib:
-    """A ctypes library whose forbidden symbols refuse at lookup (so a computed name is caught too)."""
+def _guarded_lib(lib: ctypes.CDLL, label: str) -> Any:
+    """A ctypes library whose forbidden symbols refuse at lookup, so a computed name is caught too. The library is
+    held in a closure, not an attribute, so the script has no unguarded handle to reach for."""
 
-    def __init__(self, lib: ctypes.CDLL, label: str) -> None:
-        object.__setattr__(self, "_lib", lib)
-        object.__setattr__(self, "_label", label)
+    class GuardedLib:
+        __slots__ = ()
 
-    def __getattr__(self, name: str) -> Any:
-        STATE.check(rawlint.NAMES.get(name) if rawlint.NAMES.get(name) != "GUI1" else None, f"{self._label}.{name}")
-        fn = getattr(self._lib, name)
-        if name == "XInternAtom":
+        def __getattr__(self, name: str) -> Any:
+            if name.startswith("_"):
+                raise AttributeError(name)
+            rule = rawlint.NAMES.get(name)
+            STATE.check(rule if rule != "GUI1" else None, f"{label}.{name}")
+            fn = getattr(lib, name)
+            if name == "XInternAtom":
 
-            def intern(dpy: Any, atom: Any, only_if_exists: Any, _fn: Any = fn) -> Any:
-                text = atom.decode("latin-1") if isinstance(atom, bytes) else str(atom)
-                for needle, rule in rawlint.STRINGS.items():
-                    if needle in text:
-                        STATE.check(rule, f"XInternAtom({needle})")
-                return _fn(dpy, atom, only_if_exists)
+                def intern(dpy: Any, atom: Any, only_if_exists: Any) -> Any:
+                    text = atom.decode("latin-1") if isinstance(atom, bytes) else str(atom)
+                    for needle, rule_id in rawlint.STRINGS.items():
+                        if needle in text:
+                            STATE.check(rule_id, f"XInternAtom({needle})")
+                    return fn(dpy, atom, only_if_exists)
 
-            return intern
-        return fn
+                return intern
+            return fn
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise Blocked("the raw libraries are read-only")
+        def __setattr__(self, name: str, value: Any) -> None:
+            raise Blocked("the raw libraries are read-only")
+
+        def __getitem__(self, name: str) -> Any:
+            return self.__getattr__(name)
+
+    return GuardedLib()
 
 
 def _guard_gi() -> None:
@@ -431,9 +439,9 @@ class Raw:
     Blocked = Blocked
 
     def __init__(self) -> None:
-        self.x11 = _GuardedLib(_X11, "x11")
-        self.xtst = _GuardedLib(_XTST, "xtst")
-        self.xi = _GuardedLib(_XI, "xi")
+        self.x11 = _guarded_lib(_X11, "x11")
+        self.xtst = _guarded_lib(_XTST, "xtst")
+        self.xi = _guarded_lib(_XI, "xi")
         self.dpy = _X11.XOpenDisplay(None)
         self.root = _X11.XDefaultRootWindow(self.dpy)
         self._x = _X()

@@ -42,16 +42,16 @@ def _jsonable(value: Any) -> Any:
 
 
 def _guarded_import(name: str, globals_: Any = None, locals_: Any = None, fromlist: Any = (), level: int = 0) -> Any:
-    root = name.split(".")[0]
-    if name not in rawlint.IMPORT_OK and root not in {"gi"}:
-        raise ImportError(f"import {name} is not available to raw-linux scripts (GUI-only, rule GUI1)")
+    if name not in rawlint.IMPORT_OK or level:
+        raise ImportError(f"import {name} is not available to raw-linux scripts (GUI-only, rule GUI1); use raw.*")
     if name == "raw":
         return sys.modules["raw_runtime"]
-    if root == "gi" and fromlist:
-        for item in fromlist:
-            if item not in {"Atspi", "Gdk", "GLib"}:
-                raise ImportError(f"gi.repository.{item} is not available; use raw.Atspi")
-    return builtins.__import__(name, globals_, locals_, fromlist, level)
+    module = builtins.__import__(name, globals_, locals_, fromlist, level)
+    if name == "ctypes":
+        for item in fromlist or ():
+            if item in rawlint.ESCAPES or item in rawlint.NAMES:
+                raise ImportError(f"ctypes.{item} is not available to raw-linux scripts")
+    return module
 
 
 def run(source: str, image_dir: Path) -> dict[str, Any]:
@@ -89,6 +89,8 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
     ast.fix_missing_locations(module)
     safe = {k: v for k, v in vars(builtins).items() if k not in DENIED_BUILTINS}
     safe["__import__"] = _guarded_import
+    for name in ("setattr", "delattr", "vars", "globals", "locals", "memoryview"):
+        safe.pop(name, None)
     env: dict[str, Any] = {"__builtins__": safe, "raw": handle, "Atspi": raw.Atspi, "__name__": "script"}
     exec(compile(module, "<script>", "exec"), env)  # noqa: S102 - the script, after the lint
     printed = io.StringIO()
@@ -109,7 +111,8 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         out["stdout"] = printed.getvalue()[-4000:]
         out["runtime_blocked"] = list(raw.STATE.runtime_blocked)
         out["runtime_warned"] = list(raw.STATE.runtime_warned)
-        out["escalated"] = raw.STATE.escalated or out.get("escalated")
+        # only an escalation the script actually executed counts; a declaration in dead code is not one
+        out["escalated"] = raw.STATE.escalated
         out["images"] = [str(p) for p in raw.STATE.images]
     return out
 

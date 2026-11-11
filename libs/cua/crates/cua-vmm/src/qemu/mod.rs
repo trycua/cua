@@ -2268,6 +2268,28 @@ impl QemuRuntime {
     }
 }
 
+/// What is left of a start's readiness budget (see [`QemuRuntime::start`]).
+#[derive(Clone, Copy, Debug)]
+struct Budget(tokio::time::Instant);
+
+impl Budget {
+    fn new(total: Duration) -> Self {
+        Self(tokio::time::Instant::now() + total)
+    }
+
+    fn left(&self) -> Duration {
+        self.0
+            .saturating_duration_since(tokio::time::Instant::now())
+    }
+
+    /// `spec` with what is left as its `ready_timeout`.
+    fn spec(&self, spec: &StartSpec) -> StartSpec {
+        let mut s = spec.clone();
+        s.ready_timeout = self.left();
+        s
+    }
+}
+
 /// Guest OS and firmware for a new x86 instance. What the caller said wins;
 /// what it left open comes from the disk's partition table, so any
 /// containerDisk boots without per-image flags: a GPT with an ESP and no BIOS
@@ -3010,6 +3032,13 @@ impl Runtime for QemuRuntime {
                 Err(e) => return Err(e),
             }
         };
+        // One readiness budget from here, with the image present (as the
+        // SDK measures it): a golden recording, a restore with its identity
+        // renewal, a cold boot after a failed restore and the probes share
+        // it. Each used to get all of `ready_timeout` again, so a start
+        // could take twice the budget and leave the caller's own wait for
+        // cua-spacesd none of it.
+        let budget = Budget::new(spec.ready_timeout);
 
         // The start spec's policy for a new VM (or one with none kept); a
         // kept one wins (`set_egress` changed it since).
@@ -3037,7 +3066,7 @@ impl Runtime for QemuRuntime {
             crate::progress::report(crate::progress::Progress::phase(
                 crate::progress::Phase::Booting,
             ));
-            match self.golden(&st, spec, backing, &key).await {
+            match self.golden(&st, &budget.spec(spec), backing, &key).await {
                 Ok(snap) => self.adopt_snapshot(&mut st, &snap).await?,
                 Err(e) => {
                     tracing::warn!(error = %e, "could not record a golden QEMU snapshot; booting cold")
@@ -3079,7 +3108,9 @@ impl Runtime for QemuRuntime {
             ));
             let dir = self.dir(&st.name);
             if let Some(snap) = st.restore_from.clone()
-                && let Err(e) = self.restore_memory(&mut st, spec, &snap).await
+                && let Err(e) = self
+                    .restore_memory(&mut st, &budget.spec(spec), &snap)
+                    .await
             {
                 let _ = self.force_stop(&mut st, Duration::ZERO).await;
                 // No room on this host: the snapshot is fine.
@@ -3132,7 +3163,9 @@ impl Runtime for QemuRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        let ready = self.wait_probes(&st, &inst.endpoints, spec).await;
+        let ready = self
+            .wait_probes(&st, &inst.endpoints, &budget.spec(spec))
+            .await;
         // Booted (or restored) and answering, or not going to: from here on
         // the VM counts what it really uses, not what it was expected to.
         self.release(&st.name);
@@ -4900,6 +4933,23 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    /// Every phase of a start (golden recording, restore, cold boot,
+    /// probes) gets what is left of one budget, never the whole budget
+    /// again: a spent budget leaves the next phase nothing.
+    #[tokio::test]
+    async fn phases_of_a_start_share_one_readiness_budget() {
+        let spec =
+            StartSpec::new("a", ImageSource::Existing).ready_timeout(Duration::from_secs(60));
+        let budget = Budget::new(spec.ready_timeout);
+        let first = budget.spec(&spec).ready_timeout;
+        assert!(first <= Duration::from_secs(60) && first > Duration::from_secs(59));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(budget.spec(&spec).ready_timeout < first);
+        assert_eq!(budget.spec(&spec).name, "a");
+        let spent = Budget::new(Duration::ZERO);
+        assert_eq!(spent.spec(&spec).ready_timeout, Duration::ZERO);
     }
 
     #[test]

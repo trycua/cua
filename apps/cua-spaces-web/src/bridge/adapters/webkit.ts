@@ -355,6 +355,8 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
       overflow: on("placement-overflow"),
+      closeWindowKeepsRunning: rows.has("close-window") ? active(rows.get("close-window")) === "keep" : null,
+      closeNotice: on("close-notice"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),

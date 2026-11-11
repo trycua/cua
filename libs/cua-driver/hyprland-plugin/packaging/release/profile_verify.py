@@ -347,7 +347,8 @@ def pkgconfig_selection(profile):
     require(all(Path(name).is_relative_to(HEADER_ROOT) for name in leading), "Hyprland headers are not first in pkg-config include selection")
     for name in include_dirs:
         path = Path(name)
-        require(path.is_dir() and path.resolve() == path and path.is_relative_to(SYSTEM_INCLUDE), "noncanonical pkg-config include path")
+        require(path.is_dir() and path.resolve() == path and path.is_relative_to(SYSTEM_INCLUDE),
+                f"noncanonical pkg-config include path: {name} (resolves to {path.resolve()})")
     require([flag for flag in cflags if flag.startswith("-I")] == includes and
             [flag for flag in cflags if not flag.startswith("-I")] == other, "inconsistent pkg-config flags")
     verify_flags(other, "pkg-config CFLAGS_OTHER")

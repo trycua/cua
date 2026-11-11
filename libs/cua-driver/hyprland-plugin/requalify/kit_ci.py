@@ -152,6 +152,10 @@ def main():
     except Exception as error:  # Recorded as a failure of this channel, never swallowed.
         record["error"] = f"{type(error).__name__}: {error}"
         detail = getattr(error, "output", "") or ""
+        # Environment facts that explain a profile_verify refusal on a new Hyprland build.
+        for command in (["pkgconf", "--cflags", "hyprland"], ["sh", "-c", "pkgconf --cflags-only-I hyprland | tr ' ' '\\n' | sed 's/^-I//' | xargs -r ls -ld"]):
+            probe = subprocess.run(command, capture_output=True, text=True)
+            print(f"--- {' '.join(command[:3])}\n{probe.stdout}{probe.stderr}", file=sys.stderr)
         print(f"error: {record['error']}\n{detail[-3000:]}", file=sys.stderr)
         for name in ("pacman.log", "kit.log"):
             if (args.out / name).is_file():

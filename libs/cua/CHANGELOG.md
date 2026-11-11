@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.23.0](https://github.com/trycua/cua/compare/cua-sdk-v0.22.0...cua-sdk-v0.23.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Home shows your computers as one supercomputer (CUA-3976) ([#7166](https://github.com/trycua/cua/issues/7166)) ([49f716e](https://github.com/trycua/cua/commit/49f716e9c7e224db0f1bafbb2957be385f308e01))
+
+
+### Performance Improvements
+
+* **cua-sdk:** build libcua_sdk in its own crate so cua-sdk is rlib-only (CUA-3971) ([#7250](https://github.com/trycua/cua/issues/7250)) ([73b54ae](https://github.com/trycua/cua/commit/73b54aeb62c5c5a253be761d30f4026dea2f1fd5))
+
+## [0.22.0](https://github.com/trycua/cua/compare/cua-sdk-v0.21.0...cua-sdk-v0.22.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Agents tab starts agents from the Home box, one entry per Space, easy to clear ([#7275](https://github.com/trycua/cua/issues/7275)) ([5a0b65f](https://github.com/trycua/cua/commit/5a0b65f7d6af5a1c09e7f3aced03d809cbd4d521))
+* **spaces:** show a child Space's window in the parent's Stream section and stream it directly from the child ([#6819](https://github.com/trycua/cua/issues/6819)) ([5f09d89](https://github.com/trycua/cua/commit/5f09d890ad10a68c02de0cfd4e3fe24096537059))
+
+
+### Bug Fixes
+
+* **cua-spaces:** read spaces.json once per connect ([#7235](https://github.com/trycua/cua/issues/7235)) ([1344c86](https://github.com/trycua/cua/commit/1344c86d1cf892002c454b5c73139b9bca62f47a))
+* **spaces:** a computer's row opens its shared desktop's Space page ([#7263](https://github.com/trycua/cua/issues/7263)) ([7b8d889](https://github.com/trycua/cua/commit/7b8d889130252a72972319d4f6791b59aeb442cb))
+* **spaces:** first agent on This Mac after Set up no longer fails to reach it ([#7161](https://github.com/trycua/cua/issues/7161)) ([4611678](https://github.com/trycua/cua/commit/46116784b637483e750f624ef0ef6fb74c745bde))
+* **spaces:** the relay row follows the Provide Spaces setting, and a Space on the account is listed once ([#7132](https://github.com/trycua/cua/issues/7132)) ([75fff6c](https://github.com/trycua/cua/commit/75fff6c8cc827d1dd85b81a07cc849778d1f2dee))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua-ci:** build cua-ci beside cua-sdk, not after it (CUA-3971) ([#7240](https://github.com/trycua/cua/issues/7240)) ([1d23545](https://github.com/trycua/cua/commit/1d23545a03689800046f5fd7ecf78c3d128dec61))
+* **cua-cli:** build cua-compat beside cua-cli, not before it (CUA-3971) ([#7222](https://github.com/trycua/cua/issues/7222)) ([5bf6559](https://github.com/trycua/cua/commit/5bf6559ab9942885cb5972928dd764bca5b6f7e2))
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
 ## [0.21.0](https://github.com/trycua/cua/compare/cua-sdk-v0.20.0...cua-sdk-v0.21.0) (2026-11-10)
 
 

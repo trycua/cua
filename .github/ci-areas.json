@@ -378,9 +378,10 @@
  },
  "narrow": {
   "ci-test-python.yml": {
-   "why": "Tests the Python packages and cua-sandbox against cua-sdk (cargo build -p cua-sdk); no other libs/cua crate.",
+   "why": "Tests the Python packages and cua-sandbox against cua-sdk (cargo build -p cua-sdk-native); no other libs/cua crate.",
    "packages": [
     "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-sdk-native",
     "libs/cua/crates/cua-cli"
    ],
    "paths": [
@@ -404,6 +405,7 @@
    "why": "Builds cua-sdk for the TypeScript and Swift samples; its own scope job (ci_swift_samples_scope.py) narrows the Swift build further.",
    "packages": [
     "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-sdk-native",
     "libs/cua/typescript",
     "examples/openkoalabot-example-ts"
    ],

@@ -125,7 +125,7 @@ _INPUTS = [_glob(p) for p in PATHS]
 # builds and runs. The roots are the SDK and CLI crates, the static cua-spacesd, the cua-test-fixtures
 # crate (libs/cua-spacesd/tests/spaces-e2e), the Rust half of the suite and the TypeScript package.
 GRAPH_SCOPED = ("libs/cua/", "libs/cua-spacesd/")
-ROOT_NAMES = ("cua-sdk", "cua-cli", "cua-spacesd", "cua-sdk-e2e", "cua-spaces-e2e")
+ROOT_NAMES = ("cua-sdk", "cua-sdk-native", "cua-cli", "cua-spacesd", "cua-sdk-e2e", "cua-spaces-e2e")
 ROOT_DIRS = ("libs/cua/typescript", "libs/cua/python")
 # Directories of libs/cua that the suite never builds, loads or runs.
 NOT_INPUT_DIRS = ("libs/cua/swift/", "libs/cua/kotlin/", "libs/cua/vz/", "libs/cua/bench/")

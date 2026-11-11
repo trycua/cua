@@ -23313,6 +23313,5 @@
   }
  ],
  "name": "cua",
- "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.21.0"
+ "usage": "cua [OPTIONS] <COMMAND>"
 }

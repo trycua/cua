@@ -188,6 +188,9 @@ class NativeRuntime(Runtime):
         # A pool to take a ready sandbox from (`create_pool`; `cua daemon`
         # keeps it).
         pool = opts.pop("pool", None)
+        # The caller's readiness budget (``time_to_start``), else this
+        # runtime's own.
+        ready_timeout = opts.pop("ready_timeout", None) or self.ready_timeout
         n = native()
         ref = await self._image_ref(image, name, **opts)
         # Layers on a container image: a local build before boot (any
@@ -224,7 +227,7 @@ class NativeRuntime(Runtime):
             ports=ports,
             services=services,
             wait_for=probes,
-            ready_timeout_ms=millis(self.ready_timeout),
+            ready_timeout_ms=millis(ready_timeout),
             env={
                 **self.environment,
                 **dict(image._env),

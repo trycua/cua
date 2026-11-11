@@ -25,6 +25,7 @@ PKGCONF_ENV = {"PKG_CONFIG_ALLOW_SYSTEM_CFLAGS": "1", "PKG_CONFIG_ALLOW_SYSTEM_L
 HYPRLAND_PC = Path("/usr/share/pkgconfig/hyprland.pc")
 SYSTEM_INCLUDE = Path("/usr/include")
 HEADER_ROOT = SYSTEM_INCLUDE / "hyprland"
+PACKAGE_LIB_INCLUDES = {"/usr/lib/glib-2.0/include": "glib2"}
 BUILD_ROUTING_ENV = {"CPATH", "CPLUS_INCLUDE_PATH", "C_INCLUDE_PATH", "OBJC_INCLUDE_PATH",
                      "GCC_EXEC_PREFIX", "COMPILER_PATH", "LIBRARY_PATH", "SDKROOT", "SYSROOT"}
 EMPTY_CMAKE_ROUTING = ("CMAKE_PREFIX_PATH", "CMAKE_MODULE_PATH", "CMAKE_TOOLCHAIN_FILE", "CMAKE_SYSROOT",
@@ -347,7 +348,14 @@ def pkgconfig_selection(profile):
     require(all(Path(name).is_relative_to(HEADER_ROOT) for name in leading), "Hyprland headers are not first in pkg-config include selection")
     for name in include_dirs:
         path = Path(name)
-        require(path.is_dir() and path.resolve() == path and path.is_relative_to(SYSTEM_INCLUDE),
+        under_system = path.is_relative_to(SYSTEM_INCLUDE)
+        if name in PACKAGE_LIB_INCLUDES:
+            # Hyprland 0.57's pkg-config pulls in glib through gdk-pixbuf and librsvg, whose
+            # arch-specific glibconfig.h lives outside /usr/include. Admit exactly that
+            # directory, and only while its package-owned header is still glib2's.
+            owner = PACKAGE_LIB_INCLUDES[name]
+            under_system = run("pacman", "-Qoq", str(path / "glibconfig.h")) == owner
+        require(path.is_dir() and path.resolve() == path and under_system,
                 f"noncanonical pkg-config include path: {name} (resolves to {path.resolve()})")
     require([flag for flag in cflags if flag.startswith("-I")] == includes and
             [flag for flag in cflags if not flag.startswith("-I")] == other, "inconsistent pkg-config flags")

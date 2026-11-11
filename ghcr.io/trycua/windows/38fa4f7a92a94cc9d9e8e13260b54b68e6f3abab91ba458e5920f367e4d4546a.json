@@ -1,0 +1,28 @@
+{
+  "arch": "x86_64",
+  "digest": "sha256:38fa4f7a92a94cc9d9e8e13260b54b68e6f3abab91ba458e5920f367e4d4546a",
+  "lanes": {
+    "windows": {
+      "counts": {
+        "fail": 0,
+        "pass": 85,
+        "skip": 11,
+        "warn": 0
+      },
+      "date": "2026-11-11T09:37:32Z",
+      "manifest_sha256": "3574efab62a9f1639c80c2960d9261131e6ce58c3318da6e0655804db271e7e1",
+      "producer": "cua-spacesd",
+      "report": "ghcr.io/trycua/windows@sha256:ca3053d20eb84d7d8dba92249466600e0c4a0146b53f60a4cd49fe369deb397a",
+      "spacesd_version": "0.15.2",
+      "status": "pass",
+      "strict": true,
+      "workflow_run": "https://github.com/trycua/cua/actions/runs/42978832658"
+    }
+  },
+  "os": "windows",
+  "repo": "ghcr.io/trycua/windows",
+  "schema_version": 1,
+  "status": "pass",
+  "updated": "2026-11-11T09:37:32Z",
+  "variant": "containerdisk"
+}

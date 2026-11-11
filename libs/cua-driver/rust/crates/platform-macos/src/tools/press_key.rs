@@ -23,6 +23,7 @@ use crate::ax::bindings::{
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::ToolState;
 
@@ -200,6 +201,9 @@ fn with_confirmed_key_focus<T>(
 }
 
 fn delivery_failed(error: anyhow::Error) -> ToolResult {
+    if let Some(refusal) = crate::security_prompt::tool_result(&error) {
+        return refusal;
+    }
     if error.is::<KeyFocusUnconfirmed>() {
         return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
             "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
@@ -269,9 +273,10 @@ impl Tool for PressKeyTool {
             let key = input.key;
             let modifiers = input.modifiers.unwrap_or_default();
             let key_for_input = key.clone();
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::keyboard::press_key_global(&key_for_input, &modifier_refs)
+                crate::input::keyboard::press_key_global(prompt, &key_for_input, &modifier_refs)
             })
             .await;
             return match result {
@@ -281,7 +286,11 @@ impl Tool for PressKeyTool {
                         "path": "hid",
                         "effect": "unverifiable"
                     })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop press_key failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop press_key failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop press_key task failed: {error}")),
             };
         }
@@ -439,6 +448,7 @@ impl Tool for PressKeyTool {
         // wildcard snapshot suppressor and the targeted FocusGuard lease.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let prompt = PromptInput::from_args(&args);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -476,7 +486,7 @@ impl Tool for PressKeyTool {
                                         },
                                         || {
                                             crate::input::keyboard::press_key_bare_global(
-                                                pid, &key, &m,
+                                                prompt, pid, &key, &m,
                                             )
                                         },
                                     )

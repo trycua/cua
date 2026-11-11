@@ -36,6 +36,7 @@ use crate::ax::bindings::{
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
@@ -492,6 +493,7 @@ impl ClickTool {
 
             let btn = button.clone();
             let desktop_modifiers: Vec<String> = args.str_array("modifier");
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 // Desktop scope is explicitly foreground and vision-driven: post
                 // at the global HID tap so WindowServer delivers to the window
@@ -500,6 +502,7 @@ impl ClickTool {
                 let modifier_refs: Vec<&str> =
                     desktop_modifiers.iter().map(String::as_str).collect();
                 crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                    prompt,
                     sx,
                     sy,
                     count,
@@ -520,7 +523,9 @@ impl ClickTool {
                      (desktop scope; not driver-verified)."
                 ))
                 .with_structured(serde_json::json!({ "path": "cgevent_hid", "verified": false, "effect": "unverifiable" })),
-                Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
+                Ok(Err(e)) => crate::security_prompt::tool_result(&e).unwrap_or_else(|| {
+                    ToolResult::error(format!("desktop-scope click failed: {e}"))
+                }),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
         }
@@ -736,6 +741,7 @@ impl ClickTool {
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
                 let middle_guard = element_guard.clone();
+                let prompt = PromptInput::from_args(&args);
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                     // AppKit hit-tests the window-local stamp, so an unrouted
@@ -773,7 +779,7 @@ impl ClickTool {
                             || {
                                 ensure_enabled()?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
-                                    cx, cy, 1, "middle", &m,
+                                    prompt, cx, cy, 1, "middle", &m,
                                 )
                             },
                         )
@@ -799,7 +805,8 @@ impl ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
+                    Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                        .or_else(|| super::element_disabled_error(pid, wid, &e, foreground))
                         .unwrap_or_else(|| ToolResult::error(format!("Middle-click failed: {e}"))),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -900,6 +907,7 @@ impl ClickTool {
             let ck = cursor_key.clone();
             let selection_modifiers = modifiers.clone();
             let settle_guard = element_guard.clone();
+            let prompt = PromptInput::from_args(&args);
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -918,7 +926,7 @@ impl ClickTool {
                                     &ck,
                                     selection_pixel,
                                     &selection_modifiers,
-                                    foreground,
+                                    (foreground, prompt),
                                 )?);
                                 std::thread::sleep(std::time::Duration::from_millis(150));
                                 Ok(())
@@ -949,7 +957,7 @@ impl ClickTool {
                                 &ck,
                                 selection_pixel,
                                 &selection_modifiers,
-                                false,
+                                (false, prompt),
                             )
                             .map(|outcome| (outcome, false))
                         }
@@ -1009,7 +1017,8 @@ impl ClickTool {
                     Some(disabled) => {
                         super::element_disabled_result(pid, wid, disabled, foreground)
                     }
-                    None => ToolResult::error(format!("AX action failed: {e}")),
+                    None => crate::security_prompt::tool_result(&e)
+                        .unwrap_or_else(|| ToolResult::error(format!("AX action failed: {e}"))),
                 },
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
@@ -1447,6 +1456,7 @@ impl ClickTool {
             );
 
             let mods_owned = modifiers.clone();
+            let prompt = PromptInput::from_args(&args);
             // Surface 5: route to the right/middle CGEvent primitives when
             // button != left. Left-button path stays on the existing Chromium-
             // routed `click_at_xy_with_window_local` for back-compat.
@@ -1469,6 +1479,7 @@ impl ClickTool {
                                 // at the target, as on Windows and X11, so apps that
                                 // read the pointer when handling the event see it.
                                 return crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                                    prompt,
                                     screen_x,
                                     screen_y,
                                     count,
@@ -1572,14 +1583,17 @@ impl ClickTool {
                     ))
                     .with_structured(structured)
                 }
-                Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
-                    super::pixel_route::foreground_unavailable(
-                        button_label,
-                        window_id.unwrap_or_default(),
-                        &e.to_string(),
-                    )
-                }
-                Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
+                Ok(Err(e)) => match crate::security_prompt::tool_result(&e) {
+                    Some(refusal) => refusal,
+                    None if route == PixelClickRoute::ForegroundHid => {
+                        super::pixel_route::foreground_unavailable(
+                            button_label,
+                            window_id.unwrap_or_default(),
+                            &e.to_string(),
+                        )
+                    }
+                    None => ToolResult::error(format!("{button_label} failed: {e}")),
+                },
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
@@ -1752,10 +1766,11 @@ fn perform_ax_click(
     cursor_key: &str,
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
-    foreground: bool,
+    delivery: (bool, PromptInput),
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
+    let (foreground, prompt) = delivery;
     let ax_action = crate::input::ax_actions::map_action(action_str)?;
     let element = element_ptr as AXUIElementRef;
 
@@ -1813,6 +1828,7 @@ fn perform_ax_click(
             let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
             if foreground && !modifier_refs.is_empty() {
                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
+                    prompt,
                     target.screen_x,
                     target.screen_y,
                     1,

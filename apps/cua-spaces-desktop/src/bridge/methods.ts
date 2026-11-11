@@ -140,6 +140,7 @@ export const METHODS = [
   "telemetry.acknowledgeLinkNotice",
   "crashReporting.config",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",

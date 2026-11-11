@@ -44,7 +44,7 @@ The binding needs the cua-sdk native library for the JVM's OS and arch, on
 `$CUA_SDK_LIB_DIR`, or `libs/cua/target/release` by default.
 
 - **macOS host with a JDK**:
-  `cargo build --release -p cua-sdk` in `libs/cua`, then
+  `cargo build --release -p cua-sdk-native` in `libs/cua`, then
   `CUA_SDK_LIB_DIR=libs/cua/target/release gradle run`, with the scenario
   variables (`CUA_ENV_URL`, `CUA_ENV_TOKEN`, ...) exported.
 - **Docker (Linux), the tested path**: build `libcua_sdk.so` for Linux in a
@@ -55,7 +55,7 @@ The binding needs the cua-sdk native library for the JVM's OS and arch, on
 ```sh
 docker run --rm --memory=4g --memory-swap=4g -v "$PWD":/work:ro \
   -v cua-e2e-kotlin-target:/target -e CARGO_TARGET_DIR=/target -e CARGO_BUILD_JOBS=4 \
-  -w /work/libs/cua <rust image with clang/cmake> cargo build --locked --release -p cua-sdk
+  -w /work/libs/cua <rust image with clang/cmake> cargo build --locked --release -p cua-sdk-native
 
 eval "$(libs/cua/bench/streaming/scripts/space.sh env)"   # CUA_ENV_TOKEN
 docker run --rm --memory=4g --memory-swap=4g --network container:cua-e2e-bench-space \

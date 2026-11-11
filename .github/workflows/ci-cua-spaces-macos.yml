@@ -34,6 +34,7 @@ on:
       - "libs/cua/crates/cua-teleport/**"
       - "libs/cua/crates/cua-keyvault/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       # The channel names the Local bundle is stamped from (CuaChannel).
       - "libs/cua/crates/cua-home/**"
       - "libs/cua/scripts/generate-app-core-ffi.py"
@@ -62,6 +63,7 @@ on:
       - "libs/cua/crates/cua-teleport/**"
       - "libs/cua/crates/cua-keyvault/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       # The channel names the Local bundle is stamped from (CuaChannel).
       - "libs/cua/crates/cua-home/**"
       - "libs/cua/scripts/generate-app-core-ffi.py"
@@ -207,10 +209,12 @@ jobs:
     if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: Cua Spaces app library (built once)
     runs-on: macos-26
-    # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
-    # cancelled steady progress on PRs that miss main's cached library, and 90
-    # cancelled a PR that changes Cargo.lock (it builds every dependency).
-    timeout-minutes: 180
+    # Last 26 successful runs: median 57 minutes, p95 about 90, longest 93 (a
+    # full cold build when both caches miss). 45 cancelled steady progress and
+    # 90 cancelled a Cargo.lock PR, so the ceiling is 120: a stalled job now
+    # frees the runner and the merge queue in two hours, not three. The cache
+    # restores inside the action give up after 4 minutes per segment.
+    timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).

@@ -89,7 +89,7 @@ import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestI
 import type { AgentKeysReport } from "../ops/agent-keys";
 import type { GithubAccount, GithubHost, GithubReport, GithubSourceRow } from "../ops/github";
 import type { TelemetryLinkNotice } from "../ops/telemetry";
-import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
+import type { SentFileInfo, SpaceReach, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { AppPermissions, DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
 import type { DefaultSpace, DefaultSpaceStep, SpacesSettings } from "../ops/spaces-settings";
@@ -543,6 +543,8 @@ const SettingsShape = ref(
         runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
         overflow: optNull(bool),
+        closeWindowKeepsRunning: optNull(bool),
+        closeNotice: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),
@@ -1887,6 +1889,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "telemetry.acknowledgeLinkNotice": nul,
   "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": nullable(obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool })),
+  "spaces.reach": obj<SpaceReach>()({ reachable: bool, listedOffline: bool, reason: nullable(str) }),
   "spaces.windows": obj<SpaceWindows>()({ windows: list(RemoteWindowShape), display: nullable(object({ widthPx: num, heightPx: num })), open: opt(strings) }),
   "stream.pip": strings,
   "spaces.thumbnail": nullable(obj<SpaceThumbnail>()({ url: str, capturedAtMs: num })),
@@ -2340,6 +2343,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "telemetry.acknowledgeLinkNotice": nul,
   "crashReporting.config": CrashReportingConfigShape,
   "spaces.usage": OP_SHAPES["spaces.usage"],
+  "spaces.reach": OP_SHAPES["spaces.reach"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,
   "spaces.thumbnail": OP_SHAPES["spaces.thumbnail"],

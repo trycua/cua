@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.0...cua-spacesd-v0.15.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** retry input.type once when nothing reached the entry ([#7290](https://github.com/trycua/cua/issues/7290)) ([6e7a5a4](https://github.com/trycua/cua/commit/6e7a5a4e0c3717eb2d12e2e81ae4dde9c6ba3126))
+
+
+### Performance Improvements
+
+* **cua-ci:** build cua-ci beside cua-sdk, not after it (CUA-3971) ([#7240](https://github.com/trycua/cua/issues/7240)) ([1d23545](https://github.com/trycua/cua/commit/1d23545a03689800046f5fd7ecf78c3d128dec61))
+
 ## [0.15.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.14.0...cua-spacesd-v0.15.0) (2026-11-10)
 
 

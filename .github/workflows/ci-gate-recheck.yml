@@ -26,6 +26,7 @@ on:
       - "CD: Image runtime-gvisor"
       - "CI: cua-bench ALE compatibility"
       - "CI: Bench results and compare links"
+      - "CI: Cache hygiene"
       - "CI: Check Docs Links"
       - "CI: Check Docs"
       - "CI: Check eMudhra Distrust"

@@ -10,6 +10,7 @@
  * | Operation | Tauri | SwiftUI | Electron |
  * |---|---|---|---|
  * | `spaces.usage {spaceId}` | `space_usage` | `backend.usage(id:)` (`Space.usage`) | the same SDK call |
+ * | `spaces.reach {spaceId}` | none | `backend.reach(id:)` (the SDK's app method `spaces.reach`) | the same SDK call |
  * | `spaces.windows {spaceId}` | none: its viewer lists windows over its own stream | `StreamRowsModel`'s `availableWindows` and `primaryDisplay` | `StreamRows` (`Space.windows`, `displays`) |
  * | `stream.pip {spaceId, command}` | none: its PiP is a viewer window | the stream panel set (`StreamSource.pipKey`) | floating windows showing `/pip` (`src/pip.ts`) |
  * | `spaces.thumbnail {spaceId, maxAgeMs?}` | none | `SpaceThumbnails.refresh` (the notch's and the cover's image) | `SpaceThumbnails`, ported |
@@ -94,6 +95,14 @@ export interface StreamRowAction {
   active: boolean;
 }
 
+/** The Space a window another Space shows here lives in (`stream::StreamRowOrigin`). */
+export interface StreamRowOrigin {
+  spaceId: string;
+  name: string;
+  /** Its OS mark (`os-macos`, `os-ubuntu`, ...). */
+  osIcon: string;
+}
+
 /** One row of the Stream section (`stream::StreamRow`). */
 export interface StreamRow {
   id: string;
@@ -102,6 +111,8 @@ export interface StreamRow {
   help: string;
   resolution?: string | null;
   icon: StreamRowIcon;
+  /** Only on a window another Space shows here: where it lives. A Space's own rows carry none. */
+  origin?: StreamRowOrigin | null;
   actions: StreamRowAction[];
 }
 
@@ -237,11 +248,25 @@ export interface DetailCopy {
   teleportApp: string;
 }
 
+/**
+ * Whether a Space can take work now (the SDK's `spaces.reach`): the relay's word on its computer and a health
+ * check over the connection a job would use. Asked just before a job is handed to it.
+ */
+export interface SpaceReach {
+  reachable: boolean;
+  /** The relay lists its computer offline. */
+  listedOffline: boolean;
+  /** Why it can't take work, when it can't. */
+  reason: string | null;
+}
+
 /* ---- Operations ------------------------------------------------------------------ */
 
 export interface SpaceDetailOps {
   /** Memory and storage use now (the SDK's `Space.usage`); null when the Space can't say. */
   "spaces.usage": { args: { spaceId: string }; result: SpaceUsage | null };
+  /** Whether the Space can take work now; asked before a job is handed to it. */
+  "spaces.reach": { args: { spaceId: string }; result: SpaceReach };
   /** The Space's windows and primary display. */
   "spaces.windows": { args: { spaceId: string }; result: SpaceWindows };
   /** Opens or closes a row's picture-in-picture panel; answers the rows whose panel is open. */
@@ -267,6 +292,7 @@ type Args<K extends keyof SpaceDetailOps> = SpaceDetailOps[K]["args"];
 
 /** Ops the Tauri shell has no command for (they reject as unsupported). */
 export const TAURI_SPACE_DETAIL_UNSUPPORTED = [
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
@@ -288,6 +314,11 @@ export const SPACE_DETAIL_COVERAGE = {
   "spaces.usage": {
     webkit: { methods: ["spaces.usage"] },
     tauri: ["space_usage"],
+  },
+  "spaces.reach": {
+    webkit: { methods: ["spaces.reach"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app starts no jobs on your other computers" },
   },
   "spaces.windows": {
     webkit: { methods: ["spaces.windows"] },
@@ -325,6 +356,7 @@ export const SPACE_DETAIL_COVERAGE = {
 export const DETAIL_ARGS = {
   "telemetry.track": { signals: [{ type: "step" as const, step: "app_launched", ok: true }] },
   "spaces.usage": { spaceId: "local:design-review" },
+  "spaces.reach": { spaceId: "local:design-review" },
   "spaces.windows": { spaceId: "local:design-review" },
   "stream.pip": { spaceId: "local:design-review", command: { type: "open" as const, row: "desktop" } },
   "spaces.thumbnail": { spaceId: "local:design-review" },

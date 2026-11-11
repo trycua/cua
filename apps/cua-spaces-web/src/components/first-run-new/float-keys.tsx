@@ -111,10 +111,16 @@ export function homography(q: number[][]): string {
   return `matrix3d(${a / 100},${d / 100},0,${g / 100},${b / 100},${e / 100},0,${h / 100},0,0,1,0,${x0},${y0},0,1)`;
 }
 
+/** The gap kept between the copy's right edge and the nearest key, in px. */
+export const KEY_GAP = 24;
+
 /**
  * Where each key goes in a box of `w` x `h` whose copy ends `copyRight` px from the left: the frame
  * scaled to cover the box, then (like the site's `wide`) the keys right of centre pressed into the
- * space right of the copy when the copy runs past the middle.
+ * space right of the copy when the copy runs past the middle. No key ever sits on the copy (its text,
+ * its buttons and links): a key that would still reach into the copy column is moved just right of
+ * it, or left out when it no longer fits there or belongs on the left. The soft key in the bottom-left
+ * corner is the one exception: it is drawn faint, behind the dots, under the copy's buttons.
  */
 export function placeKeys(w: number, h: number, copyRight: number): (Place & { left: number; top: number; width: number; height: number })[] {
   const s = Math.max(w / FRAME.w, h / FRAME.h);
@@ -122,7 +128,8 @@ export function placeKeys(w: number, h: number, copyRight: number): (Place & { l
     oy = (h - FRAME.h * s) / 2;
   const edge = (copyRight / w) * 100 + 3;
   const k = edge <= 50 ? 1 : (100 - Math.min(edge, 70)) / 50;
-  return KEYS.map((p) => {
+  const clear = copyRight + KEY_GAP;
+  return KEYS.flatMap((p) => {
     const sp = SPRITES[p.src]!;
     let x = ((ox + (p.x / 100) * FRAME.w * s) / w) * 100;
     let size = (p.size * FRAME.w * s) / w;
@@ -133,7 +140,14 @@ export function placeKeys(w: number, h: number, copyRight: number): (Place & { l
     }
     const width = (size / 100) * w;
     const height = (width * sp.h) / sp.w;
-    return { ...p, x, y, size, width, height, left: (x / 100) * w - width / 2, top: (y / 100) * h - height / 2 };
+    let left = (x / 100) * w - width / 2;
+    if (!p.soft && left < clear) {
+      // A key of the left half has no place right of the copy; one that would hang mostly off the right edge neither.
+      if (p.x < 40 || clear + width * 0.4 > w) return [];
+      left = clear;
+      x = ((left + width / 2) / w) * 100;
+    }
+    return [{ ...p, x, y, size, width, height, left, top: (y / 100) * h - height / 2 }];
   });
 }
 

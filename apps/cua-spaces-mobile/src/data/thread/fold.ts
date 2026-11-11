@@ -62,6 +62,7 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   const tasks = new Map<number, Extract<ThreadItem, { type: "task" }>>();
   const approvals = new Map<number, Extract<ThreadItem, { type: "approval" | "join_request" }>>();
   const subs = new Map<string, Extract<ThreadItem, { type: "subagent" }>>();
+  const kids = new Map<string, Extract<ThreadItem, { type: "child_space" }>>();
   const answered = new Set<string>();
   for (const e of sorted) {
     // The copy of a message that tasks one more agent: the original is the row.
@@ -90,6 +91,8 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       if (known) {
         known.sub = e.child;
       } else {
+        const header = creatorHeader(items, e, e.child.agent, null);
+        if (header) items.push(header);
         const item = { type: "subagent" as const, key: `u${e.seq}`, entry: e, sub: e.child };
         subs.set(e.child.id, item);
         items.push(item);
@@ -97,7 +100,18 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     if (e.kind === "system" && e.child?.kind === "child_space") {
-      items.push({ type: "child_space", key: `c${e.seq}`, entry: e, space: e.child });
+      // The notes of one create (its steps, then ready or failed) are one row, in the order it started.
+      const known = e.child.key ? kids.get(e.child.key) : undefined;
+      if (known) {
+        known.space = e.child;
+      } else {
+        // The row sits under its creator's turn, as a subagent's does (its header comes with the row when the creator has not spoken just above).
+        const header = creatorHeader(items, e, e.child.agent, e.child.by ?? null);
+        if (header) items.push(header);
+        const item = { type: "child_space" as const, key: `c${e.seq}`, entry: e, space: e.child };
+        if (e.child.key) kids.set(e.child.key, item);
+        items.push(item);
+      }
       continue;
     }
     if (e.kind === "system") {
@@ -138,7 +152,13 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   const readSeq = opts.readSeq;
   if (readSeq == null) return items;
   const first = items.findIndex(
-    (i) => i.type !== "unread" && i.type !== "system" && i.type !== "subagent" && i.type !== "child_space" && unreadIn(i, readSeq, opts.me ?? null),
+    (i) =>
+      i.type !== "unread" &&
+      i.type !== "system" &&
+      i.type !== "subagent" &&
+      i.type !== "child_space" &&
+      !isCreatorHeader(i) &&
+      unreadIn(i, readSeq, opts.me ?? null),
   );
   if (first < 0) return items;
   // A note just above the first unread entry belongs below the divider.
@@ -165,4 +185,39 @@ export function readSeqFrom(entries: readonly ThreadEntry[], unread: number, me:
   const others = entries.filter((e) => e.author.id !== me && e.kind !== "task_update");
   if (unread > others.length) return null;
   return others[others.length - unread]!.seq - 1;
+}
+
+/** The textless message that heads a created Space's row (never unread, never a quote target). */
+export const isCreatorHeader = (i: ThreadItem): boolean => i.type === "message" && i.entry.id.endsWith(":header");
+
+/**
+ * The header a created Space's row needs above it, or null when its creator's own message or earlier rows already sit
+ * right above. The creator is the agent that made it, or the person (`by`) when a person did; with neither the row stands alone.
+ */
+function creatorHeader(items: readonly ThreadItem[], note: ThreadEntry, agent: string, by: { id: string; name: string } | null): ThreadItem | null {
+  const author: ThreadEntry["author"] | null = by
+    ? { kind: "person", id: by.id, name: by.name }
+    : agent
+      ? { kind: "agent", id: `agent:${agent}`, name: agent }
+      : null;
+  if (!author) return null;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.type === "unread" || it.type === "system") continue;
+    const same = (a: ThreadEntry["author"]) => a.kind === author.kind && (a.id === author.id || (a.kind === "agent" && a.name === author.name));
+    if (it.type === "message" && same(it.entry.author)) return null;
+    if (it.type === "child_space" || it.type === "subagent") {
+      const c = it.type === "child_space" ? it.space : it.sub;
+      const mine = c.kind === "child_space" ? (c.by ? !!by && c.by.id === by.id : !by && !!agent && c.agent === agent) : !by && c.agent === agent;
+      if (mine) return null;
+    }
+    break;
+  }
+  return {
+    type: "message",
+    key: `h${note.seq}`,
+    entry: { ...note, seq: note.seq - 0.5, id: `${note.id}:header`, author, kind: "message", text: "", child: null, noteFor: null, event: null },
+    quote: null,
+    taskText: null,
+  };
 }

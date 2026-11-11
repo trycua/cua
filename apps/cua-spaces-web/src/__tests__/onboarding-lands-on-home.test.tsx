@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The last onboarding page of an ask-first run ends on Home (the prompt box and the suggestions), not inside a
-// Space: the nothing is made in the background: a Space exists only when the person chooses one.
+// The last onboarding page of an ask-first run ends on Home (your computers and Run something), not inside a
+// Space. Nothing is made while the first run shows; once it is over the only Space the app makes by itself is the hidden
+// warm home (Warm start), which no list, count or Home strip shows.
 
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -13,11 +14,12 @@ import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetAskTasks } from "@/lib/ask-first";
 import { rememberAgent, resetPickedAgent } from "@/lib/ask-first-model";
-import { getDriver, resetPrepare } from "@/lib/prepare/store";
+import { getDriver, holdWarmStart, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
+  holdWarmStart(false);
   localStorage.clear();
   resetSavedOnboardingCache();
   resetFirstRunCache();
@@ -61,30 +63,25 @@ async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] =
   return router;
 }
 
-// The welcome's example jobs are still there (Home's own suggestions).
-const expectCards = () => {
-  expect(document.querySelectorAll("[data-home-card]").length).toBeGreaterThanOrEqual(2);
-};
-
 describe.skipIf(!wasmBuilt)("where the first run ends", () => {
-  it("lands on Home with the prompt box and the suggestions, and makes no Space the person did not choose", { timeout: 60_000 }, async () => {
-    const calls: { op: string }[] = [];
-    const router = await throughOnboarding(undefined, calls);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
-    // The prompt box and the suggestions are there, not a Space's page.
-    expect(await screen.findByLabelText("What should it do?")).not.toBeNull();
-    expectCards();
-    expect(document.querySelector("[data-ask-first-home]")).not.toBeNull();
-    // Nothing is warming in the background: no Space is created and nothing is being prepared.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 1_500));
-    });
-    expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
-    expect(getDriver()?.state?.wanted ?? false).toBe(false);
-    expect(document.querySelector("[data-prepare-line]")).toBeNull();
-    expect(document.querySelector("[data-home-spaces]")?.textContent ?? "").not.toContain("home-claude-code");
-    expect(document.body.textContent).not.toContain("home-claude-code");
-    // No job has run yet, so Home doesn't ask for the rest of setup.
-    expect(document.querySelector("[data-bring-rest]")).toBeNull();
-  });
+  it(
+    "lands on Home with your computers and Run something; the only Space made is the hidden warm home, which is shown nowhere",
+    { timeout: 60_000 },
+    async () => {
+      const calls: { op: string }[] = [];
+      const router = await throughOnboarding(undefined, calls);
+      await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
+      // Your computers as one pool, with Run something and Add a computer, not a Space's page.
+      await waitFor(() => expect(document.querySelector("[data-pool-grid]")).not.toBeNull());
+      expect(document.querySelector("[data-pool-run]")).not.toBeNull();
+      expect(document.querySelector("[data-pool-add-tile]")).not.toBeNull();
+      // Once the first run is over the app warms its hidden home (Warm start): one create, and nothing shows it.
+      await waitFor(() => expect(calls.filter((c) => c.op === "spaces.create")).toHaveLength(1), { timeout: 20_000 });
+      expect(getDriver()?.state?.wanted).toBe(true);
+      expect(document.querySelector("[data-prepare-line]")).toBeNull();
+      expect(document.body.textContent).not.toContain("home-claude-code");
+      // No job has run yet, so Home doesn't ask for the rest of setup.
+      expect(document.querySelector("[data-bring-rest]")).toBeNull();
+    },
+  );
 });

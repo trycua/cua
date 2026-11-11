@@ -1,0 +1,19 @@
+[bindings.python]
+cdylib_name = "cua_sdk"
+
+[bindings.swift]
+module_name = "CuaSDK"
+ffi_module_name = "cua_sdkFFI"
+ffi_module_filename = "cua_sdkFFI"
+
+[bindings.kotlin]
+package_name = "ai.cua.sdk"
+cdylib_name = "cua_sdk"
+
+# Kotlin objects implement AutoCloseable, whose `close()` frees the Rust
+# handle; an exported async `close` would clash with it (and not compile).
+[bindings.kotlin.rename]
+"MediaSession.close" = "closeSession"
+"PortForward.close" = "closeForward"
+"SpaceStreamSession.close" = "closeStream"
+"McpClient.close" = "closeClient"

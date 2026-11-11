@@ -220,8 +220,11 @@ jobs:
               '.files | any(.path == "libs/cua-spacesd/VERSION")')
             SDK=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua/VERSION")')
+            BENCH=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-bench/pyproject.toml")')
             if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && \
-                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" ]]; then
+                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" && \
+                  "$BENCH" != "true" ]]; then
               continue
             fi
 
@@ -281,6 +284,9 @@ jobs:
               if [[ "${SDK}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-sdk)
               fi
+              if [[ "${BENCH}" == "true" ]]; then
+                COMPONENT_ARGS+=(--component bench)
+              fi
               "$TOOLS/replay_release_branch.sh" "origin/$BRANCH" "${COMPONENT_ARGS[@]}"
             fi
             if [[ "$PERCEPTION" == "true" ]]; then
@@ -300,19 +306,13 @@ jobs:
               for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
                 cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
               done
-              python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock \
-                docs/content/docs/cua-driver/reference \
-                scripts/docs-generators/cli-specs/cua-driver.json
+                libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             elif [[ "$LUME" == "true" ]]; then
-              python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/lume/reference \
-                scripts/docs-generators/cli-specs/lume.json
-              COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+              COMMIT_MESSAGE="chore(lume): synchronize release files"
             elif [[ "$SPACESD" == "true" ]]; then
               # Release Please bumps the workspace version in Cargo.toml; the
               # lockfiles (the workspace and the standalone e2e workspaces
@@ -331,22 +331,42 @@ jobs:
               python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
               SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
-              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk scripts/docs-generators/cli-specs/cua.json
+              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk
               if [[ -n "$SDK_LOCKS" ]]; then
                 mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
                 git add -- "${SDK_LOCK_PATHS[@]}"
               fi
               COMMIT_MESSAGE="chore(cua-sdk): synchronize release documentation and lockfiles"
+            elif [[ "$BENCH" == "true" ]]; then
+              # Other lockfiles lock cua-bench from the checkout and still record
+              # the old version; follow it without relocking.
+              BENCH_LOCKS=$(python3 .github/scripts/sync_uv_member_locks.py)
+              if [[ -n "$BENCH_LOCKS" ]]; then
+                mapfile -t BENCH_LOCK_PATHS <<< "$BENCH_LOCKS"
+                git add -- "${BENCH_LOCK_PATHS[@]}"
+              fi
+              COMMIT_MESSAGE="chore(bench): synchronize release lockfiles"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
-              # The Sandbox reference records the package version, so regenerate
-              # it with the release version. Lifecycle scripts stay disabled
-              # because this step holds the release app token.
-              npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
-              node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
-              git add docs/content/docs/cua-sdk/reference/runtime-support.mdx \
-                docs/content/docs/cua-sdk/reference/os-image-catalog.mdx \
-                docs/content/docs/cua-sdk/reference/image-software.mdx
+              # The hand-written SDK pages and the other lockfiles that lock the
+              # checkout's cua-sandbox record its version too.
+              PREVIOUS=$(git show origin/main:libs/python/cua-sandbox/VERSION)
+              python3 .github/scripts/sync_sandbox_release_docs.py --from "$PREVIOUS"
+              SANDBOX_LOCKS=$(python3 .github/scripts/sync_uv_member_locks.py)
+              if [[ -n "$SANDBOX_LOCKS" ]]; then
+                mapfile -t SANDBOX_LOCK_PATHS <<< "$SANDBOX_LOCKS"
+                git add -- "${SANDBOX_LOCK_PATHS[@]}"
+              fi
+              # cua-bench and cua-agent cap cua-sandbox below the next minor; a
+              # release that crosses the cap would make the ALE jobs unsatisfiable.
+              SANDBOX_CAPS=$(python3 .github/scripts/widen_sibling_dependency_caps.py \
+                --package cua-sandbox --from "$PREVIOUS" \
+                --to "$(cat libs/python/cua-sandbox/VERSION)")
+              if [[ -n "$SANDBOX_CAPS" ]]; then
+                mapfile -t SANDBOX_CAP_PATHS <<< "$SANDBOX_CAPS"
+                git add -- "${SANDBOX_CAP_PATHS[@]}"
+              fi
+              git add docs/content/docs/cua-sdk
               COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then

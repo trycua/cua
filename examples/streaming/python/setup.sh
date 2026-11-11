@@ -2,7 +2,7 @@
 # Builds the cua-sdk native library and installs the `cua` Python binding
 # into examples/streaming/python/.venv (Python 3.12, uv).
 #
-#   ./setup.sh             # cargo build --release -p cua-sdk, then install
+#   ./setup.sh             # cargo build --release -p cua-sdk-native, then install
 #   ./setup.sh --no-build  # reuse an existing target/release library
 #
 # CARGO_TARGET_DIR defaults to libs/cua/target.
@@ -19,7 +19,7 @@ esac
 
 if [ "${1:-}" != "--no-build" ]; then
     (cd "$CUA" && CARGO_TARGET_DIR="$TARGET_DIR" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" \
-        cargo build --release -p cua-sdk)
+        cargo build --release -p cua-sdk-native)
 fi
 [ -f "$TARGET_DIR/release/$LIB" ] || { echo "missing $TARGET_DIR/release/$LIB" >&2; exit 1; }
 

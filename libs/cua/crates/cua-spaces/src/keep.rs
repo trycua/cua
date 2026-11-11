@@ -258,14 +258,6 @@ pub enum ServiceControl {
 impl Space {
     /// Keeps `def` running in this Space (replacing a service of that name).
     pub async fn put_service(&self, def: &ServiceDef) -> Result<ServiceInfo> {
-        // Part of the Child Spaces experiment, off unless turned on.
-        // Listing, stopping and removing services stay available.
-        if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
-            return Err(Error::invalid(format!(
-                "keeping a command running is part of the Child Spaces experiment. {}",
-                cua_vmm::experiments::Gate::ChildSpaces.off_message()
-            )));
-        }
         self.require(SERVICES_FEATURE)?;
         let r = self
             .spacesd()?

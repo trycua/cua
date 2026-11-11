@@ -23,7 +23,6 @@ const TONE: Record<TreeTone, string> = {
   busy: "bg-brand animate-pulse",
   offline: "bg-muted-foreground/50",
   stopped: "bg-muted-foreground/50",
-  waits: "bg-muted-foreground/50",
 };
 
 export function TreeDot({ tone, className }: { tone: TreeTone; className?: string }) {

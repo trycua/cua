@@ -145,10 +145,10 @@ jobs:
           shared-key: libs-cua-lint
       - name: Format
         if: runner.os == 'Linux'
-        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-cluster -p cua-spaces-cluster -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
+        run: cargo fmt -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-cluster -p cua-spaces-cluster -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
       - name: Clippy (native)
         run: >
-          cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
+          cargo clippy --locked -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster -p cua-agent-setup
           -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
@@ -241,7 +241,7 @@ jobs:
       - name: Build the test binaries once (cargo-nextest archive)
         run: >-
           cargo nextest archive --locked --archive-file "$RUNNER_TEMP/rust-tests.tar.zst"
-          -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
+          -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
@@ -354,7 +354,7 @@ jobs:
       - name: Doctests (the packages above)
         if: matrix.shard == 2
         run: >
-          cargo test --locked --no-fail-fast --doc -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
+          cargo test --locked --no-fail-fast --doc -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
@@ -475,7 +475,7 @@ jobs:
         run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         run: >
-          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
+          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon-core -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-cluster -p cua-spaces-cluster
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
@@ -657,7 +657,7 @@ jobs:
           workspaces: libs/cua
           shared-key: libs-cua-build-sdk
       - name: Build
-        run: cargo build --locked --release -p cua-sdk
+        run: cargo build --locked --release -p cua-sdk-native
       - run: tar -C target -cf "$RUNNER_TEMP/sdk-linux.tar" release/libcua_sdk.so
       - uses: actions/upload-artifact@v4
         with:
@@ -774,7 +774,7 @@ jobs:
         if: runner.os != 'Linux'
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli
           if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
@@ -845,7 +845,7 @@ jobs:
       - name: Build (macOS; Linux uses the shared build)
         if: runner.os != 'Linux'
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli -p cua-spaces-cli
       - name: Stage
@@ -932,7 +932,7 @@ jobs:
           save-always: "true"
       - name: Dev dylib
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked --release -p cua-sdk-native
           scripts/build-test-fixtures.sh
           node scripts/stage-uniffi-library.mjs --only=swift
           swift/scripts/test.sh

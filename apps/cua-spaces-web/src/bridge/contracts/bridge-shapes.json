@@ -2311,9 +2311,6 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "childSpaces": {
-          "type": "boolean"
-        },
         "ciRunners": {
           "type": "boolean"
         },
@@ -2321,9 +2318,6 @@
           "type": "boolean"
         },
         "mobile": {
-          "type": "boolean"
-        },
-        "warmPools": {
           "type": "boolean"
         }
       }
@@ -5406,6 +5400,18 @@
                 "null"
               ]
             },
+            "closeWindowKeepsRunning": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "closeNotice": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "keyvaultAutoWipe": {
               "type": [
                 "boolean",
@@ -5989,6 +5995,9 @@
         "arch": {
           "type": "string"
         },
+        "hidden": {
+          "type": "boolean"
+        },
         "reachable": {
           "type": "boolean"
         },
@@ -5999,6 +6008,9 @@
           "type": "string"
         },
         "hostName": {
+          "type": "string"
+        },
+        "parent": {
           "type": "string"
         },
         "power": {
@@ -6711,6 +6723,9 @@
                     "space": {
                       "type": "string"
                     },
+                    "key": {
+                      "type": "string"
+                    },
                     "name": {
                       "type": "string"
                     },
@@ -6719,6 +6734,55 @@
                     },
                     "agent": {
                       "type": "string"
+                    },
+                    "by": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "creating",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "percent": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -8472,6 +8536,12 @@
           ]
         },
         "hostName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
           "type": [
             "string",
             "null"
@@ -10618,6 +10688,28 @@
       "required": [
         "wsUrl",
         "expiresAt"
+      ]
+    },
+    "spaces.reach": {
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "listedOffline": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reachable",
+        "listedOffline",
+        "reason"
       ]
     },
     "spaces.rename": {
@@ -14952,6 +15044,28 @@
     },
     "spaces.open": {
       "type": "null"
+    },
+    "spaces.reach": {
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "listedOffline": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reachable",
+        "listedOffline",
+        "reason"
+      ]
     },
     "spaces.rename": {
       "type": "object",

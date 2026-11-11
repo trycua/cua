@@ -508,6 +508,48 @@ function demoConversation(
   });
   update(min(14), bump, "claimed");
   update(min(13), bump, "working");
+  add({
+    ts_ms: min(13),
+    author: { kind: "system", id: "system:dispatcher", name: "Cua" },
+    kind: "system",
+    text: "Claude restarted and is back on \u201cbump the retry timeout in ws_reconnect\u201d.",
+    task_seq: bump,
+  });
+  add({
+    ts_ms: min(1),
+    author: { kind: "system", id: "system:dispatcher", name: "Cua" },
+    kind: "system",
+    text: "Claude started a subagent",
+    task_seq: bump,
+    event: {
+      kind: "subagent",
+      id: "sub-1",
+      agent: "claude",
+      title: "Check the reconnect logs for the last failures",
+      state: "running",
+      steps: 3,
+      started_ms: min(1),
+    },
+  });
+  add({ ts_ms: min(12), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Cursor was added to this Space." });
+  const cs = (key: string, name: string, os: string, extra: Json) =>
+    add({
+      ts_ms: min(1),
+      author: { kind: "system", id: "system:dispatcher", name: "Cua" },
+      kind: "system",
+      text: `Creating ${name}`,
+      task_seq: bump,
+      event: { kind: "child_space", space: `local:${name}`, key, name, os, agent: "claude", ...extra },
+    });
+  cs("build-box:1", "build-box", "Linux", { state: "ready", phase: "Ready", started_ms: min(1) - 62_000, ended_ms: min(1) - 8_000 });
+  cs("macos-child:2", "macos-child", "macOS", {
+    state: "failed",
+    error: "Its network setup did not come up",
+    started_ms: min(1) - 40_000,
+    ended_ms: min(1) - 20_000,
+  });
+  cs("test-win:3", "test-win", "Windows", { state: "creating", phase: "Downloading the image", percent: 42, started_ms: min(1) - 20_000 });
+
   const changelog = add({
     ts_ms: min(11),
     author: CLAUDE,
@@ -519,7 +561,7 @@ function demoConversation(
     ts_ms: min(11),
     author: { kind: "system", id: "system:dispatcher", name: "Cua" },
     kind: "system",
-    text: "Hermes woke up and joined",
+    text: "Hermes stopped working on \u201cwrite the 2 failures up for the changelog\u201d. It will pick it up again.",
     task_seq: changelog,
   });
   update(min(11), changelog, "working");
@@ -793,14 +835,10 @@ export function demoThreadHandlers({
     const id = member.identity;
     for (const m of t.members)
       m.identity.collides = t.members.filter((x) => x.identity.display_name.toLowerCase() === m.identity.display_name.toLowerCase()).length > 1;
-    const from = id.device ? ` from ${id.device.name}` : "";
     append(space, {
       author: SYSTEM,
       kind: "system",
-      text:
-        id.origin === "space"
-          ? `${id.display_name} joined. ${id.owner.name} started it here.`
-          : `${id.display_name} joined. ${id.owner.name} connected it${from}.`,
+      text: `${id.display_name} was added to this Space.`,
       event: { kind: "member_joined", member: id, by: id.joined.by },
     });
   };
@@ -1001,8 +1039,7 @@ export function demoThreadHandlers({
       await wait(stepMs);
       setStage(space, agent, "starting");
       await wait(stepMs);
-      // The note comes once the agent is up.
-      append(space, { author: system, kind: "system", text: `${label(agent)} woke up and joined`, task_seq: task });
+      // No note: the starting row above already showed it (the core says nothing for a start the person asked for).
     }
     append(space, { author: system, kind: "task_update", update: { task, state: "working", session: 1, note: null } });
     setStage(space, agent, "thinking");
@@ -1265,5 +1302,3 @@ export function seedLongDm(handlers: DemoHandlers<ThreadOpName>, count: number):
       await handlers["thread.post"]({ spaceId: DEMO_THREAD_SPACE, text: `@hermes check item ${i} of the release list` } as never);
   })();
 }
-
-const label = (agent: string) => (agent === "claude" ? "Claude Code" : agent.charAt(0).toUpperCase() + agent.slice(1));

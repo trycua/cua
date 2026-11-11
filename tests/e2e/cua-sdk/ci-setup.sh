@@ -89,9 +89,9 @@ fi
 if phase cli || phase fixtures || phase sdk; then
     step "cua SDK, CLI, fixtures"
     cd "$REPO/libs/cua"
-    if phase cli; then cargo build --locked -p cua-cli -p cua-sdk; fi
+    if phase cli; then cargo build --locked -p cua-cli -p cua-sdk-native; fi
     if phase fixtures; then scripts/build-test-fixtures.sh; fi
-    if phase sdk; then cargo build --locked --release -p cua-sdk; fi
+    if phase sdk; then cargo build --locked --release -p cua-sdk-native; fi
     end
 fi
 

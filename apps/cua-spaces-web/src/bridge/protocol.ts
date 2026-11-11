@@ -196,6 +196,10 @@ export interface HostSettings {
   autoConnect?: boolean | null;
   /** New Spaces overflow into your linked cloud when this machine is full (`placement.overflow`). */
   overflow?: boolean | null;
+  /** The Mac app's background service: the close button keeps Cua Spaces running (none: no rows). */
+  closeWindowKeepsRunning?: boolean | null;
+  /** The notice that Cua Spaces keeps running is on. */
+  closeNotice?: boolean | null;
   /** The Keyvault wipes access from Spaces automatically. */
   keyvaultAutoWipe?: boolean | null;
   /** The Keyvault explains unattended access before allowing it (off after "Never ask again"). */
@@ -610,6 +614,7 @@ export const OPERATIONS = [
   ...NOTIFICATIONS_OPERATIONS,
   ...TELEMETRY_OPERATIONS,
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",

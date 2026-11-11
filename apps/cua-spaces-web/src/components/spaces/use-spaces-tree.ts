@@ -3,7 +3,8 @@
 
 import { useMemo } from "react";
 
-import { useAgents, useBridge, useSession, useSpaces, type SpacesDefaultHook } from "@/bridge";
+import { sharesDesktop, useAgents, useBridge, useSession, useSpaces, type SpacesDefaultHook } from "@/bridge";
+import { useChildren } from "@/components/children/use-children";
 import { useMachinesLive } from "@/hooks/use-machines-live";
 import { currentLocale, useT } from "@/i18n";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
@@ -39,12 +40,28 @@ export function useSpacesTreeData(running: ReadonlyMap<string, number> = NO_RUNS
   const warming = useHiddenSpaceIds(core);
   // The setting names the default; until it's read (or when it names none) the relay's own answer does.
   const defaultSpace = defaults.settings?.defaultSpace ?? defaults.resolved?.defaultSpace ?? null;
+  // Which Space made which (Child Spaces): a child sits under its parent. The host's store re-renders this when it reads again.
+  const store = useChildren();
+  const parentPairs = (spaces ?? []).flatMap((s) => {
+    const parent = store?.node(s.id)?.parent;
+    return parent ? [`${s.id}\n${parent}`] : [];
+  });
+  const parentsKey = parentPairs.join("\n\n");
   const tree = useMemo(
     () =>
       spaces && machines
-        ? buildSpacesTree({ spaces: spaces.filter((s) => !warming.has(s.id)), machines, defaultSpace, running, me: session?.identity ?? null, relayOnline })
+        ? buildSpacesTree({
+            spaces: spaces.filter((s) => !warming.has(s.id)),
+            machines,
+            defaultSpace,
+            running,
+            me: session?.identity ?? null,
+            relayOnline,
+            shares: (s) => sharesDesktop(core, s) !== false,
+            parents: new Map(parentsKey ? parentsKey.split("\n\n").map((p) => p.split("\n") as [string, string]) : []),
+          })
         : null,
-    [spaces, machines, warming, defaultSpace, running, session?.identity, relayOnline, lng],
+    [spaces, machines, warming, defaultSpace, running, session?.identity, relayOnline, lng, parentsKey, core],
   );
   return { tree, loaded: Boolean(spaces && machines && listStatus.loaded), defaults };
 }

@@ -2448,6 +2448,5 @@
    "meaning": "Usage error: an unknown or missing subcommand or argument, or conflicting flags (for example `revoke` without exactly one of `--session` or `--all`, or an authorization flag passed to `mcp`)."
   }
  ],
- "name": "cua-driver",
- "version": "0.47.0"
+ "name": "cua-driver"
 }

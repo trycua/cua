@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { ArrowDownCircleIcon, EllipsisIcon, LoaderCircleIcon, PictureInPicture2Icon, PowerIcon, UserPlusIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ArrowDownCircleIcon, EllipsisIcon, LoaderCircleIcon, PictureInPicture2Icon, PowerIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SpaceOs } from "@/bridge";
@@ -32,12 +33,18 @@ export interface SpaceHeaderProps {
   os: SpaceOs;
   title: string;
   place: ReactNode;
+  /** The Space it is a child of: "Child of <parent>", linking to it. */
+  childOf?: { id: string; name: string } | null;
   power?: HeaderPower;
   /** The desktop into its floating window. */
   pip?: HeaderAction & { id: string; active: boolean };
   teleport?: HeaderAction;
   share?: HeaderAction;
   remove?: HeaderAction;
+  /** A computer's desktop page: its own page (switches, rename, details), in the menu. */
+  computerSettings?: HeaderAction;
+  /** A computer's desktop page: remove the computer (the trash); disabled with its help while it cannot be. */
+  removeComputer?: HeaderAction;
   /** A failed create: take it off the list. */
   dismiss?: HeaderAction;
 }
@@ -74,6 +81,7 @@ function PowerButton({ power }: { power: HeaderPower }) {
  * Share. A hairline under it spans the page. */
 export function SpaceHeader(p: SpaceHeaderProps) {
   const more: MenuItem[] = [
+    ...(p.computerSettings ? [{ label: p.computerSettings.label, onSelect: p.computerSettings.onClick }] : []),
     ...(p.dismiss ? [{ label: p.dismiss.label, onSelect: p.dismiss.onClick, destructive: true }] : []),
     ...(p.remove ? [{ label: `${p.remove.label}…`, onSelect: p.remove.onClick, destructive: true }] : []),
   ];
@@ -86,6 +94,18 @@ export function SpaceHeader(p: SpaceHeaderProps) {
           <h1 data-detail-title className="truncate text-[20px] leading-tight font-semibold tracking-[-0.01em]">
             {p.title}
           </h1>
+          {p.childOf ? (
+            <p data-child-of={p.childOf.id} className="mt-0.5 text-xs text-muted-foreground">
+              Child of{" "}
+              <Link
+                to="/spaces/$spaceId"
+                params={{ spaceId: p.childOf.id }}
+                className="cursor-default font-medium text-foreground outline-none hover:underline focus-visible:underline"
+              >
+                {p.childOf.name}
+              </Link>
+            </p>
+          ) : null}
           <div className="[&>p]:mt-0.5">{p.place}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -103,6 +123,21 @@ export function SpaceHeader(p: SpaceHeaderProps) {
                 className={cn(bare, p.pip.active && "text-brand-strong")}
               >
                 <PictureInPicture2Icon />
+              </Button>
+            </Tooltip>
+          ) : null}
+          {p.removeComputer ? (
+            <Tooltip content={p.removeComputer.help ?? p.removeComputer.label}>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-header-remove-computer=""
+                aria-label={p.removeComputer.label}
+                aria-disabled={!p.removeComputer.enabled || undefined}
+                onClick={p.removeComputer.enabled ? p.removeComputer.onClick : undefined}
+                className={cn(bare, !p.removeComputer.enabled && "opacity-50")}
+              >
+                <Trash2Icon />
               </Button>
             </Tooltip>
           ) : null}

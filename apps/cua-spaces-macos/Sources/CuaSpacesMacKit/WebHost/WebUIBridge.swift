@@ -72,7 +72,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
         // A Space's network, clipboard and Volume settings (the SDK's).
         "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
-        // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+        // Child Spaces: the tree of Spaces, children, budgets and kept services.
         "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
@@ -108,7 +108,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.reach", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
@@ -612,9 +612,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
-        // The first run's sign-in set this Mac up to provide Spaces: ask for
-        // Local Network now that it is over.
-        if model.host.providesSpaces { model.askLocalNetworkForHosting() }
+        // Local Network is not asked here: the first run's permissions step
+        // asks for it, with its reason, and a dialog as Home opens was a
+        // surprise with no context (device test, 10 Nov). Left off there,
+        // it is asked when it is needed: the first macOS Space on this Mac,
+        // or turning on Spaces from other computers (`askLocalNetworkForHosting`).
         return onboarding()
     }
 
@@ -915,7 +917,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                                                  branch: text("branch"), model: text("model"),
                                                  envFromHost: (args["envFromHost"] as? [String]) ?? [],
                                                  cwd: text("cwd"), resumeSession: text("resumeSession"),
-                                                 resumeContext: text("resumeContext"))
+                                                 resumeContext: text("resumeContext"), effort: text("effort"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
             guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }

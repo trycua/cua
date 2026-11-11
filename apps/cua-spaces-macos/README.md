@@ -51,7 +51,7 @@ core's crate docs.
 
 ```sh
 # The cua SDK library (release) for the Swift package:
-cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift
+cd libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift
 cd ../../apps/cua-spaces-macos
 swift build                      # the package
 scripts/test.sh                  # unit, parity and snapshot tests (swift-testing)
@@ -324,7 +324,7 @@ the released app on your production account, your build on staging, both
 signed in and both hosting this Mac.
 
 ```sh
-scripts/install-local.sh                 # debug build, then opens the app
+scripts/install-local.sh                 # fast build (Rust dev-fast, Swift debug), then opens the app
 scripts/install-local.sh --release       # release configuration
 scripts/install-local.sh --development   # fast dev loop: Rust `dev-fast` profile + Swift debug (dev hooks, CUA_WEBUI_DEV=1)
 scripts/install-local.sh --no-launch     # install without opening it
@@ -336,16 +336,19 @@ scripts/install-local.sh --setup-signing # do the one-time signing setup on a ne
 
 Which build to use:
 
-- **Default**: Rust release, Swift debug. The dev hooks work; the Rust side is
-  fully optimised, so a Rust change takes a long rebuild.
-- **`--development`**: Rust with the `dev-fast` Cargo profile (defined in
-  `libs/cua` and `libs/cua-spacesd`: `opt-level = 1`, incremental, no LTO,
-  output in `target/dev-fast`) and Swift debug. Use it while iterating: a
-  one-file Rust change rebuilds in seconds, and live reload works. Run the web
+- **Default**: Rust with the `dev-fast` Cargo profile (defined in `libs/cua`
+  and `libs/cua-spacesd`: `opt-level = 1`, incremental, no LTO, output in
+  `target/dev-fast`) and Swift debug. The dev hooks work, and a one-file Rust
+  change rebuilds in seconds.
+- **`--development`**: the same Rust and Swift builds, set up for live reload of
+  the web UI. Run the web
   dev server (`pnpm dev` in `apps/cua-spaces-web`) and launch the app with
   `CUA_WEBUI_DEV=1`. Do not hand these builds to anyone.
 - **`--release`**: everything fully optimised, no dev hooks. Use it to check
-  what ships (performance, the release bundle checks).
+  what ships (performance, the release bundle checks). Release-grade builds are
+  opt-in; nothing else asks for them. `--rust-profile release|dev-fast` picks the
+  Rust profile whatever the other flags say, and `--build-only` builds, signs
+  and checks the app without installing it (for timing a build).
 
 It first checks what the build needs and lists everything that is missing in
 one message, with what to run: the Xcode command line tools, `cmake`, Rust

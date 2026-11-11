@@ -18,7 +18,7 @@ source-available under the
 ## Run
 
 ```sh
-(cd ../../libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+(cd ../../libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift)
 swift build -c release
 .build/release/infinite-canvas --spaces spaces.json --show
 ```

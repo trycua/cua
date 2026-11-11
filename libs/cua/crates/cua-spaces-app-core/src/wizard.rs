@@ -4258,8 +4258,8 @@ pub(crate) fn arch_word(arch: Option<&str>) -> Option<&'static str> {
 }
 
 /// The catalog's Linux slim tier as a container (about 0.5 GB to pull), when
-/// published: what the first Linux Space of Ask first is while the `warm-pools`
-/// experiment is on, because that is the Space it keeps ready.
+/// published: what the first Linux Space of Ask first is, because that is the Space
+/// the daemon keeps ready (Warm start).
 fn slim_linux_ref() -> Option<String> {
     catalog()
         .images
@@ -4319,11 +4319,9 @@ pub fn first_space_offers(env: &WizardEnv, host_os: SpaceOs) -> Vec<FirstSpaceOf
     };
     let arch = arch_word(local.host_arch.as_deref());
     let mut linux = view_on(&initial(&local), &local, host_os).image.image_ref;
-    // The Space the `warm-pools` experiment keeps ready is the slim tier: the
-    // first Linux Space is made from it too, so Create claims it.
-    if env.experiments.warm_pools
-        && let Some(slim) = slim_linux_ref()
-    {
+    // The Space Warm start keeps ready is the slim tier: the first Linux Space is made
+    // from it too, so Create claims it.
+    if let Some(slim) = slim_linux_ref() {
         linux = slim;
     }
     let mut wanted: Vec<(&str, String)> = vec![("linux", linux)];
@@ -4746,27 +4744,16 @@ mod tests {
         let offers = first_space_offers(&e, SpaceOs::Linux);
         let ids: Vec<&str> = offers.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(ids, ["linux", "omarchy"]);
-        // The Linux Space Home creates for a new agent is the full image;
-        // with the `warm-pools` experiment on it is the slim tier, which the
-        // daemon keeps ready at the same size (`cua_daemon::local::
-        // warm_pools_image` asserts the same reference), so a change to
-        // either must change both.
-        assert_eq!(offers[0].image, "ghcr.io/trycua/linux:24.04");
-        let warm = WizardEnv {
-            experiments: crate::experiments::Experiments {
-                warm_pools: true,
-                ..e.experiments
-            },
-            ..e.clone()
-        };
-        let slim = first_space_offers(&warm, SpaceOs::Linux);
-        assert_eq!(slim[0].image, "ghcr.io/trycua/linux:24.04-slim");
-        assert_eq!(slim[0].os, SpaceOs::Linux);
+        // The Linux Space Home creates for a new agent is the slim tier, which the daemon
+        // keeps ready at the same size (Warm start; `cua_daemon::local::warm_pools_image`
+        // asserts the same reference), so a change to either must change both.
+        assert_eq!(offers[0].image, "ghcr.io/trycua/linux:24.04-slim");
+        assert_eq!(offers[0].os, SpaceOs::Linux);
         assert_eq!(
-            (slim[0].args.cpus, slim[0].args.memory_mb),
+            (offers[0].args.cpus, offers[0].args.memory_mb),
             (Some(2), Some(4096))
         );
-        assert_eq!(slim[0].args.image, "ghcr.io/trycua/linux:24.04-slim");
+        assert_eq!(offers[0].args.image, "ghcr.io/trycua/linux:24.04-slim");
         let o = &offers[1];
         assert_eq!(o.image, "ghcr.io/trycua/omarchy:edge");
         assert_eq!(o.os, SpaceOs::Linux);

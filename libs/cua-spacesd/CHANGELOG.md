@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.15.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.0...cua-spacesd-v0.15.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** retry input.type once when nothing reached the entry ([#7290](https://github.com/trycua/cua/issues/7290)) ([6e7a5a4](https://github.com/trycua/cua/commit/6e7a5a4e0c3717eb2d12e2e81ae4dde9c6ba3126))
+
+
+### Performance Improvements
+
+* **cua-ci:** build cua-ci beside cua-sdk, not after it (CUA-3971) ([#7240](https://github.com/trycua/cua/issues/7240)) ([1d23545](https://github.com/trycua/cua/commit/1d23545a03689800046f5fd7ecf78c3d128dec61))
+
+## [0.15.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.14.0...cua-spacesd-v0.15.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** show a child Space's window in the parent's Stream section and stream it directly from the child ([#6819](https://github.com/trycua/cua/issues/6819)) ([5f09d89](https://github.com/trycua/cua/commit/5f09d890ad10a68c02de0cfd4e3fe24096537059))
+
+
+### Bug Fixes
+
+* **cua-spacesd:** remove the agent sandbox even when its setup fails ([#7232](https://github.com/trycua/cua/issues/7232)) ([7b8de09](https://github.com/trycua/cua/commit/7b8de092587a04926919b52e2dcb472a4e9e947a))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.13.0...cua-spacesd-v0.14.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+
 ## [0.13.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.8...cua-spacesd-v0.13.0) (2026-11-09)
 
 

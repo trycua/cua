@@ -44,9 +44,9 @@ async function openAgents() {
 
 describe.skipIf(!wasmBuilt)("the prompt box", () => {
   it("starts with the first connected app and its account (Codex, then Hermes, Claude Code, OpenCode) and only the agent and a repo to pick", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("OpenAI Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("GPT-5.5Medium"));
     expect(q('[data-picker="repo"]')!.textContent).toContain("Add a repo");
     // No model chip and no separate coding app picker.
     expect(q('[data-picker="model"]')).toBeNull();
@@ -54,9 +54,9 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
   });
 
   it("groups by coding app: the top four first, their accounts as rows, Sign in where there is none", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await openAgents();
     const groups = [...document.querySelectorAll<HTMLElement>("[data-agent-group]")].map((g) => g.dataset.agentGroup);
     expect(groups).toEqual(["codex", "hermes", "claude-code", "opencode"]);
@@ -80,15 +80,15 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
       ...ACCOUNTS,
       intercept: (op: string, args: unknown) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
     };
-    await mountApp("/home", host);
+    await mountApp("/home/ask", host);
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await openAgents();
     await act(async () => {
       fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
     });
     // The chip is the app alone; the account is the ticked row inside the menu.
-    expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code");
+    expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High");
     await openAgents();
     expect(q('[data-agent-group="claude-code"] [aria-selected="true"]')!.textContent).toBe("work Max");
     await act(async () => {
@@ -102,17 +102,17 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     );
     cleanup();
     // A new launch: the choice is still there (the app and model here, the account from the host's store).
-    await mountApp("/home", host);
+    await mountApp("/home/ask", host);
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Claude Code"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sonnet 5.5High"));
     await openAgents();
     expect(q('[data-agent-group="claude-code"] [aria-selected="true"]')!.textContent).toBe("work Max");
   });
 
   it("says in one line what signing in is for, and leaves managing sign-ins to Settings", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await openAgents();
     expect(q("[data-agent-menu-why]")!.textContent).toBe("Pick the agent for this job. Sign in once, and it runs on any of your computers.");
     // No sign-in management in the job box: no chevrons, no rename or remove.
@@ -162,9 +162,9 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
   });
 
   it("the model is a secondary line: it lists the account's models and keeps the pick", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await openAgents();
     await act(async () => {
       fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
@@ -186,14 +186,14 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
 
   it("Enter sends the job with the picked app, account and model; Shift+Enter is a new line", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    await mountApp("/home", {
+    await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       ...ACCOUNTS,
       intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
     });
     const box = (await screen.findByLabelText("What should it do?")) as HTMLTextAreaElement;
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("GPT-5.5"));
     await openAgents();
     await act(async () => {
       fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
@@ -212,7 +212,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
   });
 
   it("with nothing signed in the chip says to sign in, every app has a Sign in row and Start waits", async () => {
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent"));
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
@@ -222,7 +222,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
 
   it("adds a repo from a link, refuses what is not one, keeps it on the task, and removes it with the x", async () => {
     const calls: { op: string; args: Record<string, unknown> }[] = [];
-    const { router } = await mountApp("/home", {
+    const { router } = await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       ...ACCOUNTS,
@@ -266,7 +266,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
       { timeout: 15000 },
     );
     // It stays for the next job until removed (back on Home, the job's Space is open now).
-    await act(async () => void router.navigate({ to: "/home" }));
+    await act(async () => void router.navigate({ to: "/home/ask" }));
     await act(async () => {
       fireEvent.click(
         await waitFor(() => {

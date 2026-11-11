@@ -29,10 +29,19 @@ export const LOCAL_NETWORK_PANE = "x-apple.systempreferences:com.apple.preferenc
 export function demoHostStatusFor(state: DemoHostSetupState, args?: { localNetwork?: boolean }): HostStatus {
   const h = { ...state.host };
   if (!args?.localNetwork || !h.configured || !h.provideSpaces) return h;
-  return { ...h, permissions: [...h.permissions, { id: "local-network", label: "Local Network", settingsUrl: LOCAL_NETWORK_PANE, granted: state.localNetworkGranted }] };
+  return {
+    ...h,
+    permissions: [...h.permissions, { id: "local-network", label: "Local Network", settingsUrl: LOCAL_NETWORK_PANE, granted: state.localNetworkGranted }],
+  };
 }
 
-export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.limits" | "host.openSettings"> {
+export function demoHostSetupHandlers({
+  state,
+  now,
+  wait,
+  emit,
+  stepMs,
+}: DemoContext): DemoHandlers<"host.setUp" | "host.joinWithCode" | "host.action" | "host.limits" | "host.openSettings"> {
   const set = (host: HostStatus) => {
     state.host = host;
     emit({ type: "machines.changed" });
@@ -61,7 +70,8 @@ export function demoHostSetupHandlers({ state, now, wait, emit, stepMs }: DemoCo
     },
     // The demo has no relay: any well-formed code joins, a bad one fails as the CLI does.
     "host.joinWithCode": async ({ code }) => {
-      if (!normalizePairingCode(code)) throw new HostError(`${code.trim() || "That"} is not a pairing code (12 letters and digits, like K7QM-4XPB-2RHD)`, "bad_args");
+      if (!normalizePairingCode(code))
+        throw new HostError(`${code.trim() || "That"} is not a pairing code (12 letters and digits, like K7QM-4XPB-2RHD)`, "bad_args");
       await wait(stepMs * 2);
       return set({ ...demoHostStatus(now()), name: "This Mac", permissions: state.host.permissions, clients: [], recentAccess: [] });
     },

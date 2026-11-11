@@ -39,10 +39,10 @@ mod ci_app;
 mod ci_cmd;
 mod ci_hosted;
 mod ci_overview;
+mod ci_sdk;
 mod ci_signin;
 mod ci_targets;
 mod cloud_cmd;
-mod compat_cmd;
 mod computer;
 mod config_cmd;
 mod connections_cmd;
@@ -296,7 +296,7 @@ enum Command {
     /// Run another provider's SDK unchanged on Cua Spaces: a local gateway
     /// that speaks its wire protocol (`cua compat serve --provider e2b`).
     #[command(subcommand)]
-    Compat(compat_cmd::CompatCmd),
+    Compat(cua_compat_cmd::CompatCmd),
     /// Disk used by images, sandboxes, builds and logs, and its cleanup.
     #[command(subcommand)]
     Cache(cache::CacheCmd),
@@ -1708,7 +1708,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Bench(cmd) => return bench_cmd::run(cmd.clone(), json, out),
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
         Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
-        Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
+        Command::Compat(cmd) => return extension::compat(cmd.clone(), json, out).await,
         Command::Cache(cmd) => {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
@@ -2598,7 +2598,7 @@ async fn daemon_start(
     if foreground {
         // Job members that ask for `compat:e2b` / `compat:daytona` reach a
         // cua-compat gateway this daemon runs (shared, started on first use).
-        compat_cmd::register_job_services();
+        extension::register_compat_job_services();
     }
     if !foreground {
         if let Some(d) = cua_daemon::Discovery::read(&discovery)
@@ -2872,7 +2872,13 @@ async fn daemon_start(
     if !h.wait_bounded(cua_daemon::server::SHUTDOWN_GRACE).await {
         eprintln!("cua daemon: shutdown took too long; exiting");
     }
-    Ok(0)
+    tracing::info!("the daemon's wind-down is done; the process exits");
+    // Everything the daemon owned is stopped and its socket and discovery file are gone: the process ends now, without
+    // waiting on destructors (a runtime or engine handle can block in its `Drop`; on Linux CI that held a stopped daemon
+    // up for minutes after it had finished).
+    let _ = std::io::stdout().flush();
+    cua_telemetry::global().shutdown(EXIT_TELEMETRY_BUDGET);
+    std::process::exit(0);
 }
 
 /// Accepts the `CUA_SPACESD_*` spelling of every `CUA_ENV_*` variable (for
@@ -2958,30 +2964,7 @@ fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
     use cua_vmm::experiments::Gate;
     match cmd {
         Command::Ci(_) => Some(Gate::CiRunners),
-        Command::Spaces(host::SpacesCmd::Create {
-            parent,
-            widen,
-            children,
-            ..
-        }) => {
-            if parent.is_some() || *widen || *children {
-                Some(Gate::ChildSpaces)
-            } else {
-                None
-            }
-        }
         Command::Share(args) if args.uses_tcp_shares() => Some(Gate::TcpShares),
-        Command::Spaces(
-            host::SpacesCmd::Ls { tree: true, .. }
-            | host::SpacesCmd::Delete {
-                keep_children: true,
-                ..
-            }
-            | host::SpacesCmd::Children { .. }
-            | host::SpacesCmd::Budget { .. }
-            | host::SpacesCmd::Orphans
-            | host::SpacesCmd::Service(host::ServiceCmd::Add { .. }),
-        ) => Some(Gate::ChildSpaces),
         _ => None,
     }
 }
@@ -3013,21 +2996,6 @@ fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool)
                 .mut_subcommand("approve", |c| c.hide(true))
                 .mut_subcommand("deny", |c| c.hide(true))
                 .mut_subcommand("settings", |c| c.hide(true))
-        });
-    }
-    if !on(Gate::ChildSpaces) {
-        cmd = cmd.mut_subcommand("spaces", |s| {
-            s.mut_subcommand("create", |c| {
-                c.mut_arg("parent", |a| a.hide(true))
-                    .mut_arg("widen", |a| a.hide(true))
-                    .mut_arg("children", |a| a.hide(true))
-            })
-            .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
-            .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
-            .mut_subcommand("children", |c| c.hide(true))
-            .mut_subcommand("budget", |c| c.hide(true))
-            .mut_subcommand("orphans", |c| c.hide(true))
-            .mut_subcommand("service", |c| c.hide(true))
         });
     }
     cmd
@@ -3728,9 +3696,29 @@ mod tests {
             .find(|c| c.get_name() == "set")
             .expect("spaces set");
         assert!(!set.is_hide_set(), "spaces set is hidden");
+        // Child Spaces and Warm start graduated too: `spaces children`, `budget`, `orphans`, `ls --tree`
+        // and `create --parent` are listed and need no experiment.
+        for name in ["children", "budget", "orphans", "service"] {
+            let c = spaces
+                .get_subcommands()
+                .find(|c| c.get_name() == name)
+                .unwrap_or_else(|| panic!("spaces {name}"));
+            assert!(!c.is_hide_set(), "spaces {name} is hidden");
+        }
+        let create = spaces.find_subcommand("create").expect("spaces create");
+        for arg in ["parent", "widen", "children"] {
+            let a = create
+                .get_arguments()
+                .find(|a| a.get_id() == arg)
+                .unwrap_or_else(|| panic!("--{arg}"));
+            assert!(!a.is_hide_set(), "--{arg} is hidden");
+        }
         for args in [
             ["cua", "connections", "github"].as_slice(),
             &["cua", "network", "show", "x"],
+            &["cua", "spaces", "children", "x", "on"],
+            &["cua", "spaces", "ls", "--tree"],
+            &["cua", "spaces", "orphans"],
         ] {
             if let Ok(cli) = Cli::try_parse_from(args) {
                 assert_eq!(uses_experiment(&cli.command), None, "{args:?}");
@@ -3739,6 +3727,8 @@ mod tests {
         // And the switch is gone for them.
         assert!(cua_vmm::experiments::Gate::parse("ask-first").is_none());
         assert!(cua_vmm::experiments::Gate::parse("secure-spaces").is_none());
+        assert!(cua_vmm::experiments::Gate::parse("child-spaces").is_none());
+        assert!(cua_vmm::experiments::Gate::parse("warm-pools").is_none());
     }
 
     /// `cua ci` belongs to the ci-runners experiment: left out of help and

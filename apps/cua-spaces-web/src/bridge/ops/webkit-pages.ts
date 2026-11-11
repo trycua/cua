@@ -99,6 +99,7 @@ export const WEBKIT_PAGE_OPS = [
   "notifications.markRead",
   "telemetry.track",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
@@ -301,6 +302,7 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
       return null;
     },
     "spaces.usage": call("spaces.usage"),
+    "spaces.reach": call("spaces.reach"),
     "spaces.windows": call("spaces.windows"),
     "stream.pip": list("stream.pip"),
     "spaces.thumbnail": call("spaces.thumbnail"),

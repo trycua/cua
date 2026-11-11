@@ -83,6 +83,9 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     runtimes: model.runtimesInput(),
     // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
     showTips: !model.settings.tips.off,
+    // The close-window rows are the Mac app's (its background service): none here.
+    closeWindowKeepsRunning: undefined,
+    closeNotice: true,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
@@ -92,29 +95,12 @@ export function experimentsPage(model: AppModel) {
   return model.native.appExperimentsPage(model.settings.experiments);
 }
 
-/** The experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+/** The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
 export function refreshDaemonExperiments(model: AppModel): void {
   const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
   const now = model.settings.experiments;
-  if (
-    kept.childSpaces === now.childSpaces &&
-    kept.ciRunners === now.ciRunners &&
-    kept.tcpShares === now.tcpShares &&
-    kept.mobile === now.mobile &&
-    kept.warmPools === now.warmPools
-  )
-    return;
-  model.settings = {
-    ...model.settings,
-    experiments: {
-      ...now,
-      childSpaces: kept.childSpaces,
-      ciRunners: kept.ciRunners,
-      tcpShares: kept.tcpShares,
-      mobile: kept.mobile,
-      warmPools: kept.warmPools,
-    },
-  };
+  if (kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
+  model.settings = { ...model.settings, experiments: { ...now, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:

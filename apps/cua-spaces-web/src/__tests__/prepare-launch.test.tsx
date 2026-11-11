@@ -1,22 +1,23 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// No hidden Space. The app never makes a Space the person did not choose: not after the first run, not when it
-// opens again or updates (an old saved "preparing" record included), and not when a home was removed. A Linux Space
-// is made only when the person targets "New computer" for a job.
+// The only Space the app makes by itself. After the first run (Warm start) it warms one hidden home, the Space Home's
+// prompt box writes into; it makes it once, finds it again when the app opens, and rebuilds it when it was removed. It
+// never makes a second one, and every other Space is made only when the person chooses it ("New computer" for a job).
 
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeFirstRun } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { resetAskTasks } from "@/lib/ask-first";
-import { getDriver, resetPrepare } from "@/lib/prepare/store";
-import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
+import { getDriver, holdWarmStart, resetPrepare } from "@/lib/prepare/store";
+import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
+  holdWarmStart(false);
   localStorage.clear();
   // Set up with this app's first run: the home warms only after one.
   writeFirstRun({ newRun: { screen: "next" } });
@@ -38,23 +39,23 @@ const settle = () =>
   });
 const creates = (calls: Call[]) => calls.filter((c) => c.op === "spaces.create");
 
-describe.skipIf(!wasmBuilt)("no Space is made unless the person chooses one", () => {
-  it("makes nothing after the first run, on Spaces or on Home", { timeout: 40_000 }, async () => {
+const HOME_NAME = "home-claude-code";
+const homeCreates = (calls: Call[]) => creates(calls).filter((c) => JSON.stringify(c.args).includes(HOME_NAME));
+
+describe.skipIf(!wasmBuilt)("the app makes the warm home and no other Space on its own", () => {
+  it("makes exactly one Space after the first run: the hidden home", { timeout: 40_000 }, async () => {
     const calls: Call[] = [];
     await mountApp("/spaces", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
+    await waitFor(() => expect(creates(calls)).toHaveLength(1), { timeout: 20_000 });
     await settle();
-    expect(creates(calls)).toHaveLength(0);
-    expect(getDriver()?.state?.wanted ?? false).toBe(false);
-    cleanup();
-    resetPrepare();
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
-    await screen.findByLabelText("What should it do?");
-    await settle();
-    expect(creates(calls)).toHaveLength(0);
-    expect(calls.some((c) => c.op === "thread.agentAdd")).toBe(false);
+    expect(creates(calls)).toHaveLength(1);
+    expect(homeCreates(calls)).toHaveLength(1);
+    // Labelled hidden and off the relay: no list shows it and the phone does not list it.
+    expect(JSON.stringify(creates(calls)[0]!.args)).toContain("cua.hidden");
+    expect(getDriver()?.state?.wanted).toBe(true);
   });
 
-  it("makes nothing when the app opens with a record an older version saved, wanted or with its home gone", { timeout: 40_000 }, async () => {
+  it("rebuilds the home once when the app opens with a record whose home is gone", { timeout: 40_000 }, async () => {
     localStorage.setItem(
       "cua.prepare.v1",
       JSON.stringify({
@@ -69,24 +70,25 @@ describe.skipIf(!wasmBuilt)("no Space is made unless the person chooses one", ()
       }),
     );
     const calls: Call[] = [];
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
     await screen.findByLabelText("What should it do?");
+    await waitFor(() => expect(homeCreates(calls)).toHaveLength(1), { timeout: 20_000 });
     await settle();
-    expect(creates(calls)).toHaveLength(0);
-    expect(calls.some((c) => c.op === "thread.agentAdd")).toBe(false);
+    expect(homeCreates(calls)).toHaveLength(1);
   });
 
-  it("makes one Space when the person targets New computer and sends a job", { timeout: 60_000 }, async () => {
+  it("makes nothing before the first run is over", { timeout: 40_000 }, async () => {
+    localStorage.clear();
+    writeFirstRun(null);
     const calls: Call[] = [];
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
-    await screen.findByLabelText("What should it do?");
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true },
+      intercept: record(calls),
+    });
     await settle();
     expect(creates(calls)).toHaveLength(0);
-    await pickNewLinux();
-    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
-    fireEvent.click(screen.getByRole("button", { name: "Start" }));
-    await waitFor(() => expect(creates(calls)).toHaveLength(1), { timeout: 20_000 });
-    // It is the person's Space: it carries no hidden or off-the-relay label.
-    expect(JSON.stringify(creates(calls)[0]!.args)).not.toContain("cua.hidden");
+    expect(getDriver()?.state?.wanted ?? false).toBe(false);
   });
 });

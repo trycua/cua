@@ -172,6 +172,7 @@ export const WEBKIT_METHODS = [
   "telemetry.acknowledgeLinkNotice",
   "crashReporting.config",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
@@ -317,6 +318,8 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
+  /** The Space it is a child of (its id), from the daemon's tree. */
+  parent?: string | null;
   power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;

@@ -7,6 +7,7 @@
 // route with the wasm core.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
@@ -15,29 +16,42 @@ import { firstSpaceOffers } from "@/bridge/new-space";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import { readFirstRun, resetFirstRunCache, writeFirstRun as writeFirstRunForTest } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
-import { AgentScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WelcomeScreen } from "@/components/first-run-new/first-run-new";
+import {
+  AgentScreen,
+  COPY_RIGHT,
+  PermissionsScreen,
+  ReadyScreen,
+  SignInScreen,
+  StepDots,
+  useMoreBelow,
+  WelcomeScreen,
+} from "@/components/first-run-new/first-run-new";
 import { BringTheRestCard, CliPanel } from "@/components/ask-first/bring-the-rest";
-import { placeKeys } from "@/components/first-run-new/float-keys";
+import { KEY_GAP, placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import type { AppPermissions } from "@/bridge/app-permissions";
 import { permissionsStepView } from "@/lib/app-permissions";
 import {
   addingView,
-  afterSignIn,
   agentView,
   bringRestView,
   chosenAgents,
-  dotFor,
   dotStep,
   firstJobDone,
   installedWhere,
+  furthestStep,
   NEW_RUN_SCREENS,
-  reachedAfter,
+  nextStepScreen,
   readyComputers,
   readyView,
+  RUN_STEPS,
+  runSteps,
   signInView,
   stepDots,
+  stepOf,
   toggleAgentOff,
+  type NewRunScreen,
+  type RunFacts,
   welcomeUsage,
 } from "@/lib/first-run-new";
 import { addAskTask, resetAskTasks } from "@/lib/ask-first";
@@ -61,9 +75,9 @@ const text = () => document.body.textContent ?? "";
 describe("no step to pick where agents work (Francesco, 8 Nov 2026)", () => {
   it("is not among the setup's screens: welcome, sign-in, then the permissions on a Mac or the agents", () => {
     expect(NEW_RUN_SCREENS).toEqual(["welcome", "signin", "permissions", "agent", "ready"]);
-    expect(afterSignIn("macos")).toBe("permissions");
-    expect(afterSignIn("windows")).toBe("agent");
-    expect(afterSignIn("linux")).toBe("agent");
+    expect(nextStepScreen({ os: "macos", permissions: "ask" }, "signin")).toBe("permissions");
+    expect(nextStepScreen({ os: "windows", permissions: null }, "signin")).toBe("agent");
+    expect(nextStepScreen({ os: "linux", permissions: null }, "signin")).toBe("agent");
   });
 
   it("agents can use this computer and every ready computer in the account, never offline, not-sharing or device ones", () => {
@@ -361,17 +375,20 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
   });
   const draw = (d: AppPermissions, allow = vi.fn(async () => {}), onContinue = vi.fn()) => {
     const allGranted = d.permissions.every((p) => p.granted);
-    render(<PermissionsScreen view={permissionsStepView({ appName: d.appName, allGranted })} perms={{ data: d, allow }} onContinue={onContinue} />);
+    const off = d.permissions.filter((p) => !p.granted).map((p) => p.id);
+    render(<PermissionsScreen view={permissionsStepView({ appName: d.appName, allGranted, off })} perms={{ data: d, allow }} onContinue={onContinue} />);
     return { allow, onContinue };
   };
 
-  it("comes right after the sign-in, on a Mac only, under the first dot", () => {
-    expect(afterSignIn("macos")).toBe("permissions");
-    expect(afterSignIn("windows")).toBe("agent");
-    expect(dotFor("permissions")).toBe(dotFor("signin"));
+  it("comes right after the sign-in, on a Mac only, as its own step; left out when every permission is already on", () => {
+    expect(nextStepScreen({ os: "macos", permissions: "ask" }, "signin")).toBe("permissions");
+    expect(nextStepScreen({ os: "macos", permissions: null }, "signin")).toBe("permissions");
+    expect(nextStepScreen({ os: "macos", permissions: "skip" }, "signin")).toBe("agent");
+    expect(nextStepScreen({ os: "windows", permissions: "ask" }, "signin")).toBe("agent");
+    expect(stepOf("permissions")).toBe("permissions");
   });
 
-  it("asks for both for Cua Spaces itself, says Cua Driver uses the same ones, and offers Later", () => {
+  it("asks for both for Cua Spaces itself, says Cua Driver uses the same ones, and offers to go on without them", () => {
     const { allow, onContinue } = draw(data(false, false));
     expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces see and use apps");
     expect(text()).toContain("Agents can then use the apps on this Mac. Your own pointer never moves.");
@@ -384,8 +401,9 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
     expect(rows[1]!.textContent).toContain("Accessibility, given to Cua Spaces");
     fireEvent.click(rows[1]!.querySelector("button")!);
     expect(allow).toHaveBeenCalledWith("accessibility");
-    // Never blocks: Later goes on.
-    const later = screen.getByRole("button", { name: "Later" });
+    // Never blocks, and says what is still off: the button goes on without them.
+    expect(document.querySelector("[data-new-run-still-off]")!.textContent).toBe("Still off: See the screen and Use the mouse and keyboard");
+    const later = screen.getByRole("button", { name: "Continue without them" });
     fireEvent.click(later);
     expect(onContinue).toHaveBeenCalled();
   });
@@ -395,7 +413,8 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
     expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("On");
     expect(document.querySelector("[data-app-permission=screen] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("on");
     expect(document.querySelector("[data-app-permission=screen] button")).toBeNull();
-    expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue without it" })).toBeTruthy();
+    expect(document.querySelector("[data-new-run-still-off]")!.textContent).toBe("Still off: Use the mouse and keyboard");
     cleanup();
     draw(data(true, true));
     expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
@@ -562,42 +581,55 @@ describe("screen 1, usage data", () => {
 });
 
 describe("the step dots", () => {
-  const S1 = `Step 1 of 2: ${"Combine all your computers into one supercomputer."}`;
-  const S2 = "Step 2 of 2: Which agents do you use?";
+  const mac: RunFacts = { os: "macos", permissions: "ask" };
+  const S = [
+    "Step 1 of 4: Add this computer",
+    "Step 2 of 4: Let Cua Spaces use apps",
+    "Step 3 of 4: Which agents do you use?",
+    "Step 4 of 4: Try your first job",
+  ];
   it("name each step and go back to any earlier one, but forward only to a step already reached", () => {
-    const perms = stepDots("permissions", 0)!;
-    expect(perms.map((d) => d.label)).toEqual([S1, S2]);
-    expect(perms.map((d) => d.to)).toEqual(["welcome", null]);
-    expect(perms.map((d) => d.current)).toEqual([true, false]);
-    // Back on screen 1 after reaching the agents: the later step opens again.
-    expect(stepDots("welcome", 1)!.map((d) => d.to)).toEqual([null, "agent"]);
+    const perms = stepDots(mac, "permissions", "permissions")!;
+    expect(perms.map((d) => d.label)).toEqual(S);
+    expect(perms.map((d) => d.to)).toEqual(["welcome", null, null, null]);
+    expect(perms.map((d) => d.current)).toEqual([false, true, false, false]);
+    // Back on screen 1 after reaching the agents: the later steps open again, up to the agents.
+    expect(stepDots(mac, "welcome", "agents")!.map((d) => d.to)).toEqual([null, "permissions", "agent", null]);
     // On the sign-in, the first dot goes back to its start; nothing past it opens (a dot never skips the sign-in).
-    expect(stepDots("signin", 0)!.map((d) => d.to)).toEqual(["welcome", null]);
-    expect(stepDots("ready", 1)).toBeNull();
+    expect(stepDots(mac, "signin", "computer")!.map((d) => d.to)).toEqual(["welcome", null, null, null]);
+    // Ready is a step too: its dot is the last, and every earlier one opens from it.
+    expect(stepDots(mac, "ready", "ready")!.map((d) => [d.current, d.to])).toEqual([
+      [false, "welcome"],
+      [false, "permissions"],
+      [false, "agent"],
+      [true, null],
+    ]);
+    // The old last screen isn't a step: it finishes on Home.
+    expect(stepDots(mac, "next", "ready")).toBeNull();
   });
 
-  it("count Ready and Next steps as past the last dot, and never go back on how far a run got", () => {
-    expect(reachedAfter(0, "signin")).toBe(0);
-    expect(reachedAfter(0, "permissions")).toBe(0);
-    expect(reachedAfter(0, "agent")).toBe(1);
-    expect(reachedAfter(0, "ready")).toBe(1);
-    expect(reachedAfter(1, "welcome")).toBe(1);
+  it("count the furthest step reached and never go back on it", () => {
+    expect(furthestStep(undefined, "signin")).toBe("computer");
+    expect(furthestStep("computer", "permissions")).toBe("permissions");
+    expect(furthestStep("computer", "agent")).toBe("agents");
+    expect(furthestStep("agents", "ready")).toBe("ready");
+    expect(furthestStep("agents", "welcome")).toBe("agents");
     // A run saved on the removed step counts as the first.
-    expect(dotFor("where")).toBe(0);
+    expect(stepOf("where")).toBe("computer");
   });
 
   it("move with the arrow keys to the nearest step that opens", () => {
-    const dots = stepDots("agent", 1)!;
-    expect(dotStep(dots, 1, -1)).toBe(0);
-    expect(dotStep(dots, 1, 1)).toBeNull();
-    expect(dotStep(stepDots("welcome", 0)!, 0, 1)).toBeNull();
+    const dots = stepDots(mac, "agent", "agents")!;
+    expect(dotStep(dots, 2, -1)).toBe(1);
+    expect(dotStep(dots, 2, 1)).toBeNull();
+    expect(dotStep(stepDots(mac, "welcome", "computer")!, 0, 1)).toBeNull();
   });
 
   it("are buttons with their step's name: a click or an arrow key opens a step, a step not reached yet can't be pressed", () => {
     const onGo = vi.fn();
-    render(<StepDots dots={stepDots("signin", 0)!} onGo={onGo} />);
-    const first = screen.getByRole("button", { name: S1 });
-    const second = screen.getByRole("button", { name: S2 });
+    render(<StepDots dots={stepDots(mac, "signin", "computer")!} onGo={onGo} />);
+    const first = screen.getByRole("button", { name: S[0] });
+    const second = screen.getByRole("button", { name: S[1] });
     expect(first.getAttribute("aria-current")).toBe("step");
     expect(second.hasAttribute("disabled")).toBe(true);
     fireEvent.click(second);
@@ -606,12 +638,67 @@ describe("the step dots", () => {
     expect(onGo).toHaveBeenLastCalledWith(0, false);
     cleanup();
     onGo.mockClear();
-    render(<StepDots dots={stepDots("agent", 1)!} onGo={onGo} />);
-    fireEvent.keyDown(screen.getByRole("button", { name: S2 }), { key: "ArrowLeft" });
-    expect(onGo).toHaveBeenLastCalledWith(0, true);
+    render(<StepDots dots={stepDots(mac, "agent", "agents")!} onGo={onGo} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: S[2] }), { key: "ArrowLeft" });
+    expect(onGo).toHaveBeenLastCalledWith(1, true);
     onGo.mockClear();
-    fireEvent.keyDown(screen.getByRole("button", { name: S2 }), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByRole("button", { name: S[2] }), { key: "ArrowRight" });
     expect(onGo).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The step dots and the screens setup really shows can never disagree: every path is walked with the run's own moves
+ * (`nextStepScreen`, the same one the page uses), and on every screen the dots must count exactly the steps the walk
+ * goes through, with the one it is on lit. A screen added without a step, a step the moves skip but the dots still
+ * count, or the reverse, fails here.
+ */
+describe("the step dots match the steps setup really shows", () => {
+  /** Walks a run from the welcome screen: `signIn` presses Add this computer (the sign-in screen), else Skip for now. */
+  function walk(facts: RunFacts, signIn: boolean): NewRunScreen[] {
+    const screens: NewRunScreen[] = ["welcome"];
+    if (signIn) screens.push("signin");
+    for (let next = nextStepScreen(facts, screens.at(-1)!); next; next = nextStepScreen(facts, screens.at(-1)!)) screens.push(next);
+    return screens;
+  }
+  const paths: { name: string; facts: RunFacts; signIn: boolean; steps: string[] }[] = [
+    {
+      name: "fresh Mac, signed out, no permissions yet",
+      facts: { os: "macos", permissions: "ask" },
+      signIn: true,
+      steps: ["computer", "permissions", "agents", "ready"],
+    },
+    { name: "fresh Mac, Skip for now", facts: { os: "macos", permissions: "ask" }, signIn: false, steps: ["computer", "permissions", "agents", "ready"] },
+    { name: "Mac with every permission already on", facts: { os: "macos", permissions: "skip" }, signIn: true, steps: ["computer", "agents", "ready"] },
+    { name: "Mac, permissions not read yet", facts: { os: "macos", permissions: null }, signIn: true, steps: ["computer", "permissions", "agents", "ready"] },
+    { name: "an existing account on Windows", facts: { os: "windows", permissions: null }, signIn: true, steps: ["computer", "agents", "ready"] },
+    { name: "Linux", facts: { os: "linux", permissions: "ask" }, signIn: false, steps: ["computer", "agents", "ready"] },
+  ];
+
+  it.each(paths)("$name", ({ facts, signIn, steps }) => {
+    const screens = walk(facts, signIn);
+    expect(runSteps(facts).map((s) => s.id)).toEqual(steps);
+    const seen: string[] = [];
+    let reached: ReturnType<typeof furthestStep>;
+    for (const screen of screens) {
+      const step = stepOf(screen)!;
+      if (seen.at(-1) !== step) seen.push(step);
+      reached = furthestStep(reached, screen);
+      const dots = stepDots(facts, screen, reached)!;
+      // As many dots as the steps this run goes through, and the lit one is the step showing now.
+      expect(dots).toHaveLength(steps.length);
+      expect(dots.findIndex((d) => d.current)).toBe(seen.length - 1);
+      expect(dots.filter((d) => d.current)).toHaveLength(1);
+      expect(dots[seen.length - 1]!.label).toBe(`Step ${seen.length} of ${steps.length}: ${RUN_STEPS.find((s) => s.id === step)!.name}`);
+    }
+    // The walk went through every step its dots counted, in their order, and ended on the last dot.
+    expect(seen).toEqual(steps);
+  });
+
+  it("every screen setup can show belongs to exactly one step", () => {
+    for (const screen of NEW_RUN_SCREENS) expect(RUN_STEPS.filter((s) => s.screens.includes(screen))).toHaveLength(1);
+    // Each step's dot opens a screen setup shows.
+    for (const step of RUN_STEPS) expect(NEW_RUN_SCREENS).toContain(step.screens[0]);
   });
 });
 
@@ -625,6 +712,55 @@ describe("the keys", () => {
     ]);
     // Only the soft near key (bottom left, behind the dots) sits left of the copy's edge.
     expect(keys.filter((k) => !k.soft && k.left + k.width * 0.1 < 544).map((k) => k.src)).toEqual([]);
+  });
+
+  // Device test 10 Nov: a small key covered "Install later" at the end of the agent step's action row.
+  it.each([
+    [960, 500],
+    [1200, 780],
+    [1470, 956],
+    [1920, 1080],
+  ])("never put a key on the copy column, buttons and links included, at %ix%i", (w, h) => {
+    const keys = placeKeys(w, h, COPY_RIGHT);
+    expect(keys.filter((k) => !k.soft && k.left < COPY_RIGHT + KEY_GAP).map((k) => k.src)).toEqual([]);
+    // The product keys with the OS marks still show.
+    expect(keys.filter((k) => k.mark).length).toBe(3);
+  });
+});
+
+describe("More below", () => {
+  function Probe({ height }: { height: number }) {
+    const ref = useRef<HTMLElement>(null);
+    const more = useMoreBelow(ref, "permissions");
+    return (
+      <>
+        <main
+          ref={(el) => {
+            if (el) {
+              Object.defineProperty(el, "clientHeight", { configurable: true, value: 400 });
+              Object.defineProperty(el, "scrollHeight", { configurable: true, value: height });
+            }
+            ref.current = el;
+          }}
+        >
+          <div />
+        </main>
+        <span data-more={more ? "yes" : "no"} />
+      </>
+    );
+  }
+  const more = () => document.querySelector("[data-more]")!.getAttribute("data-more");
+
+  it("shows only while the content runs on below the window, and goes once scrolled to the end", () => {
+    render(<Probe height={400} />);
+    expect(more()).toBe("no");
+    cleanup();
+    render(<Probe height={700} />);
+    expect(more()).toBe("yes");
+    const main = document.querySelector("main")!;
+    main.scrollTop = 300;
+    fireEvent.scroll(main);
+    expect(more()).toBe("no");
   });
 });
 
@@ -661,11 +797,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(document.querySelector("[data-float-keys]")).not.toBeNull();
     // Skip for now goes straight on: there is no step to pick where agents work.
     click("[data-onboarding-later]");
-    // On a Mac, Cua Spaces' permissions next: both missing here, so Later goes on without them.
+    // On a Mac, Cua Spaces' permissions next: both missing here, so "Continue without them" goes on.
     await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
     await waitFor(() => expect(document.querySelectorAll("[data-app-permission]").length).toBe(2));
     expect(calls.some((c) => c.op === "driver.permissions")).toBe(true);
-    click("[data-new-run-permissions-next=Later]");
+    click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     expect(document.querySelector("[data-new-run-agent=codex] [data-new-run-agent-where]")!.textContent).toBe("On this Mac");
     click("[data-onboarding-primary]");
@@ -702,7 +838,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       intercept: (op, args) => (calls.push({ op, args }), undefined),
       answer: (op, out) => (op === "agents.setup" || op === "agents.configure" ? twoFound(out as AgentSetupRow[]) : out),
     });
-    writeFirstRunForTest({ newRun: { screen: "agent", reached: 1 } });
+    writeFirstRunForTest({ newRun: { screen: "agent", reachedStep: "agents" } });
     await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Claude Code and Codex can now use this Mac"), { timeout: 15_000 });
@@ -723,7 +859,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       demo: { signedIn: false, onboarded: false, noSpaces: true },
       intercept: (op, args) => (calls.push({ op, args }), undefined),
     });
-    writeFirstRunForTest({ newRun: { screen: "agent", reached: 1 } });
+    writeFirstRunForTest({ newRun: { screen: "agent", reachedStep: "agents" } });
     await waitFor(() => expect(document.querySelector("[data-new-run-agent-later]")).not.toBeNull(), { timeout: 15_000 });
     click("[data-new-run-agent-later]");
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"), { timeout: 15_000 });
@@ -732,7 +868,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
   });
 
   it("a run saved on the old last screen finishes on Home", { timeout: 60_000 }, async () => {
-    writeFirstRunForTest({ newRun: { screen: "next", reached: 3 } });
+    writeFirstRunForTest({ newRun: { screen: "next", reachedStep: "ready" } });
     const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"), { timeout: 15_000 });
     expect(readFirstRun().restOffer).toBe("waiting");
@@ -762,7 +898,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home asks for the rest only once the first job is done, and Not now puts it away for good", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
     await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     // The demo's agent runs all started before setup ended: no job yet.
@@ -779,7 +915,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home has no Terminal row when the command is already on this computer", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
     await waitFor(() => expect(document.querySelector("[data-bring-rest]")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(document.querySelector("[data-bring-rest-row=cli]")).toBeNull();
@@ -788,7 +924,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
   it("Home offers Use Cua from Terminal where the app carries the command, and Install installs it", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", {
+    await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       demo: { signedIn: true, onboarded: true, cli: "missing" },
@@ -835,7 +971,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     it(`Home shows the apps row at launch while a permission is missing, each switch live (offer ${offer ?? "none"})`, { timeout: 60_000 }, async () => {
       let on = false;
       writeFirstRunForTest({ restOffer: offer, restSinceMs: Date.now() });
-      await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
+      await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
       await waitFor(() => expect(document.querySelector("[data-home-apps]")).not.toBeNull(), { timeout: 15_000 });
       expect(document.querySelector("#home-apps-heading")!.textContent).toBe("Let agents use apps on this Mac");
       expect(document.querySelector("[data-home-apps]")!.textContent).toContain("One switch in System Settings is still off.");
@@ -852,7 +988,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("Home's apps row stays away while both permissions are on", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
     await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     expect(document.querySelector("[data-home-apps]")).toBeNull();
@@ -860,7 +996,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("with 'Now bring the rest in' showing, its apps row opens by itself while a permission is missing", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ restOffer: "shown" });
-    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
+    await mountApp("/home/ask", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
     await waitFor(() => expect(document.querySelector("[data-bring-rest-apps]")).not.toBeNull(), { timeout: 15_000 });
     expect(document.querySelector("[data-bring-rest-row=apps]")!.getAttribute("aria-expanded")).toBe("true");
     expect(
@@ -889,7 +1025,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       // No "Pick where your agents work": on a Mac, the permissions come next.
       await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
       expect(document.body.textContent).not.toContain("Pick where your agents work");
-      click("[data-new-run-permissions-next=Later]");
+      click("[data-onboarding-primary]");
       await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
       click("[data-onboarding-primary]");
       await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
@@ -919,7 +1055,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
   });
 
   it("an app restarted mid-sign-in starts the sign-in again and sets nothing up until it finishes", { timeout: 60_000 }, async () => {
-    writeFirstRunForTest({ newRun: { screen: "signin", reached: 0 } });
+    writeFirstRunForTest({ newRun: { screen: "signin", reachedStep: "computer" } });
     const calls: Calls = [];
     await mountApp("/onboarding", {
       failsCreates: false,
@@ -950,14 +1086,14 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
   });
 
   it("a run saved on the removed step goes on from the step after the sign-in", { timeout: 60_000 }, async () => {
-    writeFirstRunForTest({ newRun: { screen: "where", reached: 1 } });
+    writeFirstRunForTest({ newRun: { screen: "where" } });
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(document.querySelector("[data-new-run=permissions], [data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
     expect(readFirstRun().newRun?.screen).not.toBe("where");
   });
 
   it("Skip for now on the agents leaves setup for Home, as finishing does", { timeout: 60_000 }, async () => {
-    writeFirstRunForTest({ newRun: { screen: "agent", reached: 1 } });
+    writeFirstRunForTest({ newRun: { screen: "agent", reachedStep: "agents" } });
     const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(document.querySelector("[data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
     click("[data-onboarding-later]");
@@ -965,14 +1101,75 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(readFirstRun().finishedLater).toBe(true);
   });
 
+  /** The dots on the page now: how many, and which one is lit. */
+  const dotsNow = () => {
+    const dots = [...document.querySelectorAll<HTMLElement>("[data-step-dot]")];
+    return { count: dots.length, current: dots.findIndex((d) => d.getAttribute("aria-current") === "step") };
+  };
+  /** The step the page shows now, read from the screen it draws. */
+  const stepNow = () => stepOf(document.querySelector<HTMLElement>("[data-new-first-run]")!.dataset.step as NewRunScreen);
+
+  it("the page's dots count the steps it really shows, and light the one showing (a Mac that still needs permissions)", { timeout: 60_000 }, async () => {
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true },
+      answer: (op, out) => (op === "agents.setup" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
+    });
+    const seen: string[] = [];
+    const check = () => {
+      const step = stepNow()!;
+      if (seen.at(-1) !== step) seen.push(step);
+      expect(dotsNow()).toEqual({ count: 4, current: seen.length - 1 });
+    };
+    await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
+    await waitFor(check);
+    click("[data-onboarding-later]");
+    await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
+    check();
+    // The button names what is still off ("Continue without it", "Still off: ..."), so it is found by its mark.
+    click("[data-new-run-permissions-next]");
+    await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
+    check();
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
+    check();
+    // Every dot was a step the page showed.
+    expect(seen).toEqual(["computer", "permissions", "agents", "ready"]);
+  });
+
+  it("with every permission already on, the permissions step is left out of both the run and its dots", { timeout: 60_000 }, async () => {
+    const granted = (out: unknown) => {
+      const d = out as AppPermissions | null;
+      return d ? { ...d, permissions: d.permissions.map((p) => ({ ...p, granted: true })) } : d;
+    };
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true },
+      answer: (op, out) =>
+        op === "driver.permissions" ? granted(out) : op === "agents.setup" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out,
+    });
+    await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
+    // Once the permissions are read, three dots: this computer, the agents, Ready.
+    await waitFor(() => expect(dotsNow()).toEqual({ count: 3, current: 0 }), { timeout: 15_000 });
+    click("[data-onboarding-later]");
+    await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
+    expect(dotsNow()).toEqual({ count: 3, current: 1 });
+    expect(readFirstRun().newRun?.permissions).toBe("skip");
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
+    expect(dotsNow()).toEqual({ count: 3, current: 2 });
+  });
+
   it("the step dots go back to screen 1 and forward again to the agents, but never past the sign-in", { timeout: 60_000 }, async () => {
-    const S1 = "Step 1 of 2: Combine all your computers into one supercomputer.";
-    const S2 = "Step 2 of 2: Which agents do you use?";
+    const S1 = "Step 1 of 4: Add this computer";
+    const S2 = "Step 3 of 4: Which agents do you use?";
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
     // The agents aren't reached yet: their dot can't be pressed, so it can't skip the sign-in.
     expect(screen.getByRole("button", { name: S2 }).hasAttribute("disabled")).toBe(true);
-    writeFirstRunForTest({ newRun: { screen: "agent", reached: 1 } });
+    writeFirstRunForTest({ newRun: { screen: "agent", reachedStep: "agents" } });
     await waitFor(() => expect(document.querySelector("[data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
     fireEvent.click(screen.getByRole("button", { name: S1 }));
     await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));

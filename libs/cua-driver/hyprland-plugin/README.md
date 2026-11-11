@@ -35,12 +35,13 @@ testing, packaging, and release requirements.
 Bounded instrumented app proof and an uninstrumented smoke are retained from
 source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`, with an unchanged plugin
 tree and uninstrumented module hash at
-`1133a06e4f205cf80188a7ac9e41102f37611fea`. Raw background qualification is
-limited to native Calc from `libreoffice-fresh 26.2.5-3`, Inkscape `1.4.4-6`,
-the plain compiled `evdev`/`pc105`/`us` keymap, and the two seats `Cua-Agent`
-and `Cua-Agent-2`. The proof covers the recorded actions and observation
-intervals. Chromium, Electron, and XWayland raw background input remain
-unqualified; semantic AT-SPI actions are separate.
+`1133a06e4f205cf80188a7ac9e41102f37611fea`. The proof covers the recorded
+actions and observation intervals. Background input now admits any native
+Wayland window whose app bound the agent seats `Cua-Agent` and `Cua-Agent-2`
+(GTK 3 and 4 and Qt 6 do; Qt 6 keys refuse), with the plain compiled
+`evdev`/`pc105`/`us` keymap. Chromium and Electron bind only the user's seat and
+refuse with `client_not_bound`; XWayland refuses. Semantic AT-SPI actions are
+separate.
 
 The exact-target foreground route intentionally changes primary focus and,
 for pointer actions, cursor position, without restoration. The canonical native
@@ -123,12 +124,16 @@ changing Hyprland configuration.
 ### Requalification for each Hyprland build
 
 [`nightly-hyprland-plugin-requalify.yml`](../../../.github/workflows/nightly-hyprland-plugin-requalify.yml)
-runs daily and can also be dispatched by hand. It detects new Hyprland builds
+runs every four hours and can also be dispatched by hand or by a
+`hyprland-build-published` repository dispatch. It detects new Hyprland builds
 in Arch and in the Omarchy edge, rc and stable channels, keyed by package
 version and package hash. For each new build it rebuilds this plugin against
 the exact headers in an Arch container, runs CTest, records the header hashes,
-and loads the module into a headless Hyprland for a window-targeted input
-smoke. The results go to the `hyprland-plugin-compat` branch as
+and loads the module into a headless Hyprland (a virtual output on vkms) for a
+window-targeted input smoke. It then runs the latest released Cua Driver in that
+session: `list_windows` finds a fresh native window, `get_window_state` returns
+a screenshot of it, `click` moves the pointer to it and `type_text` reaches the
+application. The results go to the `hyprland-plugin-compat` branch as
 `compatibility.json`. See [`requalify/COMPAT-BRANCH.md`](requalify/COMPAT-BRANCH.md).
 This is CI evidence. It is not a kit or native certification.
 
@@ -175,6 +180,13 @@ loaded in the running compositor before it enables input:
 
 Neither field says that the current physical keymap qualifies for foreground
 typing; each foreground key is still checked when it is sent.
+
+Input builds also report `ime_popup_guard`. With the agent seats present, an
+input method such as fcitx5 registers once per seat; when it exits, Hyprland
+0.56 can keep an input-method popup mapped after its surface is gone and crash
+placing or drawing it. The guard hooks `CInputPopup::updateBox` and
+`CInputPopup::shouldBeRendered` so such a popup is neither placed nor drawn.
+`false` means the exact symbols were not found and the plugin runs without it.
 
 The local transport is also disabled by default. To exercise negotiation in a
 disposable session, set the following and reload the configuration after the
@@ -229,6 +241,16 @@ and operations outside its qualification scope.
   a refusal, never permission to try a weaker route.
 - The plugin never redirects a target-addressed request to the primary seat,
   focused window, pointer location, or another target.
+- Two client requests take the user's whole seat in Hyprland 0.56 and 0.57,
+  whatever seat and serial they name: a popup grab (a menu, a combo-box list)
+  moves the user's keyboard to the popup until it closes, and a drag start makes
+  the drag follow the user's pointer and drop on their next click. A background
+  app can make either request when an agent seat or an accessibility action
+  works in it. Input builds hook both (`src/user_seat_guard.cpp`) and grant them
+  only to the client that holds the user's keyboard or pointer focus, as every
+  popup and drag the user starts does. Other popups open without the grab;
+  other drags are cancelled. `cua:status` reports `user_seat_guard`,
+  `popup_grabs_withheld` and `drags_withheld`.
 - A transport acknowledgement proves only receipt and validation. Application
   behavior requires a separate typed result and independent state evidence.
 
@@ -306,5 +328,5 @@ remains discovery-only in its normal build. The separate physical run has explic
 activation observation, GTK3, GTK4, Qt6, LibreOffice, Chromium/Ozone, Electron,
 DPMS-off refusal, and one-shot and long-lived graphical-session client rows;
 see `tests/README.md` for the required evidence. Those broader application rows
-do not widen the raw-background qualification beyond the exact Calc/Inkscape
-packages, plain US keymap, and two seats documented in the input v3 contract.
+are separate from the per-target background admission, plain US keymap, and
+two seats documented in the input v3 contract.

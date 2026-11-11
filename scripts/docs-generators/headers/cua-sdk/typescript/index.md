@@ -1,4 +1,4 @@
-`npm install @trycua/cua` ({{version}}) installs the Node package; native code ships as per-platform optional packages (`@trycua/cua-darwin-arm64`, `@trycua/cua-linux-x64-gnu`, ...).
+`npm install @trycua/cua` installs the Node package; native code ships as per-platform optional packages (`@trycua/cua-darwin-arm64`, `@trycua/cua-linux-x64-gnu`, ...).
 
 | Entry point | Use it for |
 | --- | --- |

@@ -26,6 +26,7 @@ spec.loader.exec_module(inputs)
 
 ACTION = yaml.safe_load((ROOT / ".github/actions/spaces-rust-slice/action.yml").read_text())
 PRODUCER = yaml.safe_load((ROOT / ".github/workflows/ci-cua-spaces-rust-slice.yml").read_text())
+BUILD = yaml.safe_load((ROOT / ".github/workflows/cd-cua-spaces-build.yml").read_text())
 MACOS = yaml.safe_load((ROOT / ".github/workflows/ci-cua-spaces-macos.yml").read_text())
 
 needs_toml = pytest.mark.skipif(inputs._load_toml is None, reason="no TOML parser for the dependency closure")
@@ -198,7 +199,12 @@ def test_the_action_keys_the_cache_on_the_script():
 
 @needs_toml
 def test_the_producer_runs_on_main_when_any_input_changes(extra):
-    patterns = PRODUCER[True]["push"]["paths"]
+    # The producer is a stage of the one main pipeline (cd-cua-spaces-build.yml),
+    # which calls it; it has no push trigger of its own, so it never builds
+    # beside the pipeline (CUA-3562).
+    assert "push" not in PRODUCER[True] and "workflow_call" in PRODUCER[True]
+    assert PRODUCER["jobs"] and BUILD["jobs"]["slice"]["uses"] == "./.github/workflows/ci-cua-spaces-rust-slice.yml"
+    patterns = BUILD[True]["push"]["paths"]
     for entry in extra:
         for path in tracked(entry):
             assert any(glob_matches(p, path) for p in patterns), f"{path} does not trigger the producer"

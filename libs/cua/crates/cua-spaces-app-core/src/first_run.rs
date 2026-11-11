@@ -3,7 +3,7 @@
 
 //! The first run every app shows: a few short screens, agent first.
 //!
-//! 1. **Welcome.** "Your computers, shared by your team and its agents." One button.
+//! 1. **Welcome.** "Combine all your computers into one supercomputer." One button.
 //! 2. **Pick your agent.** The agents found on this computer, in the order
 //!    [`PREFERENCE`] gives (Hermes, Claude Code, Codex, Cursor, then the
 //!    rest), one Connect each. Nothing is connected until its button is
@@ -273,7 +273,7 @@ pub struct FirstRunPlan {
     pub metered: bool,
     /// `free`, `pro`, `team`.
     pub plan: String,
-    /// Free's connections at once (default 2).
+    /// Free's computers in use at once (default 2).
     pub sessions_limit: Option<u32>,
     /// Free's remote hours a month (default 20).
     pub hours_limit: Option<u32>,
@@ -398,7 +398,7 @@ fn button(id: &str, label: &str) -> FirstRunButton {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WelcomeView {
-    /// "Your computers, shared by your team and its agents."
+    /// "Combine all your computers into one supercomputer."
     pub title: String,
     pub lede: String,
     /// "Get started" (`start`).
@@ -1086,11 +1086,11 @@ fn default_or(name: &str, id: &str) -> String {
     }
 }
 
-fn welcome_view(input: &FirstRunInput) -> WelcomeView {
-    let place = this_computer(&input.host_os);
+fn welcome_view(_input: &FirstRunInput) -> WelcomeView {
     WelcomeView {
-        title: "Your computers, shared by your team and its agents.".into(),
-        lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
+        title: "Combine all your computers into one supercomputer.".into(),
+        // The shipped welcome (first-run-new) carries the product line; this one says nothing twice.
+        lede: String::new(),
         primary: button("start", "Get started"),
     }
 }
@@ -1689,7 +1689,7 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
     let Some(lead) = lead_of(input) else {
         return SetupView {
             title: "Try a first Space.".into(),
-            lede: format!("Spaces run on {place}, away from your files and your mouse."),
+            lede: format!("Spaces run on {place}."),
             prompt: None,
             status: None,
             extra: Some(extra_view(input)),
@@ -1765,7 +1765,7 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
     if plan.teammates && kind != "teams" {
         return Some(UpsellCard {
             plan: "teams".into(),
-            title: "Working with others?".into(),
+            title: "Teams".into(),
             lines: vec![
                 "Teams gives your team computers you share, with roles and device approval.".into(),
             ],
@@ -1784,8 +1784,10 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
         plan: "pro".into(),
         title: "More remote hours with Pro".into(),
         lines: vec![
-            format!("Free: {hours} remote hours a month · {sessions} connections at once"),
-            format!("Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} connections at once"),
+            format!("Free: {hours} remote hours a month · {sessions} computers in use at once"),
+            format!(
+                "Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} computers in use at once"
+            ),
         ],
         price: "$18 a month".into(),
         cta: button("upsell", "Try Pro"),
@@ -1990,7 +1992,7 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     items.push(FirstRunTodo {
         id: "extra".into(),
         title: "Make a first Space (optional)".into(),
-        note: format!("A separate computer on {place}, away from your files and your mouse."),
+        note: format!("A separate computer on {place}."),
         done: extra_done,
         optional: true,
         action: (!extra_done).then(|| button("add", "Add a Space")),
@@ -2292,7 +2294,7 @@ mod tests {
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
         assert_eq!(
             w.title,
-            "Your computers, shared by your team and its agents."
+            "Combine all your computers into one supercomputer."
         );
         assert_eq!(w.primary.id, "start");
     }

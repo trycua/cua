@@ -5,6 +5,7 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { useRef, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export const AlertDialog = AlertDialogPrimitive.Root;
@@ -12,7 +13,11 @@ export const AlertDialog = AlertDialogPrimitive.Root;
 export function AlertDialogPopup({ className, children, onBackdropClick, ...props }: AlertDialogPrimitive.Popup.Props & { onBackdropClick?: () => void }) {
   return (
     <AlertDialogPrimitive.Portal>
-      <AlertDialogPrimitive.Backdrop data-window-dim="" onClick={onBackdropClick} className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 dark:bg-black/40" />
+      <AlertDialogPrimitive.Backdrop
+        data-window-dim=""
+        onClick={onBackdropClick}
+        className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 dark:bg-black/40"
+      />
       <AlertDialogPrimitive.Popup
         className={cn(
           "glass fixed top-[22vh] left-1/2 z-50 w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-lg border text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-150 ease-out-soft data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
@@ -46,7 +51,20 @@ interface ConfirmDialogProps {
 }
 
 /** A yes-or-no question before an action that is hard to undo. */
-export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, destructive, cancelLabel = "Cancel", disabledReason, onConfirm, alternative, cancelFirst }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  destructive,
+  cancelLabel,
+  disabledReason,
+  onConfirm,
+  alternative,
+  cancelFirst,
+}: ConfirmDialogProps) {
+  const t = useT();
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -57,7 +75,9 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
           {disabledReason ? <p className="mt-2 text-xs text-muted-foreground">{disabledReason}</p> : null}
         </div>
         <div className="flex justify-end gap-2 border-t bg-muted/60 px-5 py-3">
-          <AlertDialogPrimitive.Close render={<Button variant="outline" ref={cancelRef} />}>{cancelLabel}</AlertDialogPrimitive.Close>
+          <AlertDialogPrimitive.Close render={<Button variant="outline" ref={cancelRef} />}>
+            {cancelLabel ?? t("shell.dialog.cancel")}
+          </AlertDialogPrimitive.Close>
           {alternative ? (
             <Button
               variant="outline"

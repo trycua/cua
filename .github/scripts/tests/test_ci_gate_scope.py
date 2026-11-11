@@ -263,7 +263,10 @@ def test_urgent_label_with_reference_uses_the_same_path_scope(tmp_path):
 def test_gate_runs_the_scope_step_first_and_passes_its_output_to_the_wait_step():
     gate = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())
     steps = gate['jobs']['ci-gate']['steps']
-    assert steps[2]['id'] == 'scope'
+    # The scope step runs right after the two selector checkouts; the hold-label step may sit before them.
+    names = [st.get('name') for st in steps]
+    assert names.index('Scope the gate to the changed areas') == names.index("Check out the pull request's manifests") + 1
+    assert next(st for st in steps if st.get('name') == 'Scope the gate to the changed areas')['id'] == 'scope'
     wait = next(st for st in steps if st.get('name', '').startswith('Wait for every other'))
     assert wait['env']['IGNORE_RE'] == '${{ steps.scope.outputs.ignore_re }}'
     assert 'labeled' in gate[True]['pull_request']['types']
@@ -272,7 +275,8 @@ def test_gate_runs_the_scope_step_first_and_passes_its_output_to_the_wait_step()
 
 
 def test_gate_run_filter_drops_only_ignored_workflows():
-    script = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps'][4]['run']
+    script = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps']
+    script = next(st for st in script if st.get('name', '').startswith('Wait for every other'))['run']
     jq_filter = next(line.split("='", 1)[1].rsplit("'", 1)[0]
                      for line in script.splitlines() if line.strip().startswith('scope_jq='))
     runs = [{'path': '.github/workflows/cd-image-linux.yml@refs/pull/1/merge'},
@@ -289,7 +293,11 @@ def test_gate_run_filter_drops_only_ignored_workflows():
 def test_gate_runs_the_selector_from_the_base_commit_not_the_pull_request():
     """A PR that edits the map, the scripts or its manifests cannot narrow its own gate."""
     steps = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps']
-    base, head, run = steps[0]['with'], steps[1]['with'], steps[2]['run']
+    by_name = {st.get('name'): st for st in steps}
+    scope_step = by_name['Scope the gate to the changed areas']
+    base = by_name['Check out the selector from the base commit']['with']
+    head = by_name["Check out the pull request's manifests"]['with']
+    run = scope_step['run']
     assert base['ref'] == '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}'
     assert base['path'] == 'base'
     for f in ('/.github/ci-areas.json', '/.github/scripts/ci_gate_scope.py', '/.github/scripts/ci_graph.py'):
@@ -297,4 +305,74 @@ def test_gate_runs_the_selector_from_the_base_commit_not_the_pull_request():
         assert f not in head['sparse-checkout'].split()
     assert 'ref' not in head and head['path'] == 'head'
     assert 'python3 base/.github/scripts/ci_gate_scope.py' in run
-    assert steps[2]['env']['CI_GATE_HEAD_ROOT'].endswith('/head')
+    assert scope_step['env']['CI_GATE_HEAD_ROOT'].endswith('/head')
+
+
+# --- narrowing and the execution scope (CUA-3856) ----------------------------------------------------
+
+def test_every_narrowed_workflow_exists_and_names_real_packages():
+    names = {w.name for w in WORKFLOWS}
+    for workflow, rule in CFG['narrow'].items():
+        assert workflow in names, workflow
+        assert rule.get('packages') or rule.get('paths'), workflow
+        for pkg in rule.get('packages', []):
+            assert pkg in GRAPH.packages, f'{workflow}: {pkg} is not a package directory'
+
+
+# A spaces app-core change (the Rust half of #6992, an 8 Nov copy pass): the Rust, web and app lanes
+# that build the crate or its dependents run; the Python, Tauri-example and samples suites do not.
+SPACES_CORE = ['libs/cua/crates/cua-spaces-app-core/src/first_run.rs']
+
+
+@pytest.mark.parametrize('workflow', [
+    'ci-test-python.yml', 'ci-openkoalabot-example-tauri.yml', 'ci-openkoalabot-example-samples.yml'])
+def test_a_spaces_core_change_skips_suites_that_do_not_build_it(workflow):
+    assert workflow in ignored(*SPACES_CORE)
+
+
+@pytest.mark.parametrize('workflow', ['ci-cua-sdk.yml', 'ci-cua-spaces.yml', 'ci-cua-spaces-web.yml'])
+def test_a_spaces_core_change_still_runs_the_rust_lanes_that_build_it(workflow):
+    assert workflow not in ignored(*SPACES_CORE)
+
+
+@pytest.mark.parametrize(('path', 'workflow'), [
+    ('libs/cua/crates/cua-sdk/src/lib.rs', 'ci-test-python.yml'),
+    ('libs/cua/crates/cua-proto/src/lib.rs', 'ci-test-python.yml'),  # in cua-sdk's closure
+    ('libs/cua/proto/cua/v1/spaces.proto', 'ci-test-python.yml'),     # an input of cua-proto
+    ('libs/cua/Cargo.lock', 'ci-test-python.yml'),                     # the workspace
+    ('libs/python/core/core/x.py', 'ci-test-python.yml'),
+    ('libs/cua/crates/cua-spacesd-client/src/lib.rs', 'ci-openkoalabot-example-tauri.yml'),
+    ('examples/openkoalabot-example-tauri/src/App.tsx', 'ci-openkoalabot-example-tauri.yml'),
+    ('libs/cua/typescript/src/index.ts', 'ci-openkoalabot-example-samples.yml'),
+    ('libs/cua/swift/Sources/CuaSDK/CuaSDK.swift', 'ci-openkoalabot-example-samples.yml'),
+    ('.github/workflows/ci-test-python.yml', 'ci-test-python.yml'),
+])
+def test_a_narrowed_workflow_still_runs_when_what_it_builds_changes(path, workflow):
+    assert workflow not in ignored(path)
+
+
+def test_a_web_only_change_runs_only_the_web_lane():
+    web = ['apps/cua-spaces-web/src/components/shell/sidebar.tsx',
+           'apps/cua-spaces-web/src/__tests__/tips.test.tsx']
+    assert areas_of(*web) == ['spaces-web']
+    skipped = ignored(*web)
+    assert 'ci-cua-spaces-web.yml' not in skipped
+    for heavy in ('ci-cua-sdk.yml', 'ci-rust-linux.yml', 'ci-swift-lume.yml', 'ci-test-python.yml',
+                  'ci-openkoalabot-example-samples.yml', 'e2e-cua-sdk.yml'):
+        assert heavy in skipped, heavy
+
+
+def test_workflow_mode_writes_the_skip_output(tmp_path):
+    out = tmp_path / 'out'
+    def decide(workflow, files):
+        out.write_text('')
+        subprocess.run([sys.executable, str(scope.ROOT / '.github/scripts/ci_gate_scope.py'), '--workflow', workflow],
+                       input='\n'.join(files), text=True, check=True, capture_output=True,
+                       env={**os.environ, 'GITHUB_OUTPUT': str(out)})
+        return dict(line.split('=', 1) for line in out.read_text().splitlines())['skip']
+    assert decide('ci-test-python.yml', SPACES_CORE) == 'true'
+    assert decide('ci-cua-sdk.yml', SPACES_CORE) == 'false'
+    # A workflow the map does not know (CI: Quick itself, a new workflow) always runs.
+    assert decide('ci-quick.yml', SPACES_CORE) == 'false'
+    # No file list (a failed diff would be an error, never this) runs everything.
+    assert decide('ci-test-python.yml', []) == 'false'

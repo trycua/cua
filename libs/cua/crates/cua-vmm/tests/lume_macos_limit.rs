@@ -79,3 +79,48 @@ async fn linux_vms_and_stopped_macos_vms_do_not_count() {
     }
     assert_eq!(runs(&state.lock().unwrap()), 1);
 }
+
+/// Apple's limit can be held by VMs this Lume does not list (another Cua
+/// Spaces, another Lume): the boot then stops with nothing to name them, and
+/// the refusal is only in `lume serve`'s own log, written a moment after the
+/// stop. The error still says the limit, in plain words.
+#[tokio::test]
+async fn a_boot_refused_for_the_limit_by_vms_lume_does_not_list_says_so() {
+    let mut st = FakeLume {
+        boot_fails: true,
+        ..Default::default()
+    };
+    st.vms
+        .insert("target".into(), vm("target", "macOS", "stopped"));
+    let state = Arc::new(Mutex::new(st));
+    let url = serve(state.clone()).await;
+    let rt = fake_lume::runtime(url);
+    let root = fake_lume::temp_home().join("lume-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let _ = std::fs::remove_file(root.join("serve.log"));
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::fs::write(
+            root.join("serve.log"),
+            format!(
+                "[{}] ERROR: Failed in VM.run error=The number of virtual machines exceeds the \
+                 limit. The maximum supported number of active virtual machines has been \
+                 reached. errorType=NSError name=target\n",
+                cua_vmm::lume::utc_stamp(now)
+            ),
+        )
+        .unwrap();
+    });
+    let err = rt.resume("target").await.unwrap_err();
+    match &err {
+        VmmError::HostCapacity(m) => {
+            assert!(m.contains("Apple allows 2"), "{m}");
+            assert!(!m.contains("stopped while booting"), "{m}");
+        }
+        other => panic!("expected HostCapacity, got {other:?}"),
+    }
+}

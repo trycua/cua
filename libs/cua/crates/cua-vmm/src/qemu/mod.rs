@@ -179,7 +179,7 @@ struct BootConfig {
 }
 
 /// Persisted per-instance state (`<root>/<name>/state.json`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct QemuState {
     pub name: String,
     pub kind: EntryKind,
@@ -299,6 +299,57 @@ pub struct QemuState {
     /// creation for Windows on ARM; forks and checkpoints keep it.
     #[serde(default)]
     pub tpm: bool,
+}
+
+impl std::fmt::Debug for QemuState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QemuState")
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("arch", &self.arch)
+            .field("os", &self.os)
+            .field("disk", &self.disk)
+            .field("disk_format", &self.disk_format)
+            .field("install_iso", &self.install_iso)
+            .field("seed_iso", &self.seed_iso)
+            .field("firmware", &self.firmware)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("vnc_display", &self.vnc_display)
+            .field("qmp_port", &self.qmp_port)
+            .field("qmp_socket", &self.qmp_socket)
+            .field(
+                "vnc_password",
+                &self.vnc_password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("pid", &self.pid)
+            .field("accel", &self.accel)
+            .field("ssh", &self.ssh)
+            .field("restrict_network", &self.restrict_network)
+            .field("egress", &self.egress)
+            .field("network", &self.network)
+            .field("netns", &self.netns)
+            .field("pasta_pid", &self.pasta_pid)
+            .field("gateway_control", &self.gateway_control)
+            .field("extra_args", &self.extra_args)
+            .field("snapshots", &self.snapshots)
+            .field("paused", &self.paused)
+            .field("source", &self.source)
+            .field("created_at", &self.created_at)
+            .field("gpu", &self.gpu)
+            .field("restore_from", &self.restore_from)
+            .field("memory", &self.memory)
+            .field("last_start", &self.last_start)
+            .field("free_page_reporting", &self.free_page_reporting)
+            .field("ram_file", &self.ram_file)
+            .field("headless", &self.headless)
+            .field("shared_memory", &self.shared_memory)
+            .field("pinned", &self.pinned)
+            .field("bulk", &self.bulk)
+            .field("tpm", &self.tpm)
+            .finish()
+    }
 }
 
 /// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
@@ -628,12 +679,38 @@ impl QemuRuntime {
         kvm: &std::io::Result<()>,
         sudo: impl Fn() -> bool,
     ) -> Result<String> {
+        self.accel_for_policy(arch, kvm, sudo, kvm_required())
+    }
+
+    /// `require_kvm`: a same-architecture guest on Linux must get KVM, so
+    /// software emulation (TCG) is an error rather than a slow fallback.
+    fn accel_for_policy(
+        &self,
+        arch: Arch,
+        kvm: &std::io::Result<()>,
+        sudo: impl Fn() -> bool,
+        require_kvm: bool,
+    ) -> Result<String> {
         if let Some(accel) = &self.cfg.accel {
             return Ok(accel.clone());
         }
         let accel = host::qemu_accel_with(host::HostOs::current(), arch, kvm, sudo, |message| {
             tracing::warn!("{message}")
         })?;
+        if require_kvm
+            && accel == "tcg"
+            && arch == Arch::host()
+            && host::HostOs::current() == host::HostOs::Linux
+        {
+            let why = match kvm {
+                Err(e) => host::kvm_hint(e),
+                Ok(()) => "KVM is not usable".to_string(),
+            };
+            return Err(VmmError::missing(
+                "KVM",
+                format!("{KVM_REQUIRED_ENV} is set, so TCG emulation is refused: {why}"),
+            ));
+        }
         if let Err(e) = kvm
             && accel == "tcg"
             && arch == Arch::host()
@@ -766,6 +843,10 @@ impl QemuRuntime {
         )?;
         let dir = self.dir(name);
         std::fs::create_dir_all(&dir)?;
+        // A create dropped mid-way (its client cancelled) runs neither arm
+        // below: the directory it made goes with the future, or a disk with
+        // no state file stays where nothing lists or deletes it.
+        let mut made = DirGuard(Some(dir.clone()));
         let arch = spec_like.effective_arch();
         let disk = dir.join("disk.qcow2");
         let res: Result<QemuState> = async {
@@ -835,16 +916,10 @@ impl QemuRuntime {
             })
         }
         .await;
-        match res {
-            Ok(st) => {
-                self.save(&st)?;
-                Ok(st)
-            }
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&dir);
-                Err(e)
-            }
-        }
+        let st = res?;
+        self.save(&st)?;
+        made.0 = None;
+        Ok(st)
     }
 
     /// Write the cloud-init seed for this run: SSH key and/or raw user-data,
@@ -1088,7 +1163,18 @@ impl QemuRuntime {
                         boot.keep_ports = false;
                     }
                 }
-                Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
+                // The forwarder could not join the namespace: it is off
+                // now, so this launch uses pasta's forwards.
+                Err(e) if attempt < LAUNCH_PORT_ATTEMPTS && crate::nsfwd::is_join_failure(&e) => {
+                    tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
+                    attempt += 1;
+                }
+                Err(e)
+                    if st.accel == "kvm"
+                        && self.cfg.accel.is_none()
+                        && !kvm_required()
+                        && kvm_stalled(&e) =>
+                {
                     tracing::warn!(
                         sandbox = %st.name,
                         "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
@@ -1370,6 +1456,7 @@ impl QemuRuntime {
             // the guest's first instruction).
             let mut relay: Option<PathBuf> = None;
             let mut tree_argv: Vec<String> = Vec::new();
+            let mut fwd: Option<crate::nsfwd::Pending> = None;
             let (program, args): (PathBuf, Vec<String>) = match &netns_rules {
                 Some(rules) => {
                     let pasta = host::which("pasta").ok_or_else(|| {
@@ -1411,8 +1498,15 @@ impl QemuRuntime {
                     } else {
                         Vec::new()
                     };
+                    // The host's ports cross into the namespace through
+                    // cua's own forwarder, not pasta's splice (passt before
+                    // 2025 adds ~40 ms per round trip; [`crate::nsfwd`]).
+                    // Without one, pasta's forwards as before.
+                    let pairs: Vec<(u16, u16)> = ports.iter().map(|p| (*p, *p)).collect();
+                    fwd = crate::nsfwd::spawn(&dir, &pairs).await;
+                    let pasta_ports: &[u16] = if fwd.is_some() { &[] } else { &ports };
                     let mut a = netns_pasta_args(
-                        &ports,
+                        pasta_ports,
                         &localhost,
                         crate::pasta::supports_host_lo(&pasta),
                     );
@@ -1487,6 +1581,35 @@ impl QemuRuntime {
                 st.pasta_pid = Some(pid);
                 st.netns = true;
             }
+            if let Some(fwd) = fwd {
+                // pasta's command (the namespace's first process) appears
+                // as pasta's child at once; QEMU becomes that process.
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                let child = loop {
+                    if let Some(c) = netns_child(pid) {
+                        break Some(c);
+                    }
+                    if !host::pid_alive(pid) || tokio::time::Instant::now() >= deadline {
+                        break None;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                };
+                match child {
+                    Some(c) => {
+                        if let Err(e) = fwd.join(c).await {
+                            // End this launch before the next one uses the
+                            // same disk ([`Self::launch_admitted`] retries).
+                            for p in [c, pid] {
+                                host::signal(p, "KILL");
+                                Self::wait_exit(p, Duration::from_secs(5)).await;
+                            }
+                            return Err(e);
+                        }
+                    }
+                    // pasta is gone: the wait below reports why.
+                    None => drop(fwd),
+                }
+            }
         }
         #[cfg(not(unix))]
         {
@@ -1510,13 +1633,15 @@ impl QemuRuntime {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let mut q = loop {
             if !host::pid_alive(pid) {
+                let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
+                let mut stderr = crate::exec::tail(&log_text, 4000);
+                if st.netns && pasta_userns_denied(&log_text) {
+                    stderr = format!("{PASTA_USERNS_HINT}\n{stderr}");
+                }
                 return Err(VmmError::Command {
                     cmd: format!("{} (see {})", bin.display(), dir.join("cmdline").display()),
                     code: None,
-                    stderr: crate::exec::tail(
-                        &std::fs::read_to_string(&log_path).unwrap_or_default(),
-                        4000,
-                    ),
+                    stderr,
                 });
             }
             match QmpClient::connect(&qmp_addr(st)?).await {
@@ -1860,7 +1985,8 @@ impl QemuRuntime {
         let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
             st.pid = None;
             self.drop_aliases(Some(&self.dir(&st.name)));
-            Self::end_netns(st);
+            let run_dir = self.run_dir(st);
+            Self::end_netns(st, &run_dir);
             return self.stop_tpm(st).await;
         };
         if !graceful.is_zero() {
@@ -1876,7 +2002,8 @@ impl QemuRuntime {
             if Self::wait_exit(pid, wait).await {
                 st.pid = None;
                 self.drop_aliases(Some(&self.dir(&st.name)));
-                Self::end_netns(st);
+                let run_dir = self.run_dir(st);
+                Self::end_netns(st, &run_dir);
                 return self.stop_tpm(st).await;
             }
         }
@@ -1895,7 +2022,8 @@ impl QemuRuntime {
         }
         st.pid = None;
         self.drop_aliases(Some(&self.dir(&st.name)));
-        Self::end_netns(st);
+        let run_dir = self.run_dir(st);
+        Self::end_netns(st, &run_dir);
         self.stop_tpm(st).await
     }
 
@@ -1980,7 +2108,11 @@ impl QemuRuntime {
     }
 
     /// pasta exits with QEMU; one left behind (a VM killed with it) goes.
-    fn end_netns(st: &mut QemuState) {
+    fn end_netns(st: &mut QemuState, dir: &Path) {
+        #[cfg(unix)]
+        crate::nsfwd::stop(dir);
+        #[cfg(not(unix))]
+        let _ = dir;
         if let Some(p) = st.pasta_pid.take()
             && host::pid_alive(p)
         {
@@ -2095,11 +2227,10 @@ impl QemuRuntime {
     }
 
     async fn guest_tcp_established(&self, st: &QemuState, guest_port: u16) -> Result<bool> {
-        let host_port = *st.ports.get(&guest_port).ok_or_else(|| {
-            VmmError::invalid(format!(
-                "probe port {guest_port} is not published by this sandbox"
-            ))
-        })?;
+        let host_port = *st
+            .ports
+            .get(&guest_port)
+            .ok_or_else(|| crate::probe::not_forwarded(guest_port))?;
         let Ok(Ok(mut stream)) = tokio::time::timeout(
             Duration::from_secs(3),
             tokio::net::TcpStream::connect(("127.0.0.1", host_port)),
@@ -2134,6 +2265,28 @@ impl QemuRuntime {
             }
         }
         Ok(false)
+    }
+}
+
+/// What is left of a start's readiness budget (see [`QemuRuntime::start`]).
+#[derive(Clone, Copy, Debug)]
+struct Budget(tokio::time::Instant);
+
+impl Budget {
+    fn new(total: Duration) -> Self {
+        Self(tokio::time::Instant::now() + total)
+    }
+
+    fn left(&self) -> Duration {
+        self.0
+            .saturating_duration_since(tokio::time::Instant::now())
+    }
+
+    /// `spec` with what is left as its `ready_timeout`.
+    fn spec(&self, spec: &StartSpec) -> StartSpec {
+        let mut s = spec.clone();
+        s.ready_timeout = self.left();
+        s
     }
 }
 
@@ -2298,6 +2451,11 @@ fn netns_pasta_args(ports: &[u16], localhost: &[u16], host_lo_to_ns_lo: bool) ->
     .collect();
     if host_lo_to_ns_lo {
         a.push(crate::pasta::HOST_LO_TO_NS_LO.into());
+    }
+    // No ports: `none`, never pasta's default (`auto`, which would forward
+    // every port anything in the namespace listens on).
+    if ports.is_empty() {
+        a.extend(["-t".into(), "none".into()]);
     }
     for p in ports {
         a.extend(["-t".into(), format!("127.0.0.1/{p}:{p}")]);
@@ -2498,11 +2656,33 @@ pub struct Density {
 
 const LAUNCH_PORT_ATTEMPTS: u32 = 4;
 
+/// What a host that stops pasta from making its namespace gets: the secure
+/// network needs it, and the guest is never started on the open network instead.
+const PASTA_USERNS_HINT: &str = "This host does not let pasta create the user namespace the secure \
+     network runs in (on Ubuntu 24.04 an AppArmor profile must allow `userns` for /usr/bin/pasta, \
+     or set kernel.apparmor_restrict_unprivileged_userns=0).";
+
+/// Whether pasta's output says it could not create its user namespace.
+fn pasta_userns_denied(log: &str) -> bool {
+    log.contains("Couldn't configure user mappings")
+        || log.contains("Couldn't write to /proc/self/uid_map")
+        || log.contains("Couldn't create user namespace")
+}
+
 /// Whether QEMU's stderr says a host port it was handed is already bound.
 fn is_port_conflict(stderr: &str) -> bool {
     stderr.contains("Address already in use")
         || stderr.contains("Failed to find an available port")
         || stderr.contains("Could not set up host forwarding rule")
+}
+
+/// Set (`1`/`true`) by CI lanes that must run under hardware acceleration:
+/// QEMU then fails instead of falling back to TCG, which boots a desktop
+/// image several times slower and turns a missing /dev/kvm into a timeout.
+const KVM_REQUIRED_ENV: &str = "CUA_REQUIRE_KVM";
+
+fn kvm_required() -> bool {
+    std::env::var(KVM_REQUIRED_ENV).is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
 }
 
 fn kvm_stalled(e: &VmmError) -> bool {
@@ -2852,6 +3032,13 @@ impl Runtime for QemuRuntime {
                 Err(e) => return Err(e),
             }
         };
+        // One readiness budget from here, with the image present (as the
+        // SDK measures it): a golden recording, a restore with its identity
+        // renewal, a cold boot after a failed restore and the probes share
+        // it. Each used to get all of `ready_timeout` again, so a start
+        // could take twice the budget and leave the caller's own wait for
+        // cua-spacesd none of it.
+        let budget = Budget::new(spec.ready_timeout);
 
         // The start spec's policy for a new VM (or one with none kept); a
         // kept one wins (`set_egress` changed it since).
@@ -2879,7 +3066,7 @@ impl Runtime for QemuRuntime {
             crate::progress::report(crate::progress::Progress::phase(
                 crate::progress::Phase::Booting,
             ));
-            match self.golden(&st, spec, backing, &key).await {
+            match self.golden(&st, &budget.spec(spec), backing, &key).await {
                 Ok(snap) => self.adopt_snapshot(&mut st, &snap).await?,
                 Err(e) => {
                     tracing::warn!(error = %e, "could not record a golden QEMU snapshot; booting cold")
@@ -2921,7 +3108,9 @@ impl Runtime for QemuRuntime {
             ));
             let dir = self.dir(&st.name);
             if let Some(snap) = st.restore_from.clone()
-                && let Err(e) = self.restore_memory(&mut st, spec, &snap).await
+                && let Err(e) = self
+                    .restore_memory(&mut st, &budget.spec(spec), &snap)
+                    .await
             {
                 let _ = self.force_stop(&mut st, Duration::ZERO).await;
                 // No room on this host: the snapshot is fine.
@@ -2974,7 +3163,9 @@ impl Runtime for QemuRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        let ready = self.wait_probes(&st, &inst.endpoints, spec).await;
+        let ready = self
+            .wait_probes(&st, &inst.endpoints, &budget.spec(spec))
+            .await;
         // Booted (or restored) and answering, or not going to: from here on
         // the VM counts what it really uses, not what it was expected to.
         self.release(&st.name);
@@ -3791,6 +3982,24 @@ fn admission_file(memory: &Memory) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// A VM create dropped before its state file was written takes its
+    /// directory with it; one that finished keeps it.
+    #[test]
+    fn a_dropped_create_leaves_no_directory() {
+        let d = tempfile::tempdir().unwrap();
+        let dropped = d.path().join("a");
+        std::fs::create_dir_all(&dropped).unwrap();
+        std::fs::write(dropped.join("disk.qcow2"), b"x").unwrap();
+        drop(super::DirGuard(Some(dropped.clone())));
+        assert!(!dropped.exists());
+        let kept = d.path().join("b");
+        std::fs::create_dir_all(&kept).unwrap();
+        let mut g = super::DirGuard(Some(kept.clone()));
+        g.0 = None;
+        drop(g);
+        assert!(kept.exists());
+    }
+
     #[test]
     fn the_gateway_sockets_live_in_a_short_folder_of_their_own() {
         use super::gateway_run_dir;
@@ -3803,6 +4012,14 @@ mod tests {
         assert!(a.starts_with(std::env::temp_dir()));
         // QEMU and the gateway need a socket path under 104 bytes.
         assert!(a.join("q.sock").as_os_str().len() < 104, "{}", a.display());
+    }
+
+    #[test]
+    fn pasta_userns_denial_is_recognised() {
+        assert!(pasta_userns_denied(
+            "Couldn't write to /proc/self/uid_map: Operation not permitted\nCouldn't configure user mappings\nclone: Operation not permitted"
+        ));
+        assert!(!pasta_userns_denied("No routable interface for IPv6"));
     }
 
     #[test]
@@ -4574,6 +4791,14 @@ mod tests {
             "{new:?}"
         );
         assert_eq!(new.len(), a.len() + 1);
+        // cua's forwarder carries the ports: pasta forwards none, never
+        // its default `auto` (every port the namespace listens on).
+        let none = netns_pasta_args(&[], &[], false);
+        assert!(
+            none.windows(2).any(|w| w[0] == "-t" && w[1] == "none"),
+            "{none:?}"
+        );
+        assert!(!none.iter().any(|x| x.starts_with("127.0.0.1/")));
     }
 
     #[test]
@@ -4710,6 +4935,23 @@ mod tests {
         );
     }
 
+    /// Every phase of a start (golden recording, restore, cold boot,
+    /// probes) gets what is left of one budget, never the whole budget
+    /// again: a spent budget leaves the next phase nothing.
+    #[tokio::test]
+    async fn phases_of_a_start_share_one_readiness_budget() {
+        let spec =
+            StartSpec::new("a", ImageSource::Existing).ready_timeout(Duration::from_secs(60));
+        let budget = Budget::new(spec.ready_timeout);
+        let first = budget.spec(&spec).ready_timeout;
+        assert!(first <= Duration::from_secs(60) && first > Duration::from_secs(59));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(budget.spec(&spec).ready_timeout < first);
+        assert_eq!(budget.spec(&spec).name, "a");
+        let spent = Budget::new(Duration::ZERO);
+        assert_eq!(spent.spec(&spec).ready_timeout, Duration::ZERO);
+    }
+
     #[test]
     fn no_desktop_means_no_display_hardware() {
         let s = StartSpec::new("a", ImageSource::Existing);
@@ -4836,6 +5078,30 @@ mod tests {
         );
         let missing = Err(std::io::ErrorKind::NotFound.into());
         assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn required_kvm_refuses_tcg_instead_of_falling_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = rt(tmp.path());
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(
+            r.accel_for_policy(Arch::host(), &missing, || true, false)
+                .unwrap(),
+            "tcg"
+        );
+        let error = r
+            .accel_for_policy(Arch::host(), &missing, || true, true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(KVM_REQUIRED_ENV), "{error}");
+        assert!(error.contains("/dev/kvm is missing"), "{error}");
+        assert_eq!(
+            r.accel_for_policy(Arch::host(), &Ok(()), || true, true)
+                .unwrap(),
+            "kvm"
+        );
     }
 
     #[test]
@@ -5537,6 +5803,18 @@ impl LaunchGuard {
 
     fn disarm(&mut self) {
         self.armed = false;
+    }
+}
+
+/// Removes a new VM's directory when dropped armed (its create failed or
+/// was dropped before the state file was written).
+struct DirGuard(Option<PathBuf>);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        if let Some(d) = self.0.take() {
+            let _ = std::fs::remove_dir_all(d);
+        }
     }
 }
 

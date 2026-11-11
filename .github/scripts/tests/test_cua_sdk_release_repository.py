@@ -77,7 +77,8 @@ def test_spaces_builds_use_the_release_config_overlay() -> None:
 def test_spaces_signing_fails_closed_only_on_trycua_cua() -> None:
     wf = workflow("cd-cua-spaces.yml")
     assert wf["env"]["REQUIRE_SIGNING"] == (
-        "${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}"
+        "${{ github.repository == 'trycua/cua' && (startsWith(github.ref, 'refs/tags/') "
+        "|| (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}"
     )
     gate = step("cd-cua-spaces.yml", "build-macos", "Signing configuration")["run"]
     assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in gate
@@ -204,7 +205,7 @@ def test_spaces_sparkle_cutover_is_off_and_guarded() -> None:
 
 def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> None:
     publish = step("cd-cua-spaces.yml", "installer-manifest", "Publish the release")["run"]
-    assert "--prerelease --latest=false" in publish
+    assert "--latest=false" in publish and "--prerelease" in publish
     assert "UNSIGNED" in publish
     feeds = step("cd-cua-spaces.yml", "installer-manifest", "Update the rolling feeds")
     assert feeds["if"] == "needs.electron-plan.outputs.prerelease != 'true' || github.repository != 'trycua/cua'"
@@ -310,3 +311,26 @@ def test_spacesd_releases_never_become_latest() -> None:
     # took it on 5 Nov 2026.
     publish = step("cd-cua-spacesd.yml", "release", "Upload to the GitHub release")["run"]
     assert "FLAGS=(--draft=false --latest=false)" in publish
+
+
+def test_sdk_publish_sparse_checkout_does_not_wipe_the_workspace():
+    # A sparse re-checkout into the workspace removed scripts/install and the
+    # downloaded release-artifacts.json, so "Update the rolling installer
+    # manifest" failed on stamp_installers.py in every release 7-10 Nov 2026.
+    steps = workflow("cd-cua-sdk.yml")["jobs"]["publish"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    feed = names.index("Update the rolling installer manifest (cua-install-latest)")
+    for step in steps[:feed]:
+        with_ = step.get("with") or {}
+        if str(step.get("uses", "")).startswith("actions/checkout") and "sparse-checkout" in with_:
+            assert with_.get("path"), "sparse checkout before the installer feed must use its own path"
+    run = next(s["run"] for s in steps if s.get("name") == "Keep Latest on Cua Spaces")
+    assert "latest-guard/.github/scripts/pin_latest_release.py" in run
+
+
+def test_driver_installer_bump_pr_queue_has_no_delete_branch():
+    # `gh pr merge --delete-branch` is refused when the merge queue is on, so
+    # the post-publish installer bump failed five times in a row.
+    run = text("cd-rust-cua-driver.yml")
+    assert "--auto --squash --delete-branch" not in run
+    assert 'gh pr merge "$PR_URL" --auto --squash' in run

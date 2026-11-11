@@ -24,7 +24,9 @@ function Shell() {
 
 async function mountAt(path: string) {
   const root = createRootRoute({ component: Shell });
-  const tree = root.addChildren(["/", "/spaces", "/spaces/$spaceId", "/settings"].map((p) => createRoute({ getParentRoute: () => root, path: p, component: () => null })));
+  const tree = root.addChildren(
+    ["/", "/spaces", "/spaces/$spaceId", "/settings"].map((p) => createRoute({ getParentRoute: () => root, path: p, component: () => null })),
+  );
   const router = createRouter({ routeTree: tree, history: createMemoryHistory({ initialEntries: [path] }) });
   await act(async () => {
     render(<RouterProvider router={router} />);

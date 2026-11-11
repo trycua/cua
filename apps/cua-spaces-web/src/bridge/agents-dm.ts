@@ -8,9 +8,9 @@
  *
  * - `useAgentChats()` lists the agents across every Space
  *   (`thread.members {overview}` per Space). One agent in several Spaces
- *   is one row, keyed on who owns it, its harness and its name (`chatKey`),
- *   since handles differ per daemon. Each row has its status line, unread
- *   count and what waits for you.
+ *   is its own row (a Space's handle is its key), so the Agents tab and Home
+ *   list the same entries. Each row has its status line, unread count and
+ *   what waits for you.
  * - `useAgentDm(chat, space)` reads the DM in each of its Spaces (or one),
  *   follows it, marks it read while visible, posts @mention tasks and
  *   answers approvals.
@@ -24,7 +24,15 @@ import { chatsPollMs, forEachLimit, jittered, MissCache } from "../lib/poll-plan
 import { useBridge, useSpaces } from "./hooks";
 import type { Space } from "./contracts/spaces";
 import { foldThread, readSeqFrom, type ThreadItem } from "./thread";
-import { isMissingThreadTool, THREAD_FOLLOW_MAX_MS, type AgentMember, type MemberIdentity, type NeedsYou, type ThreadEntry, type ThreadRole } from "./ops/thread";
+import {
+  isMissingThreadTool,
+  THREAD_FOLLOW_MAX_MS,
+  type AgentMember,
+  type MemberIdentity,
+  type NeedsYou,
+  type ThreadEntry,
+  type ThreadRole,
+} from "./ops/thread";
 
 /** One agent's membership in one Space. */
 export interface AgentChatSpace {
@@ -103,7 +111,13 @@ export function chatKey(spaceId: string, m: AgentMember): string {
  * rows, their order and every word; this only hangs each Space's member
  * records back on the rows. The Agents page and Home both use it.
  */
-export function mergeChats(core: CoreClient, perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[], attempts: readonly ChatAttempt[] = []): AgentChat[] {
+export function mergeChats(
+  core: CoreClient,
+  perSpace: readonly { space: Space; role: ThreadRole | null; members: readonly AgentMember[] }[],
+  attempts: readonly ChatAttempt[] = [],
+  /** One row per agent in each Space (the Agents tab), not one per agent across its Spaces. */
+  perSpaceRows = false,
+): AgentChat[] {
   const input = {
     spaces: perSpace.map(({ space, members }) => ({
       spaceId: space.id,
@@ -122,20 +136,24 @@ export function mergeChats(core: CoreClient, perSpace: readonly { space: Space; 
       })),
     })),
     attempts,
+    perSpace: perSpaceRows,
   };
   const view = core.tryCall<{ rows: AgentListRow[] }>("agentList.view", { input: input as unknown as Record<string, unknown> });
   if (!view) return [];
 
   return view.rows.map((r) => {
-    const spaces: AgentChatSpace[] = r.kind === "agent"
-      ? r.places.flatMap((pl) => {
-          // A Space may come in more than one part: the one that has this member.
-          const p = perSpace.find((x) => x.space.id === pl.spaceId && x.members.some((m) => m.name === pl.handle));
-          const member = p?.members.find((m) => m.name === pl.handle);
-          return p && member ? [{ spaceId: p.space.id, spaceName: p.space.name, os: p.space.os, handle: pl.handle, member, role: p.role }] : [];
-        })
-      : [];
-    const needsYou: ChatNeed[] = spaces.flatMap((sp) => (sp.member.needsYou ?? []).map((n) => ({ ...n, spaceId: sp.spaceId, spaceName: sp.spaceName }))).sort((a, b) => b.tsMs - a.tsMs);
+    const spaces: AgentChatSpace[] =
+      r.kind === "agent"
+        ? r.places.flatMap((pl) => {
+            // A Space may come in more than one part: the one that has this member.
+            const p = perSpace.find((x) => x.space.id === pl.spaceId && x.members.some((m) => m.name === pl.handle));
+            const member = p?.members.find((m) => m.name === pl.handle);
+            return p && member ? [{ spaceId: p.space.id, spaceName: p.space.name, os: p.space.os, handle: pl.handle, member, role: p.role }] : [];
+          })
+        : [];
+    const needsYou: ChatNeed[] = spaces
+      .flatMap((sp) => (sp.member.needsYou ?? []).map((n) => ({ ...n, spaceId: sp.spaceId, spaceName: sp.spaceName })))
+      .sort((a, b) => b.tsMs - a.tsMs);
     return {
       key: r.key,
       label: r.label,
@@ -254,20 +272,28 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
     const known = new Set(list.map((s) => s.id));
     misses.current.prune(known);
     for (const id of [...reads.current!.keys()]) if (!known.has(id)) reads.current!.delete(id);
-    // A pass's answers redraw the page together, not one by one.
-    const flush = () => {
+    // A pass's answers redraw the page together, not one by one. The pass's end is drawn with its last answers,
+    // so the list never shows as empty for a moment before they arrive.
+    let settleNext = false;
+    const flush = (settle = false) => {
+      settleNext ||= settle;
       if (flushTimer !== undefined) return;
       flushTimer = setTimeout(() => {
         flushTimer = undefined;
         if (!alive) return;
         saveLastKnown(reads.current!);
         setVersion((v) => v + 1);
+        if (settleNext) setSettled(true);
       }, FLUSH_MS);
     };
+    const unseen = new Set<string>();
     const readOne = async (space: Space) => {
       inflight.current.add(space.id);
       try {
-        const [{ members }, page] = await Promise.all([data.call("thread.members", { spaceId: space.id, overview: true }), data.call("thread.read", { spaceId: space.id, limit: 1 })]);
+        const [{ members }, page] = await Promise.all([
+          data.call("thread.members", { spaceId: space.id, overview: true }),
+          data.call("thread.read", { spaceId: space.id, limit: 1 }),
+        ]);
         reads.current!.set(space.id, { role: page.role, members, me: page.me });
       } catch (e) {
         // No thread there (an old daemon): not in the list, and not asked again for a while.
@@ -278,21 +304,22 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
       } finally {
         inflight.current.delete(space.id);
         if (alive) {
-          setPending((n) => Math.max(0, n - 1));
+          if (unseen.delete(space.id)) setPending((n) => Math.max(0, n - 1));
           flush();
         }
       }
     };
     const pass = async () => {
       const asked = list.filter((s) => !misses.current.has(s.id) && !inflight.current.has(s.id));
-      setPending(asked.length);
+      // Only a Space with no answer yet is "being checked": a pass that refreshes known answers is silent, so
+      // "Checking 1 Space" does not come and go every few seconds.
+      unseen.clear();
+      for (const s of asked) if (!reads.current!.has(s.id)) unseen.add(s.id);
+      setPending(unseen.size);
       // Spaces that answered last time go first: the slow ones are last in line, never in front.
       asked.sort((x, y) => Number(reads.current!.has(y.id)) - Number(reads.current!.has(x.id)));
       await forEachLimit(asked, CHATS_PARALLEL, CHATS_SLOT_MS, readOne);
-      if (alive) {
-        setSettled(true);
-        flush();
-      }
+      if (alive) flush(true);
     };
     // One pass at a time, the next after the last one's slots end: slower as the
     // account grows (`chatsPollMs`), spread so pages don't ask together, and
@@ -319,12 +346,19 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   }, [data, ids, round, spaces === undefined]);
   // One list, with this device's unfinished runs (the core's order and words), made again only when an
   // answer, the Spaces or the runs change.
+  const stable = useRef<{ json: string; chats: AgentChat[] } | null>(null);
   const merged = useMemo(() => {
     const perSpace = list.flatMap((space) => {
       const r = reads.current!.get(space.id);
       return r ? [{ space, role: r.role, members: r.members }] : [];
     });
-    return { perSpace, chats: spaces === undefined ? [] : mergeChats(core, perSpace, attempts) };
+    const next = spaces === undefined ? [] : mergeChats(core, perSpace, attempts, true);
+    // The same list as before keeps its identity: a poll that found nothing new redraws nothing (rows, the open
+    // thread and its roster stay as they are).
+    const json = JSON.stringify(next);
+    if (stable.current && stable.current.json === json) return { perSpace, chats: stable.current.chats };
+    stable.current = { json, chats: next };
+    return { perSpace, chats: next };
     // `list` follows `spaces`; `reads` is read when `version` says it changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, spaces, attempts, core]);
@@ -434,7 +468,13 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
         let backoff = 1_000;
         while (alive) {
           try {
-            const page = await data.call("thread.read", { spaceId: t.spaceId, with: t.handle, after: cursor, followMs: THREAD_FOLLOW_MAX_MS, markRead: visible() });
+            const page = await data.call("thread.read", {
+              spaceId: t.spaceId,
+              with: t.handle,
+              after: cursor,
+              followMs: THREAD_FOLLOW_MAX_MS,
+              markRead: visible(),
+            });
             if (!alive) return;
             cursor = Math.max(cursor, page.cursor);
             merge(t.spaceId, page.entries);

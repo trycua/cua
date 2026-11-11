@@ -50,7 +50,7 @@ pub enum EffectsArg {
     Virtual,
 }
 
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Clone)]
 pub struct DoctorArgs {
     /// Sandbox to check: `local:<name>`, `direct:<host:port>`,
     /// a bare name, or a spacesd URL. Omit for the host checks only.
@@ -111,6 +111,30 @@ pub struct DoctorArgs {
     /// an overlay name. `cua sb create --overlay` prints the sha256 to pass.
     #[arg(long = "expect", value_name = "COMPONENT=WANT")]
     pub expect: Vec<String>,
+}
+
+impl std::fmt::Debug for DoctorArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DoctorArgs")
+            .field("target", &self.target)
+            .field("image", &self.image)
+            .field("arch", &self.arch)
+            .field("strict", &self.strict)
+            .field("format", &self.format)
+            .field("effects", &self.effects)
+            .field("only", &self.only)
+            .field("skip", &self.skip)
+            .field("timeout", &self.timeout)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("shim", &self.shim)
+            .field("expect_manifest", &self.expect_manifest)
+            .field("out", &self.out)
+            .field("junit", &self.junit)
+            .field("no_host", &self.no_host)
+            .field("machine", &self.machine)
+            .field("expect", &self.expect)
+            .finish()
+    }
 }
 
 impl DoctorArgs {

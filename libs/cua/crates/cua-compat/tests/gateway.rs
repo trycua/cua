@@ -16,6 +16,14 @@ struct Gw {
     _dir: tempfile::TempDir,
 }
 
+/// An `Authorization: Basic` value for `user:pass`, built at runtime so no
+/// encoded credential sits in the source.
+fn basic_auth(user: &str, pass: &str) -> String {
+    use base64::Engine;
+    let token = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+    format!("Basic {token}")
+}
+
 async fn start(ports: &[(u16, String)]) -> Gw {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(MockBackend::new());
@@ -236,18 +244,16 @@ async fn a_root_command_names_root_to_an_agent_that_switches_users() {
     // The mock agent is not root and switches users by capability (as the
     // Linux image's `cua` agent does): a command sent without a user runs
     // as the agent, so `root` must be named.
-    use base64::Engine;
     let g = start(&[]).await;
     let sb = g.sandbox(json!({"templateID": "base"})).await;
     let body = envelope(&json!({
         "process": {"cmd": "/bin/bash", "args": ["-l", "-c", "echo hi"], "envs": {}},
         "stdin": false
     }));
-    let basic = base64::engine::general_purpose::STANDARD.encode("root:");
     let r = g
         .envd(&sb, "process.Process/Start")
         .header("content-type", "application/connect+json")
-        .header("authorization", format!("Basic {basic}"))
+        .header("authorization", basic_auth("root", ""))
         .body(body)
         .send()
         .await
@@ -272,7 +278,6 @@ async fn a_root_command_runs_as_root_on_a_non_root_agent() {
     use base64::Engine;
     let g = start(&[]).await;
     let sb = g.sandbox(json!({"templateID": "base"})).await;
-    let basic = base64::engine::general_purpose::STANDARD.encode("root:");
     let mut seen = Vec::new();
     for line in ["whoami", "id -u", "printf %s \"$HOME\""] {
         let body = envelope(&json!({
@@ -282,7 +287,7 @@ async fn a_root_command_runs_as_root_on_a_non_root_agent() {
         let r = g
             .envd(&sb, "process.Process/Start")
             .header("content-type", "application/connect+json")
-            .header("authorization", format!("Basic {basic}"))
+            .header("authorization", basic_auth("root", ""))
             .body(body)
             .send()
             .await
@@ -1016,7 +1021,7 @@ async fn start_warmed_makes_the_first_create_before_it_returns() {
     }
 }
 
-/// An account at its live-session limit gets E2B's rate-limit error (HTTP
+/// An account at its computers-in-use limit gets E2B's rate-limit error (HTTP
 /// 429, which the SDKs raise as RateLimitException), with the plan-limit
 /// sentence and its upgrade path verbatim.
 #[tokio::test]
@@ -1024,7 +1029,8 @@ async fn the_live_session_limit_is_a_429_with_its_sentence() {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(MockBackend::new());
     *backend.create_fails.lock().await = Some(cua_compat::backend::BackendError::RateLimited(
-        "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.".into(),
+        "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
+            .into(),
     ));
     let mut o = GatewayOptions::new(Provider::E2b);
     o.listen = "127.0.0.1:0".parse().unwrap();
@@ -1043,7 +1049,7 @@ async fn the_live_session_limit_is_a_429_with_its_sentence() {
         let v: Value = r.json().await.unwrap();
         assert_eq!(
             v["message"],
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
         );
     }
 }
@@ -1095,7 +1101,7 @@ async fn root_file_calls_name_root_to_an_agent_that_switches_users() {
     let call = |method: &str, body: Value| {
         g.envd(&sb, &format!("filesystem.Filesystem/{method}"))
             .header("content-type", "application/json")
-            .header("authorization", "Basic cm9vdDo=")
+            .header("authorization", basic_auth("root", ""))
             .body(body.to_string())
             .send()
     };
@@ -1157,7 +1163,7 @@ async fn native_file_calls_give_what_they_make_to_the_user() {
         let r = g
             .envd(&sb, &format!("filesystem.Filesystem/{method}"))
             .header("content-type", "application/json")
-            .header("authorization", "Basic YWxpY2U6")
+            .header("authorization", basic_auth("alice", ""))
             .body(body.to_string())
             .send()
             .await

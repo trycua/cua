@@ -45,6 +45,12 @@ pub struct AgentEvent {
     /// One short line for an `activity` event (see [`AgentEvent::summary`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// The subagent call this event happened inside (the `tool_id` of the
+    /// parent's Task/Agent call), when the harness says so: its tool calls
+    /// and words belong to the child, not to the agent's own turn (see
+    /// [`crate::subagents`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_id: Option<String>,
     /// The line as written.
     pub raw: Value,
 }
@@ -156,6 +162,7 @@ impl AgentEvent {
             stop_reason: None,
             category: "hidden",
             summary: None,
+            parent_tool_id: None,
             raw: Value::Null,
         };
         let ty = raw.get("type").and_then(Value::as_str).unwrap_or("");
@@ -243,6 +250,10 @@ impl AgentEvent {
             }
             _ => "other",
         };
+        e.parent_tool_id = raw["update"]["_meta"]["claudeCode"]["parentToolUseId"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .map(str::to_string);
         e.raw = raw;
         e.classify();
         Some(e)
@@ -278,6 +289,7 @@ impl AgentEvent {
             stop_reason: s(v, "stop_reason"),
             category: "hidden",
             summary: None,
+            parent_tool_id: s(v, "parent_tool_id"),
             raw: v.get("raw").cloned().unwrap_or(Value::Null),
         };
         e.classify();
@@ -409,6 +421,16 @@ impl AgentEvent {
 
     /// One human-readable line (CLI logs, the MCP `output_tail`).
     pub fn render(&self) -> Option<String> {
+        let line = self.render_line()?;
+        // What a subagent did is indented under the call that started it.
+        Some(if self.parent_tool_id.is_some() {
+            format!("  | {line}")
+        } else {
+            line
+        })
+    }
+
+    fn render_line(&self) -> Option<String> {
         let t = |s: &Option<String>| s.clone().unwrap_or_default();
         Some(match self.kind {
             "message" => t(&self.text),
@@ -493,9 +515,58 @@ pub fn page(bytes: &[u8], from: u64, max: usize) -> EventPage {
     }
 }
 
+/// How far a page read may grow to hold one line: a line is never split, so a
+/// read window smaller than a line could never return it.
+pub const MAX_WINDOW: u64 = 256 * 1024 * 1024;
+
+/// One page of events from byte `cursor` that always makes progress: `read`
+/// (offset, length) fetches a window of `first` bytes, and when the window
+/// holds no complete line yet the file goes on (an event with an image in it
+/// is bigger than a window), the window grows (x4, up to [`MAX_WINDOW`]) and
+/// the read repeats. `caught_up` is false while a window ended inside a line.
+pub async fn read_page<E, F, Fut>(
+    mut read: F,
+    cursor: u64,
+    max: usize,
+    first: u64,
+) -> std::result::Result<EventPage, E>
+where
+    F: FnMut(u64, u64) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<Option<Vec<u8>>, E>>,
+{
+    let mut want = first.max(1);
+    loop {
+        let bytes = read(cursor, want).await?.unwrap_or_default();
+        let mut p = page(&bytes, cursor, max);
+        let full = bytes.len() as u64 >= want;
+        let left = bytes.len() as u64 - (p.cursor - cursor);
+        if full && left > 0 && p.events.is_empty() && p.cursor == cursor && want < MAX_WINDOW {
+            want = (want * 4).min(MAX_WINDOW);
+            continue;
+        }
+        if full && left > 0 {
+            // The window ended inside a line: there is more to read.
+            p.caught_up = false;
+        }
+        return Ok(p);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_subagents_steps_are_indented_in_the_log_and_name_their_parent() {
+        let child = r#"{"seq":5,"ts":1,"turn":1,"type":"update","update":{"_meta":{"claudeCode":{"parentToolUseId":"toolu_1"}},"sessionUpdate":"tool_call","toolCallId":"c1","title":"ls","kind":"execute","status":"pending"}}"#;
+        let e = AgentEvent::parse(child).unwrap();
+        assert_eq!(e.parent_tool_id.as_deref(), Some("toolu_1"));
+        assert_eq!(e.render().unwrap(), "  | [tool execute] ls");
+        let own = AgentEvent::parse(&child.replace("\"parentToolUseId\":\"toolu_1\"", "\"x\":1"))
+            .unwrap();
+        assert!(own.parent_tool_id.is_none());
+        assert_eq!(own.render().unwrap(), "[tool execute] ls");
+    }
 
     /// Lines recorded from real runs (claude-agent-acp 0.81.1 and codex-acp
     /// 1.13.1 against cua-mock-llm, the mock provider).
@@ -548,5 +619,63 @@ mod tests {
         let limited = page(RECORDED.as_bytes(), 0, 2);
         assert_eq!(limited.events.len(), 2);
         assert!(!limited.caught_up);
+    }
+
+    fn line(seq: u64, pad: usize) -> String {
+        format!(
+            r#"{{"seq":{seq},"ts":1,"turn":1,"type":"update","pad":"{}"}}"#,
+            "x".repeat(pad)
+        )
+    }
+
+    #[tokio::test]
+    async fn a_line_bigger_than_the_window_is_still_read_and_the_reader_moves_on() {
+        // Small events around one that is far bigger than the read window (an
+        // image result): a fixed window livelocked on it forever.
+        let mut file = String::new();
+        for (seq, pad) in [(1, 10), (2, 10), (3, 5000), (4, 10), (5, 10)] {
+            file.push_str(&line(seq, pad));
+            file.push('\n');
+        }
+        let data = file.into_bytes();
+        let read = |off: u64, len: u64| {
+            let d = data.clone();
+            async move {
+                let a = (off as usize).min(d.len());
+                let b = ((off + len) as usize).min(d.len());
+                Ok::<_, ()>(Some(d[a..b].to_vec()))
+            }
+        };
+        let mut cursor = 0u64;
+        let mut seqs = vec![];
+        for _ in 0..20 {
+            let p = read_page(read, cursor, 500, 256).await.unwrap();
+            seqs.extend(p.events.iter().map(|e| e.seq));
+            if p.cursor == cursor {
+                break;
+            }
+            cursor = p.cursor;
+        }
+        assert_eq!(seqs, [1, 2, 3, 4, 5]);
+        assert_eq!(cursor, data.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn a_window_that_ends_inside_a_line_is_not_caught_up() {
+        let data = format!("{}\n{}\n", line(1, 10), line(2, 400)).into_bytes();
+        let read = |off: u64, len: u64| {
+            let d = data.clone();
+            async move {
+                let a = (off as usize).min(d.len());
+                let b = ((off + len) as usize).min(d.len());
+                Ok::<_, ()>(Some(d[a..b].to_vec()))
+            }
+        };
+        let p = read_page(read, 0, 500, 200).await.unwrap();
+        assert_eq!(p.events.len(), 1);
+        assert!(!p.caught_up, "line 2 is still to come");
+        let p = read_page(read, p.cursor, 500, 200).await.unwrap();
+        assert_eq!(p.events.len(), 1);
+        assert!(p.caught_up);
     }
 }

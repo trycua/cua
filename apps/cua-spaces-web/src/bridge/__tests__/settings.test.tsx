@@ -75,8 +75,10 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     expect(hooks.about.data?.view?.links.map((l) => l.id)).toEqual(["acknowledgements", "privacy", "terms", "status", "issue"]);
     await hooks.about.setAbout({ autoCheck: false });
     await waitFor(() => expect(hooks.about.data?.view?.updates?.autoInstallEnabled).toBe(false));
-    await hooks.about.setAbout({ channel: "beta" });
-    await waitFor(() => expect(hooks.about.data?.view?.updates?.channels.find((c) => c.active)?.id).toBe("beta"));
+    await hooks.about.setAbout({ channel: "nightly" });
+    await waitFor(() => expect(hooks.about.data?.view?.updates?.channels.find((c) => c.active)?.id).toBe("nightly"));
+    expect(hooks.about.data?.view?.updates?.channels.map((c) => c.id)).toEqual(["stable", "nightly"]);
+    expect(hooks.about.data?.view?.updates?.channelHelp).toBe("Daily builds. May break.");
   });
 
   it("turns an experiment on, and Cua Volume changes the launch-at-login line", async () => {
@@ -157,7 +159,7 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     await waitFor(() => expect(hooks.notifications.data?.unread).toBe(4));
     const texts = hooks.notifications.data!.view!.rows.map((r) => r.text);
     // With what it is, in plain words (never "VM" or "container").
-    expect(texts.find((t) => t.startsWith("qa-gui-linux-local is ready"))).toMatch(/A fresh Linux computer inside this (Mac|PC|computer)\. Your agent can use it now\./);
+    expect(texts.find((t) => t.startsWith("qa-gui-linux-local is ready"))).toContain("Ready for your agent.");
     // The reason in the failed row's words (the core names the macOS limit).
     expect(texts.find((t) => t.startsWith("Couldn't create boom: "))).toMatch(/This Mac is already running/);
     await hooks.notifications.markAllRead();

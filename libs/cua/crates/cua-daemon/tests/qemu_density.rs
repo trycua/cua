@@ -108,6 +108,8 @@ fn gate() -> Option<PathBuf> {
 #[tokio::test]
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn shared_memory_counts_once_and_admission_refuses_past_the_limits() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let root = tempfile::tempdir().unwrap();
     let cpus = cua_vmm::density::host_cpus();
@@ -244,6 +246,8 @@ async fn shared_memory_counts_once_and_admission_refuses_past_the_limits() {
 #[tokio::test]
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn free_page_reporting_returns_freed_guest_memory_where_qemu_can() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let root = tempfile::tempdir().unwrap();
     // Cold boots (warm off): anonymous guest RAM, the only RAM the balloon
@@ -591,6 +595,8 @@ async fn burst(mode: &str) {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1, CUA_VMM_TEST_DISK and CUA_VMM_TEST_BURST, run with --ignored"]
 #[cfg(target_os = "linux")]
 async fn a_burst_of_cold_creates_is_admitted_while_real_memory_has_room() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     burst("cold").await;
 }
 
@@ -598,6 +604,8 @@ async fn a_burst_of_cold_creates_is_admitted_while_real_memory_has_room() {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1, CUA_VMM_TEST_DISK and CUA_VMM_TEST_BURST, run with --ignored"]
 #[cfg(target_os = "linux")]
 async fn a_burst_of_forks_is_admitted_while_real_memory_has_room() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     burst("fork").await;
 }
 
@@ -611,6 +619,8 @@ async fn a_burst_of_forks_is_admitted_while_real_memory_has_room() {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1, CUA_VMM_TEST_DISK and CUA_VMM_TEST_BURST, run with --ignored"]
 #[cfg(target_os = "linux")]
 async fn creating_and_deleting_vms_over_and_over_is_not_refused() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let workers: usize = std::env::var("CUA_VMM_TEST_BURST")
         .ok()

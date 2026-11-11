@@ -104,14 +104,22 @@ class SessionManager {
   /** The system sign-in sheet; resolves when signed in, throws a `SignInError` in the core's words otherwise. */
   async signIn(): Promise<void> {
     if (config.devTokenUrl) return this.devSignIn(config.devTokenUrl);
-    const redirectUri = AuthSession.makeRedirectUri({ scheme: config.redirectScheme, path: config.redirectPath });
+    // Exactly the redirect registered for the phone's client, `ai.cua.spaces:/oauth/callback` (one slash).
+    // `makeRedirectUri` builds `ai.cua.spaces://oauth/callback`, which the provider refuses ("Invalid parameter: redirect_uri").
+    const redirectUri = `${config.redirectScheme}:/${config.redirectPath}`;
     let discovery: AuthSession.DiscoveryDocument;
     try {
       discovery = await AuthSession.fetchDiscoveryAsync(config.issuer);
     } catch (e) {
       throw new SignInError(signInFailure(String(e), "offline")?.message ?? "Could not reach cua.ai. Check the connection and try again.");
     }
-    const request = new AuthSession.AuthRequest({ clientId: config.clientId, redirectUri, scopes: config.scope.split(" "), usePKCE: true, responseType: AuthSession.ResponseType.Code });
+    const request = new AuthSession.AuthRequest({
+      clientId: config.clientId,
+      redirectUri,
+      scopes: config.scope.split(" "),
+      usePKCE: true,
+      responseType: AuthSession.ResponseType.Code,
+    });
     const result = await request.promptAsync(discovery);
     if (result.type === "cancel" || result.type === "dismiss") throw new SignInError("Sign-in was cancelled.", true);
     if (result.type !== "success") {
@@ -119,7 +127,10 @@ class SessionManager {
       throw new SignInError(signInFailure(String(detail))?.message ?? `Sign-in did not finish (${detail}).`);
     }
     try {
-      const t = await AuthSession.exchangeCodeAsync({ clientId: config.clientId, code: result.params.code!, redirectUri, extraParams: { code_verifier: request.codeVerifier ?? "" } }, discovery);
+      const t = await AuthSession.exchangeCodeAsync(
+        { clientId: config.clientId, code: result.params.code!, redirectUri, extraParams: { code_verifier: request.codeVerifier ?? "" } },
+        discovery,
+      );
       await this.save({ accessToken: t.accessToken, refreshToken: t.refreshToken ?? null, expiresAt: t.expiresIn ? now() + t.expiresIn : now() + 300 });
     } catch (e) {
       throw new SignInError(signInFailure(String(e instanceof Error ? e.message : e))?.message ?? "Sign-in did not finish.");
@@ -133,7 +144,10 @@ class SessionManager {
     await this.save(null);
     if (!refresh || config.devTokenUrl) return;
     try {
-      const discovery = await Promise.race([AuthSession.fetchDiscoveryAsync(config.issuer), new Promise<never>((_, no) => setTimeout(() => no(new Error("slow")), 4000))]);
+      const discovery = await Promise.race([
+        AuthSession.fetchDiscoveryAsync(config.issuer),
+        new Promise<never>((_, no) => setTimeout(() => no(new Error("slow")), 4000)),
+      ]);
       await AuthSession.revokeAsync({ clientId: config.clientId, token: refresh, tokenTypeHint: AuthSession.TokenTypeHint.RefreshToken }, discovery);
     } catch {
       // Offline or the provider has no revocation endpoint: the tokens are already gone from this phone.

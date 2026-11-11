@@ -40,6 +40,12 @@ pub static CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 /// How long a Space that could not be listed is left alone.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
+/// How long a Space whose cua-spacesd is still waking is left alone.
+static WAKING_RETRY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10_000);
+
+pub(super) fn set_waking_retry(d: Duration) {
+    WAKING_RETRY_MS.store(d.as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+}
 /// Calls to the relay in flight at once.
 const AT_ONCE: usize = 4;
 /// Most registrations and removals one pass starts; the rest wait for the
@@ -601,7 +607,9 @@ impl Spaces {
             }
         }
 
-        // On: Spaces that are not online and not on their way.
+        // On: Spaces that are not online and not on their way (or whose row
+        // does not name this computer as host yet: it is registered again).
+        let host_id = self.own_host_id();
         let now = Instant::now();
         let due: Vec<String> = want
             .iter()
@@ -610,7 +618,9 @@ impl Spaces {
                 let online = all
                     .get(id)
                     .and_then(|a| rows.get(&a.machine))
-                    .is_some_and(|m| m.online && m.role == "owner");
+                    .is_some_and(|m| {
+                        m.online && m.role == "owner" && super::host_matches(m, host_id.as_deref())
+                    });
                 let (waiting, dialing) = memo(&home, |m| {
                     (
                         m.retry_at.get(id).is_some_and(|t| *t > now),
@@ -714,8 +724,15 @@ impl Spaces {
                         relay_error = Some((e, wait));
                         report.failed.push((id, msg));
                     } else {
+                        let after = if super::is_waking(&e) {
+                            Duration::from_millis(
+                                WAKING_RETRY_MS.load(std::sync::atomic::Ordering::Relaxed),
+                            )
+                        } else {
+                            RETRY_AFTER
+                        };
                         memo(&home, |m| {
-                            m.retry_at.insert(id.clone(), Instant::now() + RETRY_AFTER)
+                            m.retry_at.insert(id.clone(), Instant::now() + after)
                         });
                         report.failed.push((id, e.to_string()));
                     }
@@ -738,7 +755,13 @@ impl Spaces {
                 report.more = false;
             }
             None => {
-                let finished = !over && !skipped && !young && report.failed.is_empty();
+                // A Space waiting for its retry is not finished: the next
+                // passes must come back to it, not rest until the verify.
+                let retrying = memo(&home, |m| {
+                    want.iter()
+                        .any(|i| m.retry_at.get(&i.id).is_some_and(|t| *t > Instant::now()))
+                });
+                let finished = !over && !skipped && !young && !retrying && report.failed.is_empty();
                 memo(&home, |m| {
                     m.breaker = Breaker::default();
                     m.dialing.retain(|_, t| *t > Instant::now());

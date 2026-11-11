@@ -9,7 +9,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 Cua Spaces runs on macOS, Windows (preview) and Linux. One command installs the
 `cua` CLI and the app. The [download page](https://cua.ai/download) has the
 app for each system, and every installer is attached to the
-[GitHub releases](https://github.com/trycua/cua/releases).
+[GitHub releases](https://github.com/trycua/cua/releases?q=cua-spaces-v).
 
 | System | Needs |
 |---|---|
@@ -69,7 +69,7 @@ The first time you open the app, it walks you through a short setup. The
 
 | Step | What it does |
 |---|---|
-| Your computers, shared by your team and its agents | The welcome. |
+| Combine your existing computers into one supercomputer | The welcome, with "Your computers, shared by your team and its agents." under it. |
 | Pick your agent | The agents found on this computer, most used first (Hermes, Claude Code, Codex, Cursor, then the rest). Press **Connect** on each one you want; nothing is connected until you do. See [Connect your agent](/spaces/guides/connect-your-agent). |
 | Add your other computers | Optional. Signing in lets your other computers and your cloud use this computer's Spaces. **Not now** keeps Cua on this computer only. |
 | Try it in your agent | A request to paste into the agent you connected, which makes a Space on this computer. With no agent, a first Space in one click: Linux, or macOS on a Mac with Apple silicon. |
@@ -91,7 +91,7 @@ turns off what the app set up (see
 
 The download page offers the x64 package. On an arm64 computer, take
 `cua-spaces_<version>_arm64.deb` from the
-[GitHub release](https://github.com/trycua/cua/releases) instead: `apt` refuses
+[GitHub release](https://github.com/trycua/cua/releases?q=cua-spaces-v) instead: `apt` refuses
 the x64 package there with a list of packages it cannot install. The .deb
 installs the app only. To get the `cua` command as well, run
 `curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only`.

@@ -277,13 +277,13 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
         case "$CUA_CLI_VERSION" in ""|latest) echo "CUA_CLI_SOURCE=release needs a pinned CUA_CLI_VERSION (not latest)" >&2; exit 1 ;; esac; \
         url="$(echo "$CUA_CLI_RELEASE_URL" | sed "s/{version}/$CUA_CLI_VERSION/g; s/{arch}/$arch/g")"; \
         echo "fetching $url"; \
-        curl -fsSL --retry 5 -o /tmp/cua-cli.tar.gz "$url"; \
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o /tmp/cua-cli.tar.gz "$url"; \
         if [ -z "$CUA_CLI_SHA256" ] && [ "$CUA_CLI_VERSION" = "$CUA_CLI_DEFAULT_VERSION" ]; then \
           case "$TARGETARCH" in amd64) CUA_CLI_SHA256="$CUA_CLI_DEFAULT_SHA256_AMD64" ;; arm64) CUA_CLI_SHA256="$CUA_CLI_DEFAULT_SHA256_ARM64" ;; esac; \
         fi; \
         if [ -z "$CUA_CLI_SHA256" ]; then \
           sums="https://github.com/trycua/cua/releases/download/cua-sdk-v$CUA_CLI_VERSION/checksums.txt"; \
-          CUA_CLI_SHA256="$(curl -fsSL --retry 5 "$sums" | awk -v f="$(basename "$url")" '$2 == f || $2 == "*" f { print $1 }')"; \
+          CUA_CLI_SHA256="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$sums" | awk -v f="$(basename "$url")" '$2 == f || $2 == "*" f { print $1 }')"; \
           [ -n "$CUA_CLI_SHA256" ] || { echo "no sha256 for $(basename "$url") in $sums" >&2; exit 1; }; \
         fi; \
         echo "$CUA_CLI_SHA256  /tmp/cua-cli.tar.gz" | sha256sum -c -; \
@@ -469,7 +469,7 @@ RUN set -eu; \
       arm64) node_arch=arm64; go_sha="$GO_SHA256_ARM64"; node_sha="$NODE_SHA256_ARM64"; uv_t=aarch64; uv_sha="$UV_SHA256_ARM64"; gh_sha="$GH_SHA256_ARM64"; ru_t=aarch64; ru_sha="$RUSTUP_SHA256_ARM64" ;; \
       *) echo "unsupported arch $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    fetch() { curl -fsSL --retry 5 -o "$1" "$2" && echo "$3  $1" | sha256sum -c -; }; \
+    fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$1" "$2" && echo "$3  $1" | sha256sum -c -; }; \
     cd /tmp; \
     fetch node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" "$node_sha"; \
     mkdir -p /usr/local/lib/nodejs && tar -xJf node.tar.xz -C /usr/local/lib/nodejs --strip-components=1; \

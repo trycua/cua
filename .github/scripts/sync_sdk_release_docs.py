@@ -13,7 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     version = (args.root / "libs/cua/VERSION").read_text().strip()
     paths = [path for folder in ("cua-cli", "cua-sdk")
              for path in (args.root / "docs/content/docs" / folder).rglob("*.mdx")]
-    for path in [*paths, args.root / "scripts/docs-generators/cli-specs/cua.json"]:
+    for path in paths:
         content = path.read_text()
         # The MCP contract has its own version (CONTRACT_VERSION in
         # cua-spaces-contract), which the generated reference prints on a

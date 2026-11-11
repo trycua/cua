@@ -16,10 +16,16 @@ import { Fragment, type ReactNode } from "react";
 
 import { spaceMenu, useBridge, useNotchPins, useSession, useShareSheet, useTeleport, type SpaceMenuInput, type SpaceMenuItem } from "@/bridge";
 import { toastError } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { canPinToNotch, type SpaceItem } from "./model";
-import { MENU_ITEM, MENU_POPUP } from "./spaces-toolbar";
+
+/** A popup menu's look, shared by the Spaces' "⋯" menus. */
+export const MENU_POPUP =
+  "glass min-w-44 origin-(--transform-origin) rounded-lg p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0";
+export const MENU_ITEM =
+  "flex cursor-default items-center gap-2 rounded-lg px-2 py-1 text-[13px] outline-none data-disabled:opacity-40 data-highlighted:bg-brand data-highlighted:text-white";
 
 /**
  * What the core's menu reads for this Space. `pinned`: the notch's pins, when the host can keep
@@ -63,6 +69,7 @@ type MenuEntry = Omit<SpaceMenuItem, "id"> & { id: SpaceMenuItem["id"] | "hide";
 
 /** The menu's items, each with what it does. */
 export function useSpaceMenu(item: SpaceItem, actions: MenuActions): MenuEntry[] {
+  const t = useT();
   const { core } = useBridge();
   const navigate = useNavigate();
   const share = useShareSheet();
@@ -87,7 +94,7 @@ export function useSpaceMenu(item: SpaceItem, actions: MenuActions): MenuEntry[]
       case "leave":
         return actions.remove(item);
       case "pin":
-        return void pins.toggle(item.space.id).catch(toastError(`Couldn't change the notch`));
+        return void pins.toggle(item.space.id).catch(toastError(t("computers.menu.notch_failed")));
       case "hide":
         return actions.hide?.(item);
       case "rename":
@@ -96,7 +103,8 @@ export function useSpaceMenu(item: SpaceItem, actions: MenuActions): MenuEntry[]
   };
   const entries: MenuEntry[] = items.map((i) => ({ ...i, run: () => run(i.id) }));
   // Another machine's desktop leaves the list from here (This Mac's has the hover button).
-  if (item.desktop && actions.hide) entries.push({ id: "hide", label: "Hide", enabled: true, destructive: false, separatorBefore: false, run: () => run("hide") });
+  if (item.desktop && actions.hide)
+    entries.push({ id: "hide", label: t("computers.menu.hide"), enabled: true, destructive: false, separatorBefore: false, run: () => run("hide") });
   return entries;
 }
 
@@ -125,14 +133,15 @@ const MORE_BUTTON =
  * it still shows, disabled, saying why, so every tile has the same controls.
  */
 export function SpaceMoreMenu({ item, actions, className }: { item: SpaceItem; actions: MenuActions; className?: string }) {
+  const t = useT();
   const items = useSpaceMenu(item, actions);
   const { core } = useBridge();
   if (!items.length) {
-    const why = core.status === "loading" ? "Still loading" : "This Space's actions aren't available here";
+    const why = core.status === "loading" ? t("computers.menu.still_loading") : t("computers.menu.unavailable");
     return (
       <button
         type="button"
-        aria-label={`More for ${item.space.name}`}
+        aria-label={t("computers.menu.more_for", { name: item.space.name })}
         aria-disabled
         aria-description={why}
         title={why}
@@ -151,7 +160,7 @@ export function SpaceMoreMenu({ item, actions, className }: { item: SpaceItem; a
   return (
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger
-        aria-label={`More for ${item.space.name}`}
+        aria-label={t("computers.menu.more_for", { name: item.space.name })}
         data-space-more={item.space.id}
         onClick={(e) => e.stopPropagation()}
         className={cn(MORE_BUTTON, className)}
@@ -193,6 +202,7 @@ export function SpaceContextMenu({ item, actions, children }: { item: SpaceItem;
  * shows on hover over the row's chevron. Nothing where the app core can't pin.
  */
 export function MachineRowMenu({ id, name }: { id: string; name: string }) {
+  const t = useT();
   const { core } = useBridge();
   const navigate = useNavigate();
   const pins = useNotchPins();
@@ -200,11 +210,15 @@ export function MachineRowMenu({ id, name }: { id: string; name: string }) {
   const items = spaceMenu(core, { kind: "mine", role: "owner", power: "off", canPin: true, pinned: pins.pinned.has(id) });
   const run = (item: SpaceMenuItem) => {
     if (item.id === "open") void navigate({ to: "/spaces/$spaceId", params: { spaceId: id } });
-    else if (item.id === "pin") void pins.toggle(id).catch(toastError("Couldn't change the notch"));
+    else if (item.id === "pin") void pins.toggle(id).catch(toastError(t("computers.menu.notch_failed")));
   };
   return (
     <MenuPrimitive.Root>
-      <MenuPrimitive.Trigger aria-label={`More for ${name}`} data-space-more={id} className={cn(MORE_BUTTON, "absolute top-1/2 right-[-6px] -translate-y-1/2")}>
+      <MenuPrimitive.Trigger
+        aria-label={t("computers.menu.more_for", { name })}
+        data-space-more={id}
+        className={cn(MORE_BUTTON, "absolute top-1/2 right-2 -translate-y-1/2")}
+      >
         <MoreHorizontalIcon className="size-4" />
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>

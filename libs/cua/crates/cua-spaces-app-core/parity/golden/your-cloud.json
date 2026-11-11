@@ -39,7 +39,7 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: About 3–7 GB",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -85,7 +85,7 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: About 3–7 GB",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -722,7 +722,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -764,7 +764,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -809,7 +809,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -851,7 +851,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -897,7 +897,7 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -943,7 +943,7 @@
           "Runtime: Container on 2 CPU, 4 GiB",
           "Cost: About $0.10/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -989,7 +989,7 @@
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
           "Disk: About 3–7 GB",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [

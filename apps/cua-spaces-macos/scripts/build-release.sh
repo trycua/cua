@@ -197,6 +197,8 @@ for f in cua-driver cua-cursor-theme; do
 done
 [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
   { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
+[ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.driver.plist" ] ||
+  { echo "$app has no com.trycua.spaces.driver.plist (Cua Driver's login item)" >&2; exit 1; }
 # The symbols build-app.sh took out of the binaries, for symbolicating crash
 # reports (the release workflow keeps it as an artifact; not shipped).
 if [ -d "$out/dSYMs" ]; then

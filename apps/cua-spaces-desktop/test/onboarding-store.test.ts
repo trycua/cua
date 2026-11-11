@@ -65,9 +65,10 @@ describe("the first run's state", () => {
     s.finish("client");
     expect(s.read()).toEqual({ completed: true, mode: "client" });
     // The file it removes is the one the app core's reset plan names.
-    const plan = JSON.parse(
-      readFileSync(path.join(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/contracts/onboarding-reset.json"), "utf8"),
-    ) as { hostFiles: string[]; firstStep: string };
+    const plan = JSON.parse(readFileSync(path.join(__dirname, "../../../libs/cua/crates/cua-spaces-app-core/contracts/onboarding-reset.json"), "utf8")) as {
+      hostFiles: string[];
+      firstStep: string;
+    };
     expect(plan.hostFiles).toEqual([path.basename(s.file)]);
     expect(plan.firstStep).toBe("welcome");
   });

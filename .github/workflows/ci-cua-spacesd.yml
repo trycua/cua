@@ -32,7 +32,9 @@ on:
       - ".github/workflows/ci-cua-spacesd.yml"
       - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_graph.py"
       - ".github/scripts/ci_reuse_pr_result.py"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -60,6 +62,7 @@ on:
       - ".github/workflows/ci-cua-spacesd.yml"
       - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_graph.py"
       - ".github/scripts/ci_reuse_pr_result.py"
   workflow_dispatch:
 
@@ -90,12 +93,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   changes:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: "cua-spacesd / changes"
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -109,10 +112,16 @@ jobs:
       matrix: ${{ steps.scope.outputs.matrix }}
       reused: ${{ steps.reuse.outputs.reused || '[]' }}
       legs_test: ${{ steps.legs_test.outputs.legs || steps.scope.outputs.matrix }}
+      relay_run: ${{ steps.relay_scope.outputs.run || 'true' }}
+      legs_relay: ${{ steps.legs_relay.outputs.legs || '["core","hosted","teleport","tunnel"]' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          sparse-checkout: .github/scripts
+          # The manifests too: ci_graph.py reads every Cargo.toml for the relay e2e scope.
+          sparse-checkout: |
+            /.github/scripts/
+            Cargo.toml
+          sparse-checkout-cone-mode: false
       # CUA-1910: pull requests run only the OS lanes the changed paths can
       # reach (explicit dependency map in ci_component_scope.py). Pushes,
       # manual runs and release PRs run everything.
@@ -130,6 +139,24 @@ jobs:
             files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
           fi
           python3 .github/scripts/ci_component_scope.py spacesd <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+      # CUA-3558: `relay e2e (docker)` starts only when a changed file is inside the dependency
+      # closure of the relay, spacesd server, socks and teleport packages (package graph from the
+      # manifests, ci_graph.py), not for every change the path filter above lets through.
+      # Fails closed: pushes, release PRs, shared inputs and unknown files run it.
+      - id: relay_scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          files=""
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | (.filename, (.previous_filename // empty))')
+          fi
+          python3 .github/scripts/ci_component_scope.py relay-e2e <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
       # Reuse results by tree: a squash-merge push whose exact tree a green pull
       # request run of this workflow already tested skips the lanes that run
       # did. Lanes the pull request never ran (other OSes) still run. Any doubt
@@ -152,11 +179,18 @@ jobs:
           REUSED: ${{ steps.reuse.outputs.reused }}
           LEGS: ${{ steps.scope.outputs.matrix }}
         run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "fmt, clippy, test ({os})" --output legs
+      - id: legs_relay
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          REUSED: ${{ steps.reuse.outputs.reused }}
+          LEGS: '["core","hosted","teleport","tunnel"]'
+        run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "relay e2e (docker) ({os})" --output legs
 
   test:
     name: fmt, clippy, test (${{ matrix.os }})
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]')) && needs.quick.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -188,14 +222,10 @@ jobs:
           workspaces: "libs/cua-spacesd -> target"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        working-directory: .
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config perl libx11-dev libxkbcommon-dev \
-            libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev \
-            libxfixes-dev libxdamage-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev
       - name: Format
         run: cargo fmt --all --check
       - uses: ./.github/actions/nextest
@@ -277,7 +307,7 @@ jobs:
     # Not shipped yet (renames fail in the Windows NFS client): run on
     # demand while the Windows mount is finished.
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name == 'workflow_dispatch')) && needs.quick.outputs.skip != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -329,13 +359,21 @@ jobs:
           if ($left) { $left; throw "a Cua Volume mount is still there" }
           "no Cua Volume mount left"
 
-  # Reverse tunnel end to end: spacesd on an internal Docker network with
-  # no published ports, reached through cua-relay (conformance suite,
-  # 1 GiB transfers, relay killed mid-stream).
+  # The Docker lanes of the spacesd server core, one parallel job per shard (CUA-3558): the unit,
+  # conformance and in-process relay suites (core), the hosted relay build (hosted), the
+  # cua-spacesd binary and SDK-sender -> driver teleport e2e (teleport), and the reverse tunnel end
+  # to end (tunnel): spacesd on an internal Docker network with no published ports, reached
+  # through cua-relay (conformance suite, 1 GiB transfers, relay killed mid-stream).
+  # The test shards run under nextest with one retry; they used to run plain `cargo test`, the one
+  # Linux lane without a retry, and failed about one run in three on timing tests.
   relay-e2e:
-    name: relay e2e (docker)
-    needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)')) }}
+    name: relay e2e (docker) (${{ matrix.shard }})
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.relay_run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && needs.changes.outputs.legs_relay != '[]' && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)'))) && needs.quick.outputs.skip != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.legs_relay) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults:
@@ -351,17 +389,28 @@ jobs:
           # top of the debug builds: the default cleanup left it out of disk
           # (ENOSPC in large_transfers_via_chunks_and_signed_urls).
           free-more: "true"
-      - name: Linux core lane (unit, conformance, in-process relay, teleport e2e)
-        run: scripts/ci/linux-core-tests.sh
+      - name: Linux core shard (${{ matrix.shard }})
+        if: matrix.shard != 'tunnel'
+        env:
+          CUA_ENV_JUNIT_DIR: ${{ runner.temp }}/cua-core-junit
+        run: >-
+          "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "spacesd-relay-${{ matrix.shard }}" --format junit
+          --results "$CUA_ENV_JUNIT_DIR/*.xml" --
+          scripts/ci/linux-core-tests.sh "${{ matrix.shard }}"
+      - uses: ./.github/actions/flaky-upload
+        if: always() && matrix.shard != 'tunnel'
+        with:
+          suite: spacesd-relay-${{ matrix.shard }}
       - name: Relay lane
+        if: matrix.shard == 'tunnel'
         run: scripts/ci/relay-e2e.sh
 
   # Always-run aggregator: skipped lanes pass, so this is the one check to
   # require if branch protection ever needs one.
   result:
     name: "cua-spacesd / result"
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (always()) }}
-    needs: [changes, test, relay-e2e]
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (always()) && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, changes, test, relay-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

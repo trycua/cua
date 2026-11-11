@@ -67,9 +67,7 @@ async function pickSurface(): Promise<React.ReactElement> {
   if (hasTauri()) {
     // Only the portal reaches this point; kick off a background auto-update
     // check so long-lived installs pick up new releases without user action.
-    void import("./native/updater").then(({ checkForUpdateSilently }) =>
-      checkForUpdateSilently(),
-    );
+    void import("./native/updater").then(({ checkForUpdateSilently }) => checkForUpdateSilently());
   }
   return <App bridge={createBridge()} />;
 }
@@ -80,7 +78,5 @@ reportUiLocale();
 void initCore()
   .then(pickSurface)
   .then((surface) => {
-  ReactDOM.createRoot(document.getElementById("root")!).render(
-    <React.StrictMode>{surface}</React.StrictMode>,
-  );
-});
+    ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode>{surface}</React.StrictMode>);
+  });

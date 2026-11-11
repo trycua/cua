@@ -72,7 +72,7 @@ describe("the Space page header", () => {
     await waitFor(() => expect(q("[data-call-header] [data-header-power]")).not.toBeNull(), { timeout: 4000 });
     const head = q("[data-call-header]")!;
     // "‹ Spaces" is on a row of its own, above the title's row.
-    const back = within(head).getByRole("link", { name: /Spaces/ });
+    const back = within(head).getByRole("link", { name: /Computers/ });
     expect(back.closest("div")!.contains(head.querySelector("[data-detail-title]"))).toBe(false);
     const power = within(head).getByRole("button", { name: "Turn off" });
     expect(power.dataset.headerPower).toBe("on");
@@ -153,11 +153,16 @@ function srgb(value: string, t: Record<string, string>): number[] {
   const m = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(value);
   if (!m) throw new Error(`not oklch: ${value}`);
   const [L, C, h] = [Number(m[1]), Number(m[2]), (Number(m[3]) * Math.PI) / 180];
-  const a = C * Math.cos(h), b = C * Math.sin(h);
+  const a = C * Math.cos(h),
+    b = C * Math.sin(h);
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
   const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
   const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  return [4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s].map((x) => Math.min(1, Math.max(0, x)));
+  return [
+    4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s,
+  ].map((x) => Math.min(1, Math.max(0, x)));
 }
 const luminance = ([r, g, b]: number[]) => 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
 const contrast = (x: number[], y: number[]) => {

@@ -51,7 +51,7 @@ core's crate docs.
 
 ```sh
 # The cua SDK library (release) for the Swift package:
-cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift
+cd libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=swift
 cd ../../apps/cua-spaces-macos
 swift build                      # the package
 scripts/test.sh                  # unit, parity and snapshot tests (swift-testing)
@@ -122,9 +122,7 @@ Started, ⌘⇧Space and the app's notifications (a Space that came up: its page
 a machine asking to be added: Machines; an agent: Agents). A Space's
 desktop opens in its own native window (video stays native).
 
-There is no native main window and no switch back: the "Use classic UI"
-setting is gone. An install that had it on (`AppSettings.new_ui` false) opens
-the web UI like every other one (`settings::resolve_new_ui` is always on).
+There is no native main window and no switch back.
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
   or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at
@@ -326,14 +324,31 @@ the released app on your production account, your build on staging, both
 signed in and both hosting this Mac.
 
 ```sh
-scripts/install-local.sh                 # debug build, then opens the app
+scripts/install-local.sh                 # fast build (Rust dev-fast, Swift debug), then opens the app
 scripts/install-local.sh --release       # release configuration
+scripts/install-local.sh --development   # fast dev loop: Rust `dev-fast` profile + Swift debug (dev hooks, CUA_WEBUI_DEV=1)
 scripts/install-local.sh --no-launch     # install without opening it
 scripts/install-local.sh --with-lume-local   # also install lume-local
 scripts/install-local.sh --prefix DIR    # app in DIR/Applications, cua-local in DIR/.local/bin
 scripts/install-local.sh --skip-web-build    # use the web UI already built in apps/cua-spaces-web/dist
 scripts/install-local.sh --setup-signing # do the one-time signing setup on a new Keychain without asking
 ```
+
+Which build to use:
+
+- **Default**: Rust with the `dev-fast` Cargo profile (defined in `libs/cua`
+  and `libs/cua-spacesd`: `opt-level = 1`, incremental, no LTO, output in
+  `target/dev-fast`) and Swift debug. The dev hooks work, and a one-file Rust
+  change rebuilds in seconds.
+- **`--development`**: the same Rust and Swift builds, set up for live reload of
+  the web UI. Run the web
+  dev server (`pnpm dev` in `apps/cua-spaces-web`) and launch the app with
+  `CUA_WEBUI_DEV=1`. Do not hand these builds to anyone.
+- **`--release`**: everything fully optimised, no dev hooks. Use it to check
+  what ships (performance, the release bundle checks). Release-grade builds are
+  opt-in; nothing else asks for them. `--rust-profile release|dev-fast` picks the
+  Rust profile whatever the other flags say, and `--build-only` builds, signs
+  and checks the app without installing it (for timing a build).
 
 It first checks what the build needs and lists everything that is missing in
 one message, with what to run: the Xcode command line tools, `cmake`, Rust
@@ -388,6 +403,18 @@ certificate that Cua Driver's local install uses
 the app is signed ad hoc and macOS asks for Screen Recording and Accessibility
 again after every rebuild; the script says so, and clears the stale rows for the
 Local bundle id only. `--require-stable-signing` stops instead of signing ad hoc.
+
+The certificate lives in a Keychain the script owns,
+`~/Library/Keychains/cua-spaces-local-signing.keychain-db`, with an empty password
+(it only signs development builds of Cua Spaces Local on this Mac), so a locked
+login Keychain, SSH or a VM does not stop it and nothing is asked to unlock it. The
+script writes nothing to your login Keychain and leaves the search list alone; it
+keeps using a stable local certificate that is already in the login Keychain, or the
+`cua-driver-signing` Keychain of Cua Driver's local install, so permissions already
+granted survive. `CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0` turns the owned Keychain off. When
+nothing works the app is signed ad hoc and the script says why in one line, with the
+command to run (`--setup-signing` for the one-time trust prompt, or
+`security unlock-keychain ...` when an SSH session left the Keychain locked).
 
 On a new Keychain the certificate is created but codesign cannot use it until
 macOS trusts it for code signing, its Keychain is in your search list and
@@ -526,7 +553,12 @@ update found by a scheduled check downloads and extracts at once; Sparkle's
 ready-to-install reply is then held, and nothing restarts the app until the
 page calls `update.install` ("Restart to update"). With "check for and
 download updates automatically" on (the default), Sparkle's silent path reaches the same state through
-`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`, which returns false so Sparkle also installs the downloaded update when the app quits. The page
+`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`, which returns false so Sparkle also installs the downloaded update when the app quits. "Restart to update" resumes that update through a check
+(`UpdateUserDriver.installNow`); builds 0.20.0 to 0.22.0 lacked that resume and the button did nothing (quitting still installed the update; a user on one of them
+quits and reopens Cua Spaces). If the app is still running 6 seconds after the click, it quits itself so Sparkle's installer applies the staged update, and if
+it still runs 6 seconds later the state is an error telling the user to quit from the menu bar and reopen. `scripts/test-update-restart.sh` is the upgrade test: it
+installs the previous release, offers it the new build through a local appcast signed with a throwaway key, presses "Restart to update" and checks the new
+version runs (`--legacy` for a release with the dead button); the release workflow runs it in verify-release. The page
 reads the state with `update.get` (`{status, currentVersion, version,
 percent, notesUrl, message}`; status is `idle`, `checking`, `available`,
 `downloading`, `downloaded` or `error`) and refetches on the `update.changed`
@@ -538,8 +570,17 @@ the menu bar icon's up-arrow badge and Settings read the one `UpdatesModel`
 install" or "Restart to update" under it. Usage telemetry records `found`,
 `not_found`, `downloaded`, `installed` and `failed`.
 
-Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to
-"Update to: Beta" (`AppSettings.updateChannel`) are offered.
+Channels (Settings, Advanced, Updates; `AppSettings.updateChannel`): Stable
+reads `SUFeedURL`, the appcast on the rolling `cua-spaces-latest` release.
+Nightly reads the nightly appcast on the rolling `cua-spaces-nightly` release
+(`feedURLString(for:)`, built by `nightly-cua-spaces.yml` from main every
+night) and installs only its `nightly` items. There are no betas any more:
+the settings file still stores Nightly as `beta`, so a release from before
+Nightly reads the file instead of starting over, and every build reads `beta`
+as Nightly. A prerelease's first launch starts on Nightly. Back on Stable, a
+nightly build stays until the next stable release passes it; Settings offers
+"Download Stable" to go back now. About shows a nightly's build day
+("Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026").
 
 After an update, the first launch (the settings file's `lastSeenVersion`
 changed) runs the bundled `cua agents update` (skill folders and MCP entries

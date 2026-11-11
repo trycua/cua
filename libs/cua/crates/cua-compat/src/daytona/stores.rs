@@ -71,7 +71,7 @@ pub struct SecretEntry {
 }
 
 /// A Daytona warm pool and the Cua pool that serves it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WarmPoolEntry {
     pub id: String,
     pub key_id: String,
@@ -93,6 +93,32 @@ pub struct WarmPoolEntry {
     pub error_reason: Option<String>,
     pub created_ms: u64,
     pub updated_ms: u64,
+}
+
+impl std::fmt::Debug for WarmPoolEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WarmPoolEntry")
+            .field("id", &self.id)
+            .field("key_id", &self.key_id)
+            .field("identity_daemon", &self.identity_daemon)
+            .field(
+                "identity_token",
+                &self.identity_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("cua_pool", &self.cua_pool)
+            .field("snapshot", &self.snapshot)
+            .field("snapshot_id", &self.snapshot_id)
+            .field("target", &self.target)
+            .field("pool", &self.pool)
+            .field("cpu", &self.cpu)
+            .field("mem", &self.mem)
+            .field("disk", &self.disk)
+            .field("os_user", &self.os_user)
+            .field("error_reason", &self.error_reason)
+            .field("created_ms", &self.created_ms)
+            .field("updated_ms", &self.updated_ms)
+            .finish()
+    }
 }
 
 impl WarmPoolEntry {

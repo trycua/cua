@@ -78,7 +78,9 @@ export function MenuSelect({ value, items, onValueChange, disabled, className, d
                     <SelectPrimitive.ItemIndicator className="col-start-1">
                       <CheckIcon className="size-3.5" />
                     </SelectPrimitive.ItemIndicator>
-                    <SelectPrimitive.ItemText className="col-start-2" data-item-label="">{item.label}</SelectPrimitive.ItemText>
+                    <SelectPrimitive.ItemText className="col-start-2" data-item-label="">
+                      {item.label}
+                    </SelectPrimitive.ItemText>
                   </SelectPrimitive.Item>
                 </Fragment>
               ))}

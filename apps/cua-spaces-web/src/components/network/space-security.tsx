@@ -31,9 +31,7 @@ export function ExitDownNotice({ spaceId }: { spaceId: string }) {
   return (
     <div role="status" data-network-exit-down-more="" className="mb-6 flex items-center gap-2.5 rounded-lg bg-warning/10 py-2 pr-1.5 pl-3 text-[13px]">
       <ShieldAlertIcon className="size-4 shrink-0 text-warning" />
-      <span className="min-w-0 flex-1">
-        {exitLabel(s.network.via, s.topology?.members)} isn't reachable, so this Space has no internet until it's back.
-      </span>
+      <span className="min-w-0 flex-1">{exitLabel(s.network.via, s.topology?.members)} isn't reachable, so this Space has no internet until it's back.</span>
       <Button size="sm" variant="ghost" onClick={() => openNetworkSheet(spaceId)}>
         Change exit
       </Button>
@@ -73,17 +71,19 @@ export function NetworkRow({ spaceId }: { spaceId: string }) {
 function NetworkButton({ spaceId, summary }: { spaceId: string; summary: string }) {
   return (
     <button
-        type="button"
-        data-network-row=""
-        onClick={() => openNetworkSheet(spaceId)}
-        className="flex h-8 w-full cursor-default items-center justify-between gap-3 rounded-lg px-2 text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
-      >
-        <span className="shrink-0 text-muted-foreground">Network</span>
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate">{summary}</span>
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      type="button"
+      data-network-row=""
+      onClick={() => openNetworkSheet(spaceId)}
+      className="flex h-8 w-full cursor-default items-center justify-between gap-3 rounded-lg px-2 text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
+    >
+      <span className="shrink-0 text-muted-foreground">Network</span>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate" title={summary}>
+          {summary}
         </span>
-      </button>
+        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+      </span>
+    </button>
   );
 }
 
@@ -108,7 +108,9 @@ export function SecurityRows({ spaceId, className }: { spaceId: string; classNam
       >
         <span className="shrink-0 text-muted-foreground">Network</span>
         <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate">{networkSummary(s.network)}</span>
+          <span className="truncate" title={networkSummary(s.network)}>
+            {networkSummary(s.network)}
+          </span>
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
         </span>
       </button>
@@ -196,9 +198,7 @@ export function NetworkNotice({ spaceId }: { spaceId: string }) {
   return (
     <div role="status" data-network-notice="" className="mx-5 mb-1 flex items-center gap-2.5 rounded-lg bg-muted py-1.5 pr-1.5 pl-3 text-[13px]">
       <ShieldIcon className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate">
-        This Space now reaches the internet only. It can't reach this computer or your local network.
-      </span>
+      <span className="min-w-0 flex-1 truncate">This Space now reaches the internet only. It can't reach this computer or your local network.</span>
       <Button
         size="sm"
         variant="ghost"
@@ -242,11 +242,21 @@ export function ClipboardPrompt({ spaceId, spaceName }: { spaceId: string; space
   const answer = () => store.answerClipboard(spaceId);
   return (
     <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-4">
-      {/* design-ok: a popover floating over the stream, as the app's menus */}
-      <div role="dialog" aria-label="Clipboard" data-clipboard-prompt="" className="glass pointer-events-auto flex items-center gap-3 rounded-lg border py-1.5 pr-1.5 pl-3.5 text-[13px] shadow-float">
+      <div
+        role="dialog"
+        aria-label="Clipboard"
+        data-clipboard-prompt=""
+        // design-ok: a popover floating over the stream, as the app's menus
+        className="glass pointer-events-auto flex items-center gap-3 rounded-lg border py-1.5 pr-1.5 pl-3.5 text-[13px] shadow-float"
+      >
         <span className="min-w-0">
           {spaceName} copied text. Paste it on your computer?
-          <button type="button" data-clipboard-always="" onClick={answer} className="ml-2 cursor-default text-xs text-brand-strong outline-none hover:underline">
+          <button
+            type="button"
+            data-clipboard-always=""
+            onClick={answer}
+            className="ml-2 cursor-default text-xs text-brand-strong outline-none hover:underline"
+          >
             Always while I'm viewing
           </button>
         </span>

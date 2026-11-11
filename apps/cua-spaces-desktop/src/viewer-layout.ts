@@ -68,7 +68,11 @@ export function initialViewerBounds(o: { saved: ViewerPlace | null; work: Rect; 
  * stream's shape under the toolbar; narrower when that would be taller than
  * most of the work area. Never under the minimum.
  */
-export function fitViewerToStream(content: { width: number; height: number }, stream: { width: number; height: number }, work: Rect): { width: number; height: number } {
+export function fitViewerToStream(
+  content: { width: number; height: number },
+  stream: { width: number; height: number },
+  work: Rect,
+): { width: number; height: number } {
   if (stream.width <= 0 || stream.height <= 0) return content;
   const aspect = stream.width / stream.height;
   let width = content.width;

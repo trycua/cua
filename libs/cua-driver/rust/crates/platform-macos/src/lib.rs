@@ -37,6 +37,8 @@ pub mod document_edit;
 #[cfg(target_os = "macos")]
 pub mod fast_path_guard;
 #[cfg(target_os = "macos")]
+pub mod focus_arbiter;
+#[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
 pub mod focus_steal;
@@ -58,6 +60,8 @@ pub mod pointer_shape;
 pub mod pointer_shape_map;
 #[cfg(target_os = "macos")]
 pub mod recording_hooks;
+#[cfg(target_os = "macos")]
+pub mod security_prompt;
 #[cfg(target_os = "macos")]
 pub mod session;
 #[cfg(all(test, target_os = "macos"))]

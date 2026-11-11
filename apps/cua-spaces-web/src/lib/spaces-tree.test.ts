@@ -5,13 +5,33 @@ import { describe, expect, it } from "vitest";
 
 import { resolveDefaultSpace, type Machine, type Space } from "@/bridge";
 
-import { currentTreeWhere, fallbackSentence, newSpaceTargets, treeDefault } from "./default-where";
-import { buildSpacesTree, defaultCandidates, findNode, foldOffline, treeRows, treeSummary } from "./spaces-tree";
+import { buildSpacesTree, descendants, findNode, foldOffline, treeRows, treeSummary } from "./spaces-tree";
 
 const NOW = Date.parse("2026-11-04T12:00:00Z");
 
-const machine = (over: Partial<Machine>): Machine => ({ id: "m", name: "M", os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over });
-const space = (over: Partial<Space>): Space => ({ id: "s", name: "s", os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "blank", provider: "relay", ...over });
+const machine = (over: Partial<Machine>): Machine => ({
+  id: "m",
+  name: "M",
+  os: "macos",
+  via: "relay",
+  connection: "relay",
+  online: true,
+  current: false,
+  spaceIds: [],
+  limits: [],
+  ...over,
+});
+const space = (over: Partial<Space>): Space => ({
+  id: "s",
+  name: "s",
+  os: "linux",
+  status: "running",
+  detail: "",
+  lastUsedAt: 0,
+  scene: "blank",
+  provider: "relay",
+  ...over,
+});
 
 const THIS_MAC = machine({ id: "this-mac", name: "Francesco's MacBook", current: true, via: "local", relayId: "mac-here" });
 const STUDIO = machine({ id: "studio", name: "Studio Mac mini", lastSeen: Math.floor((NOW - 20 * 60_000) / 1000) });
@@ -51,12 +71,14 @@ describe("buildSpacesTree", () => {
   it("counts computers, Spaces, online rows and running tasks (a computer adds up its Spaces')", () => {
     const t = tree();
     expect([t.computers, t.spaces, t.online]).toEqual([3, 4, 6]);
-    expect(treeSummary(t)).toBe("3 computers and 4 Spaces made on them. 7 in all, 6 online.");
+    expect(t.spacesRunning).toBe(3);
+    expect(treeSummary(t)).toBe("3 computers and 3 Spaces running");
     expect(t.roots.map((r) => r.tasks)).toEqual(["1 running", "2 running", "1 running"]);
+    // No tasks: an empty cell, not "None".
     expect(t.roots[1]!.children.map((c) => [c.status, c.tasks])).toEqual([
       ["Online", "1 running"],
       ["Online", "1 running"],
-      ["Stopped", "None"],
+      ["Stopped", ""],
     ]);
   });
 
@@ -64,7 +86,11 @@ describe("buildSpacesTree", () => {
     expect(tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] }).defaultKey).toBe("relay:dillon");
     const allOff = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, { ...DILLON, online: false }] });
     expect(allOff.defaultKey).toBe("relay:mac-here");
-    expect(treeRows(allOff).filter((n) => n.isDefault).map((n) => n.name)).toEqual(["This Mac"]);
+    expect(
+      treeRows(allOff)
+        .filter((n) => n.isDefault)
+        .map((n) => n.name),
+    ).toEqual(["This Mac"]);
   });
 
   it("marks the first online computer that isn't this Mac Default while none is set, and the setting once it is", () => {
@@ -72,7 +98,11 @@ describe("buildSpacesTree", () => {
     expect(tree().roots[1]!.status).toBe("Online, Default");
     const set = tree({ defaultSpace: "relay:dillon" });
     expect(set.defaultKey).toBe("relay:dillon");
-    expect(treeRows(set).filter((n) => n.isDefault).map((n) => n.name)).toEqual(["Dillon's PC"]);
+    expect(
+      treeRows(set)
+        .filter((n) => n.isDefault)
+        .map((n) => n.name),
+    ).toEqual(["Dillon's PC"]);
     // A default that's no longer listed: the first other computer again.
     expect(tree({ defaultSpace: "relay:gone" }).defaultKey).toBe("relay:studio");
   });
@@ -81,30 +111,46 @@ describe("buildSpacesTree", () => {
     const t = tree({ defaultSpace: "relay:studio", relayOnline: new Map([["relay:studio", false]]) });
     expect(t.roots[1]!.online).toBe(false);
     expect(t.roots[1]!.status).toBe("Offline, seen 20 minutes ago, Default");
-    expect(t.roots[1]!.children.every((c) => c.status === "Waits for Studio Mac mini")).toBe(true);
+    expect(t.roots[1]!.children.every((c) => c.status === "Offline")).toBe(true);
     // Unset: the relay's offline computer isn't the default either.
     expect(tree({ relayOnline: new Map([["relay:studio", false]]) }).defaultKey).toBe("relay:dillon");
     // The relay only ever turns a computer offline here, never online.
     expect(tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], relayOnline: new Map([["relay:studio", true]]) }).roots[1]!.online).toBe(false);
   });
 
-  it("greys out the Spaces of an offline computer: they wait for it and their tasks are paused", () => {
+  it("greys out the Spaces of an offline computer: each just reads Offline, and the page line says nothing about it", () => {
     // Set as the default, it stays marked Default while offline (the fallback line says where tasks go instead).
     const t = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], defaultSpace: "relay:studio" });
     const studio = t.roots[1]!;
     expect(studio.status).toBe("Offline, seen 20 minutes ago, Default");
     expect(studio.tasks).toBe("Paused");
     expect(studio.children.map((c) => [c.status, c.tasks, c.dim, c.online])).toEqual([
-      ["Waits for Studio Mac mini", "Paused", true, false],
-      ["Waits for Studio Mac mini", "Paused", true, false],
-      ["Waits for Studio Mac mini", "None", true, false],
+      ["Offline", "Paused", true, false],
+      ["Offline", "Paused", true, false],
+      ["Offline", "", true, false],
     ]);
-    expect(t.offlineParent?.key).toBe("relay:studio");
-    expect(treeSummary(t)).toBe("Studio Mac mini is offline, so the 3 Spaces on it are too. They come back when it does.");
+    expect(treeSummary(t)).not.toMatch(/Studio|offline/i);
   });
 
   it("lists a Space whose computer isn't one of yours as a top row of its own", () => {
-    const shared = space({ id: "relay:space-sam-qa", name: "Sam's QA", hostName: "Sam's Mac", access: { kind: "withMe", role: "editor", ownerName: "Sam", place: "Sam's Mac", people: [], canPower: false, canTeleport: false, canShare: false, canRename: false, canDelete: false, canLeave: true } });
+    const shared = space({
+      id: "relay:space-sam-qa",
+      name: "Sam's QA",
+      hostName: "Sam's Mac",
+      access: {
+        kind: "withMe",
+        role: "editor",
+        ownerName: "Sam",
+        place: "Sam's Mac",
+        people: [],
+        canPower: false,
+        canTeleport: false,
+        canShare: false,
+        canRename: false,
+        canDelete: false,
+        canLeave: true,
+      },
+    });
     const t = tree({ spaces: [...SPACES, shared] });
     expect(t.roots.map((r) => r.name)).toEqual(["This Mac", "Studio Mac mini", "Dillon's PC", "Sam's QA"]);
     const orphan = t.roots[3]!;
@@ -119,13 +165,90 @@ describe("buildSpacesTree", () => {
     expect([empty.computers, empty.spaces]).toEqual([0, 0]);
 
     const single = buildSpacesTree({ spaces: [SPACES[0]!], machines: [THIS_MAC], defaultSpace: null, me: "f@trycua.com", now: NOW });
-    expect(single.roots.map((r) => [r.name, r.status, r.tasks, r.people])).toEqual([["This Mac", "Online, Default", "None", ["f@trycua.com"]]]);
-    expect(treeSummary(single)).toBe("1 computer. New tasks run on This Mac until you add another.");
+    expect(single.roots.map((r) => [r.name, r.status, r.tasks, r.people])).toEqual([["This Mac", "Online, Default", "", ["f@trycua.com"]]]);
+    expect(treeSummary(single)).toBe("1 computer");
   });
 
   it("leaves devices that are only signed in out of the tree", () => {
     const t = tree({ machines: [THIS_MAC, STUDIO, DILLON, machine({ id: "phone", name: "iPhone", device: true })] });
     expect(t.roots.map((r) => r.name)).not.toContain("iPhone");
+  });
+});
+
+describe("child Spaces in the tree", () => {
+  const BUILD = "relay:studio/build-box";
+  const KID_A = space({ id: "relay:studio/build-box-a", name: "Build A", host: "studio", hostName: "Studio Mac mini" });
+  const KID_B = space({ id: "relay:studio/build-box-b", name: "Build B", host: "studio", hostName: "Studio Mac mini" });
+  const GRAND = space({ id: "relay:studio/build-box-a-1", name: "Build A1", host: "studio", hostName: "Studio Mac mini" });
+  const withKids = (over: Partial<Parameters<typeof buildSpacesTree>[0]> = {}) =>
+    tree({
+      spaces: [...SPACES, KID_A, KID_B, GRAND],
+      parents: new Map([
+        [KID_A.id, BUILD],
+        [KID_B.id, BUILD],
+        [GRAND.id, KID_A.id],
+      ]),
+      ...over,
+    });
+
+  it("nests a child Space under the Space that made it, and its own children under it, not on the computer", () => {
+    const t = withKids();
+    const studio = t.roots[1]!;
+    // The computer lists only the Spaces no other Space made.
+    expect(studio.children.map((c) => c.name)).toEqual(["Safari check", "Build box", "Release runner"]);
+    const build = studio.children[1]!;
+    expect(build.children.map((c) => [c.name, c.parentKey, c.depth])).toEqual([
+      ["Build A", BUILD, 2],
+      ["Build B", BUILD, 2],
+    ]);
+    expect(build.children[0]!.children.map((c) => [c.name, c.parentKey, c.depth])).toEqual([["Build A1", KID_A.id, 3]]);
+    expect(studio.children.map((c) => c.depth)).toEqual([1, 1, 1]);
+    expect(descendants(studio).map((c) => c.name)).toEqual(["Safari check", "Build box", "Build A", "Build A1", "Build B", "Release runner"]);
+    expect(treeRows(t).map((n) => n.name)).toContain("Build A1");
+    expect(findNode(t, GRAND.id)?.parentKey).toBe(KID_A.id);
+  });
+
+  it("lists the children of a Space by name, whatever order the list came in", () => {
+    const t = withKids({ spaces: [...SPACES, KID_B, GRAND, KID_A] });
+    const build = t.roots[1]!.children[1]!;
+    expect(build.children.map((c) => c.name)).toEqual(["Build A", "Build B"]);
+  });
+
+  it("counts every child in the Spaces total and adds its tasks to its parents' and its computer's", () => {
+    const base = tree();
+    const t = withKids({ running: new Map([...RUNNING, [KID_A.id, 1], [GRAND.id, 2]]) });
+    expect(t.spaces).toBe(base.spaces + 3);
+    const studio = t.roots[1]!;
+    const build = studio.children[1]!;
+    expect([build.running, build.children[0]!.running, build.children[0]!.children[0]!.running]).toEqual([4, 3, 2]);
+    expect([studio.tasks, build.tasks]).toEqual(["5 running", "4 running"]);
+  });
+
+  it("reads Offline with its computer, not Stopped with its parent, when the parent is stopped", () => {
+    const stoppedParent = SPACES.map((s) => (s.id === BUILD ? { ...s, power: { control: "stop" as const, off: true } } : s));
+    const t = withKids({ spaces: [...stoppedParent, KID_A, KID_B, GRAND] });
+    const kid = t.roots[1]!.children[1]!.children[0]!;
+    expect(kid.status).toBe("Online");
+    const off = withKids({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] });
+    expect(off.roots[1]!.children[1]!.children[0]!.status).toBe("Offline");
+    expect(treeSummary(off)).not.toMatch(/Studio|offline/i);
+  });
+
+  it("leaves a child on its computer when its parent isn't listed, and ignores a loop", () => {
+    const lost = tree({ spaces: [...SPACES, KID_A], parents: new Map([[KID_A.id, "local:gone"]]) });
+    expect(lost.roots[1]!.children.map((c) => c.name)).toContain("Build A");
+    const loop = tree({
+      spaces: [...SPACES, KID_A, KID_B],
+      parents: new Map([
+        [KID_A.id, KID_B.id],
+        [KID_B.id, KID_A.id],
+      ]),
+    });
+    expect(loop.roots[1]!.children.map((c) => c.name)).toEqual(["Safari check", "Build box", "Release runner", "Build A", "Build B"]);
+  });
+
+  it("is the same tree as before when no Space has a parent", () => {
+    expect(withKids({ spaces: SPACES, parents: new Map() })).toEqual(tree());
   });
 });
 
@@ -150,173 +273,84 @@ describe("foldOffline", () => {
   });
 });
 
-describe("treeDefault", () => {
-  const settings = (defaultSpace: string | null, fallback: string[] = [], fallbackOn = true) => ({ defaultSpace, fallback, fallbackOn, updatedAt: 0 });
-
-  it("runs on the default while it's online, with no line under the box", () => {
-    const t = tree({ defaultSpace: "relay:studio" });
-    const d = treeDefault(t, settings("relay:studio"), null);
-    expect(d.where).toEqual({ kind: "space", space: SPACES[2] });
-    expect(d.fallback).toBeNull();
-  });
-
-  it("goes to the next online computer when the default is offline, and says why", () => {
-    const t = tree({ defaultSpace: "relay:studio", machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] });
-    const d = treeDefault(t, settings("relay:studio"), null);
-    expect(d.where).toEqual({ kind: "space", space: SPACES[6] });
-    expect(d.fallback?.line).toBe("Studio Mac mini, your default, is offline. This runs on Dillon's PC, the next computer that can take it. If none can, it runs on This Mac.");
-    expect(d.fallback?.steps.map((s) => [s.name, s.note])).toEqual([
-      ["Studio Mac mini", "Your default. Offline now"],
-      ["Dillon's PC", "Next online computer. Used now"],
-      ["This Mac", "Last resort"],
-    ]);
-  });
-
-  it("runs on This Mac when nothing else is online, and never makes a new computer", () => {
-    const t = tree({ defaultSpace: "relay:studio", machines: [THIS_MAC, { ...STUDIO, online: false }, { ...DILLON, online: false }] });
-    const d = treeDefault(t, settings("relay:studio"), null);
-    expect(d.where).toEqual({ kind: "this-mac" });
-    expect(d.fallback?.line).toBe("Studio Mac mini, your default, is offline, and no other computer is online. This runs on This Mac.");
-    expect(d.fallback?.steps.at(-1)).toMatchObject({ name: "This Mac", note: "Last resort. Used now", used: true });
-    // Fallback off: only the default, then This Mac.
-    const off = treeDefault(tree({ defaultSpace: "relay:studio", machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] }), settings("relay:studio", [], false), null);
-    expect(off.where).toEqual({ kind: "this-mac" });
-  });
-
-  it("follows the order to try, and the relay's own answer when it gave one", () => {
-    const machines = [THIS_MAC, { ...STUDIO, online: false }, DILLON, machine({ id: "linux", name: "Linux box", os: "linux" })];
-    const spaces = [...SPACES, space({ id: "relay:linux", name: "Linux box" })];
-    const t = tree({ defaultSpace: "relay:studio", machines, spaces });
-    expect(treeDefault(t, settings("relay:studio", ["relay:linux", "relay:dillon"]), null).where).toMatchObject({ kind: "space", space: { id: "relay:linux" } });
-    const relay = { space: "relay:dillon", reason: "fallback", defaultSpace: "relay:studio", defaultOnline: false, order: [{ space: "relay:studio", name: "Studio Mac mini", online: false, role: "default" }, { space: "relay:dillon", name: "Dillon's PC", online: true, role: "fallback" }, { space: "relay:mac-here", name: "This Mac", online: true, role: "here" }] };
-    expect(treeDefault(t, settings("relay:studio"), relay).where).toMatchObject({ kind: "space", space: { id: "relay:dillon" } });
-    // The relay says "here" with no Space: This Mac.
-    expect(treeDefault(t, settings("relay:studio"), { ...relay, space: null, reason: "here" }).where).toEqual({ kind: "this-mac" });
-  });
-
-  it("with no default set, uses the first other computer, else This Mac", () => {
-    expect(treeDefault(tree(), null, null).where).toMatchObject({ kind: "space", space: { id: "relay:studio" } });
-    const single = buildSpacesTree({ spaces: [SPACES[0]!], machines: [THIS_MAC], defaultSpace: null, now: NOW });
-    expect(treeDefault(single, null, null).where).toEqual({ kind: "this-mac" });
-  });
-
-  it("ignores a saved default whose computer was removed, and never says \"your default\" twice", () => {
-    // The live case: This Mac is the default in the tree, every other computer is offline, and the account still has
-    // a default saved for a computer that's gone.
-    const machines = [THIS_MAC, { ...STUDIO, online: false }, { ...DILLON, online: false }];
-    const t = tree({ machines, defaultSpace: "relay:removed" });
-    const local = treeDefault(t, settings("relay:removed"), null);
-    expect(local.where).toEqual({ kind: "this-mac" });
-    expect(local.fallback).toBeNull();
-    // The relay still answering with the old default changes nothing.
-    const relay = { space: null, reason: "here", defaultSpace: "relay:removed", defaultOnline: false, order: [{ space: "relay:studio", name: "Studio Mac mini", online: false, role: "fallback" }, { space: "relay:mac-here", name: "This Mac", online: true, role: "here" }] };
-    const remote = treeDefault(t, settings("relay:removed"), relay);
-    expect(remote.where).toEqual({ kind: "this-mac" });
-    expect(remote.fallback).toBeNull();
-  });
-
-  it("never repeats \"your default\" in any line it builds", () => {
-    for (const problem of ["offline", "no-desktop"] as const)
-      for (const usedName of [null, "Dillon's PC"])
-        for (const othersOnline of [false, true]) {
-          const line = fallbackSentence({ defaultName: "Studio Mac mini", problem, usedName, othersOnline });
-          expect(line.match(/your default/gi)).toHaveLength(1);
-          expect(line.startsWith("Studio Mac mini, your default, ")).toBe(true);
-        }
-  });
-
-  it("passes over an online computer that shares no desktop, and doesn't call it offline", () => {
-    // Dillon's PC is online but shares no desktop (no Space row of its own).
-    const spaces = SPACES.filter((s) => s.id !== "relay:dillon");
-    const t = tree({ defaultSpace: "relay:studio", machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON], spaces });
-    const d = treeDefault(t, settings("relay:studio"), null);
-    expect(d.where).toEqual({ kind: "this-mac" });
-    expect(d.fallback?.line).toBe("Studio Mac mini, your default, is offline, and no other computer can take it now. This runs on This Mac.");
-    expect(d.fallback?.steps.map((s) => [s.name, s.note, s.state])).toEqual([
-      ["Studio Mac mini", "Your default. Offline now", "offline"],
-      ["Dillon's PC", "Online, doesn't share its desktop", "no-desktop"],
-      ["This Mac", "Last resort. Used now", "used"],
-    ]);
-    expect(d.fallback?.steps.some((s) => s.note === "Next to try")).toBe(false);
-  });
-
-  it("moves on to the next computer that can take it when the relay picked one with no desktop", () => {
-    const linux = machine({ id: "linux", name: "Linux box", os: "linux" });
-    const spaces = [...SPACES.filter((s) => s.id !== "relay:dillon"), space({ id: "relay:linux", name: "Linux box" })];
-    const t = tree({ defaultSpace: "relay:studio", machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON, linux], spaces });
-    const relay = {
-      space: "relay:dillon",
-      reason: "fallback",
-      defaultSpace: "relay:studio",
-      defaultOnline: false,
-      order: [
-        { space: "relay:studio", name: "Studio Mac mini", online: false, role: "default" },
-        { space: "relay:dillon", name: "Dillon's PC", online: true, role: "fallback" },
-        { space: "relay:linux", name: "Linux box", online: true, role: "fallback" },
-        { space: "relay:mac-here", name: "This Mac", online: true, role: "here" },
-      ],
-    };
-    const d = treeDefault(t, settings("relay:studio"), relay);
-    expect(d.where).toMatchObject({ kind: "space", space: { id: "relay:linux" } });
-    expect(d.fallback?.line).toBe("Studio Mac mini, your default, is offline. This runs on Linux box, the next computer that can take it. If none can, it runs on This Mac.");
-    expect(d.fallback?.steps.map((s) => s.state)).toEqual(["offline", "no-desktop", "used", "ready"]);
-  });
-
-  it("says why when the default is online but shares no desktop, instead of running elsewhere silently", () => {
-    const spaces = SPACES.filter((s) => s.id !== "relay:studio");
-    const t = tree({ defaultSpace: "relay:studio", spaces });
-    const d = treeDefault(t, settings("relay:studio"), null);
-    expect(d.where).toMatchObject({ kind: "space", space: { id: "relay:dillon" } });
-    expect(d.fallback?.line).toBe("Studio Mac mini, your default, is online but doesn't share its desktop. This runs on Dillon's PC, the next computer that can take it. If none can, it runs on This Mac.");
-    expect(d.fallback?.steps[0]).toMatchObject({ name: "Studio Mac mini", note: "Your default. Doesn't share its desktop", state: "no-desktop", online: true });
-  });
-
+describe("the default Space", () => {
   it("the resolver treats a saved default that's no longer a computer of yours as unset", () => {
     const candidates = [
       { space: "relay:studio", name: "Studio Mac mini", online: false },
       { space: "relay:mac-here", name: "This Mac", online: true, here: true },
     ];
-    expect(resolveDefaultSpace({ defaultSpace: "relay:removed", fallback: [], fallbackOn: true }, candidates)).toMatchObject({ space: "relay:mac-here", defaultSpace: null, defaultOnline: null });
+    expect(resolveDefaultSpace({ defaultSpace: "relay:removed", fallback: [], fallbackOn: true }, candidates)).toMatchObject({
+      space: "relay:mac-here",
+      defaultSpace: null,
+      defaultOnline: null,
+    });
     // One that is still there is kept.
-    expect(resolveDefaultSpace({ defaultSpace: "relay:studio", fallback: [], fallbackOn: true }, candidates)).toMatchObject({ defaultSpace: "relay:studio", defaultOnline: false });
-  });
-
-  it("lists This Mac last among the candidates", () => {
-    const c = defaultCandidates(tree());
-    expect(c.map((x) => x.space)).toEqual(["relay:mac-here", "relay:studio", "relay:dillon"]);
-    expect(c[0]!.here).toBe(true);
+    expect(resolveDefaultSpace({ defaultSpace: "relay:studio", fallback: [], fallbackOn: true }, candidates)).toMatchObject({
+      defaultSpace: "relay:studio",
+      defaultOnline: false,
+    });
   });
 });
 
-describe("currentTreeWhere", () => {
+describe("findNode", () => {
   const t = tree({ defaultSpace: "relay:studio" });
-  const fallback = { kind: "space", space: SPACES[2]! } as const;
-  const kinds = [{ os: "linux" as const, note: "", blocked: null }];
-
-  it("keeps a pick that's still usable", () => {
-    expect(currentTreeWhere({ kind: "space", space: SPACES[6]! }, fallback, kinds, t)).toEqual({ kind: "space", space: SPACES[6] });
-    expect(currentTreeWhere({ kind: "this-mac" }, fallback, kinds, t)).toEqual({ kind: "this-mac" });
-    expect(currentTreeWhere({ kind: "new", os: "linux", on: { machine: "dillon", name: "Dillon's PC" } }, fallback, kinds, t)).toMatchObject({ kind: "new", on: { machine: "dillon" } });
-  });
-
-  it("falls back to the default, never to a new computer, when the pick went away or went offline", () => {
-    expect(currentTreeWhere({ kind: "space", space: space({ id: "relay:gone" }) }, fallback, kinds, t)).toBe(fallback);
-    const off = tree({ machines: [THIS_MAC, STUDIO, { ...DILLON, online: false }] });
-    expect(currentTreeWhere({ kind: "space", space: SPACES[6]! }, fallback, kinds, off)).toBe(fallback);
-    expect(currentTreeWhere({ kind: "new", os: "linux", on: { machine: "dillon", name: "Dillon's PC" } }, fallback, kinds, off)).toBe(fallback);
-    expect(currentTreeWhere(null, fallback, kinds, t)).toBe(fallback);
-  });
-
-  it("offers New Space on This Mac and on each online computer", () => {
-    expect(newSpaceTargets(t).map((n) => [n.name, n.on?.machine ?? null])).toEqual([
-      ["This Mac", null],
-      ["Studio Mac mini", "studio"],
-      ["Dillon's PC", "dillon"],
-    ]);
-  });
 
   it("finds a row by its key or the relay's id", () => {
     expect(findNode(t, "relay:studio/build-box")?.name).toBe("Build box");
     expect(findNode(t, "relay:mac-here")?.name).toBe("This Mac");
+  });
+});
+
+describe("a removed computer", () => {
+  const ghost = space({ id: "relay:a77e7c1777f98e7", name: "a77e7c1777f98e7", status: "running" });
+  const ghostChild = space({ id: "relay:a77e7c1777f98e7/box", name: "Build box", host: "a77e7c1777f98e7" });
+
+  it("leaves no computer named by its raw id, nor its Spaces, when its machine is gone", () => {
+    const t = tree({ spaces: [...SPACES, ghost, ghostChild] });
+    expect(t.roots.map((r) => r.name)).toEqual(["This Mac", "Studio Mac mini", "Dillon's PC"]);
+    expect([t.computers, t.spaces]).toEqual([3, 4]);
+  });
+
+  it("is not the default even when the setting still names it", () => {
+    const t = tree({ spaces: [...SPACES, ghost, ghostChild], defaultSpace: ghost.id });
+    expect(t.defaultKey).not.toBe(ghost.id);
+    expect(t.roots.some((r) => r.isDefault && r.key === ghost.id)).toBe(false);
+  });
+
+  it("does not hide a teammate's Space whose own name is shown", () => {
+    const t = tree({ spaces: [...SPACES, space({ id: "relay:space-sam-qa", name: "Sam's QA" })] });
+    expect(t.roots.map((r) => r.name)).toContain("Sam's QA");
+  });
+});
+
+describe("what a computer's row opens", () => {
+  const opens = (over: Partial<Parameters<typeof buildSpacesTree>[0]>, key: string) =>
+    buildSpacesTree({ defaultSpace: null, now: NOW, ...over, spaces: over.spaces ?? SPACES, machines: over.machines ?? [THIS_MAC, STUDIO, DILLON] }).roots.find(
+      (r) => r.machine?.id === key,
+    )!.opens;
+
+  it("opens the desktop's Space page while the computer shares its desktop", () => {
+    expect(opens({}, "studio")).toBe("relay:studio");
+    expect(opens({}, "this-mac")).toBe("this-mac");
+  });
+
+  it("opens This Mac's page too while it can share and does not (the page has the one button)", () => {
+    const off = space({ id: "this-mac", name: "This Mac", status: "suspended", provider: "local", os: "macos" });
+    expect(opens({ spaces: [off, ...SPACES.slice(1)] }, "this-mac")).toBe("this-mac");
+  });
+
+  it("opens the computer's own page when it cannot share", () => {
+    // set up to provide Spaces only, offline, not reachable, or a computer added by address
+    expect(opens({ shares: (s) => s.id !== "relay:studio" }, "studio")).toBeNull();
+    expect(opens({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] }, "studio")).toBeNull();
+    expect(
+      opens(
+        { spaces: SPACES.map((s) => (s.id === "relay:studio" ? { ...s, sdk: { reachable: false, features: [], spacesdVersion: "" } as Space["sdk"] } : s)) },
+        "studio",
+      ),
+    ).toBeNull();
+    expect(opens({ spaces: SPACES.filter((s) => s.id !== "relay:dillon") }, "dillon")).toBeNull();
+    // This Mac before it is set up
+    expect(opens({ machines: [{ ...THIS_MAC, connection: null }, STUDIO] }, "this-mac")).toBeNull();
   });
 });

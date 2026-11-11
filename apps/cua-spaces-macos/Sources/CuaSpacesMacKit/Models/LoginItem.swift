@@ -126,23 +126,28 @@ public enum HelperService {
     /// channel (`CuaChannel` other than `stable`) without a usable home: it
     /// must never fall back to the released app's file, so it runs nothing.
     public static func specPath(info: [String: Any]?, home: String) -> String? {
-        let base: String
+        homeDirectory(info: info, home: home).map { ($0 as NSString).appendingPathComponent("helper/service.json") }
+    }
+
+    /// The Cua home this bundle runs in: `CuaHome` (`~/...` or absolute),
+    /// else `~/.cua`. `nil` for a bundle that names another channel
+    /// (`CuaChannel` other than `stable`) without a usable home.
+    public static func homeDirectory(info: [String: Any]?, home: String) -> String? {
         if let stampedHome = stamped(info, "CuaHome") {
             if stampedHome == "~" {
-                base = home
+                return home
             } else if stampedHome.hasPrefix("~/") {
-                base = home + "/" + String(stampedHome.dropFirst(2))
+                return home + "/" + String(stampedHome.dropFirst(2))
             } else if stampedHome.hasPrefix("/") {
-                base = stampedHome
+                return stampedHome
             } else {
                 return nil
             }
         } else if let channel = stamped(info, "CuaChannel"), channel.lowercased() != "stable" {
             return nil
         } else {
-            base = home + "/" + defaultHome
+            return home + "/" + defaultHome
         }
-        return (base as NSString).appendingPathComponent("helper/service.json")
     }
 
     /// Where the host service's executable lives, relative to the app's
@@ -219,12 +224,13 @@ public enum HelperService {
     public static let restartExitCode: Int32 = 75
 
     /// A launch of this executable that is not the app's window: the host
-    /// service and its commands (`--service-helper`, `check-permissions`,
+    /// service, Cua Driver's login item and their commands
+    /// (`--service-helper`, `--driver-helper`, `check-permissions`,
     /// `preflight-permissions`). These must never touch AppKit or start
     /// anything that does (the Sentry SDK): a windowless process checked in
     /// with LaunchServices as "Cua Spaces" makes opening the app fail.
     public static func isServiceCommand(_ args: [String]) -> Bool {
-        ["--service-helper", "check-permissions", "preflight-permissions"].contains(args.first ?? "")
+        ["--service-helper", "--driver-helper", "check-permissions", "preflight-permissions"].contains(args.first ?? "")
     }
 
     /// The service holds the app's LaunchServices entry: it shows as a
@@ -352,7 +358,12 @@ public enum HelperService {
         var failure: String?
         switch args.first {
         case "register":
-            do { try service.register() } catch { failure = error.localizedDescription }
+            // Registered again when macOS says enabled but launchd lost the
+            // job (`LaunchAgentRegistration`), so cua-host can start it.
+            do {
+                try LaunchAgentRegistration.ensureLoaded(LaunchAgentItem(plistName: plistName),
+                                                         isLoaded: { LaunchAgentRegistration.isLoaded(label: label) })
+            } catch { failure = error.localizedDescription }
         case "unregister":
             // Not registered is already done. So is an item that ends up
             // not registered or not found (a bundle moved or replaced since

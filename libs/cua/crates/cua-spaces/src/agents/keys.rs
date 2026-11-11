@@ -67,7 +67,11 @@ pub const APP_METHODS: &[&str] = &[
     "agent_keys.rename",
     "agent_keys.shell",
     "agent_keys.from_shell",
+    "agent_keys.copy_sign_in",
 ];
+
+/// Where "Copy my sign-in to my other computers" is kept (beside the keys).
+const COPY_SIGN_IN_ITEM: &str = "agent-sign-in-copy";
 
 /// The provider keys Cua may read from your login shell, by name (Settings,
 /// Connections: "Use ANTHROPIC_API_KEY from your shell"): the API key names of
@@ -337,6 +341,14 @@ pub struct KeysReport {
     /// Why not, when they can't.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable: Option<String>,
+    /// A warning, when keys can be saved but only in an unencrypted file
+    /// (a Local development build without the Keychain).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insecure: Option<String>,
+    /// "Copy my sign-in to my other computers" is on: a saved Claude Code or
+    /// ChatGPT sign-in reaches runs on other computers. Off by default; each
+    /// computer then signs in with the agent's own sign-in.
+    pub copy_sign_in: bool,
 }
 
 /// The credential an app was told to use: a variable and which of its saved
@@ -500,6 +512,8 @@ pub enum LoginSync {
 pub struct AgentKeys {
     store: Option<cua_auth::Store>,
     unavailable: Option<String>,
+    // Set when the keys are kept in an unencrypted file ([`AgentKeys::new_for`]).
+    insecure: Option<String>,
     // Serializes read-modify-write; holds the last read.
     cache: Mutex<Option<(Instant, Vec<Stored>)>>,
     // When Claude Code's own sign-in was last re-read ([`AgentKeys::sync_claude_login`]).
@@ -520,6 +534,26 @@ impl std::fmt::Debug for AgentKeys {
 /// app shows it as "Keys can't be saved here: <this>."). A Mac's unsigned
 /// build and Windows with `CUA_CREDENTIAL_STORE=file` have a vault they
 /// could use; Linux has none.
+/// The warning shown while the Local channel keeps keys in a file: where, and
+/// that they are not encrypted.
+fn insecure_notice(credentials: &std::path::Path) -> String {
+    let file = credentials
+        .parent()
+        .map(|d| d.join(SECRET_NAME))
+        .unwrap_or_else(|| std::path::PathBuf::from(SECRET_NAME));
+    let shown = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .and_then(|h| {
+            file.strip_prefix(&h)
+                .ok()
+                .map(|r| format!("~/{}", r.display()))
+        })
+        .unwrap_or_else(|| file.display().to_string());
+    format!(
+        "Keychain not available in this development build: keys are stored unencrypted in {shown}. Do not use real production secrets"
+    )
+}
+
 const fn file_store_reason() -> &'static str {
     if cfg!(target_os = "macos") {
         "this build of cua keeps credentials in a file, and agent keys are only kept in the Keychain (a Cua-signed build of Cua Spaces does). Set the key for the Cua daemon instead"
@@ -531,18 +565,36 @@ const fn file_store_reason() -> &'static str {
 }
 
 impl AgentKeys {
-    /// Keys in `store`. A file store can't hold them (see the module docs).
+    /// Keys in `store` for this process's channel. A file store can't hold
+    /// them, except on the Local channel ([`AgentKeys::new_for`]).
     pub fn new(store: cua_auth::Store) -> Self {
-        if store.kind() == "keychain" {
-            Self {
-                store: Some(store),
-                unavailable: None,
-                cache: Mutex::new(None),
-                claude_sync: Mutex::new(None),
-                uses_cache: Mutex::new(None),
-            }
+        Self::new_for(store, cua_home::channel::CuaChannel::current())
+    }
+
+    /// Keys in `store` for `channel`. A file store can't hold them (see the
+    /// module docs) unless `channel` allows the unencrypted development
+    /// store ([`cua_home::channel::CuaChannel::allows_insecure_dev_store`]: Local
+    /// only): then the keys are kept in a 0600 file beside the store's
+    /// credentials, and [`AgentKeys::insecure`] says so.
+    pub fn new_for(store: cua_auth::Store, channel: cua_home::channel::CuaChannel) -> Self {
+        let mut insecure = None;
+        let store = if store.kind() == "keychain" {
+            Some(store)
+        } else if let (true, cua_auth::Store::File(p)) =
+            (channel.allows_insecure_dev_store(), &store)
+        {
+            insecure = Some(insecure_notice(p));
+            Some(store)
         } else {
-            Self::unavailable(file_store_reason())
+            None
+        };
+        Self {
+            unavailable: store.is_none().then(|| file_store_reason().to_string()),
+            store,
+            insecure,
+            cache: Mutex::new(None),
+            claude_sync: Mutex::new(None),
+            uses_cache: Mutex::new(None),
         }
     }
 
@@ -551,10 +603,17 @@ impl AgentKeys {
         Self {
             store: None,
             unavailable: Some(reason.into()),
+            insecure: None,
             cache: Mutex::new(None),
             claude_sync: Mutex::new(None),
             uses_cache: Mutex::new(None),
         }
+    }
+
+    /// The warning to show while keys are kept in an unencrypted file (a
+    /// Local development build without the Keychain); `None` otherwise.
+    pub fn insecure(&self) -> Option<&str> {
+        self.insecure.as_deref()
     }
 
     /// Whether keys can be saved.
@@ -636,7 +695,25 @@ impl AgentKeys {
             providers: providers(),
             available: self.available(),
             unavailable: self.unavailable.clone(),
+            insecure: self.insecure.clone(),
+            copy_sign_in: self.copy_sign_in(),
         })
+    }
+
+    /// Whether the person turned on "Copy my sign-in to my other computers".
+    /// Off unless they did: a saved Claude Code or ChatGPT sign-in then stays
+    /// on This Mac, and other computers sign in themselves.
+    pub fn copy_sign_in(&self) -> bool {
+        self.aux_load(COPY_SIGN_IN_ITEM).as_deref() == Some(b"on".as_slice())
+    }
+
+    /// Turns "Copy my sign-in to my other computers" on or off.
+    pub fn set_copy_sign_in(&self, on: bool) -> Result<()> {
+        if on {
+            self.aux_save(COPY_SIGN_IN_ITEM, b"on")
+        } else {
+            self.aux_clear(COPY_SIGN_IN_ITEM)
+        }
     }
 
     /// Adds or replaces a key. `provider` is a provider id of the registry
@@ -1710,6 +1787,12 @@ struct FromShellArgs {
     fields: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CopySignInArgs {
+    on: bool,
+}
+
 #[derive(Serialize)]
 struct ShellReport {
     /// The provider keys your login shell has set (names; never a value).
@@ -1735,9 +1818,6 @@ pub fn app_call(
         r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
     };
     if super::github_auth::is_app_method(name) {
-        if !super::github_auth::enabled() {
-            return Some(Err(super::github_auth::off_error()));
-        }
         return super::github_auth::app_call(super::github_auth::global(), name, args);
     }
     Some(match name {
@@ -1815,6 +1895,14 @@ pub fn app_call(
                 })
                 .and_then(|_| keys.report()),
         ),
+        "agent_keys.copy_sign_in" => report(
+            serde_json::from_value::<CopySignInArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.copy_sign_in: {e}")))
+                .and_then(|a| {
+                    keys.set_copy_sign_in(a.on)?;
+                    keys.report()
+                }),
+        ),
         "agent_keys.shell" => serde_json::to_value(ShellReport {
             names: shell_names(shell),
         })
@@ -1867,11 +1955,6 @@ pub async fn app_tool_async(
     args: serde_json::Value,
 ) -> Option<crate::mcp::ToolOutcome> {
     if super::github_auth::is_app_method(name) {
-        if !super::github_auth::enabled() {
-            return Some(crate::mcp::ToolOutcome::error(
-                &super::github_auth::off_error(),
-            ));
-        }
         return super::github_auth::app_call_async(name, args)
             .await
             .map(|r| match r {
@@ -2183,8 +2266,12 @@ mod tests {
     #[test]
     fn a_file_store_keeps_no_keys() {
         let dir = std::env::temp_dir().join(format!("cua-agent-keys-file-{}", std::process::id()));
-        let keys = AgentKeys::new(cua_auth::Store::File(dir.join("credentials.json")));
+        let keys = AgentKeys::new_for(
+            cua_auth::Store::File(dir.join("credentials.json")),
+            cua_home::channel::CuaChannel::Stable,
+        );
         assert!(!keys.available());
+        assert!(keys.insecure().is_none());
         let e = keys.set("anthropic", None, "sk-ant-test-0000").unwrap_err();
         // The refusal names this system's vault, or says there is none (Linux).
         let named = if cfg!(target_os = "macos") {
@@ -2201,6 +2288,76 @@ mod tests {
         assert!(!dir.exists());
         let r = keys.report().unwrap();
         assert!(!r.available && r.unavailable.is_some() && r.keys.is_empty());
+    }
+
+    #[test]
+    fn the_local_channel_keeps_keys_in_a_private_file_and_says_so() {
+        let dir = std::env::temp_dir().join(format!("cua-agent-keys-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let keys = AgentKeys::new_for(
+            cua_auth::Store::File(dir.join("credentials.json")),
+            cua_home::channel::CuaChannel::Local,
+        );
+        assert!(keys.available());
+        let warning = keys.insecure().expect("a warning").to_string();
+        assert!(
+            warning.starts_with("Keychain not available in this development build"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("unencrypted") && warning.contains(SECRET_NAME),
+            "{warning}"
+        );
+        assert!(!warning.contains('\u{b7}'), "{warning}");
+        keys.set("anthropic", None, "sk-ant-test-0000").unwrap();
+        let file = dir.join(SECRET_NAME);
+        assert!(file.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        // A new handle on the same file reads the key back, and the report says why to be careful.
+        let again = AgentKeys::new_for(
+            cua_auth::Store::File(dir.join("credentials.json")),
+            cua_home::channel::CuaChannel::Local,
+        );
+        let r = again.report().unwrap();
+        assert!(r.available && r.unavailable.is_none());
+        assert_eq!(r.insecure.as_deref(), Some(warning.as_str()));
+        assert_eq!(r.keys.len(), 1);
+        assert_eq!(r.keys[0].last4, "0000");
+        assert!(again.remove("ANTHROPIC_API_KEY").unwrap());
+        assert!(!file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_local_channel_can_save_to_a_file_and_the_vault_never_warns() {
+        let dir = std::env::temp_dir().join(format!("cua-agent-keys-chan-{}", std::process::id()));
+        let file = cua_auth::Store::File(dir.join("credentials.json"));
+        for c in cua_home::channel::CuaChannel::ALL {
+            let keys = AgentKeys::new_for(file.clone(), c);
+            assert_eq!(keys.available(), c.allows_insecure_dev_store(), "{c:?}");
+            assert_eq!(
+                keys.insecure().is_some(),
+                c.allows_insecure_dev_store(),
+                "{c:?}"
+            );
+        }
+        let stable = AgentKeys::new_for(file, cua_home::channel::CuaChannel::Stable);
+        assert!(stable.set("anthropic", None, "sk-ant-test-0000").is_err());
+        assert!(!dir.exists());
+        // The vault stand-in is a real vault: no warning on any channel.
+        let vault =
+            std::env::temp_dir().join(format!("cua-agent-keys-vault-{}", std::process::id()));
+        let keys = AgentKeys::new_for(
+            cua_auth::Store::TestKeychain(vault.clone()),
+            cua_home::channel::CuaChannel::Local,
+        );
+        assert!(keys.available() && keys.insecure().is_none());
+        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]

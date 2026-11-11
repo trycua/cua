@@ -184,7 +184,13 @@ export class PersistentAgents {
       home: files,
       routines,
       grants: arr(access, "grants").map((g) => ({ agent: g.agent ?? "", machine: g.machine ?? "", revoked: g.revoked ?? false })),
-      audit: arr(access, "audit").map((a) => ({ tsMs: a.ts_ms ?? 0, action: a.action ?? "", principal: a.principal ?? "", path: a.path ?? "", detail: a.detail ?? "" })),
+      audit: arr(access, "audit").map((a) => ({
+        tsMs: a.ts_ms ?? 0,
+        action: a.action ?? "",
+        principal: a.principal ?? "",
+        path: a.path ?? "",
+        detail: a.detail ?? "",
+      })),
     };
   }
 
@@ -200,7 +206,12 @@ export class PersistentAgents {
       path,
       text: binary ? "" : (file.content ?? ""),
       binary,
-      versions: arr(history, "versions").map((v) => ({ version: v.version ?? "", modifiedMs: v.modified_ms ?? 0, deleted: v.deleted ?? false, latest: v.latest ?? false })),
+      versions: arr(history, "versions").map((v) => ({
+        version: v.version ?? "",
+        modifiedMs: v.modified_ms ?? 0,
+        deleted: v.deleted ?? false,
+        latest: v.latest ?? false,
+      })),
     };
   }
 
@@ -407,7 +418,8 @@ export function agentKeysInput(report: Json | null, error: string | null): AppAg
     }))
     .filter((k) => k.env !== "");
   const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this machine can't keep keys") : undefined;
-  return { keys, unavailable, error: error ?? undefined };
+  const warning = report?.available !== false && typeof report?.insecure === "string" && report.insecure ? report.insecure : undefined;
+  return { keys, unavailable, warning, error: error ?? undefined };
 }
 
 // MARK: Coding agents on this machine
@@ -553,11 +565,11 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
   signIn = async (agent: string) => (await this.s()).signIn(agent);
-  connectionStatusJson = async (refresh: boolean) =>
-    (await this.gate.wait()).agentSetup?.connectionStatusJson(refresh) ?? '{"agents":[],"checked_at_ms":0}';
+  connectionStatusJson = async (refresh: boolean) => (await this.gate.wait()).agentSetup?.connectionStatusJson(refresh) ?? '{"agents":[],"checked_at_ms":0}';
   connectJson = async (agents: string[], signIn: boolean, skills: boolean, mcp: boolean) => (await this.s()).connectJson(agents, signIn, skills, mcp);
   disconnectJson = async (agents: string[], signIn: boolean) => (await this.s()).disconnectJson(agents, signIn);
-  disconnectPartsJson = async (agents: string[], skills: boolean, mcp: boolean, signIn: boolean) => (await this.s()).disconnectPartsJson(agents, skills, mcp, signIn);
+  disconnectPartsJson = async (agents: string[], skills: boolean, mcp: boolean, signIn: boolean) =>
+    (await this.s()).disconnectPartsJson(agents, skills, mcp, signIn);
   deviceSignInStartJson = async (agent: string) => (await this.s()).deviceSignInStartJson(agent);
   deviceSignInWaitJson = async (id: string) => (await this.s()).deviceSignInWaitJson(id);
   sweepLeftovers = () => this.gate.current?.agentSetup?.sweepLeftovers?.();

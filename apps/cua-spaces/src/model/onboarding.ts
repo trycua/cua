@@ -194,7 +194,10 @@ export interface OnboardingCopy {
   teamsUrl: string;
 }
 
-export function initialOnboarding(installerMode?: OnboardingModeWord | null, identity?: string | null): OnboardingState {
+export function initialOnboarding(
+  installerMode?: OnboardingModeWord | null,
+  identity?: string | null,
+): OnboardingState {
   return core("onboarding.initial", { installerMode: installerMode ?? null, identity: identity ?? null });
 }
 

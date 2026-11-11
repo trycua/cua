@@ -39,6 +39,10 @@ use wayland_client::protocol::{wl_callback, wl_keyboard, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use xkbcommon::xkb;
 
+use super::super::text_keys::{
+    chromium_receives, evdev_in, find_key, level_mods, refused, text_sym, with_line_feeds,
+    CHROMIUM_CODES,
+};
 use super::super::virtual_keyboard::protocol::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use super::super::virtual_keyboard::protocol::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1;
 
@@ -77,60 +81,16 @@ struct Part {
 /// The highest keycode Xwayland clients can receive.
 const MAX_X11_KEYCODE: u32 = 255;
 
-/// The evdev codes up to `MAX_X11_KEYCODE` that Chromium gives a DOM `code`
-/// (the rows of `ui/events/keycodes/dom/dom_code_data.inc` with an evdev
-/// code and a code string). Chromium and Electron drop a key without one.
-const CHROMIUM_CODES: [RangeInclusive<u32>; 22] = [
-    1..=83,
-    85..=94,
-    96..=100,
-    102..=111,
-    113..=117,
-    119..=129,
-    131..=138,
-    140..=140,
-    142..=144,
-    155..=156,
-    158..=159,
-    161..=161,
-    163..=168,
-    171..=173,
-    179..=180,
-    183..=194,
-    201..=201,
-    207..=208,
-    217..=217,
-    224..=225,
-    227..=227,
-    231..=233,
-];
-
 /// F13 to F24: Chromium knows them, keymaps give them symbols, and few
 /// keyboards have them, so a keymap may borrow them once its keys without
 /// symbols run out.
 const BORROWABLE: RangeInclusive<u32> = 183..=194;
 
-fn evdev_in(code: xkb::Keycode, ranges: &[RangeInclusive<u32>]) -> bool {
-    code.raw()
-        .checked_sub(8)
-        .is_some_and(|evdev| ranges.iter().any(|range| range.contains(&evdev)))
-}
-
-/// Whether Chromium receives evdev `code` (all of these are within
-/// `MAX_X11_KEYCODE`). A symbol the layout has only on other keys, such as
-/// US's `EuroSign` on `<I443>` (evdev 435), counts as missing and goes on a
-/// spare key.
-fn chromium_receives(code: u32) -> bool {
-    CHROMIUM_CODES.iter().any(|range| range.contains(&code))
-}
-
-fn refused(detail: impl std::fmt::Display) -> anyhow::Error {
-    anyhow!("foreground_unavailable: {detail}; nothing was typed")
-}
-
 /// `text`'s keys in layout `group` of `map`, cut into parts whose symbols
 /// the layout lacks fit on the keymap's spare keys.
 fn plan_text(map: &str, group: u32, text: &str) -> Result<Vec<Part>> {
+    let text = with_line_feeds(text);
+    let text: &str = &text;
     let keymap = compile(map)?;
     if group >= keymap.num_layouts() {
         return Err(refused(format!(
@@ -154,23 +114,6 @@ fn plan_text(map: &str, group: u32, text: &str) -> Result<Vec<Part>> {
             })
         })
         .collect()
-}
-
-/// The keysym that types `c`. A line feed and a tab are the Return and Tab
-/// keys, as `wtype` types them; any other control character is refused.
-fn text_sym(c: char) -> Result<xkb::Keysym> {
-    match c {
-        '\n' => Ok(xkb::Keysym::Return),
-        '\t' => Ok(xkb::Keysym::Tab),
-        c if c.is_control() => Err(refused(format!(
-            "control character U+{:04X} cannot be typed",
-            u32::from(c)
-        ))),
-        c => match xkb::utf32_to_keysym(u32::from(c)) {
-            sym if sym.raw() == 0 => Err(refused(format!("U+{:04X} has no keysym", u32::from(c)))),
-            sym => Ok(sym),
-        },
-    }
 }
 
 fn characters(keymap: &xkb::Keymap, group: u32, text: &str) -> Result<Vec<Key>> {
@@ -325,12 +268,6 @@ fn same_key(original: &xkb::Keymap, extended: &xkb::Keymap, code: xkb::Keycode) 
         })
 }
 
-fn level_mods(map: &xkb::Keymap, code: xkb::Keycode, layout: u32, level: u32) -> Vec<u32> {
-    let mut masks = [0_u32; 32];
-    let count = map.key_get_mods_for_level(code, layout, level, &mut masks);
-    masks.iter().take(count).copied().collect()
-}
-
 /// An added key has one symbol, in one layout and level, and changes no
 /// modifier or layout.
 fn inert(map: &xkb::Keymap, code: xkb::Keycode) -> bool {
@@ -355,34 +292,18 @@ fn compile(map: &str) -> Result<xkb::Keymap> {
     .ok_or_else(|| refused("niri supplied a keymap libxkbcommon cannot compile"))
 }
 
-/// The key and modifiers that type `sym` in layout `group`: one Chromium
-/// receives first, then the fewest modifiers, then the lowest code.
+/// The key and modifiers that type `sym` in layout `group`. A virtual keyboard
+/// sets niri's modifier state outright, so nothing else is on when the key goes.
 fn find(map: &xkb::Keymap, group: u32, sym: xkb::Keysym) -> Option<Key> {
-    let mut candidates = Vec::new();
-    for raw in map.min_keycode().raw().max(8)..=map.max_keycode().raw() {
-        let code = xkb::Keycode::new(raw);
-        for level in 0..map.num_levels_for_key(code, group) {
-            if map.key_get_syms_by_level(code, group, level) != [sym] {
-                continue;
-            }
-            let masks = level_mods(map, code, group, level);
-            candidates.extend(masks.into_iter().filter_map(|modifiers| {
-                let mut state = xkb::State::new(map);
-                state.update_mask(modifiers, 0, 0, 0, 0, group);
-                (state.key_get_one_sym(code) == sym).then_some(Key {
-                    code: raw - 8,
-                    modifiers,
-                    group,
-                })
-            }));
-        }
-    }
-    candidates.into_iter().min_by_key(|key| {
-        (
-            !chromium_receives(key.code),
-            key.modifiers.count_ones(),
-            key.code,
-        )
+    let (code, modifiers) = find_key(map, group, sym, |code, modifiers| {
+        let mut state = xkb::State::new(map);
+        state.update_mask(modifiers, 0, 0, 0, 0, group);
+        (state.key_get_one_sym(code) == sym).then_some((modifiers.count_ones(), modifiers))
+    })?;
+    Some(Key {
+        code,
+        modifiers,
+        group,
     })
 }
 
@@ -901,6 +822,25 @@ mod tests {
     }
 
     #[test]
+    fn ascii_goes_out_on_the_main_typing_block_in_both_layouts() {
+        // `us` also has `(` and `)` with no modifier on `KEY_KPLEFTPAREN` and
+        // `KEY_KPRIGHTPAREN`, which terminals can read as commands.
+        assert_eq!(codes(0, "()"), [10, 11]);
+        assert_eq!(codes(1, "()"), [9, 10]);
+        let ascii: String = (' '..='~').collect();
+        // German has `^` and `` ` `` only as dead keys, so those go on spare keys.
+        let german: String = ascii.chars().filter(|c| !"^`".contains(*c)).collect();
+        for (group, text) in [(0, ascii.as_str()), (1, german.as_str())] {
+            for code in codes(group, text) {
+                assert!(
+                    crate::wayland::text_keys::is_typing_key(code),
+                    "layout {group} types ASCII on evdev {code}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn text_uses_the_active_layout_and_its_shift_level() {
         let shift = plan_text(US_DE, 0, "Z").unwrap()[0].keys[0].modifiers;
         assert_ne!(shift, 0);
@@ -913,6 +853,11 @@ mod tests {
     #[test]
     fn line_feed_and_tab_are_the_return_and_tab_keys() {
         assert_eq!(codes(0, "a\nb\t"), [30, ENTER, 48, 15]);
+    }
+
+    #[test]
+    fn a_windows_line_ending_is_one_return() {
+        assert_eq!(codes(0, "a\r\nb\rc"), [30, ENTER, 48, ENTER, 46]);
     }
 
     #[test]

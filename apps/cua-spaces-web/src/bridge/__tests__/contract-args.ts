@@ -115,6 +115,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agentKeys.rename": { env: "OPENAI_API_KEY", label: "Work key" },
   "agentKeys.shell": {},
   "agentKeys.fromShell": { env: "ANTHROPIC_API_KEY" },
+  "agentKeys.copySignIn": { on: false },
   "github.status": {},
   "github.rescan": {},
   "github.use": { host: "github.com", login: "ada" },
@@ -134,6 +135,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "relay.usage": {},
   "nudges.pending": {},
   "agents.recentThreads": { limit: 4 },
+  "agents.computerSignIn": { space: "mac-mini", agent: "openai-codex", action: "status" },
   "agents.threadHistory": { agent: "claude-code", id: "0b1e5c2a-1111-4222-8333-944445555666" },
   "nudges.answer": { id: "risky-1-1", choice: "here" },
   "resources.get": { visible: true },
@@ -191,7 +193,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "presence.leave": { handle: "p1" },
   "spaces.fixRuntime": { action: "start-docker" },
   "about.get": {},
-  "about.set": { channel: "beta" },
+  "about.set": { channel: "nightly" },
   "about.checkNow": {},
   "update.get": {},
   "update.install": {},
@@ -226,6 +228,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.acknowledgeLinkNotice": {},
   "crashReporting.config": {},
   "spaces.usage": { spaceId: SPACE },
+  "spaces.reach": { spaceId: SPACE },
   "spaces.windows": { spaceId: SPACE },
   "stream.pip": { spaceId: SPACE, command: { type: "open", row: "desktop" } },
   "spaces.thumbnail": { spaceId: SPACE },
@@ -248,6 +251,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "driver.setApp": { app: "codex", on: true },
   "driver.setup": {},
   "driver.update": {},
+  "driver.permissions": {},
 };
 
 /** Operations the demo host refuses on purpose, and why. */

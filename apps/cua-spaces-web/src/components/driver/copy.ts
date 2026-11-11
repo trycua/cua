@@ -4,10 +4,11 @@
 /** The Cua Driver page's words. Plain words only. */
 
 import { sinceText, type DriverStatus } from "@/bridge";
+import { thisComputerText } from "@/lib/host-labels";
 
-export const DRIVER_LINE = "Lets agents see and use the apps on this Mac.";
+export const driverLine = () => `Lets agents see and use the apps on ${thisComputerText()}.`;
 
-const place = (s: DriverStatus) => (s.thisMachine ? "this Mac" : s.machineName);
+const place = (s: DriverStatus) => (s.thisMachine ? thisComputerText() : s.machineName);
 
 /** "Working on this Mac." and friends: the status in one sentence. */
 export function stateText(s: DriverStatus): string {
@@ -15,7 +16,7 @@ export function stateText(s: DriverStatus): string {
     case "ready":
       return `Working on ${place(s)}.`;
     case "paused":
-      return "Off. Agents can't use apps on this Mac.";
+      return `Off. Agents can't use apps on ${thisComputerText()}.`;
     case "needs-permission":
       return "A permission is missing. Allow it below.";
     case "starting":
@@ -25,6 +26,33 @@ export function stateText(s: DriverStatus): string {
     case "failed":
       return "Not answering.";
   }
+}
+
+/** What the Cua Driver line in the sidebar and This Mac's Cua Driver row say when the driver needs a person. */
+export interface DriverAttention {
+  kind: "needs-permission" | "failed" | "stopped" | "update";
+  /** One or two words beside the line. */
+  word: string;
+  /** The tooltip: what is wrong and what to do, in a sentence. */
+  tip: string;
+}
+
+/**
+ * Null while Cua Driver works, is starting, or was paused on purpose, so the
+ * sidebar stays quiet. Otherwise the most urgent thing, from the same state
+ * and update the page shows.
+ */
+export function driverAttention(s: DriverStatus): DriverAttention | null {
+  switch (s.state) {
+    case "needs-permission":
+      return { kind: "needs-permission", word: "Needs access", tip: "Cua Driver needs a permission in System Settings. Open it to allow it." };
+    case "failed":
+      return { kind: "failed", word: "Not answering", tip: "Cua Driver keeps stopping. Open it to repair it." };
+    case "stopped":
+      return { kind: "stopped", word: "Stopped", tip: "Cua Driver isn't running. Open it to repair it." };
+  }
+  if (s.update) return { kind: "update", word: "Update ready", tip: `Cua Driver ${s.update.version} is ready. Open it to update.` };
+  return null;
 }
 
 /** "Last test passed 2 minutes ago." / "Last test failed: …" / null. */

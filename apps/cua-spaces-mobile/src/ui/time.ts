@@ -28,7 +28,8 @@ export function rowTime(ms: number, now: number): string {
 /** The thread's day line: "Today 09:12", "Yesterday 18:02", "Tuesday 10:31". */
 export function dayLine(ms: number, now: number): string {
   const days = Math.round((startOfDay(now) - startOfDay(ms)) / 86_400_000);
-  const when = days <= 0 ? "Today" : days === 1 ? "Yesterday" : days < 7 ? DAYS[new Date(ms).getDay()]! : `${new Date(ms).getMonth() + 1}/${new Date(ms).getDate()}`;
+  const when =
+    days <= 0 ? "Today" : days === 1 ? "Yesterday" : days < 7 ? DAYS[new Date(ms).getDay()]! : `${new Date(ms).getMonth() + 1}/${new Date(ms).getDate()}`;
   return `${when} ${clock(ms)}`;
 }
 

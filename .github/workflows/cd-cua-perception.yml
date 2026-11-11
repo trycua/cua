@@ -685,3 +685,15 @@ jobs:
           gh release edit "$TAG" --notes-file release-notes.md --draft=false --latest=false
           gh release view "$TAG" --json isDraft,assets \
             --jq '"draft=\(.isDraft) assets=\(.assets | length)"'
+      # Publishing a draft can still hand this component the repo-wide "Latest"
+      # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
+      # on Cua Spaces; the release-latest-guard schedule is the backstop.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: always() && github.repository == 'trycua/cua'
+        with:
+          sparse-checkout: .github/scripts
+      - name: Keep Latest on Cua Spaces
+        if: always() && github.repository == 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pin_latest_release.py

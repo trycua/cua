@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import IO, Any, Iterable
 
 SEVEN_DAY_STOP = 0.95
 BACKOFF_BASE_S = 60.0
@@ -339,15 +340,92 @@ def budget_allows(cumulative: float, per_trial_cap: float, cap: float | None) ->
 # ---------------------------------------------------------------- resume
 
 
-def completed_trial_ids(rows: Iterable[dict[str, Any]]) -> set[str]:
-    """Trial ids that are final: a row exists that is not a retryable infra failure awaiting retry."""
+def completed_trial_ids(rows: Iterable[dict[str, Any]], smoke: bool = False) -> set[str]:
+    """Trial ids that are final: a row exists that is not a retryable infra failure awaiting retry. A smoke run
+    counts only its own smoke rows, a real run only real rows."""
     done: set[str] = set()
     for row in rows:
-        if row.get("smoke"):
+        if bool(row.get("smoke")) != smoke:
             continue
         if row.get("final", True):
             done.add(row["trial_id"])
     return done
+
+
+def prior_attempts(rows: Iterable[dict[str, Any]], trial: str) -> tuple[int, list[str | None]]:
+    """The highest attempt number recorded for ``trial`` and the infra kinds of its attempts since its last final
+    row, so a resumed run numbers the next attempt after the recorded ones and keeps the retry budgets."""
+    last, kinds = 0, []
+    for row in rows:
+        if row.get("trial_id") != trial:
+            continue
+        last = max(last, int(row.get("attempt") or 0))
+        kinds = [] if row.get("final", True) else [*kinds, row.get("infra_failure")]
+    return last, kinds
+
+
+def fsync_dir(directory: Path) -> None:
+    """Persist a directory's entries (a created or renamed file) across a power loss."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def append_row(path: Path, row: dict[str, Any]) -> None:
+    """One durable line: a row is on disk once this returns."""
+    created = not path.exists()
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if created:
+        fsync_dir(path.parent)
+
+
+def drop_torn_tail(path: Path) -> int:
+    """Cut a last line that has no newline (a write cut short by a crash), so the next row starts on its own line.
+    Returns the bytes dropped. Only the run's single owner (``lock_run``) may call this."""
+    if not path.exists():
+        return 0
+    data = path.read_bytes()
+    keep = data.rfind(b"\n") + 1
+    if keep == len(data):
+        return 0
+    with path.open("r+b") as handle:
+        handle.truncate(keep)
+        os.fsync(handle.fileno())
+    return len(data) - keep
+
+
+def lock_run(run_dir: Path) -> IO[str] | None:
+    """Take the run directory's exclusive lock for this process's lifetime, or None when another process holds it.
+    The kernel drops the lock when the holder dies, however it dies, so there is no stale lock to clear."""
+    handle = (run_dir / "run.lock").open("a", encoding="utf-8")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Replace ``path`` so a reader sees the old or the new content, never a part, even after a power loss."""
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(
+            directory
+        )  # the rename itself survives a power loss only once its directory is synced
+    finally:
+        os.close(directory)
 
 
 def load_rows(path: Path) -> list[dict[str, Any]]:

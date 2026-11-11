@@ -136,8 +136,8 @@ protocol, capabilities, socket paths, and compositor identity. A loaded module
 alone does not prove input availability. Start the matching Driver with
 `CUA_DRIVER_RS_ENABLE_WAYLAND=1`; its production input protocol is v3 by default.
 
-The input path checks exact native application packages: `libreoffice-fresh
-26.2.5-3` for Calc and `inkscape 1.4.4-6`. Each background input lane publishes
+The input path admits any native Wayland window whose app bound the agent seats
+(GTK 3 and 4 and Qt 6 do; Chromium and Electron do not). Each background input lane publishes
 its own canonical `evdev/pc105/us` keymap, independent of user options such as
 Caps Lock remapped to Ctrl or Super. Existing actions are canceled when the
 physical keymap changes; start a fresh action after the reload. Foreground

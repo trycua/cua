@@ -8,19 +8,67 @@ import { installFixtureCore, uninstallCore } from "./helpers/core";
 import { fakeRelay } from "./helpers/fakeDaemon";
 
 const machines = [
-  { id: "studio", name: "Studio Mac", owner: { id: "acct:you" }, role: "owner", online: true, sharing: true, version: "1", url: "", meta: { "cua.host.spaces": "on", "cua.os": "macos" } },
-  { id: "space-aaaa1111", name: "checkout-api", owner: { id: "acct:you" }, role: "owner", online: true, sharing: true, version: "1", url: "", host: "studio", meta: { "cua.os": "macos" } },
+  {
+    id: "studio",
+    name: "Studio Mac",
+    owner: { id: "acct:you" },
+    role: "owner",
+    online: true,
+    sharing: true,
+    version: "1",
+    url: "",
+    meta: { "cua.host.spaces": "on", "cua.os": "macos" },
+  },
+  {
+    id: "space-aaaa1111",
+    name: "checkout-api",
+    owner: { id: "acct:you" },
+    role: "owner",
+    online: true,
+    sharing: true,
+    version: "1",
+    url: "",
+    host: "studio",
+    meta: { "cua.os": "macos" },
+  },
 ];
 
-const entry = (seq: number, text: string, author = { kind: "person", id: "acct:sam", name: "Sam" }) => ({ seq, id: `e${seq}`, ts_ms: 1_000 * seq, author, kind: "message", text, mentions: [], reply_to: null, attachments: [] });
+const entry = (seq: number, text: string, author = { kind: "person", id: "acct:sam", name: "Sam" }) => ({
+  seq,
+  id: `e${seq}`,
+  ts_ms: 1_000 * seq,
+  author,
+  kind: "message",
+  text,
+  mentions: [],
+  reply_to: null,
+  attachments: [],
+});
 
-function setup(extra: { touchRefused?: string; threadRefused?: string; tools?: (n: string, a: Record<string, unknown>) => unknown; isError?: (n: string) => boolean; rest?: Parameters<typeof fakeRelay>[0]["rest"] } = {}) {
+function setup(
+  extra: {
+    touchRefused?: string;
+    threadRefused?: string;
+    tools?: (n: string, a: Record<string, unknown>) => unknown;
+    isError?: (n: string) => boolean;
+    rest?: Parameters<typeof fakeRelay>[0]["rest"];
+  } = {},
+) {
   const fake = fakeRelay({
     machines,
     tools: (name, args) => {
       if (extra.tools) return extra.tools(name, args);
-      if (name === "agent_members") return { members: [{ name: "claude", harness: "claude-code", status: { state: "working", activity: "running tests" }, sessions: 1 }] };
-      if (name === "thread_read") return { entries: [entry(1, "Hello"), entry(2, "Fixed: 149 passed.", { kind: "agent", id: "agent:claude", name: "claude" })], cursor: 2, unread: 1, me: { id: "acct:you" }, role: "owner", live: { key: "", agents: [] } };
+      if (name === "agent_members")
+        return { members: [{ name: "claude", harness: "claude-code", status: { state: "working", activity: "running tests" }, sessions: 1 }] };
+      if (name === "thread_read")
+        return {
+          entries: [entry(1, "Hello"), entry(2, "Fixed: 149 passed.", { kind: "agent", id: "agent:claude", name: "claude" })],
+          cursor: 2,
+          unread: 1,
+          me: { id: "acct:you" },
+          role: "owner",
+          live: { key: "", agents: [] },
+        };
       if (name === "thread_post") return { entry: entry(3, String(args.text), { kind: "person", id: "acct:you", name: "You" }) };
       return {};
     },
@@ -29,7 +77,15 @@ function setup(extra: { touchRefused?: string; threadRefused?: string; tools?: (
     touchRefused: extra.touchRefused,
     threadRefused: extra.threadRefused,
   });
-  const backend = createLiveBackend({ relay: new RelayClient("https://relay.test", fake.fetcher as never), token: async () => "acct-token", deviceSession: async () => "dev-session", me: () => "acct:you", deviceId: () => "dev_0123456789abcdef01234567", fetcher: fake.fetcher as never, now: () => 2_000_000 });
+  const backend = createLiveBackend({
+    relay: new RelayClient("https://relay.test", fake.fetcher as never),
+    token: async () => "acct-token",
+    deviceSession: async () => "dev-session",
+    me: () => "acct:you",
+    deviceId: () => "dev_0123456789abcdef01234567",
+    fetcher: fake.fetcher as never,
+    now: () => 2_000_000,
+  });
   return { fake, backend };
 }
 
@@ -42,7 +98,13 @@ describe("the live backend against a fake relay and a fake host daemon", () => {
     const list = await backend.listSpaces();
     expect(list.machines.map((m) => m.name)).toEqual(["Studio Mac"]);
     expect(list.spaces).toHaveLength(1);
-    expect(list.spaces[0]).toMatchObject({ name: "checkout-api", machineName: "Studio Mac", statusWord: "Running", unread: 1, lastMessage: { text: "Fixed: 149 passed." } });
+    expect(list.spaces[0]).toMatchObject({
+      name: "checkout-api",
+      machineName: "Studio Mac",
+      statusWord: "Running",
+      unread: 1,
+      lastMessage: { text: "Fixed: 149 passed." },
+    });
     const call = fake.seen.find((s) => s.tool?.name === "thread_read")!;
     // The thread runs on the host that provides the Space, named by its relay id, as the account.
     expect(call.url).toBe("https://relay.test/m/studio/cua.env.v1.HostThreadService/CallThreadTool");
@@ -128,11 +190,16 @@ describe("the live backend against a fake relay and a fake host daemon", () => {
   });
 
   it("says plainly when the share only lets this account look, or the desktop is not shared", async () => {
-    for (const words of ["view-only share: ada@example.test cannot call /cua.env.v1.ComputerService/Pointer", "this computer does not share its desktop (it only provides Spaces): ada cannot call /cua.env.v1.ComputerService/Pointer"]) {
+    for (const words of [
+      "view-only share: ada@example.test cannot call /cua.env.v1.ComputerService/Pointer",
+      "this computer does not share its desktop (it only provides Spaces): ada cannot call /cua.env.v1.ComputerService/Pointer",
+    ]) {
       const { backend } = setup({ touchRefused: words });
       await backend.listSpaces();
       await expect(backend.sendInput("relay:space-aaaa1111", { type: "click", x: 0.5, y: 0.5 })).rejects.toThrow(ControlNotAllowedError);
-      await expect(backend.sendInput("relay:space-aaaa1111", { type: "type", text: "x" })).rejects.toThrow("You can only look at this desktop. Its owner can let you control it in the share.");
+      await expect(backend.sendInput("relay:space-aaaa1111", { type: "type", text: "x" })).rejects.toThrow(
+        "You can only look at this desktop. Its owner can let you control it in the share.",
+      );
     }
   });
 
@@ -160,23 +227,61 @@ describe("what the phone needs beyond the thread, against a fake relay and a fak
   const SPACE = "relay:space-aaaa1111";
 
   it("asks every online machine what it can start, merges the answers, and says an old daemon cannot", async () => {
-    const { backend, fake } = setup({ tools: (name) => (name === "task_options" ? { machine: { id: "studio", os: ["macos"], online: true, can_create: true }, agents: [{ harness: "claude-code", label: "Claude Code", ready: true }, { harness: "openai-codex", label: "Codex", ready: false, why: "Sign in" }] } : name === "agent_members" ? { members: [] } : name === "thread_read" ? { entries: [], cursor: 0, me: { id: "acct:you" } } : {}) });
+    const { backend, fake } = setup({
+      tools: (name) =>
+        name === "task_options"
+          ? {
+              machine: { id: "studio", os: ["macos"], online: true, can_create: true },
+              agents: [
+                { harness: "claude-code", label: "Claude Code", ready: true },
+                { harness: "openai-codex", label: "Codex", ready: false, why: "Sign in" },
+              ],
+            }
+          : name === "agent_members"
+            ? { members: [] }
+            : name === "thread_read"
+              ? { entries: [], cursor: 0, me: { id: "acct:you" } }
+              : {},
+    });
     await backend.listSpaces();
     const o = await backend.taskOptions!();
     expect(o.machines).toEqual([{ id: "studio", name: "Studio Mac", online: true, canCreate: true, why: null, os: ["macos"], readyAgents: ["claude-code"] }]);
-    expect(o.agents.map((a) => [a.harness, a.ready])).toEqual([["claude-code", true], ["openai-codex", false]]);
+    expect(o.agents.map((a) => [a.harness, a.ready])).toEqual([
+      ["claude-code", true],
+      ["openai-codex", false],
+    ]);
     const call = fake.seen.find((s) => s.tool?.name === "task_options")!;
     expect(call.url).toBe("https://relay.test/m/studio/cua.env.v1.HostThreadService/CallThreadTool");
     expect(call.tool!.space).toBe("relay:studio");
-    const old = setup({ isError: (n) => n === "task_options", tools: (name) => (name === "task_options" ? "task_options can't be called from another device" : name === "agent_members" ? { members: [] } : { entries: [], cursor: 0 }) });
+    const old = setup({
+      isError: (n) => n === "task_options",
+      tools: (name) =>
+        name === "task_options" ? "task_options can't be called from another device" : name === "agent_members" ? { members: [] } : { entries: [], cursor: 0 },
+    });
     await old.backend.listSpaces();
     await expect(old.backend.taskOptions!()).rejects.toThrow(/Update Cua Spaces on it/);
   });
 
   it("starts a task on a machine with the request the core built, or in a Space that exists, with the client id", async () => {
-    const { backend, fake } = setup({ tools: (name, args) => (name === "task_start" ? { space: args.where && (args.where as { kind: string }).kind === "space" ? SPACE : "relay:space-new1", created: true, entry_seq: 4, state: "ready" } : name === "task_status" ? { client_id: args.client_id, state: "creating", space: null } : name === "agent_members" ? { members: [] } : { entries: [], cursor: 0 }) });
+    const { backend, fake } = setup({
+      tools: (name, args) =>
+        name === "task_start"
+          ? { space: args.where && (args.where as { kind: string }).kind === "space" ? SPACE : "relay:space-new1", created: true, entry_seq: 4, state: "ready" }
+          : name === "task_status"
+            ? { client_id: args.client_id, state: "creating", space: null }
+            : name === "agent_members"
+              ? { members: [] }
+              : { entries: [], cursor: 0 },
+    });
     await backend.listSpaces();
-    const req = { client_id: "task-0001", agent: "claude-code", prompt: "fix it", message: "@claude fix it", where: { kind: "machine" as const, machine: "studio" }, os: "linux" };
+    const req = {
+      client_id: "task-0001",
+      agent: "claude-code",
+      prompt: "fix it",
+      message: "@claude fix it",
+      where: { kind: "machine" as const, machine: "studio" },
+      os: "linux",
+    };
     const r = await backend.startTask!(req);
     expect(r).toMatchObject({ space: "relay:space-new1", created: true, entrySeq: 4 });
     const call = fake.seen.filter((s) => s.tool?.name === "task_start").at(-1)!;
@@ -198,7 +303,11 @@ describe("what the phone needs beyond the thread, against a fake relay and a fak
     const { backend, fake } = setup();
     await backend.listSpaces();
     expect(await backend.post(SPACE, "@claude stop that, do this", { clientId: "c1", mode: "steer", agent: "claude" })).toBeNull();
-    expect(fake.seen.at(-1)!.tool).toMatchObject({ name: "agent_message", space: SPACE, args: { name: "claude", text: "@claude stop that, do this", force: true, client_id: "c1" } });
+    expect(fake.seen.at(-1)!.tool).toMatchObject({
+      name: "agent_message",
+      space: SPACE,
+      args: { name: "claude", text: "@claude stop that, do this", force: true, client_id: "c1" },
+    });
     await backend.post(SPACE, "@claude then this", { clientId: "c2", mode: "queue", agent: "@claude" });
     expect(fake.seen.at(-1)!.tool).toMatchObject({ name: "agent_message", args: { name: "claude", force: false, client_id: "c2" } });
   });
@@ -207,7 +316,10 @@ describe("what the phone needs beyond the thread, against a fake relay and a fak
     const { backend, fake } = setup();
     await backend.listSpaces();
     await backend.post(SPACE, "@claude look at this", { clientId: "c5", mode: "steer", agent: "claude", replyTo: 3 });
-    const tools = fake.seen.map((s) => s.tool).filter(Boolean).slice(-2);
+    const tools = fake.seen
+      .map((s) => s.tool)
+      .filter(Boolean)
+      .slice(-2);
     expect(tools.map((t) => t!.name)).toEqual(["agent_interrupt", "thread_post"]);
     expect(tools[1]!.args).toMatchObject({ reply_to: 3 });
     await backend.post(SPACE, "hello", { clientId: "c6" });
@@ -228,8 +340,10 @@ describe("what the phone needs beyond the thread, against a fake relay and a fak
       tools: (name) => {
         if (name === "agent_members") return { members: [] };
         if (name === "thread_read") return { entries: [], cursor: 0, me: { id: "acct:you" } };
-        if (name === "thread_tool_rows") return { groups: [{ after_seq: 2, agent: "claude", calls: [{ id: "a", cat: "ran", line: "Ran ls", state: "done" }] }], cursor: 5, caught_up: true };
-        if (name === "space_changes") return { repo: "a/b", branch: "x", base: "main", files: [{ path: "a.ts", status: "modified", additions: 1, deletions: 1 }] };
+        if (name === "thread_tool_rows")
+          return { groups: [{ after_seq: 2, agent: "claude", calls: [{ id: "a", cat: "ran", line: "Ran ls", state: "done" }] }], cursor: 5, caught_up: true };
+        if (name === "space_changes")
+          return { repo: "a/b", branch: "x", base: "main", files: [{ path: "a.ts", status: "modified", additions: 1, deletions: 1 }] };
         if (name === "space_file_diff") return { path: "a.ts", patch: "@@ -1 +1 @@\n-a\n+b\n" };
         if (name === "space_file_preview") return { path: "a.ts", mime: "text/plain", size: 3, encoding: "utf8", content: "abc" };
         return {};
@@ -246,7 +360,9 @@ describe("what the phone needs beyond the thread, against a fake relay and a fak
   });
 
   it("registers this phone's push token with the relay under its device id, and removes it", async () => {
-    const { backend, fake } = setup({ rest: (method, path) => (path.startsWith("/v1/push/registrations/") ? { status: method === "DELETE" ? 204 : 204 } : undefined) });
+    const { backend, fake } = setup({
+      rest: (method, path) => (path.startsWith("/v1/push/registrations/") ? { status: method === "DELETE" ? 204 : 204 } : undefined),
+    });
     await backend.push!.register({ platform: "ios", token: "ab".repeat(32) });
     const put = fake.seen.at(-1)!;
     expect(put.method).toBe("PUT");

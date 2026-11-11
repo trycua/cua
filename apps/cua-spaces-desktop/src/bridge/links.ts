@@ -34,7 +34,9 @@ export function linksMethods({ model }: BridgeContext): Handlers {
           }),
         );
       }
-      return encode(await model.backend.createLink(string(args, "target"), optionalString(args, "access"), count(args, "ttlSeconds"), optionalString(args, "name")));
+      return encode(
+        await model.backend.createLink(string(args, "target"), optionalString(args, "access"), count(args, "ttlSeconds"), optionalString(args, "name")),
+      );
     },
     "links.stop": async (args) => ({ stopped: await model.backend.stopLink(string(args, "id")) }),
     // A waiting public TCP share (an agent asked, or the first through a share edge): the person's answer.

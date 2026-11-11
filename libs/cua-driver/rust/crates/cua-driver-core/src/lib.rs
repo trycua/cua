@@ -60,6 +60,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 pub mod action_record;
 pub mod action_target;
 pub mod agent_cursor;
+pub mod app_names;
 pub mod authorization;
 pub mod background_input;
 pub mod batch_nudge;
@@ -91,6 +92,7 @@ pub mod history;
 #[cfg(feature = "keyring")]
 pub mod history_keyring;
 pub mod image_utils;
+pub mod input_pacing;
 pub mod interactive_input;
 pub mod key_pacing;
 pub mod launch_guard;
@@ -111,6 +113,7 @@ pub mod recording_zoom;
 pub mod recovery_hint;
 #[cfg(feature = "script")]
 pub mod script_tool;
+pub mod security_prompt;
 pub mod server;
 pub mod session;
 pub mod session_authorization;
@@ -128,6 +131,7 @@ pub mod tool;
 pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
+pub mod type_pacing;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;

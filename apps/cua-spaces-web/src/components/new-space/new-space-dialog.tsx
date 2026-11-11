@@ -4,7 +4,18 @@
 import { CheckIcon, ChevronRightIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import {
+  useBridge,
+  useConnectCloud,
+  useNewSpaceWizard,
+  useSpaces,
+  type CreateSpaceArgs,
+  type RuntimeSwitch,
+  type WizardAction,
+  type WizardField,
+  type WizardTile,
+  type WizardView,
+} from "@/bridge";
 import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
 import { GroupedSection } from "@/components/ui/grouped";
@@ -34,9 +45,9 @@ export function NewSpaceDialog() {
   const wizard = useNewSpaceWizard();
   const connect = useConnectCloud();
   const { view, send } = wizard;
-  const { defaultLocation, clouds = [], experiments } = wizard.env;
+  const { defaultLocation, clouds = [] } = wizard.env;
   // The default only counts once the clouds it may name have loaded.
-  const defaultKey = [defaultLocation, experiments?.yourCloud, ...clouds.map((c) => c.name)].join(" ");
+  const defaultKey = [defaultLocation, ...clouds.map((c) => c.name)].join(" ");
 
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens, or change when a cloud is connected as default).
@@ -180,7 +191,21 @@ function Group({ children, className, ...rest }: { children: ReactNode; classNam
 }
 
 /** A label on the left and its control on the right; `stacked` puts the control under it. */
-function Row({ id, label, htmlFor, children, below, stacked }: { id: string; label: string; htmlFor?: string; children: ReactNode; below?: ReactNode; stacked?: boolean }) {
+function Row({
+  id,
+  label,
+  htmlFor,
+  children,
+  below,
+  stacked,
+}: {
+  id: string;
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+  below?: ReactNode;
+  stacked?: boolean;
+}) {
   return (
     <div data-field={id} className="px-4 py-2.5">
       <div className={cn(stacked ? "space-y-2" : "flex min-h-8 items-center justify-between gap-6")}>
@@ -362,7 +387,9 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
             items={[
               ...v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group })),
               // Only with the Your cloud experiment (the core offers the field); it opens the connect sheet.
-              ...(v.fields.some((x) => x.id === "connect-cloud") ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }] : []),
+              ...(v.fields.some((x) => x.id === "connect-cloud")
+                ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }]
+                : []),
             ]}
             onValueChange={(on) => (on === ADD_CLOUD ? connect.show() : send({ type: "choose-placement", on }))}
           />
@@ -370,11 +397,7 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
       );
     case "kind":
       return (
-        <Row
-          id="kind"
-          label={f.label}
-          below={error}
-        >
+        <Row id="kind" label={f.label} below={error}>
           <Tiles id="kind" label={f.label} tiles={v.kindTiles} onPick={(kind) => send({ type: "choose-kind", kind })} />
         </Row>
       );
@@ -711,7 +734,10 @@ function SummaryStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
   const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
   const network = useNetworkPreview();
-  const technical = [...v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label)), ...(network ? [{ label: "Network", value: presetInfo(network.wizardPreset).short }] : [])];
+  const technical = [
+    ...v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label)),
+    ...(network ? [{ label: "Network", value: presetInfo(network.wizardPreset).short }] : []),
+  ];
   return (
     <>
       <Group data-summary="">

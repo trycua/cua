@@ -86,19 +86,21 @@ const macHostAnswer = (name: string): WkSettings =>
   JSON.parse(readFileSync(join(__dirname, "fixtures", `mac-host-settings-${name}.json`), "utf8")) as WkSettings;
 
 /** The demo host, but `settings.get` answers what the SwiftUI host answered, through the WebKit adapter. */
-const asMacHost = (name: string) => (demo: DataAdapter): DataAdapter => ({
-  ...demo,
-  call: (async (op: string, args: unknown) => {
-    if (op === "settings.get") return toSettingsSnapshot(macHostAnswer(name), { theme: "system", hotkey: "⌘⇧Space" });
-    return demo.call(op as never, args as never);
-  }) as DataAdapter["call"],
-});
+const asMacHost =
+  (name: string) =>
+  (demo: DataAdapter): DataAdapter => ({
+    ...demo,
+    call: (async (op: string, args: unknown) => {
+      if (op === "settings.get") return toSettingsSnapshot(macHostAnswer(name), { theme: "system", hotkey: "⌘⇧Space" });
+      return demo.call(op as never, args as never);
+    }) as DataAdapter["call"],
+  });
 
 describe.skipIf(!wasmBuilt)("Settings, Advanced: which software runs Spaces (real routes, wasm core)", () => {
   it("has one row per kind, in plain words, and none of the old per-OS rows", async () => {
     await mountAdvanced();
     await waitFor(() => expect(kindRow("microvm")).toBeTruthy());
-    expect(document.body.textContent).toContain("Which software runs Spaces on this machine");
+    expect(document.body.textContent).toContain("Which software runs Spaces on this computer");
     for (const [kind, label] of KINDS) {
       const r = row(`runtime:${kind}`)!;
       expect(within(r).getByText(label)).toBeTruthy();

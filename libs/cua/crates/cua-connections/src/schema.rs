@@ -74,6 +74,10 @@ pub struct ModelDef {
     /// A quick, cheap model: the default of a new prompt picks the first one.
     #[serde(default)]
     pub fast: bool,
+    /// An older id that stays accepted (a saved choice keeps working) but is
+    /// not offered in the menu and is never a default.
+    #[serde(default)]
+    pub legacy: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

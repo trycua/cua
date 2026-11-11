@@ -16,11 +16,23 @@ struct HostSetupFailureTests {
     @Test func aMissingReleaseIsADownloadFailureWithoutTheURL() {
         let f = HostSetupFailure.presenting(Self.missingRelease)
         #expect(f.kind == .download)
-        #expect(f.title == "Couldn\u{2019}t download the Cua host service")
-        #expect(f.message.contains("update Cua Spaces"))
+        #expect(f.title == "Couldn\u{2019}t set up sharing for this Mac")
+        #expect(f.message.contains("internet connection"))
         #expect(!f.message.contains("http"))
         #expect(!f.title.contains("http"))
         #expect(f.details == Self.missingRelease, "details stay raw")
+    }
+
+    /// The relay refuses a new computer that arrives with a token alone on
+    /// an account that already has computers: the page says what to do,
+    /// not "Something went wrong" (seen on Share With This Account, 0.21.0).
+    @Test func aNewComputerOnAnAccountWithComputersIsAddedFromOne() {
+        let raw = "permission denied: relay: add computers from a computer you already added, or with a pairing code"
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .addFromAnotherComputer)
+        #expect(f.title == "Add this Mac from another computer")
+        #expect(f.message.contains("pairing code"))
+        #expect(f.details == raw)
     }
 
     @Test func aThrottledSetupSaysHowLongToWaitInPlainWords() {
@@ -205,6 +217,32 @@ struct HostSetupFailureTests {
         #expect(model.setupFailure == nil)
         model.openForm()
         #expect(model.setupFailure == nil)
+    }
+
+    /// The relay refuses a new computer that came with no proof it is the
+    /// owner adding it; the error keeps the relay's code, and the page asks
+    /// the person to confirm it is them with a code from another computer.
+    @Test func aNewComputerThatNeedsProofAsksForACodeInPlainWords() {
+        let raw = "permission denied: relay: add computers from a computer you already added, "
+            + "or with a pairing code [code: new_computer_needs_proof]"
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .needsProof)
+        #expect(f.refusalCode == "new_computer_needs_proof")
+        #expect(f.title == "Confirm it\u{2019}s you")
+        #expect(f.message.contains("enter a code from a computer you already added"))
+        #expect(f.actionLabel == "Use a code from another computer")
+        #expect(f.details == raw, "details stay raw")
+        for word in ["relay", "enrol", "MFA", "token", "pairing"] {
+            #expect(!f.title.contains(word) && !f.message.contains(word), "no jargon: \(word)")
+        }
+    }
+
+    @Test func aRefusalCodeIsReadOnlyFromTheEnd() {
+        #expect(HostSetupFailure.refusalCode("relay: no [code: phone]") == "phone")
+        #expect(HostSetupFailure.refusalCode("relay: that host is shared with you to watch only") == nil)
+        #expect(HostSetupFailure.refusalCode("relay: x [code: Bad-Code]") == nil)
+        #expect(HostSetupFailure.presenting("relay: x [code: phone]").kind == .other)
+        #expect(HostSetupFailure.presenting("relay: x [code: phone]").refusalCode == "phone")
     }
 }
 

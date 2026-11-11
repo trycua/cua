@@ -48,7 +48,7 @@ use tokio::sync::mpsc;
 pub const MAX_BODY: usize = 32 * 1024 * 1024;
 
 /// Server settings.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     /// The key a client must present.
     pub api_key: String,
@@ -58,6 +58,16 @@ pub struct Config {
     /// contains a rule's text runs that rule's script, so a demo prompt can
     /// read like a person wrote it.
     pub rules: Vec<scenario::Rule>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("api_key", &"<redacted>")
+            .field("capture_dir", &self.capture_dir)
+            .field("rules", &self.rules)
+            .finish()
+    }
 }
 
 impl Default for Config {

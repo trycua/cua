@@ -92,7 +92,7 @@ RULES: dict[str, Rule] = {
             "block",
             "XGrabKeyboard, XGrabPointer, XGrabKey, XGrabButton and XGrabServer take every input device or the "
             "whole server away from the user until released.",
-            f"{INPUT_RS}:1797-1803 (the driver dropped its XI2 shield grab: it swallowed input and left the device "
+            f"{INPUT_RS}:1792-1797 (the driver dropped its XI2 shield grab: it swallowed input and left the device "
             f"frozen); {DRV}/crates/platform-linux/src/input/focus_guard.rs:24-27 (a held grab cannot be undone)",
             "No grab is needed: AT-SPI actions and EditableText reach the element without one.",
         ),

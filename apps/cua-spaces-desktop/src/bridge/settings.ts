@@ -83,6 +83,9 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     runtimes: model.runtimesInput(),
     // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
     showTips: !model.settings.tips.off,
+    // The close-window rows are the Mac app's (its background service): none here.
+    closeWindowKeepsRunning: undefined,
+    closeNotice: true,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/trycua/cua/compare/cua-spaces-v0.33.1...cua-spaces-v0.33.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **runtime:** setup runsc no longer says already available on a runc-only Docker ([#7314](https://github.com/trycua/cua/issues/7314)) ([bc640ca](https://github.com/trycua/cua/commit/bc640ca8186aed9999f98596decf4b5a9cd9a607))
+
 ## [0.33.1](https://github.com/trycua/cua/compare/cua-spaces-v0.33.0...cua-spaces-v0.33.1) (2026-11-11)
 
 

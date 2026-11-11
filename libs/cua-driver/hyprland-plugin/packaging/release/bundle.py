@@ -25,6 +25,8 @@ include/cua_hyprland/session.hpp
 include/cua_hyprland/status.hpp
 src/drag_geometry.hpp
 src/foreground_route.hpp
+src/ime_popup_guard.cpp
+src/ime_popup_guard.hpp
 src/inject_server.cpp
 src/inject_server.hpp
 src/input_client_deadline.hpp

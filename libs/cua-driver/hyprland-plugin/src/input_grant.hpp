@@ -10,7 +10,8 @@ class InputGrant {
     using Clock = std::chrono::steady_clock;
     static constexpr auto lifetime = std::chrono::seconds(5);
     static constexpr bool single_operation(std::uint64_t capability) {
-        return capability == 1 || capability == 2 || capability == 4 || capability == 8 || capability == 16;
+        return capability == 1 || capability == 2 || capability == 4 || capability == 8 || capability == 16 ||
+            capability == 32;
     }
     bool arm(std::uint64_t capability, Clock::time_point now) {
         reset();

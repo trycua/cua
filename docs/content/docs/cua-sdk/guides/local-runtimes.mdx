@@ -36,7 +36,7 @@ and runtime from the image and starts it itself.
 ```bash test="cli-shape" id="cua-runtime-doctor"
 cua runtime doctor              # what this host can run (read-only)
 cua runtime setup --dry-run     # the install plan
-cua runtime setup               # install what is missing; or name qemu, lume, container, firecracker
+cua runtime setup               # install what is missing; or name qemu, lume, container, runsc, firecracker
 ```
 
 `cua doctor` checks the host, an image and a sandbox's guest in one report.

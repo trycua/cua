@@ -262,14 +262,14 @@ Move a cursor to (x, y). With target &#123;kind: "window", pid, window_id&#125;,
 </Tab>
 <Tab value="Linux">
 
-Move the synthetic agent cursor without changing the user's pointer. Only an explicit scope=desktop request moves the real OS pointer in get_desktop_state coordinates.
+Move the synthetic agent cursor without changing the user's pointer. With target &#123;kind: "window", pid, window_id&#125;, x/y are window screenshot pixels (as for click); on Hyprland the background app is also hovered through Cua's own input seat, so hover styles, hover-only controls and tooltips appear while the user's pointer stays put, and the result says whether the app saw the hover (hover_delivered). Without a target, x/y are screen coordinates for the overlay only. Only an explicit scope=desktop request moves the real OS pointer in get_desktop_state coordinates.
 
 **Linux parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="move_cursor--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "window" (default) moves only the agent cursor overlay; "desktop" moves the real OS pointer. |
-| <span id="move_cursor--linux--x"></span>`x` | `number` | required | Destination X. Window scope: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels. |
+| <span id="move_cursor--linux--x"></span>`x` | `number` | required | Destination X. Window target: window screenshot pixels. No target: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels. |
 
 </Tab>
 <Tab value="Windows">

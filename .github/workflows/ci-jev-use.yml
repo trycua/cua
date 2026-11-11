@@ -19,6 +19,7 @@ on:
       - ".github/workflows/authorized-live-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use-demo.yml"
       - "scripts/ci/windows/run-jev-use-elevated-autostart.ps1"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -62,7 +63,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   unit-python:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Python unit
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -71,7 +79,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -90,6 +98,8 @@ jobs:
           uv run --frozen python verify_decision_cli.py --model mock --fixture native
 
   unit-typescript:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: TypeScript unit and typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -108,9 +118,11 @@ jobs:
         run: npm run typecheck
 
   mock-e2e-linux:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Linux mock E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       CUA_DRIVER_BIN: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver
       CUA_DRIVER_PERMISSION_MODE: unrestricted
@@ -122,13 +134,13 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua-driver/rust
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -138,15 +150,17 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install Linux desktop packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom clang pkg-config
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev
+            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - name: Install Linux desktop dependencies
         working-directory: ${{ github.workspace }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom clang pkg-config \
-            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
           chromium_source="$(readlink -f "$(command -v chromium)")"
           "$chromium_source" --version
           test ! -e /usr/lib/chromium-browser
@@ -343,6 +357,8 @@ jobs:
   # silently tests an older release. The candidate-source build above stays
   # Linux-only.
   released-driver-macos:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: macOS released Driver mock E2E
     runs-on: macos-26
     timeout-minutes: 45
@@ -357,7 +373,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -401,7 +417,7 @@ jobs:
           "$CUA_DRIVER_BIN" stop >/dev/null 2>&1 || true
           bash libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh \
             --app /Applications/CuaDriver.app --expected-client com.trycua.driver
-          open -n -g -a CuaDriver --args serve
+          open -n -g /Applications/CuaDriver.app --args serve
           for _ in $(seq 1 60); do
             if "$CUA_DRIVER_BIN" permissions status --json > "$RUNNER_TEMP/permissions.json" 2>/dev/null \
                 && jq -e '.accessibility == true and .screen_recording == true' "$RUNNER_TEMP/permissions.json" >/dev/null; then
@@ -459,6 +475,8 @@ jobs:
   # mock provider. verify_native.py launches a fresh harness per run and reads
   # the harness's own state file as the independent oracle.
   native-appkit-macos:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: macOS native AppKit mock E2E
     runs-on: macos-26
     timeout-minutes: 45
@@ -473,7 +491,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -518,7 +536,20 @@ jobs:
           "$CUA_DRIVER_BIN" stop >/dev/null 2>&1 || true
           bash libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh \
             --app /Applications/CuaDriver.app --expected-client com.trycua.driver
-          open -n -g -a CuaDriver --args serve
+          # Since 0.37 the Driver skips every implicit capture until replayd
+          # holds macOS's one-time direct-capture approval for the app
+          # (CUA-1792); without it get_window_state returns no screenshot and
+          # no capture_id. A user records it with `cua-driver permissions
+          # grant`; this unattended runner records it the way a managed Mac
+          # does, keyed by the released app's bundle identifier.
+          approvals="$HOME/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+          mkdir -p "$(dirname "$approvals")"
+          defaults write "$approvals" com.trycua.driver -dict \
+            kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
+            kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000"
+          killall -HUP replayd >/dev/null 2>&1 || true
+          defaults read "$approvals" com.trycua.driver | grep -Fq kScreenCaptureApprovalLastAlerted
+          open -n -g /Applications/CuaDriver.app --args serve
           for _ in $(seq 1 60); do
             if "$CUA_DRIVER_BIN" permissions status --json > "$RUNNER_TEMP/permissions.json" 2>/dev/null \
                 && jq -e '.accessibility == true and .screen_recording == true' "$RUNNER_TEMP/permissions.json" >/dev/null; then
@@ -598,6 +629,8 @@ jobs:
           retention-days: 14
 
   released-driver-windows:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Windows released Driver mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -615,7 +648,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -712,6 +745,8 @@ jobs:
   # verify_native.py launches a fresh harness in task mode per run and reads
   # the harness's own state file as the independent oracle.
   native-wpf-windows:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Windows native WPF mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -729,7 +764,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -858,6 +893,8 @@ jobs:
   # default install.ps1, the deterministic mock provider, and the harness's
   # own state file as the independent oracle.
   native-winui3-windows:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Windows native WinUI3 mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
@@ -875,7 +912,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -1005,6 +1042,8 @@ jobs:
   # verify_native.py runs from the locked venv directly (not `uv run`, which
   # would put the venv's python3 first on PATH).
   native-gtk3-linux:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Linux native GTK3 mock E2E
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1020,7 +1059,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.8.15"
           enable-cache: true
@@ -1031,10 +1070,9 @@ jobs:
           cache: npm
           cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
       - name: Install Linux desktop dependencies
-        working-directory: ${{ github.workspace }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
             xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
       - name: Install the released Driver with the canonical installer
         working-directory: ${{ github.workspace }}

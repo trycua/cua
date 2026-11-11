@@ -25,7 +25,7 @@ node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a
     || skip "node $(node --version) is too old (need >= 23.6)"
 [ -f "$SDK/dist/index.js" ] || skip "SDK not built: (cd libs/cua/typescript && npm ci && npm run build)"
 ls "$SDK"/node_modules/@trycua/cua-*/libcua_sdk.* >/dev/null 2>&1 \
-    || skip "native cua-sdk not staged: (cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=node)"
+    || skip "native cua-sdk not staged: (cd libs/cua && cargo build --release -p cua-sdk-native && node scripts/stage-uniffi-library.mjs --only=node)"
 [ -e "$EX/node_modules/@trycua/cua" ] || skip "example deps missing: (cd examples/streaming/typescript-node && npm install)"
 
 cd "$EX"

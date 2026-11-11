@@ -1,5 +1,8 @@
 # Held-input lifecycle validation
 
+> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the Fleet references below are historical.
+
 On 2026-09-05, the experimental Hyprland input path released a held background
 button after operator Stop, agent disconnect, lease expiry, and plugin unload.
 The recorded runs observed release in 18-62 ms, with the expiry interval measured

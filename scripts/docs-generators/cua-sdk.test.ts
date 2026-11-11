@@ -177,11 +177,11 @@ const PAGES_FIXTURE: PageSpec[] = [
     items: [],
     members: [{ object: 'Sandbox', title: 'Lifecycle methods', methods: ['delete'] }],
   },
-  { slug: 'local', title: 'Local', description: 'Local.', intro: 'Intro.', items: [], modules: ['media', 'types'] },
+  { slug: 'services', title: 'Services', description: 'Services.', intro: 'Intro.', items: [], modules: ['media', 'types'] },
 ];
 
 const render = (api = fixture(), examples = new Map()) =>
-  renderAll(api, '1.2.3', {
+  renderAll(api, {
     renames: ctx.renames,
     outputDir: '/out',
     pages: PAGES_FIXTURE,
@@ -199,11 +199,11 @@ test('pages are deterministic, complete and use only the shimmed components', ()
       'cua.mdx',
       'errors.mdx',
       'index.mdx',
-      'local.mdx',
       'meta.json',
       'sandbox/index.mdx',
       'sandbox/life.mdx',
       'sandbox/meta.json',
+      'services.mdx',
       'types.mdx',
     ]
   );
@@ -213,20 +213,20 @@ test('pages are deterministic, complete and use only the shimmed components', ()
   assert.deepEqual(JSON.parse(a.get('/out/sandbox/meta.json')!).pages, ['life']);
   const sandbox = a.get('/out/sandbox/index.mdx')!;
   assert.match(sandbox, /AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY/);
-  assert.match(sandbox, /Version: 1\.2\.3/);
+  assert.doesNotMatch(sandbox, /^\s*Version:/m);
   assert.match(sandbox, /^### `Sandbox\.exec`$/m);
   assert.match(sandbox, /<Tabs items=\{\['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust'\]\} groupId="sdk-lang" persist>/);
   assert.match(sandbox, /pub async fn exec\(&self, command: Vec<String>, timeout_ms: Option<u64>\) -> Result<ExecResult, CuaError>/);
   assert.match(sandbox, /\| `command` \| `Vec<String>` \| required \|/);
   assert.match(sandbox, /\| `timeout_ms` \| `Option<u64>` \| `None` \|/);
-  assert.match(sandbox, /\*\*Returns\*\* \[`ExecResult`\]\(\/cua-sdk\/reference\/local#execresult-record\)/);
+  assert.match(sandbox, /\*\*Returns\*\* \[`ExecResult`\]\(\/cua-sdk\/reference\/services#execresult-record\)/);
   // A method documented on another page is indexed on its object and rendered there.
   assert.match(sandbox, /\[`delete`\]\(\/cua-sdk\/reference\/sandbox\/life#sandboxdelete\)/);
   assert.doesNotMatch(sandbox, /^### `Sandbox\.delete`$/m);
   assert.match(a.get('/out/sandbox/life.mdx')!, /^### `Sandbox\.delete`$/m);
   assert.match(sandbox, /SandboxPhase\.RUNNING/);
   assert.match(sandbox, /^## `SandboxPhase` enum$/m);
-  const media = a.get('/out/local.mdx')!;
+  const media = a.get('/out/services.mdx')!;
   assert.match(media, /\| `exit_code` \/ `exitCode` \| `i32` \|/);
   assert.match(media, /Output \\\| raw\./);
   assert.match(media, /<Callout>/);
@@ -303,7 +303,7 @@ test('nested folders get their own meta.json; a catalog page lists its subtree i
     { slug: 'sandbox/life/results', title: 'Results', description: 'Results.', intro: 'Intro.', items: [], prefixes: ['Exec'] },
     PAGES_FIXTURE[3],
   ];
-  const out = renderAll(fixture(), '1.2.3', {
+  const out = renderAll(fixture(), {
     renames: ctx.renames,
     outputDir: '/out',
     pages,
@@ -404,7 +404,7 @@ function spacesFixture(): SdkApi {
 const SPACES_PAGE: PageSpec = { slug: 'sandbox/porter', title: 'Porter', description: 'Porting.', intro: 'Intro.', items: [], modules: ['teleport'], spaces: true };
 
 test('app export pages: Swift and Rust only, the FSL note, linked into the SDK and off the Types list', () => {
-  const out = renderAll(fixture(), '1.2.3', {
+  const out = renderAll(fixture(), {
     renames: ctx.renames,
     outputDir: '/out',
     pages: [...PAGES_FIXTURE, SPACES_PAGE],

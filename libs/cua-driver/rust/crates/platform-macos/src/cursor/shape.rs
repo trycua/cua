@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS adapter for [`cua_driver_core::cursor_shape`].
 //!
 //! Thin by design: the vocabulary, the dispatch and the "unsupported" story

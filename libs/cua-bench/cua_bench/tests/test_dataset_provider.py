@@ -10,7 +10,7 @@ import textwrap
 import pytest
 from cua_bench.computers.dataset import DatasetSession
 from cua_bench.runner import AgentOptions, BatchRunner, Job
-from cua_bench.targets import Target, check_requirements, plan_claims, resolve_env_spec
+from cua_bench.targets import Target, check_requirements, resolve_env_spec
 from cua_bench.types import ClickAction, DoneAction
 
 
@@ -24,12 +24,11 @@ def _png(w=40, h=30) -> bytes:
 
 def test_env_spec_needs_no_sandbox():
     comp = {"provider": "dataset", "setup_config": {"requires": ["kvm", "env:X"], "width": 5}}
-    spec = resolve_env_spec(comp, Target(on="cloud", kind="vm", image="ghcr.io/x/y:1"))
+    spec = resolve_env_spec(comp, Target(on="local", kind="vm", image="ghcr.io/x/y:1"))
     assert spec.provider == "dataset" and not spec.needs_sandbox
     assert spec.kind == "none" and spec.image is None
-    assert spec.backend("cloud") == "none" and spec.image_variant == "none"
+    assert spec.backend("local") == "none" and spec.image_variant == "none"
     assert spec.requires == ("env:X",)  # kvm never applies without a VM
-    assert plan_claims([("a", spec)], 4) == []
     with pytest.raises(Exception, match="X"):
         check_requirements([spec], Target(), environ={})
 

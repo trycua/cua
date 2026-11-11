@@ -113,8 +113,9 @@ impl Connection {
     }
 
     /// `create_space`: makes a new sandbox and registers it as a Space.
-    /// `options.on` says where: `cloud` is metered, `local` is free, and
-    /// unset is the user's default location (local unless configured).
+    /// `options.on` says where: a connected cloud account (`aws`, `gcp`,
+    /// `modal`) is billed there, `local` is free, and unset is the user's
+    /// default location (local unless configured).
     /// With `reuse`, a reachable registered Space in that location is
     /// returned instead.
     pub fn create_space(self: &Arc<Self>, options: CreateSpaceOptions) -> Result<Space> {
@@ -211,7 +212,9 @@ impl Connection {
     pub fn hotspot_start(&self, space_id: &str) -> Result<HotspotStatus> {
         Ok(HotspotStatus::decode(&self.call_object(
             "hotspot_start",
-            json!({ "space": space_id }),
+            // This call is the user's own explicit start; the tool's
+            // `confirm` guards agents that reach it without asking.
+            json!({ "space": space_id, "confirm": true }),
         )?))
     }
 
@@ -472,10 +475,38 @@ impl Connection {
         self.call_object("cloud_test", target)
     }
 
-    /// `cloud_disconnect`: forgets a connected cloud (nothing in it is
-    /// deleted).
-    pub fn cloud_disconnect(&self, provider: &str) -> Result<Map<String, Value>> {
-        self.call_object("cloud_disconnect", json!({ "provider": provider }))
+    /// `cloud_disconnect`: forgets a connected cloud. Refused while Cua
+    /// resources still run there; with `delete`, deletes everything Cua
+    /// created there first and disconnects once the cloud confirms.
+    pub fn cloud_disconnect(&self, provider: &str, delete: bool) -> Result<Map<String, Value>> {
+        self.call_object(
+            "cloud_disconnect",
+            json!({ "provider": provider, "delete": delete }),
+        )
+    }
+
+    /// `cloud_audit`: the newest `limit` entries of the cloud audit log,
+    /// newest last (each `ts`, `action`, `provider`, `kind`, `id`, `space`,
+    /// `actor`, `outcome`, `detail`).
+    pub fn cloud_audit(&self, limit: u32) -> Result<Vec<Value>> {
+        let payload = self.call("cloud_audit", json!({ "limit": limit }))?;
+        Ok(expect_array(&payload, None))
+    }
+
+    /// `cloud_cost`: what the machines Cua created cost, grouped `by`
+    /// `space`, `agent`, `day` or `cloud` since `since` (`YYYY-MM-DD`;
+    /// `None`: the first of this month): `by`, `since`, `until`, `rows`
+    /// (each `key`, `usd`, `hours`, `machines`) and `total_usd`.
+    pub fn cloud_cost(
+        &self,
+        provider: Option<&str>,
+        by: &str,
+        since: Option<&str>,
+    ) -> Result<Map<String, Value>> {
+        self.call_object(
+            "cloud_cost",
+            json!({ "provider": provider, "by": by, "since": since }),
+        )
     }
 
     /// `cloud_sweep`: what Cua left in your clouds; deletes it unless
@@ -490,6 +521,57 @@ impl Connection {
             "cloud_sweep",
             json!({ "provider": provider, "dry_run": dry_run, "all": all }),
         )
+    }
+
+    /// `cloud_plan`: what the elastic pool would do for some Spaces (and
+    /// with `"apply": true`, adds the machines).
+    pub fn cloud_plan(&self, request: Value) -> Result<Map<String, Value>> {
+        self.call_object("cloud_plan", request)
+    }
+
+    /// `cloud_hosts`: the hosts the elastic pool added in your clouds.
+    pub fn cloud_hosts(&self) -> Result<Value> {
+        self.call("cloud_hosts", json!({}))
+    }
+
+    /// `cloud_add_host`: adds hosts by hand in a linked cloud.
+    pub fn cloud_add_host(&self, provider: &str, instance_type: &str, count: u32) -> Result<Value> {
+        self.call(
+            "cloud_add_host",
+            json!({ "provider": provider, "instance_type": instance_type, "count": count }),
+        )
+    }
+
+    /// `cloud_remove_host`: removes hosts this home added.
+    pub fn cloud_remove_host(&self, names: &[&str]) -> Result<Map<String, Value>> {
+        self.call_object("cloud_remove_host", json!({ "names": names }))
+    }
+
+    /// `cloud_budget`: reads the elastic pool's budget, setting the fields
+    /// given.
+    pub fn cloud_budget(&self, update: Value) -> Result<Map<String, Value>> {
+        self.call_object("cloud_budget", update)
+    }
+
+    /// `prewarm`: keep Spaces of one shape ready (`args` as the tool takes
+    /// them).
+    pub fn prewarm(&self, args: Value) -> Result<Value> {
+        self.call("prewarm", args)
+    }
+
+    /// `prewarm_list`: the prewarms and how many are ready.
+    pub fn prewarm_list(&self) -> Result<Value> {
+        self.call("prewarm_list", json!({}))
+    }
+
+    /// `prewarm_remove`: end a prewarm.
+    pub fn prewarm_remove(&self, id: &str) -> Result<Value> {
+        self.call("prewarm_remove", json!({ "id": id }))
+    }
+
+    /// `cloud_reconcile`: one scale-in pass now.
+    pub fn cloud_reconcile(&self) -> Result<Value> {
+        self.call("cloud_reconcile", json!({}))
     }
 
     // -- Snapshot memory --------------------------------------------------
@@ -574,10 +656,33 @@ impl Space {
         self.connection.delete_space(&self.info.id)
     }
 
-    /// `stop_space`: turns this Space off (suspended or stopped, as its
-    /// provider can). Returns `space`, `state`, `power` and `message`.
+    /// `stop_space`: turns this Space off (stopped, its memory freed, or
+    /// suspended where its provider cannot stop it). Returns `space`,
+    /// `state`, `power` and `message`.
     pub fn stop(&self) -> Result<Map<String, Value>> {
         self.call_object("stop_space", self.arguments(json!({})))
+    }
+
+    /// `stop_space` with `suspend`: suspends this Space, keeping its
+    /// memory (a local container or QEMU VM).
+    pub fn suspend(&self) -> Result<Map<String, Value>> {
+        self.call_object("stop_space", self.arguments(json!({ "suspend": true })))
+    }
+
+    /// `resize_space`: gives this local VM Space `cpus` vCPUs, `memory_mb`
+    /// MiB of memory or a disk grown to `disk_gb` GiB; it boots again from
+    /// its own disk. Returns `space`, `cpus`, `memory_mb`, `disk_gb` and
+    /// `message`.
+    pub fn resize(
+        &self,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<Map<String, Value>> {
+        self.call_object(
+            "resize_space",
+            self.arguments(json!({ "cpus": cpus, "memory_mb": memory_mb, "disk_gb": disk_gb })),
+        )
     }
 
     /// `start_space`: turns this Space on again (resumed or booted).
@@ -636,6 +741,12 @@ impl Space {
         })
     }
 
+    /// `space_job`: a background job in the Space (`arguments` as the tool
+    /// takes them: `action` and its fields).
+    pub fn job(&self, arguments: Value) -> Result<Map<String, Value>> {
+        self.call_object("space_job", self.arguments(arguments))
+    }
+
     /// `space_write`. Literal text, no local file, no shell quoting.
     pub fn write_text(&self, text: &str, path: &str) -> Result<RemoteFile> {
         let target = self.guest_path(path);
@@ -648,6 +759,13 @@ impl Space {
             byte_count: Some(text.len() as u64),
             path: target,
         })
+    }
+
+    /// `space_service`: keeps a command running in the Space (restarts,
+    /// health checks, start on boot, logs). `arguments` are the tool's own
+    /// (`action`, `name`, `command`, ...); the Space is filled in.
+    pub fn keep_service(&self, arguments: Value) -> Result<Value> {
+        self.call("space_service", self.arguments(arguments))
     }
 
     /// `upload`. Reports the path it actually wrote — `FRICTION.md` §13:
@@ -727,8 +845,8 @@ impl Space {
         Ok(format!("{directory}/{}", base_name(local_path)))
     }
 
-    /// `download`. The Local path answers with JSON and the Fleet path with
-    /// prose (§4); both return a path here.
+    /// `download`. Providers answered with JSON or with prose (§4); both
+    /// return a path here.
     pub fn download(&self, remote_path: &str, into_directory: Option<String>) -> Result<String> {
         self.require("download", self.capabilities().download, "no file transfer")?;
         let mut arguments = json!({ "path": self.guest_path(remote_path) });
@@ -1332,7 +1450,7 @@ mod tests {
             r#"{{"script":"cua.control.script/1","responses":{{{LIST_SPACES}}}}}"#
         ));
         let error = connection
-            .attach("fleet:nope", true)
+            .attach("local:nope", true)
             .err()
             .expect("attaching to an absent Space must fail");
         assert_eq!(error.tag(), "SpaceUnavailable");
@@ -1381,9 +1499,8 @@ mod tests {
     }
 
     /// §6. A provider that cannot do a thing says so before the call, rather
-    /// than after, in prose. (Fleet used to be that provider for streaming;
-    /// `stream_endpoint` now serves every real provider, so the check is
-    /// pinned on a provider the client cannot identify.)
+    /// than after, in prose. (`stream_endpoint` serves every real provider, so
+    /// the check is pinned on a provider the client cannot identify.)
     #[test]
     fn an_unknown_provider_refuses_streaming_before_calling_anything() {
         let script = r#"{"script":"cua.control.script/1","responses":{
@@ -1501,7 +1618,7 @@ mod tests {
             .unwrap();
         let approval = manifest
             .approving(
-                "fleet:somewhere-else",
+                "local:somewhere-else",
                 &["claude/.credentials.json".into()],
                 true,
             )

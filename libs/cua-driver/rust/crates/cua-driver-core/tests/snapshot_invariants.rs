@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::element_token::{token_for, ResolvedElement, LRU_CAP_PER_PID};
 use cua_driver_core::snapshot_store::{
     register_runtime_store, retire_runtime_scope, SnapshotPayload, SnapshotStore,

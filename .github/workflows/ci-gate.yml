@@ -1,0 +1,369 @@
+name: "CI: gate"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
+  merge_group:
+
+permissions:
+  # write: only to rerun the failed jobs of a run whose every failure is a quarantined
+  # flake (.github/flaky/quarantine.json), once. Fork PRs get a read-only token; their
+  # quarantined failures are reported without the rerun.
+  actions: write
+  # read: the check runs (jobs) on the commit, so a job that already failed fails the gate at once.
+  checks: read
+  contents: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  ci-gate:
+    name: ci-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      # A pull request labelled `release-hold` (or the older `hold`) never merges, auto-merge or not (CUA-3559). The gate
+      # reruns when the label is added or removed (labeled/unlabeled above).
+      - name: Fail while the pull request is on hold
+        if: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'release-hold') || contains(github.event.pull_request.labels.*.name, 'hold')) }}
+        run: |
+          echo "::error::This pull request has a hold label (release-hold). Remove it to let the gate pass; see docs/release-hold.md"
+          exit 1
+      # Which workflows this gate may ignore, from the paths the PR changes, the area map
+      # (.github/ci-areas.json) and the package graph (.github/scripts/ci_graph.py); see
+      # docs/contributing/CI.md. The map and both scripts come from the base commit, never
+      # from the pull request, so a PR cannot narrow its own gate by editing them (and any
+      # .github/** change waits for every workflow). The PR's manifests are read too, only
+      # to add the dependency edges it introduces. The merge queue entry resolves the same
+      # pull request and reads the same file list, so both events compute one set.
+      # Any failure here fails the gate: nothing is skipped on error.
+      - name: Check out the selector from the base commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: base
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            /.github/ci-areas.json
+            /.github/scripts/ci_gate_scope.py
+            /.github/scripts/ci_graph.py
+            /.github/flaky/quarantine.json
+            /.github/scripts/flaky/flaky.py
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
+          sparse-checkout-cone-mode: false
+      - name: Check out the pull request's manifests
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: head
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
+          sparse-checkout-cone-mode: false
+      - name: Scope the gate to the changed areas
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          CI_GATE_HEAD_ROOT: ${{ github.workspace }}/head
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          pr=$PR_NUMBER
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+            pr=${BASH_REMATCH[1]}
+          fi
+          api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
+          labels=$(api "repos/$GITHUB_REPOSITORY/issues/$pr/labels" --jq '[.[].name] | join(",")')
+          # The hold step above only sees pull_request events; a queue entry has no PR payload, so the
+          # label is re-read here for the pull request the queue ref names.
+          if [[ -n "$QUEUE_REF" && ",$labels," =~ ,(release-hold|hold), ]]; then
+            echo "::error::Pull request #$pr has a hold label (release-hold). Remove it and requeue; see docs/release-hold.md"
+            exit 1
+          fi
+          api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files.txt"
+          # The files API stops at 3000 entries; a PR that large waits on everything.
+          if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
+          python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+      # Every pull request needs a sign-off on its head commit. Which one depends on where the code lives:
+      #  - A branch of this repository (members and agents, any author): a `local-ci` commit status, set
+      #    by `bin/ci --signoff` (or our Mac CI runner, which `ci-remote-sweep` starts for each such PR)
+      #    after a green quick run.
+      #  - A fork (community): untrusted code, which never runs on our Macs. Its sign-off is a successful
+      #    `CI: Quick` run (ci-quick.yml, `bin/ci --quick`) on the head commit in GitHub Actions: a
+      #    pull_request job with a read-only token and no secrets.
+      # Neither the author, the labels nor the commit trailers decide anything here.
+      # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
+      # set to "true"; that variable is the one switch that makes a missing sign-off block the merge.
+      # A sign-off can take 20-40 minutes (a queued run on the Mac runner), so it is checked twice:
+      # here, once and without waiting, so a failure fails the gate at once; and after the other
+      # workflows have finished (the last step), where a still-missing sign-off is waited for.
+      - name: Check the sign-off on the pull request (fail fast)
+        id: signoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          pr=$PR_NUMBER
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+            pr=${BASH_REMATCH[1]}
+          fi
+          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // ""), .head.ref, ([.labels[].name] | join(","))] | @tsv')
+          IFS=$'\t' read -r sha head_repo head_ref pr_labels <<<"$info"
+          # Release Please PRs are opened by the bot and have no local-ci sign-off: nobody runs bin/ci on
+          # them. They are exempt only when all three hold: a branch of this repository (so a fork cannot
+          # claim it), the release-please branch prefix and the `autorelease: pending` label. Every other
+          # workflow is still waited on.
+          if [[ "$head_repo" == "$GITHUB_REPOSITORY" && "$head_ref" == release-please--branches--* && ",$pr_labels," == *",autorelease: pending,"* ]]; then
+            kind=release
+            what="no sign-off (Release Please pull request)"
+          elif [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
+            kind=local
+            what="a successful local-ci status (bin/ci --quick, then bin/ci --signoff)"
+          else
+            kind=fork
+            what="a successful CI: Quick run (bin/ci --quick in GitHub Actions)"
+          fi
+          echo "Requiring $what on ${sha:0:10}."
+          { echo "kind=$kind"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          if [[ "$kind" == release ]]; then
+            echo "Release Please pull request: exempt from the sign-off."
+            exit 0
+          fi
+          if [[ "$kind" == local ]]; then
+            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+          else
+            # The newest run only: an older one may have been cancelled by a newer push.
+            state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
+              --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
+          fi
+          echo "sign-off on ${sha:0:10}: ${state:-not set yet}"
+          if [[ "$state" == failure || "$state" == error ]]; then
+            msg="The sign-off reported $state on ${sha:0:10}. Fix the failing checks and push."
+            if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then echo "::error title=sign-off failed::$msg"; exit 1; fi
+            echo "::warning title=sign-off failed (report-only)::$msg"
+          fi
+
+      - name: Wait for every other workflow on the pull request head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          IGNORE_RE: ${{ steps.scope.outputs.ignore_re }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
+          QUEUE_RUNS: ${{ vars.CI_QUEUE_RUNS }}
+          FLAKY_PY: base/.github/scripts/flaky/flaky.py
+          QUARANTINE_FILE: base/.github/flaky/quarantine.json
+        run: |
+          set -uo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 120; done; return 1; }
+          sha=$PR_SHA
+          queue_sha=
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || exit 1
+            pr=${BASH_REMATCH[1]}
+            sha=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha) || exit 1
+            # Merge queue runs (CUA-3856): with CI_QUEUE_RUNS on, a workflow that ran on the queue commit
+            # (merge_group, the lanes the queued pull requests touch, on the merged result) is judged by
+            # that run. A workflow with no such run, or one whose every job was skipped, keeps the pull
+            # request's own result. Off: the queue re-reads the pull request's results only.
+            [[ "${QUEUE_RUNS:-}" == true && -n "${QUEUE_SHA:-}" ]] && queue_sha=$QUEUE_SHA
+          fi
+          # IGNORE_RE (from the scope step) names workflow files that belong only to areas this PR
+          # did not touch. Empty means wait for every run.
+          # contributor-attribution enforces the CLA, so the gate never waits on cla.yml.
+          scope_jq='(env.IGNORE_RE // "") == "" or ((.path | sub("@.*"; "") | split("/") | last) | test(env.IGNORE_RE) | not)'
+          list_runs() {
+            api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$1&per_page=100" \
+              --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and ($2) and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)\") | not) and ($scope_jq)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
+          }
+          runs() {
+            local pr queue
+            pr=$(list_runs "$sha" '.event == "pull_request"') || return 1
+            if [[ -z "$queue_sha" ]]; then
+              [[ -z "$pr" ]] || printf '%s\n' "$pr"
+              return 0
+            fi
+            queue=$(list_runs "$queue_sha" '.event == "merge_group" and .conclusion != "skipped"') || return 1
+            { [[ -z "$queue" ]] || printf '%s\n' "$queue"
+              awk -F'\t' 'NR == FNR { if ($1 != "") seen[$1] = 1; next } !($1 in seen)' <(printf '%s\n' "$queue") <(printf '%s\n' "$pr")
+            } | sed '/^$/d'
+          }
+          GITHUB_WORKFLOW_ID=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id) || exit 1
+          # Two identical listings cannot prove every run has appeared, so no verdict is allowed
+          # before a fixed 120 s window. Runs for one event are created within 4 s of it (30 recent
+          # PRs); the window leaves 30x margin for slow fan-out. After it, a poll counts only when
+          # the run set equals the previous poll's and every run is completed. Poll fast while quick
+          # PRs finish, then back off: a long suite costs about 85 run listings an hour.
+          poll_interval() {
+            local elapsed=$((SECONDS - started))
+            if (( elapsed < 300 )); then echo 10
+            elif (( elapsed < 900 )); then echo 30
+            else echo 60
+            fi
+          }
+          # Quarantined flakes (.github/flaky/quarantine.json, read from the base commit like the
+          # selector, so a PR cannot quarantine its own failure). When every failed job of a run
+          # matches a `job` entry and its log contains that entry's signature, the gate reruns the
+          # failed jobs once and waits again. If they fail the same way again, the run is reported
+          # as a quarantined flake and does not fail the gate. Any other failure fails it.
+          retried=
+          quarantine_verdict() {
+            qv=
+            local run=$1 name=$2 failed_jobs result attempt
+            [[ -n "${FLAKY_PY:-}" && -f "$FLAKY_PY" ]] || return 0
+            failed_jobs=$(api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | "\(.id)\t\(.name)"') || return 0
+            [[ -n "$failed_jobs" ]] || return 0
+            result=$(python3 "$FLAKY_PY" gate-check --workflow "$name" --quarantine "$QUARANTINE_FILE" <<<"$failed_jobs") || return 0
+            [[ "$result" == all ]] || return 0
+            attempt=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .run_attempt) || return 0
+            if (( attempt < 2 )) && [[ " $retried " != *" $run "* ]] \
+                && gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/rerun-failed-jobs" >/dev/null; then
+              retried="$retried $run"
+              qv=retry
+            else
+              qv=quarantined
+            fi
+          }
+          # Fail fast: a job that has already failed decides the verdict, so the gate does not wait
+          # for the rest of its run. On 10 Nov 2026 one job of a pull request's macOS workflow failed
+          # after 4 minutes while another job (180-minute timeout) kept the run open; the gate kept
+          # waiting, and in the merge queue that held every entry behind it until the queue's
+          # 60-minute timeout. Only the newest run of a workflow that is still going counts (a
+          # completed run gets the full verdict below), and a failure that is a quarantined flake
+          # waits for that verdict and its one rerun. One check-runs listing per commit (a job's
+          # check run id is its job id), at most once a minute.
+          early_checked=-60
+          early_failure() {
+            local open failed s rows run name jobs result
+            (( SECONDS - early_checked >= 60 )) || return 1
+            early_checked=$SECONDS
+            open=$(sort -t$'\t' -k1,1 -k2,2nr <<<"$current" | awk -F'\t' '$1 != "" && !seen[$1]++ && $NF != "completed" {print $2 "\t" $3}')
+            [[ -n "$open" ]] || return 1
+            failed=
+            for s in "$sha" ${queue_sha:+"$queue_sha"}; do
+              rows=$(api --paginate "repos/$GITHUB_REPOSITORY/commits/$s/check-runs?status=completed&filter=latest&per_page=100" \
+                --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | (.details_url // "" | capture("/actions/runs/(?<r>[0-9]+)/job/").r) as $run | "\($run)\t\(.id)\t\(.name)"') || return 1
+              failed+=$rows$'\n'
+            done
+            while IFS=$'\t' read -r run name; do
+              jobs=$(awk -F'\t' -v r="$run" '$1 == r {print $2 "\t" $3}' <<<"$failed")
+              [[ -n "$jobs" ]] || continue
+              if [[ -n "${FLAKY_PY:-}" && -f "$FLAKY_PY" ]]; then
+                result=$(python3 "$FLAKY_PY" gate-check --workflow "$name" --quarantine "$QUARANTINE_FILE" <<<"$jobs") || result=
+                if [[ "$result" == all ]]; then continue; fi
+              fi
+              echo "$name: fail (job $(cut -f2 <<<"$jobs" | paste -sd, -) failed; not waiting for the rest of run $run)"
+              return 0
+            done <<<"$open"
+            return 1
+          }
+          started=$SECONDS
+          sleep 120
+          while :; do
+          previous=
+          while :; do
+            current=$(runs) || exit 1
+            if [[ -n "$current" && "$current" == "$previous" ]] && awk -F'\t' '$NF != "completed" { exit 1 }' <<<"$current"; then
+              break
+            fi
+            previous=$current
+            if early_failure; then exit 1; fi
+            # Everything finished: the next listing only has to confirm the same set, so look again
+            # in 10 s instead of after a full poll interval (up to 60 s). That wait, twice, was most
+            # of the gate's median 1.9 min after the last check (CUA-3558).
+            if [[ -n "$current" ]] && awk -F'\t' '$NF != "completed" { exit 1 }' <<<"$current"; then
+              sleep 10
+            else
+              sleep "$(poll_interval)"
+            fi
+          done
+          failed=0
+          again=0
+          for workflow in $(cut -f1 <<<"$current" | sort -u); do
+            verdict=skipped
+            name=$(awk -F'\t' -v w="$workflow" '$1 == w {print $3; exit}' <<<"$current")
+            newest=1
+            for run in $(awk -F'\t' -v w="$workflow" '$1 == w {print $2}' <<<"$current" | sort -rn); do
+              conclusion=$(awk -F'\t' -v r="$run" '$2 == r {print $4}' <<<"$current")
+              (( newest )) || [[ "$conclusion" != cancelled ]] || continue
+              newest=0
+              jobs=$(api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=100" \
+                --jq '.jobs[] | select(.conclusion != "skipped") | "\(.name)\t\(.conclusion)"') || exit 1
+              if [[ -z "$jobs" ]]; then
+                [[ "$conclusion" =~ ^(success|skipped|neutral)$ ]] && continue
+                jobs="run"$'\t'"$conclusion"
+              fi
+              verdict=pass
+              if [[ ! "$conclusion" =~ ^(success|neutral)$ ]]; then
+                quarantine_verdict "$run" "$name"
+                case "$qv" in
+                  retry) verdict="quarantined flake, rerunning its failed jobs once"; again=1 ;;
+                  quarantined) verdict="pass (quarantined flake, not blocking; see the job summary)"
+                    echo "::warning title=Quarantined flake::$name failed with a known flake listed in .github/flaky/quarantine.json" ;;
+                  *) verdict=fail; failed=1 ;;
+                esac
+              fi
+              break
+            done
+            echo "$name: $verdict"
+          done
+          (( again )) || break
+          sleep 30
+          done
+          exit $failed
+
+      # Last step: the other workflows are done, so only the sign-off can still be missing. Wait for
+      # it (bounded, 75 minutes: a queued 20-40 minute run on the Mac runner plus slack). A failure
+      # fails at once. Report-only mode looks once and only warns.
+      - name: Require the sign-off on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.signoff.outputs.sha }}
+          KIND: ${{ steps.signoff.outputs.kind }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          sha=$SHA
+          if [[ "$KIND" == release ]]; then echo "sign-off: not required (Release Please pull request)"; exit 0; fi
+          tries=1
+          # Polled every 15 s (it was 60 s, so a sign-off that landed just after a poll cost up to a
+          # minute). Still bounded at 75 minutes.
+          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=300
+          for i in $(seq 1 "$tries"); do
+            if [[ "$KIND" == local ]]; then
+              state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+            else
+              state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
+                --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
+            fi
+            if [[ "$state" == success ]]; then echo "sign-off: success"; exit 0; fi
+            [[ "$state" == failure || "$state" == error ]] && break
+            (( i < tries )) && sleep 15
+          done
+          if [[ "$KIND" == local ]]; then
+            msg="Run bin/ci --quick and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
+          else
+            msg="The CI: Quick workflow has no successful run on this head commit. (${sha:0:10}: ${state:-not run yet}; a first-time contributor's run needs a maintainer to approve it)"
+          fi
+          if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
+            echo "::error title=sign-off missing::$msg"
+            exit 1
+          fi
+          echo "::warning title=sign-off missing (report-only)::$msg"
+          echo "The sign-off is report-only until the repository variable REQUIRE_LOCAL_CI is true; not failing the gate."

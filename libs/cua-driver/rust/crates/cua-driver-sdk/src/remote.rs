@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-free remote Driver connection backend.
 //!
-//! A carrier (gRPC, HTTP/2, Fleet, or another authenticated channel) implements
+//! A carrier (gRPC, HTTP/2, or another authenticated channel) implements
 //! [`DriverEnvelopeChannel`]. The SDK continues to expose the same typed
 //! `CuaDriver` methods and never depends on that carrier.
 

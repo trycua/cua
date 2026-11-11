@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Find windows and elements by description, wait for them, and check them.
 //!
 //! Used by `run_steps` steps that name their target (`role`, `name`, `app`,
@@ -1008,6 +1011,36 @@ fn narrow<'r>(found: Vec<&'r Value>, spec: &ElementSpec) -> Vec<&'r Value> {
     found
 }
 
+/// A spreadsheet address such as `A8` or `AB120`.
+fn is_cell_address(name: &str) -> bool {
+    let name = name.trim();
+    let letters = name.chars().take_while(char::is_ascii_alphabetic).count();
+    let digits = &name[letters..];
+    (1..=3).contains(&letters)
+        && !digits.is_empty()
+        && digits.len() <= 7
+        && digits.chars().all(|c| c.is_ascii_digit())
+        && !digits.starts_with('0')
+}
+
+/// Grids (LibreOffice Calc, Numbers, Excel) expose only the cells on screen,
+/// so a name that reads as a cell address and is missing is usually a cell
+/// outside the view. Say how to reach it instead of leaving look-alikes.
+fn spreadsheet_cell_hint(spec: &ElementSpec) -> String {
+    match &spec.name {
+        Some(name) if is_cell_address(name) => format!(
+            ". If `{}` is a spreadsheet cell, only the visible cells are in the tree. Click the \
+             Name Box (the combo box named after the current cell, for example \"A1\"), \
+             type_text the address and a newline (\"{}\\n\"), then type_text the value and \
+             press_key tab or return. A window with a dialog open (Tip of the Day, \
+             Confirmation) refuses keys until that dialog is answered",
+            name.trim(),
+            name.trim()
+        ),
+        _ => String::new(),
+    }
+}
+
 fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
     let found = narrow(matches(read, spec), spec);
     let chosen = match (found.len(), spec.nth) {
@@ -1024,7 +1057,9 @@ fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
                         "{} is in {} as `{}` but has no element index (it exposes no \
                          accessibility actions), so it cannot be targeted by name or token. \
                          Click it by pixel x,y read from the window's screenshot; toolkits \
-                         that ignore background clicks also need delivery_mode:\"foreground\"",
+                         that ignore background clicks also need delivery_mode:\"foreground\". \
+                         For a tab or sheet tab the app's own shortcut (press_key ctrl+pagedown \
+                         for the next sheet) or invoke_menu works without a pixel click",
                         spec.describe(),
                         read.window.describe(),
                         clip(text, 80)
@@ -1034,10 +1069,11 @@ fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
             return Err(Miss::new(
                 "not_found",
                 format!(
-                    "no {} in {}{}",
+                    "no {} in {}{}{}",
                     spec.describe(),
                     read.window.describe(),
-                    near_misses(read, spec)
+                    near_misses(read, spec),
+                    spreadsheet_cell_hint(spec)
                 ),
             ));
         }
@@ -1632,6 +1668,31 @@ mod tests {
             ..spec
         };
         assert_eq!(pick(&read, &second).unwrap().element["element_index"], 9);
+    }
+
+    #[test]
+    fn a_missing_cell_address_points_to_the_name_box() {
+        let read = read(
+            vec![element(3, "AXTextField", "A1")],
+            "- [0] AXWindow \"Doc\"\n",
+        );
+        let spec = ElementSpec {
+            role: Some("AXTextField".into()),
+            name: Some("A8".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &spec).unwrap_err();
+        assert!(miss.message.contains("Name Box"), "{}", miss.message);
+        assert!(miss.message.contains("\"A8\\n\""), "{}", miss.message);
+        let other = ElementSpec {
+            name: Some("Save".into()),
+            ..Default::default()
+        };
+        assert!(!pick(&read, &other)
+            .unwrap_err()
+            .message
+            .contains("Name Box"));
+        assert!(is_cell_address("AB120") && !is_cell_address("A0") && !is_cell_address("Q3 plan"));
     }
 
     #[test]

@@ -151,7 +151,7 @@ fn relay_failures_that_pass_on_their_own_are_transient() {
         (Error::Relay("HTTP 500: boom".into()), false),
         (Error::Relay("bad relay response: EOF".into()), false),
         (Error::Unauthenticated("relay: no".into()), false),
-        (Error::NotFound("relay: no such machine".into()), false),
+        (Error::NotFound("relay: no such computer".into()), false),
     ] {
         assert_eq!(e.is_transient(), transient, "{e}");
     }
@@ -287,4 +287,44 @@ async fn a_pairing_code_sets_up_the_machine_once_and_a_failed_download_does_not_
     let (stage, e) = g.host().setup_staged(opts, &token).await.unwrap_err();
     assert_eq!(stage, SetupStage::Register);
     assert_eq!(e.http_status(), Some(401), "{e}");
+}
+
+/// The Mac the user just signed in on is enrolled by that sign-in, so its
+/// own host registration carries the device's session and is not listed as
+/// a new computer to confirm; one without the session still is.
+#[tokio::test]
+async fn a_signed_in_devices_own_registration_is_confirmed() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    relay.require_devices(true);
+    relay.fresh_sign_in("user-1");
+    let auth = DeviceAuth::new(
+        &relay.url,
+        Arc::new(StaticToken("acct".into())),
+        Arc::new(crate::device::MemoryKeySlot::default()),
+        "mini",
+    )
+    .unwrap();
+    auth.enroll().await.unwrap();
+    let session = auth.session().await.unwrap();
+    let account = StaticToken("acct".into());
+
+    let own = fixture();
+    let mut opts = own.opts(&relay.url);
+    opts.device_session = Some(session);
+    let status = own.host().setup(opts, &account).await.unwrap();
+    let id = status.machine_id.unwrap();
+    assert!(relay.machine(&id).unwrap().confirmed);
+
+    let unproven = fixture();
+    let status = unproven
+        .host()
+        .setup(unproven.opts(&relay.url), &account)
+        .await
+        .unwrap();
+    let id = status.machine_id.unwrap();
+    assert!(
+        !relay.machine(&id).unwrap().confirmed,
+        "no device proof keeps the warning"
+    );
 }

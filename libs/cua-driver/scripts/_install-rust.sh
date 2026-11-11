@@ -24,6 +24,21 @@
 #   --channel <name>     persist and install the latest stable or nightly release
 #   --require-signature  fail unless the archive's Sigstore bundle verifies
 #                        with cosign (needs cosign on PATH)
+#   --no-connect         do not connect Claude Code, Codex and Cursor to Cua
+#                        Driver (and skip the permission guide); same as
+#                        CUA_DRIVER_NO_CONNECT=1
+#   --no-test            do not run `cua-driver test` at the end; same as
+#                        CUA_DRIVER_NO_TEST=1
+#
+# After installing, this script runs `cua-driver connect` (connects every
+# supported agent found on the computer, installs the skill pack), then on
+# macOS, when run from a terminal outside CI, `cua-driver permissions grant`
+# (opens the permission guide and waits), then `cua-driver test`. Each step
+# is skipped when the installed binary does not have it yet, and a failing
+# step never fails the install. Run it as
+# `/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"` so the
+# terminal stays attached; with `curl ... | bash` there is no terminal for
+# the permission guide and that step is skipped.
 #
 # Every download is checked against the release's SHA256SUMS (or the older
 # checksums.txt); releases from CHECKSUMS_REQUIRED_FROM on must publish one.
@@ -119,6 +134,8 @@ if [[ "$_cua_install_common_loaded" == "0" ]]; then
     printf 'warning: could not load _install-common.sh (on-disk + network); daemon kill skipped\n' >&2
     stop_cua_driver_daemons() { :; }
     show_cua_driver_daemon_survivors() { :; }
+    unregister_other_cua_driver_copies() { :; }
+    cua_driver_lsregister_path() { return 1; }
 fi
 
 REPO="trycua/cua"
@@ -140,6 +157,8 @@ HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}"
 # install is staged so a single rooted home (~/.cua-driver) is left behind.
 LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
+NO_CONNECT="${CUA_DRIVER_NO_CONNECT:-0}"
+NO_TEST="${CUA_DRIVER_NO_TEST:-0}"
 # Post-install GC: how many per-version release dirs to retain. Validated
 # below as a non-negative integer; 0 means "never GC". The dir that
 # `current` resolves to is always preserved regardless of cutoff.
@@ -170,6 +189,8 @@ while [[ $# -gt 0 ]]; do
             CHANNEL_ARG="$2"; CHANNEL_EXPLICIT=1; shift 2 ;;
         --channel=*) CHANNEL_ARG="${1#*=}"; CHANNEL_EXPLICIT=1; shift ;;
         --require-signature) REQUIRE_SIGNATURE=1; shift ;;
+        --no-connect) NO_CONNECT=1; shift ;;
+        --no-test) NO_TEST=1; shift ;;
         *) shift ;;
     esac
 done
@@ -350,8 +371,22 @@ release_install_lock() {
 # Combine TMP_DIR cleanup with lock release in a single trap so neither
 # clobbers the other. INT/TERM also re-raise via $? so the user-visible
 # exit code reflects the signal.
+# The release archive is unpacked into $TMP_DIR, which includes a CuaDriver.app
+# that is deleted on exit. Make sure LaunchServices never keeps that dead copy:
+# a registered temp copy can later be what `open -a CuaDriver` or a permission
+# row resolves to.
+forget_staged_macos_app() {
+    [[ "$(uname -s 2>/dev/null)" == "Darwin" && -n "${SRC_APP:-}" && -d "$SRC_APP" ]] || return 0
+    local lsregister
+    lsregister="$(cua_driver_lsregister_path 2>/dev/null || true)"
+    if [[ -x "$lsregister" ]]; then
+        "$lsregister" -u "$SRC_APP" >/dev/null 2>&1 || true
+    fi
+}
+
 cleanup_on_exit() {
     restore_macos_app_backup_on_exit
+    forget_staged_macos_app
     rm -rf "$TMP_DIR" 2>/dev/null || true
     release_install_lock
 }
@@ -652,7 +687,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.36.0" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.47.8" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -891,8 +926,8 @@ version_is_at_least() {
 # macOS — fetch the directory tarball (cua-driver-rs-vN-darwin-universal.tar.gz).
 #   The directory layout includes `CuaDriver.app/` alongside the bare
 #   binary, which we need to install into /Applications so the TCC
-#   auto-relaunch path in `cua-driver-rs mcp` can resolve
-#   `com.trycua.driver` via `open -n -g -a CuaDriver`. The
+#   auto-relaunch path in `cua-driver-rs mcp` can launch the installed
+#   `com.trycua.driver` app by its exact path. The
 #   directory variant carries the same universal binary as the
 #   bare-binary tarball, so users on both Apple Silicon and Intel
 #   get a working install from one download.
@@ -1242,7 +1277,7 @@ fi
 # $HOME_DIR/packages/releases/<v>/ + current symlink layout used on
 # Linux. Reason: /Applications/CuaDriver.app placement is the
 # anchor for both TCC attribution (cdhash + bundle id) and
-# LaunchServices' `open -a CuaDriver` discovery — symlinking the
+# LaunchServices' bundle-id discovery — symlinking the
 # .app from /Applications to a versioned dir under $HOME_DIR breaks
 # both. The asymmetry is deliberate; rollback on macOS = reinstall
 # an older release tag.
@@ -1377,8 +1412,9 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
         exit 1
     fi
 
-    # Register synchronously so both `open -a CuaDriver` and `tccutil reset`
-    # resolve the replacement bundle rather than a stale LaunchServices entry.
+    # Register synchronously so both `permissions grant` (which launches the
+    # bundle by its exact path) and `tccutil reset` resolve the replacement
+    # bundle rather than a stale LaunchServices entry.
     LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
     if [[ -x "$LSREGISTER" ]] \
        && "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1; then
@@ -1417,6 +1453,10 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     rm -rf "$MACOS_APP_BACKUP" || true
     ln -sf "$APP_BINARY" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $APP_BINARY"
+    # Other copies of the app (an old release in ~/Downloads, the Trash, a
+    # benchmark folder) make macOS open the wrong app and label the permission
+    # rows with the wrong name. Forget them; their files stay where they are.
+    unregister_other_cua_driver_copies "$APP_DEST" || true
     if ! macos_reset_tcc_after_requirement_change "$REQUIREMENT_COMPATIBILITY"; then
         exit 1
     fi
@@ -1489,6 +1529,21 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
+    if command -v kwin_wayland >/dev/null 2>&1; then
+        # Ask the installed driver: the switch survives updates, so a user who
+        # turned it on must not read that it is off.
+        KWIN_STATUS="$("$CURRENT_LINK/$BINARY_NAME" kwin-capture status 2>/dev/null || true)"
+        case "$KWIN_STATUS" in
+            "kwin window capture: on"*|"kwin window capture: override-portal-deny"*)
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && log "$line"
+                done <<<"$KWIN_STATUS"
+                ;;
+            *)
+                log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+                ;;
+        esac
+    fi
 
     # Post-install GC of old per-version release dirs. Runs AFTER the
     # atomic `current` swap above so the about-to-be-active version is
@@ -1605,6 +1660,50 @@ if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
     echo ""
 fi
 
+# Connect the user's agents, grant permissions and run the self-test, so one
+# paste leaves Cua Driver ready to use. Every call uses the absolute path
+# ($BIN_DIR may not be on this shell's PATH yet) and is guarded so an older
+# binary without `connect` / `test` falls back to the hints below. A failing
+# step never fails the install.
+driver_has_command() {
+    # `--help` prints one "Subcommands:" line; older binaries do not list the
+    # new ones (and exit 0 for any argument, so the exit code says nothing).
+    "$BIN_LINK" --help 2>&1 | grep -E "^Subcommands:.*(: |, )$1(,|\$)" >/dev/null 2>&1
+}
+
+CONNECTED_AGENT=""
+if [[ "$NO_CONNECT" != "1" ]] && driver_has_command connect; then
+    CONNECT_OUT="$("$BIN_LINK" connect 2>/dev/null)" && CONNECT_RC=0 || CONNECT_RC=$?
+    [[ -n "$CONNECT_OUT" ]] && printf '%s\n' "$CONNECT_OUT"
+    if [[ "$CONNECT_RC" == "0" ]]; then
+        for _agent in "Claude Code" "Codex" "Cursor"; do
+            if printf '%s\n' "$CONNECT_OUT" | grep -E "^$_agent: (already )?connected\$" >/dev/null; then
+                CONNECTED_AGENT="$_agent"
+                break
+            fi
+        done
+    fi
+fi
+
+# The permission guide needs a person at a terminal: stdin and stdout attached
+# and no CI. `curl ... | bash` has no terminal on stdin, so it skips this.
+if [[ "$NO_CONNECT" != "1" && "$(uname -s)" == "Darwin" && -t 0 && -t 1 && -z "${CI:-}" ]]; then
+    echo ""
+    echo "Next, turn on the two switches Cua Driver needs. A guide window will help."
+    "$BIN_LINK" permissions grant || echo "Permissions are not finished. Run later: $BIN_LINK permissions grant"
+fi
+
+if [[ "$NO_TEST" != "1" ]] && driver_has_command test; then
+    echo ""
+    "$BIN_LINK" test || echo "The test did not pass. Run it again later: $BIN_LINK test"
+fi
+
+if [[ -n "$CONNECTED_AGENT" ]]; then
+    echo ""
+    echo "Done. Ask $CONNECTED_AGENT (restart it first if it is open): \"Use Cua Driver to open TextEdit and write a haiku.\""
+    exit 0
+fi
+
 # Unified post-install hints come from a single shared text file so the
 # 4 Rust installers (this script + install.ps1 + install-local.sh +
 # install-local.ps1) never drift. The .txt holds the OS-agnostic bulk
@@ -1619,17 +1718,11 @@ else
     # Network fetch failed — print a one-line essentials fallback so the
     # user always gets enough to recover, even if hint-text fetching is
     # blocked. Skip everything else.
-    echo "Next steps: $BIN_LINK --version  |  $BIN_LINK mcp-config  |  $BIN_LINK skills install"
+    echo "Next steps: $BIN_LINK permissions grant  |  $BIN_LINK connect  |  $BIN_LINK list-tools"
     echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 
 case "$(uname -s)" in
-    Darwin)
-        echo ""
-        echo "macOS TCC: grant Accessibility + Screen Recording on first run:"
-        echo "  open -n -g -a CuaDriver --args serve"
-        echo "  $BIN_LINK check_permissions"
-        ;;
     Linux)
         echo ""
         echo "Auto-start at logon (optional):"

@@ -1,9 +1,8 @@
-//! `cua mcp`, `cua skills`, `cua trajectory` and Fleet `cua image`.
+//! `cua mcp`, `cua skills`, and `cua trajectory`.
 
 mod common;
 use common::*;
 use cua_daemon::fixtures;
-use cua_fleet::testing::FakeFleet;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -306,7 +305,12 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     for t in cua_spaces::contract::tools() {
-        assert!(names.contains(&t.name), "{} missing", t.name);
+        if cua_spaces::contract::person_only(t.name) {
+            // Every MCP client is an agent: a person's tool is never offered.
+            assert!(!names.contains(&t.name), "{} offered to an agent", t.name);
+        } else {
+            assert!(names.contains(&t.name), "{} missing", t.name);
+        }
     }
     assert!(names.contains(&"computer_screenshot"));
 
@@ -577,56 +581,6 @@ async fn trajectory_view_serves_the_zip_with_cors_then_stops() {
     assert!(o.stdout.contains("Deleted 1 session(s)."), "{o:?}");
     let o = h.run(&["trajectory", "ls"]).await;
     assert!(o.stdout.contains("No trajectory sessions found."), "{o:?}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fleet_image_resources() {
-    let fake = FakeFleet::new();
-    fake.put_object(
-        "image",
-        "ns1",
-        "desktop",
-        json!({"apiVersion": "images.cua.ai/v1alpha1", "kind": "Image",
-            "metadata": {"name": "desktop", "namespace": "ns1", "creationTimestamp": "2026-09-01T00:00:00Z"},
-            "status": {"phase": "Ready"}}),
-    );
-    fake.add_namespace("ns2");
-    let fleet = fixtures::start_fleet_http(fake.clone()).await;
-    let mut h = Home::new();
-    h.set("CUA_FLEET_BASE_URL", &fleet.base_url)
-        .set("FLEETS_TOKEN", "t");
-    let o = h.run(&["image", "ls"]).await;
-    o.ok();
-    assert!(
-        o.stdout.contains("desktop  ns1        Ready  2026-09-01"),
-        "{o:?}"
-    );
-    let o = h
-        .run(&["--json", "img", "list", "--namespace", "ns2"])
-        .await;
-    assert_eq!(o.json(), json!([]));
-    let o = h.run(&["image", "info", "desktop"]).await;
-    o.ok();
-    assert_eq!(o.json()["status"]["phase"], "Ready");
-    let manifest = h.dir.path().join("img.json");
-    std::fs::write(&manifest, json!({"apiVersion": "images.cua.ai/v1alpha1", "kind": "Image", "metadata": {"name": "built"}, "spec": {}}).to_string()).unwrap();
-    h.run(&[
-        "image",
-        "create",
-        "-f",
-        manifest.to_str().unwrap(),
-        "--namespace",
-        "ns2",
-    ])
-    .await
-    .ok();
-    assert!(fake.exists("image", "ns2", "built"));
-    let o = h.run(&["image", "rm", "desktop"]).await;
-    assert_eq!(o.code, 1, "needs --force non-interactively: {o:?}");
-    h.run(&["image", "delete", "desktop", "--force"]).await.ok();
-    assert!(!fake.exists("image", "ns1", "desktop"));
-    let o = h.run(&["image", "info", "desktop"]).await;
-    assert_eq!(o.code, 3, "{o:?}");
 }
 
 /// A Space another account shared through the relay (CUA-1418): the guest

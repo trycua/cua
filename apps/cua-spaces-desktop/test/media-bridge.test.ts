@@ -141,7 +141,11 @@ describe("openMediaRequest", () => {
       ticketTtl: "120s",
     });
     expect(openMediaRequest("full", { windowId: "w-1", epoch: 3, activate: true }).policy).toBe("SESSION_POLICY_ALLOW_ACTIVATION");
-    expect(openMediaRequest("tile", { windowId: "w-1" })).toMatchObject({ target: { window: { id: "w-1", epoch: "1" } }, maxFps: 10, policy: "SESSION_POLICY_VIEW_ONLY" });
+    expect(openMediaRequest("tile", { windowId: "w-1" })).toMatchObject({
+      target: { window: { id: "w-1", epoch: "1" } },
+      maxFps: 10,
+      policy: "SESSION_POLICY_VIEW_ONLY",
+    });
     expect(openMediaRequest("full", { activate: true }).target).toEqual({ displayId: "primary" });
   });
 });

@@ -179,6 +179,11 @@ mod tests {
     fn painted_pointer(surface: SurfaceGeometry, pointer: (f64, f64)) -> Option<(f64, f64)> {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.theme = Some(hotspot_marker_theme());
+        // The halo would pull the measured centroid off the marker.
+        core.options_override = Some(crate::CursorOptions {
+            halo: false,
+            ..crate::CursorOptions::DEFAULT
+        });
         core.apply_command_base(track_pointer_command(pointer.0, pointer.1), false, false);
         let (w, h) = surface.pixel_size();
         let mut pixmap = tiny_skia::Pixmap::new(w, h).unwrap();

@@ -39,6 +39,23 @@ see the extension contract for the stable codes.
 
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
+## Get Cua Driver
+
+**Get Cua Driver with Cua Spaces (recommended on a Mac).** Cua Spaces for Mac
+(macOS 26 or later) carries Cua Driver, runs it in the background, keeps it up
+to date and connects Claude Code and Codex to it. Download it from
+[cua.ai/download](https://cua.ai/download). Permissions are granted to Cua Spaces,
+and its Cua Driver page shows whether Cua Driver is running, with **Repair** and
+**Test now**. See [how the install works](https://cua.ai/docs/cua-driver/guides/cua-spaces).
+
+**Install Cua Driver on its own.** For Windows, Linux, older macOS, or if you
+don't want Cua Spaces:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"   # macOS and Linux
+irm https://cua.ai/driver/install.ps1 | iex                       # Windows (PowerShell)
+```
+
 ## Integration surfaces
 
 - **Cua as an agent MCP or CLI:** MCP-capable agents connect directly to
@@ -118,6 +135,7 @@ The canonical GUI runners execute the complete Rust harness catalog:
 ```text
 Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
 Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux niri:        CUA_E2E_WAYLAND_SESSION=niri scripts/ci/linux/run-rust-e2e-wayland.sh
 Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
 Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
 Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
@@ -195,29 +213,25 @@ Contributor documentation:
 - `docs/linux-desktop-validation.md` covers representative Linux sessions.
 - `docs/linux-support-completion-plan.md` preserves the historical Linux plan.
 
-## Claude Code computer-use compatibility
+## Claude Code registration
 
-Standard Claude Code MCP registration:
+Register the standard MCP server:
 
 ```bash
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver window screenshots, register the compatibility mode:
-
-```bash
-claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
-```
-
-This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
-
-Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+The legacy `--claude-code-computer-use-compat` flag is still accepted so old
+configurations keep starting, but it currently has no tool-surface effect and
+does not register a standalone `screenshot` tool. Use `get_window_state` for a
+window tree plus screenshot, `get_desktop_state` for a full-display screenshot,
+and `zoom` for a cropped region.
 
 ## macOS process identity and permissions
 
 macOS attributes Accessibility and Screen Recording grants to a responsible app identity, not simply to an executable path. Use one of these supported launch modes:
 
-- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `open -n -g -a CuaDriver --args serve`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
+- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `cua-driver permissions grant`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
 - **Explicit direct MCP:** `cua-driver mcp --direct` makes the MCP process own
   its runtime. On macOS this deliberately uses the spawning host's TCC
   attribution and does not provide the AppKit cursor overlay without a
@@ -244,7 +258,7 @@ ClawHub CLI. A real release is available only through the
 all of the following:
 
 1. Dispatch the workflow from `main`.
-2. Enter a version that matches both `rust/Cargo.toml` and the `version` field
+2. Enter a version that matches both `rust/Cargo.toml` and the `metadata.version` field
    in `rust/Skills/cua-driver/SKILL.md`.
 3. Confirm the MIT-0 rights check in the workflow form.
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher

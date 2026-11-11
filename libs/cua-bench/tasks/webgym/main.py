@@ -10,7 +10,7 @@ by them. Needs egress in the guest and ``OPENAI_API_KEY``.
 ::
 
     cb run dataset libs/cua-bench/tasks/webgym --agent <agent> --max-variants 10
-    CUA_BENCH_WEBGYM_DIFFICULTY=1,2 cb run dataset libs/cua-bench/tasks/webgym --on cloud
+    CUA_BENCH_WEBGYM_DIFFICULTY=1,2 cb run dataset libs/cua-bench/tasks/webgym
 """
 
 from __future__ import annotations

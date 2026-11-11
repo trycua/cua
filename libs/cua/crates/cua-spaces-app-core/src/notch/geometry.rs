@@ -18,7 +18,7 @@ pub enum WindowMode {
     /// has room to hang below the notch. Same top-centre placement as `Ambient`.
     AmbientTeleport,
     Switcher,
-    CreateFleet,
+    CreateSpace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,11 +106,11 @@ pub fn mode_size(mode: WindowMode, style: DisplayStyle) -> Size {
             width: 760.0,
             height: 300.0,
         },
-        (WindowMode::CreateFleet, DisplayStyle::Notched) => Size {
+        (WindowMode::CreateSpace, DisplayStyle::Notched) => Size {
             width: 600.0,
             height: 700.0,
         },
-        (WindowMode::CreateFleet, DisplayStyle::NoNotch) => Size {
+        (WindowMode::CreateSpace, DisplayStyle::NoNotch) => Size {
             width: 600.0,
             height: 680.0,
         },
@@ -210,7 +210,7 @@ mod tests {
         for style in [DisplayStyle::Notched, DisplayStyle::NoNotch] {
             let a = mode_size(WindowMode::Ambient, style);
             let s = mode_size(WindowMode::Switcher, style);
-            let c = mode_size(WindowMode::CreateFleet, style);
+            let c = mode_size(WindowMode::CreateSpace, style);
             assert!(a.height < s.height && s.height < c.height, "{style:?}");
             assert!(a.width < s.width, "{style:?}");
         }
@@ -220,7 +220,7 @@ mod tests {
         assert!(mode_size(WindowMode::Ambient, DisplayStyle::NoNotch).width < 200.0);
         // The composer must leave room for its actions on a 768pt external display.
         assert_eq!(
-            mode_size(WindowMode::CreateFleet, DisplayStyle::NoNotch).height,
+            mode_size(WindowMode::CreateSpace, DisplayStyle::NoNotch).height,
             680.0
         );
     }
@@ -366,8 +366,8 @@ mod tests {
     #[test]
     fn serde_uses_kebab_case_for_modes() {
         assert_eq!(
-            serde_json::to_string(&WindowMode::CreateFleet).unwrap(),
-            "\"create-fleet\""
+            serde_json::to_string(&WindowMode::CreateSpace).unwrap(),
+            "\"create-space\""
         );
         assert_eq!(
             serde_json::from_str::<WindowMode>("\"switcher\"").unwrap(),

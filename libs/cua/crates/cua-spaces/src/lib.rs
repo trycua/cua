@@ -4,8 +4,9 @@
 //!
 //! This crate replaces `apps/cua-spaces/mcp/spaces_mcp.py` (and
 //! `agent_harness.py`) as the Spaces core. It is plain async Rust over the cua
-//! SDK crates: [`cua_spacesd_client`] for every guest call, [`cua_fleet`] for Fleet
-//! claims, [`cua_sandbox_core`] for local sandboxes. `cua-daemon` hosts it
+//! SDK crates: [`cua_spacesd_client`] for every guest call,
+//! [`cua_sandbox_core`] for local sandboxes. Cua Cloud (`cloud:<name>`) has
+//! ended: its Spaces fail with [`cua_sandbox_core::CLOUD_ENDED`]. `cua-daemon` hosts it
 //! (and serves [`mcp`] as `cua daemon mcp`); `cua-sdk` wraps it for UniFFI;
 //! the Tauri app links it directly.
 //!
@@ -59,42 +60,89 @@
 pub mod app_icon;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
+pub mod build;
+pub mod child_creates;
+pub mod children;
 #[cfg(feature = "mcp-client")]
 pub mod client;
+pub mod clipboard;
 /// Spaces in your own cloud account: a cloud sandbox (`cua_sandbox_core::byoc`)
 /// shown as its relay machine.
 pub mod cloud;
 pub mod creating;
+pub mod dial_backoff;
+pub mod durable;
+pub mod egress;
+/// The elastic pool: placement and scaling over your devices and clouds.
+pub mod elastic;
 pub mod error;
 pub mod exec;
-pub mod fleet_runtime;
+pub mod fork_batch;
 pub mod groups;
+pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
+pub mod keep;
+pub mod lifetimes;
+pub mod list_watch;
+pub mod listing;
+mod local_load;
 pub mod mesh;
+pub use cua_spaces_contract::names;
+pub mod named_volumes;
+pub mod network;
 pub mod operator;
+pub mod pool_checkpoints;
+pub mod prewarm;
+pub mod quarantine;
+/// Whether a Space can take work now (`spaces.reach`), asked before work is handed to it.
+pub mod reach;
 pub mod registry;
 pub mod relay;
+pub mod rename;
+mod repo_cache;
+pub mod resources;
+pub mod route;
 pub mod routines;
 pub mod services;
+pub mod sleep;
+pub mod snapshots;
 mod space;
+pub mod space_jobs;
 mod spaces;
 pub mod thumbnails;
+pub mod tree;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;
+/// Exits: where a Space's internet traffic leaves ("Exit through").
+#[cfg(feature = "spaces-hotspot")]
+pub mod exit;
 /// Extension points for the capabilities that ship with Cua Spaces
 /// (teleport, the Cua Volume, persistent agents).
 #[cfg(feature = "mcp")]
 pub mod extension;
 #[cfg(feature = "spaces-files")]
 pub mod files;
+/// The host's ports at `localhost` inside a Space.
+#[cfg(feature = "spaces-hotspot")]
+pub mod host_ports;
 #[cfg(feature = "spaces-hotspot")]
 pub mod hotspot;
 #[cfg(feature = "spaces-agents")]
 pub mod install_cache;
+/// Host services job members reach on their loopback (`JobSpec::services`).
+#[cfg(feature = "spaces-hotspot")]
+pub mod job_services;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+/// The tree overlay: the members of one tree reach each other across your
+/// machines, over the mesh.
+#[cfg(feature = "spaces-hotspot")]
+pub mod overlay;
+/// How a Space's traffic reaches the account's other computers (the mesh's
+/// chosen path, and a pin).
+pub mod paths;
 #[cfg(feature = "spaces-presence")]
 pub mod presence;
 pub mod reattach;
@@ -102,14 +150,30 @@ pub mod reattach;
 /// relay.
 #[cfg(feature = "spaces-agents")]
 pub mod share;
+pub mod sharing;
 /// The Keyvault seam and the whole `request_site_login` tool: sign in to a
 /// site in a Space with a saved password, approved by the user.
 pub mod site_login;
+#[cfg(feature = "spaces-spawn")]
+pub mod spawn;
 #[cfg(feature = "spaces-stream")]
 pub mod stream;
+#[cfg(feature = "spaces-stream")]
+pub mod stream_registry;
 /// The Keyvault broker seam the `teleport_app` MCP tool routes delivery
 /// through (the daemon supplies the implementation).
 pub mod teleport_broker;
+#[cfg(feature = "mcp")]
+pub mod thread_route;
+/// What a Space's network looks like: tree names, the host, the exit.
+pub mod topology;
+/// Containers in a VM's tree (the tree hub).
+#[cfg(feature = "spaces-hotspot")]
+pub mod tree_hub;
+/// How a container reaches the members of its tree that are not containers
+/// on this computer.
+#[cfg(feature = "spaces-hotspot")]
+pub mod tree_proxy;
 #[cfg(feature = "spaces-volume")]
 pub mod volume;
 #[cfg(feature = "spaces-files")]
@@ -117,14 +181,20 @@ pub mod walk;
 
 pub use app_icon::{AppIcon, IconRequest};
 pub use creating::{CancelOutcome, CancelState};
+pub use cua_vmm::experiments;
 pub use error::{Error, Result};
 pub use id::{Provider, SpaceId};
+pub use listing::{LIST_WAIT, ListProgress, SpaceListing};
 pub use relay::{RelayAccount, RelayMachine};
-pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceService};
+pub use route::{ChannelRoute, Transport};
+pub use sharing::{BulkResult, SpaceSharing, TeamShare};
+pub use space::{
+    SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceResize, SpaceService,
+};
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,
-    expects_spacesd, is_generated_name, pool_key, sanitize_label, sized_pool_key,
+    expects_spacesd, is_generated_name, sanitize_label,
 };
 
 /// The Spaces tool contract (manifest, input types).

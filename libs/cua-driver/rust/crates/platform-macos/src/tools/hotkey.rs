@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
@@ -12,6 +15,7 @@ use std::sync::Arc;
 use crate::apps;
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::ToolState;
 
@@ -45,7 +49,9 @@ fn def() -> &'static ToolDef {
                front, that menu item runs through accessibility instead (a disabled \
                Save is saved through the app's scripting interface and verified on \
                disk); a menu item macOS keeps disabled in the background is refused \
-               with `background_unavailable`, and no keys are sent.\n\
+               with `background_unavailable`. With serve --no-automation-prompts, \
+               scripting without granted consent refuses with `automation_consent_required`, \
+               without keyboard fallback.\n\
              • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
@@ -200,9 +206,10 @@ impl Tool for HotkeyTool {
                 );
             };
             let display = raw_keys.join("+");
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                crate::input::keyboard::press_key_global(&key, &modifier_refs)
+                crate::input::keyboard::press_key_global(prompt, &key, &modifier_refs)
             })
             .await;
             return match result {
@@ -212,7 +219,11 @@ impl Tool for HotkeyTool {
                         "path": "hid",
                         "effect": "unverifiable"
                     })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop hotkey failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop hotkey failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop hotkey task failed: {error}")),
             };
         }
@@ -342,12 +353,9 @@ impl Tool for HotkeyTool {
                         super::invoke_menu::MenuRequest::KeyEquivalent(key_display.clone()),
                     )
                     .await;
-                    // The menu route is only a better route when it works. A
-                    // refusal (an item macOS keeps disabled while the app is in
-                    // the background, as LibreOffice's Format > Bold does) must
-                    // not end the call: the caller named a window, so the combo
-                    // goes to that window as key events below (CUA-1767).
-                    if menu_result.is_error != Some(true) {
+                    // Only unavailable background menus may fall back to keys;
+                    // target-safety refusals must survive this route unchanged.
+                    if !menu_allows_key_fallback(&menu_result) {
                         return menu_result;
                     }
                 }
@@ -532,6 +540,7 @@ impl Tool for HotkeyTool {
         // and the prior frontmost is restored if the activation lingers.
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
+        let prompt = PromptInput::from_args(&args);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -552,9 +561,11 @@ impl Tool for HotkeyTool {
                                 wid,
                                 || {
                                     if screen_sharing_target {
-                                        crate::input::keyboard::press_key_bare_global(&key, &m)
+                                        crate::input::keyboard::press_key_bare_global(
+                                            prompt, pid, &key, &m,
+                                        )
                                     } else {
-                                        crate::input::keyboard::press_key_global(&key, &m)
+                                        crate::input::keyboard::press_key_global(prompt, &key, &m)
                                     }
                                 },
                             )?;
@@ -570,32 +581,22 @@ impl Tool for HotkeyTool {
                                 wid,
                                 || {
                                     focus_hotkey_element(pid, ptr)?;
-                                    crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    crate::input::keyboard::press_key_bare_global(
+                                        prompt, pid, &key, &m,
+                                    )
                                 },
                             )?;
                             Ok(())
                         }
-                        // Screen Sharing is an input forwarder: modifier flags
-                        // on a PID-routed base-key event are not relayed to the
-                        // guest. Emit the physical modifier down/base/up
-                        // sequence through the guarded foreground HID path.
-                        (true, false, Some(wid), None)
-                            if crate::input::keyboard::is_screen_sharing_pid(pid) =>
-                        {
+                        (true, false, Some(wid), None) => {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
-                                || crate::input::keyboard::press_key_bare_global(&key, &m),
-                            )?;
-                            Ok(())
-                        }
-                        // foreground rung: briefly front the window so NSMenu key
-                        // equivalents dispatch, then restore prior frontmost.
-                        (true, false, Some(wid), None) => {
-                            crate::input::skylight::with_menu_shortcut_activation(
-                                pid as libc::pid_t,
-                                wid,
-                                || crate::input::keyboard::hotkey_no_auth(pid, &key, &m),
+                                || {
+                                    crate::input::keyboard::press_key_bare_global(
+                                        prompt, pid, &key, &m,
+                                    )
+                                },
                             )?;
                             Ok(())
                         }
@@ -629,10 +630,20 @@ impl Tool for HotkeyTool {
                 ))
                 .with_structured(delivered_structured(fg))
             }
-            Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
+            Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .unwrap_or_else(|| ToolResult::error(format!("hotkey failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+fn menu_allows_key_fallback(result: &ToolResult) -> bool {
+    result.is_error == Some(true)
+        && result
+            .structured_content
+            .as_ref()
+            .and_then(|v| v["code"].as_str())
+            == Some("background_unavailable")
 }
 
 fn delivered_structured(foreground: bool) -> Value {
@@ -646,6 +657,24 @@ fn delivered_structured(foreground: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_safety_refusals_do_not_fall_back_to_keys() {
+        for code in [
+            "window_not_key",
+            "background_unavailable",
+            "automation_consent_required",
+        ] {
+            let result =
+                ToolResult::error("refused").with_structured(serde_json::json!({ "code": code }));
+            assert_eq!(
+                menu_allows_key_fallback(&result),
+                code == "background_unavailable"
+            );
+        }
+        assert!(!menu_allows_key_fallback(&ToolResult::error("unknown")));
+        assert!(!menu_allows_key_fallback(&ToolResult::text("done")));
+    }
 
     #[test]
     fn a_delivered_combo_suggests_no_resend() {

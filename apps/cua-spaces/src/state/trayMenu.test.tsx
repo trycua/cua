@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FIXTURE_NOW, FIXTURE_SPACES } from "../model/fixtures";
 import { withThisMachine } from "../model/host";
 import { notchTab } from "../model/notch";
-import { openableCount, trayMenu, type MenuItem } from "../model/window";
+import { onCount, trayMenu, type MenuItem } from "../model/window";
 import { TRAY_SYNC_POLL_MS, useTrayMenu } from "./trayMenu";
 
 // Cua Volume's sync line shows with its experiment on (Settings,
@@ -16,7 +16,7 @@ beforeEach(() => {
   window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ cuaVolume: true }));
 });
 
-/** The notch's roster: "This machine" (not shared) and the Spaces. */
+/** The notch's roster: "This computer" (not shared) and the Spaces. */
 const ROSTER = withThisMachine(FIXTURE_SPACES, null, FIXTURE_NOW, "macos");
 
 function sync(over: Record<string, unknown> = {}) {
@@ -38,7 +38,13 @@ const tick = (ms: number) =>
     await vi.advanceTimersByTimeAsync(ms);
   });
 
-const conflict = { path: "public/plan.md", conflict_path: "public/plan (conflict).md", winner_device: "d1", loser_device: "d2", ts_ms: 0 };
+const conflict = {
+  path: "public/plan.md",
+  conflict_path: "public/plan (conflict).md",
+  winner_device: "d1",
+  loser_device: "d2",
+  ts_ms: 0,
+};
 
 const S3 = { backend: "s3", fs_path: "/Users/maya/.cua/volume/data", s3: null, has_keys: true };
 const FS = { ...S3, backend: "fs", has_keys: false };
@@ -56,7 +62,9 @@ function run(answer: () => unknown, now: () => number = () => FIXTURE_NOW, stora
   const setMenu = vi.fn(async (items: MenuItem[]) => {
     menus.push(items);
   });
-  const hook = renderHook(({ spaces }) => useTrayMenu(spaces, { call, setMenu, now }), { initialProps: { spaces: ROSTER } });
+  const hook = renderHook(({ spaces }) => useTrayMenu(spaces, { call, setMenu, now }), {
+    initialProps: { spaces: ROSTER },
+  });
   return { calls, menus, setMenu, hook };
 }
 
@@ -66,12 +74,14 @@ describe("the menu bar item's menu", () => {
     await waitFor(() => expect(calls).toEqual(["volume_sync_status", "volume_storage"]));
     const items = menus.at(-1)!;
     expect(items).toEqual(trayMenu({ spaces: ROSTER, keyvault: null, sync: null, backend: "s3", nowMs: FIXTURE_NOW }));
-    // "This machine" (not shared) is in the roster but not in the count.
+    // "This computer" (not shared) is in the roster but not in the count,
+    // and neither is a stopped Space: only the ones on or starting.
     expect(ROSTER.some((s) => s.id === "this-mac")).toBe(true);
-    const n = openableCount(ROSTER);
-    expect(n).toBe(ROSTER.length - 1);
+    expect(ROSTER.some((s) => s.status === "suspended")).toBe(true);
+    const n = onCount(ROSTER);
+    expect(n).toBe(ROSTER.filter((s) => s.id !== "this-mac" && s.status !== "suspended").length);
     expect(String(notchTab(ROSTER).count)).toBe(String(n));
-    expect(items[0]).toMatchObject({ id: "status", label: `${n} Spaces`, enabled: false });
+    expect(items[0]).toMatchObject({ id: "status", label: `${n} Spaces running`, enabled: false });
     expect(items.map((i) => i.id)).not.toContain("volume-conflicts");
   });
 
@@ -82,7 +92,7 @@ describe("the menu bar item's menu", () => {
       const { menus } = run(() => sync({ pending_uploads: 3, conflicts: [conflict] }));
       await tick(0);
       const items = menus.at(-1)!;
-      expect(items[0]!.label).toBe(`${openableCount(ROSTER)} Spaces`);
+      expect(items[0]!.label).toBe(`${onCount(ROSTER)} Spaces running`);
       expect(items.map((i) => i.id)).not.toContain("volume-conflicts");
     } finally {
       vi.useRealTimers();
@@ -95,25 +105,25 @@ describe("the menu bar item's menu", () => {
     try {
       const { menus, setMenu } = run(() => answer);
       await tick(0);
-      const n = openableCount(ROSTER);
+      const n = onCount(ROSTER);
       let items = menus.at(-1)!;
-      expect(items[0]!.label).toBe(`${n} Spaces · Syncing 3…`);
+      expect(items[0]!.label).toBe(`${n} Spaces running · Syncing 3…`);
       expect(items[1]).toEqual({ id: "volume-conflicts", label: "2 conflicts", shortcut: null, enabled: true });
 
       answer = sync();
       await tick(TRAY_SYNC_POLL_MS);
       items = menus.at(-1)!;
-      expect(items[0]!.label).toBe(`${n} Spaces · Synced`);
+      expect(items[0]!.label).toBe(`${n} Spaces running · Synced`);
       expect(items.map((i) => i.id)).not.toContain("volume-conflicts");
 
       answer = sync({ feed: "error" });
       await tick(TRAY_SYNC_POLL_MS);
-      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces · Offline`);
+      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running · Offline`);
 
       // This machine's store, one device: no sync word.
       answer = sync({ feed: "off", conflicts: [conflict] });
       await tick(TRAY_SYNC_POLL_MS);
-      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces`);
+      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running`);
       expect(menus.at(-1)!.map((i) => i.id)).not.toContain("volume-conflicts");
 
       // Unchanged reads send nothing.
@@ -129,14 +139,17 @@ describe("the menu bar item's menu", () => {
     let clock = FIXTURE_NOW + 1_000;
     vi.useFakeTimers();
     try {
-      const { menus } = run(() => sync(), () => clock);
+      const { menus } = run(
+        () => sync(),
+        () => clock,
+      );
       await tick(0);
-      const n = openableCount(ROSTER);
-      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces \u00b7 Synced`);
+      const n = onCount(ROSTER);
+      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running \u00b7 Synced`);
       // The same answer (last poll unchanged), 31 s later.
       clock = FIXTURE_NOW + 31_000;
       await tick(TRAY_SYNC_POLL_MS);
-      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces \u00b7 Offline`);
+      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running \u00b7 Offline`);
       expect(menus.at(-1)).toEqual(
         trayMenu({ spaces: ROSTER, keyvault: null, sync: sync() as never, backend: "s3", nowMs: clock }),
       );
@@ -150,20 +163,26 @@ describe("the menu bar item's menu", () => {
       sync({
         pending_uploads: 2,
         conflicts: [conflict],
-        devices: [{ id: "d1", name: "maya-mbp", this_device: true, last_seen_ms: FIXTURE_NOW, last_change_ms: FIXTURE_NOW }],
+        devices: [
+          { id: "d1", name: "maya-mbp", this_device: true, last_seen_ms: FIXTURE_NOW, last_change_ms: FIXTURE_NOW },
+        ],
       });
     let storage: unknown = FS;
     vi.useFakeTimers();
     try {
-      const { menus, calls } = run(one, () => FIXTURE_NOW, () => storage);
+      const { menus, calls } = run(
+        one,
+        () => FIXTURE_NOW,
+        () => storage,
+      );
       await tick(0);
-      const n = openableCount(ROSTER);
+      const n = onCount(ROSTER);
       // The engine says "live" even here; the core leaves it out.
-      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces`);
+      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running`);
       expect(menus.at(-1)!.map((i) => i.id)).not.toContain("volume-conflicts");
       storage = S3;
       await tick(TRAY_SYNC_POLL_MS);
-      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces \u00b7 Syncing 2\u2026`);
+      expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running \u00b7 Syncing 2\u2026`);
       expect(menus.at(-1)!.map((i) => i.id)).toContain("volume-conflicts");
       // Both are read on every tick.
       expect(calls.filter((c) => c === "volume_storage")).toHaveLength(2);
@@ -178,7 +197,9 @@ describe("the menu bar item's menu", () => {
     await waitFor(() => expect(calls.length).toBe(2));
     const fewer = ROSTER.filter((s) => s.id !== "this-mac" && s.status !== "local").slice(0, 1);
     hook.rerender({ spaces: fewer });
-    await waitFor(() => expect(menus.at(-1)![0]!.label).toBe("1 Space"));
-    expect(menus.at(-1)).toEqual(trayMenu({ spaces: fewer, keyvault: null, sync: null, backend: "s3", nowMs: FIXTURE_NOW }));
+    await waitFor(() => expect(menus.at(-1)![0]!.label).toBe("1 Space running"));
+    expect(menus.at(-1)).toEqual(
+      trayMenu({ spaces: fewer, keyvault: null, sync: null, backend: "s3", nowMs: FIXTURE_NOW }),
+    );
   });
 });

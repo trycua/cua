@@ -13,7 +13,8 @@ import { useContext, useSyncExternalStore } from "react";
 import { HostError, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { HostActionId, HostFormView as HostFormViewBase } from "./contracts/host";
+import { plainThrottleError } from "./friendly-errors";
+import type { HostActionId, HostFormView as HostFormViewBase, HostLimits } from "./contracts/host";
 import type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
 
 export type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
@@ -60,9 +61,19 @@ export interface HostFailure {
   message: string;
   /** The raw error, unchanged. */
   details?: string;
-  /** The retry button: "Retry", or "Sign In" when the account is missing. */
+  /** The button: "Retry", "Sign In" when the account is missing, or "Use a
+   * code from another computer" when the account wants proof (`needsProof`). */
   actionLabel?: string;
+  /** Which failure it is, as the host classed it (`HostSetupFailure.Kind`). */
+  kind?: string;
+  /** The relay's code for a refusal, when it gave one. */
+  refusalCode?: string;
 }
+
+/** The failure is a new computer the account wants proof for: its button
+ * opens "Enter a code" instead of trying again. */
+export const NEEDS_PROOF = "needsProof";
+export const isNeedsProof = (f: HostFailure | null | undefined): boolean => f?.kind === NEEDS_PROOF;
 
 export interface ThisMachineState {
   /** The setup form's state; null while the page shows. */
@@ -83,7 +94,26 @@ const IDLE: ThisMachineState = { form: null, busy: false, error: null, setupErro
 export function hostFailure(e: unknown): HostFailure {
   const message = e instanceof Error ? e.message : String(e);
   const p = e instanceof HostError ? e.presented : undefined;
-  return p ? { title: p.title, message, details: p.details, actionLabel: p.actionLabel } : { message };
+  if (p)
+    return {
+      title: p.title,
+      message,
+      details: p.details,
+      actionLabel: p.actionLabel,
+      ...(p.kind ? { kind: p.kind } : {}),
+      ...(p.refusalCode ? { refusalCode: p.refusalCode } : {}),
+    };
+  // A host that only says the error: the server's "slow down" in plain words.
+  const throttled = plainThrottleError(message);
+  return throttled
+    ? {
+        title: "Too many attempts right now",
+        message: throttled
+          .replace(/^Too many attempts right now\. Wait (\d+) (seconds?), then try again\./, "Trying again in $1 $2.")
+          .replace("Wait a few seconds, then try again.", "Trying again in a few seconds."),
+        details: message,
+      }
+    : { message };
 }
 
 export class ThisMachineStore {
@@ -112,12 +142,40 @@ export class ThisMachineStore {
     for (const l of [...this.listeners]) l();
   }
 
+  /** This computer joined another way (a code from another computer): the
+   * failure that asked for it is answered, so it no longer shows. */
+  joinedWithCode(): void {
+    this.failedRequest = null;
+    this.failedAction = null;
+    this.set({ error: null, setupError: null, form: null });
+  }
+
   /** Opens the form, with a setup choice's profile (`desktop`, `spare`). */
   openForm(profile?: string): void {
     let form = hostFormInitial(this.core);
     if (profile) form = hostFormReduce(this.core, form, { type: "set-profile", profile });
     this.failedRequest = null;
     this.set({ form, error: null, setupError: null });
+    void this.prefillName();
+  }
+
+  /** Fills Name with what the system calls this computer (the host reports
+   * it before setup), so nobody has to type it. A name already typed stays. */
+  private async prefillName(): Promise<void> {
+    const status = (await this.adapter.call("host.status", {}).catch(() => null)) as { name?: string | null } | null;
+    const name = status?.name?.trim();
+    if (name && this.state.form && !this.state.form.name) this.send({ type: "set-name", name });
+  }
+
+  /** Sets this computer up with the form's defaults and its own name, in
+   * one step (the first run's "Set up"). Resolves to whether it worked. */
+  async quickSetUp(identity: string | null, profile = "spare"): Promise<boolean> {
+    let form = hostFormInitial(this.core);
+    form = hostFormReduce(this.core, form, { type: "set-profile", profile });
+    this.failedRequest = null;
+    this.set({ form, error: null, setupError: null });
+    await this.prefillName();
+    return this.submit(identity);
   }
 
   closeForm(): void {
@@ -182,6 +240,18 @@ export class ThisMachineStore {
     }
   }
 
+  /** Changes the limits on the Spaces other machines create here (0 is no limit); a failure shows as a toast where it was asked. */
+  async setLimits(limits: HostLimits): Promise<void> {
+    if (this.state.busy) return;
+    this.set({ busy: true });
+    try {
+      await this.adapter.call("host.limits", limits);
+    } finally {
+      this.set({ busy: false });
+      await this.changed();
+    }
+  }
+
   /** Retry on a failed button: the same button again. */
   retry(): Promise<void> {
     return this.failedAction ? this.run(this.failedAction) : Promise.resolve();
@@ -207,9 +277,13 @@ export interface ThisMachineHook extends ThisMachineState {
   send(action: HostFormAction): void;
   /** Resolves to whether setup worked. */
   submit(): Promise<boolean>;
+  /** Sets this machine up with the defaults (other machines can create Spaces here; its desktop stays private). */
+  quickSetUp(): Promise<boolean>;
   /** Sends the failed setup's request again. */
   retrySetUp(): Promise<boolean>;
   run(action: HostActionId): Promise<void>;
+  /** Changes the limits on Spaces other machines create here (0 is no limit); rejects with the failure. */
+  setLimits(limits: HostLimits): Promise<void>;
   /** Runs the failed button again. */
   retry(): Promise<void>;
   openSettings(url: string): Promise<void>;
@@ -233,8 +307,10 @@ export function useThisMachine(identity: string | null): ThisMachineHook {
     closeForm: () => tm?.closeForm(),
     send: (a) => tm?.send(a),
     submit: () => tm?.submit(who) ?? Promise.resolve(false),
+    quickSetUp: () => tm?.quickSetUp(who) ?? Promise.resolve(false),
     retrySetUp: () => tm?.retrySetUp() ?? Promise.resolve(false),
     run: (a) => tm?.run(a) ?? Promise.resolve(),
+    setLimits: (l) => tm?.setLimits(l) ?? Promise.resolve(),
     retry: () => tm?.retry() ?? Promise.resolve(),
     openSettings: async (url) => {
       await tm?.openSettings(url);

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background mouse event synthesis via SLEventPostToPid (SkyLight SPI),
 //! with fallback to the public CGEvent::post_to_pid for older OS releases.
 //!
@@ -15,6 +18,7 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
     geometry::CGPoint,
 };
+use cua_driver_core::security_prompt::PromptInput;
 use foreign_types::ForeignType;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +84,15 @@ fn dispatch_mouse_event(route: PostRoute, pid: i32, event: &CGEvent) {
     }
 }
 
+/// Move the hardware cursor to `point`.
+fn warp_cursor(point: CGPoint) -> Result<(), core_graphics::base::CGError> {
+    #[cfg(test)]
+    if post_sink::record_warp(point) {
+        return Ok(());
+    }
+    core_graphics::display::CGDisplay::warp_mouse_cursor_position(point)
+}
+
 #[derive(Clone, Copy)]
 pub enum WindowClickDelivery {
     Background,
@@ -137,35 +150,44 @@ pub fn click_at_xy(
 /// Unlike the pid-routed `click_at_xy`, this honors the real foreground/Z order
 /// (it lands on whatever is visually on top at the point) — exactly the
 /// foreground, vision-driven model that complements the background contract.
-pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
-    click_at_xy_desktop_inner(x, y, count, button, &[], false)
+pub fn click_at_xy_desktop(
+    prompt: PromptInput,
+    x: f64,
+    y: f64,
+    count: usize,
+    button: &str,
+) -> anyhow::Result<()> {
+    click_at_xy_desktop_inner(prompt, x, y, count, button, &[], false)
 }
 
 /// Global HID click with physical modifier transitions. The caller must guard
 /// the exact foreground window because this transport has no pid addressing.
 pub fn click_at_xy_desktop_with_modifiers(
+    prompt: PromptInput,
     x: f64,
     y: f64,
     count: usize,
     button: &str,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    click_at_xy_desktop_inner(x, y, count, button, modifiers, false)
+    click_at_xy_desktop_inner(prompt, x, y, count, button, modifiers, false)
 }
 
 /// Global HID modifier click that restores the user's hardware cursor after
 /// the event pair has been queued.
 pub fn click_at_xy_desktop_with_modifiers_preserving_cursor(
+    prompt: PromptInput,
     x: f64,
     y: f64,
     count: usize,
     button: &str,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    click_at_xy_desktop_inner(x, y, count, button, modifiers, true)
+    click_at_xy_desktop_inner(prompt, x, y, count, button, modifiers, true)
 }
 
 fn click_at_xy_desktop_inner(
+    prompt: PromptInput,
     x: f64,
     y: f64,
     count: usize,
@@ -173,8 +195,7 @@ fn click_at_xy_desktop_inner(
     modifiers: &[&str],
     preserve_cursor: bool,
 ) -> anyhow::Result<()> {
-    use core_graphics::display::CGDisplay;
-    use core_graphics::event::CGEventTapLocation;
+    crate::security_prompt::refuse_point(prompt, x, y)?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let prior = if preserve_cursor {
@@ -209,7 +230,7 @@ fn click_at_xy_desktop_inner(
     // cursor, and AppKit hit-tests some clicks against the actual cursor
     // position, so without the warp the down/up can miss the target. Desktop
     // scope is the foreground modality, so moving the visible cursor is expected.
-    let _ = CGDisplay::warp_mouse_cursor_position(point);
+    let _ = warp_cursor(point);
     // Re-couple cursor + mouse-delta so the synthesized click hit-tests at the
     // warped point, not the pre-warp one.
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
@@ -227,8 +248,8 @@ fn click_at_xy_desktop_inner(
             )
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
             moved.set_flags(flags);
-            moved.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(12));
+            dispatch_mouse_event(PostRoute::Hid, 0, &moved);
+            std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
         }
 
         for pair_index in 0..count.max(1) {
@@ -239,8 +260,8 @@ fn click_at_xy_desktop_inner(
                 core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
                 (pair_index + 1) as i64,
             );
-            down.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(28));
+            dispatch_mouse_event(PostRoute::Hid, 0, &down);
+            std::thread::sleep(cua_driver_core::input_pacing::click_gap());
             let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
             up.set_flags(flags);
@@ -248,9 +269,9 @@ fn click_at_xy_desktop_inner(
                 core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
                 (pair_index + 1) as i64,
             );
-            up.post(CGEventTapLocation::HID);
+            dispatch_mouse_event(PostRoute::Hid, 0, &up);
             if count > 1 {
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(cua_driver_core::input_pacing::multi_click_gap());
             }
         }
         Ok(())
@@ -260,7 +281,7 @@ fn click_at_xy_desktop_inner(
     // exact foreground guard remains active around this entire helper.
     std::thread::sleep(std::time::Duration::from_millis(40));
     if let Some(prior) = prior {
-        let _ = CGDisplay::warp_mouse_cursor_position(prior);
+        let _ = warp_cursor(prior);
         unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     }
     result
@@ -274,9 +295,8 @@ fn click_at_xy_desktop_inner(
 /// hover-revealed controls stay hidden. Follow the warp with a `MouseMoved`
 /// at the same point through the HID tap, as a physical mouse would.
 pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
-    use core_graphics::display::CGDisplay;
     let point = CGPoint::new(x, y);
-    CGDisplay::warp_mouse_cursor_position(point)
+    warp_cursor(point)
         .map_err(|error| anyhow::anyhow!("CGWarpMouseCursorPosition failed: {error:?}"))?;
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     // Let WindowServer settle the warp first: a move posted in the same
@@ -305,14 +325,16 @@ fn post_pointer_moved(point: CGPoint) -> anyhow::Result<()> {
 /// global HID queue. Mirrors computer-server's pynput wheel behavior while
 /// preserving cua-driver's explicit direction/amount contract.
 pub fn scroll_wheel_desktop(
+    prompt: PromptInput,
     x: f64,
     y: f64,
     delta_y_per_tick: i32,
     delta_x_per_tick: i32,
     ticks: usize,
 ) -> anyhow::Result<()> {
-    use core_graphics::event::{CGEventTapLocation, ScrollEventUnit};
+    use core_graphics::event::ScrollEventUnit;
 
+    crate::security_prompt::refuse_point(prompt, x, y)?;
     move_cursor_desktop(x, y)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     for _ in 0..ticks.max(1) {
@@ -337,7 +359,7 @@ pub fn scroll_wheel_desktop(
             return Err(anyhow::anyhow!("CGEventCreateScrollWheelEvent2 failed"));
         }
         let event = unsafe { CGEvent::from_ptr(event_ref) };
-        event.post(CGEventTapLocation::HID);
+        dispatch_mouse_event(PostRoute::Hid, 0, &event);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
     Ok(())
@@ -348,8 +370,12 @@ pub fn scroll_wheel_desktop(
 /// This is intentionally narrower than the public desktop click path. It is
 /// used only by approved, bounded setup flows after an accessibility element
 /// has proven the exact target point and window.
-pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<()> {
-    click_at_xy_desktop_inner(x, y, 1, "left", &[], true)
+pub fn click_at_xy_desktop_preserving_cursor(
+    prompt: PromptInput,
+    x: f64,
+    y: f64,
+) -> anyhow::Result<()> {
+    click_at_xy_desktop_inner(prompt, x, y, 1, "left", &[], true)
 }
 
 extern "C" {
@@ -372,8 +398,8 @@ extern "C" {
 
 /// Like `click_at_xy` but also targets a specific window. Foreground delivery
 /// uses the supplied window-local point with one public pid post. Background
-/// delivery keeps the translated screen point through the SkyLight route, with
-/// a public fallback only when the private symbol is unavailable.
+/// delivery stamps the window-local point on macOS 27+, or the screen point
+/// before, through SkyLight with a public fallback if the symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -444,7 +470,7 @@ fn click_at_xy_inner(
             click_group_id,
             post_mode,
         );
-        std::thread::sleep(std::time::Duration::from_millis(12));
+        std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
         for pair_index in 0..count {
             let click_state = (pair_index + 1) as i64;
@@ -472,7 +498,7 @@ fn click_at_xy_inner(
             // 28 ms down→up gap: an NSButton's mouseDown enters a modal
             // tracking loop that polls for the matching mouseUp; too tight a
             // gap can race the loop's first poll and the click is dropped.
-            std::thread::sleep(std::time::Duration::from_millis(28));
+            std::thread::sleep(cua_driver_core::input_pacing::click_gap());
 
             let up = CGEvent::new_mouse_event(
                 source.clone(),
@@ -496,7 +522,7 @@ fn click_at_xy_inner(
             );
 
             if count > 1 {
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(cua_driver_core::input_pacing::multi_click_gap());
             }
         }
         Ok(())
@@ -546,7 +572,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
-///  - `CGEventSetWindowLocation` per-event (screen point for both routes)
+///  - `CGEventSetWindowLocation` per-event (window-local point on macOS 27+,
+///    screen point before; see `window_location_is_window_local`)
 ///
 /// Uses the SkyLight route required by Chromium-compatible targets, with the
 /// public API only as a fallback when the private symbol is unavailable.
@@ -570,22 +597,42 @@ struct ChromiumClickRouteStep {
     delay_after_ms: u64,
 }
 
+/// Whether WindowServer hands the `CGEventSetWindowLocation` stamp of a
+/// pid-routed click to the target as its window-local point. macOS 27 does:
+/// a screen-point stamp arrives as `locationInWindow == (screen_x, height -
+/// screen_y)`, so the click lands shifted by the window's origin (AppKit,
+/// Chromium and GPUI windows alike). Earlier releases derived the local point
+/// from the screen stamp themselves.
+fn window_location_is_window_local() -> bool {
+    static WINDOW_LOCAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WINDOW_LOCAL.get_or_init(|| {
+        crate::tools::macos_product_version()
+            .and_then(|version| version.split('.').next()?.parse::<u32>().ok())
+            .is_some_and(|major| major >= 27)
+    })
+}
+
 fn chromium_click_route_plan(
     screen_x: f64,
     screen_y: f64,
     win_local_x: f64,
     win_local_y: f64,
     count: usize,
+    window_local: bool,
 ) -> Vec<ChromiumClickRouteStep> {
     let screen_target = (screen_x, screen_y);
-    let _ = (win_local_x, win_local_y);
+    let stamped_target = if window_local {
+        (win_local_x, win_local_y)
+    } else {
+        screen_target
+    };
     let off_screen = (-1.0, -1.0);
     let mut steps = vec![
         ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Move,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state: 0,
             phase: 2,
             button_number: 0,
@@ -622,8 +669,8 @@ fn chromium_click_route_plan(
         steps.push(ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Down,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -633,8 +680,8 @@ fn chromium_click_route_plan(
         steps.push(ChromiumClickRouteStep {
             kind: ChromiumClickEventKind::Up,
             event_location: screen_target,
-            skylight_window_location: screen_target,
-            public_window_location: screen_target,
+            skylight_window_location: stamped_target,
+            public_window_location: stamped_target,
             click_state,
             phase: 3,
             button_number: 0,
@@ -647,9 +694,8 @@ fn chromium_click_route_plan(
 
 /// Post the route plan for the Chromium-compatible background left-click
 /// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
-/// `CGEventSetWindowLocation` uses the screen point for both SkyLight and the
-/// public PID fallback. macOS interprets the stamped location in screen space
-/// even when the public route is used for a background process.
+/// `CGEventSetWindowLocation` carries the window-local point on macOS 27+ and
+/// the screen point before, for both SkyLight and the public PID fallback.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
@@ -665,7 +711,14 @@ pub fn click_at_xy_chromium(
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
+    let route_plan = chromium_click_route_plan(
+        screen_x,
+        screen_y,
+        win_local_x,
+        win_local_y,
+        count,
+        window_location_is_window_local(),
+    );
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 
@@ -739,50 +792,6 @@ pub fn click_at_xy_chromium(
     Ok(())
 }
 
-/// Press-drag-release gesture from `(from_x, from_y)` to `(to_x, to_y)` in
-/// screen coordinates, addressed to `pid` and the optional exact window.
-///
-/// `duration_ms` is the wall-clock budget for the drag path; `steps` is the
-/// number of intermediate `leftMouseDragged` events linearly interpolated
-/// along the path. `modifiers` are held across the entire gesture.
-///
-/// Like the Swift reference `MouseInput.drag`, uses the SkyLight path for
-/// backgrounded-target delivery.
-// The drag primitive deliberately exposes its complete native event contract.
-#[allow(clippy::too_many_arguments)]
-pub fn drag_at_xy(
-    pid: i32,
-    from_x: f64,
-    from_y: f64,
-    to_x: f64,
-    to_y: f64,
-    from_local: Option<(f64, f64)>,
-    to_local: Option<(f64, f64)>,
-    wid: Option<u32>,
-    duration_ms: u64,
-    steps: usize,
-    modifiers: &[&str],
-    button: DragButton,
-    foreground_hid: bool,
-) -> anyhow::Result<()> {
-    drag_at_xy_observed(
-        pid,
-        from_x,
-        from_y,
-        to_x,
-        to_y,
-        from_local,
-        to_local,
-        wid,
-        duration_ms,
-        steps,
-        modifiers,
-        button,
-        foreground_hid,
-        |_, _| {},
-    )
-}
-
 /// Window drag with an observer called for every native pointer position.
 ///
 /// Background delivery keeps the established PID-routed sequence. When
@@ -794,6 +803,7 @@ pub fn drag_at_xy(
 /// actual dispatched path rather than jumping to the endpoint after release.
 #[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy_observed<F>(
+    prompt: PromptInput,
     pid: i32,
     from_x: f64,
     from_y: f64,
@@ -814,6 +824,7 @@ where
 {
     if foreground_hid {
         return drag_at_xy_window_foreground_observed(
+            prompt,
             pid,
             from_x,
             from_y,
@@ -846,6 +857,17 @@ where
         || true,
     )
     .map(|_| ())
+}
+
+/// A HID drag presses at its start and releases at its end; either landing
+/// on a prompt would answer it.
+fn refuse_drag_points(
+    prompt: PromptInput,
+    from: (f64, f64),
+    to: (f64, f64),
+) -> Result<(), crate::security_prompt::PromptProtected> {
+    crate::security_prompt::refuse_point(prompt, from.0, from.1)?;
+    crate::security_prompt::refuse_point(prompt, to.0, to.1)
 }
 
 /// How a background drag gesture ended.
@@ -1093,6 +1115,7 @@ fn post_drag_mouse_event(
 
 #[allow(clippy::too_many_arguments)]
 fn drag_at_xy_window_foreground_observed<F>(
+    prompt: PromptInput,
     pid: i32,
     from_x: f64,
     from_y: f64,
@@ -1110,7 +1133,6 @@ fn drag_at_xy_window_foreground_observed<F>(
 where
     F: FnMut(f64, f64),
 {
-    use core_graphics::display::CGDisplay;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let (cg_button, down_type, dragged_type, up_type, button_number) = match button {
@@ -1149,6 +1171,7 @@ where
         duration_ms
     };
     let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
+    refuse_drag_points(prompt, (from_x, from_y), (to_x, to_y))?;
 
     super::keyboard::with_global_modifier_keys(modifiers, |flags| {
         for spec in events {
@@ -1171,12 +1194,12 @@ where
 
             match spec.kind {
                 ForegroundDragEventKind::Move => {
-                    let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                    let _ = warp_cursor(spec.point);
                     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
                     std::thread::sleep(std::time::Duration::from_millis(40));
                 }
                 ForegroundDragEventKind::Dragged => {
-                    let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                    let _ = warp_cursor(spec.point);
                 }
                 ForegroundDragEventKind::Up => {
                     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1202,7 +1225,7 @@ where
 
             match spec.kind {
                 ForegroundDragEventKind::Move => {
-                    std::thread::sleep(std::time::Duration::from_millis(12));
+                    std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
                 }
                 ForegroundDragEventKind::Down => {
                     observe(spec.point.x, spec.point.y);
@@ -1224,37 +1247,6 @@ where
     Ok(())
 }
 
-/// Foreground drag through the global HID event tap.
-///
-/// A frontmost Chromium/WebKit surface expects a real HID-origin gesture for
-/// pointer capture and drag tracking. PID-routed `post_to_pid` events are
-/// suitable for background delivery, but they can be silently filtered by the
-/// renderer even when the target is frontmost.
-// The drag primitive deliberately exposes its complete native event contract.
-#[allow(clippy::too_many_arguments)]
-pub fn drag_at_xy_foreground(
-    from_x: f64,
-    from_y: f64,
-    to_x: f64,
-    to_y: f64,
-    duration_ms: u64,
-    steps: usize,
-    modifiers: &[&str],
-    button: DragButton,
-) -> anyhow::Result<()> {
-    drag_at_xy_foreground_observed(
-        from_x,
-        from_y,
-        to_x,
-        to_y,
-        duration_ms,
-        steps,
-        modifiers,
-        button,
-        |_, _| {},
-    )
-}
-
 /// Foreground drag with an observer called for every native pointer position.
 ///
 /// The cursor overlay uses this to follow the same interpolated path and
@@ -1262,6 +1254,7 @@ pub fn drag_at_xy_foreground(
 /// has already completed the drag.
 #[allow(clippy::too_many_arguments)]
 pub fn drag_at_xy_foreground_observed<F>(
+    prompt: PromptInput,
     from_x: f64,
     from_y: f64,
     to_x: f64,
@@ -1275,9 +1268,6 @@ pub fn drag_at_xy_foreground_observed<F>(
 where
     F: FnMut(f64, f64),
 {
-    use core_graphics::display::CGDisplay;
-    use core_graphics::event::CGEventTapLocation;
-
     let (cg_button, down_type, dragged_type, up_type) = match button {
         DragButton::Left => (
             CGMouseButton::Left,
@@ -1298,6 +1288,7 @@ where
             CGEventType::OtherMouseUp,
         ),
     };
+    refuse_drag_points(prompt, (from_x, from_y), (to_x, to_y))?;
     let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 {
@@ -1309,7 +1300,7 @@ where
     // Keep WindowServer's hardware cursor and event stream coupled. AppKit
     // hit-tests some pointer-capture surfaces against the actual cursor even
     // when the HID event carries an explicit location.
-    let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(from_x, from_y));
+    let _ = warp_cursor(CGPoint::new(from_x, from_y));
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(40));
@@ -1331,7 +1322,7 @@ where
                     anyhow::anyhow!("foreground drag {:?} event creation failed", spec.kind)
                 })?;
             event.set_flags(flags);
-            event.post(CGEventTapLocation::HID);
+            dispatch_mouse_event(PostRoute::Hid, 0, &event);
 
             match spec.kind {
                 ForegroundDragEventKind::Move => {
@@ -1537,7 +1528,7 @@ fn right_click_at_xy_inner(
         click_group_id,
         MousePostMode::SkyLightPreferred,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
     let down = CGEvent::new_mouse_event(source.clone(), down_type, point, button)
         .map_err(|_| anyhow::anyhow!("mouse down failed"))?;
@@ -1553,7 +1544,7 @@ fn right_click_at_xy_inner(
         3,
         MousePostMode::SkyLightPreferred,
     );
-    std::thread::sleep(std::time::Duration::from_millis(28));
+    std::thread::sleep(cua_driver_core::input_pacing::click_gap());
 
     let up = CGEvent::new_mouse_event(source, up_type, point, button)
         .map_err(|_| anyhow::anyhow!("mouse up failed"))?;
@@ -1757,7 +1748,7 @@ pub fn scroll_wheel_at_xy(
         ),
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(cua_driver_core::input_pacing::mouse_primer_settle());
 
     for _ in 0..ticks.max(1) {
         // Fresh source per event, matching the click primitives.
@@ -1876,6 +1867,8 @@ mod post_sink {
     struct State {
         skylight_available: bool,
         posted: Vec<Posted>,
+        /// Hardware cursor warps, which a capture also swallows.
+        warps: usize,
         /// Modifier flags carried by each posted event, parallel to `posted`.
         modifiers: Vec<u64>,
         window_routing: Vec<[i64; 4]>,
@@ -1895,6 +1888,7 @@ mod post_sink {
                 *state.borrow_mut() = Some(State {
                     skylight_available,
                     posted: Vec::new(),
+                    warps: 0,
                     modifiers: Vec::new(),
                     window_routing: Vec::new(),
                 });
@@ -1933,6 +1927,24 @@ mod post_sink {
     impl Drop for Capture {
         fn drop(&mut self) {
             STATE.with(|state| *state.borrow_mut() = None);
+        }
+    }
+
+    /// Record a cursor warp when a capture is active; returns whether it did.
+    pub(super) fn record_warp(_point: core_graphics::geometry::CGPoint) -> bool {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return false;
+            };
+            state.warps += 1;
+            true
+        })
+    }
+
+    impl Capture {
+        pub(super) fn warps(&self) -> usize {
+            STATE.with(|state| state.borrow().as_ref().map_or(0, |state| state.warps))
         }
     }
 
@@ -2042,7 +2054,7 @@ mod tests {
         assert_eq!((screen_x, screen_y), (564.0, 504.0));
         assert_eq!((local_x, local_y), capture_local);
 
-        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1);
+        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1, false);
         assert_eq!(
             plan,
             vec![
@@ -2126,6 +2138,32 @@ mod tests {
         assert_eq!(skylight_journal_point, capture_local);
         assert!((292.0..=496.0).contains(&skylight_journal_point.0));
         assert!((132.0..=310.0).contains(&skylight_journal_point.1));
+    }
+
+    #[test]
+    fn macos_27_route_stamps_the_window_local_point() {
+        // macOS 27 reads the stamp as the window-local point: a screen-point
+        // stamp at (564, 504) for a window at (170, 194) would hit (564, 504)
+        // inside the window instead of (394, 310).
+        let plan = chromium_click_route_plan(564.0, 504.0, 394.0, 310.0, 2, true);
+        let targets: Vec<_> = plan
+            .iter()
+            .filter(|step| step.phase != 1 && step.event_location != (-1.0, -1.0))
+            .collect();
+        assert_eq!(targets.len(), 5, "move + two down/up pairs");
+        for step in targets {
+            assert_eq!(step.event_location, (564.0, 504.0));
+            assert_eq!(step.skylight_window_location, (394.0, 310.0));
+            assert_eq!(step.public_window_location, (394.0, 310.0));
+        }
+        let primers: Vec<_> = plan
+            .iter()
+            .filter(|step| step.event_location == (-1.0, -1.0))
+            .collect();
+        assert_eq!(primers.len(), 2);
+        for step in primers {
+            assert_eq!(step.skylight_window_location, (-1.0, -1.0));
+        }
     }
 
     #[test]
@@ -2507,10 +2545,175 @@ mod tests {
         );
     }
 
+    /// Every global-HID pointer primitive checks for a security prompt before
+    /// its first warp or event. Removing one of those checks fails here.
+    #[test]
+    fn hid_pointer_primitives_send_nothing_onto_a_security_prompt() {
+        use crate::security_prompt::{fixture::PromptShown, PromptProtected};
+        type Primitive = fn(PromptInput) -> anyhow::Result<()>;
+        let primitives: [(&str, Primitive); 7] = [
+            ("click_at_xy_desktop", |prompt| {
+                click_at_xy_desktop(prompt, 5.0, 5.0, 1, "left")
+            }),
+            ("click_at_xy_desktop_with_modifiers", |prompt| {
+                click_at_xy_desktop_with_modifiers(prompt, 5.0, 5.0, 1, "right", &[])
+            }),
+            (
+                "click_at_xy_desktop_with_modifiers_preserving_cursor",
+                |prompt| {
+                    click_at_xy_desktop_with_modifiers_preserving_cursor(
+                        prompt,
+                        5.0,
+                        5.0,
+                        1,
+                        "middle",
+                        &[],
+                    )
+                },
+            ),
+            ("click_at_xy_desktop_preserving_cursor", |prompt| {
+                click_at_xy_desktop_preserving_cursor(prompt, 5.0, 5.0)
+            }),
+            ("scroll_wheel_desktop", |prompt| {
+                scroll_wheel_desktop(prompt, 5.0, 5.0, -12, 0, 1)
+            }),
+            ("drag_at_xy_foreground_observed", |prompt| {
+                drag_at_xy_foreground_observed(
+                    prompt,
+                    5.0,
+                    5.0,
+                    6.0,
+                    6.0,
+                    0,
+                    1,
+                    &[],
+                    DragButton::Left,
+                    |_, _| {},
+                )
+            }),
+            ("drag_at_xy_observed (foreground HID)", |prompt| {
+                drag_at_xy_observed(
+                    prompt,
+                    1,
+                    5.0,
+                    5.0,
+                    6.0,
+                    6.0,
+                    None,
+                    None,
+                    Some(7),
+                    0,
+                    1,
+                    &[],
+                    DragButton::Left,
+                    true,
+                    |_, _| {},
+                )
+            }),
+        ];
+        let _prompt = PromptShown::start();
+        for (name, primitive) in primitives {
+            let capture = Capture::start(true);
+            let error = primitive(PromptInput::Refuse).expect_err(name);
+            assert_eq!(
+                error
+                    .downcast_ref::<PromptProtected>()
+                    .map(|p| p.owner.as_str()),
+                Some("SecurityAgent"),
+                "{name}: {error}"
+            );
+            assert!(capture.posted().is_empty(), "{name} posted onto the prompt");
+            assert_eq!(capture.warps(), 0, "{name} moved the cursor");
+            drop(capture);
+
+            // Unrestricted mode lifts the refusal: the same call goes out.
+            let capture = Capture::start(true);
+            primitive(PromptInput::Allow).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(
+                !capture.posted().is_empty(),
+                "{name} sent nothing when allowed"
+            );
+            assert!(
+                capture.posted().iter().all(|p| p.route == PostRoute::Hid),
+                "{name} left the HID queue"
+            );
+        }
+    }
+
+    /// A HID drag presses at its start and releases at its end: either one
+    /// on a prompt answers it, so each endpoint is checked on its own.
+    #[test]
+    fn a_hid_drag_is_refused_when_either_end_is_on_a_prompt() {
+        use crate::security_prompt::{fixture::PromptShown, PromptProtected};
+        // The prompt covers (100..200, 100..200); the other end is off it.
+        let _prompt = PromptShown::over((100.0, 100.0, 100.0, 100.0));
+        for (from, to) in [
+            ((150.0, 150.0), (10.0, 10.0)),
+            ((10.0, 10.0), (150.0, 150.0)),
+        ] {
+            for window_drag in [false, true] {
+                let capture = Capture::start(true);
+                let result = if window_drag {
+                    drag_at_xy_observed(
+                        PromptInput::Refuse,
+                        1,
+                        from.0,
+                        from.1,
+                        to.0,
+                        to.1,
+                        None,
+                        None,
+                        Some(7),
+                        0,
+                        1,
+                        &[],
+                        DragButton::Left,
+                        true,
+                        |_, _| {},
+                    )
+                } else {
+                    drag_at_xy_foreground_observed(
+                        PromptInput::Refuse,
+                        from.0,
+                        from.1,
+                        to.0,
+                        to.1,
+                        0,
+                        1,
+                        &[],
+                        DragButton::Left,
+                        |_, _| {},
+                    )
+                };
+                let error = result.expect_err("a drag onto or off a prompt is refused");
+                assert!(error.is::<PromptProtected>(), "{error}");
+                assert!(capture.posted().is_empty(), "{from:?}->{to:?} posted");
+                assert_eq!(capture.warps(), 0);
+            }
+        }
+        // Clear of the prompt at both ends, the drag goes out.
+        let capture = Capture::start(true);
+        drag_at_xy_foreground_observed(
+            PromptInput::Refuse,
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            0,
+            1,
+            &[],
+            DragButton::Left,
+            |_, _| {},
+        )
+        .unwrap();
+        assert!(!capture.posted().is_empty());
+    }
+
     #[test]
     fn window_less_background_drag_is_refused_before_posting() {
         let capture = Capture::start(true);
         let error = drag_at_xy_observed(
+            PromptInput::Refuse,
             42,
             0.0,
             0.0,

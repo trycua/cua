@@ -65,6 +65,10 @@ function Form-State {
 }
 
 $entry.Add_TextChanged({ Write-FixtureEvent $log "entry_changed" ([ordered]@{ widget = "Name"; text = $entry.Text }) })
+# Keyboard focus of the Name entry, so `cua-spacesd doctor` types only once the
+# entry really holds it ("widget_focus", the ready record says focus_events).
+$entry.Add_GotFocus({ Write-FixtureEvent $log "widget_focus" ([ordered]@{ widget = "Name"; focused = $true }) })
+$entry.Add_LostFocus({ Write-FixtureEvent $log "widget_focus" ([ordered]@{ widget = "Name"; focused = $false }) })
 $entry.Add_KeyDown({ param($s, $e)
     if ($e.KeyCode -eq "Return") { Write-FixtureEvent $log "entry_activate" ([ordered]@{ widget = "Name"; text = $entry.Text }) } })
 $notes.Add_TextChanged({ Write-FixtureEvent $log "notes_changed" ([ordered]@{ widget = "Notes"; text = $notes.Text }) })
@@ -88,9 +92,9 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 300
 $timer.Add_Tick({
     $timer.Stop()
-    $f = [ordered]@{ pid = $PID; title = $title; wm_class = "cua-fixture-$name" }
+    $f = [ordered]@{ pid = $PID; title = $title; wm_class = "cua-fixture-$name"; focus_events = $true }
     foreach ($kv in (Form-State).GetEnumerator()) { $f[$kv.Key] = $kv.Value }
     Write-FixtureEvent $log "ready" $f
   })
-$form.Add_Shown({ $timer.Start() })
+$form.Add_Shown({ $form.ActiveControl = $entry; $timer.Start() })
 [Windows.Forms.Application]::Run($form)

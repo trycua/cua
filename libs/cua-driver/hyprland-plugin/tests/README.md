@@ -107,7 +107,7 @@ logs. The JSON result distinguishes this check from application delivery and
 physical input isolation. It does not certify package installation, direct DRM
 startup, arbitrary ABI combinations, or the complete driver desktop matrix.
 Hosted CI tests the runner's cleanup/error paths with mocks; native results
-require running it in the Fleet guest or another declared Wayland environment.
+require running it in the VM guest or another declared Wayland environment.
 
 ## Held-input lifecycle faults
 
@@ -131,7 +131,7 @@ brief desktop-transition revocation, or real multi-process lane behavior.
 The [native reliability record](../docs/lifecycle-validation.md) identifies the tested
 source, measured results, recordings, setup failures, and remaining limits.
 
-Run `input_lifecycle_live.py` only in a disposable Fleet guest with the
+Run `input_lifecycle_live.py` only in a disposable VM guest with the
 experimental build explicitly loaded, a source-built Driver service started
 with `--permission-mode unrestricted --dangerously-bypass-approvals`, and two
 native GTK fixtures. The normal build does not support this test.
@@ -267,7 +267,7 @@ contains five matched fault/control pairs, artifact identities, measured
 cancellation and cleanup times, retained failures, and limits.
 
 `desktop_state_live.py` is a focused experimental safety test, not the canonical
-desktop matrix. It requires a disposable Fleet guest, the explicitly loaded
+desktop matrix. It requires a disposable VM guest, the explicitly loaded
 input experiment, and a source-built Driver service with unrestricted
 permissions. Use native GTK raw-event fixtures and keep their journals and
 Wayland wire logs. The helper refuses an arbitrary process as its target.
@@ -331,9 +331,9 @@ observed by the compositor loop; they do not prove that an off/on transition
 entirely between samples is latched. Atomic key packets provide recovery
 evidence, not an interrupted held-key-stream guarantee.
 
-## Fleet packaging lane
+## VM packaging lane
 
-Build an Omarchy/Arch Fleet image from the monorepo source using
+Build an Omarchy/Arch VM image from the monorepo source using
 `packaging/arch/PKGBUILD`. Record the source SHA, exact Hyprland package version,
 plugin package version, module digest, and image identity. The lane must prove:
 
@@ -347,7 +347,7 @@ plugin package version, module digest, and image identity. The lane must prove:
 - all discovery-only mutation refusals under fixture-state, focus, z-order,
   cursor, and input-leak oracles.
 
-The Fleet lane must also identify whether each client is a one-shot process or
+The VM lane must also identify whether each client is a one-shot process or
 a long-lived process created inside the graphical session. A process launched
 outside that session and given copied display variables is not equivalent
 evidence. Chromium and Electron rows must record their effective Ozone backend
@@ -355,19 +355,19 @@ and confirm they render and expose the intended fixture before testing a
 refusal.
 
 Run the repository's ordinary Linux source/unit checks and relevant Cua Driver
-catalogs on the exact candidate SHA. Fleet validates reproducible packaging and
+catalogs on the exact candidate SHA. The VM lane validates reproducible packaging and
 lifecycle behavior; it is not the final hardware claim.
 
 ## Physical Omarchy final gate
 
-After the Fleet packaging lane passes, and before any capability or release
+After the VM packaging lane passes, and before any capability or release
 claim, repeat the candidate package on a bare-metal Omarchy machine using the
 exact Hyprland/plugin pair. Record status before load, after load, after
 discovery, after refused mutations, after unload, and after a compositor
 restart. Independently verify application state, focus, z-order, cursor
 position, and absence of primary-seat or unrelated-window input.
 
-The physical run is the final acceptance gate. VM, nested compositor, or Fleet
+The physical run is the final acceptance gate. VM or nested compositor
 success cannot replace it. If the candidate SHA, Hyprland package, protocol,
 packaging, mutation behavior, or harness changes afterward, rerun the evidence
 affected by that change before promotion.
@@ -397,7 +397,7 @@ windows unchanged.
 | One-shot graphical-session client   | Launch one fresh process from the real graphical-session environment, complete discovery negotiation, receive typed mutation refusal, and exit cleanly without relying on state from another invocation.                      |
 | Long-lived graphical-session client | Launch inside the real graphical session, negotiate discovery, survive repeated calls, detect compositor/plugin restart and the stale connection, reconnect and negotiate the new epoch, then receive typed mutation refusal. |
 
-The bare-metal result is the final certification after Fleet. A missing row,
+The bare-metal result is the final certification after the VM lane. A missing row,
 an untyped failure, a black frame treated as capture success, focus or cursor
 movement, input leakage, or a client that cannot reconnect fails certification.
 

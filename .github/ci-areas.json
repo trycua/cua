@@ -1,0 +1,430 @@
+{
+ "shared": [
+  ".github/**",
+  "*",
+  "**/uv.lock",
+  "scripts/ci/**",
+  "flake.nix",
+  "nix/**"
+ ],
+ "inputs": {
+  "libs/cua/proto/**": [
+   "libs/cua/crates/cua-proto"
+  ]
+ },
+ "areas": {
+  "relay": {
+   "paths": [
+    "libs/cua-spacesd/crates/cua-relay/**"
+   ],
+   "workflows": [
+    "ci-cua-relay-image.yml",
+    "ci-cua-spacesd.yml",
+    "license-check.yml"
+   ],
+   "narrowed": true
+  },
+  "spacesd": {
+   "paths": [
+    "libs/cua-spacesd/**"
+   ],
+   "workflows": [
+    "cd-image-linux.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-cua-oci-spacesd.yml",
+    "ci-cua-oidc.yml",
+    "ci-cua-relay-image.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spacesd.yml",
+    "ci-elastic.yml",
+    "ci-images-spacesd-lag.yml",
+    "ci-openkoalabot-example-tauri.yml",
+    "ci-release-spacesd-pin.yml",
+    "ci-test-python.yml",
+    "ci-test-scripts.yml",
+    "e2b-core-nightly.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml",
+    "perf-cua-channel.yml"
+   ]
+  },
+  "driver-rust": {
+   "paths": [
+    "libs/cua-driver/rust/**"
+   ],
+   "workflows": [
+    "cd-cua-perception.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-driver-contract-clients.yml",
+    "ci-cua-driver-preflight.yml",
+    "ci-cua-driver-quick.yml",
+    "ci-cua-driver-valgrind.yml",
+    "ci-cua-perception-release.yml",
+    "ci-cua-s1-weights.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-spacesd.yml",
+    "ci-driver-mcp-candidate.yml",
+    "ci-nix-linux.yml",
+    "ci-platform-linux-portability.yml",
+    "ci-rust-linux.yml",
+    "ci-rust-macos.yml",
+    "ci-rust-windows.yml",
+    "ci-swift-linker.yml",
+    "ci-test-scripts.yml",
+    "ci-ts-cursor-motion.yml",
+    "clawhub-cua-driver.yml",
+    "e2e-cua-sdk.yml",
+    "e2e-rust-linux.yml",
+    "fuzz-cua-driver.yml",
+    "license-check.yml",
+    "smoke-cua-driver-live.yml"
+   ]
+  },
+  "driver": {
+   "paths": [
+    "libs/cua-driver/**",
+    "libs/cua-driver-bench/**"
+   ],
+   "workflows": [
+    "cd-cua-perception.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-driver-bench.yml",
+    "ci-cua-driver-contract-clients.yml",
+    "ci-cua-driver-preflight.yml",
+    "ci-cua-driver-quick.yml",
+    "ci-cua-driver-valgrind.yml",
+    "ci-cua-perception-release.yml",
+    "ci-cua-s1-weights.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-spacesd.yml",
+    "ci-driver-mcp-candidate.yml",
+    "ci-hyprland-plugin.yml",
+    "ci-jev-use.yml",
+    "ci-nix-linux.yml",
+    "ci-platform-linux-portability.yml",
+    "ci-rust-linux.yml",
+    "ci-rust-macos.yml",
+    "ci-rust-windows.yml",
+    "ci-swift-linker.yml",
+    "ci-test-scripts.yml",
+    "ci-ts-cursor-motion.yml",
+    "clawhub-cua-driver.yml",
+    "docs-driver-first-run-smoke.yml",
+    "e2e-cua-sdk.yml",
+    "e2e-rust-linux.yml",
+    "fuzz-cua-driver.yml",
+    "license-check.yml",
+    "nightly-hyprland-plugin-requalify.yml",
+    "smoke-cua-driver-live.yml"
+   ]
+  },
+  "cua": {
+   "paths": [
+    "libs/cua/**",
+    "tests/e2e/**"
+   ],
+   "workflows": [
+    "cd-image-linux.yml",
+    "cd-image-omarchy.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-byoc.yml",
+    "ci-cua-compat-daytona.yml",
+    "ci-cua-compat.yml",
+    "ci-cua-contrib.yml",
+    "ci-cua-microvm.yml",
+    "ci-cua-oci-spacesd.yml",
+    "ci-cua-oidc.yml",
+    "ci-cua-proto.yml",
+    "ci-cua-relay-image.yml",
+    "ci-cua-sandbox-doctor.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-cua-spaces.yml",
+    "ci-cua-spacesd-html5.yml",
+    "ci-cua-spacesd.yml",
+    "ci-elastic.yml",
+    "ci-openkoalabot-example-tauri.yml",
+    "ci-pi-durable-crash.yml",
+    "ci-test-python.yml",
+    "ci-test-scripts.yml",
+    "ci-vm-density.yml",
+    "docs-compile-lanes.yml",
+    "docs-nightly.yml",
+    "docs-page-tests.yml",
+    "e2b-bindings.yml",
+    "e2b-core-nightly.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml",
+    "nightly-build.yml",
+    "nightly-e2b-rollouts.yml",
+    "nightly-fork-batch.yml",
+    "nightly-qemu-fork.yml",
+    "nightly-qemu-ready.yml",
+    "nightly-qemu-vmm.yml",
+    "perf-cua-channel.yml",
+    "space-egress-nightly.yml"
+   ]
+  },
+  "images": {
+   "paths": [
+    "libs/images/**",
+    "scripts/images/**"
+   ],
+   "workflows": [
+    "cd-bench-images.yml",
+    "cd-image-linux.yml",
+    "cd-image-macos.yml",
+    "cd-image-omarchy.yml",
+    "cd-image-runtime-gvisor.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spacesd.yml",
+    "ci-images-chromium-pin.yml",
+    "ci-images-spacesd-lag.yml",
+    "ci-test-scripts.yml",
+    "e2b-core-nightly.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml",
+    "nightly-qemu-ready.yml",
+    "perf-cua-channel.yml"
+   ]
+  },
+  "spaces-web": {
+   "paths": [
+    "apps/cua-spaces-web/**",
+    "apps/cua-spaces-desktop/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "spaces-app": {
+   "paths": [
+    "apps/cua-spaces/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-cua-spaces.yml",
+    "ci-installers.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "spaces-mobile": {
+   "paths": [
+    "apps/cua-spaces-mobile/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "spaces-macos": {
+   "paths": [
+    "apps/cua-spaces-macos/**",
+    "libs/spaces-app-swift/**",
+    "libs/spaces-notch-swift/**",
+    ".github/actions/push-generated/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-cua-spaces-driver-pin.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-cua-spaces-web.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "python": {
+   "paths": [
+    "libs/python/**",
+    "libs/cua-bench/**",
+    "libs/cua-bench-rl/**",
+    "libs/cua-s1/**"
+   ],
+   "workflows": [
+    "ci-bench-ale-compat.yml",
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-contrib.yml",
+    "ci-cua-driver-contract-clients.yml",
+    "ci-cua-s1-weights.yml",
+    "ci-cua-s1.yml",
+    "ci-cua-sdk.yml",
+    "ci-driver-mcp-candidate.yml",
+    "ci-py-bench.yml",
+    "ci-test-python.yml",
+    "ci-test-scripts.yml",
+    "docs-page-tests.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml"
+   ]
+  },
+  "typescript": {
+   "paths": [
+    "libs/typescript/**",
+    "libs/cuabot/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-lint-typescript.yml",
+    "ci-test-scripts.yml",
+    "ci-ts-cursor-motion.yml",
+    "license-check.yml"
+   ]
+  },
+  "lume": {
+   "paths": [
+    "libs/lume/**",
+    "libs/lumier/**",
+    "libs/spaces-sdk-swift/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-sdk.yml",
+    "ci-cua-spaces-macos.yml",
+    "ci-swift-lume.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "containers": {
+   "paths": [
+    "libs/kasm/**",
+    "libs/qemu-docker/**",
+    "libs/xfce/**",
+    "libs/xfce-cua/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "docs": {
+   "paths": [
+    "docs/**",
+    "skills/**",
+    "scripts/docs-generators/**"
+   ],
+   "workflows": [
+    "ci-check-docs-image-refs.yml",
+    "ci-check-docs-links.yml",
+    "ci-check-docs.yml",
+    "ci-cua-contrib.yml",
+    "ci-cua-sandbox-action.yml",
+    "ci-jev-use.yml",
+    "ci-public-containerdisk-refs.yml",
+    "ci-test-scripts.yml",
+    "docs-compile-lanes.yml",
+    "docs-driver-first-run-smoke.yml",
+    "docs-mcp-corpus-parity.yml",
+    "docs-mcp-server-build-push.yml",
+    "docs-page-tests.yml",
+    "e2e-cua-sdk.yml",
+    "license-check.yml"
+   ]
+  },
+  "compat": {
+   "paths": [
+    "tests/compat/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-cua-compat-daytona.yml",
+    "ci-cua-compat-e2b.yml",
+    "ci-cua-compat.yml",
+    "ci-test-scripts.yml",
+    "e2e-compat-examples.yml",
+    "license-check.yml"
+   ]
+  },
+  "installers": {
+   "paths": [
+    "scripts/install/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-installers.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  },
+  "examples": {
+   "paths": [
+    "examples/**"
+   ],
+   "workflows": [
+    "ci-check-docs-links.yml",
+    "ci-openkoalabot-example-tauri.yml",
+    "ci-test-scripts.yml",
+    "license-check.yml"
+   ]
+  }
+ },
+ "narrow": {
+  "ci-test-python.yml": {
+   "why": "Tests the Python packages and cua-sandbox against cua-sdk (cargo build -p cua-sdk-native); no other libs/cua crate.",
+   "packages": [
+    "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-sdk-native",
+    "libs/cua/crates/cua-cli"
+   ],
+   "paths": [
+    "libs/python/**",
+    "libs/cua/python/**",
+    "libs/cua-spacesd/tests/spaces-e2e/**"
+   ]
+  },
+  "ci-openkoalabot-example-tauri.yml": {
+   "why": "Checks and tests the Tauri example workspace and its UI; the package graph adds the libs/cua crates and @trycua/cua it links.",
+   "packages": [
+    "examples/openkoalabot-example-tauri",
+    "examples/openkoalabot-example-tauri/src-tauri/app",
+    "examples/openkoalabot-example-tauri/src-tauri/core"
+   ],
+   "paths": [
+    "examples/openkoalabot-example-tauri/**"
+   ]
+  },
+  "ci-openkoalabot-example-samples.yml": {
+   "why": "Builds cua-sdk for the TypeScript and Swift samples; its own scope job (ci_swift_samples_scope.py) narrows the Swift build further.",
+   "packages": [
+    "libs/cua/crates/cua-sdk",
+    "libs/cua/crates/cua-sdk-native",
+    "libs/cua/typescript",
+    "examples/openkoalabot-example-ts"
+   ],
+   "paths": [
+    "examples/openkoalabot-example-*/**",
+    "libs/cua/swift/**",
+    "libs/spaces-sdk-swift/**",
+    "libs/spaces-app-swift/**",
+    "libs/images/sandbox-images.json"
+   ]
+  }
+ }
+}

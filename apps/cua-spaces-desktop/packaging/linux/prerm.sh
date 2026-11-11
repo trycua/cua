@@ -75,7 +75,7 @@ turn_off() {
   if [ -f "$ch/host/config.json" ]; then
     say "turning off unattended access ($ch)"
     if ! as_user 150 "$u" "$id" "$h" env CUA_HOME="$ch" "$CUA" host remove --force --uninstalling; then
-      say "could not tell the relay this machine is gone; remove it from Machines in the app or at cua.ai"
+      say "could not tell the relay this computer is gone; remove it from Computers in the app or at cua.ai"
     fi
   fi
   if [ -d "$ch" ]; then
@@ -83,9 +83,13 @@ turn_off() {
   fi
   # Whatever the removal above could not reach (no session bus for a user
   # who is logged out): the unit file, and a driver still running.
-  unit="$h/.config/systemd/user/cua-spacesd-host.service"
+  # Each home has its own unit (cua-host ServiceNames, CUA-3512): the
+  # staging home's is cua-spacesd-host-staging.
+  name=cua-spacesd-host
+  case "$ch" in */.cua/envs/staging) name=cua-spacesd-host-staging ;; esac
+  unit="$h/.config/systemd/user/$name.service"
   if [ -f "$unit" ] && [ ! -f "$ch/host/config.json" ]; then
-    as_user 20 "$u" "$id" "$h" systemctl --user disable --now cua-spacesd-host >/dev/null 2>&1 || true
+    as_user 20 "$u" "$id" "$h" systemctl --user disable --now "$name" >/dev/null 2>&1 || true
   fi
   pkill -KILL -u "$id" -f "$ch/host/bin/" 2>/dev/null || true
 }

@@ -142,7 +142,11 @@ export class SpaceThumbnails {
    * policy's background interval, every interval, skipped while `active`
    * says the app is not in use. Returns the stop.
    */
-  keepFresh(running: () => readonly string[], active: () => boolean = () => true, sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms).unref?.())): () => void {
+  keepFresh(
+    running: () => readonly string[],
+    active: () => boolean = () => true,
+    sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms).unref?.()),
+  ): () => void {
     this.keeping?.();
     let stopped = false;
     const interval = this.policy.backgroundIntervalMs / 1000;

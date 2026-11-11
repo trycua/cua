@@ -62,7 +62,7 @@ pub const MAX_PLAINTEXT_LEN: usize = 64 * 1024 * 1024;
 pub enum Error {
     /// `open` on ciphertext that does not decrypt: a tampered envelope, or
     /// the wrong recipient key.
-    #[error("the envelope does not decrypt: tampered, or sealed to a different machine key")]
+    #[error("the envelope does not decrypt: tampered, or sealed to a different computer key")]
     Tampered,
     /// `space_id` or `purpose` did not match what the envelope was sealed
     /// under (still fails decryption above; this is for callers that check
@@ -182,6 +182,38 @@ impl MachineKeypair {
         bytes.zeroize();
         let public = MachinePublicKey(PublicKey::from(&secret).to_bytes());
         Self { secret, public }
+    }
+
+    /// A fresh random keypair whose secret also depends on `extra`: the
+    /// SHA-256 of the OS randomness and `extra`. A guest restored from a
+    /// memory snapshot may share its kernel's random state with every other
+    /// clone until the kernel reseeds; mixing in bytes the caller drew from
+    /// its own CSPRNG (`InitRequest.entropy`) keeps two clones' keys apart
+    /// even then.
+    pub fn generate_mixed(extra: &[u8]) -> Self {
+        use sha2::Digest as _;
+        let mut os = [0u8; 32];
+        OsRng.try_fill_bytes(&mut os).expect("OS RNG");
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(b"cua-machine-seal/keygen/v1\0");
+        hasher.update(os);
+        hasher.update((extra.len() as u64).to_be_bytes());
+        hasher.update(extra);
+        let mut bytes: [u8; 32] = hasher.finalize().into();
+        os.zeroize();
+        let secret = StaticSecret::from(bytes);
+        bytes.zeroize();
+        let public = MachinePublicKey(PublicKey::from(&secret).to_bytes());
+        Self { secret, public }
+    }
+
+    /// Replaces the keypair at `path` with a new one
+    /// ([`Self::generate_mixed`] over `extra`), saved 0600. The old key no
+    /// longer opens anything sealed to this machine afterwards.
+    pub fn regenerate(path: &Path, extra: &[u8]) -> Result<Self, Error> {
+        let keypair = Self::generate_mixed(extra);
+        keypair.save(path)?;
+        Ok(keypair)
     }
 
     /// This machine's public key, to be pinned by a sender.
@@ -1007,6 +1039,27 @@ mod tests {
         assert_eq!(reopened.get("space-1"), Some(a.public()));
         reopened.unpin("space-1").unwrap();
         assert!(!reopened.is_pinned("space-1"));
+    }
+
+    #[test]
+    fn regenerate_replaces_the_key_and_the_old_one_no_longer_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("machine-seal.key");
+        let old = MachineKeypair::load_or_create(&path).unwrap();
+        let sealed = seal(old.public(), "space-1", "p", b"for the old machine").unwrap();
+        let new = MachineKeypair::regenerate(&path, b"caller entropy").unwrap();
+        assert_ne!(old.public(), new.public());
+        // Persisted: a restart loads the new key, not the old one.
+        assert_eq!(
+            MachineKeypair::load_or_create(&path).unwrap().public(),
+            new.public()
+        );
+        assert!(open(&new, "space-1", "p", &ReplayGuard::new(), &sealed).is_err());
+        // Two keys mixed with the same extra bytes still differ (OS randomness).
+        assert_ne!(
+            MachineKeypair::generate_mixed(b"same").public(),
+            MachineKeypair::generate_mixed(b"same").public()
+        );
     }
 
     #[test]

@@ -297,6 +297,8 @@ impl InteractiveInputProvider for Inputs {
 #[derive(Default)]
 struct FakeAudio {
     sinks: Mutex<Vec<Arc<dyn AudioFrameSink>>>,
+    /// `start` fails, as capture does with no reachable sound server.
+    unavailable: std::sync::atomic::AtomicBool,
 }
 
 struct FakeAudioLease;
@@ -329,6 +331,12 @@ impl AudioProvider for AudioProviderImpl {
         _: &AudioTrackConfig,
         sink: Arc<dyn AudioFrameSink>,
     ) -> Result<Arc<dyn AudioTrackLease>, ProviderError> {
+        if self.0.unavailable.load(Ordering::Relaxed) {
+            return Err(ProviderError::new(
+                ProviderErrorCode::Internal,
+                "audio: pa_simple_new(@DEFAULT_MONITOR@): Connection refused",
+            ));
+        }
         self.0.sinks.lock().unwrap().push(sink);
         Ok(Arc::new(FakeAudioLease))
     }
@@ -934,6 +942,60 @@ async fn acking_clients_are_held_to_an_ack_window() {
     }
     assert!((8..200).contains(&sent), "sent {sent}");
     assert!(viewer.stats().frames_dropped > 0);
+}
+
+fn desktop_audio(source_ids: Vec<String>) -> AudioRequest {
+    AudioRequest {
+        downlink: true,
+        source_ids,
+        config: AudioTrackConfig {
+            source_id: String::new(),
+            codec: AudioCodecName::PcmS16le,
+            sample_rate_hz: 48_000,
+            channels: 2,
+            frame_ms: 20,
+            bitrate_kbps: 0,
+            fec: false,
+            dtx: false,
+            expected_loss_percent: 0,
+        },
+        uplink: None,
+    }
+}
+
+#[tokio::test]
+async fn video_opens_without_audio_when_the_default_source_cannot_start() {
+    let fixture = fixture();
+    fixture.audio.unavailable.store(true, Ordering::Relaxed);
+    let mut with_audio = params(display());
+    with_audio.audio = Some(desktop_audio(vec![]));
+    let opened = open(&fixture, with_audio).await;
+    assert!(opened.audio.as_ref().unwrap().tracks.is_empty());
+    assert!(!opened.session.audio_enabled());
+    let viewer = opened.session.attach().unwrap();
+    fixture.capture.emit(true, 640, 480, 2);
+    assert!(drain(&viewer)
+        .iter()
+        .any(|item| matches!(item, Outbound::Video(_))));
+
+    // A source the client asked for by id still fails the open.
+    let mut named = params(display());
+    named.audio = Some(desktop_audio(vec!["desktop".into()]));
+    let runtime = fixture.runtime.clone();
+    let failed = tokio::task::spawn_blocking(move || runtime.open(named))
+        .await
+        .unwrap();
+    assert!(matches!(failed, Err(MediaError::Provider(_))));
+
+    // So does an audio-only session: without audio it has nothing to send.
+    let mut audio_only = params(display());
+    audio_only.disable_video = true;
+    audio_only.audio = Some(desktop_audio(vec![]));
+    let runtime = fixture.runtime.clone();
+    let failed = tokio::task::spawn_blocking(move || runtime.open(audio_only))
+        .await
+        .unwrap();
+    assert!(failed.is_err());
 }
 
 #[tokio::test]

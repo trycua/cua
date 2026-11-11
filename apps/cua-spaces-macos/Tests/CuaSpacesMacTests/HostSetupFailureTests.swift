@@ -16,11 +16,48 @@ struct HostSetupFailureTests {
     @Test func aMissingReleaseIsADownloadFailureWithoutTheURL() {
         let f = HostSetupFailure.presenting(Self.missingRelease)
         #expect(f.kind == .download)
-        #expect(f.title == "Couldn\u{2019}t download the Cua host service")
-        #expect(f.message.contains("update Cua Spaces"))
+        #expect(f.title == "Couldn\u{2019}t set up sharing for this Mac")
+        #expect(f.message.contains("internet connection"))
         #expect(!f.message.contains("http"))
         #expect(!f.title.contains("http"))
         #expect(f.details == Self.missingRelease, "details stay raw")
+    }
+
+    /// The relay refuses a new computer that arrives with a token alone on
+    /// an account that already has computers: the page says what to do,
+    /// not "Something went wrong" (seen on Share With This Account, 0.21.0).
+    @Test func aNewComputerOnAnAccountWithComputersIsAddedFromOne() {
+        let raw = "permission denied: relay: add computers from a computer you already added, or with a pairing code"
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .addFromAnotherComputer)
+        #expect(f.title == "Add this Mac from another computer")
+        #expect(f.message.contains("pairing code"))
+        #expect(f.details == raw)
+    }
+
+    @Test func aThrottledSetupSaysHowLongToWaitInPlainWords() {
+        let raw = "http: Too many attempts right now. Wait 3 seconds, then try again."
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .throttled)
+        #expect(f.title == "Too many attempts right now")
+        #expect(f.message == "Trying again in 3 seconds.")
+        #expect(f.details == raw)
+        #expect(f.actionLabel == "Retry")
+    }
+
+    @Test func aRawHTTP429FromAnOlderHostIsTheSameWithoutANumber() {
+        let f = HostSetupFailure.presenting("http: relay: HTTP 429: Too Many Requests")
+        #expect(f.kind == .throttled)
+        #expect(f.message == "Wait a few seconds, then try again.")
+        #expect(!f.message.contains("429"))
+    }
+
+    @Test(arguments: [
+        "http: relay: HTTP 429: computer limit for this token reached",
+        "HTTP 429: at most 5 unused pairing codes",
+    ])
+    func aLimitTheRelayExplainsIsNotAThrottle(_ raw: String) {
+        #expect(HostSetupFailure.presenting(raw).kind == .other)
     }
 
     @Test(arguments: [
@@ -95,23 +132,18 @@ struct HostSetupFailureTests {
 
     // MARK: - The model
 
-    @MainActor func onboarding(_ host: HostRunning) -> OnboardingModel {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
-        return OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path, host: host)
-    }
-
     @MainActor @Test func aFailedSetupKeepsTheRawErrorAsDetails() async {
         let host = FixtureHost()
         host.failSetup = Self.missingRelease + "\ncaused by: 404"
-        let model = onboarding(host)
-        model.host.openForm()
-        await model.setUpHost()
-        let failure = model.host.setupFailure
+        let model = HostModel(host: host)
+        model.openForm()
+        await model.submit()
+        let failure = model.setupFailure
         #expect(failure?.kind == .download)
         #expect(failure?.details == Self.missingRelease + "\ncaused by: 404", "the whole error, every line")
-        #expect(model.host.formView?.canSubmit == true, "Retry can run")
-        #expect(!model.host.settingUp)
-        #expect(model.showingHostForm)
+        #expect(model.formView?.canSubmit == true, "Retry can run")
+        #expect(!model.settingUp)
+        #expect(model.form != nil)
     }
 
     /// A page button that fails (the first post-launch user turned a
@@ -137,54 +169,80 @@ struct HostSetupFailureTests {
     @MainActor @Test func retryRunsTheSameChoiceAndClearsOnSuccess() async {
         let host = FixtureHost()
         host.failSetup = Self.missingRelease
-        let model = onboarding(host)
-        model.host.openForm()
-        model.host.send(.setProfile(profile: "spare"))
-        await model.setUpHost()
-        #expect(model.host.setupFailure != nil)
-        #expect(model.host.formView?.request?.profile == "spare", "the choice survives the failure")
+        let model = HostModel(host: host)
+        model.openForm()
+        model.send(.setProfile(profile: "spare"))
+        await model.submit()
+        #expect(model.setupFailure != nil)
+        #expect(model.formView?.request?.profile == "spare", "the choice survives the failure")
 
         host.failSetup = nil
-        await model.setUpHost()
+        await model.submit()
         #expect(host.calls.count == 2)
         #expect(host.calls[0] == host.calls[1], "the retry sends the same request")
-        #expect(model.host.setupFailure == nil)
-        #expect(!model.showingHostForm)
-        #expect(model.host.state?.configured == true)
+        #expect(model.setupFailure == nil)
+        #expect(model.form == nil)
+        #expect(model.state?.configured == true)
     }
 
     @MainActor @Test func whileRetryingTheFailureStaysAndSetupIsBusy() async {
         let gate = GatedHost()
-        let model = onboarding(gate)
-        model.host.openForm()
+        let model = HostModel(host: gate)
+        model.openForm()
         gate.fail = "no GUI session"
-        await model.setUpHost()
-        #expect(model.host.setupFailure?.kind == .guiSession)
+        await model.submit()
+        #expect(model.setupFailure?.kind == .guiSession)
 
         gate.fail = nil
         gate.hold = true
-        let retry = Task { await model.setUpHost() }
+        let retry = Task { await model.submit() }
         await gate.waitUntilCalled(times: 2)
-        #expect(model.host.settingUp, "Retry shows progress and is disabled")
-        #expect(model.host.formView?.canSubmit == false, "no second setup while one runs")
-        #expect(model.host.setupFailure?.kind == .guiSession, "the failure stays while retrying")
+        #expect(model.settingUp, "Retry shows progress and is disabled")
+        #expect(model.formView?.canSubmit == false, "no second setup while one runs")
+        #expect(model.setupFailure?.kind == .guiSession, "the failure stays while retrying")
         gate.release()
         await retry.value
-        #expect(!model.host.settingUp)
-        #expect(model.host.setupFailure == nil)
+        #expect(!model.settingUp)
+        #expect(model.setupFailure == nil)
     }
 
     @MainActor @Test func closingTheFormClearsTheFailure() async {
         let host = FixtureHost()
         host.failSetup = "boom"
-        let model = onboarding(host)
-        model.host.openForm()
-        await model.setUpHost()
-        #expect(model.host.setupFailure != nil)
-        model.host.closeForm()
-        #expect(model.host.setupFailure == nil)
-        model.host.openForm()
-        #expect(model.host.setupFailure == nil)
+        let model = HostModel(host: host)
+        model.openForm()
+        await model.submit()
+        #expect(model.setupFailure != nil)
+        model.closeForm()
+        #expect(model.setupFailure == nil)
+        model.openForm()
+        #expect(model.setupFailure == nil)
+    }
+
+    /// The relay refuses a new computer that came with no proof it is the
+    /// owner adding it; the error keeps the relay's code, and the page asks
+    /// the person to confirm it is them with a code from another computer.
+    @Test func aNewComputerThatNeedsProofAsksForACodeInPlainWords() {
+        let raw = "permission denied: relay: add computers from a computer you already added, "
+            + "or with a pairing code [code: new_computer_needs_proof]"
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .needsProof)
+        #expect(f.refusalCode == "new_computer_needs_proof")
+        #expect(f.title == "Confirm it\u{2019}s you")
+        #expect(f.message.contains("enter a code from a computer you already added"))
+        #expect(f.actionLabel == "Use a code from another computer")
+        #expect(f.details == raw, "details stay raw")
+        for word in ["relay", "enrol", "MFA", "token", "pairing"] {
+            #expect(!f.title.contains(word) && !f.message.contains(word), "no jargon: \(word)")
+        }
+    }
+
+    @Test func aRefusalCodeIsReadOnlyFromTheEnd() {
+        #expect(HostSetupFailure.refusalCode("relay: no [code: phone]") == "phone")
+        #expect(HostSetupFailure.refusalCode("relay: that host is shared with you to watch only") == nil)
+        #expect(HostSetupFailure.refusalCode("relay: x [code: Bad-Code]") == nil)
+        #expect(HostSetupFailure.presenting("relay: x [code: phone]").kind == .other)
+        #expect(HostSetupFailure.presenting("relay: x [code: phone]").refusalCode == "phone")
     }
 }
 

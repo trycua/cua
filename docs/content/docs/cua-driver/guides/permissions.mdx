@@ -41,7 +41,8 @@ cua-driver serve --dangerously-bypass-approvals
 
 `--permission-mode unrestricted` alone fails closed. Add the two manifest flags
 to `standard` or `unrestricted` to narrow them too. On macOS, pass the flags
-after `serve` in `open -n -g -a CuaDriver --args serve …` and use an absolute
+after `serve` when you start the installed app by its exact path
+(`open -n -g /Applications/CuaDriver.app --args serve …`), and use an absolute
 manifest path.
 
 What `standard` allows:
@@ -54,6 +55,13 @@ What `standard` allows:
 | Terminate a process this runtime launched | Allow (fingerprint rechecked) |
 | Attach to a logged-in Chromium profile | Needs `--grant existing-profile` or host approval |
 | Terminate a foreign process; raise an OS permission prompt from a tool; legacy page mutations; unknown risky operations | Deny |
+
+Input that would land on a macOS security or consent prompt (an administrator
+password sheet, a privacy "would like to access" alert, an Accessibility or
+Gatekeeper warning) is refused with `security_prompt_protected` in `standard`
+and `bounded` mode; answering it is the user's call. Reading the prompt stays
+allowed. Only `unrestricted` mode lets input reach it, for disposable machines
+such as a VM being prepared unattended.
 
 ### Without CLI flags
 
@@ -115,6 +123,8 @@ resources:
 
 - Apps: `bundle_id` on macOS, an absolute `executable` on Windows and Linux.
   `terminate: driver_launched` only kills a process this runtime started.
+  `launch_app` needs `launch: true` on a matching entry, and the call must name
+  the app by that exact `bundle_id` or absolute path, not by display name.
 - Files: roots are compared by canonical path component; `recursive: false`
   allows direct children only.
 - `desktop.display: true` allows full-display capture and screen-coordinate
@@ -250,7 +260,7 @@ package cua.policy
 
 import rego.v1
 
-safe_tools := {"screenshot", "get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
+safe_tools := {"get_window_state", "list_apps", "list_windows", "click", "press_key", "wait"}
 
 allow if {
     input.tool in safe_tools

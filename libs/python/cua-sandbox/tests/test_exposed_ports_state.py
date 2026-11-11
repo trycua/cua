@@ -66,9 +66,9 @@ class TestExposedPortsSurviveAReconnect:
 
 
 class TestTunnelErrorNamesEverySupportedTransport:
-    """The message hardcoded a list that fell out of date: FleetCloudTransport
-    implements forward_tunnel but was not named, so a local caller was told Fleet
-    could not tunnel either — contradicting the documented Fleet path."""
+    """The message hardcoded a list that fell out of date: a transport that
+    implements forward_tunnel was not named, so a caller was told it could not
+    tunnel — contradicting the documented path."""
 
     def test_message_lists_exactly_the_transports_that_implement_it(self):
         import importlib

@@ -669,7 +669,7 @@ mod tests {
             "explicit null restores the style default, rather than keeping the override"
         );
         assert_eq!(
-            serde_json::to_value(&reset).unwrap()["trail"],
+            serde_json::to_value(reset).unwrap()["trail"],
             "default",
             "typed parse/serialize must retain the reset intent on the wire"
         );

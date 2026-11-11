@@ -110,7 +110,21 @@ pub fn entry_info(path: &Path, meta: &Metadata) -> EntryInfo {
         group,
         modified_at: meta.modified().ok().map(timestamp),
         symlink_target,
+        metadata: Default::default(),
     }
+}
+
+/// [`entry_info`] with the extended attributes under `namespace` (a full
+/// prefix, see [`super::xattr`]). `follow` reads through a symbolic link.
+pub fn entry_info_with_metadata(
+    path: &Path,
+    meta: &Metadata,
+    namespace: &str,
+    follow: bool,
+) -> EntryInfo {
+    let mut entry = entry_info(path, meta);
+    entry.metadata = super::xattr::read(path, namespace, follow);
+    entry
 }
 
 #[cfg(unix)]

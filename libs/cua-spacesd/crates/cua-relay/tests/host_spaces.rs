@@ -214,3 +214,68 @@ async fn machine_metadata_round_trips_and_is_checked() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "nothing was registered");
 }
+
+/// A machine's owner updates its meta with a PATCH (the resource summary a
+/// computer publishes): keys are merged into what registration set, and a
+/// machine token cannot do it.
+#[tokio::test]
+async fn the_owner_patches_machine_meta_and_it_merges() {
+    let issuer = FakeIssuer::new(ISSUER);
+    let base = start(&issuer, 14 * 86_400).await;
+    let ada = issuer.token("ada", Some("ada@example.com"), "cua-relay", 600);
+    let bob = issuer.token("bob", Some("bob@example.com"), "cua-relay", 600);
+    let (s, v) = call(
+        reqwest::Method::POST,
+        format!("{base}/v1/machines"),
+        &ada,
+        Some(json!({"id": "machine-00000000aa", "name": "mini", "meta": {"cua.host.os": "macos"}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let machine_token = v["machine_token"].as_str().unwrap().to_owned();
+    let url = format!("{base}/v1/machines/machine-00000000aa");
+    let (s, v) = call(
+        reqwest::Method::PATCH,
+        url.clone(),
+        &ada,
+        Some(json!({"meta": {"cua.res": "{\"v\":1,\"c\":12}"}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["meta"]["cua.host.os"], "macos");
+    assert_eq!(v["meta"]["cua.res"], "{\"v\":1,\"c\":12}");
+    // Listings carry it.
+    let (_, one) = call(reqwest::Method::GET, url.clone(), &ada, None).await;
+    assert_eq!(one["meta"]["cua.res"], "{\"v\":1,\"c\":12}");
+    // Bad meta is refused and changes nothing.
+    let (s, _) = call(
+        reqwest::Method::PATCH,
+        url.clone(),
+        &ada,
+        Some(json!({"meta": {"Bad Key": "x"}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // Neither the machine itself nor another account may.
+    let (s, _) = call(
+        reqwest::Method::PATCH,
+        url.clone(),
+        &machine_token,
+        Some(json!({"meta": {"cua.res": "x"}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = call(
+        reqwest::Method::PATCH,
+        url.clone(),
+        &bob,
+        Some(json!({"meta": {"cua.res": "x"}})),
+    )
+    .await;
+    assert!(
+        s == StatusCode::NOT_FOUND || s == StatusCode::FORBIDDEN,
+        "{s}"
+    );
+    let (_, after) = call(reqwest::Method::GET, url, &ada, None).await;
+    assert_eq!(after["meta"]["cua.res"], "{\"v\":1,\"c\":12}");
+}

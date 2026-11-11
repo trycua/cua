@@ -13,6 +13,8 @@
 # Fixtures (cua-spacesd-x11-pad, the GTK button) are copied into the sandbox and
 # started through the driver's own ProcessService.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 RUNTIME="${1:-runc}"
 host_arch() { case "$(uname -m)" in arm64|aarch64) echo arm64 ;; *) echo amd64 ;; esac; }
 IMAGE="${2:-cua-e2e-local/linux:docker-local-$(host_arch)}"
@@ -62,7 +64,32 @@ run_suite() {
         -e CUA_ENV_GTK_FIXTURE=/tmp/gtk_button.py \
         -w /repo/libs/cua-spacesd cua-envdesktop-test sh -c "timeout 1800 $1"
 }
+# Prints a suite's summary lines, the lines matching $1 with $2 lines of
+# context after them, and each panic with the message lines that follow
+# it. Never fails, so the suite's own exit status decides the gate.
+summarize() {
+    awk -v extra="$1" -v after="$2" '
+        /panicked at/ { print; n = 3; next }
+        /^test |test result/ || (extra != "" && $0 ~ extra) { print; n = after; next }
+        n > 0 { print; n-- }
+    ' || true
+}
+# Runs one suite and records its exit status (not the filter's) in rc.
+rc=0
+gate() {
+    local pattern="$1" after="$2" status
+    shift 2
+    set +e
+    run_suite "$@" 2>&1 | summarize "$pattern" "$after"
+    status="${PIPESTATUS[0]}"
+    set -e
+    if [ "$status" -ne 0 ]; then
+        echo "    FAILED (exit $status)"
+        rc=1
+    fi
+}
 echo "==> core conformance suite against $RUNTIME"
-[ -n "${SKIP_CORE:-}" ] || run_suite "cargo test -p cua-spacesd-server --test conformance -- --test-threads=4" 2>&1 | grep -E "^test |test result|panicked" || true
+[ -n "${SKIP_CORE:-}" ] || gate "" 0 "cargo test -p cua-spacesd-server --test conformance -- --test-threads=4"
 echo "==> desktop suite against $RUNTIME"
-run_suite "cargo test -p cua-spacesd-desktop --test linux_desktop -- --test-threads=1 --nocapture ${DESKTOP_FILTER:-}" 2>&1 | grep -E "^test |test result|panicked|skews|assert|flashes" -A2 || true
+gate "skews|assert|flashes" 2 "cargo test -p cua-spacesd-desktop --test linux_desktop -- --test-threads=1 --nocapture ${DESKTOP_FILTER:-}"
+exit "$rc"

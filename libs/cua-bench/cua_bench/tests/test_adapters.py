@@ -87,12 +87,11 @@ def test_timeouts_bound_each_phase():
     assert sb.files.data["/tmp/solved"] == b"yes"
 
 
-def test_requirements_fail_before_any_claim():
-    assert unmet_requirements(["openai"], cloud=False, environ={}, has_kvm=True) == [
+def test_requirements_fail_before_any_sandbox_starts():
+    assert unmet_requirements(["openai"], environ={}, has_kvm=True) == [
         "needs OPENAI_API_KEY in the environment"
     ]
-    assert unmet_requirements(["kvm"], cloud=True, environ={}, has_kvm=False) == []
-    assert "KVM" in unmet_requirements(["kvm"], cloud=False, environ={}, has_kvm=False)[0]
+    assert "KVM" in unmet_requirements(["kvm"], environ={}, has_kvm=False)[0]
     spec = resolve_env_spec(Toy().environment(), Target())
     assert spec.requires == ("openai",)
     with pytest.raises(TargetError, match="OPENAI_API_KEY"):
@@ -182,7 +181,6 @@ def test_waa_is_a_vm_only_bench_adapter(waa):
         resolve_env_spec(tasks[0].computer, Target(kind="container"))
     with pytest.raises(TargetError, match="KVM"):
         check_requirements([spec], Target(), environ={}, has_kvm=False)
-    check_requirements([spec], Target(on="cloud"), environ={}, has_kvm=False)
     assert "solve" not in vars(module)  # WAA has no oracle
 
 
@@ -194,8 +192,8 @@ def test_waa_image_comes_from_the_environment(waa, monkeypatch):
     )
     fresh = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fresh)
-    env = resolve_env_spec(fresh.load()[0].computer, Target(on="cloud"))
-    assert env.image == "registry.example/waa-win11:1" and env.backend("cloud") == "cloud-kubevirt"
+    env = resolve_env_spec(fresh.load()[0].computer, Target())
+    assert env.image == "registry.example/waa-win11:1" and env.backend("local") == "local-qemu"
 
 
 def test_waa_runs_through_cb_run_on_fake_sandboxes(waa, monkeypatch, tmp_path):

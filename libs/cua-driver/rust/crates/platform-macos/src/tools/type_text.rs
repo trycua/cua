@@ -1705,6 +1705,13 @@ fn type_text_in_key_window(
             .then(|| single_line_submit_body(&role, text))
             .flatten();
         let ax_text = submit_body.unwrap_or(text);
+        // What a full insert of the line must leave in the field, from the
+        // value and selection read just before the write.
+        let expected_after_submit = submit_body.and_then(|body| unsafe {
+            let value = copy_string_attr(element, "AXValue")?;
+            let (location, length) = selected_range(element)?;
+            replace_utf16_range(&value, location, length, body)
+        });
         let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         // Classify the atomic write before considering synthesis. Complete AX
         // delivery returns immediately. Partial delivery is surfaced as such
@@ -1729,11 +1736,12 @@ fn type_text_in_key_window(
         } else {
             crate::document_edit::DocumentEdited::NotADocument
         };
-        // A read-back that already held the line before the write proves
-        // nothing landed, so it never earns a submit.
+        // Only a read-back equal to the selection replaced by the whole line
+        // earns a submit: a field that already held the line, or a partial
+        // write that happens to complete a matching value, does not.
         let insert_observed = ax_progress == Some(TypedProgress::Complete)
-            && submit_body
-                .is_some_and(|body| insert_added_body(before.as_deref(), after.as_deref(), body));
+            && expected_after_submit.is_some()
+            && after.as_deref() == expected_after_submit.as_deref();
         // Return is a pid-routed key: it reaches whichever field has focus,
         // so it goes out only once the written field is confirmed focused.
         let return_reaches_field = insert_observed && {
@@ -1756,7 +1764,7 @@ fn type_text_in_key_window(
                     let reason = if insert_observed {
                         "the field does not hold keyboard focus"
                     } else {
-                        "the line was not seen landing in the field"
+                        "the field did not read back the inserted line"
                     };
                     return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                         detail: format!(
@@ -1874,16 +1882,48 @@ fn single_line_submit_body<'a>(role: &str, text: &'a str) -> Option<&'a str> {
     (!body.is_empty() && !body.contains(['\n', '\r', '\t'])).then_some(body)
 }
 
-/// Whether an AX insert put `body` into the field. Both values must be
-/// readable and `body` must occur more often after the write than before:
-/// a field that already held the text reads as complete without anything
-/// landing, and a partial write can change the value while an older copy of
-/// `body` still matches.
-fn insert_added_body(before: Option<&str>, after: Option<&str>, body: &str) -> bool {
-    match (before, after) {
-        (Some(b), Some(a)) => a.matches(body).count() > b.matches(body).count(),
-        _ => false,
+/// The selection of a text element as a UTF-16 `(location, length)`.
+///
+/// # Safety
+/// `element` must be a live `AXUIElementRef`.
+unsafe fn selected_range(element: AXUIElementRef) -> Option<(usize, usize)> {
+    use crate::ax::bindings::{kAXValueCFRangeType, AXValueGetValue, AXValueRef};
+    #[repr(C)]
+    struct CfRange {
+        location: isize,
+        length: isize,
     }
+    let value = copy_raw_attr(element, SELECTED_RANGE)?;
+    let mut range = CfRange {
+        location: -1,
+        length: -1,
+    };
+    let ok = AXValueGetValue(
+        value as AXValueRef,
+        kAXValueCFRangeType,
+        &mut range as *mut CfRange as *mut std::ffi::c_void,
+    );
+    CFRelease(value);
+    if !ok {
+        return None;
+    }
+    Some((
+        usize::try_from(range.location).ok()?,
+        usize::try_from(range.length).ok()?,
+    ))
+}
+
+/// `value` with the UTF-16 range `location..location + length` replaced by
+/// `body`, or `None` when the range is outside `value` or splits a character.
+fn replace_utf16_range(value: &str, location: usize, length: usize, body: &str) -> Option<String> {
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let end = location.checked_add(length)?;
+    if end > units.len() {
+        return None;
+    }
+    let head = String::from_utf16(&units[..location]).ok()?;
+    let tail = String::from_utf16(&units[end..]).ok()?;
+    Some(format!("{head}{body}{tail}"))
 }
 
 fn is_text_input_role(role: &str) -> bool {
@@ -2190,35 +2230,33 @@ mod tests {
     }
 
     #[test]
-    fn submit_needs_the_insert_to_add_the_line() {
-        use super::{insert_added_body, typed_progress, TypedProgress};
-        // The field already held the line: read-back is "complete" but
-        // nothing landed, so Return must not go out.
-        let (before, after) = (Some("netflix.com"), Some("netflix.com"));
+    fn submit_needs_the_read_back_to_equal_the_full_insert() {
+        use super::replace_utf16_range as expect;
+        // Each case: value and selection before, line, what a full insert
+        // leaves. Partial writes that happen to read as "complete" differ.
         assert_eq!(
-            typed_progress(before, after, "netflix.com"),
-            TypedProgress::Complete
+            expect("", 0, 0, "netflix.com").as_deref(),
+            Some("netflix.com")
         );
-        assert!(!insert_added_body(before, after, "netflix.com"));
-        // A partial write changed the value, but only the old copy matches.
+        let url = "https://a.test/";
         assert_eq!(
-            typed_progress(Some("foo"), Some("foof"), "foo"),
-            TypedProgress::Complete
+            expect(url, 0, 15, "netflix.com").as_deref(),
+            Some("netflix.com")
         );
-        assert!(!insert_added_body(Some("foo"), Some("foof"), "foo"));
-        assert!(insert_added_body(Some("foo"), Some("foofoo"), "foo"));
-        assert!(insert_added_body(
-            Some(""),
-            Some("netflix.com"),
-            "netflix.com"
-        ));
-        assert!(insert_added_body(
-            Some("https://a.test"),
-            Some("netflix.com"),
-            "netflix.com"
-        ));
-        assert!(!insert_added_body(None, Some("netflix.com"), "netflix.com"));
-        assert!(!insert_added_body(Some(""), None, "netflix.com"));
+        // Already held the line, caret at end: a no-op write reads "netflix.com".
+        assert_ne!(
+            expect("netflix.com", 11, 0, "netflix.com").as_deref(),
+            Some("netflix.com")
+        );
+        // "fo" + partial "o" reads "foo"; a full insert reads "fofoo".
+        assert_eq!(expect("fo", 2, 0, "foo").as_deref(), Some("fofoo"));
+        // "foo" + partial "f" reads "foof"; a full insert reads "foofoo".
+        assert_eq!(expect("foo", 3, 0, "foo").as_deref(), Some("foofoo"));
+        assert_eq!(expect("ab", 1, 0, "X").as_deref(), Some("aXb"));
+        // UTF-16 ranges: an emoji is two units.
+        assert_eq!(expect("😀b", 2, 1, "c").as_deref(), Some("😀c"));
+        assert_eq!(expect("😀", 1, 0, "c"), None);
+        assert_eq!(expect("ab", 1, 5, "c"), None);
     }
 
     #[test]

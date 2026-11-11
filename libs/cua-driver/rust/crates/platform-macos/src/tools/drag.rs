@@ -487,6 +487,7 @@ impl Tool for DragTool {
                         pid,
                         (from_sx, from_sy),
                         (to_sx, to_sy),
+                        (from_sx - from_lx, from_sy - from_ly),
                         wid,
                         duration_ms,
                         steps,

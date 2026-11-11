@@ -1750,13 +1750,13 @@ fn type_text_in_key_window(
                 expected_after_submit.as_deref(),
                 after.as_deref(),
             );
-        // The write changed the field into something other than the full
-        // insert: part of the line may have landed, so typing it again as
-        // keys (with its Return) could submit a mangled value.
-        let submit_write_diverged = submit_body.is_some()
-            && !insert_observed
+        // The field accepted the write but it is not proven to have left the
+        // field untouched: part of the line may have landed, so typing it
+        // again as keys (with its Return) could submit a mangled value.
+        let submit_write_unconfirmed = submit_body.is_some()
+            && err == kAXErrorSuccess
             && ax_progress != Some(TypedProgress::Complete)
-            && matches!((pre_write.as_deref(), after.as_deref()), (Some(p), Some(a)) if p != a);
+            && !write_left_field_untouched(pre_write.as_deref(), after.as_deref());
         // Return is a pid-routed key: it reaches whichever field has focus,
         // so it goes out only once the written field is confirmed focused.
         let return_reaches_field = insert_observed && {
@@ -1803,12 +1803,12 @@ fn type_text_in_key_window(
                 delivered_chars: Some(text.chars().count()),
             }));
         }
-        if submit_write_diverged {
+        if submit_write_unconfirmed {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                 detail: format!(
-                    " via AX write into{idx_str} {role} \"{title}\", which changed the field \
-                     but did not read back the inserted line; Return was not sent"
+                    " via AX write into{idx_str} {role} \"{title}\", which did not read back \
+                     the inserted line; Return was not sent"
                 ),
                 path: PATH_AX,
                 verified: false,
@@ -1952,6 +1952,12 @@ fn submit_read_back_matches(
         (Some(pre), Some(expected), Some(after)) => after == expected && expected != pre,
         _ => false,
     }
+}
+
+/// Whether an accepted AX write provably left the field as it was: both values
+/// readable and equal. Only then is typing the line as keys safe.
+fn write_left_field_untouched(pre_write: Option<&str>, after: Option<&str>) -> bool {
+    matches!((pre_write, after), (Some(p), Some(a)) if p == a)
 }
 
 /// `value` with the UTF-16 range `location..location + length` replaced by
@@ -2298,6 +2304,18 @@ mod tests {
         assert_eq!(expect("😀b", 2, 1, "c").as_deref(), Some("😀c"));
         assert_eq!(expect("😀", 1, 0, "c"), None);
         assert_eq!(expect("ab", 1, 5, "c"), None);
+    }
+
+    #[test]
+    fn only_an_untouched_field_falls_back_to_keys_after_a_submit_write() {
+        use super::write_left_field_untouched as untouched;
+        assert!(untouched(Some("abc"), Some("abc")));
+        // Changed into something other than the full insert.
+        assert!(!untouched(Some("abcdef"), Some("f")));
+        // Unreadable before or after: a partial write cannot be ruled out.
+        assert!(!untouched(None, Some("abc")));
+        assert!(!untouched(Some("abc"), None));
+        assert!(!untouched(None, None));
     }
 
     #[test]

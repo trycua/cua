@@ -2725,6 +2725,56 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_transport_cannot_claim_a_label_with_a_late_call() {
+        let label = "test-late-closed-owner-label-K3L4M5";
+        let owner_a = "test-late-closed-owner-transport-a";
+        let owner_b = "test-late-closed-owner-transport-b";
+        let begin = |owner: &str| {
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        let start = |owner: &str| {
+            activate_or_revive_session_for_owner(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+
+        // A closes while it holds no label; a call it sent earlier lands after.
+        assert_eq!(
+            end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
+            0
+        );
+        assert_eq!(
+            begin(owner_a).err(),
+            Some("session is not available to this transport")
+        );
+        assert_eq!(
+            start(owner_a),
+            Err("session is not available to this transport")
+        );
+
+        // The label stays free for every other transport.
+        drop(begin(owner_b).unwrap());
+        assert_eq!(start(owner_b), Ok(false));
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            1
+        );
+    }
+
+    #[test]
     fn a_closed_transport_is_forgotten_once_no_tombstone_names_it() {
         let label = "test-forgotten-owner-label-F7A8B9";
         let ended_label = "test-forgotten-owner-ended-F7A8B9";

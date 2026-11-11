@@ -38,6 +38,12 @@ BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binut
 SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa", "at-spi2-core", "libx11", "libxcb", "libxext", "libxi")
 DRIVER_BINARY = Path("/driver/cua-driver")
 USER, UID = "cua", 1000
+# Omarchy's packaging key, full fingerprint. Verified 11 Nov 2026 against Omarchy's own scripts at
+# https://github.com/basecamp/omarchy/blob/0e7530fb7c23fbf496d44f072ad64efaa7713d14/bin/omarchy-update-keyring (pacman-key --recv-keys
+# <fingerprint> --keyserver keys.openpgp.org, then --lsign-key). Omarchy fetches the key from a keyserver
+# and does not ship the key bytes outside the package, so this does too; gpg checks the downloaded key
+# against the full fingerprint, so a keyserver cannot substitute a different key.
+OMARCHY_KEY = "40DFB630FF42BCFFB047046CF0134EE680CAC571"
 # Driver releases before #6495 refuse input builds on any Hyprland but the one they pinned.
 SOURCE_PIN = re.compile(r"Input is pinned to Hyprland (\S+)")
 
@@ -86,6 +92,16 @@ def setup_pacman(job, log):
         url = channels.repo_url(server, "omarchy")
         database = channels.parse_db(channels.fetch(url + "/omarchy.db"))
         keyring = database["omarchy-keyring"]["filename"]
+        # The keyring package is signed by Omarchy's maintainer key. Import it from a keyserver first,
+        # as Omarchy's own installer does, and retry: pacman's implicit lookup during -U is a single
+        # attempt against one keyserver, and fails the whole job when that server is slow.
+        for attempt in range(6):
+            server = ("keys.openpgp.org", "keyserver.ubuntu.com")[attempt % 2]  # the first is the one Omarchy uses
+            code, _ = run(["pacman-key", "--keyserver", server, "--recv-keys", OMARCHY_KEY], log, check=False)
+            if code == 0:
+                run(["pacman-key", "--lsign-key", OMARCHY_KEY], log)
+                break
+            time.sleep(5 * (attempt + 1))
         run(["pacman", "-U", "--noconfirm", f"{url}/{keyring}"], log)
         run(["pacman-key", "--populate", "omarchy"], log)
     for attempt in range(3):

@@ -358,6 +358,9 @@ class InputLaneTest(unittest.TestCase):
         lane.key({"target": "f" * 32, "revision": 1}, 46)
         lane.key({"target": "f" * 32, "revision": 2}, 28)
         self.assertEqual(sent, ["TARGET 42 55aa 2", f"KEY 1 {'f' * 32} 1 46 0", f"KEY 2 {'f' * 32} 2 28 0"])
+        lane.target({"pid": 43, "address": "0x66bb"}, capability=1)
+        lane.click({"target": "e" * 32, "revision": 3}, 40, 20)
+        self.assertEqual(sent[3:], ["TARGET 43 66bb 1", f"CLICK 3 {'e' * 32} 3 40 20 272 1"])
 
 
 class PacmanSetupTest(unittest.TestCase):

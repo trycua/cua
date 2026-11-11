@@ -865,7 +865,7 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                       ci=(("ci-cua-spaces-macos.yml", "node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build"),)))
 
     # Self-tests for this tool and the CI helper scripts.
-    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/)"):
+    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/|.*\.sh$)"):
         add(Check("bin-ci-tests", "bin/ci tests and workflow sync", "python3 -m unittest discover -s scripts/ci/tests -q && python3 bin/ci --verify-sync",
                   ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s scripts/ci/tests"),)))
     if changes.touches(r"^\.github/scripts/"):

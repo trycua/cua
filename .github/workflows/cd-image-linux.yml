@@ -382,7 +382,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage netcat-openbsd
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: Free runner disk (golden snapshots and the checkpoint need room)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Bake, fork and check (tests/bake-world.sh)
@@ -436,7 +436,7 @@ jobs:
           sudo apt-get update -qq
           fw=ovmf; [ "$ARCH" = arm64 ] && fw=qemu-efi-aarch64
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 qemu-system-arm "$fw" genisoimage
-          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh"
           scripts/images/install-gvisor.sh
       - name: Build rootfs + disk (cua images build)
         run: cua images build "libs/images/$IMAGE" --platform "linux/$ARCH" --tag ci --outputs rootfs,disk

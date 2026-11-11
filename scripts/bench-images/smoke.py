@@ -215,6 +215,22 @@ def child_for(index_ref: str, variant: str, arch: str) -> tuple[str, str]:
     raise SystemExit(f"{index_ref} has no {arch} child")
 
 
+def require_kvm_preflight(variant: str, arch: str) -> None:
+    """With CUA_REQUIRE_KVM=1, a same-arch VM must have a usable /dev/kvm: fail
+    now, with the reason, instead of booting under TCG (900-1300+ s on a hosted
+    runner) and timing out half an hour later. The runtime enforces the same
+    switch when it picks QEMU's accelerator."""
+    if variant != "containerdisk" or os.environ.get("CUA_REQUIRE_KVM", "").strip() not in ("1", "true", "yes"):
+        return
+    if sys.platform != "linux" or arch != host_arch():
+        return
+    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        print("::error::CUA_REQUIRE_KVM is set but /dev/kvm is missing or not writable: "
+              "the VM would run under slow TCG emulation (scripts/images/enable-kvm.sh --require)", flush=True)
+        sys.exit(3)
+    print("   /dev/kvm is usable: QEMU runs with KVM", flush=True)
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("id")
@@ -276,6 +292,7 @@ async def main() -> int:
     mem = args.memory_mb or 4096
     if mem > 4096:
         ap.error("local smokes stay at or under 4096 MiB (AGENT_BRIEF memory rule)")
+    require_kvm_preflight(args.variant, arch)
     report = Report()
     pinned = None
     print(f"== smoke {args.id} {args.variant} {where}: {ref}", flush=True)

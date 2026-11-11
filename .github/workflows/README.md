@@ -85,6 +85,14 @@ workflow.
   main already keeps warm, or add a `push: main` trigger with the same paths.
 * CI uses a cheaper release profile (opt-level 1, no LTO, no debug info) for
   smoke tests; release builds in `cd-*.yml` keep the shipped profile.
+* The budget is kept for main by `ci-cache-hygiene.yml`
+  (`.github/scripts/cache_hygiene.py`): it deletes a pull request's caches
+  when the PR closes, and daily the caches of closed PRs, tags and branches
+  older than two days, and every superseded day of a main family (only the
+  newest entry per family stays; a family is its key without the date or
+  hash). Try it with a manual run (dry run by default). `ci-cache-warm.yml`
+  dispatches the seeding Rust workflows when none has run green on main for
+  36 hours, so a quiet weekend does not let the 7 day idle eviction drop them.
 * When sccache cannot start, cargo compiles normally.
 * sccache hashes the rustc version into every object key, so a toolchain bump
   simply misses until main re-seeds, and the cap ages the old objects out.

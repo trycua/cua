@@ -280,6 +280,10 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CARGO_BUILD_JOBS: "4"
+      # amd64 runners expose /dev/kvm: the containerdisk must boot under KVM.
+      # Under TCG it needs 900-1300+ s (past the smoke's time_to_start), so
+      # the runtime refuses the fallback and says why instead of timing out.
+      CUA_REQUIRE_KVM: ${{ matrix.arch == 'amd64' && '1' || '' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@1.97.1
@@ -295,6 +299,9 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
           scripts/images/install-release-tools.sh --free-disk
+      - name: Require KVM (amd64)
+        if: matrix.arch == 'amd64'
+        run: scripts/images/enable-kvm.sh --require
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         # This run's build job's CLI; a promote_stamp run has none and compiles it.
         continue-on-error: true

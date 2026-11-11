@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.5](https://github.com/trycua/cua/compare/cua-spaces-v0.33.4...cua-spaces-v0.33.5) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-vmm:** boot cold when a guest cannot take a restored identity; one readiness budget per start ([#7354](https://github.com/trycua/cua/issues/7354)) ([82412af](https://github.com/trycua/cua/commit/82412afdca85c7fca0ca3c63d1be3f080fb0e9c2))
+
 ## [0.33.4](https://github.com/trycua/cua/compare/cua-spaces-v0.33.3...cua-spaces-v0.33.4) (2026-11-11)
 
 

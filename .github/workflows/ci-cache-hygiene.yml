@@ -8,7 +8,7 @@ name: "CI: Cache hygiene"
 # and the superseded days of main's sccache families (daily).
 
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
   schedule:
     - cron: "17 4 * * *"
@@ -31,24 +31,28 @@ concurrency:
 jobs:
   prune:
     name: Prune caches
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # The script comes from main (pull_request_target never checks out PR
-      # code); nothing from the pull request is executed.
+      # The script comes from main; nothing from the pull request is executed.
+      # Plain pull_request (no pull_request_target, which GitHub blocks): a
+      # same-repo pull request gets the actions: write token declared above.
+      # A fork pull request gets a read-only token, so its delete step is
+      # skipped and the daily sweep removes its caches instead.
       - uses: actions/checkout@v4
         with:
           ref: main
           sparse-checkout: .github/scripts/cache_hygiene.py
           sparse-checkout-cone-mode: false
       - name: Delete the caches of the closed pull request
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: python3 .github/scripts/cache_hygiene.py --only-pr "$PR"
       - name: Sweep
-        if: github.event_name != 'pull_request_target'
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           DRY: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}

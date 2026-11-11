@@ -415,6 +415,12 @@ struct RerenderState {
     /// Labels of the current snapshot, by row.
     rows: Vec<(&'static str, &'static str)>,
     clicked: Vec<String>,
+    click_attempts: usize,
+    /// Reads that happen between a find and its click: the next this many
+    /// clicks find their token already replaced.
+    rerender_before_click: usize,
+    /// Refuse the next click with this code.
+    refuse_with: Option<&'static str>,
 }
 
 #[async_trait]
@@ -449,6 +455,15 @@ impl Tool for Rerender {
                 }))
             }
             "click" => {
+                state.click_attempts += 1;
+                if let Some(code) = state.refuse_with.take() {
+                    return ToolResult::error(format!("Background input refused ({code}): no"))
+                        .with_structured(json!({"code": code}));
+                }
+                if state.rerender_before_click > 0 {
+                    state.rerender_before_click -= 1;
+                    state.snapshot += 1;
+                }
                 let token = args["element_token"]
                     .as_str()
                     .unwrap_or_default()
@@ -459,7 +474,8 @@ impl Tool for Rerender {
                         "Background input refused (element_outside_target_window): the addressed \
                          element could not be proven to belong to window 7; take a fresh \
                          get_window_state snapshot and re-address it",
-                    );
+                    )
+                    .with_structured(json!({"code": "element_outside_target_window"}));
                 }
                 let row: usize = token[current.len()..].parse().unwrap();
                 let label = state.rows[row - 1].1.to_owned();
@@ -561,4 +577,190 @@ async fn a_stale_token_is_not_retried_when_its_label_is_ambiguous_or_unknown() {
         );
     }
     assert!(state.lock().unwrap().clicked.is_empty());
+}
+
+#[tokio::test]
+async fn a_described_step_refused_after_a_rerender_is_found_again_and_run() {
+    let (registry, state) = rerender_registry(vec![
+        ("AXButton", "Delete event"),
+        ("AXButton", "Dune handoff LHP-DUNE"),
+    ]);
+    state.lock().unwrap().rerender_before_click = 1;
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [
+                {"click": {"role": "button", "name": "Dune handoff LHP-DUNE"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(state.lock().unwrap().clicked, vec!["Dune handoff LHP-DUNE"]);
+    assert!(text(&result).contains("found again"), "{}", text(&result));
+}
+
+#[tokio::test]
+async fn a_described_step_is_not_retried_for_other_refusals() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Save")]);
+    state.lock().unwrap().refuse_with = Some("off_space_or_ax_unresolved");
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [
+                {"click": {"role": "button", "name": "Save"}}
+            ]}),
+        )
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(state.lock().unwrap().click_attempts, 1);
+}
+
+/// A window whose end-of-batch reads say "no change" `unchanged_reads`
+/// times, then show a change.
+struct LateApply {
+    def: ToolDef,
+    reads: Arc<Mutex<Vec<Value>>>,
+    unchanged_reads: usize,
+}
+
+#[async_trait]
+impl Tool for LateApply {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        if self.def.name != "get_window_state" {
+            return ToolResult::text(format!("{} done", self.def.name));
+        }
+        let mut reads = self.reads.lock().unwrap();
+        reads.push(args);
+        let status = if reads.len() <= self.unchanged_reads {
+            "no_change"
+        } else {
+            "diff"
+        };
+        ToolResult::text("read").with_structured(json!({
+            "pid": 42, "window_id": 7, "snapshot_id": format!("s{:08x}", reads.len()),
+            "since": "s00000100", "since_status": status,
+            "diff_counts": {"added": 1, "changed": 0, "removed": 0},
+        }))
+    }
+}
+
+fn late_apply_registry(unchanged_reads: usize) -> (Arc<ToolRegistry>, Arc<Mutex<Vec<Value>>>) {
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = ToolRegistry::new();
+    for name in ["click", "get_window_state"] {
+        registry.register(Box::new(LateApply {
+            def: ToolDef {
+                name: name.into(),
+                description: "fake".into(),
+                input_schema: json!({"type": "object", "properties": {
+                    "pid": {"type": "integer"}, "window_id": {"type": "integer"},
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "since": {"type": "string"}, "max_elements": {"type": "integer"},
+                    "include_screenshot": {"type": "boolean"}
+                }}),
+                read_only: name != "click",
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+            reads: reads.clone(),
+            unchanged_reads,
+        }));
+    }
+    registry.register_session_tools();
+    let registry = Arc::new(registry);
+    registry.init_self_weak();
+    (registry, reads)
+}
+
+async fn click_and_observe(registry: &ToolRegistry) -> ToolResult {
+    registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [{"click": {"x": 1, "y": 2}}], "observe": true}),
+        )
+        .await
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_end_read_after_an_action_is_taken_again_until_it_shows_the_change() {
+    let (registry, reads) = late_apply_registry(2);
+    let result = click_and_observe(&registry).await;
+    assert!(
+        text(&result).contains("observation: changed since s00000100"),
+        "{}",
+        text(&result)
+    );
+    let reads = reads.lock().unwrap();
+    assert_eq!(reads.len(), 3);
+    // Every re-read diffs against the batch's baseline, not the read before it.
+    assert_eq!(reads[1]["since"], "s00000100");
+    assert_eq!(reads[2]["since"], "s00000100");
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn the_end_read_stops_retaking_after_its_cap() {
+    let (registry, reads) = late_apply_registry(usize::MAX);
+    let started = std::time::Instant::now();
+    let result = click_and_observe(&registry).await;
+    let waited = started.elapsed();
+    assert!(
+        text(&result).contains("observation: no change since s00000100"),
+        "{}",
+        text(&result)
+    );
+    assert!(
+        waited >= std::time::Duration::from_millis(250),
+        "{waited:?}"
+    );
+    assert!(waited < std::time::Duration::from_millis(600), "{waited:?}");
+    assert!(reads.lock().unwrap().len() > 1);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tokio::test]
+async fn the_end_read_is_taken_once_where_actions_wait_for_their_report() {
+    let (registry, reads) = late_apply_registry(usize::MAX);
+    let result = click_and_observe(&registry).await;
+    assert!(text(&result).contains("no change"), "{}", text(&result));
+    assert_eq!(reads.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_end_read_after_a_change_is_taken_once() {
+    let (registry, reads) = late_apply_registry(0);
+    let result = click_and_observe(&registry).await;
+    assert!(text(&result).contains("changed since"), "{}", text(&result));
+    assert_eq!(reads.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_described_step_with_a_stale_token_still_gets_the_token_refind() {
+    let (registry, state) = rerender_registry(vec![("AXButton", "Save")]);
+    state.lock().unwrap().refuse_with = Some("stale_element_token");
+    // The step's lookup is read 41 (s00000029); a platform that remembers
+    // that read lets the token re-find look its row up.
+    crate::window_state_view::remember_for_test(
+        "s00000029",
+        42,
+        7,
+        "- [0] AXWindow \"Daymark\"\n  - [1] AXButton \"Save\"\n",
+    );
+    let result = registry
+        .invoke(
+            super::super::RUN_STEPS_TOOL,
+            json!({"pid": 42, "window_id": 7, "steps": [
+                {"click": {"role": "button", "name": "Save"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(state.lock().unwrap().clicked, vec!["Save"]);
+    assert!(text(&result).contains("went stale"), "{}", text(&result));
 }

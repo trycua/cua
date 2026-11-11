@@ -59,6 +59,12 @@ impl Tool for Fake {
                 ]
             })),
             "launch_app" => ToolResult::text("launched").with_structured(json!({"pid": 42})),
+            _ if args["outside_once"] == true
+                && self.calls.lock().unwrap().iter().filter(|(n, _)| *n == name).count() == 1 =>
+            {
+                ToolResult::error(format!("{name} refused: element_outside_target_window"))
+                    .with_structured(json!({"code": "element_outside_target_window"}))
+            }
             _ if args["refuse"] == true => ToolResult::error(format!("{name} refused: stale token"))
                 .with_structured(json!({"code": "stale_element_token"})),
             _ if args["fail"] == true => ToolResult::error(format!("{name} refused: asked to fail")),
@@ -590,4 +596,24 @@ async fn script_actions_are_paced_as_batched_steps_and_reads_are_not() {
         "reads keep their own timing: {:?}",
         of("get_window_state")
     );
+}
+
+#[tokio::test]
+async fn a_described_action_refused_after_a_rerender_is_found_again_and_run() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nawait app.click({role: 'button', name: 'Save'}, {outside_once: true});\nreturn 1;")
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.calls("click").len(), 2);
+}
+
+#[tokio::test]
+async fn an_action_by_token_refused_as_outside_the_window_is_not_retried() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nawait app.click('s00000009:2', {outside_once: true});\nreturn 1;")
+        .await;
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.calls("click").len(), 1);
 }

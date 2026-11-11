@@ -278,6 +278,21 @@ keep the full waits, so the batch's final result still reports what it left
 open. A script has no last step the driver can know in advance; read the window
 with `getState()` or `waitFor()` after the action that opens something.
 
+Because a macOS action returns before the app has applied it, three waits
+check for the change instead of sleeping. Each costs nothing when the change is
+already there:
+
+- A step or script call that names its target by role and name, and is refused
+  with `element_outside_target_window` because the window re-rendered between
+  the lookup and the action, finds the element again and runs once more. In
+  `run_script` the second lookup shares the call's find timeout.
+- A click on an item of an open pop-up menu (`AXMenuItem` under an
+  `AXPopUpButton`) returns once the pop-up's value reads as the item, or after
+  300 ms with a note saying it did not.
+- When the last step of a `run_steps` batch was an action and its `observe`
+  read reports `no change`, the batch reads again every 50 ms against the same
+  baseline until something changed, for up to 300 ms.
+
 An embedding host that wants every step to play the full glide and watch, for
 example to record a demo, sets `CUA_DRIVER_BATCH_PACING=full` in the same
 environment as the variables above. Any other value, or none, applies the

@@ -251,7 +251,7 @@ async function claudeCodeProbe() {
     debug,
     new RegExp(`"name":"${EXPECTED.serverName}","version":"${EXPECTED_VERSION.replaceAll(".", "\\.")}"`),
   );
-  console.log("Claude Code 2.1.224: connected and accepted the complete tool schema set");
+  console.log("Claude Code 2.1.322: connected and accepted the complete tool schema set");
 }
 
 async function codexProbe() {

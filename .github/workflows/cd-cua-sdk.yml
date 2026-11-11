@@ -949,5 +949,8 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/publish-downloads-cdn
         with:
+          # attach-xcframework rewrote checksums.txt after the first mirror
+          # copied the old one; GitHub is the source of truth, so replace it.
+          allow-overwrite: "true"
           tags: |
             ${{ needs.version.outputs.tag }}

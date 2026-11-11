@@ -60,6 +60,49 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Why one renewal attempt failed.
+#[derive(Debug)]
+enum RenewFailure {
+    /// The guest ran the renewal script and it failed (`sudo` wants a
+    /// password, a read-only file): the same guest fails the same way
+    /// again.
+    Refused(String),
+    /// The guest did not answer, or not yet (still restoring, the driver
+    /// dropped the session as it followed the new token): worth retrying.
+    Transport(String),
+}
+
+impl std::fmt::Display for RenewFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused(why) => write!(f, "the guest's identity renewal failed: {why}"),
+            Self::Transport(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<cua_spacesd_client::Error> for RenewFailure {
+    fn from(e: cua_spacesd_client::Error) -> Self {
+        Self::Transport(e.to_string())
+    }
+}
+
+/// Renewal attempts the guest refused (it ran the script, which failed)
+/// before [`SpacesdIdentity::renew`] gives up. More than one: the driver
+/// can drop the call's session part way through as it follows the new
+/// token. A refusal never heals by waiting out the budget.
+const MAX_REFUSALS: u32 = 3;
+
+/// Run as the guest's agent: succeeds when the renewal script can run as
+/// root (the agent is root, or has passwordless sudo).
+const RENEWABLE_COMMAND: &str = "[ \"$(id -u)\" = 0 ] || sudo -n true";
+
+/// Whether a renewal stops retrying: the guest refused it
+/// [`MAX_REFUSALS`] times, or the budget is spent.
+fn gives_up(refusals: u32, past_deadline: bool) -> bool {
+    refusals >= MAX_REFUSALS || past_deadline
+}
+
 /// One renewal over a connected client: `Init` (clock, `new_machine`,
 /// entropy; the token is left to the files cua-spacesd follows), then the
 /// guest's root renewal script for the token and the machine identity.
@@ -68,7 +111,7 @@ async fn renew_once(
     current: &str,
     identity: &ClaimIdentity,
     new_machine: bool,
-) -> cua_spacesd_client::Result<()> {
+) -> Result<(), RenewFailure> {
     let started = std::time::Instant::now();
     let client = connect(url, current).await?;
     let connected = started.elapsed();
@@ -107,10 +150,7 @@ async fn renew_once(
         "guest identity renewed"
     );
     if !out.success() {
-        return Err(cua_spacesd_client::Error::Protocol(format!(
-            "the guest's identity renewal failed: {}",
-            out.stderr_str().trim()
-        )));
+        return Err(RenewFailure::Refused(out.stderr_str().trim().to_string()));
     }
     Ok(())
 }
@@ -248,6 +288,35 @@ impl GuestIdentity for SpacesdIdentity {
         }
     }
 
+    async fn check_renewable(
+        &self,
+        endpoints: &Endpoints,
+        token: &str,
+    ) -> cua_vmm::Result<Option<String>> {
+        let url = spacesd_url(endpoints)?;
+        let check = async {
+            let client = connect(&url, token).await?;
+            let cmd = cua_spacesd_client::Command::new("sh")
+                .args(["-c", RENEWABLE_COMMAND])
+                .timeout(Duration::from_secs(10));
+            client.run(cmd).await
+        };
+        match tokio::time::timeout(Duration::from_secs(20), check).await {
+            Ok(Ok(out)) if out.success() => Ok(None),
+            Ok(Ok(out)) => Ok(Some(format!(
+                "its cua-spacesd cannot run the identity renewal as root (it runs as an \
+                 unprivileged user without passwordless sudo): {}",
+                out.stderr_str().trim()
+            ))),
+            Ok(Err(e)) => Err(VmmError::other(format!(
+                "could not ask its cua-spacesd whether it can renew its identity: {e}"
+            ))),
+            Err(_) => Err(VmmError::other(
+                "timed out asking its cua-spacesd whether it can renew its identity",
+            )),
+        }
+    }
+
     async fn renew(
         &self,
         endpoints: &Endpoints,
@@ -264,17 +333,19 @@ impl GuestIdentity for SpacesdIdentity {
                  {what}: {last}"
             ))
         };
+        let mut refusals = 0;
         loop {
-            let last = match tokio::time::timeout(
+            let failure = match tokio::time::timeout(
                 Duration::from_secs(30),
                 renew_once(&url, current, identity, new_machine),
             )
             .await
             {
                 Ok(Ok(())) => break,
-                Ok(Err(e)) => e.to_string(),
-                Err(_) => "timed out".to_string(),
+                Ok(Err(e)) => e,
+                Err(_) => RenewFailure::Transport("timed out".to_string()),
             };
+            let last = failure.to_string();
             tracing::debug!(error = %last, "guest identity renewal attempt ended");
             // The driver drops the renewal's own session once it follows
             // the new token, which can end the call before it returns.
@@ -283,7 +354,10 @@ impl GuestIdentity for SpacesdIdentity {
             {
                 break;
             }
-            if tokio::time::Instant::now() >= deadline {
+            if matches!(failure, RenewFailure::Refused(_)) {
+                refusals += 1;
+            }
+            if gives_up(refusals, tokio::time::Instant::now() >= deadline) {
                 return Err(fail("renewal", &last));
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -345,5 +419,49 @@ mod tests {
         // No token: leave the guest's unchanged.
         let none = init_request(&ClaimIdentity::default(), now);
         assert!(none.token.is_empty());
+    }
+
+    /// A guest whose agent cannot sudo (the OSWorld disk's runs as `user`)
+    /// refuses every renewal: it is given up after a few refusals, not
+    /// retried until the readiness budget is gone (25 min of a 30 min
+    /// release verify). Transport errors keep retrying until the deadline.
+    #[test]
+    fn a_refused_renewal_is_given_up_without_waiting_out_the_budget() {
+        assert!(!gives_up(0, false));
+        assert!(!gives_up(MAX_REFUSALS - 1, false));
+        assert!(gives_up(MAX_REFUSALS, false));
+        assert!(gives_up(0, true));
+        let refused = RenewFailure::Refused("sudo: a password is required".into());
+        assert_eq!(
+            refused.to_string(),
+            "the guest's identity renewal failed: sudo: a password is required"
+        );
+    }
+
+    /// The renewability check passes as root or with passwordless sudo and
+    /// fails for an unprivileged agent whose sudo wants a password.
+    #[cfg(unix)]
+    #[test]
+    fn the_renewable_command_needs_root_or_passwordless_sudo() {
+        let bin = tempfile::tempdir().unwrap();
+        let run = |sudo_exit: i32| {
+            let sudo = bin.path().join("sudo");
+            std::fs::write(&sudo, format!("#!/bin/sh\nexit {sudo_exit}\n")).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&sudo, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let path = format!("{}:/usr/bin:/bin", bin.path().display());
+            std::process::Command::new("/bin/sh")
+                .args(["-c", RENEWABLE_COMMAND])
+                .env("PATH", path)
+                .status()
+                .unwrap()
+                .success()
+        };
+        let root = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .is_ok_and(|o| o.stdout.starts_with(b"0\n"));
+        assert!(run(0));
+        assert_eq!(run(1), root, "an unprivileged agent without sudo must fail");
     }
 }

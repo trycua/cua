@@ -280,9 +280,11 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CARGO_BUILD_JOBS: "4"
-      # amd64 runners expose /dev/kvm: the containerdisk must boot under KVM.
-      # Under TCG it needs 900-1300+ s (past the smoke's time_to_start), so
-      # the runtime refuses the fallback and says why instead of timing out.
+      # amd64 runners expose /dev/kvm: the containerdisk must boot under KVM
+      # (about 300 s from pull to ready). A TCG boot is several times slower,
+      # so the runtime refuses the fallback and says why instead of timing
+      # out. A failed smoke prints the guest console (smoke.py ConsoleTee)
+      # and keeps it in the evidence (verify/<tag>-console/).
       CUA_REQUIRE_KVM: ${{ matrix.arch == 'amd64' && '1' || '' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

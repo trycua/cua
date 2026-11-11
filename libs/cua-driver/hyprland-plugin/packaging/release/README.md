@@ -30,7 +30,7 @@ Profile schema 1 requires these fields; all digests are lowercase SHA-256:
 - `source`: `revision` = `4b3396d9fe4bd3cf723b0eb8db83c18a8764b520`,
   `driver_version` = `0.24.0`, `archive_sha256` and `manifest_sha256` measured
   from the reviewed original archive and its embedded `SOURCE-PROVENANCE.json`.
-- `hyprland`: exact `package_version`, `header_version` = `0.56.2`, compositor
+- `hyprland`: exact `package_version`, `header_version` = `0.56.2` (schema 2 also accepts `0.57.2`, Omarchy edge), compositor
   executable `sha256`, and `headers_sha256`.
 - `compiler`: full GCC `version` including date, exact `comment` (the string
   `GCC: (GNU) ` followed by that version), and executable `sha256`.

@@ -149,6 +149,11 @@ def main():
                 record["load"], record["smoke"] = qualify.session(module, args.out)
     except Exception as error:  # Recorded as a failure of this channel, never swallowed.
         record["error"] = f"{type(error).__name__}: {error}"
+        detail = getattr(error, "output", "") or ""
+        print(f"error: {record['error']}\n{detail[-3000:]}", file=sys.stderr)
+        for name in ("pacman.log", "kit.log"):
+            if (args.out / name).is_file():
+                print(f"--- tail of {name}\n" + (args.out / name).read_text()[-3000:], file=sys.stderr)
     unavailable = {"status": "unavailable", "reason": "not reached"}
     record.setdefault("load", dict(unavailable))
     record.setdefault("smoke", dict(unavailable))

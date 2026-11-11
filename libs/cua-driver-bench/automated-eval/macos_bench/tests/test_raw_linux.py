@@ -143,22 +143,12 @@ class RawLintTest(unittest.TestCase):
 class RunnerPolicyTest(unittest.TestCase):
     """What a script's restricted builtins give it (the parts that need no X display)."""
 
-    def test_ctypes_import_offers_types_and_by_reference_helpers_only(self):
-        module = runner._guarded_import("ctypes")
-        self.assertEqual(sorted(vars(module)), sorted(runner.CTYPES_OK))
-        for name in (
-            "CDLL",
-            "cdll",
-            "CFUNCTYPE",
-            "cast",
-            "memmove",
-            "addressof",
-            "pythonapi",
-            "util",
-        ):
-            self.assertFalse(hasattr(module, name), name)
+    def test_ctypes_is_not_importable(self):
+        for fromlist in ((), ("c_int",), ("CDLL",), ("c_char_p",)):
             with self.assertRaises(ImportError):
-                runner._guarded_import("ctypes", fromlist=(name,))
+                runner._guarded_import("ctypes", fromlist=fromlist)
+        self.assertFalse(rawlint.lint("import ctypes").ok)
+        self.assertFalse(rawlint.lint("from ctypes import c_char_p").ok)
 
     def test_only_listed_modules_import(self):
         for name in ("os", "gi", "gi.repository", "subprocess", "importlib", "operator"):

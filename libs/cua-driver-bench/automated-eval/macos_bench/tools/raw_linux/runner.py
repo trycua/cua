@@ -52,23 +52,6 @@ def _jsonable(value: Any) -> Any:
         return repr(value)
 
 
-# What `import ctypes` gives a script: data types and by-reference helpers for calling raw.x11/raw.xtst/raw.xi.
-# No loaders (CDLL, cdll, LibraryLoader), no function pointers (CFUNCTYPE), no raw memory (cast, memmove,
-# addressof, pythonapi): those reach native code past the runtime guard.
-CTYPES_OK = (
-    "c_bool c_byte c_char c_char_p c_double c_float c_int c_int8 c_int16 c_int32 c_int64 c_long c_longlong "
-    "c_short c_size_t c_ssize_t c_ubyte c_uint c_uint8 c_uint16 c_uint32 c_uint64 c_ulong c_ulonglong c_ushort "
-    "c_void_p c_wchar c_wchar_p byref POINTER pointer Structure Union Array sizeof create_string_buffer"
-).split()
-
-
-def _restricted_ctypes() -> Any:
-    import ctypes
-    import types
-
-    return types.SimpleNamespace(**{name: getattr(ctypes, name) for name in CTYPES_OK})
-
-
 def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
     """getattr for scripts: the same refusals as the lint, applied to the name the script computed."""
     if not isinstance(name, str) or name.startswith("_") or name in rawlint.ESCAPES:
@@ -91,12 +74,6 @@ def _guarded_import(
         )
     if name == "raw":
         return sys.modules["raw_runtime"]
-    if name == "ctypes":
-        module = _restricted_ctypes()
-        for item in fromlist or ():
-            if not hasattr(module, item):
-                raise ImportError(f"ctypes.{item} is not available to raw-linux scripts")
-        return module
     return builtins.__import__(name, globals_, locals_, fromlist, level)
 
 

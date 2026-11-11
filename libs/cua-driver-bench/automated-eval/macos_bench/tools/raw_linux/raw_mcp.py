@@ -58,8 +58,9 @@ showing=None) -> list of accessibles (role names as get_role_name() returns them
 depth=12) -> text tree of showing nodes.
 - raw.windows() -> [{window_id, title, pid, frame:(x,y,w,h)}] bottom to top; raw.pointer(); raw.active_window().
 - raw.screenshot(window_id=None, region=None) -> the PNG is returned to you as an image.
-- raw.x11, raw.xtst, raw.xi: libX11 / libXtst / libXi through ctypes, raw.dpy an open Display*, raw.root the root \
-window. raw.xdotool(*args) runs xdotool. raw.sleep(s).
+- raw.x11, raw.xtst, raw.xi: libX11 / libXtst / libXi functions (ctypes calls with int and bytes arguments), raw.dpy \
+an open Display*, raw.root the root window. ctypes itself is not importable; use raw.pointer(), raw.windows() and \
+raw.active_window() for reads that would need out-parameters. raw.xdotool(*args) runs xdotool. raw.sleep(s).
 
 Background contract (checked before the script runs, and again while it runs):
 - The user's real pointer, keyboard focus, active window and stacking must stay as they are. Blocked: XTest motion/\
@@ -75,7 +76,9 @@ allows the pointer/focus/key calls in that script only, and the result reports t
 - Combo boxes: opening one with its "press" action shows a popup that takes the keyboard grab from the user's \
 window. Select an item without opening it: Atspi.Action.do_action on the (hidden) menu item, or \
 Atspi.Selection.select_child(combo, i).
-- Not available: files, processes, network, other imports (GUI-only); eval/exec/getattr with computed names.
+- Not available: files, processes, network, ctypes and other imports (GUI-only; json, re, math, time, itertools, \
+collections, functools, string, textwrap are importable); eval/exec, private attributes, getattr with computed \
+names.
 - An action the API accepted is not proof it worked: read the element back (get_text, get_current_value, states, \
 a screenshot) before you report success.
 """

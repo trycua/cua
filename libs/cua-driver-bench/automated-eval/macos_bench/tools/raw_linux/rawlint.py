@@ -17,7 +17,13 @@ Severity:
 * ``warn``: the script runs; the finding is returned with the result.
 
 The lint cannot prove a script safe (an app may move focus by itself, a value may be computed at run time), so the
-runtime hook in ``rawlib`` checks the same rules at run time and samples pointer and focus during the run.
+runtime in ``raw.py`` checks the same rules when a guarded function is looked up, and its hook samples pointer, focus,
+stacking and open popups during the run.
+
+Threat model: an honest model that does not know the background contract, or forgets it. The checker tells it, and it
+counts what was blocked and what slipped through. It is not a security boundary against a hostile script. The raw
+X11 functions are ctypes calls that take pointers, so a script set on escaping could corrupt memory through them. The
+bench runs in a disposable session (bwrap, a private /tmp), and the GUI-only guard still watches for side doors.
 """
 
 from __future__ import annotations
@@ -230,7 +236,6 @@ XDOTOOL: dict[str, str] = {
 }
 # Modules a script may import. Everything else is GUI1.
 IMPORT_OK = {
-    "ctypes",
     "time",
     "json",
     "re",

@@ -2197,19 +2197,61 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     }
 }
 
-pub(crate) fn unavailable_gtk_pointer_background(
+/// Background pointer input (wheel, right / double click, drag) to a toolkit
+/// that discards synthetic `XSendEvent` pointer events (GTK, Qt, LibreOffice
+/// VCL) needs the agent's own XI2 master pointer. When this X server cannot
+/// hot-add it (Xvfb, Xtigervnc, no writable `/dev/uinput`), the only route
+/// left would report success while the toolkit drops the event, so refuse.
+/// Qt is the case trycua/cua#7369 caught: with XI 2.1 it reads the wheel only
+/// from XI2 scroll valuators and ignores core Button4/5 entirely.
+pub(crate) fn unavailable_synthetic_pointer_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_gtk_process(pid)
-        && !crate::wayland::is_inject_mode()
-        && !crate::input::real_pointer_input_available())
+    synthetic_pointer_background_must_refuse(
+        delivery.is_foreground(),
+        crate::wayland::is_inject_mode() || crate::input::real_pointer_input_available(),
+        synthetic_pointer_is_dropped(pid),
+    )
     .then(|| {
         crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            crate::input::delivery::BackgroundUnavailable::SyntheticPointerDropped,
         )
     })
+}
+
+pub(crate) fn synthetic_pointer_background_must_refuse(
+    foreground: bool,
+    real_pointer_route: bool,
+    drops_synthetic_pointer: bool,
+) -> bool {
+    !foreground && !real_pointer_route && drops_synthetic_pointer
+}
+
+#[cfg(test)]
+mod synthetic_pointer_tests {
+    use super::*;
+
+    #[test]
+    fn qt_and_vcl_wheel_needs_the_agent_pointer_like_gtk() {
+        // trycua/cua#7369: Qt (XI 2.1) reads the wheel from XI2 scroll
+        // valuators and ignores synthetic Button4/5. Without the agent's own
+        // pointer device every background wheel to it would be a silent no-op.
+        for maps in [
+            "7f /usr/lib/libQt5Gui.so.5\n",
+            "7f /usr/lib/libQt6Gui.so.6\n",
+            "7f /usr/lib/libgtk-3.so.0\n",
+            "7f /opt/libreoffice/program/libmergedlo.so\n",
+        ] {
+            assert!(maps_indicate_synthetic_pointer_dropped(maps), "{maps}");
+        }
+        assert!(synthetic_pointer_background_must_refuse(false, false, true));
+        assert!(!synthetic_pointer_background_must_refuse(false, true, true));
+        assert!(!synthetic_pointer_background_must_refuse(true, false, true));
+        assert!(!synthetic_pointer_background_must_refuse(
+            false, false, false
+        ));
+    }
 }
 
 pub(crate) fn unavailable_wayland_focused_input_background(

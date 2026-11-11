@@ -219,9 +219,15 @@ unsafe fn read_alert_element(
 ) -> Option<Vec<crate::ax::bindings::AXUIElementRef>> {
     match read_string(element, "AXRole")?.as_deref() {
         Some("AXButton") => {
-            if let Some(title) = read_string(element, "AXTitle")? {
-                content.button_titles.push(title);
-            }
+            // A button names itself by its title, else by its description
+            // (an icon-only Help button). One with neither stays empty, and
+            // an empty label makes the alert count as consent.
+            let title = read_string(element, "AXTitle")?.filter(|title| !title.trim().is_empty());
+            let label = match title {
+                Some(title) => Some(title),
+                None => read_string(element, "AXDescription")?,
+            };
+            content.button_titles.push(label.unwrap_or_default());
         }
         Some("AXTextField") => {
             content.has_secure_field |=
@@ -310,6 +316,8 @@ fn absent_value(error: crate::ax::bindings::AXError) -> bool {
 /// The button labels the system's consent prompts use, in every language it
 /// ships: privacy (TCC) requests and local-network requests, both drawn by
 /// UserNotificationCenter. Read once from the system's own string tables.
+/// Empty when any table yields no labels: a missing table could hold the
+/// label of the prompt on screen, so then no alert is ruled out.
 fn consent_labels() -> &'static [String] {
     const TABLES: &[(&str, &[&str])] = &[
         (
@@ -323,14 +331,23 @@ fn consent_labels() -> &'static [String] {
     ];
     static LABELS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     LABELS.get_or_init(|| {
-        let mut labels: Vec<String> = TABLES
+        let tables: Vec<Vec<String>> = TABLES
             .iter()
-            .flat_map(|(path, keys)| button_labels(path, keys))
+            .map(|(path, keys)| button_labels(path, keys))
             .collect();
-        labels.sort();
-        labels.dedup();
-        labels
+        merge_label_tables(tables)
     })
+}
+
+/// All labels of every table, or none when any table is empty.
+fn merge_label_tables(tables: Vec<Vec<String>>) -> Vec<String> {
+    if tables.iter().any(Vec::is_empty) {
+        return Vec::new();
+    }
+    let mut labels: Vec<String> = tables.into_iter().flatten().collect();
+    labels.sort();
+    labels.dedup();
+    labels
 }
 
 /// Every short value in the localized string table at `path` whose key
@@ -505,6 +522,18 @@ mod tests {
                 assert!(content.is_some());
             }
         }
+    }
+
+    #[test]
+    fn one_unreadable_label_table_rules_out_nothing() {
+        let tcc = vec!["Allow".to_owned()];
+        let network = vec!["Allow".to_owned(), "Don’t Allow".to_owned()];
+        assert_eq!(
+            merge_label_tables(vec![tcc.clone(), network.clone()]),
+            vec!["Allow".to_owned(), "Don’t Allow".to_owned()]
+        );
+        assert!(merge_label_tables(vec![tcc, Vec::new()]).is_empty());
+        assert!(merge_label_tables(vec![Vec::new(), network]).is_empty());
     }
 
     #[test]

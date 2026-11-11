@@ -143,16 +143,17 @@ pub fn macos_prompt_owner(bundle_id: Option<&str>, process_name: Option<&str>) -
 pub struct AlertContent {
     /// Whether the alert has a secure (password) text field.
     pub has_secure_field: bool,
-    /// The titles of its buttons.
+    /// Each button's label (its title, else its description); empty for a
+    /// button whose label could not be read.
     pub button_titles: Vec<String>,
 }
 
 /// Whether an alert asks for consent: it takes a password, or one of its
 /// buttons carries a label the system uses for its consent prompts (in the
 /// user's language, from the system's own strings). Only an alert read in
-/// full, with titled buttons none of which is a consent label, is not a
-/// consent alert: unreadable content, no titled buttons, or no known labels
-/// at all all count as consent.
+/// full, whose buttons all have labels and none of them a consent label, is
+/// not a consent alert: unreadable content, no buttons, a button without a
+/// label, or no known labels at all count as consent.
 pub fn is_consent_alert(content: Option<&AlertContent>, consent_labels: &[String]) -> bool {
     let Some(content) = content else {
         return true;
@@ -161,10 +162,10 @@ pub fn is_consent_alert(content: Option<&AlertContent>, consent_labels: &[String
         .button_titles
         .iter()
         .map(|title| title.trim())
-        .filter(|title| !title.is_empty())
         .collect();
     content.has_secure_field
         || titles.is_empty()
+        || titles.iter().any(|title| title.is_empty())
         || consent_labels.is_empty()
         || titles
             .iter()
@@ -239,19 +240,23 @@ mod tests {
             Some(&alert(&["Don’t Allow", "Allow"], false)),
             &labels
         ));
-        // "CuaSpacesMac quit unexpectedly."
+        // "CuaSpacesMac quit unexpectedly.": its icon button reads as "Help".
         assert!(!is_consent_alert(
-            Some(&alert(&["", "Ignore", "Report…"], false)),
+            Some(&alert(&["Help", "Ignore", "Report…"], false)),
             &labels
         ));
+        assert!(
+            is_consent_alert(Some(&alert(&["", "Ignore"], false)), &labels),
+            "a button without a label could be the consent button"
+        );
         assert!(is_consent_alert(Some(&alert(&["OK"], true)), &labels));
         assert!(
             is_consent_alert(None, &labels),
             "unreadable content fails closed"
         );
         assert!(
-            is_consent_alert(Some(&alert(&["", " "], false)), &labels),
-            "an alert whose button titles did not read fails closed"
+            is_consent_alert(Some(&alert(&[], false)), &labels),
+            "an alert with no buttons read fails closed"
         );
         assert!(
             is_consent_alert(Some(&alert(&["Ignore"], false)), &[]),

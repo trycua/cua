@@ -35,7 +35,9 @@ import warnings
 
 import gi
 
-warnings.simplefilter("ignore", DeprecationWarning)  # gi's deprecated Accessible.get_text etc. stay callable
+warnings.simplefilter(
+    "ignore", DeprecationWarning
+)  # gi's deprecated Accessible.get_text etc. stay callable
 gi.require_version("Atspi", "2.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Atspi, Gdk  # noqa: E402
@@ -78,9 +80,13 @@ _X11.XGetWindowProperty.argtypes = [
 ] + [ctypes.c_void_p] * 5
 _X11.XFree.argtypes = [ctypes.c_void_p]
 _X11.XGetGeometry.argtypes = [ctypes.c_void_p, Window] + [ctypes.c_void_p] * 7
-_X11.XTranslateCoordinates.argtypes = [ctypes.c_void_p, Window, Window, ctypes.c_int, ctypes.c_int] + [
-    ctypes.c_void_p
-] * 3
+_X11.XTranslateCoordinates.argtypes = [
+    ctypes.c_void_p,
+    Window,
+    Window,
+    ctypes.c_int,
+    ctypes.c_int,
+] + [ctypes.c_void_p] * 3
 _X11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
 _X11.XQueryTree.argtypes = [ctypes.c_void_p, Window] + [ctypes.c_void_p] * 4
 
@@ -116,7 +122,9 @@ class _XWindowAttributes(ctypes.Structure):
 _X11.XGetWindowAttributes.argtypes = [ctypes.c_void_p, Window, ctypes.POINTER(_XWindowAttributes)]
 _X11.XSetErrorHandler.restype = ctypes.c_void_p
 _ERROR_HANDLER = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda d, e: 0)
-_X11.XSetErrorHandler(_ERROR_HANDLER)  # a window that vanished between QueryTree and a read is not fatal
+_X11.XSetErrorHandler(
+    _ERROR_HANDLER
+)  # a window that vanished between QueryTree and a read is not fatal
 _X11.XCloseDisplay.argtypes = [ctypes.c_void_p]
 
 
@@ -135,7 +143,9 @@ class _X:
             self.atoms[name] = _X11.XInternAtom(self.dpy, name.encode(), 0)
         return self.atoms[name]
 
-    def prop(self, window: int, name: str, kind: int = 0, length: int = 4096) -> tuple[int, list[int] | bytes]:
+    def prop(
+        self, window: int, name: str, kind: int = 0, length: int = 4096
+    ) -> tuple[int, list[int] | bytes]:
         actual, fmt = Atom(), ctypes.c_int()
         n, after = ctypes.c_ulong(), ctypes.c_ulong()
         data = ctypes.c_void_p()
@@ -222,7 +232,14 @@ class _X:
         )
         sx, sy, child = ctypes.c_int(), ctypes.c_int(), Window()
         _X11.XTranslateCoordinates(
-            self.dpy, window, self.root, 0, 0, ctypes.byref(sx), ctypes.byref(sy), ctypes.byref(child)
+            self.dpy,
+            window,
+            self.root,
+            0,
+            0,
+            ctypes.byref(sx),
+            ctypes.byref(sy),
+            ctypes.byref(child),
         )
         return sx.value, sy.value, w.value, h.value
 
@@ -233,7 +250,12 @@ class _X:
         children = ctypes.POINTER(Window)()
         n = ctypes.c_uint()
         if not _X11.XQueryTree(
-            self.dpy, self.root, ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(n)
+            self.dpy,
+            self.root,
+            ctypes.byref(root),
+            ctypes.byref(parent),
+            ctypes.byref(children),
+            ctypes.byref(n),
         ):
             return ()
         out = []
@@ -241,7 +263,10 @@ class _X:
             attrs = _XWindowAttributes()
             for i in range(n.value):
                 w = children[i]
-                if _X11.XGetWindowAttributes(self.dpy, w, ctypes.byref(attrs)) and attrs.override_redirect:
+                if (
+                    _X11.XGetWindowAttributes(self.dpy, w, ctypes.byref(attrs))
+                    and attrs.override_redirect
+                ):
                     if attrs.map_state == 2 and attrs.width > 1 and attrs.height > 1:  # IsViewable
                         out.append(int(w))
         finally:
@@ -363,7 +388,13 @@ class Watch:
         self.x = _X()
         self.interval = interval
         self.before = self.sample()
-        self.changes: dict[str, list[Any]] = {"pointer": [], "focus": [], "active": [], "top": [], "popups": []}
+        self.changes: dict[str, list[Any]] = {
+            "pointer": [],
+            "focus": [],
+            "active": [],
+            "top": [],
+            "popups": [],
+        }
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.loop, daemon=True)
 
@@ -397,7 +428,9 @@ class Watch:
         self.thread.join(timeout=1)
         after = self.sample()
         for key in after:
-            if after[key] != self.before[key] and (not self.changes[key] or self.changes[key][-1] != after[key]):
+            if after[key] != self.before[key] and (
+                not self.changes[key] or self.changes[key][-1] != after[key]
+            ):
                 self.changes[key].append(after[key])
         moved = {k: v for k, v in self.changes.items() if v}
 
@@ -414,10 +447,16 @@ class Watch:
                 f"({len(moved['pointer'])} change(s) sampled)"
             )
         if moved.get("active"):
-            lines.append(f"active window changed from {label(self.before['active'])} to {label(after['active'])}")
+            lines.append(
+                f"active window changed from {label(self.before['active'])} to {label(after['active'])}"
+            )
         if moved.get("focus"):
-            lines.append(f"keyboard focus changed from {label(self.before['focus'])} to {label(after['focus'])}")
-        new_popups = sorted({w for seen in moved.get("popups", []) for w in seen} - set(self.before["popups"]))
+            lines.append(
+                f"keyboard focus changed from {label(self.before['focus'])} to {label(after['focus'])}"
+            )
+        new_popups = sorted(
+            {w for seen in moved.get("popups", []) for w in seen} - set(self.before["popups"])
+        )
         if new_popups:
             lines.append(
                 f"{len(new_popups)} popup window(s) opened during the script (a menu or combo popup takes the "
@@ -426,7 +465,9 @@ class Watch:
         else:
             moved.pop("popups", None)
         if moved.get("top"):
-            lines.append(f"top of the stacking order changed from {label(self.before['top'])} to {label(after['top'])}")
+            lines.append(
+                f"top of the stacking order changed from {label(self.before['top'])} to {label(after['top'])}"
+            )
         self.x.close()
         return {"before": self.before, "after": after, "changed": sorted(moved), "lines": lines}
 
@@ -469,7 +510,12 @@ class Raw:
         out = []
         for w in self._x.clients():
             out.append(
-                {"window_id": w, "title": self._x.name(w), "pid": self._x.pid(w), "frame": self._x.geometry(w)}
+                {
+                    "window_id": w,
+                    "title": self._x.name(w),
+                    "pid": self._x.pid(w),
+                    "frame": self._x.geometry(w),
+                }
             )
         return out
 
@@ -554,7 +600,10 @@ class Raw:
             if e.x > -100000:
                 parts.append(f"@({e.x},{e.y} {e.width}x{e.height})")
         if node.get_action_iface() is not None:
-            names = [Atspi.Action.get_action_name(node, i) for i in range(Atspi.Action.get_n_actions(node))]
+            names = [
+                Atspi.Action.get_action_name(node, i)
+                for i in range(Atspi.Action.get_n_actions(node))
+            ]
             if names:
                 parts.append("actions=" + "/".join(names))
         if node.get_text_iface() is not None:
@@ -573,7 +622,11 @@ class Raw:
             if node is None or len(lines) >= limit or level > depth:
                 return
             try:
-                if showing_only and level and not node.get_state_set().contains(Atspi.StateType.SHOWING):
+                if (
+                    showing_only
+                    and level
+                    and not node.get_state_set().contains(Atspi.StateType.SHOWING)
+                ):
                     return
                 lines.append("  " * level + self.describe(node))
                 count = node.get_child_count()
@@ -587,7 +640,9 @@ class Raw:
             lines.append(f"... cut at {limit} nodes")
         return "\n".join(lines)
 
-    def screenshot(self, window_id: int | None = None, region: tuple[int, int, int, int] | None = None) -> str:
+    def screenshot(
+        self, window_id: int | None = None, region: tuple[int, int, int, int] | None = None
+    ) -> str:
         """A PNG of the screen, a window's screen frame or a region; it is returned to you with the result."""
         if STATE.image_dir is None:
             raise RuntimeError("no image directory")
@@ -620,7 +675,9 @@ class Raw:
                 STATE.check(rule, f"xdotool {token}")
         done = subprocess.run([self._xdotool, *argv], capture_output=True, text=True, timeout=20)
         if done.returncode != 0:
-            raise RuntimeError(f"xdotool {' '.join(argv)} exited {done.returncode}: {done.stderr.strip()[:300]}")
+            raise RuntimeError(
+                f"xdotool {' '.join(argv)} exited {done.returncode}: {done.stderr.strip()[:300]}"
+            )
         return done.stdout.strip()
 
 

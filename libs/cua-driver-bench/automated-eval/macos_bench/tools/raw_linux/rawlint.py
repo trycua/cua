@@ -264,6 +264,11 @@ ESCAPES = {
     "addressof",
     "LibraryLoader",
     "util",
+    "from_address",
+    "from_buffer",
+    "from_buffer_copy",
+    "from_param",
+    "in_dll",
 }
 DYNAMIC = {
     "eval",
@@ -448,7 +453,9 @@ class _Walker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
-        if node.id in {"getattr", "setattr", "delattr", "hasattr"} and not getattr(node, "_called", False):
+        if node.id in {"getattr", "setattr", "delattr", "hasattr"} and not getattr(
+            node, "_called", False
+        ):
             # an alias (g = getattr) would hide every later lookup from this check
             self.add("GUI2", node, f"{node.id} used as a value")
         if node.id in DYNAMIC:
@@ -484,7 +491,11 @@ class _Walker(ast.NodeVisitor):
             node.func._called = True  # type: ignore[attr-defined]
         func = _dotted(node.func)
         last = func.rsplit(".", 1)[-1]
-        if last in {"getattr", "setattr", "delattr", "hasattr"} and len(node.args) >= 2 and last != "getattr":
+        if (
+            last in {"getattr", "setattr", "delattr", "hasattr"}
+            and len(node.args) >= 2
+            and last != "getattr"
+        ):
             self.add("GUI2", node, f"{last}")
         if last == "escalate_foreground":
             reason = _const_str(node.args[0]) if node.args else None
@@ -492,9 +503,7 @@ class _Walker(ast.NodeVisitor):
                 self.escalated = True
                 self.escalation = reason.strip()
             else:
-                self.add(
-                    "GUI2", node, "raw.escalate_foreground needs a literal reason string"
-                )
+                self.add("GUI2", node, "raw.escalate_foreground needs a literal reason string")
         if last == "getattr" and len(node.args) >= 2:
             attr = _const_str(node.args[1])
             if attr is None:

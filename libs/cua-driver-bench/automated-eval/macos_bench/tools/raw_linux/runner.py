@@ -26,7 +26,18 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rawlint  # noqa: E402
 
-DENIED_BUILTINS = {"open", "eval", "exec", "compile", "input", "breakpoint", "help", "exit", "quit", "__import__"}
+DENIED_BUILTINS = {
+    "open",
+    "eval",
+    "exec",
+    "compile",
+    "input",
+    "breakpoint",
+    "help",
+    "exit",
+    "quit",
+    "__import__",
+}
 
 
 def _jsonable(value: Any) -> Any:
@@ -71,9 +82,13 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
     return getattr(obj, name, *default)
 
 
-def _guarded_import(name: str, globals_: Any = None, locals_: Any = None, fromlist: Any = (), level: int = 0) -> Any:
+def _guarded_import(
+    name: str, globals_: Any = None, locals_: Any = None, fromlist: Any = (), level: int = 0
+) -> Any:
     if name not in rawlint.IMPORT_OK or level:
-        raise ImportError(f"import {name} is not available to raw-linux scripts (GUI-only, rule GUI1); use raw.*")
+        raise ImportError(
+            f"import {name} is not available to raw-linux scripts (GUI-only, rule GUI1); use raw.*"
+        )
     if name == "raw":
         return sys.modules["raw_runtime"]
     if name == "ctypes":
@@ -93,10 +108,13 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
         out["error"] = f"SyntaxError: {error.msg} (line {error.lineno})"
         return out
     out["lint"] = [
-        {"rule": f.rule, "line": f.line, "detail": f.detail, "severity": f.severity} for f in report.findings
+        {"rule": f.rule, "line": f.line, "detail": f.detail, "severity": f.severity}
+        for f in report.findings
     ]
     out["lint_text"] = report.render()
-    out["escalated"] = None  # set only from what the script executes (raw.STATE), never from the source
+    out["escalated"] = (
+        None  # set only from what the script executes (raw.STATE), never from the source
+    )
     if not report.ok:
         out["lint_blocked"] = True
         out["error"] = "blocked by the background-use lint; nothing was run"
@@ -123,7 +141,12 @@ def run(source: str, image_dir: Path) -> dict[str, Any]:
     safe["getattr"] = _guarded_getattr
     for name in ("setattr", "delattr", "vars", "globals", "locals", "memoryview"):
         safe.pop(name, None)
-    env: dict[str, Any] = {"__builtins__": safe, "raw": handle, "Atspi": raw.Atspi, "__name__": "script"}
+    env: dict[str, Any] = {
+        "__builtins__": safe,
+        "raw": handle,
+        "Atspi": raw.Atspi,
+        "__name__": "script",
+    }
     exec(compile(module, "<script>", "exec"), env)  # noqa: S102 - the script, after the lint
     printed = io.StringIO()
     watch = raw.Watch().start()

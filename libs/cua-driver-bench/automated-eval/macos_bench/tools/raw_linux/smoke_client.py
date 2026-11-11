@@ -39,9 +39,9 @@ SCRIPTS = {
         'a = raw.app("BenchLab")\n'
         'q = raw.find(a, role="text", name="Quantity")[0]\n'
         'Atspi.EditableText.set_text_contents(q, "3")\n'
-        'Atspi.Action.do_action(q, 0)\n'
+        "Atspi.Action.do_action(q, 0)\n"
         'p = raw.find(a, role="combo box", name="Priority")[0]\n'
-        'Atspi.Action.do_action(p, 0)\n'
+        "Atspi.Action.do_action(p, 0)\n"
         "raw.sleep(0.5)\n"
         'hi = raw.find(a, role="menu item", name="High")[0]\n'
         "Atspi.Action.do_action(hi, 0)\n"
@@ -60,11 +60,16 @@ SCRIPTS = {
 
 def main() -> int:
     proc = subprocess.Popen(
-        [sys.executable, "-I", "-B", sys.argv[1]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        [sys.executable, "-I", "-B", sys.argv[1]],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
     )
 
     def rpc(i, method, params=None):
-        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}}) + "\n")
+        proc.stdin.write(
+            json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}}) + "\n"
+        )
         proc.stdin.flush()
         return json.loads(proc.stdout.readline())
 
@@ -72,9 +77,11 @@ def main() -> int:
     tools = rpc(1, "tools/list")["result"]["tools"]
     print("tools:", [t["name"] for t in tools], "description chars", len(tools[0]["description"]))
     for n, (name, script) in enumerate(SCRIPTS.items(), 2):
-        res = rpc(n, "tools/call", {"name": "run_script", "arguments": {"script": script, "timeout_ms": 60000}})[
-            "result"
-        ]
+        res = rpc(
+            n,
+            "tools/call",
+            {"name": "run_script", "arguments": {"script": script, "timeout_ms": 60000}},
+        )["result"]
         kinds = [c["type"] for c in res["content"]]
         text = next(c["text"] for c in res["content"] if c["type"] == "text")
         print(f"===== {name}: isError={res['isError']} content={kinds}\n{text[:3500]}\n")

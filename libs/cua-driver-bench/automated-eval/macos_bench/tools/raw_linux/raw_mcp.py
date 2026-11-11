@@ -84,7 +84,10 @@ SCHEMA = {
     "type": "object",
     "required": ["script"],
     "properties": {
-        "script": {"type": "string", "description": "Python statements (a function body; `return` a value)."},
+        "script": {
+            "type": "string",
+            "description": "Python statements (a function body; `return` a value).",
+        },
         "timeout_ms": {
             "type": "integer",
             "description": f"Wall-time limit, default {DEFAULT_TIMEOUT_MS}, max {MAX_TIMEOUT_MS}.",
@@ -115,12 +118,19 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
             env={k: v for k, v in os.environ.items() if k not in {"RAW_LOG"}},
         )
         line = (done.stdout.strip().splitlines() or [""])[-1]
-        result = json.loads(line) if line.startswith("{") else {
-            "ok": False,
-            "error": f"runner exited {done.returncode}: {done.stderr.strip()[-1500:]}",
-        }
+        result = (
+            json.loads(line)
+            if line.startswith("{")
+            else {
+                "ok": False,
+                "error": f"runner exited {done.returncode}: {done.stderr.strip()[-1500:]}",
+            }
+        )
     except subprocess.TimeoutExpired:
-        result = {"ok": False, "error": f"the script did not finish within {limit:.0f} s and was killed"}
+        result = {
+            "ok": False,
+            "error": f"the script did not finish within {limit:.0f} s and was killed",
+        }
     elapsed = round(time.monotonic() - started, 2)
     text: list[str] = []
     if result.get("lint_text"):
@@ -155,7 +165,9 @@ def run_script(script: str, timeout_ms: int | None) -> tuple[list[dict], bool, d
             data = Path(path).read_bytes()
         except OSError:
             continue
-        content.append({"type": "image", "data": base64.b64encode(data).decode(), "mimeType": "image/png"})
+        content.append(
+            {"type": "image", "data": base64.b64encode(data).decode(), "mimeType": "image/png"}
+        )
     entry = {
         "t": time.time(),
         "elapsed_s": elapsed,
@@ -198,12 +210,31 @@ def serve() -> None:
                 }
             )
         elif method == "tools/list":
-            send({"result": {"tools": [{"name": "run_script", "description": DESCRIPTION, "inputSchema": SCHEMA}]}})
+            send(
+                {
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "run_script",
+                                "description": DESCRIPTION,
+                                "inputSchema": SCHEMA,
+                            }
+                        ]
+                    }
+                }
+            )
         elif method == "tools/call":
             params = message.get("params") or {}
             args = params.get("arguments") or {}
             if params.get("name") != "run_script" or not isinstance(args.get("script"), str):
-                send({"result": {"content": [{"type": "text", "text": "unknown tool or missing script"}], "isError": True}})
+                send(
+                    {
+                        "result": {
+                            "content": [{"type": "text", "text": "unknown tool or missing script"}],
+                            "isError": True,
+                        }
+                    }
+                )
                 continue
             content, failed, entry = run_script(args["script"], args.get("timeout_ms"))
             _log(entry)

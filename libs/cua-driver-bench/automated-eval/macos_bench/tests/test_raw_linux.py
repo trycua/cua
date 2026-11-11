@@ -12,6 +12,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE / "tools" / "raw_linux"))
 import rawlint  # noqa: E402
+import runner  # noqa: E402
 
 ESC = 'raw.escalate_foreground("the toolbar only appears on a real hover")\n'
 
@@ -104,6 +105,10 @@ class RawLintTest(unittest.TestCase):
             "import ctypes\nctypes.CFUNCTYPE",
             "import ctypes\nctypes.memmove",
             "import ctypes\nctypes.util",
+            # raw memory through ctypes types (verifier round 3)
+            "import ctypes\nctypes.c_char.from_address(1)",
+            "import ctypes\nctypes.c_int.from_buffer(b)",
+            "import ctypes\nctypes.c_int.in_dll(x, 'y')",
         ):
             with self.subTest(src=src):
                 self.assertFalse(rawlint.lint(src).ok, src)
@@ -127,8 +132,56 @@ class RawLintTest(unittest.TestCase):
         for rule in rawlint.RULES.values():
             self.assertTrue(rule.source and rule.instead and rule.why, rule.id)
             self.assertIn(rule.severity, {"block", "escalatable", "warn"})
-        used = set(rawlint.NAMES.values()) | set(rawlint.STRINGS.values()) | set(rawlint.XDOTOOL.values())
+        used = (
+            set(rawlint.NAMES.values())
+            | set(rawlint.STRINGS.values())
+            | set(rawlint.XDOTOOL.values())
+        )
         self.assertLessEqual(used, set(rawlint.RULES))
+
+
+class RunnerPolicyTest(unittest.TestCase):
+    """What a script's restricted builtins give it (the parts that need no X display)."""
+
+    def test_ctypes_import_offers_types_and_by_reference_helpers_only(self):
+        module = runner._guarded_import("ctypes")
+        self.assertEqual(sorted(vars(module)), sorted(runner.CTYPES_OK))
+        for name in (
+            "CDLL",
+            "cdll",
+            "CFUNCTYPE",
+            "cast",
+            "memmove",
+            "addressof",
+            "pythonapi",
+            "util",
+        ):
+            self.assertFalse(hasattr(module, name), name)
+            with self.assertRaises(ImportError):
+                runner._guarded_import("ctypes", fromlist=(name,))
+
+    def test_only_listed_modules_import(self):
+        for name in ("os", "gi", "gi.repository", "subprocess", "importlib", "operator"):
+            with self.assertRaises(ImportError, msg=name):
+                runner._guarded_import(name)
+        self.assertIs(runner._guarded_import("json"), __import__("json"))
+
+    def test_guarded_getattr_refuses_private_and_escape_names(self):
+        class Box:
+            _lib = "native"
+            GLib = "glib"
+            from_address = "memory"
+
+        for name in ("_lib", "__class__", "GLib", "from_address"):
+            with self.assertRaises(AttributeError, msg=name):
+                runner._guarded_getattr(Box(), name)
+
+    def test_lint_refused_script_reports_no_escalation(self):
+        src = 'if False:\n    raw.escalate_foreground("never runs")\nraw.x11.XGrabServer(raw.dpy)'
+        out = runner.run(src, Path("/nonexistent"))
+        self.assertTrue(out["lint_blocked"])
+        self.assertIsNone(out["escalated"])
+        self.assertIn("BG4", out["lint_text"])
 
 
 if __name__ == "__main__":

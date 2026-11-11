@@ -2,7 +2,7 @@
 
 use super::{Sandboxes, SpacesdClient, run, runtime};
 use crate::{CuaError, Result};
-use cua_daemon::{Runtime, RuntimeConfig, client::DaemonAddress, client::DaemonClient};
+use cua_daemon_core::{Runtime, RuntimeConfig, client::DaemonAddress, client::DaemonClient};
 use std::{path::PathBuf, sync::Arc};
 
 /// Configuration of an embedded SDK runtime.
@@ -141,13 +141,13 @@ impl Cua {
         let rc = RuntimeConfig {
             state_dir: config.state_dir.clone().map(PathBuf::from),
             local: None,
-            vmm: Some(Arc::new(cua_daemon::local::VmmLocal::default())),
+            vmm: Some(Arc::new(cua_daemon_core::local::VmmLocal::default())),
             env_probe_timeout: config.env_probe_timeout_ms.map(super::millis),
             spaces_home: config.spaces_home.clone().map(PathBuf::from),
             teleport_home: config.teleport_home.clone().map(PathBuf::from),
             // Every contrib provider this build includes (none by default).
             providers: None,
-            // Extensions: the host's registered ones (`cua_daemon::extension`),
+            // Extensions: the host's registered ones (`cua_daemon_core::extension`),
             // none in an MIT-only process.
             ..Default::default()
         };
@@ -161,7 +161,7 @@ impl Cua {
                 .spaces_home
                 .clone()
                 .map(PathBuf::from)
-                .unwrap_or_else(cua_daemon::cua_home);
+                .unwrap_or_else(cua_daemon_core::cua_home);
             rt.spaces().set_relay(Some(session_relay_account(&home)));
         }
         // With a session: at most every few hours per machine, in the
@@ -196,7 +196,7 @@ impl Cua {
     pub fn auto(config: CuaConfig) -> Result<Arc<Self>> {
         // Inside a Space with children on: its spawn channel (every Space
         // made through it is a child of that Space).
-        if let Some(addr) = cua_daemon::client::spawn_channel() {
+        if let Some(addr) = cua_daemon_core::client::spawn_channel() {
             let client = {
                 let _guard = runtime().enter();
                 DaemonClient::new(addr)?
@@ -207,13 +207,13 @@ impl Cua {
         }
         // A daemon that is starting is waited for (bounded), not raced with
         // an embedded runtime.
-        match cua_daemon::client::wait_for_starting(std::time::Duration::from_secs(30))? {
+        match cua_daemon_core::client::wait_for_starting(std::time::Duration::from_secs(30))? {
             Some(addr) => {
                 let client = {
                     let _guard = runtime().enter();
                     DaemonClient::new(addr)?
                 };
-                if cua_daemon::identity::bundled_cua().is_some() {
+                if cua_daemon_core::identity::bundled_cua().is_some() {
                     check_identity(&client)?;
                 }
                 Ok(Arc::new(Self {
@@ -339,7 +339,7 @@ impl Cua {
     }
 }
 
-/// [`cua_daemon::identity::check`] on the daemon `client` reaches, from a
+/// [`cua_daemon_core::identity::check`] on the daemon `client` reaches, from a
 /// thread of its own (so a caller already inside an async runtime can call
 /// [`Cua::auto`]), bounded. A daemon that does not answer in time is left
 /// to fail on first use, as without the check.
@@ -353,7 +353,7 @@ fn check_identity(client: &DaemonClient) -> Result<()> {
     .join()
     .map_err(|_| CuaError::Internal("the daemon identity check panicked".into()))?;
     match info {
-        Ok(Ok(info)) => Ok(cua_daemon::identity::check(&info)?),
+        Ok(Ok(info)) => Ok(cua_daemon_core::identity::check(&info)?),
         _ => Ok(()),
     }
 }

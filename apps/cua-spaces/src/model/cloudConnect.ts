@@ -9,7 +9,7 @@
  * only types it.
  */
 
-import { core } from '../core';
+import { core } from "../core";
 
 export interface CloudProviderInput {
   name: string;
@@ -37,16 +37,16 @@ export interface CloudCheckInput {
 export type CloudConnectState = Record<string, unknown>;
 
 export type CloudConnectAction =
-  | { type: 'select'; name: string }
-  | { type: 'set-value'; text: string }
-  | { type: 'set-profile'; text: string }
-  | { type: 'set-make-default'; on: boolean }
-  | { type: 'set-token-entered'; entered: boolean }
-  | { type: 'test' }
-  | { type: 'tested'; ok: boolean; account: string; checks: CloudCheckInput[] }
-  | { type: 'connect' }
-  | { type: 'connected'; label: string }
-  | { type: 'failed'; error: string };
+  | { type: "select"; name: string }
+  | { type: "set-value"; text: string }
+  | { type: "set-profile"; text: string }
+  | { type: "set-make-default"; on: boolean }
+  | { type: "set-token-entered"; entered: boolean }
+  | { type: "test" }
+  | { type: "tested"; ok: boolean; account: string; checks: CloudCheckInput[] }
+  | { type: "connect" }
+  | { type: "connected"; label: string }
+  | { type: "failed"; error: string };
 
 export interface CloudTargetArgs {
   provider: string;
@@ -59,8 +59,8 @@ export interface CloudTargetArgs {
 }
 
 export type CloudConnectRequest =
-  | { kind: 'test'; target: CloudTargetArgs }
-  | { kind: 'connect'; target: CloudTargetArgs; make_default: boolean };
+  | { kind: "test"; target: CloudTargetArgs }
+  | { kind: "connect"; target: CloudTargetArgs; make_default: boolean };
 
 export interface CloudField {
   id: string;
@@ -93,17 +93,17 @@ export interface CloudConnectView {
 }
 
 export function cloudConnectInitial(): CloudConnectState {
-  return core('cloudConnect.initial', {});
+  return core("cloudConnect.initial", {});
 }
 
 export function reduceCloudConnect(
   input: CloudConnectInput,
   state: CloudConnectState,
-  action: CloudConnectAction
+  action: CloudConnectAction,
 ): CloudConnectState {
-  return core('cloudConnect.reduce', { input, state, action });
+  return core("cloudConnect.reduce", { input, state, action });
 }
 
 export function cloudConnectView(input: CloudConnectInput, state: CloudConnectState): CloudConnectView {
-  return core('cloudConnect.view', { input, state });
+  return core("cloudConnect.view", { input, state });
 }

@@ -3511,13 +3511,22 @@ fn at_point_activation_index(
     actions: &[String],
     is_deepest_hit: bool,
 ) -> Option<usize> {
-    if is_container_role(role) || crate::at_point_policy::is_top_level_shell_role(role) {
+    if is_container_role(role)
+        || crate::at_point_policy::is_top_level_shell_role(role)
+        || is_web_document_role(role)
+    {
         return None;
     }
     if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
         return None;
     }
     activation_index(role, actions)
+}
+
+/// A web document's `doDefault` dispatches no DOM click (Chromium on X11
+/// answers true and the page sees nothing), so it is never an at-point target.
+pub(crate) fn is_web_document_role(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("document web")
 }
 
 /// What an at-point accessibility click did, for the tool result.
@@ -5225,6 +5234,7 @@ pub fn perform_action_at_point(
                 if v.actions.is_empty()
                     || !v.has_component
                     || is_container_role(&v.role)
+                    || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
                 {
                     continue;
@@ -5642,7 +5652,10 @@ pub enum OptionPick {
     Picked { name: String },
     /// No option has that text; nothing was changed.
     NoMatch { options: Vec<String> },
-    /// The element lists no options (or cannot select them).
+    /// Every read of the element answered, and it lists no options.
+    NoOptions,
+    /// No options could be read (or selected): a read failed or timed out,
+    /// or the element has no selection route.
     Unavailable,
 }
 
@@ -5712,31 +5725,44 @@ struct OptionNode {
     index: i32,
 }
 
+/// The options [`list_options`] found, and whether every read it made
+/// answered: an incomplete scan with no options proves nothing about the
+/// element.
+struct OptionScan {
+    options: Vec<OptionNode>,
+    complete: bool,
+}
+
 /// The options under `oref`: item children, or the items of its popup menu
 /// or list child (one level down), in order.
-async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Vec<OptionNode> {
+async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> OptionScan {
     let zconn = conn.connection();
-    let mut options = Vec::new();
+    let mut scan = OptionScan {
+        options: Vec::new(),
+        complete: true,
+    };
     let Some(Ok(children)) = call(raw_children(zconn, oref)).await else {
-        return options;
+        scan.complete = false;
+        return scan;
     };
     for (position, child) in children.into_iter().enumerate() {
-        if options.len() >= OPTION_SCAN_CAP {
+        if scan.options.len() >= OPTION_SCAN_CAP {
             break;
         }
         let Some(Ok(acc)) = call(accessible_for(conn, &child)).await else {
+            scan.complete = false;
             continue;
         };
-        let role = call(acc.get_role_name())
-            .await
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
+        let Some(Ok(role)) = call(acc.get_role_name()).await else {
+            scan.complete = false;
+            continue;
+        };
         if is_option_role(&role) {
             let name = call(acc.name())
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: child,
                 name,
                 index: position as i32,
@@ -5747,19 +5773,21 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
             continue;
         }
         let Some(Ok(items)) = call(raw_children(zconn, &child)).await else {
+            scan.complete = false;
             continue;
         };
         for (index, item) in items.into_iter().enumerate() {
-            if options.len() >= OPTION_SCAN_CAP {
+            if scan.options.len() >= OPTION_SCAN_CAP {
                 break;
             }
             let Some(Ok(item_acc)) = call(accessible_for(conn, &item)).await else {
+                scan.complete = false;
                 continue;
             };
-            let item_role = call(item_acc.get_role_name())
-                .await
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
+            let Some(Ok(item_role)) = call(item_acc.get_role_name()).await else {
+                scan.complete = false;
+                continue;
+            };
             if !is_option_role(&item_role) {
                 continue;
             }
@@ -5767,14 +5795,14 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: item,
                 name,
                 index: index as i32,
             });
         }
     }
-    options
+    scan
 }
 
 /// Pick the option `value` names on a snapshot-cached selection container
@@ -5794,7 +5822,7 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
             if !ifaces.contains(Interface::Selection) {
                 return Ok(OptionPick::Unavailable);
             }
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let options = list_options(conn, &raw_ref(object_ref)).await.options;
             if options.is_empty() {
                 return Ok(OptionPick::Unavailable);
             }
@@ -5831,9 +5859,14 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
         async {
             let conn = shared_connection().await?;
             live_accessible(conn, object_ref).await?;
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let scan = list_options(conn, &raw_ref(object_ref)).await;
+            let options = scan.options;
             if options.is_empty() {
-                return Ok(OptionPick::Unavailable);
+                return Ok(if scan.complete {
+                    OptionPick::NoOptions
+                } else {
+                    OptionPick::Unavailable
+                });
             }
             let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let Some(found) = match_option(&names, value) else {
@@ -5878,7 +5911,7 @@ pub fn options_showing_ref(object_ref: &ObjectRef) -> bool {
         REF_ACTION_BUDGET,
         async {
             let conn = shared_connection().await?;
-            for option in list_options(conn, &raw_ref(object_ref)).await {
+            for option in list_options(conn, &raw_ref(object_ref)).await.options {
                 if let Some(Ok(acc)) = call(accessible_for(conn, &option.oref)).await {
                     if let Some(Ok(state)) = call(acc.get_state()).await {
                         if is_showing_state(&state) {
@@ -8335,6 +8368,13 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["doDefault"]), true),
             Some(0)
         );
+        // Its document is not: `doDefault` there dispatches no DOM click.
+        for deepest in [false, true] {
+            assert_eq!(
+                at_point_activation_index("document web", &acts(&["doDefault"]), deepest),
+                None
+            );
+        }
     }
 
     #[test]

@@ -72,7 +72,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
         // A Space's network, clipboard and Volume settings (the SDK's).
         "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
-        // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+        // Child Spaces: the tree of Spaces, children, budgets and kept services.
         "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
@@ -80,6 +80,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.status", "agents.connect", "agents.disconnect",
         // The coding agents' own recent chats on this Mac (person-only daemon tools, CUA-3319).
         "agents.recentThreads", "agents.threadHistory",
+        // An agent's own sign-in on another computer (person-only daemon tool agent_sign_in, CUA-3907).
+        "agents.computerSignIn",
         // An agent's device-code sign-in made for Cua (Codex), started and waited in two calls.
         "agents.signInStart", "agents.signInWait",
         // Start a run in a Space and reply to it (the daemon's agent_start, agent_message).
@@ -88,6 +90,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
         "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+        "agentKeys.copySignIn",
         // Settings, Connections, GitHub: the daemon's github.* methods (WebUIBridge+Pages.swift).
         "github.status", "github.rescan", "github.use", "github.enable",
         // New Space's address form and Connect a cloud, Teleport and Share,
@@ -105,7 +108,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.reach", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
@@ -417,9 +420,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if model.host.state == nil, model.servicesIn { await model.host.refresh() }
             // The permissions page also asks for Local Network: the daemon
             // checks it in the background (its connect makes macOS ask), and
-            // the page reads the answer on its next poll.
+            // the page reads the answer on its next poll. The first run lists
+            // the row first and checks only once the person pressed Allow
+            // (`localNetworkCheck: false` until then), so macOS's prompt comes
+            // right after the step's explanation, not before it.
             let localNetwork = (args["localNetwork"] as? Bool) == true
-            if localNetwork, model.servicesIn {
+            let check = (args["localNetworkCheck"] as? Bool) ?? localNetwork
+            if localNetwork, check, model.servicesIn {
                 Task { @MainActor [model] in await model.checkLocalNetworkFromDaemon() }
             }
             return hostStatus(localNetwork: localNetwork)
@@ -432,6 +439,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "agents.recentThreads", "agents.threadHistory":
             return try await agentThreads(method, args)
+
+        case "agents.computerSignIn":
+            return try await computerSignIn(args)
 
         case "checklist.get": return ["state": model.checklist.stored]
         case "checklist.send":
@@ -602,9 +612,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
-        // The first run's sign-in set this Mac up to provide Spaces: ask for
-        // Local Network now that it is over.
-        if model.host.providesSpaces { model.askLocalNetworkForHosting() }
+        // Local Network is not asked here: the first run's permissions step
+        // asks for it, with its reason, and a dialog as Home opens was a
+        // surprise with no context (device test, 10 Nov). Left off there,
+        // it is asked when it is needed: the first macOS Space on this Mac,
+        // or turning on Spaces from other computers (`askLocalNetworkForHosting`).
         return onboarding()
     }
 
@@ -905,7 +917,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                                                  branch: text("branch"), model: text("model"),
                                                  envFromHost: (args["envFromHost"] as? [String]) ?? [],
                                                  cwd: text("cwd"), resumeSession: text("resumeSession"),
-                                                 resumeContext: text("resumeContext"))
+                                                 resumeContext: text("resumeContext"), effort: text("effort"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
             guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }

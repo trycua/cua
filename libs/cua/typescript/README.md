@@ -13,7 +13,7 @@ Native payloads ship as optional per-platform packages
 `libs/cua/scripts/generate-uniffi-bindings.mjs` and checked with `--check`.
 
 ```bash
-cd libs/cua && cargo build --release -p cua-sdk
+cd libs/cua && cargo build --release -p cua-sdk-native
 scripts/build-test-fixtures.sh
 cd typescript && npm ci && npm run stage:uniffi && npm test
 ```

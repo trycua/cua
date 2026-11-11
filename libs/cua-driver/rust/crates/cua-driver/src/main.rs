@@ -635,9 +635,16 @@ fn main() {
         cli::Command::Connect {
             clients,
             dry_run,
+            replace,
             json,
         } => {
-            connect::run_connect(&clients, dry_run, json);
+            connect::run_connect(
+                &clients,
+                &inspect_tools_without_runtime(),
+                dry_run,
+                replace,
+                json,
+            );
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -1079,9 +1086,16 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Connect {
             clients,
             dry_run,
+            replace,
             json,
         } => {
-            connect::run_connect(&clients, dry_run, json);
+            connect::run_connect(
+                &clients,
+                &inspect_tools_without_runtime(),
+                dry_run,
+                replace,
+                json,
+            );
             Ok(())
         }
         cli::Command::Manifest { pretty } => {

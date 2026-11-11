@@ -86,7 +86,9 @@ describe.skipIf(!wasmBuilt)("a create the host never answers", () => {
     const { adapter } = stuckHost();
     const demoCall = adapter.call.bind(adapter);
     adapter.call = ((method: string, args: never) =>
-      method === "spaces.create" ? Promise.reject(new Error("Cua's background service didn't start this create within 30 s.")) : demoCall(method as never, args)) as DataAdapter["call"];
+      method === "spaces.create"
+        ? Promise.reject(new Error("Cua's background service didn't start this create within 30 s."))
+        : demoCall(method as never, args)) as DataAdapter["call"];
     const store = new BridgeStore(adapter, await testCore(), { tickMs: 5 });
     store.ensure("spaces");
     store.extras.ensure("notifications");

@@ -38,7 +38,13 @@ const tick = (ms: number) =>
     await vi.advanceTimersByTimeAsync(ms);
   });
 
-const conflict = { path: "public/plan.md", conflict_path: "public/plan (conflict).md", winner_device: "d1", loser_device: "d2", ts_ms: 0 };
+const conflict = {
+  path: "public/plan.md",
+  conflict_path: "public/plan (conflict).md",
+  winner_device: "d1",
+  loser_device: "d2",
+  ts_ms: 0,
+};
 
 const S3 = { backend: "s3", fs_path: "/Users/maya/.cua/volume/data", s3: null, has_keys: true };
 const FS = { ...S3, backend: "fs", has_keys: false };
@@ -56,7 +62,9 @@ function run(answer: () => unknown, now: () => number = () => FIXTURE_NOW, stora
   const setMenu = vi.fn(async (items: MenuItem[]) => {
     menus.push(items);
   });
-  const hook = renderHook(({ spaces }) => useTrayMenu(spaces, { call, setMenu, now }), { initialProps: { spaces: ROSTER } });
+  const hook = renderHook(({ spaces }) => useTrayMenu(spaces, { call, setMenu, now }), {
+    initialProps: { spaces: ROSTER },
+  });
   return { calls, menus, setMenu, hook };
 }
 
@@ -131,7 +139,10 @@ describe("the menu bar item's menu", () => {
     let clock = FIXTURE_NOW + 1_000;
     vi.useFakeTimers();
     try {
-      const { menus } = run(() => sync(), () => clock);
+      const { menus } = run(
+        () => sync(),
+        () => clock,
+      );
       await tick(0);
       const n = onCount(ROSTER);
       expect(menus.at(-1)![0]!.label).toBe(`${n} Spaces running \u00b7 Synced`);
@@ -152,12 +163,18 @@ describe("the menu bar item's menu", () => {
       sync({
         pending_uploads: 2,
         conflicts: [conflict],
-        devices: [{ id: "d1", name: "maya-mbp", this_device: true, last_seen_ms: FIXTURE_NOW, last_change_ms: FIXTURE_NOW }],
+        devices: [
+          { id: "d1", name: "maya-mbp", this_device: true, last_seen_ms: FIXTURE_NOW, last_change_ms: FIXTURE_NOW },
+        ],
       });
     let storage: unknown = FS;
     vi.useFakeTimers();
     try {
-      const { menus, calls } = run(one, () => FIXTURE_NOW, () => storage);
+      const { menus, calls } = run(
+        one,
+        () => FIXTURE_NOW,
+        () => storage,
+      );
       await tick(0);
       const n = onCount(ROSTER);
       // The engine says "live" even here; the core leaves it out.
@@ -181,6 +198,8 @@ describe("the menu bar item's menu", () => {
     const fewer = ROSTER.filter((s) => s.id !== "this-mac" && s.status !== "local").slice(0, 1);
     hook.rerender({ spaces: fewer });
     await waitFor(() => expect(menus.at(-1)![0]!.label).toBe("1 Space running"));
-    expect(menus.at(-1)).toEqual(trayMenu({ spaces: fewer, keyvault: null, sync: null, backend: "s3", nowMs: FIXTURE_NOW }));
+    expect(menus.at(-1)).toEqual(
+      trayMenu({ spaces: fewer, keyvault: null, sync: null, backend: "s3", nowMs: FIXTURE_NOW }),
+    );
   });
 });

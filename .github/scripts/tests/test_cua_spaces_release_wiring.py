@@ -23,6 +23,11 @@ def load_script(name: str):
     return module
 
 
+def packages_paths(config: dict) -> list[str]:
+    package = config["packages"][MACOS]
+    return [MACOS, *package["additional-paths"]]
+
+
 class TestCuaSpacesReleaseWiring(unittest.TestCase):
     def setUp(self) -> None:
         self.config = json.loads((REPO_ROOT / "release-please-config.json").read_text())
@@ -37,10 +42,14 @@ class TestCuaSpacesReleaseWiring(unittest.TestCase):
         # The Tauri app must not be a package: its commits never open a release PR.
         self.assertNotIn(TAURI, packages)
         self.assertNotIn(TAURI, self.manifest)
-        # Nor the Electron app: its prereleases ride the cua-spaces version.
+        # Nor the Electron app: it rides the cua-spaces version, and its
+        # commits count through additional-paths.
         self.assertNotIn(ELECTRON, packages)
         self.assertNotIn(ELECTRON, self.manifest)
-        self.assertNotIn(ELECTRON, packages[MACOS].get("additional-paths", []))
+        self.assertEqual(
+            packages[MACOS]["additional-paths"],
+            ["libs/cua", "apps/cua-spaces-web", ELECTRON],
+        )
         self.assertEqual(
             self.manifest[MACOS], (REPO_ROOT / MACOS / "VERSION").read_text().strip()
         )
@@ -77,6 +86,15 @@ class TestCuaSpacesReleaseWiring(unittest.TestCase):
         for name in ("resolve_release_please_request", "merge_release_please_manifests"):
             self.assertEqual(load_script(name).COMPONENT_PATHS, expected, name)
         self.assertEqual(set(self.manifest), set(self.config["packages"]))
+
+    def test_a_missed_spaces_release_is_caught(self) -> None:
+        guard = (REPO_ROOT / ".github/workflows/release-spaces-guard.yml").read_text()
+        self.assertIn("check_spaces_release_counts.py", guard)
+        script = (REPO_ROOT / ".github/scripts/check_spaces_release_counts.py").read_text()
+        for path in packages_paths(self.config):
+            self.assertIn(f'"{path}"', script)
+        title = (REPO_ROOT / ".github/workflows/ci-pr-title.yml").read_text()
+        self.assertIn("feat|fix|perf", title)
 
     def test_release_workflow_reads_the_macos_changelog(self) -> None:
         workflow = (REPO_ROOT / ".github/workflows/cd-cua-spaces.yml").read_text()

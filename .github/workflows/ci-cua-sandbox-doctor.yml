@@ -19,6 +19,7 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
@@ -29,6 +30,7 @@ on:
       - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
       - "!**/*.md"
       - "!**/*.mdx"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -39,6 +41,7 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - ".github/actions/cua-sandbox/**"
       - ".github/actions/build-cua-under-test/**"
@@ -69,12 +72,12 @@ jobs:
   # run in parallel jobs and the doctor jobs below pick up the binaries.
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   build:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: build ${{ matrix.component }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -102,9 +105,9 @@ jobs:
           retention-days: 1
 
   doctor:
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
-    needs: build
+    needs: [quick, build]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -148,9 +151,9 @@ jobs:
             PY
 
   stale:
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: The bundled builds are reported stale
-    needs: build
+    needs: [quick, build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

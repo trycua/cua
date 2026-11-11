@@ -14,6 +14,8 @@
 # checksum is checked, and `cua` is copied out of it. On macOS the DMG is
 # mounted read-only; on Linux the .deb is unpacked. Nothing is installed.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../../../../.." && pwd)"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/cua/upgrade-e2e"

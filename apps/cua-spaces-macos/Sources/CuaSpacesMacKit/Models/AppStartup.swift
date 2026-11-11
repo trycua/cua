@@ -699,6 +699,7 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     }
     public func primaryDisplay(id: String) async -> AppStreamDisplay? { await b().primaryDisplay(id: id) }
     public func usage(id: String) async -> AppSpaceUsage? { await b().usage(id: id) }
+    public func reach(id: String) async throws -> [String: Any] { try await b().reach(id: id) }
     /// Never waits for the SDK: until it is in, the page shows This Mac's
     /// own numbers.
     public func resources(visible: Bool) async -> CuaSDK.ResourcesSnapshot? {

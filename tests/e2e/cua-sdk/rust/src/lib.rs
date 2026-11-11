@@ -524,6 +524,7 @@ impl Daemon {
             .arg("--state-dir")
             .arg(home.join("sandboxes"))
             .env("CUA_HOME", &home)
+            .env("CUA_WARM_START", "0")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -617,6 +618,7 @@ impl ShareDaemon {
             .env("CUA_CREDENTIAL_STORE", "file")
             .env("CUA_RELAY_URL", &relay_url)
             .env("CUA_TELEMETRY", "0")
+            .env("CUA_WARM_START", "0")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -649,7 +651,8 @@ impl ShareDaemon {
             None => (rest, "/"),
         };
         let auth = bearer.map(|b| format!("Bearer {b}"));
-        let headers: Vec<(&str, &str)> = auth.iter().map(|a| ("authorization", a.as_str())).collect();
+        let headers: Vec<(&str, &str)> =
+            auth.iter().map(|a| ("authorization", a.as_str())).collect();
         http_request(addr, "GET", path, &headers, "")
     }
 }

@@ -16,8 +16,6 @@ except ModuleNotFoundError:  # Python 3.10 and earlier
     import tomli as tomllib
 from typing import Sequence
 
-from sync_driver_release_docs import driver_reference_paths
-from sync_lume_release_docs import lume_reference_paths
 
 
 class VersionError(RuntimeError):
@@ -116,7 +114,6 @@ def read_withdrawn_versions(path: Path) -> dict[str, str]:
 
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
-    docs_dir = "docs/content/docs/cua-driver/reference"
     expected = (base / "rust/VERSION").read_text().strip()
     cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
     python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
@@ -142,10 +139,6 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
             r"^  version:\s*([^\s#]+)",
         ),
     }
-    for relative in driver_reference_paths(root):
-        values[f"docs/{Path(relative).relative_to(docs_dir).as_posix()}:metadata"] = read_match(
-            root / relative, r"^  Version: (\S+)$"
-        )
 
     members = [base / "rust" / member for member in cargo["workspace"]["members"]]
     local_names = {
@@ -181,7 +174,6 @@ def perception_versions(root: Path) -> tuple[str, dict[str, str]]:
 
 def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/lume"
-    docs_dir = "docs/content/docs/lume/reference"
     expected = (base / "VERSION").read_text().strip()
     values = {
         "src/Main.swift": read_match(
@@ -190,14 +182,7 @@ def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
         "scripts/install.sh": read_match(
             base / "scripts/install.sh", r'^LUME_BAKED_VERSION="([^"]+)"'
         ),
-        "docs/http-api.mdx:body": read_match(
-            root / docs_dir / "http-api.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
-        ),
     }
-    for relative in lume_reference_paths(root):
-        values[f"docs/{Path(relative).relative_to(docs_dir).as_posix()}:metadata"] = read_match(
-            root / relative, r"^  Version: (\S+)$"
-        )
     return expected, values
 
 

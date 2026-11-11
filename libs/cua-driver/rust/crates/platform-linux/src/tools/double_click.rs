@@ -139,7 +139,7 @@ impl Tool for DoubleClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
-                    let wayland_point = match crate::wayland::wayland_input_enabled()
+                    let wayland_point = match crate::wayland::is_wayland()
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi))
                         .transpose()
                     {
@@ -155,12 +155,12 @@ impl Tool for DoubleClickTool {
                                 return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1)
                                     .map(|()| PointerRoute::Wayland);
                             }
-                            if crate::wayland::wayland_input_enabled() {
+                            if crate::wayland::is_wayland() {
                                 let aimed = wayland_point.unwrap_or_else(|| (lxi, lyi).into());
                                 return crate::interaction::with_target_foreground(
                                     pid,
                                     xid,
-                                    crate::interaction::pointer_gesture_restore(),
+                                    crate::interaction::session_policy().gesture,
                                     || crate::wayland::click(xid, aimed, 2, 1),
                                 )
                                 .map(|()| PointerRoute::Wayland);
@@ -169,7 +169,7 @@ impl Tool for DoubleClickTool {
                                 return crate::interaction::with_x11_foreground(
                                     xid,
                                     crate::input::ForegroundOptions::pointer(),
-                                    crate::interaction::RestoreMode::LeaveFocused,
+                                    crate::interaction::session_policy().gesture,
                                     || {
                                         let (sx, sy) =
                                             window_local_to_screen(xid, lxi as f64, lyi as f64)?;
@@ -181,8 +181,11 @@ impl Tool for DoubleClickTool {
                                         )
                                     },
                                 )
-                                .map(|(value, _report)| value)
-                                .map(|()| PointerRoute::Foreground);
+                                .map(|((), report)| {
+                                    PointerRoute::Foreground {
+                                        menu_open: report.menu_open,
+                                    }
+                                });
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
                         },
@@ -251,7 +254,7 @@ impl Tool for DoubleClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        let wayland_output_point = if crate::wayland::wayland_input_enabled() {
+        let wayland_output_point = if crate::wayland::is_wayland() {
             match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
                 Ok(point) => Some(point),
                 Err(error) => return input_error_result(error),
@@ -283,12 +286,12 @@ impl Tool for DoubleClickTool {
                     return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
                         .map(|()| PointerRoute::Wayland);
                 }
-                if crate::wayland::wayland_input_enabled() {
+                if crate::wayland::is_wayland() {
                     let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
                     return crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::pointer_gesture_restore(),
+                        crate::interaction::session_policy().gesture,
                         || crate::wayland::click(xid, aimed, 2, 1),
                     )
                     .map(|()| PointerRoute::Wayland);
@@ -297,7 +300,7 @@ impl Tool for DoubleClickTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::LeaveFocused,
+                        crate::interaction::session_policy().gesture,
                         || {
                             // Real XTest double-click at the screen point — synthetic
                             // XSendEvent button events are dropped by GTK/Qt and the MPX
@@ -317,8 +320,9 @@ impl Tool for DoubleClickTool {
                                 .map(|_| ())
                         },
                     )
-                    .map(|(value, _report)| value)
-                    .map(|()| PointerRoute::Foreground);
+                    .map(|((), report)| PointerRoute::Foreground {
+                        menu_open: report.menu_open,
+                    });
                 }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
             },

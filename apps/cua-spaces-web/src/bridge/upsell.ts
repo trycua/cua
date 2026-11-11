@@ -135,7 +135,16 @@ export function useTrackPlanClick(): (surface: "plan_card" | "account_menu") => 
 }
 
 /** Where a plan limit shows, or an upgrade link opens, outside the prompts above. */
-export type PlanLimitSurface = "app_create" | "app_connect" | "app_team" | "app_meter" | "app_share" | "app_machine" | "app_plan_card" | "app_account_menu" | "app_onboarding";
+export type PlanLimitSurface =
+  | "app_create"
+  | "app_connect"
+  | "app_team"
+  | "app_meter"
+  | "app_share"
+  | "app_machine"
+  | "app_plan_card"
+  | "app_account_menu"
+  | "app_onboarding";
 
 /** `url` with `?from=<surface>`, the rest kept (the core's `upgrade.link`); `url` itself without the core. */
 export function upgradeLink(core: CoreClient | null | undefined, url: string, surface: PlanLimitSurface): string {
@@ -198,7 +207,11 @@ export function useUpsellGate(surface: UpsellSurface, candidate: boolean, gated 
   const core = ctx?.core;
   const quiet = useQuiet();
   const track = useTrack();
-  const memory = useSyncExternalStore(subscribe, () => `${readMs(LAST_KEY)}:${readMs(dismissedKey(surface))}`, () => "");
+  const memory = useSyncExternalStore(
+    subscribe,
+    () => `${readMs(LAST_KEY)}:${readMs(dismissedKey(surface))}`,
+    () => "",
+  );
   const [held, setHeld] = useState(() => isHeld(surface));
   const [closed, setClosed] = useState(false);
   const tracked = useRef(false);
@@ -207,7 +220,8 @@ export function useUpsellGate(surface: UpsellSurface, candidate: boolean, gated 
     !gated ||
     (core?.tryCall<boolean>("upsell.allows", {
       state: { nowMs: Date.now(), lastPromptMs: readMs(LAST_KEY), dismissedMs: readMs(dismissedKey(surface)), quiet } satisfies UpsellState,
-    }) ?? false);
+    }) ??
+      false);
 
   useEffect(() => {
     if (held || closed || !candidate || !allowed) return;

@@ -235,7 +235,7 @@ jobs:
           # Windows native packages must load without the VC++ redistributable.
           RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
         run: |
-          cargo build --locked --release -p cua-sdk -p cua-cli --features cua-cli/byoc --target ${{ matrix.target }}
+          cargo build --locked --release -p cua-sdk-native -p cua-cli --features cua-cli/byoc --target ${{ matrix.target }}
           npm --prefix typescript ci --ignore-scripts
           node scripts/build-node-runtime.mjs --target ${{ matrix.target }} \
             --output "native/${{ matrix.label }}/cua_node_runtime.node"
@@ -776,18 +776,29 @@ jobs:
             flags+=(--title "cua SDK $VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-sdk: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
       # Publishing a draft can still hand this component the repo-wide "Latest"
       # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
       # on Cua Spaces; the release-latest-guard schedule is the backstop.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         if: always() && github.repository == 'trycua/cua'
         with:
-          sparse-checkout: .github/scripts/pin_latest_release.py
+          # A separate path: a sparse re-checkout of the workspace removes
+          # scripts/install and the untracked release-artifacts.json that the
+          # installer-feed step below needs (it failed every release 7-10 Nov).
+          path: latest-guard
+          sparse-checkout: .github/scripts
       - name: Keep Latest on Cua Spaces
         if: always() && github.repository == 'trycua/cua'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/pin_latest_release.py
+        run: python3 latest-guard/.github/scripts/pin_latest_release.py
       # A prerelease on trycua/cua stays off the rolling feed; on any other
       # repository the feed is that repository's own and follows every release.
       - name: Update the rolling installer manifest (cua-install-latest)
@@ -883,3 +894,60 @@ jobs:
           (cd release && sha256sum -- CuaSDKFFI.xcframework.zip CuaSDKFFI.xcframework.zip.sigstore.json) > new.txt
           grep -v ' CuaSDKFFI\.xcframework\.zip' previous/checksums.txt | cat - new.txt | sort > release/checksums.txt
           gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [version, publish]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.publish.result == 'success' && needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}
+            ${{ needs.version.outputs.prerelease != 'true' && 'cua-install-latest' || '' }}
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish-xcframework:
+    name: Copy to the downloads CDN
+    needs: [version, attach-xcframework]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.attach-xcframework.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            ${{ needs.version.outputs.tag }}

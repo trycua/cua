@@ -41,7 +41,9 @@ export function Popover({
             {...popupProps}
             initialFocus={initialFocus}
             style={{ width }}
-            className={cn("glass max-w-[calc(100vw-2rem)] origin-(--transform-origin) rounded-lg border p-1.5 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0")}
+            className={cn(
+              "glass max-w-[calc(100vw-2rem)] origin-(--transform-origin) rounded-lg border p-1.5 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
+            )}
           >
             {children}
           </PopoverPrimitive.Popup>

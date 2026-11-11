@@ -26,7 +26,16 @@ afterEach(() => {
   useUiStore.getState().setPaletteOpen(false);
 });
 beforeEach(() => {
-  window.matchMedia ??= ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as unknown as typeof window.matchMedia;
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+    onchange: null,
+  })) as unknown as typeof window.matchMedia;
 });
 
 const DRIVER_PATH = "/spaces/computer/this-mac/driver";
@@ -86,7 +95,15 @@ describe("the Cua Driver line under Computers", () => {
 
   it("says Needs access when a System Settings switch is off", async () => {
     const d = demo();
-    d.state.host.permissions = [{ id: "accessibility", label: "Accessibility", instructions: "", settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", granted: false }];
+    d.state.host.permissions = [
+      {
+        id: "accessibility",
+        label: "Accessibility",
+        instructions: "",
+        settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        granted: false,
+      },
+    ];
     mount(d, <SidebarDriverLine />);
     await waitFor(() => expect(attention()?.getAttribute("data-driver-attention")).toBe("needs-permission"));
     expect(attention()?.textContent).toBe("Needs access");
@@ -96,7 +113,10 @@ describe("the Cua Driver line under Computers", () => {
     ["stopped", "Stopped"],
     ["failed", "Not answering"],
   ] as const)("says %s as %s", async (state, word) => {
-    mount(withStatus(demo(), (s) => ({ ...s, state })), <SidebarDriverLine />);
+    mount(
+      withStatus(demo(), (s) => ({ ...s, state })),
+      <SidebarDriverLine />,
+    );
     await waitFor(() => expect(attention()?.getAttribute("data-driver-attention")).toBe(state));
     expect(attention()?.textContent).toBe(word);
   });
@@ -110,7 +130,10 @@ describe("the Cua Driver line under Computers", () => {
 
   it("stays quiet while paused on purpose or starting", async () => {
     for (const state of ["paused", "starting"] as const) {
-      mount(withStatus(demo(), (s) => ({ ...s, state })), <SidebarDriverLine />);
+      mount(
+        withStatus(demo(), (s) => ({ ...s, state })),
+        <SidebarDriverLine />,
+      );
       await waitFor(() => expect(line()).not.toBeNull());
       await settle();
       expect(attention()).toBeNull();

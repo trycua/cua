@@ -2,12 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { CheckIcon, ChevronRightIcon, CopyIcon, Loader2Icon, PlugIcon, RotateCcwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
-import { connectPlan, useAgentKeys, useBridge, type ThreadFailure } from "@/bridge";
+import { computerSignInAgentOf, connectPlan, useAgentKeys, useBridge, type ThreadFailure } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
+
+import { ComputerSignIn } from "./computer-sign-in";
 
 /** The Connections app that gives a harness its sign-in. */
 const HARNESS_APP: Record<string, string> = { "claude-code": "claude-code", "openai-codex": "codex", hermes: "hermes" };
@@ -17,6 +19,16 @@ const PROVIDER_APP: Record<string, string> = { anthropic: "claude-code", openai:
 export function failureApp(harness: string, provider: string | null): string | null {
   return HARNESS_APP[harness] ?? (provider ? (PROVIDER_APP[provider] ?? null) : null);
 }
+
+/** The computer the agent runs on: This Mac uses its own sign-in; any other computer signs in itself. */
+export interface FailureComputer {
+  space: string;
+  name: string;
+  thisMac: boolean;
+}
+
+/** The computer a thread's agents run on, for the failures in it (`ThreadView` provides it). */
+export const FailureComputerContext = createContext<FailureComputer | undefined>(undefined);
 
 /**
  * What sits under an agent's failed reply (the reply's own text is the plain
@@ -29,8 +41,11 @@ export function FailureNote({
   harness,
   taskText,
   onRetry,
+  computer,
 }: {
   failure: ThreadFailure;
+  /** Where the agent runs (absent: unknown, Connect as before). */
+  computer?: FailureComputer;
   /** The failed agent's harness id. */
   harness: string;
   /** The message the agent was asked (re-sent by Retry). */
@@ -38,17 +53,35 @@ export function FailureNote({
   onRetry?: (text: string) => Promise<void>;
 }) {
   const needsConnect = failure.class === "needs_connect";
+  const fromThread = useContext(FailureComputerContext);
+  computer ??= fromThread;
   return (
     <div data-failure={failure.class} className="mt-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        {needsConnect ? <ConnectActions harness={harness} provider={failure.provider} taskText={taskText} onRetry={onRetry} /> : <RetryButton taskText={taskText} onRetry={failure.retryable ? onRetry : undefined} enabled />}
+        {needsConnect ? (
+          <ConnectActions harness={harness} provider={failure.provider} taskText={taskText} onRetry={onRetry} computer={computer} />
+        ) : (
+          <RetryButton taskText={taskText} onRetry={failure.retryable ? onRetry : undefined} enabled />
+        )}
         <FailureDetails message={failure.message} />
       </div>
     </div>
   );
 }
 
-function ConnectActions({ harness, provider, taskText, onRetry }: { harness: string; provider: string | null; taskText: string | null; onRetry?: (text: string) => Promise<void> }) {
+function ConnectActions({
+  harness,
+  provider,
+  taskText,
+  onRetry,
+  computer,
+}: {
+  harness: string;
+  provider: string | null;
+  taskText: string | null;
+  onRetry?: (text: string) => Promise<void>;
+  computer?: FailureComputer;
+}) {
   const c = useConnectors();
   const { core } = useBridge();
   // The agent was refused its credential: Settings reads the saved list again, which says it needs a reconnect.
@@ -70,6 +103,23 @@ function ConnectActions({ harness, provider, taskText, onRetry }: { harness: str
     if (app && plan && (plan.appToken || plan.device)) void c.connectApp(app);
     else c.openProvider(provider ?? plan?.provider ?? null, app);
   };
+  // Claude Code or Codex on another computer: that computer signs in itself (CUA-3907); an API key is the other way.
+  const signInAgent = computer && !computer.thisMac ? computerSignInAgentOf(harness) : null;
+  if (computer && signInAgent)
+    return (
+      <>
+        <ComputerSignIn
+          agent={signInAgent}
+          space={computer.space}
+          computerName={computer.name}
+          onUseKey={() => c.openProvider(provider ?? (signInAgent === "claude-code" ? "anthropic" : "openai"), app)}
+          onSignedIn={() => {
+            if (taskText && onRetry) void onRetry(taskText).catch(() => {});
+          }}
+        />
+        <RetryButton taskText={taskText} onRetry={onRetry} enabled />
+      </>
+    );
   return (
     <>
       <Button size="sm" variant="outline" data-failure-connect="" onClick={connect}>

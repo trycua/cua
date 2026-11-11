@@ -28,7 +28,7 @@ the quick start above works as is.
 
 ```sh
 # 1. The SDK: native library for Node, and the wasm browser build
-cd libs/cua && cargo build --release -p cua-sdk
+cd libs/cua && cargo build --release -p cua-sdk-native
 cd typescript && npm ci && node ../scripts/stage-uniffi-library.mjs --only=node && npm run build && npm run build:browser
 
 # 2. This example

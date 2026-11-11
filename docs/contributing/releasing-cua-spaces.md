@@ -38,6 +38,12 @@ Don't tag a beta. To test what is on main:
   - Stable apps read `cua-spaces-appcast.xml` and `latest*.yml` on
     `cua-spaces-latest`, so they never see a nightly. Each run checks this
     after it publishes, and checks that every download link resolves.
+- **Immutable tag:** after a fully green build and publish, the workflow also
+  tags the built commit `cua-spaces-nightly-YYYYMMDD.N` (the same date and run
+  number as the version). The tag is created once at the exact built commit
+  and never moved; if it exists elsewhere the job fails. `nightly.json` and the
+  release notes name the tag and commit. A red nightly leaves no tag. Use it to
+  read or pin the code of a nightly.
 - **Never Latest:** the release is a prerelease created with
   `--latest=false`, and its tag never matches `cua-spaces-v*`, so no release
   workflow runs and no draft is left behind.

@@ -17,6 +17,7 @@ on:
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - ".github/workflows/ci-platform-linux-portability.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -48,12 +49,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   platform-linux-off-linux:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: platform-linux compiles on macOS
     runs-on: macos-latest
     timeout-minutes: 20

@@ -9,6 +9,7 @@ import { BackLink } from "@/components/back-link";
 import { CloudDetail } from "@/components/clouds/cloud-detail";
 import { EmptyState, Page } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 
 /** One connected cloud's page, opened from the Clouds list under your computers (CUA-3551). */
 export const Route = createFileRoute("/spaces/cloud/$cloudId")({
@@ -16,6 +17,7 @@ export const Route = createFileRoute("/spaces/cloud/$cloudId")({
 });
 
 function CloudRoute() {
+  const t = useT();
   const { cloudId } = Route.useParams();
   const { view, isLoading } = useMachines();
   const navigate = useNavigate();
@@ -26,10 +28,14 @@ function CloudRoute() {
       {page ? (
         <CloudDetail key={page.id} page={page} onGone={() => void navigate({ to: "/spaces" })} />
       ) : isLoading || !view ? (
-        <div aria-busy="true" aria-label="Loading the cloud" className="h-28 animate-pulse rounded-lg bg-muted" />
+        <div aria-busy="true" aria-label={t("computers.page.cloud_loading")} className="h-28 animate-pulse rounded-lg bg-muted" />
       ) : (
-        <EmptyState icon={<CloudIcon />} title="This cloud isn't connected" action={<Button render={<Link to="/spaces" />}>See your computers</Button>}>
-          It may have been disconnected.
+        <EmptyState
+          icon={<CloudIcon />}
+          title={t("computers.page.cloud_missing_title")}
+          action={<Button render={<Link to="/spaces" />}>{t("computers.page.missing_action")}</Button>}
+        >
+          {t("computers.page.cloud_missing_body")}
         </EmptyState>
       )}
     </Page>

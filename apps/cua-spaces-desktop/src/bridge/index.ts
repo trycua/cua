@@ -35,6 +35,7 @@ import { cliMethods } from "./cli";
 import { ciMethods } from "./ci";
 import { threadMethods } from "./thread";
 import { agentThreadsMethods } from "./agent-threads";
+import { agentSignInMethods } from "./agent-sign-in";
 import { relayUsageMethods } from "./relay-usage";
 import { spacesSettingsMethods } from "./spaces-settings";
 import { resourcesMethods } from "./resources";
@@ -89,6 +90,7 @@ export const AREAS = [
   ciMethods,
   threadMethods,
   agentThreadsMethods,
+  agentSignInMethods,
   driverMethods,
   presenceMethods,
 ];
@@ -127,7 +129,14 @@ function followModel(ctx: BridgeContext): () => void {
     // The Spaces themselves (their details follow from them; "last used"
     // moves with the clock on every read, and the page reads it again with
     // the next change).
-    "spaces.changed": () => [encode(model.spaces.map(({ lastUsedAt: _, ...s }) => s)), model.selectedSpaceId, model.loaded, model.creates.deleting.map((d) => d.id), model.rosterError, model.daemonNotice],
+    "spaces.changed": () => [
+      encode(model.spaces.map(({ lastUsedAt: _, ...s }) => s)),
+      model.selectedSpaceId,
+      model.loaded,
+      model.creates.deleting.map((d) => d.id),
+      model.rosterError,
+      model.daemonNotice,
+    ],
     "session.changed": () => sessionState(model),
     "settings.changed": () => [encode(model.settings), model.lumeSource, model.linuxSource],
     "machines.changed": () => [hostStatus(model), model.devices.snapshot === null ? null : encode(model.devices.view)],

@@ -6,7 +6,20 @@ import { describe, expect, it } from "vitest";
 import type { ComputerResources, SpaceResources } from "@/bridge";
 import { DEMO_DISK_FREE, demoDiskWarning, demoResources } from "@/bridge/adapters/demo/resources";
 import { demoSpaceRows } from "@/bridge/adapters/demo-data";
-import { diskFit, extraSpacesLine, hostMeters, knownSize, lowDiskWarning, onHostLine, size, sizeOf, spaceMeters, spacePanel, systemName, updatedAgo } from "./resources";
+import {
+  diskFit,
+  extraSpacesLine,
+  hostMeters,
+  knownSize,
+  lowDiskWarning,
+  onHostLine,
+  size,
+  sizeOf,
+  spaceMeters,
+  spacePanel,
+  systemName,
+  updatedAgo,
+} from "./resources";
 
 /** GiB: sizes read the way macOS shows memory ("4 GB of 36 GB"). */
 const GB = 1024 ** 3;
@@ -40,7 +53,17 @@ const space = (over: Partial<SpaceResources> = {}): SpaceResources => ({
   cpuAllocated: 4,
   memoryAllocated: 8 * GB,
   diskAllocated: 80 * GB,
-  usage: { cpuCount: 4, cpuPercent: 22, loadAverage1m: 1, memoryUsed: 3.1 * GB, memoryTotal: 8 * GB, memoryLimited: true, diskUsed: 34 * GB, diskTotal: 80 * GB, diskLimited: true },
+  usage: {
+    cpuCount: 4,
+    cpuPercent: 22,
+    loadAverage1m: 1,
+    memoryUsed: 3.1 * GB,
+    memoryTotal: 8 * GB,
+    memoryLimited: true,
+    diskUsed: 34 * GB,
+    diskTotal: 80 * GB,
+    diskLimited: true,
+  },
   diskOnHost: { bytes: 19 * GB, allocated: 34 * GB, sharesSpace: true },
   base: null,
   ...over,
@@ -89,7 +112,9 @@ describe("the low-disk line", () => {
   });
 
   it("follows the host's level, and says it in plain words", () => {
-    expect(lowDiskWarning({ ...host(300 * GB), warning: { level: "low", free: 300 * GB, total: 1000 * GB, threshold: 100 * GB } }, "This Mac")?.level).toBe("low");
+    expect(lowDiskWarning({ ...host(300 * GB), warning: { level: "low", free: 300 * GB, total: 1000 * GB, threshold: 100 * GB } }, "This Mac")?.level).toBe(
+      "low",
+    );
     expect(lowDiskWarning({ ...host(41 * GB), warning: { level: "ok", free: 41 * GB, total: 1000 * GB, threshold: 0 } }, "This Mac")).toBeNull();
     expect(lowDiskWarning(host(41 * GB), "This Mac")).toEqual({
       level: "low",
@@ -186,13 +211,24 @@ const pipbox = (diskTotal: number | null): SpaceResources => ({
   cpuAllocated: 2,
   memoryAllocated: 4 * GB,
   diskAllocated: 0,
-  usage: { cpuCount: 2, cpuPercent: 13, loadAverage1m: 0, memoryUsed: 717 * MB, memoryTotal: 4 * GB, memoryLimited: true, diskUsed: 249_856, diskTotal, diskLimited: false },
+  usage: {
+    cpuCount: 2,
+    cpuPercent: 13,
+    loadAverage1m: 0,
+    memoryUsed: 717 * MB,
+    memoryTotal: 4 * GB,
+    memoryLimited: true,
+    diskUsed: 249_856,
+    diskTotal,
+    diskLimited: false,
+  },
   diskOnHost: { bytes: 249_856, allocated: 249_856, sharesSpace: false },
   base: { key: "sha256:9ac0", image: "ghcr.io/trycua/linux:24.04", bytes: 4.41e9, sharedWith: 1 },
 });
 
 describe("a Space's resources dialog (the core's stand-in)", () => {
-  const view = (s: SpaceResources, spaces = [s]) => spacePanel({ space: s, name: "pipbox", host: ownersMac(), computer: "this Mac", spaces, baseName: "Ubuntu 24.04" });
+  const view = (s: SpaceResources, spaces = [s]) =>
+    spacePanel({ space: s, name: "pipbox", host: ownersMac(), computer: "this Mac", spaces, baseName: "Ubuntu 24.04" });
 
   it("no sentinel ever reaches it: i64::MAX, u64::MAX, -1, 0", () => {
     for (const sentinel of [2 ** 63 - 1, 9223372036854771712, 2 ** 64 - 1, -1, 0, null]) {
@@ -239,7 +275,10 @@ describe("a Space's resources dialog (the core's stand-in)", () => {
   });
 
   it("what can't be told apart is said plainly, never guessed", () => {
-    const me = space({ diskOnHost: { bytes: null, allocated: 40 * GB, sharesSpace: true }, base: { key: "m", image: "ghcr.io/trycua/macos:26", bytes: null, sharedWith: 1 } });
+    const me = space({
+      diskOnHost: { bytes: null, allocated: 40 * GB, sharesSpace: true },
+      base: { key: "m", image: "ghcr.io/trycua/macos:26", bytes: null, sharedWith: 1 },
+    });
     const fit = diskFit(host(41 * GB), me, "macOS 1", [me], null);
     expect(fit.note).toBe("Can’t tell macOS 1’s own data apart from the image it shares.");
     expect(fit.parts.some((p) => p.kind === "thisSpace" || p.kind === "base")).toBe(false);

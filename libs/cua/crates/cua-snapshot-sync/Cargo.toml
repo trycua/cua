@@ -18,8 +18,11 @@ default = ["pull", "fallback"]
 serve = ["dep:axum", "dep:http", "dep:tokio-util"]
 # Fetching snapshot files from other hosts.
 pull = ["dep:reqwest", "dep:futures-util"]
-# The fallback stores: a folder every host mounts (the Cua Volume), and S3.
-fallback = ["dep:aws-config", "dep:aws-sdk-s3"]
+# The fallback store: a folder every host mounts (the Cua Volume).
+fallback = []
+# The S3 fallback store (the AWS SDK). Off in local development builds;
+# a build without it refuses an S3 fallback with a clear error.
+s3 = ["fallback", "dep:aws-config", "dep:aws-sdk-s3"]
 
 [dependencies]
 base64.workspace = true
@@ -48,4 +51,4 @@ libc = "0.2"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true }
-cua-snapshot-sync = { path = ".", features = ["serve", "pull", "fallback"] }
+cua-snapshot-sync = { path = ".", features = ["serve", "pull", "fallback", "s3"] }

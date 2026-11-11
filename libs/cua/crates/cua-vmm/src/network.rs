@@ -44,10 +44,10 @@
 //! answer into what a start does; nothing but `unprotected` ever starts
 //! less strict than asked.
 //!
-//! **Experiment.** All of this is the Secure Spaces experiment, off until
-//! it is turned on (`cua experiments enable secure-spaces`). Off, Spaces
-//! keep the old open default ([`Mode::Legacy`]). `CUA_SECURE_DEFAULT=1` or
-//! `=0` forces one or the other for a process.
+//! **Always on.** The secure default applies to every Space. The only way
+//! out is an operator's emergency override, not a setting: `CUA_SECURE_DEFAULT=0`
+//! makes a process keep the old open default ([`Mode::Legacy`]); `=1` forces the
+//! secure one.
 
 use std::net::IpAddr;
 
@@ -929,46 +929,74 @@ pub fn pasta_out_spec(ports: &[u16]) -> String {
 }
 
 /// Whether the secure default applies, or the old open one. The secure
-/// default is the Secure Spaces experiment ([`crate::experiments::Gate`]):
-/// off, Spaces keep the open network they always had.
+/// default always applies unless an operator forces [`SECURE_DEFAULT_ENV`] to `0`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Secure Spaces on: presets, platform and default denies.
+    /// The secure default: presets, platform and default denies.
     Secure,
     /// The old open default: only the user's own lists, and `none`.
     Legacy,
 }
 
-/// The environment variable that forces the mode over the experiment:
+/// The environment variable that forces the mode, an operator's emergency override:
 /// `0` (or `false`, `off`, `no`) the old open default, `1` (or `true`, `on`,
 /// `yes`) the secure one.
 pub const SECURE_DEFAULT_ENV: &str = "CUA_SECURE_DEFAULT";
 
+/// What a call says when the operator override [`SECURE_DEFAULT_ENV`]`=0` has turned the secure
+/// default off for this process and the call needs it.
+pub fn secure_default_off_message() -> String {
+    format!(
+        "This needs the secure network default, which {SECURE_DEFAULT_ENV}=0 has turned off for this process. Unset it and restart."
+    )
+}
+
 impl Mode {
-    /// The mode of this process: [`SECURE_DEFAULT_ENV`] when it is set,
-    /// else [`crate::experiments::Gate::SecureSpaces`] (off unless
-    /// turned on).
+    /// The mode of this process: [`SECURE_DEFAULT_ENV`] when it is set, else the secure
+    /// default. It decides the network of Spaces made from now on only.
     pub fn from_env() -> Mode {
-        Mode::from_value(
-            std::env::var(SECURE_DEFAULT_ENV).ok().as_deref(),
-            crate::experiments::enabled(crate::experiments::Gate::SecureSpaces),
-        )
+        if let Some(m) = *MODE_HELD.lock().unwrap_or_else(|e| e.into_inner()) {
+            return m;
+        }
+        Mode::from_value(std::env::var(SECURE_DEFAULT_ENV).ok().as_deref())
     }
 
-    /// [`Mode::from_env`] for a value of the variable and the experiment's
-    /// state.
-    pub fn from_value(v: Option<&str>, experiment_on: bool) -> Mode {
+    /// [`Mode::from_env`] for a value of the variable.
+    pub fn from_value(v: Option<&str>) -> Mode {
         match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
             Some("0" | "false" | "off" | "no") => Mode::Legacy,
-            Some("1" | "true" | "on" | "yes") => Mode::Secure,
-            _ if experiment_on => Mode::Secure,
-            _ => Mode::Legacy,
+            _ => Mode::Secure,
         }
     }
 }
 
+/// A process-wide mode a test holds (see [`hold_mode`]).
+static MODE_HELD: std::sync::Mutex<Option<Mode>> = std::sync::Mutex::new(None);
+/// Tests that hold a mode take turns.
+static MODE_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Holds this process's mode at `mode` until dropped. Real-VM tests that need an open network
+/// hold [`Mode::Legacy`] instead of setting the environment. Holders take turns.
+#[must_use = "the mode is held until this is dropped"]
+pub struct ModeHold {
+    _turn: std::sync::MutexGuard<'static, ()>,
+}
+
+/// Waits for its turn, then holds [`Mode::from_env`] at `mode` (see [`ModeHold`]).
+pub fn hold_mode(mode: Mode) -> ModeHold {
+    let turn = MODE_TURN.lock().unwrap_or_else(|e| e.into_inner());
+    *MODE_HELD.lock().unwrap_or_else(|e| e.into_inner()) = Some(mode);
+    ModeHold { _turn: turn }
+}
+
+impl Drop for ModeHold {
+    fn drop(&mut self) {
+        *MODE_HELD.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 /// Whether a Space with `settings` (`None`: none recorded) is held to the
-/// secure default: it is while Secure Spaces is on ([`Mode::from_env`]),
+/// secure default: it is by default ([`Mode::from_env`]),
 /// unless the user chose No protection.
 pub fn protects(settings: Option<&NetworkSettings>) -> bool {
     Mode::from_env() == Mode::Secure
@@ -1066,6 +1094,20 @@ pub fn compile_mode(
         return Ok(rules);
     }
     let mut r: Vec<Rule> = Vec::new();
+    // 1a. A cloud platform's own resolver (Azure's wireserver, GCP's
+    //     metadata server) is also a metadata endpoint. It is opened on
+    //     port 53 only, ahead of the metadata deny, so private DNS zones
+    //     resolve while its HTTP stays closed.
+    if settings.preset != NetworkPreset::None {
+        for ip in dedup(ctx.resolvers.iter().copied()) {
+            if crate::resolver::is_platform_resolver(ip) {
+                r.push(Rule {
+                    ports: Some(vec![53]),
+                    ..Rule::net(Net::host(ip), true, Reason::Resolver)
+                });
+            }
+        }
+    }
     // 1. Platform denies.
     for n in nets(&METADATA) {
         r.push(Rule::net(n, false, Reason::PlatformMetadata));

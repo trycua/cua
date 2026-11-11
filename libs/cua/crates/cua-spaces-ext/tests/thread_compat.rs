@@ -597,10 +597,12 @@ async fn an_agent_cannot_write_its_spaces_thread_through_the_volume() {
         .unwrap()
         .drive()
         .clone();
-    let folder = cua_volume::path::space_folder(&fx.space);
+    // The Volume names a Space `<id>--<uid>` (Secure Spaces is the default).
+    let vid = fx.spaces.volume_space_id(&fx.space).unwrap();
+    let folder = cua_volume::path::space_folder(&vid);
     for ctx in [
-        cua_volume::Context::agent("ada", Some(&fx.space)),
-        cua_volume::Context::space(&fx.space),
+        cua_volume::Context::agent("ada", Some(&vid)),
+        cua_volume::Context::space(&vid),
     ] {
         let e = drive
             .session(ctx)
@@ -616,7 +618,7 @@ async fn an_agent_cannot_write_its_spaces_thread_through_the_volume() {
     }
     // The rest of its folder is still its own.
     drive
-        .session(cua_volume::Context::agent("ada", Some(&fx.space)))
+        .session(cua_volume::Context::agent("ada", Some(&vid)))
         .write(
             &format!("{folder}notes.md"),
             b"ok".to_vec(),
@@ -1199,7 +1201,7 @@ async fn the_mirror_is_create_only_and_rebuilds_a_lost_thread() {
         .drive()
         .clone();
     let user = drive.session(cua_volume::Context::user());
-    let folder = cua_volume::path::space_folder(&fx.space);
+    let folder = cua_volume::path::space_folder(&fx.spaces.volume_space_id(&fx.space).unwrap());
     // An object already at entry 1's key is never overwritten.
     let first = format!("{folder}thread/entries/000000000001.json");
     for t in ["one", "two", "three"] {

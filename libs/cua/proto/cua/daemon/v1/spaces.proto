@@ -127,6 +127,15 @@ service SpaceService {
   // children may hold at once, and what they may cost. Unset limits take
   // the defaults; all unset removes the budget.
   rpc SetTreeBudget(SetTreeBudgetRequest) returns (SetTreeBudgetResponse);
+  // The windows other Spaces show in `space`'s Stream section
+  // (`stream_space_window` with `into`), as window rows with an `origin`.
+  // Entries whose window closed or whose origin Space stopped are dropped.
+  rpc ListStreamWindows(ListStreamWindowsRequest) returns (ListStreamWindowsResponse);
+  // Opens one of those windows (its `window_id` from ListStreamWindows) and
+  // decides the route at open time: straight from the origin Space when the
+  // caller owns it or holds a grant on it, else through this daemon's media
+  // bridge. The ticket is scoped to the origin and the window.
+  rpc OpenStreamEntry(OpenStreamEntryRequest) returns (OpenStreamEntryResponse);
   // Child Spaces whose parent is gone, or not this machine's to judge: the
   // ones it ends after a grace period (only on proof the parent is gone)
   // and the ones it only lists.
@@ -1173,4 +1182,75 @@ message Orphan {
 message ListOrphansResponse {
   // By child id.
   repeated Orphan orphans = 1;
+}
+
+// Request for `SpaceService.ListStreamWindows`.
+message ListStreamWindowsRequest {
+  // The Space whose Stream section shows them (id or name).
+  string space = 1;
+}
+
+// Where a window row's picture comes from.
+message StreamOrigin {
+  // The origin Space (canonical id).
+  string space_id = 1;
+  // Its name.
+  string name = 2;
+  // Its OS: `macos`, `linux`, `windows` or empty.
+  string os = 3;
+  // The window's handle in the origin.
+  string window_id = 4;
+}
+
+// A window another Space shows, as a row of this Space's window list.
+message StreamWindow {
+  // The handle to open it with (`OpenStreamEntry`).
+  string window_id = 1;
+  // Title.
+  string title = 2;
+  // App name.
+  string app_name = 3;
+  // App id.
+  string app_id = 4;
+  // Owning process in the origin.
+  uint32 pid = 5;
+  // The Space it comes from.
+  StreamOrigin origin = 6;
+}
+
+// Response for `SpaceService.ListStreamWindows`.
+message ListStreamWindowsResponse {
+  // The rows, in registration order.
+  repeated StreamWindow windows = 1;
+}
+
+// Request for `SpaceService.OpenStreamEntry`.
+message OpenStreamEntryRequest {
+  // The row's `window_id`.
+  string window_id = 1;
+  // Frames per second cap (0 = 30).
+  uint32 max_fps = 2;
+  // Ticket lifetime in seconds (0 = default).
+  uint32 ticket_ttl_seconds = 3;
+  // Mint the ticket here even when the route is direct. By default a direct
+  // route returns only the decision (the client opens the origin Space
+  // itself, with its own credentials); a proxied route always mints.
+  bool mint = 4;
+}
+
+// Response for `SpaceService.OpenStreamEntry`.
+message OpenStreamEntryResponse {
+  // `direct` (from the origin) or `proxied` (through this daemon's bridge).
+  string route = 1;
+  // What the caller holds on the origin: `owner`, `grant` or `none`.
+  string access = 2;
+  // The Space whose spacesd minted the ticket.
+  string minted_by = 3;
+  // The ticket (`StreamTicket` as JSON), scoped to that Space and window.
+  // Empty for a direct route that was not asked to mint.
+  string ticket_json = 4;
+  // The origin Space (canonical id).
+  string origin_space = 5;
+  // The window's handle in the origin.
+  string origin_window_id = 6;
 }

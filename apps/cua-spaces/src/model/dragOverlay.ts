@@ -94,9 +94,6 @@ export interface DragOverlayTransition {
  * Advance the machine and report the side effects to run (the app core's
  * `teleport::drag`). Invalid events leave the state unchanged.
  */
-export function applyDragOverlay(
-  state: DragOverlayState,
-  event: DragOverlayEvent,
-): DragOverlayTransition {
+export function applyDragOverlay(state: DragOverlayState, event: DragOverlayEvent): DragOverlayTransition {
   return core("drag.apply", { state, event });
 }

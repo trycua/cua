@@ -113,7 +113,7 @@ impl HostProfile {
 }
 
 /// A Space this host provides.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvidedSpace {
     /// The relay machine it is reached as (`relay:<machine>`).
@@ -166,6 +166,30 @@ pub struct ProvidedSpace {
     /// loopback), not on the host's direct address.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub routed: bool,
+}
+
+impl std::fmt::Debug for ProvidedSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProvidedSpace")
+            .field("relay_machine", &self.relay_machine)
+            .field("local_space", &self.local_space)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("os", &self.os)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("created_by", &self.created_by)
+            .field("created_by_account", &self.created_by_account)
+            .field("created_at_ms", &self.created_at_ms)
+            .field("machine_token", &"<redacted>")
+            .field("relay_url", &self.relay_url)
+            .field("direct_port", &self.direct_port)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("disk_gb", &self.disk_gb)
+            .field("routed", &self.routed)
+            .finish()
+    }
 }
 
 /// What a Space is counted at when its record does not say: the default

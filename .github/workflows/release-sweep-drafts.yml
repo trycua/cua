@@ -1,0 +1,39 @@
+name: "Release: Sweep Superseded Drafts"
+
+# Release Please drafts and CD-created drafts are left behind when a CD run
+# fails or is cancelled before it publishes, and when a version is skipped.
+# This deletes drafts that a newer or equal release of the same component
+# supersedes, that are older than 24 h, and that no CD run is working on.
+# Tags and published releases are never touched. Manual runs can set dry_run.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only print what would be deleted"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-sweep-drafts
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: github.repository == 'trycua/cua'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Delete superseded drafts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+        run: python3 .github/scripts/sweep_draft_releases.py

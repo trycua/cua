@@ -145,6 +145,9 @@ extension WebUIBridge {
             return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
+        case "agentKeys.copySignIn":
+            guard let on = args["on"] as? Bool else { throw Failure.badArgs("on: boolean") }
+            return try await model.agentKeys.call("agent_keys.copy_sign_in", ["on": on])
         case "agentKeys.fromShell":
             var shellArgs: [String: Any] = ["env": try string(args, "env")]
             if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
@@ -354,6 +357,10 @@ extension WebUIBridge {
         // A Space's detail
         case "spaces.usage":
             return BridgeValue.encode(await model.backend.usage(id: try spaceId(args)))
+        case "spaces.reach":
+            // Whether the Space can take work now: the relay's word and a health check
+            // (the SDK's `spaces.reach`), asked before a job is handed to it.
+            return Self.reach(try await model.backend.reach(id: try spaceId(args)))
         case "spaces.windows":
             let stream = try await stream(for: try spaceId(args))
             await stream.rows.refresh()
@@ -449,6 +456,8 @@ extension WebUIBridge {
             // dialog of its own); the pane opens only when it stays blocked
             // and no macOS prompt is waiting for an answer.
             if url.contains("Privacy_LocalNetwork") {
+                // Explained here, so a later macOS Space create does not explain it again.
+                UserDefaults.standard.set(true, forKey: LocalNetworkGate.askedKey)
                 await model.checkLocalNetworkFromDaemon(every: 0)
                 if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
                     NSWorkspace.shared.open(u)
@@ -468,6 +477,14 @@ extension WebUIBridge {
     // MARK: - Arguments
 
     func spaceId(_ args: [String: Any]) throws -> String { try string(args, "spaceId") }
+
+    /// `spaces.reach`'s answer as the page reads it (`SpaceReach`): the SDK's snake_case in camelCase.
+    static func reach(_ answer: Any) -> [String: Any] {
+        let r = answer as? [String: Any] ?? [:]
+        return ["reachable": r["reachable"] as? Bool ?? false,
+                "listedOffline": r["listed_offline"] as? Bool ?? false,
+                "reason": (r["reason"] as? String).map { $0 as Any } ?? NSNull()]
+    }
 
     func object(_ args: [String: Any], _ key: String) throws -> [String: Any] {
         guard let v = args[key] as? [String: Any] else { throw Failure.badArgs("\(key): object") }
@@ -516,6 +533,32 @@ extension WebUIBridge {
         } catch {
             let words = LiveSpacesBackend.words(error)
             if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see agent chats.") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
+    /// `agents.computerSignIn {space, agent, action, code?, afterRefusal?}`: the
+    /// person-only daemon tool `agent_sign_in` (the agent's own sign-in on
+    /// another computer, CUA-3907), its JSON back untouched
+    /// (`ops/agent-sign-in.ts` maps it). A daemon without it answers `unsupported`.
+    func computerSignIn(_ args: [String: Any]) async throws -> Any {
+        guard let space = args["space"] as? String, !space.isEmpty else { throw Failure.badArgs("space: string") }
+        guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+        let action = args["action"] as? String ?? "status"
+        guard ["status", "start", "code", "cancel"].contains(action) else { throw Failure.badArgs("action: status, start, code or cancel") }
+        var out: [String: Any] = ["space": space, "agent": agent, "action": action]
+        if action == "code" {
+            guard let code = args["code"] as? String, !code.isEmpty else { throw Failure.badArgs("code: string") }
+            out["code"] = code
+        }
+        if args["afterRefusal"] as? Bool == true { out["after_refusal"] = true }
+        do {
+            return try await tool("agent_sign_in", out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to sign agents in on other computers.") }
             throw Failure(code: "failed", message: words)
         }
     }
@@ -624,7 +667,7 @@ extension WebUIBridge {
     static func missingThreadTool(_ message: String) -> Bool {
         let m = message.lowercased()
         let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
-                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read"]
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read", "agent_sign_in"]
         return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
     }
 
@@ -707,7 +750,7 @@ extension WebUIBridge {
             var input = BridgeValue.encode(devices.input) as? [String: Any] ?? [:]
             input["readError"] = devices.error ?? NSNull()
             // What the native page names this Mac before the relay does.
-            input["deviceName"] = Foundation.Host.current().localizedName ?? NSNull()
+            input["deviceName"] = ComputerName.current ?? NSNull()
             return input
         case "devices.enroll":
             let r = try await relay.enroll()

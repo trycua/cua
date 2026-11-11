@@ -515,10 +515,13 @@ impl Tool for TypeTextTool {
                 } else {
                     note
                 };
-                let commit_unproven = uncommitted_binding_target(element_ptr, target_is_web_content);
+                let commit_unproven =
+                    uncommitted_binding_target(element_ptr, target_is_web_content);
                 let commit_note = if commit_unproven {
                     " The app takes this field's value at end-of-edit, which type_text does not deliver: press Tab or Return, or use set_value."
-                } else { "" };
+                } else {
+                    ""
+                };
                 ToolResult::text(format!(
                     "{mark} {char_count} char(s){detail}.{note}{commit_note}{}",
                     changes.result_suffix()

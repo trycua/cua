@@ -1707,11 +1707,14 @@ fn type_text_in_key_window(
         let ax_text = submit_body.unwrap_or(text);
         // What a full insert of the line must leave in the field, from the
         // value and selection read just before the write.
-        let expected_after_submit = submit_body.and_then(|body| unsafe {
-            let value = copy_string_attr(element, "AXValue")?;
-            let (location, length) = selected_range(element)?;
-            replace_utf16_range(&value, location, length, body)
-        });
+        let pre_write = submit_body.and_then(|_| unsafe { copy_string_attr(element, "AXValue") });
+        let expected_after_submit =
+            submit_body
+                .zip(pre_write.as_deref())
+                .and_then(|(body, value)| {
+                    let (location, length) = unsafe { selected_range(element)? };
+                    replace_utf16_range(value, location, length, body)
+                });
         let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         // Classify the atomic write before considering synthesis. Complete AX
         // delivery returns immediately. Partial delivery is surfaced as such
@@ -1738,10 +1741,22 @@ fn type_text_in_key_window(
         };
         // Only a read-back equal to the selection replaced by the whole line
         // earns a submit: a field that already held the line, or a partial
-        // write that happens to complete a matching value, does not.
+        // write that happens to complete a matching value, does not. When the
+        // full insert would leave the value as it was (the selection already
+        // was the line), a no-op write looks the same, so it does not either.
         let insert_observed = ax_progress == Some(TypedProgress::Complete)
-            && expected_after_submit.is_some()
-            && after.as_deref() == expected_after_submit.as_deref();
+            && submit_read_back_matches(
+                pre_write.as_deref(),
+                expected_after_submit.as_deref(),
+                after.as_deref(),
+            );
+        // The write changed the field into something other than the full
+        // insert: part of the line may have landed, so typing it again as
+        // keys (with its Return) could submit a mangled value.
+        let submit_write_diverged = submit_body.is_some()
+            && !insert_observed
+            && ax_progress != Some(TypedProgress::Complete)
+            && matches!((pre_write.as_deref(), after.as_deref()), (Some(p), Some(a)) if p != a);
         // Return is a pid-routed key: it reaches whichever field has focus,
         // so it goes out only once the written field is confirmed focused.
         let return_reaches_field = insert_observed && {
@@ -1786,6 +1801,18 @@ fn type_text_in_key_window(
                 path: PATH_AX,
                 verified: true,
                 delivered_chars: Some(text.chars().count()),
+            }));
+        }
+        if submit_write_diverged {
+            let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+            return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
+                detail: format!(
+                    " via AX write into{idx_str} {role} \"{title}\", which changed the field \
+                     but did not read back the inserted line; Return was not sent"
+                ),
+                path: PATH_AX,
+                verified: false,
+                delivered_chars: None,
             }));
         }
         if let Some(TypedProgress::Partial(delivered_chars)) = ax_progress {
@@ -1911,6 +1938,20 @@ unsafe fn selected_range(element: AXUIElementRef) -> Option<(usize, usize)> {
         usize::try_from(range.location).ok()?,
         usize::try_from(range.length).ok()?,
     ))
+}
+
+/// Whether the read-back after an AX insert of a line proves the whole line
+/// landed: it equals the expected value, and that value differs from the one
+/// before the write (otherwise a no-op write reads the same).
+fn submit_read_back_matches(
+    pre_write: Option<&str>,
+    expected: Option<&str>,
+    after: Option<&str>,
+) -> bool {
+    match (pre_write, expected, after) {
+        (Some(pre), Some(expected), Some(after)) => after == expected && expected != pre,
+        _ => false,
+    }
 }
 
 /// `value` with the UTF-16 range `location..location + length` replaced by
@@ -2257,6 +2298,19 @@ mod tests {
         assert_eq!(expect("😀b", 2, 1, "c").as_deref(), Some("😀c"));
         assert_eq!(expect("😀", 1, 0, "c"), None);
         assert_eq!(expect("ab", 1, 5, "c"), None);
+    }
+
+    #[test]
+    fn submit_read_back_must_differ_from_the_pre_write_value() {
+        use super::submit_read_back_matches as ok;
+        assert!(ok(Some(""), Some("netflix.com"), Some("netflix.com")));
+        // Selection already was the line: a no-op write reads the same.
+        assert!(!ok(Some("foo"), Some("foo"), Some("foo")));
+        // Partial write of "foo" over "fo".
+        assert!(!ok(Some("fo"), Some("fofoo"), Some("foo")));
+        assert!(!ok(None, Some("x"), Some("x")));
+        assert!(!ok(Some(""), None, Some("x")));
+        assert!(!ok(Some(""), Some("x"), None));
     }
 
     #[test]

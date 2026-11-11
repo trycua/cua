@@ -111,6 +111,7 @@ pub mod recording_render;
 pub mod recording_tools;
 pub mod recording_zoom;
 pub mod recovery_hint;
+pub mod require_verified;
 #[cfg(feature = "script")]
 pub mod script_tool;
 pub mod security_prompt;

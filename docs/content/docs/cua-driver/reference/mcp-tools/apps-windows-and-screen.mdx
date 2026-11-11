@@ -354,6 +354,7 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="set_window_frame--height"></span>`height` | `number` | required | New height, in the same units as list_windows bounds. Minimum: 1. |
 | <span id="set_window_frame--pid"></span>`pid` | `integer` | required | Process ID that owns the window. Minimum: 1. |
+| <span id="set_window_frame--require_verified"></span>`require_verified` | `boolean` |  | When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false. |
 | <span id="set_window_frame--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="set_window_frame--width"></span>`width` | `number` | required | New width, in the same units as list_windows bounds. Minimum: 1. |
 | <span id="set_window_frame--window_id"></span>`window_id` | `integer` | required | Window ID from list_windows. Minimum: 1. |
@@ -376,6 +377,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 | --- | --- | --- | --- |
 | <span id="invoke_menu--path"></span>`path` | `string[]` | required | Menu labels from the top-level menu to the item, e.g. `["File", "Save As..."]` (1 to 16 labels). Items: 1 to 16. |
 | <span id="invoke_menu--pid"></span>`pid` | `integer` | required | Process ID of the application that owns the menu. Minimum: 1. |
+| <span id="invoke_menu--require_verified"></span>`require_verified` | `boolean` |  | When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false. |
 | <span id="invoke_menu--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="invoke_menu--window_id"></span>`window_id` | `integer` | required | Window ID from list_windows whose menu is invoked. Minimum: 1. |
 

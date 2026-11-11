@@ -400,6 +400,10 @@
       "minimum": 1,
       "type": "integer"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -459,6 +463,10 @@
       "description": "Process ID of the application that owns the menu.",
       "minimum": 1,
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
@@ -546,6 +554,10 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "scope": {
       "default": "window",
@@ -652,6 +664,10 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -722,6 +738,10 @@
      "pid": {
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
@@ -811,6 +831,10 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\".",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "scope": {
       "default": "window",
@@ -923,6 +947,10 @@
       "description": "Target process ID.",
       "type": "integer"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
       "type": "string"
@@ -975,6 +1003,10 @@
      "pid": {
       "description": "Optional process ID; must match the held button's target.",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
@@ -1034,6 +1066,10 @@
      "pid": {
       "description": "Optional process ID; must match the held button's target.",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. When both are present, session takes precedence over cursor_id.",
@@ -1152,6 +1188,10 @@
       "minItems": 2,
       "type": "array"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -1203,6 +1243,10 @@
      "pid": {
       "description": "Target process ID. Omit with scope \"desktop\" to type into the focused application.",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "scope": {
       "default": "window",
@@ -1318,6 +1362,10 @@
       "description": "Target process ID. Omit with scope \"desktop\" to send the key to the focused application.",
       "type": "integer"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to send the key to the focused application. Default \"window\".",
@@ -1417,6 +1465,10 @@
       "description": "Target process ID. Omit with scope \"desktop\" to send the chord to the focused application.",
       "type": "integer"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to send the chord to the focused application. Default \"window\".",
@@ -1508,6 +1560,10 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -1589,6 +1645,10 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "scope": {
       "default": "window",
@@ -1779,6 +1839,10 @@
      "cursor_id": {
       "description": "Cursor instance to move. Default: 'default'.",
       "type": "string"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "scope": {
       "default": "window",
@@ -2643,6 +2707,10 @@
       "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
       "type": "string"
      },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
       "type": "string"
@@ -2694,6 +2762,10 @@
      },
      "replace": {
       "description": "false (default): insert at the caret, appending to whatever the field already holds. true: select the element's whole content first so the text replaces it — with an empty text this clears the field. Replacement goes through the selection, so beforeinput/input still fire and framework state stays consistent.",
+      "type": "boolean"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
       "type": "boolean"
      },
      "session": {
@@ -2958,6 +3030,10 @@
      "ref": {
       "description": "Origin page ref. Alternative to x/y.",
       "type": "string"
+     },
+     "require_verified": {
+      "description": "When true, an action the driver could not confirm (effect unverifiable, suspected_noop or partial) returns an error with code action_unverified instead of a success. The input was still sent: read the target before repeating it. Default false.",
+      "type": "boolean"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs.",

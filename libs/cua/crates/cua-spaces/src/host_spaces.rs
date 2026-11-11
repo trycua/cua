@@ -1621,6 +1621,16 @@ impl HostSpacesServer {
             &cua_sandbox_core::placement::HostFacts::current(),
         )
         .map_err(|e| self.refuse(caller, &label, place(e)))?;
+        // A fork is the kind of Space its checkpoint's engine makes: it is
+        // admitted (CPU, memory, VM limits) as that kind, not as the
+        // `auto` a caller that names none sends.
+        if let Some(rec) = Some(req.fork_source.trim())
+            .filter(|f| !f.is_empty())
+            .and_then(|f| self.spaces.sandboxes().checkpoint_record(f))
+        {
+            kind = fork_kind(kind, &rec.name, &rec.runtime_type)
+                .map_err(|e| self.refuse(caller, &label, e))?;
+        }
         let provided_now = provided::load_provided(&self.host_dir())?;
         let slot = self
             .reserve(
@@ -2910,6 +2920,23 @@ pub(crate) fn host_placement(
         return Ok((kind, runtime));
     }
     Ok((kind, resolved.runtime))
+}
+
+/// The kind a fork of checkpoint `name` (engine `engine`) is admitted as:
+/// the kind its engine makes when the caller named none (or the same), an
+/// error when the caller named another.
+pub(crate) fn fork_kind(asked: Kind, name: &str, engine: &str) -> Result<Kind> {
+    let Some(of) = crate::pool_checkpoints::kind_of_engine(engine) else {
+        return Ok(asked);
+    };
+    if asked != Kind::Auto && asked != of {
+        return Err(Error::invalid(format!(
+            "checkpoint {name} is a {engine} checkpoint, so its forks are {} Spaces, not {}",
+            of.as_str(),
+            asked.as_str()
+        )));
+    }
+    Ok(of)
 }
 
 /// The runtime to try when an `auto` create failed on a broken container
@@ -5388,6 +5415,27 @@ mod host_runtime_tests {
         assert!(
             body.contains("engine_fallback("),
             "create_provided skips engine_fallback"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fork_kind_tests {
+    use super::*;
+
+    #[test]
+    fn a_fork_is_admitted_as_its_checkpoints_kind() {
+        assert_eq!(fork_kind(Kind::Auto, "c", "runc").unwrap(), Kind::Container);
+        assert_eq!(fork_kind(Kind::Auto, "c", "qemu").unwrap(), Kind::Vm);
+        assert_eq!(fork_kind(Kind::Vm, "c", "qemu").unwrap(), Kind::Vm);
+        // An engine this build does not name keeps what was asked.
+        assert_eq!(fork_kind(Kind::Auto, "c", "").unwrap(), Kind::Auto);
+        let e = fork_kind(Kind::Container, "c", "qemu")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("qemu checkpoint") && e.contains("vm Spaces"),
+            "{e}"
         );
     }
 }

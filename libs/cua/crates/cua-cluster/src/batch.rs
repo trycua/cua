@@ -143,6 +143,18 @@ fn misfit(c: &Candidate, g: &BatchGroup) -> Option<String> {
     let mut idle = c.clone();
     idle.pending_millicpus = 0;
     idle.pending_vram_mb = 0;
+    // A machine that holds the checkpoint (or restores its ABI, which names
+    // the engine) runs the kind of Space it forks as: the kinds a host lists
+    // are what it offers for new work, and can leave one out that its engine
+    // restores (a Linux host lists no `vm` for jobs but forks a QEMU
+    // checkpoint it holds).
+    if !g.member.kind.is_empty()
+        && (holds(c, &g.world) || (!g.abi.is_empty() && restores(c, &g.abi)))
+        && let Some(st) = idle.status.as_mut()
+        && !st.kinds.contains(&g.member.kind)
+    {
+        st.kinds.push(g.member.kind.clone());
+    }
     idle.misfit(&Need {
         millicpus: 0,
         ..g.member.clone()
@@ -556,6 +568,50 @@ mod tests {
         old.status.as_mut().unwrap().snapshot_abis.clear();
         assert!(!restores(&old, HVF));
         assert!(restores(&old, ""));
+    }
+
+    /// The kinds a host lists are what it offers for new work: a host that
+    /// holds a checkpoint (or restores its ABI) forks the kind of Space the
+    /// checkpoint's engine makes, listed or not (a Linux host lists no `vm`
+    /// for jobs and still forks a QEMU checkpoint it holds), and a container
+    /// checkpoint needs a container, never a `vm`.
+    #[test]
+    fn a_holder_forks_its_checkpoints_kind_whatever_it_lists() {
+        let container = |world: &str| BatchGroup {
+            member: Need {
+                kind: "container".into(),
+                ..group(world, 1).member
+            },
+            abi: String::new(),
+            ..group(world, 1)
+        };
+        let mut only_containers = holding(host("linux", 8, 32, KVM), &["w0"]);
+        only_containers.status.as_mut().unwrap().kinds = vec!["container".into()];
+        // A QEMU checkpoint held by a host that lists no `vm`.
+        let plan = plan_batch(
+            &[only_containers.clone()],
+            &[BatchGroup {
+                abi: KVM.into(),
+                ..group("w0", 2)
+            }],
+            Policy::Spread,
+        );
+        assert!(plan.unplaced.is_empty(), "{plan:?}");
+        // A container checkpoint on a host that lists only `vm` but holds it.
+        let mut only_vm = holding(host("vmhost", 8, 32, KVM), &["c0"]);
+        only_vm.status.as_mut().unwrap().snapshot_abis.clear();
+        let plan = plan_batch(&[only_vm.clone()], &[container("c0")], Policy::Spread);
+        assert!(plan.unplaced.is_empty(), "{plan:?}");
+        // A host that neither holds nor restores it still must offer the kind.
+        let bare = host("bare", 8, 32, KVM);
+        let plan = plan_batch(&[bare], &[container("c1")], Policy::Spread);
+        assert_eq!(plan.unplaced.len(), 1, "{plan:?}");
+        assert!(
+            plan.unplaced[0]
+                .reason
+                .contains("does not create container Spaces"),
+            "{plan:?}"
+        );
     }
 
     /// A group no host has room for is split, the host with the most room

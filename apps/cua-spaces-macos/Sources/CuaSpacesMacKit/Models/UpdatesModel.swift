@@ -203,7 +203,12 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
                                     error: (any Error)?) {
         MainActor.assumeIsolated { driver.cycleFinished() }
     }
-    public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) { tell("installed") }
+    public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        // The app quits and comes back as the new build: the background
+        // service keeps running through it and restarts itself onto it.
+        BackgroundService.shared.markUpdateRestart()
+        tell("installed")
+    }
     public nonisolated func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
         // "No update" also arrives here; only a real failure is one.
         let code = (error as NSError).code
@@ -276,6 +281,8 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
             NSLog("Cua Spaces: could not relaunch: %@", error.localizedDescription)
             return
         }
+        // A relaunch is not a Quit: the service keeps running.
+        BackgroundService.shared.markUpdateRestart()
         NSApp.terminate(nil)
     }
 }

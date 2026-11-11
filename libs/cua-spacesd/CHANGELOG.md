@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.1...cua-spacesd-v0.15.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-spacesd-doctor:** type into the form only after its entry holds keyboard focus ([#7322](https://github.com/trycua/cua/issues/7322)) ([0470fc6](https://github.com/trycua/cua/commit/0470fc64e2ad0486b655182a5cc6321711378223))
+
 ## [0.15.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.0...cua-spacesd-v0.15.1) (2026-11-10)
 
 

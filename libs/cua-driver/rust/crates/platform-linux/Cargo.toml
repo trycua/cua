@@ -93,7 +93,9 @@ url = "2"
 # itself is loaded at runtime (`wayland::libpipewire`), so builds need its
 # headers but the binary does not link it. Gated behind `portal-capture`.
 pipewire-sys = { version = "0.10", optional = true }
-libloading = { version = "0.8", optional = true }
+# Looks up libxkbcommon 1.0's typing functions (`wayland::text_keys`) and
+# optional PipeWire at run time.
+libloading = { workspace = true }
 # SPA pods, format parsing and buffer types (header-only, compiled in): builds
 # the SPA_PARAM_EnumFormat pod (raw BGRx/BGRA/RGBx/RGBA at announced
 # width/height) handed to `pw_stream_connect`. Same `portal-capture` gating.
@@ -148,7 +150,6 @@ portal-input = [
 portal-capture = [
     "ashpd/screencast",
     "dep:pipewire-sys",
-    "dep:libloading",
     "dep:libspa",
 ]
 # Backward-compatible full desktop feature used by the Nix package.

@@ -38,6 +38,7 @@ BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binut
 SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa", "at-spi2-core", "libx11", "libxcb", "libxext", "libxi")
 DRIVER_BINARY = Path("/driver/cua-driver")
 USER, UID = "cua", 1000
+OMARCHY_KEY = "40DFB630FF42BCFFB047046CF0134EE680CAC571"
 
 
 def sha256_file(path):
@@ -84,6 +85,16 @@ def setup_pacman(job, log):
         url = channels.repo_url(server, "omarchy")
         database = channels.parse_db(channels.fetch(url + "/omarchy.db"))
         keyring = database["omarchy-keyring"]["filename"]
+        # The keyring package is signed by Omarchy's maintainer key. Import it from a keyserver first,
+        # as Omarchy's own installer does, and retry: pacman's implicit lookup during -U is a single
+        # attempt against one keyserver, and fails the whole job when that server is slow.
+        for attempt in range(6):
+            server = ("keys.openpgp.org", "keyserver.ubuntu.com")[attempt % 2]
+            code, _ = run(["pacman-key", "--keyserver", server, "--recv-keys", OMARCHY_KEY], log, check=False)
+            if code == 0:
+                run(["pacman-key", "--lsign-key", OMARCHY_KEY], log)
+                break
+            time.sleep(5 * (attempt + 1))
         run(["pacman", "-U", "--noconfirm", f"{url}/{keyring}"], log)
         run(["pacman-key", "--populate", "omarchy"], log)
     for attempt in range(3):

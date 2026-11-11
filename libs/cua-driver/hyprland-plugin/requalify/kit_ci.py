@@ -106,6 +106,8 @@ def main():
         candidate_path = args.out / "candidate-profile.json"
         candidate_path.write_bytes(verify.json_bytes(candidate))
         record["steps"]["measure"] = "pass"
+        # Artifact downloads can be rate limited; the candidate is public data, so keep it in the log too.
+        print("=== candidate-profile.json begin\n" + candidate_path.read_text() + "=== candidate-profile.json end", flush=True)
 
         # 2. Is the committed profile still this channel?
         if args.reviewed:

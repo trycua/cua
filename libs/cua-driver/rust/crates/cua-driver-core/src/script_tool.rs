@@ -68,6 +68,10 @@ const STACK_BYTES: usize = 1024 * 1024;
 const THREAD_STACK_BYTES: usize = 16 * 1024 * 1024;
 const RETURN_TEXT_LIMIT: usize = 8_000;
 const CALL_TEXT_LIMIT: usize = 12_000;
+/// A tool's first line ends with its verification clause ("not verified —
+/// confirm with a screenshot."), so the call log keeps whole first lines.
+const SUMMARY_TEXT_LIMIT: usize = 240;
+const CALL_LINE_LIMIT: usize = 300;
 const IMAGES_KEPT: usize = 2;
 /// Extra time the engine thread gets to notice a deadline or cancel.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(1_500);
@@ -437,6 +441,8 @@ struct CallRecord {
     op: String,
     line: u32,
     ok: bool,
+    /// The tool said it could not confirm the action took effect.
+    unverified: bool,
     elapsed: Duration,
     detail: String,
 }
@@ -485,6 +491,7 @@ async fn run(registry: &ToolRegistry, request: Request) -> ToolResult {
                         op: call.op.clone(),
                         line: call.line,
                         ok: result.is_ok(),
+                        unverified: result.as_ref().is_ok_and(unverified),
                         elapsed: call_started.elapsed(),
                         detail: match &result {
                             Ok(value) => summarize(value),
@@ -866,17 +873,34 @@ impl<'a> Api<'a> {
     }
 }
 
-/// Short, model-facing summary of a successful call.
+/// Whether a successful call's own result says the action is unconfirmed.
+fn unverified(value: &Value) -> bool {
+    value.get("verified").and_then(Value::as_bool) == Some(false)
+        || matches!(
+            value.get("effect").and_then(Value::as_str),
+            Some("unverifiable" | "suspected_noop")
+        )
+}
+
+/// Short, model-facing summary of a successful call. The tool's own first
+/// line stays, so its verification warnings reach the model.
 fn summarize(value: &Value) -> String {
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(|text| clip(text.lines().next().unwrap_or(""), SUMMARY_TEXT_LIMIT));
     if let Some(target) = value
         .get("target")
         .and_then(|target| target.get("element"))
         .and_then(Value::as_str)
     {
-        return format!("on {target}");
+        return match text {
+            Some(text) if !text.is_empty() => format!("on {target}: {text}"),
+            _ => format!("on {target}"),
+        };
     }
-    if let Some(text) = value.get("text").and_then(Value::as_str) {
-        return clip(text.lines().next().unwrap_or(""), 120);
+    if let Some(text) = text {
+        return text;
     }
     match value {
         Value::Array(items) => format!("{} item(s)", items.len()),
@@ -913,16 +937,21 @@ fn render(
     let calls_json: Vec<Value> = log
         .iter()
         .map(|record| {
-            json!({
+            let mut entry = json!({
                 "call": record.number,
                 "op": record.op,
                 "line": (record.line > 0).then_some(record.line),
                 "ok": record.ok,
                 "ms": record.elapsed.as_millis() as u64,
                 "detail": record.detail,
-            })
+            });
+            if record.unverified {
+                entry["verified"] = json!(false);
+            }
+            entry
         })
         .collect();
+    let unverified_calls = log.iter().filter(|record| record.unverified).count();
     let mut lines = Vec::new();
     let mut structured = json!({
         "elapsed_ms": elapsed_ms,
@@ -989,6 +1018,11 @@ fn render(
             true
         }
     };
+    if unverified_calls > 0 {
+        lines.push(format!(
+            "{unverified_calls} call(s) unverified — look before reporting done"
+        ));
+    }
     if !outcome.console.is_empty() {
         lines.push(format!(
             "console ({} line(s){}):",
@@ -1013,12 +1047,16 @@ fn render(
                     String::new()
                 },
                 record.op,
-                if record.ok { "ok" } else { "ERROR" },
+                match (record.ok, record.unverified) {
+                    (false, _) => "ERROR",
+                    (true, true) => "ok (unverified)",
+                    (true, false) => "ok",
+                },
                 record.elapsed.as_millis(),
                 if record.detail.is_empty() {
                     String::new()
                 } else {
-                    format!(": {}", clip(&record.detail, 160))
+                    format!(": {}", clip(&record.detail, CALL_LINE_LIMIT))
                 }
             ));
         }

@@ -62,6 +62,25 @@ impl Tool for Fake {
             _ if args["refuse"] == true => ToolResult::error(format!("{name} refused: stale token"))
                 .with_structured(json!({"code": "stale_element_token"})),
             _ if args["fail"] == true => ToolResult::error(format!("{name} refused: asked to fail")),
+            // The Linux driver's real-pointer click: dispatched, not confirmed.
+            _ if args["unconfirmed"] == true => ToolResult::text(
+                "Clicked element [2] (pid 42) with a real pointer click (delivery_mode=foreground, \
+                 focus_after=target); not verified — confirm with a screenshot.",
+            )
+            .with_structured(json!({"verified": false, "effect": "unverifiable"})),
+            _ if args["confirmed"] == true => {
+                let structured = json!({
+                    "path": "atspi", "verified": true, "effect": "confirmed",
+                    "evidence": [{"kind": "window_change", "detail": "1 window(s) appeared"}],
+                });
+                let record = crate::action_record::ActionExecutionRecord::from_legacy(
+                    &name, &args, &structured,
+                )
+                .expect("a click normalizes");
+                ToolResult::text("Clicked element [2] (pid 42) via AT-SPI action 'click'; window opened.")
+                    .with_structured(structured)
+                    .with_action_record(record)
+            }
             _ => ToolResult::text(format!("{name} done")),
         }
     }
@@ -831,4 +850,55 @@ fn the_script_only_description_is_generated_from_the_registry() {
         !default.contains("launch_app, list_apps"),
         "no hand-written list"
     );
+}
+
+#[tokio::test]
+async fn a_role_name_call_keeps_the_tools_verification_warning_in_the_call_log() {
+    let harness = Harness::new();
+    let result = harness
+        .run(
+            "await cua.tools.click({pid: 42, role: 'button', name: 'Save', unconfirmed: true});\n\
+             await cua.tools.click({pid: 42, role: 'button', name: 'Save', confirmed: true});\n\
+             return 1;",
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let message = text(&result);
+    assert!(
+        message.contains(
+            "1. line 1 click ok (unverified) ("
+        ) && message.contains(
+            "on [2] AXButton \"Save\": Clicked element [2] (pid 42) with a real pointer click \
+             (delivery_mode=foreground, focus_after=target); not verified — confirm with a screenshot."
+        ),
+        "{message}"
+    );
+    assert!(
+        message.contains("1 call(s) unverified — look before reporting done"),
+        "{message}"
+    );
+    // A confirmed call stays plain `ok` and keeps its own text too.
+    assert!(message.contains("2. line 2 click ok ("), "{message}");
+    assert!(
+        message.contains("via AT-SPI action 'click'; window opened."),
+        "{message}"
+    );
+    let calls = structured(&result)["calls"].clone();
+    let clicks: Vec<&Value> = calls
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["op"] == "click")
+        .collect();
+    assert_eq!(clicks[0]["verified"], false);
+    assert!(clicks[1].get("verified").is_none(), "{calls}");
+}
+
+#[tokio::test]
+async fn a_script_whose_calls_all_confirm_has_no_unverified_line() {
+    let harness = Harness::new();
+    let result = harness
+        .run("await cua.tools.click({pid: 42, role: 'button', name: 'Save', confirmed: true});\nreturn 1;")
+        .await;
+    assert!(!text(&result).contains("unverified"), "{}", text(&result));
 }

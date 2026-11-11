@@ -491,36 +491,52 @@ mod tests {
         }
     }
 
-    /// Live check on a desktop that shows UserNotificationCenter alerts: each
-    /// one is classified by its buttons, and only consent alerts refuse.
-    /// Prints one line per alert. Run by hand with
-    /// `cargo test -p platform-macos --lib -- --ignored notification_center_alerts`.
+    /// Live, read-only check of the prompts on this desktop: prints how each
+    /// on-screen window of a prompt owner is classified and whether a HID
+    /// pointer event at its centre would be refused. Sends no input. Run by
+    /// hand with `cargo test -p platform-macos --lib -- --ignored
+    /// on_screen_prompts --nocapture`.
     #[test]
-    #[ignore = "reads the live desktop's UserNotificationCenter alerts"]
-    fn notification_center_alerts_are_classified_by_their_buttons() {
+    #[ignore = "reads the live desktop's prompt windows"]
+    fn on_screen_prompts_are_classified() {
         for window in crate::windows::on_screen_windows_any_layer() {
-            if Owner::of(window.pid).kind != PromptOwner::ConsentAlertsOnly {
-                continue;
-            }
-            let content = alert_content(window.pid, window.window_id);
-            let consent = is_consent_window(window.pid, window.window_id);
+            let owner = Owner::of(window.pid);
+            let consent = match owner.kind {
+                PromptOwner::None => continue,
+                PromptOwner::Always => None,
+                PromptOwner::ConsentAlertsOnly => {
+                    let content = alert_content(window.pid, window.window_id);
+                    assert!(
+                        content.is_some(),
+                        "window {} did not read",
+                        window.window_id
+                    );
+                    Some((
+                        content.map(|content| content.button_titles),
+                        is_consent_window(window.pid, window.window_id),
+                    ))
+                }
+            };
             let b = &window.bounds;
-            let point = refuse_point(
+            let refused = refuse_point(
                 PromptInput::Refuse,
                 b.x + b.width / 2.0,
                 b.y + b.height / 2.0,
-            );
-            println!(
-                "window {} buttons {:?} consent {consent} point refused by {:?}",
-                window.window_id,
-                content.as_ref().map(|content| &content.button_titles),
-                point.err().map(|refusal| refusal.owner)
-            );
-            if !consent {
-                // A non-consent alert alone does not refuse; another prompt
-                // window stacked at the same point still would.
-                assert!(content.is_some());
+            )
+            .err()
+            .map(|refusal| refusal.owner);
+            if consent.is_none() || consent.as_ref().is_some_and(|(_, consent)| *consent) {
+                assert!(
+                    refused.is_some(),
+                    "prompt window {} not refused",
+                    window.window_id
+                );
             }
+            assert!(refuse_point(PromptInput::Allow, b.x + 1.0, b.y + 1.0).is_ok());
+            println!(
+                "{} window {} layer {} {:?} centre refused by {:?}",
+                owner.name, window.window_id, window.layer, consent, refused
+            );
         }
     }
 

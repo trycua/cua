@@ -182,15 +182,15 @@ When the postcondition is visibly satisfied, stop acting. For media, selection a
 Sending input again, on the same route or another one (pixels, `delivery_mode:"foreground"`, a desktop target, `run_steps` with `foreground_fallback`), is safe only when the earlier attempt provably did not happen. Two things prove that:
 
 - A refusal the driver raises before it sends any input: `stale_element_token`, `ambiguous_window_target`, `window_scope_unproven`, and Linux `browser_dialog` refusing `delivery_mode:"background"`. Take a fresh snapshot and act on its target.
-- A fresh `get_window_state`, or `verify_state` with `include_screenshot:true`, taken after the attempt, whose tree or image shows the attempt had no effect.
+- A fresh `get_window_state`, or `verify_state` with `include_screenshot:true`, taken after the attempt, whose tree or image shows the attempt had no effect, when the attempt cannot still land. It can still land after a timeout, a canceled call or a lost response, and after a Linux `background_unavailable` from a token `type_text`: input the driver sent before the result can still arrive after the read.
 
-Every other result may already have taken effect: `unverifiable`, `partial`, `suspected_noop`, any other `refused`, `background_unavailable`, a `verify_state` of `unknown` or `unsatisfied`, a timeout, a canceled call, or any error. An interrupted transport may have delivered input before losing its response. On Linux/Wayland, `background_unavailable` can follow an AT-SPI write or action that already ran (see [Linux](LINUX.md#gnomemutter)), and Hyprland isolated input can report `refused` after delivering part of a text. A result's suggestion to retry with `delivery_mode:"foreground"` names a route; it does not prove that nothing landed.
+Every other result may already have taken effect: `unverifiable`, `partial`, `suspected_noop`, any other `refused`, `background_unavailable`, a `verify_state` of `unknown` or `unsatisfied`, a timeout (`ax_timeout`, `foreground_timeout`, or effect `unknown`), a canceled call, or any error. An interrupted transport may have delivered input before losing its response. On Linux/Wayland, `background_unavailable` can follow an AT-SPI write or action that already ran (see [Linux](LINUX.md#gnomemutter)), and Hyprland isolated input can report `refused` after delivering part of a text. A result's suggestion to retry with `delivery_mode:"foreground"` names a route; it does not prove that nothing landed.
 
 After any of these, read fresh state first. Never decide from a tree or image taken before the attempt.
 
 - Fresh state shows the action took effect, fully or partly: do not send it again. Continue from that state.
-- It shows no effect: send the input again with the target from that fresh state, and apply this rule to the new attempt.
-- It cannot show either way: stop and report the uncertain effect.
+- It shows no effect and the attempt cannot still land: send the input again with the target from that fresh state, and apply this rule to the new attempt.
+- It cannot show either way, or the attempt can still land: stop and report the uncertain effect.
 
 ## Filesystem outcomes and GUI fallbacks
 

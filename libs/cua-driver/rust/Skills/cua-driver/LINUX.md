@@ -366,11 +366,11 @@ raw background PX possible on a standard compositor.
 - **Results that can follow delivered input.** A background `type_text` with
   an element token writes through AT-SPI; if that write errors or runs out of
   time, the result is `background_unavailable` and the text may already be in
-  the field. A background pixel `click` fires the AT-SPI action under the
-  point; an error or timeout there also ends as `background_unavailable`. A
-  foreground action that reports "the input was sent, but the prior focus
-  could not be restored" sent its input, and focus may still be on the target.
-  Read fresh state before any retry ([No blind retry](WORKFLOW.md#no-blind-retry)).
+  the field, or still arrive after a later read. A background pixel `click`
+  fires the AT-SPI action under the point; an error there also ends as
+  `background_unavailable`. A foreground action that reports "the input was
+  sent, but the prior focus could not be restored" sent its input, and focus
+  may still be on the target. Read fresh state before any retry ([No blind retry](WORKFLOW.md#no-blind-retry)).
 - **Shell prompts.** Polkit authentication and keyring prompts are drawn by
   the Shell, not by an application window, so the helper's window list does
   not include them. While one is open it holds the input grab, and input to

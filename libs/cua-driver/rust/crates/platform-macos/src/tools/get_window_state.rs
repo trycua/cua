@@ -1282,6 +1282,19 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     if !node.actions.is_empty() {
         entry["actions"] = serde_json::json!(node.actions);
     }
+    if !node.custom_actions.is_empty() {
+        entry["custom_actions"] = serde_json::Value::Array(
+            node.custom_actions
+                .iter()
+                .map(|action| {
+                    serde_json::json!({
+                        "name": action.name,
+                        "raw": action.raw,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
     if node.in_web_content {
         entry["in_web_content"] = serde_json::Value::Bool(true);
     }
@@ -1772,6 +1785,7 @@ mod tests {
             identifier: None,
             help: None,
             actions,
+            custom_actions: vec![],
             element_ptr: 0,
             depth,
             parent_element_index: parent,

@@ -893,6 +893,8 @@ pub enum AccessibilityOptIn {
     /// `AXManualAccessibility` is unsupported and the app is neither Chromium
     /// nor Electron: nothing was written, and nothing needs enabling.
     NotNeeded,
+    /// The app rejected both attributes.
+    Refused,
     NotAccepted,
 }
 
@@ -940,7 +942,7 @@ fn choose_accessibility_opt_in(
     if set_true("AXEnhancedUserInterface") == kAXErrorSuccess {
         AccessibilityOptIn::EnhancedUserInterface
     } else {
-        AccessibilityOptIn::NotAccepted
+        AccessibilityOptIn::Refused
     }
 }
 

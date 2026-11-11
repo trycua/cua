@@ -1699,7 +1699,13 @@ fn type_text_in_key_window(
     if let Some((element, owns, idx_opt)) = ax_target {
         let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
+        // The Return goes out as a pid-routed key, which a semantic-only
+        // request may not send.
+        let submit_body = matches!(keyboard_policy, BackgroundKeyboardPolicy::Allowed)
+            .then(|| single_line_submit_body(&role, text))
+            .flatten();
+        let ax_text = submit_body.unwrap_or(text);
+        let err = unsafe { set_string_attr(element, "AXSelectedText", ax_text) };
         // Classify the atomic write before considering synthesis. Complete AX
         // delivery returns immediately. Partial delivery is surfaced as such
         // instead of appending the full payload again. When synthesis would
@@ -1707,7 +1713,7 @@ fn type_text_in_key_window(
         // safely and unreadable AX state is reported as indeterminate.
         let after = unsafe { copy_string_attr(element, "AXValue") };
         let ax_progress = if err == kAXErrorSuccess {
-            Some(typed_progress(before.as_deref(), after.as_deref(), text))
+            Some(typed_progress(before.as_deref(), after.as_deref(), ax_text))
         } else {
             None
         };
@@ -1730,9 +1736,15 @@ fn type_text_in_key_window(
         }
         if ax_progress == Some(TypedProgress::Complete) {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+            let submitted = if submit_body.is_some() {
+                crate::input::keyboard::type_text_with_delay(pid, "\n", 0)?;
+                ", then pressed Return"
+            } else {
+                ""
+            };
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                 detail: format!(
-                    " into{idx_str} {role} \"{title}\"{}",
+                    " into{idx_str} {role} \"{title}\"{}{submitted}",
                     document.note().trim_end_matches('.')
                 ),
                 path: PATH_AX,
@@ -1815,6 +1827,23 @@ unsafe fn focused_accepts_text(element: AXUIElementRef) -> bool {
             CFRelease(range);
             true
         })
+}
+
+/// The text before a final Return, when `text` is one line plus that Return
+/// and `role` is a single-line field. Such a field cannot hold a newline, so
+/// the Return can only mean submit. An AX insert of the whole string cannot be
+/// read back (the field drops the newline) and never submits, and typing the
+/// string again after it doubled the text (Safari's address bar searched for
+/// "netflix.com netflix.com"). So the line is inserted and confirmed alone,
+/// and Return is sent as its own key.
+fn single_line_submit_body<'a>(role: &str, text: &'a str) -> Option<&'a str> {
+    if !matches!(role, "AXTextField" | "AXSearchField" | "AXComboBox") {
+        return None;
+    }
+    let body = text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix(['\n', '\r']))?;
+    (!body.is_empty() && !body.contains(['\n', '\r', '\t'])).then_some(body)
 }
 
 fn is_text_input_role(role: &str) -> bool {
@@ -2118,6 +2147,27 @@ mod tests {
         assert_eq!(indeterminate["synthesized_chars"], 0);
         assert_eq!(indeterminate["retryable"], false);
         assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
+    }
+
+    #[test]
+    fn single_line_fields_split_off_one_trailing_return() {
+        for (role, text, expected) in [
+            ("AXTextField", "netflix.com\n", Some("netflix.com")),
+            ("AXSearchField", "query\r", Some("query")),
+            ("AXComboBox", "A1\r\n", Some("A1")),
+            ("AXTextField", "netflix.com", None),
+            ("AXTextField", "\n", None),
+            ("AXTextField", "a\n\n", None),
+            ("AXTextField", "a\nb\n", None),
+            ("AXTextField", "a\tb\n", None),
+            ("AXTextArea", "line\n", None),
+        ] {
+            assert_eq!(
+                super::single_line_submit_body(role, text),
+                expected,
+                "role={role} text={text:?}"
+            );
+        }
     }
 
     #[test]

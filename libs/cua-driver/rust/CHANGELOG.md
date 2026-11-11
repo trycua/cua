@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.8...cua-driver-rs-v0.47.9) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse input to macOS security and consent prompts ([#7338](https://github.com/trycua/cua/issues/7338)) ([e13f432](https://github.com/trycua/cua/commit/e13f4321350c9114eaff0d34e2fb88b6afd5f3e0))
+
 ## [0.47.8](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.7...cua-driver-rs-v0.47.8) (2026-11-11)
 
 

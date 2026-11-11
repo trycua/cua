@@ -67,6 +67,11 @@ pub enum BackgroundUnavailable {
     /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
+    /// The menu's items only exist once the menu is open, and opening a
+    /// toolkit menu grabs the user's keyboard and pointer for as long as it
+    /// stays open: the user's keystrokes would land in the menu instead of in
+    /// their own window (trycua/cua#7371).
+    MenuOpenGrabsKeyboard,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
     /// addressed to an unfocused window without briefly moving focus, which
     /// background delivery forbids.
@@ -94,6 +99,10 @@ impl BackgroundUnavailable {
                 "no libei input backend on this Wayland compositor (built without \
                  portal-input, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
+            }
+            Self::MenuOpenGrabsKeyboard => {
+                "this menu only publishes its items once it is open, and an open menu takes the \
+                 keyboard and pointer from the user until it closes, so their typing would be lost"
             }
             Self::ChromiumInput => {
                 "Chromium/Electron drops synthetic pointer and keyboard events sent to \

@@ -3635,64 +3635,194 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
 /// snapshot index is retained across mutations.
 pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
-    invoke_menu_path_in(pid, 0, path)
+    invoke_menu_path_in(pid, 0, path, MenuOpening::Allowed)
+}
+
+/// Whether [`invoke_menu_path_in`] may open intermediate menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuOpening {
+    /// Open each menu along the path when the final item cannot be reached
+    /// directly (the window was activated for a foreground delivery).
+    Allowed,
+    /// Background delivery: never open a menu. An open GTK, Qt or VCL menu
+    /// grabs the core keyboard and pointer, so the user's keystrokes land in
+    /// the menu instead of their own window for as long as it stays open
+    /// (trycua/cua#7371).
+    Forbidden,
+}
+
+/// The final menu item cannot be reached without opening a menu, and the
+/// delivery forbids opening one ([`MenuOpening::Forbidden`]). Nothing was
+/// actuated.
+#[derive(Debug)]
+pub struct MenuMustOpen {
+    pub detail: String,
+}
+
+impl std::fmt::Display for MenuMustOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the menu item is only reachable by opening a menu ({})",
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for MenuMustOpen {}
+
+/// The unique live node for `path` (all of it, or a prefix) in one walk;
+/// `Ok(None)` when no node matches it.
+fn resolve_menu_segment(
+    visited: &[Visited<'_>],
+    scoped_frame: Option<usize>,
+    path: &[String],
+) -> Result<Option<usize>> {
+    let depth = path.len() - 1;
+    let mut matches = exact_menu_path_matches(visited, path);
+    if matches.len() > 1 {
+        if let Some(scope) = scoped_frame {
+            let scoped: Vec<usize> = matches
+                .iter()
+                .copied()
+                .filter(|index| visited[*index].frame_ordinal == scope)
+                .collect();
+            if !scoped.is_empty() {
+                matches = scoped;
+            }
+        }
+    }
+    if matches.len() > 1 {
+        matches = dedupe_menu_matches(visited, matches);
+    }
+    match matches.as_slice() {
+        [index] => Ok(Some(*index)),
+        [] => Ok(None),
+        _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
+    }
+}
+
+/// A menu node that opens a submenu rather than running a command: GTK and
+/// Qt give it the `menu` role, a command item is `menu item` / `check menu
+/// item` / `radio menu item`.
+fn opens_submenu(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("menu")
+}
+
+/// The decision for one resolved final item, before any action is fired.
+#[derive(Debug, PartialEq, Eq)]
+enum LeafPlan {
+    /// Fire the item's own action; no menu opens.
+    Direct,
+    /// The item is itself a submenu: firing it opens a menu.
+    OpensMenu,
+}
+
+fn leaf_plan(role: &str) -> LeafPlan {
+    if opens_submenu(role) {
+        LeafPlan::OpensMenu
+    } else {
+        LeafPlan::Direct
+    }
+}
+
+/// Fire the safe activation action of `target`. `Ok(false)` is the toolkit
+/// declining it (LibreOffice VCL answers that for an item of a closed menu).
+async fn fire_menu_node(target: &Visited<'_>, depth: usize) -> Result<bool> {
+    if target.enabled == Some(false) {
+        anyhow::bail!("menu path segment {depth} is disabled");
+    }
+    let chosen = activation_index(&target.role, &target.actions)
+        .ok_or_else(|| anyhow!("menu path segment {depth} has no safe activation action"))?;
+    let proxies = target
+        .acc
+        .proxies()
+        .await
+        .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
+    let action = proxies
+        .action()
+        .await
+        .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+    action
+        .do_action(chosen as i32)
+        .await
+        .map_err(|error| anyhow!("doAction failed: {error}"))
 }
 
 /// [`invoke_menu_path`] scoped to the caller's native window: when the same
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+///
+/// GTK 3 and Qt publish closed menus, so the final item is usually in the
+/// first walk: its action is fired directly and no menu ever opens (GTK runs
+/// the item's `activate` and leaves its menus unposted). Only when the item
+/// is missing or declines a closed-menu action does the path open each menu
+/// in turn, and only when `opening` allows it; otherwise [`MenuMustOpen`] is
+/// returned with nothing actuated.
+pub fn invoke_menu_path_in(
+    pid: u32,
+    xid: u64,
+    path: &[String],
+    opening: MenuOpening,
+) -> Result<()> {
     bounded(
         async {
             let conn = shared_connection().await?;
+            let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let last = path.len() - 1;
+            match resolve_menu_segment(&collected.visited, collected.scoped_frame, path)? {
+                Some(index) => {
+                    let target = &collected.visited[index];
+                    if opening == MenuOpening::Forbidden
+                        && leaf_plan(&target.role) == LeafPlan::OpensMenu
+                    {
+                        return Err(MenuMustOpen {
+                            detail: format!(
+                                "segment {last} is a submenu, and invoking it opens that menu"
+                            ),
+                        }
+                        .into());
+                    }
+                    if fire_menu_node(target, last).await? {
+                        return Ok(());
+                    }
+                    if last == 0 {
+                        anyhow::bail!("menu path segment {last} rejected its native action");
+                    }
+                    if opening == MenuOpening::Forbidden {
+                        // Declined with its menu closed; the hop walk would
+                        // open the menu. Nothing ran.
+                        return Err(MenuMustOpen {
+                            detail: "the app declines the item's action while its menu is closed"
+                                .into(),
+                        }
+                        .into());
+                    }
+                }
+                None if last == 0 => anyhow::bail!("menu path segment 0 was not found"),
+                None if opening == MenuOpening::Forbidden => {
+                    return Err(MenuMustOpen {
+                        detail: "the app does not publish the item until its menu opens".into(),
+                    }
+                    .into())
+                }
+                None => {}
+            }
+            drop(collected);
             for depth in 0..path.len() {
                 let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let visited = collected.visited;
-                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
-                if matches.len() > 1 {
-                    if let Some(scope) = collected.scoped_frame {
-                        let scoped: Vec<usize> = matches
-                            .iter()
-                            .copied()
-                            .filter(|index| visited[*index].frame_ordinal == scope)
-                            .collect();
-                        if !scoped.is_empty() {
-                            matches = scoped;
-                        }
-                    }
-                }
-                if matches.len() > 1 {
-                    matches = dedupe_menu_matches(&visited, matches);
-                }
-                let target_index = match matches.as_slice() {
-                    [index] => *index,
-                    [] => anyhow::bail!("menu path segment {depth} was not found"),
-                    _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
-                };
-                let target = &visited[target_index];
-                if target.enabled == Some(false) {
-                    anyhow::bail!("menu path segment {depth} is disabled");
-                }
-                let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
-                    anyhow!("menu path segment {depth} has no safe activation action")
-                })?;
-                let proxies = target
-                    .acc
-                    .proxies()
-                    .await
-                    .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
-                let action = proxies
-                    .action()
-                    .await
-                    .map_err(|error| anyhow!("Action unavailable: {error}"))?;
-                let accepted = action
-                    .do_action(chosen as i32)
-                    .await
-                    .map_err(|error| anyhow!("doAction failed: {error}"))?;
-                if !accepted {
+                let index = resolve_menu_segment(
+                    &collected.visited,
+                    collected.scoped_frame,
+                    &path[..=depth],
+                )?
+                .ok_or_else(|| anyhow!("menu path segment {depth} was not found"))?;
+                if !fire_menu_node(&collected.visited[index], depth).await? {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
                 if depth + 1 != path.len() {
@@ -3703,6 +3833,41 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+#[cfg(test)]
+mod menu_leaf_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_item_fires_directly_and_a_submenu_would_open_a_menu() {
+        // trycua/cua#7371: background invoke_menu must never open a menu,
+        // because an open menu grabs the user's keyboard. Command items run
+        // through their own action; only a submenu node opens one.
+        for role in [
+            "menu item",
+            "check menu item",
+            "radio menu item",
+            "Menu Item",
+        ] {
+            assert_eq!(leaf_plan(role), LeafPlan::Direct, "{role}");
+        }
+        for role in ["menu", "Menu", " menu "] {
+            assert_eq!(leaf_plan(role), LeafPlan::OpensMenu, "{role}");
+        }
+    }
+
+    #[test]
+    fn menu_must_open_names_why_nothing_ran() {
+        let error: anyhow::Error = MenuMustOpen {
+            detail: "segment 1 is a submenu".into(),
+        }
+        .into();
+        assert!(error.downcast_ref::<MenuMustOpen>().is_some());
+        assert!(error
+            .to_string()
+            .contains("only reachable by opening a menu"));
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.

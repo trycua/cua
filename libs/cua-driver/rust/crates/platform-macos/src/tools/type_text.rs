@@ -1729,6 +1729,13 @@ fn type_text_in_key_window(
         } else {
             crate::document_edit::DocumentEdited::NotADocument
         };
+        // Return is a pid-routed key: it reaches whichever field has focus,
+        // so it goes out only once the written field is confirmed focused.
+        let return_reaches_field =
+            submit_body.is_some() && ax_progress == Some(TypedProgress::Complete) && {
+                let _ = crate::input::ax_actions::focus_element(element as usize);
+                crate::input::ax_actions::element_has_keyboard_focus(pid, element as usize)
+            };
         if owns {
             unsafe {
                 CFRelease(element as _);
@@ -1736,11 +1743,23 @@ fn type_text_in_key_window(
         }
         if ax_progress == Some(TypedProgress::Complete) {
             let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
-            let submitted = if submit_body.is_some() {
-                crate::input::keyboard::type_text_with_delay(pid, "\n", 0)?;
-                ", then pressed Return"
-            } else {
-                ""
+            let submitted = match submit_body {
+                Some(_) if return_reaches_field => {
+                    crate::input::keyboard::type_text_with_delay(pid, "\n", 0)?;
+                    ", then pressed Return"
+                }
+                Some(body) => {
+                    return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
+                        detail: format!(
+                            " into{idx_str} {role} \"{title}\"; Return was not sent because \
+                             the field does not hold keyboard focus"
+                        ),
+                        path: PATH_AX,
+                        verified: false,
+                        delivered_chars: Some(body.chars().count()),
+                    }));
+                }
+                None => "",
             };
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                 detail: format!(

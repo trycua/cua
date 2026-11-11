@@ -216,3 +216,21 @@ def test_no_follow_holds_the_feed_with_a_warning_not_an_error():
 def test_plan_without_rolling():
     rels = [{"tag_name": "cua-spaces-v1.0.0", "draft": False}, {"tag_name": "cua-sdk-v2.0.0", "draft": False}]
     assert plan.pick(rels, 1, include_rolling=False) == ["cua-spaces-v1.0.0", "cua-sdk-v2.0.0"]
+
+
+def test_rewritten_checksums_are_refused_then_replaced_with_allow_overwrite():
+    # cd-cua-sdk mirrors a release, then attach-xcframework rewrites checksums.txt.
+    src, store = FakeSource({}), FakeStore()
+    src.add("sdk-v1", {"a.tgz": b"A", "checksums.txt": b"old"})
+    assert run(src, store, ["sdk-v1"]) == 0
+    src.add("sdk-v1", {"a.tgz": b"A", "checksums.txt": b"old plus xcframework"})
+    assert run(src, store, ["sdk-v1"]) != 0
+    assert run(src, store, ["sdk-v1"], "--allow-overwrite") == 0
+    assert store.objs["sdk-v1/checksums.txt"]["body"] == b"old plus xcframework"
+
+
+def test_sdk_workflow_second_mirror_allows_overwrite():
+    wf = (SCRIPTS.parent / "workflows" / "cd-cua-sdk.yml").read_text()
+    job = wf[wf.index("  cdn-publish-xcframework:"):]
+    assert 'allow-overwrite: "true"' in job
+

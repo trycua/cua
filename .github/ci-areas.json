@@ -105,6 +105,7 @@
     "ci-cua-spacesd.yml",
     "ci-driver-mcp-candidate.yml",
     "ci-hyprland-plugin.yml",
+    "ci-hyprland-plugin-kit.yml",
     "ci-jev-use.yml",
     "ci-nix-linux.yml",
     "ci-platform-linux-portability.yml",

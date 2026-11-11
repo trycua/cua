@@ -44,6 +44,8 @@ USER, UID = "cua", 1000
 # and does not ship the key bytes outside the package, so this does too; gpg checks the downloaded key
 # against the full fingerprint, so a keyserver cannot substitute a different key.
 OMARCHY_KEY = "40DFB630FF42BCFFB047046CF0134EE680CAC571"
+# Driver releases before #6495 refuse input builds on any Hyprland but the one they pinned.
+SOURCE_PIN = re.compile(r"Input is pinned to Hyprland (\S+)")
 
 
 def sha256_file(path):
@@ -150,13 +152,18 @@ def measure(job):
     }
 
 
-def build(source, out, header_version):
+def build(source, out, header_version, released=False):
     build_dir = out / "build"
     log = out / "build.log"
     options = [f"-D{key}={value}" for key, value in BUILD_OPTIONS.items()]
-    code, _ = run(["cmake", "-S", str(source), "-B", str(build_dir), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                   "-DCMAKE_CXX_COMPILER=/usr/bin/g++", "-DBUILD_TESTING=ON",
-                   f"-DCUA_HYPRLAND_EXPECTED_VERSION={header_version}", *options], log, check=False)
+    code, output = run(["cmake", "-S", str(source), "-B", str(build_dir), "-G", "Ninja",
+                        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CXX_COMPILER=/usr/bin/g++", "-DBUILD_TESTING=ON",
+                        f"-DCUA_HYPRLAND_EXPECTED_VERSION={header_version}", *options], log, check=False)
+    pin = SOURCE_PIN.search(output) if code and released else None
+    if pin and pin[1] != header_version:
+        # The released source declines these headers by design; only a new release can change that.
+        reason = f"this release pins input to Hyprland {pin[1]}"
+        return {"status": "unsupported", "step": "configure", "reason": reason, "log": log.name}, None
     if code:
         return {"status": "fail", "step": "configure", "log": log.name}, None
     code, _ = run(["cmake", "--build", str(build_dir), "--parallel", str(os.cpu_count() or 2)], log, check=False)
@@ -219,6 +226,8 @@ def session(module, out):
 
 
 def overall(record):
+    if record["build"]["status"] == "unsupported":
+        return "unsupported"
     build_ok = record["build"]["status"] == "pass" and record.get("ctest", {}).get("status") == "pass"
     if not build_ok or "fail" in (record["load"]["status"], record["smoke"]["status"]):
         return "fail"
@@ -242,7 +251,8 @@ def main():
     try:
         setup_pacman(job, args.out / "pacman.log")
         record["measured"] = measure(job)
-        record["build"], module = build(args.source, args.out, record["measured"]["hyprland"]["header_version"])
+        record["build"], module = build(args.source, args.out, record["measured"]["hyprland"]["header_version"],
+                                        released=bool(job.get("driver_version")))
         if module:
             record["ctest"] = ctest(args.out)
             if args.skip_session:

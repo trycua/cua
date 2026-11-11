@@ -233,6 +233,14 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(len(include), 3)  # A failure is retried.
         self.assertEqual(len(channels.plan(self.snapshot, SOURCES, previous, force=True)), 4)
 
+    def test_unsupported_never_skips_a_tree_main_builds(self):
+        key = self.snapshot["channels"]["arch"]["abi_key"]
+        previous = {"entries": [{"abi_key": key, "plugin": {"tree": "a" * 40}, "status": "unsupported"},
+                                {"abi_key": key, "plugin": {"tree": "b" * 40}, "status": "unsupported"}]}
+        include = channels.plan(self.snapshot, SOURCES, previous)
+        arch = [j["tree"] for j in include if j["abi_key"] == key]
+        self.assertEqual(arch, ["a" * 40])  # Tree a is main's too, so it is rebuilt; b is release-only.
+
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
 class SourcesTest(unittest.TestCase):
@@ -317,6 +325,23 @@ class QualifyTest(unittest.TestCase):
                 mock.patch.object(qualify, "run", return_value=(0, "100% tests passed out of 20\n")):
             result = qualify.ctest(Path(directory))
         self.assertEqual((result["status"], result["total"], result["failed"]), ("pass", 20, 0))
+
+    def test_released_source_pinned_to_other_hyprland_is_unsupported(self):
+        refused = "CMake Error at CMakeLists.txt:250 (message):\n  Input is pinned to Hyprland 0.56.2\n"
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(qualify, "run", return_value=(1, refused)):
+            out = Path(directory)
+            released, module = qualify.build(out, out, "0.57.1", released=True)
+            main, _ = qualify.build(out, out, "0.57.1")
+            same, _ = qualify.build(out, out, "0.56.2", released=True)
+        self.assertIsNone(module)
+        self.assertEqual((released["status"], released["step"]), ("unsupported", "configure"))
+        self.assertIn("0.56.2", released["reason"])
+        self.assertEqual(main["status"], "fail")  # main must build on every Hyprland.
+        self.assertEqual(same["status"], "fail")  # Refusing its own pinned version is a real failure.
+        unavailable = {"status": "unavailable"}
+        self.assertEqual(qualify.overall({"build": released, "load": unavailable, "smoke": unavailable}),
+                         "unsupported")
 
     def test_no_drm_device_is_unavailable_not_failure(self):
         with mock.patch.object(qualify, "drm_cards", return_value=[]):
@@ -426,6 +451,18 @@ class DryRunTest(unittest.TestCase):
                                  text=True, env=dict(os.environ, DRY_RUN="1"), check=True).stdout
         self.assertIn("gh issue create --title Hyprland\\ plugin\\ requalification\\ failing", out)
         self.assertIn("hyprland-requalify", out)
+
+    def test_unsupported_release_opens_no_issue_and_is_not_rebuilt(self):
+        refused = {"status": "unsupported", "step": "configure",
+                   "reason": "this release pins input to Hyprland 0.56.2"}
+        _, (result, fresh) = self.run_pipeline(mirrors(), statuses={"b" * 40: "unsupported"})
+        for entry in fresh:
+            if entry["plugin"]["tree"] == "b" * 40:
+                entry["checks"]["build"] = refused
+        self.assertEqual(manifest.failures(result, fresh), [])
+        self.assertIn("| unsupported |", manifest.matrix(result, fresh))
+        snapshot = channels.detect(fetcher=mirrors())
+        self.assertEqual(channels.plan(snapshot, SOURCES, result), [])
 
     def test_second_run_skips_finished_builds_and_keeps_history(self):
         _, (first, _) = self.run_pipeline(mirrors())

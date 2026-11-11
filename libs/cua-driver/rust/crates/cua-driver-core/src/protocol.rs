@@ -417,6 +417,11 @@ fn agent_instructions() -> String {
     agent_instructions_for(ScriptTools::configured())
 }
 
+/// Script-only habits, in the initialize text and in run_script's script-only
+/// description: a foreground retry stays on the one refused call, and
+/// a script stops to look once the UI opens or closes something.
+pub(crate) const SCRIPT_PACING: &str = "`delivery_mode:'foreground'` is per call: add it only to the call that was refused, and keep other element actions in the background. After an action that opens or closes something (a menu, banner or dialog), return and look before the next action.";
+
 fn agent_instructions_for(script: ScriptTools) -> String {
     // macOS needs no platform pointer: its permission line below names MACOS.md.
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
@@ -447,9 +452,10 @@ fn agent_instructions_for(script: ScriptTools) -> String {
         return format!(
             r#"cua-driver: background GUI automation through one tool, `run_script`: a sandboxed JavaScript async function body with the `cua` API (see its description). No shell.
 
-Call the driver's tools straight from the script: `await cua.tools.<name>(args)`, one signature per tool in run_script's description, full schema from `cua.describe(name)`. Look, then act: a short script that returns `(await cua.tools.get_window_state({{pid, window_id}})).tree_markdown`, then one script per step of the task with loops, waits and checks, returning what you need to confirm the result. A failed call throws with the script line; fix the script and rerun from that step. Act by {{role, name}} ({tree_kind}) targets; pixels only for surfaces missing from the tree. Stay in the background.
+Call the driver's tools straight from the script: `await cua.tools.<name>(args)`, one signature per tool in run_script's description, full schema from `cua.describe(name)`. Look, then act: a short script that returns `(await cua.tools.get_window_state({{pid, window_id}})).tree_markdown`, then one script per step of the task with loops, waits and checks, returning what you need to confirm the result. A failed call throws with the script line; fix the script and rerun from that step. Act by {{role, name}} ({tree_kind}) targets; pixels only for surfaces missing from the tree. Stay in the background. {pacing}
 
-Guides: `cua.tools.get_guide({{topic}})`, `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{permission_line}"#
+Guides: `cua.tools.get_guide({{topic}})`, `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{permission_line}"#,
+            pacing = SCRIPT_PACING,
         );
     }
 
@@ -603,6 +609,7 @@ mod agent_instruction_tests {
         use super::ScriptTools;
         let instructions = super::agent_instructions_for(ScriptTools::Only);
         assert!(instructions.contains("one tool, `run_script`"));
+        assert!(instructions.contains(super::SCRIPT_PACING));
         for direct in [
             "`run_steps(",
             "`list_windows(",

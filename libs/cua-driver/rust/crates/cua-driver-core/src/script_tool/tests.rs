@@ -835,6 +835,7 @@ fn the_script_only_description_is_generated_from_the_registry() {
     assert!(signatures.contains(&"move_cursor()"), "{signatures:?}");
     assert!(description.contains("cua.tools.<name>(args)"));
     assert!(description.contains("cua.describe(name)"));
+    assert!(description.contains(crate::protocol::SCRIPT_PACING));
 
     // The default mode lists every tool beside run_script, so its
     // description names the rule, not the tools.

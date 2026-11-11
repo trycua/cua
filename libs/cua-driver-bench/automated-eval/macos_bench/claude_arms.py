@@ -128,7 +128,9 @@ SCRIPT_ONLY_ADDENDUM = (
     "`(await cua.tools.get_window_state({pid, window_id})).tree_markdown`. To act, call the action tools "
     "(click, type_text, set_value, press_key, scroll, move_cursor, ...) with {pid, role, name} targets or an "
     "element_token, use loops and if/else, and `return` what you need to check the result. A failed call throws "
-    "with the script line and the nearest elements; fix the script and run it again from the step that failed.\n"
+    "with the script line and the nearest elements; fix the script and run it again from the step that failed. "
+    "`delivery_mode:'foreground'` is per call: add it only to the call that was refused, and keep other element actions in the background. "
+    "After an action that opens or closes something (a menu, banner or dialog), return and look before the next action.\n"
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )
 

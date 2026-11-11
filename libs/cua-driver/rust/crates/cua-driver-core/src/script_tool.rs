@@ -165,12 +165,14 @@ pub(crate) fn script_only_description(registry: &ToolRegistry) -> String {
          in place of `element_token`: the element is found fresh, waiting up to 3 s.\n\
          - `cua.sleep(ms)`, `cua.computer.target` (\"mac\", \"windows\" or \"linux\").\n\
          {DESCRIPTION_LIMITS}\n\n\
+         {pacing}\n\n\
          Tools (`?` = optional):\n{signatures}\n\n\
          Example:\n\
          const [w] = (await cua.tools.list_windows({{app: \"Calculator\"}})).windows;\n\
          for (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await cua.tools.click({{pid: w.pid, role: \"button\", name: key}});\n\
          return (await cua.tools.get_window_state({{pid: w.pid, window_id: w.window_id}})).tree_markdown;",
         actions = BATCHABLE_TOOLS.join(", "),
+        pacing = crate::protocol::SCRIPT_PACING,
         signatures = signatures.join("\n"),
     )
 }

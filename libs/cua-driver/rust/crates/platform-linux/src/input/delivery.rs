@@ -71,6 +71,12 @@ pub enum BackgroundUnavailable {
     /// addressed to an unfocused window without briefly moving focus, which
     /// background delivery forbids.
     ChromiumInput,
+    /// An XInput2 toolkit (GTK, Qt, LibreOffice VCL) discards synthetic
+    /// XSendEvent pointer input, and this X server has no real
+    /// target-addressed pointer backend (Xvfb / Xtigervnc cannot hot-add the
+    /// agent's uinput pointer), so a wheel or button event would be lost
+    /// (trycua/cua#7369).
+    SyntheticPointerDropped,
     /// The remaining backend can only inject into the globally focused widget.
     FocusedInputOnly,
     /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
@@ -80,12 +86,7 @@ pub enum BackgroundUnavailable {
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
-        match self {
-            Self::NoLibeiBackend => "background_unavailable",
-            Self::ChromiumInput => "background_unavailable",
-            Self::FocusedInputOnly => "background_unavailable",
-            Self::WebKitSyntheticInput => "background_unavailable",
-        }
+        "background_unavailable"
     }
     fn detail(self) -> &'static str {
         match self {
@@ -99,6 +100,11 @@ impl BackgroundUnavailable {
                  a window that does not have the input focus. In the background only \
                  accessibility actions reach it: a left click on a button, link or \
                  other control, by element_token or at its pixel"
+            }
+            Self::SyntheticPointerDropped => {
+                "this app reads pointer and wheel input only from real input devices and discards \
+                 synthetic events, and this display server cannot add the agent's own pointer \
+                 device, so the event would be lost"
             }
             Self::FocusedInputOnly => {
                 "the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget"

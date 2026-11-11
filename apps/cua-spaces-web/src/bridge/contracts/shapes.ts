@@ -1883,6 +1883,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
   "notifications.markRead": nul,
+  "notifications.delete": nul,
+  "notifications.deleteAll": nul,
 
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
@@ -2338,6 +2340,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
   "notifications.markRead": nul,
+  "notifications.delete": nul,
+  "notifications.deleteAll": nul,
   "telemetry.track": nul,
   "telemetry.linkNotice": nullable(LinkNoticeShape),
   "telemetry.acknowledgeLinkNotice": nul,

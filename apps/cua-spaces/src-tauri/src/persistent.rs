@@ -38,6 +38,7 @@ pub const TOOLS: &[&str] = &[
     "routine_set_enabled",
     "notifications_list",
     "notifications_ack",
+    "notifications_delete",
     "computer_access_grant",
     "computer_access_revoke",
     "computer_access_list",

@@ -11763,6 +11763,12 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func notificationsAck(ids: [String]) async throws  -> UInt64
 
     /**
+     * Deletes notifications: these ids, or every one when `all` (an empty
+     * `ids` without `all` deletes nothing). Returns how many were deleted.
+     */
+    func notificationsDelete(ids: [String], all: Bool) async throws  -> UInt64
+
+    /**
      * Posts a notification to the Cua app. Returns its id.
      */
     func notifyUser(title: String, body: String?, agent: String?) async throws  -> String
@@ -12905,6 +12911,27 @@ open func notificationsAck(ids: [String])async throws  -> UInt64  {
                 uniffi_cua_sdk_fn_method_spaces_notifications_ack(
                     self.uniffiCloneHandle(),
                     FfiConverterSequenceString.lower(ids)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Deletes notifications: these ids, or every one when `all` (an empty
+     * `ids` without `all` deletes nothing). Returns how many were deleted.
+     */
+open func notificationsDelete(ids: [String], all: Bool)async throws  -> UInt64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_notifications_delete(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceString.lower(ids),FfiConverterBool.lower(all)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_u64,
@@ -55596,6 +55623,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_notifications_delete() != 26912) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_notify_user() != 48805) {

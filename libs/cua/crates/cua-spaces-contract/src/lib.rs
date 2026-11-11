@@ -1393,6 +1393,17 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::NotificationsAck>(),
         Spec {
             category: Category::PersistentAgents,
+            result: "JSON: `deleted` (how many were removed).",
+            instructions: "Removes notifications for good, in every app that reads the feed. Pass `ids`, or `all: true` for the whole feed; an empty `ids` deletes nothing.",
+            capabilities: &["notifications.read"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "spaces.notifications.delete(_:all:)",
+            rust_symbol: "notify::Feed::delete",
+            ..Spec::new("notifications_delete", "Delete notifications.")
+        }
+        .with::<i::NotificationsDelete>(),
+        Spec {
+            category: Category::PersistentAgents,
             result: "JSON: the grant: `id`, `agent`, `machine`, `created_ms`, `expires_ms`.",
             errors: &["not_confirmed"],
             instructions: "Lets one persistent agent use one of the user's computers (its computer-use tools, through the agent's bridge). Asks the user for presence (Touch ID or passphrase) first. Other agents of the account get nothing.",

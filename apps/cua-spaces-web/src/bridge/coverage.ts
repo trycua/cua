@@ -295,6 +295,8 @@ export const HOST_COVERAGE = {
   "notifications.list": { webkit: { methods: ["notifications.list"] }, tauri: NT["notifications.list"] },
   "notifications.markAllRead": { webkit: { methods: ["notifications.markAllRead"] }, tauri: NT["notifications.markAllRead"] },
   "notifications.markRead": { webkit: { methods: ["notifications.markRead"] }, tauri: NT["notifications.markRead"] },
+  "notifications.delete": { webkit: { methods: ["notifications.delete"] }, tauri: NT["notifications.delete"] },
+  "notifications.deleteAll": { webkit: { methods: ["notifications.deleteAll"] }, tauri: NT["notifications.deleteAll"] },
   ...TELEMETRY_COVERAGE,
   ...SPACE_DETAIL_COVERAGE,
   ...HOST_SETUP_COVERAGE,

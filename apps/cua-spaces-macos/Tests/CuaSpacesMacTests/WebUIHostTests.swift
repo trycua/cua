@@ -389,6 +389,27 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "notifications.markRead", [:]) == "bad_args")
     }
 
+    @Test func notificationsAreDeletedOneAtATimeOrAll() async throws {
+        let backend = BridgeContractTests.ToolBackend(FixtureSpacesBackend())
+        backend.agents.notifications.append(["id": "n2", "at_ms": backend.agents.now - 30_000, "agent": "ada", "kind": "message",
+                                             "title": "ada", "body": "Second.", "read": false])
+        let (bridge, _) = bridge(backend: backend)
+        func ids() async throws -> [String] {
+            let rows = try await bridge.handle("notifications.list", [:]) as? [[String: Any]] ?? []
+            return rows.compactMap { $0["id"] as? String }.sorted()
+        }
+        let all = try await ids()
+        #expect(all.count >= 2)
+        #expect(try await bridge.handle("notifications.delete", ["ids": [all[0]]]) is NSNull)
+        #expect(try await ids() == Array(all.dropFirst()))
+        // No ids deletes nothing (never all).
+        _ = try await bridge.handle("notifications.delete", ["ids": [String]()])
+        #expect(try await ids() == Array(all.dropFirst()))
+        #expect(await failure(bridge, "notifications.delete", [:]) == "bad_args")
+        #expect(try await bridge.handle("notifications.deleteAll", [:]) is NSNull)
+        #expect(try await ids().isEmpty)
+    }
+
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {
         let m = PersistentModel(tools: FakeAgentsTools())
         let agents = try await m.listAgents()
@@ -579,6 +600,7 @@ struct WebUIHostTests {
         #expect(await failure(bridge, "volume.overview", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.list", [:]) == "unsupported")
         #expect(await failure(bridge, "notifications.markRead", ["ids": ["n1"]]) == "unsupported")
+        #expect(await failure(bridge, "notifications.deleteAll", [:]) == "unsupported")
         #expect(await failure(bridge, "about.set", ["autoCheck": true]) == "unsupported")
         #expect(await failure(bridge, "host.openSettings", ["url": "https://example.com"]) == "bad_args")
         #expect(await failure(bridge, "volume.reveal", ["path": "/etc/hosts"]) == "bad_args")

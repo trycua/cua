@@ -2279,6 +2279,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_notifications(uint64_t ptr, int8_t unre
 uint64_t uniffi_cua_sdk_fn_method_spaces_notifications_ack(uint64_t ptr, RustBuffer ids
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFICATIONS_DELETE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFICATIONS_DELETE
+uint64_t uniffi_cua_sdk_fn_method_spaces_notifications_delete(uint64_t ptr, RustBuffer ids, int8_t all
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFY_USER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_NOTIFY_USER
 uint64_t uniffi_cua_sdk_fn_method_spaces_notify_user(uint64_t ptr, RustBuffer title, RustBuffer body, RustBuffer agent
@@ -5916,6 +5921,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_notifications(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_ACK
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_ACK
 uint16_t uniffi_cua_sdk_checksum_method_spaces_notifications_ack(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_DELETE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_NOTIFICATIONS_DELETE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_notifications_delete(void
 
 );
 #endif

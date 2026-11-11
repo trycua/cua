@@ -97,6 +97,8 @@ export const WEBKIT_PAGE_OPS = [
   "notifications.list",
   "notifications.markAllRead",
   "notifications.markRead",
+  "notifications.delete",
+  "notifications.deleteAll",
   "telemetry.track",
   "spaces.usage",
   "spaces.reach",
@@ -293,6 +295,8 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "notifications.list": list("notifications.list"),
     "notifications.markAllRead": none("notifications.markAllRead"),
     "notifications.markRead": none("notifications.markRead"),
+    "notifications.delete": none("notifications.delete"),
+    "notifications.deleteAll": none("notifications.deleteAll"),
 
     // Only known signals of fixed words leave the page; the host drops
     // them all while usage data is off.

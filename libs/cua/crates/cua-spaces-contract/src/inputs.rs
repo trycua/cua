@@ -1424,6 +1424,18 @@ pub struct NotificationsAck {
     pub ids: Vec<String>,
 }
 
+/// `notifications_delete`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct NotificationsDelete {
+    /// Ids to delete. Unknown ids are ignored; an empty list deletes nothing
+    /// unless `all` is set.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Delete every notification. Default false.
+    #[serde(default)]
+    pub all: Option<bool>,
+}
+
 /// `computer_access_grant`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ComputerAccessGrant {

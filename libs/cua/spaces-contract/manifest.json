@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 122,
+  "tool_count": 123,
   "categories": [
     {
       "id": "lifecycle",
@@ -3691,6 +3691,57 @@
           "ids": {
             "default": [],
             "description": "Ids to mark read. Default: every notification.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "notifications_delete",
+      "category": "persistent-agents",
+      "description": "Delete notifications.",
+      "instructions": "Removes notifications for good, in every app that reads the feed. Pass `ids`, or `all: true` for the whole feed; an empty `ids` deletes nothing.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "notifications.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.notifications.delete(_:all:)",
+      "rust_symbol": "notify::Feed::delete",
+      "notes": [],
+      "result": "JSON: `deleted` (how many were removed).",
+      "errors": [],
+      "input_schema": {
+        "properties": {
+          "all": {
+            "description": "Delete every notification. Default false.",
+            "type": "boolean"
+          },
+          "ids": {
+            "default": [],
+            "description": "Ids to delete. Unknown ids are ignored; an empty list deletes nothing\nunless `all` is set.",
             "items": {
               "type": "string"
             },

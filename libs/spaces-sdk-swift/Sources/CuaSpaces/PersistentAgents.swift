@@ -278,6 +278,14 @@ public struct Notifications: Sendable {
         try await connection.object("notifications_ack",
                                     ["ids": .array(ids.map { .string($0) })])["marked"]?.intValue ?? 0
     }
+
+    /// `notifications_delete`: delete these for good, or every one with
+    /// `all`. An empty `ids` without `all` deletes nothing.
+    @discardableResult
+    public func delete(_ ids: [String] = [], all: Bool = false) async throws -> Int {
+        try await connection.object("notifications_delete",
+                                    ["ids": .array(ids.map { .string($0) }), "all": .bool(all)])["deleted"]?.intValue ?? 0
+    }
 }
 
 extension SpacesConnection {

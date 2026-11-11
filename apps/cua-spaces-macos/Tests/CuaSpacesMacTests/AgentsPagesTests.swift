@@ -69,6 +69,12 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
                 return n.merging(["read": true]) { _, new in new }
             }
             return ["marked": marked]
+        case "notifications_delete":
+            // As the daemon's feed: ids, or all; an empty list deletes nothing.
+            let ids = args["ids"] as? [String] ?? []
+            let before = notifications.count
+            notifications = args["all"] as? Bool == true ? [] : notifications.filter { !ids.contains($0["id"] as? String ?? "") }
+            return ["deleted": before - notifications.count]
         default: throw AgentsToolError(message: "unknown tool \(tool)")
         }
     }

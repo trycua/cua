@@ -22,7 +22,8 @@ SCRIPTS = {
     "lint_dynamic": 'sub = "mouse" + "move"\nraw.xdotool(sub, 50, 50)\nreturn raw.pointer()',
     # passes the lint (a plain local name the lint does not know), refused by the runtime guard at lookup
     "runtime_refuse": (
-        'n = "_NET_ACTIVE" + "_WINDOW"\nraw.x11.XInternAtom(raw.dpy, n.encode(), 0)\nreturn raw.active_window()'
+        'n = chr(95) + "NET" + chr(95) + "ACTIVE" + chr(95) + "WINDOW"\n'
+        "raw.x11.XInternAtom(raw.dpy, n.encode(), 0)\nreturn raw.active_window()"
     ),
     # an app-side focus change the lint cannot see: the hook reports it (the AT-SPI action itself is allowed)
     "runtime_hook": (
@@ -40,7 +41,7 @@ SCRIPTS = {
         'raw.escalate_foreground("smoke: escalated pointer chain")\n'
         'raw.xdotool("mousemove", "700", "500", "mousemove", "710", "505")\nreturn raw.pointer()'
     ),
-    "private_handle": 'f = raw.xtst._lib\nreturn 1',
+    "private_handle": "f = raw.xtst._lib\nreturn 1",
     "act": (
         'a = raw.app("BenchLab")\n'
         'q = raw.find(a, role="text", name="Quantity")[0]\n'

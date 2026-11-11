@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE / "tools" / "raw_linux"))
@@ -178,6 +179,18 @@ class RunnerPolicyTest(unittest.TestCase):
             with self.assertRaises(ImportError, msg=name):
                 runner._guarded_import(name)
         self.assertIs(runner._guarded_import("json"), __import__("json"))
+
+    def test_gi_reimport_of_a_loaded_module_only(self):
+        # gi's lazy loader re-imports gi.repository.Atspi through the script's __import__ (seen on the VM smoke)
+        sentinel = object()
+        with mock.patch.dict(sys.modules, {"gi.repository.Atspi": sentinel}):
+            self.assertIs(runner._guarded_import("gi.repository.Atspi"), sentinel)
+            with self.assertRaises(ImportError):
+                runner._guarded_import("gi.repository.Atspi", fromlist=("Atspi",))
+        for name in ("gi.repository.GLib", "gi.repository.Gdk"):
+            with self.assertRaises(ImportError):
+                runner._guarded_import(name)
+        self.assertFalse(rawlint.lint("import gi.repository.Atspi").ok)
 
     def test_guarded_getattr_refuses_private_and_escape_names(self):
         class Box:

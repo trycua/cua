@@ -65,9 +65,16 @@ def _guarded_getattr(obj: Any, name: str, *default: Any) -> Any:
     return getattr(obj, name, *default)
 
 
+RUNTIME_IMPORTS = {"gi.repository.Atspi"}
+
+
 def _guarded_import(
     name: str, globals_: Any = None, locals_: Any = None, fromlist: Any = (), level: int = 0
 ) -> Any:
+    if name in RUNTIME_IMPORTS and name in sys.modules and not fromlist:
+        # gi's lazy attribute loader re-imports its own, already loaded module through the caller's __import__
+        # (Atspi.Action -> import gi.repository.Atspi); hand that one back, refuse every other gi import
+        return sys.modules[name]
     if name not in rawlint.IMPORT_OK or level:
         raise ImportError(
             f"import {name} is not available to raw-linux scripts (GUI-only, rule GUI1); use raw.*"

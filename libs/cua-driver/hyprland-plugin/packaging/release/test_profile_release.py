@@ -111,8 +111,16 @@ class ProfileTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 verify.validate_profile(candidate)
         candidate = copy.deepcopy(self.profile)
-        candidate["hyprland"]["header_version"] = "0.57.0"
-        with self.assertRaisesRegex(ValueError, "unchanged source"):
+        candidate["hyprland"]["header_version"] = "0.58.0"
+        candidate["hyprland"]["package_version"] = "0.58.0-1"
+        with self.assertRaisesRegex(ValueError, "unsupported Hyprland headers"):
+            verify.validate_profile(candidate)
+        # Omarchy edge ships 0.57.2: its profile validates, and the recipe pins that exact version.
+        candidate = copy.deepcopy(self.profile)
+        candidate["hyprland"].update(header_version="0.57.2", package_version="0.57.2-1")
+        verify.validate_profile(candidate)
+        candidate["hyprland"]["package_version"] = "0.56.2-1"
+        with self.assertRaisesRegex(ValueError, "package version"):
             verify.validate_profile(candidate)
         with self.assertRaisesRegex(ValueError, "duplicate JSON"):
             verify.read_json('{"schema":1,"schema":1}')

@@ -17,6 +17,8 @@ SOURCE_REVISION = "4b3396d9fe4bd3cf723b0eb8db83c18a8764b520"
 DRIVER_VERSION = "0.24.0"
 STEM = f"cua-hyprland-plugin-{DRIVER_VERSION}-{SOURCE_REVISION}"
 OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "CUA_HYPRLAND_INPUT_TRACE": "OFF"}
+# Header versions a reviewed profile may be measured against. 0.56.2: Omarchy stable and rc; 0.57.2: Omarchy edge.
+SUPPORTED_HYPRLAND_HEADERS = ("0.56.2", "0.57.2")
 TOOLING = ("profile_bundle.py", "profile_verify.py", "PROFILE-PKGBUILD.in", "PROFILE-USAGE.md", "lifecycle.py")
 PKGCONF = Path("/usr/bin/pkgconf")
 PKGCONF_ENV = {"PKG_CONFIG_ALLOW_SYSTEM_CFLAGS": "1", "PKG_CONFIG_ALLOW_SYSTEM_LIBS": "1"}
@@ -86,8 +88,12 @@ def validate_profile(profile):
     hash_value(source["manifest_sha256"])
     hyprland = profile["hyprland"]
     keys(hyprland, "package_version header_version headers_sha256 sha256", "Hyprland")
-    require(hyprland["header_version"] == "0.56.2", "unchanged source requires Hyprland 0.56.2 headers")
-    require(re.fullmatch(r"0\.56\.2-[0-9]+(?:\.[0-9]+)?", hyprland["package_version"]), "invalid Hyprland package version")
+    # The plugin source detects the installed compositor's input internals (0.56.x and 0.57.x tiers);
+    # a profile still names exactly one measured header version and the package that ships it.
+    require(hyprland["header_version"] in SUPPORTED_HYPRLAND_HEADERS,
+            "unsupported Hyprland headers: profiles support " + ", ".join(SUPPORTED_HYPRLAND_HEADERS))
+    require(re.fullmatch(re.escape(hyprland["header_version"]) + r"-[0-9]+(?:\.[0-9]+)?", hyprland["package_version"]),
+            "invalid Hyprland package version")
     hash_value(hyprland["sha256"])
     hash_value(hyprland["headers_sha256"])
     compiler = profile["compiler"]
@@ -200,6 +206,7 @@ def render_recipe(template, profile, provenance):
     replacements = {"DRIVER_VERSION": profile["source"]["driver_version"], "PKGREL": str(profile["package_release"]),
                     "PROFILE_ID": profile["profile_id"], "STEM": stem,
                     "HYPRLAND_PACKAGE": profile["hyprland"]["package_version"],
+                    "HEADER_VERSION": profile["hyprland"]["header_version"],
                     "RUNTIME_DEPENDS": " ".join(f"'{name}={version}'" for name, version in sorted(profile["runtime"]["packages"].items())),
                     "ARCHIVE_SHA256": profile["source"]["archive_sha256"],
                     "PROFILE_SHA256": provenance["profile_sha256"],

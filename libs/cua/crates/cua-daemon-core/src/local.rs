@@ -3425,9 +3425,10 @@ pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
     }
 }
 
-/// `cua runtime setup`: provisions `components` (`qemu`, `lume`; `runsc`
-/// reports its install plan). `dry_run` only reports. Every step is
-/// returned; nothing happens implicitly.
+/// `cua runtime setup`: provisions `components` (`qemu`, `lume`, `runsc`
+/// and the other backends). Each is judged on its own readiness, the one
+/// the doctor shows, and `dry_run` reports the same plan the real run
+/// follows. Every step is returned; nothing happens implicitly.
 pub async fn setup(
     components: &[String],
     dry_run: bool,
@@ -3438,9 +3439,85 @@ pub async fn setup(
         dry_run,
         cua_vmm::qemu::install_qemu,
         cua_vmm::lume::install_lume,
+        install_runsc,
         kvm_step,
     )
     .await
+}
+
+/// `cua runtime setup runsc`: registers gVisor with the container engine
+/// through the same plan the doctor shows (it restarts the engine, which
+/// stops running containers). Fails, never falls back to runc, when the
+/// engine cannot take it.
+async fn install_runsc() -> std::result::Result<(), VmmError> {
+    let rt = ContainerRuntime::connect(ContainerConfig {
+        prefer_gvisor: true,
+        allow_install_runsc: true,
+        require_gvisor: true,
+        ..ContainerConfig::default()
+    })
+    .await?;
+    rt.resolve_oci_runtime().await.map(|_| ())
+}
+
+/// What `cua runtime setup <name>` finds for one component: judged on the
+/// component asked for, not on the backend it belongs to (a container
+/// engine being up says nothing about gVisor being registered in it).
+#[derive(Debug, PartialEq, Eq)]
+enum Component {
+    /// Nothing to do.
+    Ready(String),
+    /// A plan that would make it ready.
+    Pending(String),
+    /// Not usable here, and not something setup can fix: why.
+    Blocked(String),
+}
+
+/// QEMU's binary for this host's arch and `qemu-img` are both on the host.
+fn qemu_installed(report: &DoctorReport) -> bool {
+    report.qemu.qemu_img.is_some()
+        && (report.qemu.binaries)
+            .get(report.host.arch.qemu())
+            .is_some_and(Option::is_some)
+}
+
+fn component(report: &DoctorReport, name: &str, kind: BackendKind) -> Component {
+    if matches!(name, "runsc" | "gvisor") {
+        return match report.runsc() {
+            cua_vmm::auto::RunscState::Ready(_) => Component::Ready("already available".into()),
+            cua_vmm::auto::RunscState::Installable(plan) => Component::Pending(plan),
+            cua_vmm::auto::RunscState::Unavailable(why) => Component::Blocked(why),
+        };
+    }
+    let Some(b) = report.backend(kind) else {
+        return Component::Blocked(format!("{name} is not available on this computer"));
+    };
+    let plan = b.provisioning.join("; ");
+    if b.ready {
+        // Ready to run, with downloads still to do ahead of the first
+        // Space: setup does them, doctor lists them as what it would do.
+        let prefetch = matches!(kind, BackendKind::Firecracker | BackendKind::Vz);
+        return if prefetch && !plan.is_empty() {
+            Component::Pending(plan)
+        } else {
+            Component::Ready("already available".into())
+        };
+    }
+    if b.provisionable {
+        return Component::Pending(plan);
+    }
+    if kind == BackendKind::Qemu && qemu_installed(report) {
+        // Installed, held back by KVM access: the kvm step handles that.
+        return Component::Ready("already installed".into());
+    }
+    let mut why = b.detail.clone();
+    if !b.missing.is_empty() {
+        why.push_str(&format!("; missing: {}", b.missing.join(", ")));
+    }
+    if !plan.is_empty() {
+        why.push_str(&format!("; instead: {plan}"));
+    }
+    Component::Blocked(why)
 }
 
 async fn setup_with(
@@ -3449,6 +3526,7 @@ async fn setup_with(
     dry_run: bool,
     install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
     install_lume: impl AsyncFn() -> cua_vmm::Result<()>,
+    install_runsc: impl AsyncFn() -> cua_vmm::Result<()>,
     kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
     use cua_proto::daemon::v1::{CheckStatus, SetupStep};
@@ -3484,19 +3562,25 @@ async fn setup_with(
     }
     let mut steps = Vec::new();
     for (c, kind) in kinds {
-        let b = report.backend(kind).cloned();
-        let plan = b
-            .as_ref()
-            .map(|b| b.provisioning.join("; "))
-            .unwrap_or_default();
-        if b.as_ref().is_some_and(|b| b.ready) {
-            steps.push(SetupStep {
-                name: c,
-                status: CheckStatus::Ok as i32,
-                detail: "already available".into(),
-            });
-            continue;
-        }
+        let plan = match component(&report, &c, kind) {
+            Component::Ready(detail) => {
+                steps.push(SetupStep {
+                    name: c,
+                    status: CheckStatus::Ok as i32,
+                    detail,
+                });
+                continue;
+            }
+            Component::Blocked(why) => {
+                steps.push(SetupStep {
+                    name: c,
+                    status: CheckStatus::Error as i32,
+                    detail: why,
+                });
+                continue;
+            }
+            Component::Pending(plan) => plan,
+        };
         if dry_run {
             steps.push(SetupStep {
                 name: c,
@@ -3516,6 +3600,9 @@ async fn setup_with(
             continue;
         }
         let result = match kind {
+            BackendKind::Container if matches!(c.as_str(), "runsc" | "gvisor") => {
+                install_runsc().await
+            }
             BackendKind::Qemu => install_qemu().await,
             BackendKind::Lume => install_lume().await,
             BackendKind::Firecracker => install_microvm().await,
@@ -3527,7 +3614,7 @@ async fn setup_with(
             }
             _ => Err(VmmError::Unsupported {
                 backend: "container",
-                op: "unattended runsc install (run the plan shown by --dry-run)",
+                op: "unattended install (run the plan shown by --dry-run)",
             }),
         };
         steps.push(match result {
@@ -3543,13 +3630,9 @@ async fn setup_with(
             },
         });
     }
-    let qemu_installed = report.qemu.qemu_img.is_some()
-        && (report.qemu.binaries)
-            .get(report.host.arch.qemu())
-            .is_some_and(Option::is_some);
     let qemu_present = match steps.iter().find(|s| s.name == "qemu") {
         Some(s) => s.status != CheckStatus::Error as i32,
-        None => components.is_empty() && qemu_installed,
+        None => components.is_empty() && qemu_installed(&report),
     };
     if qemu_present {
         steps.extend(kvm(dry_run).await);
@@ -4727,12 +4810,20 @@ mod tests {
             false => Err(super::VmmError::PermissionDenied("sudo".into())),
         };
         let kvm = async |_| kvm_step();
-        super::setup_with(report, &components, dry_run, &install, &install, kvm)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|s| (s.name, s.status.try_into().unwrap()))
-            .collect()
+        super::setup_with(
+            report,
+            &components,
+            dry_run,
+            &install,
+            &install,
+            &install,
+            kvm,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.name, s.status.try_into().unwrap()))
+        .collect()
     }
 
     fn steps(
@@ -4783,9 +4874,17 @@ mod tests {
         let components = vec!["qemu".to_string(), "nope".to_string()];
         let install = async || -> cua_vmm::Result<()> { panic!("installer ran") };
         let kvm = async |_| kvm_step();
-        let err = super::setup_with(report, &components, false, &install, &install, kvm)
-            .await
-            .unwrap_err();
+        let err = super::setup_with(
+            report,
+            &components,
+            false,
+            &install,
+            &install,
+            &install,
+            kvm,
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("unknown component"), "{err}");
     }
 
@@ -4824,6 +4923,263 @@ mod tests {
             setup_steps(report, &[], false, true).await,
             steps(&[("kvm", Ok)])
         );
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Runs setup with counting installers; returns each step with its
+    /// detail, and how many times (qemu, lume, runsc) were run.
+    async fn setup_full(
+        report: cua_vmm::auto::DoctorReport,
+        components: &[&str],
+        dry_run: bool,
+        runsc_installs: bool,
+    ) -> (Vec<cua_proto::daemon::v1::SetupStep>, [usize; 3]) {
+        let components: Vec<String> = components.iter().map(|c| c.to_string()).collect();
+        let n = [
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        ];
+        let qemu = async || {
+            n[0].fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        };
+        let lume = async || {
+            n[1].fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        };
+        let runsc = async || {
+            n[2].fetch_add(1, Ordering::SeqCst);
+            if runsc_installs {
+                Ok(())
+            } else {
+                Err(super::VmmError::PermissionDenied("sudo -n".into()))
+            }
+        };
+        let kvm = async |_| None;
+        let steps = super::setup_with(report, &components, dry_run, &qemu, &lume, &runsc, kvm)
+            .await
+            .unwrap();
+        (steps, [0, 1, 2].map(|i| n[i].load(Ordering::SeqCst)))
+    }
+
+    const RUNSC_PLAN: &str = "install runsc on this Linux host, `runsc install` into \
+                              /etc/docker/daemon.json and restart dockerd (sudo -n)";
+
+    /// A Linux host whose Docker answers; `runsc` says whether it is
+    /// registered with it, `plan` whether cua could install it.
+    fn docker_report(runsc: bool, plan: bool) -> cua_vmm::auto::DoctorReport {
+        use cua_vmm::auto::BackendStatus;
+        let mut r = qemu_report(true);
+        r.container.reachable = true;
+        r.container.gvisor = runsc;
+        r.container.gvisor_provisioning = Some(if plan {
+            RUNSC_PLAN.into()
+        } else {
+            "use Colima for gVisor".into()
+        });
+        r.backends.push(BackendStatus {
+            backend: super::BackendKind::Container,
+            ready: true,
+            provisionable: !runsc && plan,
+            detail: "unix:///var/run/docker.sock".into(),
+            missing: if runsc { vec![] } else { vec!["runsc".into()] },
+            provisioning: if !runsc && plan {
+                vec![RUNSC_PLAN.into()]
+            } else {
+                vec![]
+            },
+        });
+        r
+    }
+
+    /// CUA-7308: Docker with only runc must not make `setup runsc` say
+    /// "already available" (and so never install gVisor).
+    #[tokio::test]
+    async fn setup_runsc_on_docker_with_only_runc_shows_and_runs_the_install() {
+        use cua_proto::daemon::v1::CheckStatus::{Error, Installable, Ok};
+        for name in ["runsc", "gvisor"] {
+            let (steps, n) = setup_full(docker_report(false, true), &[name], true, true).await;
+            assert_eq!(steps.len(), 1);
+            assert_eq!(steps[0].name, name);
+            assert_eq!(steps[0].status, Installable as i32, "{steps:?}");
+            assert_eq!(steps[0].detail, format!("would: {RUNSC_PLAN}"));
+            assert_eq!(n, [0, 0, 0], "a dry run installs nothing");
+
+            let (steps, n) = setup_full(docker_report(false, true), &[name], false, true).await;
+            assert_eq!(steps[0].status, Ok as i32, "{steps:?}");
+            assert!(steps[0].detail.starts_with("installed ("), "{steps:?}");
+            assert_eq!(n, [0, 0, 1]);
+
+            // Cannot run unattended (no passwordless sudo): an error, not
+            // "already available".
+            let (steps, n) = setup_full(docker_report(false, true), &[name], false, false).await;
+            assert_eq!(steps[0].status, Error as i32, "{steps:?}");
+            assert!(steps[0].detail.contains("sudo"), "{steps:?}");
+            assert_eq!(n, [0, 0, 1]);
+        }
+    }
+
+    #[tokio::test]
+    async fn setup_runsc_with_runsc_registered_is_already_available() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
+        for dry in [true, false] {
+            for name in ["runsc", "gvisor", "container"] {
+                let (steps, n) = setup_full(docker_report(true, true), &[name], dry, true).await;
+                assert_eq!(steps[0].status, Ok as i32, "{steps:?}");
+                assert_eq!(steps[0].detail, "already available");
+                assert_eq!(n, [0, 0, 0]);
+            }
+        }
+    }
+
+    /// The container backend itself is the engine: `setup container` stays
+    /// "already available" while Docker answers, with or without runsc.
+    #[tokio::test]
+    async fn setup_container_is_ready_when_docker_is() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
+        let (steps, n) = setup_full(docker_report(false, true), &["container"], false, true).await;
+        assert_eq!(steps[0].status, Ok as i32);
+        assert_eq!(steps[0].detail, "already available");
+        assert_eq!(n, [0, 0, 0]);
+    }
+
+    /// An engine cua cannot put gVisor into (Docker Desktop, OrbStack) says
+    /// why, in a dry run and a real one, and never runs an installer.
+    #[tokio::test]
+    async fn setup_runsc_on_an_engine_that_cannot_take_it_says_why() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        for dry in [true, false] {
+            let (steps, n) = setup_full(docker_report(false, false), &["runsc"], dry, true).await;
+            assert_eq!(steps[0].status, Error as i32, "{steps:?}");
+            assert!(steps[0].detail.contains("use Colima"), "{steps:?}");
+            assert_eq!(n, [0, 0, 0]);
+        }
+    }
+
+    /// No engine: runsc cannot be set up, and the doctor's reason is shown.
+    #[tokio::test]
+    async fn setup_runsc_without_an_engine_is_an_error() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        let mut r = qemu_report(true);
+        r.backends.push(cua_vmm::auto::BackendStatus {
+            backend: super::BackendKind::Container,
+            ready: false,
+            provisionable: false,
+            detail: "no container engine found".into(),
+            missing: vec!["a Docker-API container engine".into()],
+            provisioning: vec![],
+        });
+        let (steps, n) = setup_full(r, &["runsc"], false, true).await;
+        assert_eq!(steps[0].status, Error as i32);
+        assert!(steps[0].detail.contains("Docker-API container engine"));
+        assert_eq!(n, [0, 0, 0]);
+    }
+
+    /// Doctor and setup read one answer: whatever the doctor row says about
+    /// runsc, `setup runsc` agrees.
+    #[test]
+    fn doctor_and_setup_agree_on_runsc() {
+        use cua_vmm::auto::RunscState::{Installable, Ready, Unavailable};
+        assert!(matches!(docker_report(true, true).runsc(), Ready(_)));
+        assert_eq!(
+            docker_report(false, true).runsc(),
+            Installable(RUNSC_PLAN.into())
+        );
+        assert!(matches!(
+            docker_report(false, false).runsc(),
+            Unavailable(_)
+        ));
+        let doctor = super::doctor_checks(&docker_report(false, true));
+        let row = doctor.iter().find(|c| c.name == "container").unwrap();
+        assert!(row.detail.contains("missing: runsc"), "{}", row.detail);
+        assert!(row.detail.contains(RUNSC_PLAN), "{}", row.detail);
+    }
+
+    fn backend_report(
+        kind: super::BackendKind,
+        ready: bool,
+        provisionable: bool,
+        provisioning: &[&str],
+    ) -> cua_vmm::auto::DoctorReport {
+        let mut r = qemu_report(true);
+        r.backends.push(cua_vmm::auto::BackendStatus {
+            backend: kind,
+            ready,
+            provisionable,
+            detail: "the reason".into(),
+            missing: vec!["a thing".into()],
+            provisioning: provisioning.iter().map(|p| p.to_string()).collect(),
+        });
+        r
+    }
+
+    /// A component the host has no backend for (Firecracker on a Mac, Lume
+    /// on Linux) is an error that says so, not an empty plan.
+    #[tokio::test]
+    async fn components_this_host_lacks_are_errors_not_empty_plans() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        for dry in [true, false] {
+            for name in ["firecracker", "lume", "containerization"] {
+                let (steps, n) = setup_full(qemu_report(true), &[name], dry, true).await;
+                assert_eq!(steps[0].status, Error as i32, "{name}: {steps:?}");
+                assert!(steps[0].detail.contains("not available"), "{steps:?}");
+                assert_eq!(n, [0, 0, 0]);
+            }
+        }
+    }
+
+    /// Not ready and nothing cua can install: the doctor's reason, in a dry
+    /// run and a real one, with no installer run.
+    #[tokio::test]
+    async fn unprovisionable_components_show_the_doctor_reason() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        for dry in [true, false] {
+            let r = backend_report(super::BackendKind::Firecracker, false, false, &[]);
+            let (steps, n) = setup_full(r, &["firecracker"], dry, true).await;
+            assert_eq!(steps[0].status, Error as i32);
+            assert_eq!(steps[0].detail, "the reason; missing: a thing");
+            assert_eq!(n, [0, 0, 0]);
+            let r = backend_report(super::BackendKind::Managed, false, false, &[]);
+            let (steps, _) = setup_full(r, &["managed"], dry, true).await;
+            assert_eq!(steps[0].status, Error as i32, "{steps:?}");
+        }
+    }
+
+    /// microVM and macOS-VM backends that are ready but still have their
+    /// downloads to do are not "already available": setup lists them, then
+    /// does them. (Their installers are the real ones, so only the dry run
+    /// runs here.)
+    #[tokio::test]
+    async fn ready_microvms_with_pending_downloads_show_them() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        for kind in [super::BackendKind::Firecracker, super::BackendKind::Vz] {
+            let r = backend_report(kind, true, false, &["download the guest kernel"]);
+            let (steps, _) = setup_full(r, &[kind.as_str()], true, true).await;
+            assert_eq!(steps[0].status, Installable as i32, "{steps:?}");
+            assert_eq!(steps[0].detail, "would: download the guest kernel");
+            let r = backend_report(kind, true, false, &[]);
+            let (steps, _) = setup_full(r, &[kind.as_str()], true, true).await;
+            assert_eq!(steps[0].status, Ok as i32);
+            assert_eq!(steps[0].detail, "already available");
+        }
+    }
+
+    /// QEMU installed but held back by KVM access is not reinstalled; the
+    /// kvm step follows.
+    #[tokio::test]
+    async fn installed_qemu_held_back_by_kvm_is_not_reinstalled() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
+        let mut r = qemu_report(false);
+        r.backends[0].provisionable = false;
+        r.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+        r.qemu
+            .binaries
+            .insert("x86_64".into(), Some("/usr/bin/qemu-system-x86_64".into()));
+        let (steps, n) = setup_full(r, &["qemu"], false, true).await;
+        assert_eq!(steps[0].status, Ok as i32, "{steps:?}");
+        assert_eq!(n, [0, 0, 0]);
     }
 }
 

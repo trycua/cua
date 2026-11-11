@@ -137,7 +137,7 @@ RULES: dict[str, Rule] = {
             "code or files outside the GUI",
             "block",
             "Bench v2 is GUI-only: no shell, process, file, network or library loading from a computer-use script.",
-            "libs/cua-driver-bench/automated-eval/macos_bench/bench_v2.py:154-191 (EXEC_PATTERNS, the GUI-only "
+            "libs/cua-driver-bench/automated-eval/macos_bench/bench_v2.py:164-187 (EXEC_PATTERNS, the GUI-only "
             "guard)",
             "Use only the raw runtime: raw.Atspi, raw.X11/raw.Xtst handles, raw.xdotool(...), raw.windows(), "
             "raw.screenshot().",
@@ -165,7 +165,7 @@ RULES: dict[str, Rule] = {
             "action without a read-back",
             "warn",
             "An action that the API accepted is not a confirmed effect.",
-            f"{CONTRACT}:63-66 (native API acceptance alone does not justify confirmed)",
+            f"{CONTRACT}:149-152 (native API acceptance alone does not justify confirmed)",
             "After the last action, read the element back (get_text, get_current_value, get_state_set, get_name) "
             "or take raw.screenshot() and return it.",
         ),

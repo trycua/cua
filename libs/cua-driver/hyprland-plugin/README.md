@@ -181,6 +181,13 @@ loaded in the running compositor before it enables input:
 Neither field says that the current physical keymap qualifies for foreground
 typing; each foreground key is still checked when it is sent.
 
+Input builds also report `ime_popup_guard`. With the agent seats present, an
+input method such as fcitx5 registers once per seat; when it exits, Hyprland
+0.56 can keep an input-method popup mapped after its surface is gone and crash
+placing or drawing it. The guard hooks `CInputPopup::updateBox` and
+`CInputPopup::shouldBeRendered` so such a popup is neither placed nor drawn.
+`false` means the exact symbols were not found and the plugin runs without it.
+
 The local transport is also disabled by default. To exercise negotiation in a
 disposable session, set the following and reload the configuration after the
 plugin loads. For Omarchy's Lua configuration, add:

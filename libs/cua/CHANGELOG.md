@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/trycua/cua/compare/cua-sdk-v0.23.0...cua-sdk-v0.24.0) (2026-11-11)
+
+
+### Features
+
+* **spaces:** closing the window keeps Cua Spaces running, Quit stops the background service ([#7136](https://github.com/trycua/cua/issues/7136)) ([4af5875](https://github.com/trycua/cua/commit/4af587598509724ca1c716cbda5092d13794b8ea))
+
 ## [0.23.0](https://github.com/trycua/cua/compare/cua-sdk-v0.22.0...cua-sdk-v0.23.0) (2026-11-10)
 
 

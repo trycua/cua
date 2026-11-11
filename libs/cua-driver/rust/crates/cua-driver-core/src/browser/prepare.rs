@@ -645,7 +645,7 @@ fn security_prompt_refusal(already_open: bool) -> BrowserRefusal {
     let (reason, message) = if already_open {
         (
             SECURITY_PROMPT_REASON_OPEN,
-            "A system security prompt (for example a Keychain access prompt) is open, so Cua \
+            "A Keychain or password prompt is open, so Cua \
              Driver did not launch a browser: another launch could add another prompt. Cua Driver \
              never answers these prompts. Ask the user to deal with it (Deny is safe for a \
              browser's Safe Storage prompt), then retry.",
@@ -653,7 +653,7 @@ fn security_prompt_refusal(already_open: bool) -> BrowserRefusal {
     } else {
         (
             SECURITY_PROMPT_REASON_APPEARED,
-            "A system security prompt (for example a Keychain access prompt) appeared while Cua \
+            "A Keychain or password prompt appeared while Cua \
              Driver was launching an isolated browser, so it stopped that browser and will not \
              retry for now. Cua Driver launches isolated browsers with a mock keychain on macOS, \
              so this browser build ignored that switch or another process raised the prompt. Cua \

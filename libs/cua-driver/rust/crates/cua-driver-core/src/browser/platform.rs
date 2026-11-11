@@ -371,8 +371,8 @@ pub trait BrowserPlatform: Send + Sync {
             })
     }
 
-    /// Whether an OS security prompt is on screen now: on macOS a
-    /// SecurityAgent window, such as "<app> wants to use your confidential
+    /// Whether an OS keychain or password prompt is on screen now: on macOS
+    /// a SecurityAgent or LocalAuthentication window, such as "<app> wants to use your confidential
     /// information stored in ... in your keychain". Core checks it before and
     /// while it launches an isolated browser and stops the launch when one is
     /// open, because a browser that asks for a keychain secret waits on the

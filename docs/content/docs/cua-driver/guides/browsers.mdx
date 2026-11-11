@@ -96,8 +96,8 @@ refused.
 An isolated browser keeps its passwords and cookies away from the system
 keychain (on macOS it starts with `--use-mock-keychain`, on Linux with
 `--password-store=basic`), so launching one never shows a Keychain prompt.
-If a system security prompt is already on screen, or one appears while the
-browser starts, `browser_prepare` stops with `browser_route_unavailable`
+If a Keychain or password prompt is already on screen, or one appears while
+the browser starts, `browser_prepare` stops with `browser_route_unavailable`
 (`detail.reason` is `security_prompt_open` or `security_prompt_appeared`)
 instead of launching more browsers. The driver never answers these prompts;
 ask the person to close it. After three failed launches in a row, further

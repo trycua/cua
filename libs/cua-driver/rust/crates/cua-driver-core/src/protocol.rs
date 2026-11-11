@@ -447,9 +447,9 @@ fn agent_instructions_for(script: ScriptTools) -> String {
         return format!(
             r#"cua-driver: background GUI automation through one tool, `run_script`: a sandboxed JavaScript async function body with the `cua` API (see its description). No shell.
 
-Look, then act: a short script that returns `(await app.getState()).tree_markdown` or `app.query({{role, name}})`, then one script per step of the task with loops, waits (`app.waitFor`) and checks, returning what you need to confirm the result. A failed call throws with the script line; fix the script and rerun from that step. Act by {{role, name}} ({tree_kind}) targets; pixels only for surfaces missing from the tree. Stay in the background.
+Call the driver's tools straight from the script: `await cua.tools.<name>(args)`, one signature per tool in run_script's description, full schema from `cua.describe(name)`. Look, then act: a short script that returns `(await cua.tools.get_window_state({{pid, window_id}})).tree_markdown`, then one script per step of the task with loops, waits and checks, returning what you need to confirm the result. A failed call throws with the script line; fix the script and rerun from that step. Act by {{role, name}} ({tree_kind}) targets; pixels only for surfaces missing from the tree. Stay in the background.
 
-Guides: `cua.call("get_guide", {{topic}})`, `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{permission_line}"#
+Guides: `cua.tools.get_guide({{topic}})`, `skill://cua-driver/SKILL.md`{platform_skill_pointer}.{permission_line}"#
         );
     }
 

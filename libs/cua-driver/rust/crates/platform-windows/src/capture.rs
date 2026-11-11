@@ -284,84 +284,6 @@ fn screenshot_window_via_wgc_checked(hwnd: u64) -> Result<(Vec<u8>, u32, u32, Fr
     }
 }
 
-#[cfg(test)]
-mod wgc_validation_tests {
-    use super::{normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
-
-    #[test]
-    fn black_frames_do_not_depend_on_alpha() {
-        assert_eq!(
-            validate_wgc_frame(&[0, 0, 0, 0, 0, 0, 0, 255], 2, 1)
-                .unwrap_err()
-                .to_string(),
-            "WGC returned an entirely RGB-black frame"
-        );
-    }
-
-    #[test]
-    fn sparse_nonblack_content_is_preserved() {
-        let mut pixels = vec![0; 4096 * 4];
-        pixels[4 * 2049 + 2] = 1;
-        assert!(validate_wgc_frame(&pixels, 64, 64).is_ok());
-    }
-
-    #[test]
-    fn malformed_frames_are_rejected() {
-        for (pixels, width, height) in [
-            (&[][..], 0, 0),
-            (&[1, 2, 3][..], 1, 1),
-            (&[1, 2, 3, 4][..], 2, 1),
-            (&[][..], u32::MAX, u32::MAX),
-        ] {
-            assert_eq!(
-                validate_wgc_frame(pixels, width, height)
-                    .unwrap_err()
-                    .to_string(),
-                "WGC returned invalid BGRA dimensions or buffer length"
-            );
-        }
-    }
-
-    #[test]
-    fn whole_window_and_dwm_frames_share_the_input_origin() {
-        let window = FrameGeometry::from_bounds((100, 200, 108, 206)).unwrap();
-        let dwm = Some((102, 200, 106, 205));
-        for (width, height, first_pixel) in [(8, 6, 12), (4, 5, 6)] {
-            let pixels = (0..width * height)
-                .flat_map(|index| [index as u8 + 1, 0, 0, 255])
-                .collect();
-            let (pixels, width, height, geometry) =
-                normalize_wgc_frame(pixels, width, height, window, dwm).unwrap();
-            assert_eq!((width, height), (2, 3));
-            assert_eq!((geometry.left, geometry.top), (103, 201));
-            assert_eq!(&pixels[..4], &[first_pixel, 0, 0, 255]);
-            assert_eq!(geometry.local_point(103, 201), Some((0.0, 0.0)));
-        }
-    }
-
-    #[test]
-    fn unknown_wgc_dimensions_do_not_invent_an_origin() {
-        let window = FrameGeometry::from_bounds((100, 200, 108, 206)).unwrap();
-        let error = normalize_wgc_frame(vec![255; 3 * 2 * 4], 3, 2, window, None).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "WGC frame dimensions do not match current window bounds"
-        );
-    }
-
-    #[test]
-    fn colored_border_does_not_hide_black_capture_content() {
-        let window = FrameGeometry::from_bounds((0, 0, 5, 5)).unwrap();
-        let mut pixels = vec![0; 5 * 5 * 4];
-        pixels[0] = 1;
-        let error = normalize_wgc_frame(pixels, 5, 5, window, Some((0, 0, 5, 5))).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "WGC returned an entirely RGB-black frame"
-        );
-    }
-}
-
 /// Probe whether `target` is currently obscured by some other window.
 /// Samples `WindowFromPoint` at the target's center + four corners (insetting
 /// 2 px from each corner so we don't catch invisible 1-px frame slop). If any
@@ -1043,4 +965,82 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 /// the `_pub` export; the public alias is what callers use today.
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
     cua_driver_core::image_utils::png_dimensions(data)
+}
+
+#[cfg(test)]
+mod wgc_validation_tests {
+    use super::{normalize_wgc_frame, validate_wgc_frame, FrameGeometry};
+
+    #[test]
+    fn black_frames_do_not_depend_on_alpha() {
+        assert_eq!(
+            validate_wgc_frame(&[0, 0, 0, 0, 0, 0, 0, 255], 2, 1)
+                .unwrap_err()
+                .to_string(),
+            "WGC returned an entirely RGB-black frame"
+        );
+    }
+
+    #[test]
+    fn sparse_nonblack_content_is_preserved() {
+        let mut pixels = vec![0; 4096 * 4];
+        pixels[4 * 2049 + 2] = 1;
+        assert!(validate_wgc_frame(&pixels, 64, 64).is_ok());
+    }
+
+    #[test]
+    fn malformed_frames_are_rejected() {
+        for (pixels, width, height) in [
+            (&[][..], 0, 0),
+            (&[1, 2, 3][..], 1, 1),
+            (&[1, 2, 3, 4][..], 2, 1),
+            (&[][..], u32::MAX, u32::MAX),
+        ] {
+            assert_eq!(
+                validate_wgc_frame(pixels, width, height)
+                    .unwrap_err()
+                    .to_string(),
+                "WGC returned invalid BGRA dimensions or buffer length"
+            );
+        }
+    }
+
+    #[test]
+    fn whole_window_and_dwm_frames_share_the_input_origin() {
+        let window = FrameGeometry::from_bounds((100, 200, 108, 206)).unwrap();
+        let dwm = Some((102, 200, 106, 205));
+        for (width, height, first_pixel) in [(8, 6, 12), (4, 5, 6)] {
+            let pixels = (0..width * height)
+                .flat_map(|index| [index as u8 + 1, 0, 0, 255])
+                .collect();
+            let (pixels, width, height, geometry) =
+                normalize_wgc_frame(pixels, width, height, window, dwm).unwrap();
+            assert_eq!((width, height), (2, 3));
+            assert_eq!((geometry.left, geometry.top), (103, 201));
+            assert_eq!(&pixels[..4], &[first_pixel, 0, 0, 255]);
+            assert_eq!(geometry.local_point(103, 201), Some((0.0, 0.0)));
+        }
+    }
+
+    #[test]
+    fn unknown_wgc_dimensions_do_not_invent_an_origin() {
+        let window = FrameGeometry::from_bounds((100, 200, 108, 206)).unwrap();
+        let error = normalize_wgc_frame(vec![255; 3 * 2 * 4], 3, 2, window, None).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "WGC frame dimensions do not match current window bounds"
+        );
+    }
+
+    #[test]
+    fn colored_border_does_not_hide_black_capture_content() {
+        let window = FrameGeometry::from_bounds((0, 0, 5, 5)).unwrap();
+        let mut pixels = vec![0; 5 * 5 * 4];
+        pixels[0] = 1;
+        let error = normalize_wgc_frame(pixels, 5, 5, window, Some((0, 0, 5, 5))).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "WGC returned an entirely RGB-black frame"
+        );
+    }
 }

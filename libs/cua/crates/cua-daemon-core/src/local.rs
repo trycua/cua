@@ -3506,7 +3506,11 @@ fn component(report: &DoctorReport, name: &str, kind: BackendKind) -> Component 
     if b.provisionable {
         return Component::Pending(plan);
     }
-    if kind == BackendKind::Qemu && qemu_installed(report) {
+    let net_blocked = b
+        .missing
+        .iter()
+        .any(|m| m == cua_vmm::auto::PASST_FIX || m == cua_vmm::auto::USERNS_FIX);
+    if kind == BackendKind::Qemu && qemu_installed(report) && !net_blocked {
         // Installed, held back by KVM access: the kvm step handles that.
         return Component::Ready("already installed".into());
     }
@@ -5113,6 +5117,40 @@ mod tests {
             provisioning: provisioning.iter().map(|p| p.to_string()).collect(),
         });
         r
+    }
+
+    /// QEMU installed but without passt, or on a host that denies pasta its
+    /// user namespace: `runtime setup qemu` never calls that "already
+    /// installed". With a passwordless installer it plans the install; without
+    /// one (or for the namespace, which needs an administrator) it names the
+    /// missing piece and its fix.
+    #[tokio::test]
+    async fn setup_names_the_network_prerequisites_qemu_still_lacks() {
+        use cua_proto::daemon::v1::CheckStatus::{Error, Installable};
+        let installed = |missing: &str, provisionable: bool| {
+            let mut r = qemu_report(false);
+            r.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+            r.qemu
+                .binaries
+                .insert("x86_64".into(), Some("/usr/bin/qemu-system-x86_64".into()));
+            r.backends[0].missing = vec![missing.into()];
+            r.backends[0].provisionable = provisionable;
+            r
+        };
+        let (steps, n) = setup_full(
+            installed(cua_vmm::auto::PASST_FIX, true),
+            &["qemu"],
+            true,
+            true,
+        )
+        .await;
+        assert_eq!(steps[0].status, Installable as i32, "{steps:?}");
+        assert_eq!(n, [0, 0, 0]);
+        for fix in [cua_vmm::auto::PASST_FIX, cua_vmm::auto::USERNS_FIX] {
+            let (steps, _) = setup_full(installed(fix, false), &["qemu"], false, true).await;
+            assert_eq!(steps[0].status, Error as i32, "{steps:?}");
+            assert!(steps[0].detail.contains(fix), "{steps:?}");
+        }
     }
 
     /// A component the host has no backend for (Firecracker on a Mac, Lume

@@ -946,6 +946,7 @@ impl Tool for InvokeMenuTool {
         // window.
         let mut args = args;
         super::default_window_for_pid(&mut args);
+        let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
         let input: InvokeMenuInput =
             match cua_driver_core::tool_args::parse_typed_input("invoke_menu", args) {
                 Ok(input) => input,
@@ -959,7 +960,7 @@ impl Tool for InvokeMenuTool {
             Ok(pid) => pid,
             Err(_) => return refusal("invoke_menu: pid is out of range".into()),
         };
-        if let Some(refusal) = super::security_prompt::refusal_for_pid(pid) {
+        if let Err(refusal) = crate::security_prompt::refuse_pid(prompt, pid) {
             return refusal;
         }
         let window_id = match u32::try_from(input.window_id) {

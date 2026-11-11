@@ -154,8 +154,9 @@ impl Tool for ScrollTool {
             {
                 return refusal;
             }
+            let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
+                crate::input::mouse::scroll_wheel_desktop(prompt, x, y, delta_y, delta_x, amount)
             })
             .await;
             return match result {
@@ -167,7 +168,11 @@ impl Tool for ScrollTool {
                     "path": "hid",
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop scroll failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
             };
         }
@@ -464,17 +469,6 @@ impl Tool for ScrollTool {
             .await;
         }
 
-        if let Some(refusal) = super::security_prompt::foreground_refusal(
-            delivery_mode.is_foreground(),
-            wheel_target
-                .iter()
-                .map(|target| (target.screen_x, target.screen_y))
-                .collect(),
-        )
-        .await
-        {
-            return refusal;
-        }
         if let Some(target) = wheel_target {
             if !delivery_mode.is_foreground() {
                 if let Some(wid) = target.wid {

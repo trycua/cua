@@ -1,0 +1,433 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Who owns the window input would reach, for
+//! `cua_driver_core::security_prompt`.
+//!
+//! Two kinds of route can reach a prompt, and each is checked where it
+//! cannot be skipped:
+//!
+//! - Input addressed to a process (pid-routed events, AX actions, menus):
+//!   the tool refuses a target pid that owns a prompt ([`refuse_pid`]).
+//! - Input on the global HID queue, which WindowServer delivers to whatever
+//!   is on top: every HID primitive in `crate::input` checks the screen point
+//!   ([`refuse_point`]) or, for keys, the frontmost process
+//!   ([`refuse_frontmost_keys`]) immediately before its first event, after any
+//!   foreground activation has run. That covers every tool route and the
+//!   browser setup assists.
+//!
+//! The call's [`PromptInput`] decision comes from the dispatch boundary
+//! (`unrestricted` mode lifts the refusal).
+
+use cua_driver_core::{
+    protocol::ToolResult,
+    security_prompt::{self, AlertContent, PromptInput, PromptOwner},
+};
+
+/// Input refused because it would reach a security or consent prompt. HID
+/// primitives return it as their error; [`tool_result`] turns it back into
+/// the refusal.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{owner} is showing a system security or consent prompt there; nothing was sent")]
+pub struct PromptProtected {
+    pub owner: String,
+}
+
+impl PromptProtected {
+    pub fn result(&self) -> ToolResult {
+        security_prompt::refusal(&self.owner)
+    }
+}
+
+/// The refusal carried by a primitive's error, if that is why it failed.
+pub fn tool_result(error: &anyhow::Error) -> Option<ToolResult> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<PromptProtected>())
+        .map(PromptProtected::result)
+}
+
+/// Refuse input addressed to a window or element of `pid` when `pid` draws
+/// prompts. A UserNotificationCenter target is refused whenever one of its
+/// on-screen alerts asks for consent.
+pub fn refuse_pid(input: PromptInput, pid: i32) -> Result<(), ToolResult> {
+    if input == PromptInput::Allow {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if let Some(shown) = fixture::shown().filter(|shown| shown.owned_by(pid)) {
+        return Err(shown.refusal().result());
+    }
+    let owner = Owner::of(pid);
+    let protected = match owner.kind {
+        PromptOwner::None => false,
+        PromptOwner::Always => true,
+        PromptOwner::ConsentAlertsOnly => crate::windows::on_screen_windows_any_layer()
+            .into_iter()
+            .any(|window| window.pid == pid && is_consent_window(pid, window.window_id)),
+    };
+    match protected {
+        true => Err(owner.refusal().result()),
+        false => Ok(()),
+    }
+}
+
+/// Refuse a global HID pointer event at screen point `(x, y)` when a
+/// prompt's window covers it. Every on-screen prompt window counts, on any
+/// layer and in any order: prompts float above app windows, and a
+/// transparent overlay in front of one must not hide it.
+pub fn refuse_point(input: PromptInput, x: f64, y: f64) -> Result<(), PromptProtected> {
+    if input == PromptInput::Allow {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if let Some(shown) = fixture::shown() {
+        return match shown.covers(x, y) {
+            true => Err(shown.refusal()),
+            false => Ok(()),
+        };
+    }
+    let covering = crate::windows::on_screen_windows_any_layer()
+        .into_iter()
+        .filter(|window| {
+            let b = &window.bounds;
+            x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height
+        });
+    for window in covering {
+        let owner = Owner::of(window.pid);
+        let protected = match owner.kind {
+            PromptOwner::None => false,
+            PromptOwner::Always => true,
+            PromptOwner::ConsentAlertsOnly => is_consent_window(window.pid, window.window_id),
+        };
+        if protected {
+            return Err(owner.refusal());
+        }
+    }
+    Ok(())
+}
+
+/// Refuse global HID keys when the frontmost process draws prompts: the HID
+/// queue delivers keys to it. A prompt such as SecurityAgent's password
+/// sheet takes the front when it appears. UserNotificationCenter is refused
+/// only while it shows a consent alert.
+pub fn refuse_frontmost_keys(input: PromptInput) -> Result<(), PromptProtected> {
+    if input == PromptInput::Allow {
+        return Ok(());
+    }
+    #[cfg(test)]
+    if let Some(shown) = fixture::shown() {
+        return Err(shown.refusal());
+    }
+    let Some(pid) = crate::apps::frontmost_pid() else {
+        return Ok(());
+    };
+    refuse_pid(input, pid).map_err(|_| Owner::of(pid).refusal())
+}
+
+struct Owner {
+    kind: PromptOwner,
+    name: String,
+}
+
+impl Owner {
+    fn of(pid: i32) -> Self {
+        let bundle_id = crate::apps::bundle_id_for_pid(pid);
+        let name = process_name(pid);
+        Self {
+            kind: security_prompt::macos_prompt_owner(bundle_id.as_deref(), name.as_deref()),
+            name: name.or(bundle_id).unwrap_or_else(|| "unknown".to_owned()),
+        }
+    }
+
+    fn refusal(&self) -> PromptProtected {
+        PromptProtected {
+            owner: self.name.clone(),
+        }
+    }
+}
+
+/// The executable name of `pid`, as `proc_name` reports it.
+fn process_name(pid: i32) -> Option<String> {
+    let mut buffer = [0u8; 256];
+    let length = unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let length = usize::try_from(length).ok().filter(|length| *length > 0)?;
+    Some(String::from_utf8_lossy(&buffer[..length]).into_owned())
+}
+
+/// Whether UserNotificationCenter's window `window_id` asks for consent.
+fn is_consent_window(pid: i32, window_id: u32) -> bool {
+    security_prompt::is_consent_alert(alert_content(pid, window_id).as_ref(), consent_labels())
+}
+
+/// The secure field and button titles of `pid`'s AX window `window_id`, or
+/// `None` when the window cannot be read.
+fn alert_content(pid: i32, window_id: u32) -> Option<AlertContent> {
+    use crate::ax::bindings::{
+        ax_get_window_id, copy_ax_windows, copy_children, copy_string_attr,
+        AXUIElementCreateApplication, AXUIElementSetMessagingTimeout,
+    };
+    use core_foundation::base::{CFRelease, CFTypeRef};
+
+    const READ_TIMEOUT_SECONDS: f32 = 0.25;
+    const MAX_ELEMENTS: usize = 200;
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(app, READ_TIMEOUT_SECONDS);
+        let windows = copy_ax_windows(app);
+        CFRelease(app as CFTypeRef);
+        let mut window = None;
+        for candidate in windows {
+            if window.is_none() && ax_get_window_id(candidate) == Some(window_id) {
+                window = Some(candidate);
+            } else {
+                CFRelease(candidate as CFTypeRef);
+            }
+        }
+        let window = window?;
+        let mut content = AlertContent::default();
+        let mut pending = vec![window];
+        let mut visited = 0;
+        while let Some(element) = pending.pop() {
+            visited += 1;
+            if visited <= MAX_ELEMENTS {
+                match copy_string_attr(element, "AXRole").as_deref() {
+                    Some("AXButton") => {
+                        if let Some(title) = copy_string_attr(element, "AXTitle") {
+                            content.button_titles.push(title);
+                        }
+                    }
+                    Some("AXTextField") => {
+                        content.has_secure_field |= copy_string_attr(element, "AXSubrole")
+                            .as_deref()
+                            == Some("AXSecureTextField");
+                    }
+                    _ => {}
+                }
+                pending.extend(copy_children(element));
+            }
+            CFRelease(element as CFTypeRef);
+        }
+        (visited <= MAX_ELEMENTS).then_some(content)
+    }
+}
+
+/// The button labels the system's consent prompts use, in every language it
+/// ships: privacy (TCC) requests and local-network requests, both drawn by
+/// UserNotificationCenter. Read once from the system's own string tables.
+fn consent_labels() -> &'static [String] {
+    const TABLES: &[(&str, &[&str])] = &[
+        (
+            "/System/Library/PrivateFrameworks/TCC.framework/Resources/Localizable.loctable",
+            &["REQUEST_ACCESS_", "NOTIFY_BUTTON_"],
+        ),
+        (
+            "/System/Library/Frameworks/NetworkExtension.framework/Resources/Localizable.loctable",
+            &["ALLOW_BUTTON", "DONT_ALLOW_BUTTON"],
+        ),
+    ];
+    static LABELS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LABELS.get_or_init(|| {
+        let mut labels: Vec<String> = TABLES
+            .iter()
+            .flat_map(|(path, keys)| button_labels(path, keys))
+            .collect();
+        labels.sort();
+        labels.dedup();
+        labels
+    })
+}
+
+/// Every short value in the localized string table at `path` whose key
+/// starts with one of `key_prefixes`, across all languages.
+fn button_labels(path: &str, key_prefixes: &[&str]) -> Vec<String> {
+    use core_foundation::{
+        base::{CFType, TCFType},
+        data::CFData,
+        dictionary::CFDictionary,
+        propertylist::{create_with_data, kCFPropertyListImmutable},
+        string::CFString,
+    };
+    // A label longer than this is a sentence (a prompt body), not a button.
+    const MAX_LABEL_CHARS: usize = 40;
+
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let Ok((plist, _)) = create_with_data(CFData::from_buffer(&bytes), kCFPropertyListImmutable)
+    else {
+        return Vec::new();
+    };
+    let plist = unsafe { CFType::wrap_under_create_rule(plist) };
+    let dictionary = |value: &CFType| value.downcast::<CFDictionary>();
+    let Some(languages) = dictionary(&plist) else {
+        return Vec::new();
+    };
+    let mut labels = Vec::new();
+    let (_, tables) = languages.get_keys_and_values();
+    for table in tables {
+        let table = unsafe { CFType::wrap_under_get_rule(table) };
+        let Some(table) = dictionary(&table) else {
+            continue;
+        };
+        let (keys, values) = table.get_keys_and_values();
+        for (key, value) in keys.into_iter().zip(values) {
+            let key = unsafe { CFType::wrap_under_get_rule(key) }.downcast::<CFString>();
+            let value = unsafe { CFType::wrap_under_get_rule(value) }.downcast::<CFString>();
+            let (Some(key), Some(value)) = (key, value) else {
+                continue;
+            };
+            let key = key.to_string();
+            let value = value.to_string();
+            if key_prefixes.iter().any(|prefix| key.starts_with(prefix))
+                && !value.is_empty()
+                && value.chars().count() <= MAX_LABEL_CHARS
+                && !value.contains("%@")
+            {
+                labels.push(value.trim().to_owned());
+            }
+        }
+    }
+    labels
+}
+
+/// Test fixture: a prompt window over a screen region that also holds the
+/// front, on this thread, so the HID primitives' guards can be tested
+/// without a window server or a real prompt.
+#[cfg(test)]
+pub(crate) mod fixture {
+    use super::PromptProtected;
+    use std::cell::Cell;
+
+    /// The prompt's screen rectangle `(x, y, width, height)` and the pid
+    /// that draws it.
+    #[derive(Clone, Copy)]
+    pub(crate) struct PromptShown((f64, f64, f64, f64), i32);
+
+    /// The pid the fixture's prompt belongs to: a value no real process has.
+    pub(crate) const PROMPT_PID: i32 = i32::MAX;
+
+    thread_local! {
+        static SHOWN: Cell<Option<PromptShown>> = const { Cell::new(None) };
+    }
+
+    impl PromptShown {
+        /// A prompt covering the whole screen.
+        pub(crate) fn start() -> Guard {
+            Self::over((f64::MIN / 2.0, f64::MIN / 2.0, f64::MAX, f64::MAX))
+        }
+
+        pub(crate) fn over(rect: (f64, f64, f64, f64)) -> Guard {
+            SHOWN.with(|shown| shown.set(Some(Self(rect, PROMPT_PID))));
+            Guard
+        }
+
+        pub(super) fn owned_by(self, pid: i32) -> bool {
+            self.1 == pid
+        }
+
+        pub(super) fn covers(self, x: f64, y: f64) -> bool {
+            let (left, top, width, height) = self.0;
+            x >= left && x < left + width && y >= top && y < top + height
+        }
+
+        pub(super) fn refusal(self) -> PromptProtected {
+            PromptProtected {
+                owner: "SecurityAgent".to_owned(),
+            }
+        }
+    }
+
+    pub(crate) struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            SHOWN.with(|shown| shown.set(None));
+        }
+    }
+
+    pub(super) fn shown() -> Option<PromptShown> {
+        SHOWN.with(Cell::get)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn this_process_is_not_a_prompt() {
+        let pid = std::process::id() as i32;
+        assert!(refuse_pid(PromptInput::Refuse, pid).is_ok());
+    }
+
+    #[test]
+    fn the_system_consent_labels_include_allow_and_dont_allow() {
+        // Read from the OS's own tables; English must be among the languages.
+        let labels = consent_labels();
+        for label in ["Allow", "Don’t Allow", "Don't Allow"] {
+            assert!(
+                labels.iter().any(|known| known == label),
+                "{label} in {labels:?}"
+            );
+        }
+        for not_consent in ["Ignore", "Report…", "OK", "Cancel"] {
+            assert!(
+                !labels.iter().any(|known| known == not_consent),
+                "{not_consent} is not a consent label"
+            );
+        }
+    }
+
+    /// Live check on a desktop that shows UserNotificationCenter alerts: each
+    /// one is classified by its buttons, and only consent alerts refuse.
+    /// Prints one line per alert. Run by hand with
+    /// `cargo test -p platform-macos --lib -- --ignored notification_center_alerts`.
+    #[test]
+    #[ignore = "reads the live desktop's UserNotificationCenter alerts"]
+    fn notification_center_alerts_are_classified_by_their_buttons() {
+        for window in crate::windows::on_screen_windows_any_layer() {
+            if Owner::of(window.pid).kind != PromptOwner::ConsentAlertsOnly {
+                continue;
+            }
+            let content = alert_content(window.pid, window.window_id);
+            let consent = is_consent_window(window.pid, window.window_id);
+            let b = &window.bounds;
+            let point = refuse_point(
+                PromptInput::Refuse,
+                b.x + b.width / 2.0,
+                b.y + b.height / 2.0,
+            );
+            println!(
+                "window {} buttons {:?} consent {consent} point refused by {:?}",
+                window.window_id,
+                content.as_ref().map(|content| &content.button_titles),
+                point.err().map(|refusal| refusal.owner)
+            );
+            if !consent {
+                // A non-consent alert alone does not refuse; another prompt
+                // window stacked at the same point still would.
+                assert!(content.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_primitive_error_maps_back_to_the_refusal() {
+        let error = anyhow::Error::new(PromptProtected {
+            owner: "SecurityAgent".to_owned(),
+        })
+        .context("desktop click failed");
+        let result = tool_result(&error).expect("the refusal survives context");
+        let structured = result.structured_content.unwrap();
+        assert_eq!(
+            structured["refusal"]["code"],
+            security_prompt::SECURITY_PROMPT_PROTECTED
+        );
+        assert_eq!(structured["refusal"]["owner"], "SecurityAgent");
+        assert!(tool_result(&anyhow::anyhow!("other failure")).is_none());
+    }
+}

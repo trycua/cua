@@ -61,7 +61,10 @@ impl Tool for TypeTextCharsTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        if let Some(refusal) = super::security_prompt::refusal_for_pid(pid) {
+        if let Err(refusal) = crate::security_prompt::refuse_pid(
+            cua_driver_core::security_prompt::PromptInput::from_args(&args),
+            pid,
+        ) {
             return refusal;
         }
         let text_raw = match args.require_str("text") {

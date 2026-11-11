@@ -99,6 +99,7 @@ fn start_err(image: &str, e: VmmError) -> RuntimeError {
     else {
         return rt_err(e);
     };
+    let image = backend_prefix(image).map_or(image, |(_, rest)| rest);
     let pinned = cua_image::resolve::NormalizedRef::parse(image)
         .is_ok_and(|r| r.digest.is_some_and(|d| d.eq_ignore_ascii_case(&want)));
     if pinned {
@@ -2231,6 +2232,7 @@ impl VmmLocal {
                 message,
                 valid,
             }),
+            Error::InvalidArgument(m) => RuntimeError::InvalidArgument(m),
             other => RuntimeError::Other(other.to_string()),
         })?;
         if missing_fallback_allowed(
@@ -4399,6 +4401,11 @@ mod tests {
             start_err(&upper, moved()),
             RuntimeError::InvalidArgument(_)
         ));
+        let prefixed = start_err(&format!("lume:ghcr.io/trycua/macos:26@{want}"), moved());
+        assert!(
+            matches!(prefixed, RuntimeError::InvalidArgument(_)),
+            "a backend prefix still pins: {prefixed:?}"
+        );
         let unpinned = start_err("ghcr.io/trycua/macos:26", moved());
         let RuntimeError::Other(m) = &unpinned else {
             panic!("a tag that moved under the create is retried: {unpinned:?}");
@@ -4601,6 +4608,54 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(lume_only_vm.unwrap().placement.backend, BackendKind::Lume);
+    }
+
+    /// A digest-only Lume reference is refused at placement, and a create
+    /// keeps it an invalid argument, so `on=auto` does not try every machine
+    /// with it.
+    #[tokio::test]
+    async fn a_digest_only_lume_create_is_an_invalid_argument() {
+        let _turn = FAKE_REGISTRY.lock().await;
+        let mut reg = cua_image::testing::FakeRegistry::default();
+        let digest = reg.lume("ghcr.io/acme/mac:1");
+        cua_image::resolve::set_source(Some(std::sync::Arc::new(reg)));
+        let spec = LocalStartSpec {
+            name: "digest-only".into(),
+            image: format!("ghcr.io/acme/mac@{digest}"),
+            os: "macos".into(),
+            cpus: 2,
+            memory_mb: 4096,
+            disk_size_gb: None,
+            ports: vec![],
+            env: Default::default(),
+            command: None,
+            ready_timeout: std::time::Duration::from_secs(30),
+            firmware: None,
+            sidecars: vec![],
+            registry_credentials: None,
+            container_runtime: None,
+            kind: None,
+            runtime: None,
+            restrict_network: false,
+            headless: false,
+            spacesd: None,
+            egress: Default::default(),
+            network: None,
+            tree: None,
+            gpu: None,
+            probes: vec![],
+            ephemeral: false,
+            warm: None,
+            mounts: vec![],
+            forkable: false,
+        };
+        let got = VmmLocal::default().prepare(&spec).await;
+        cua_image::resolve::set_source(None);
+        match got {
+            Err(RuntimeError::InvalidArgument(m)) => assert!(m.contains("digest-only"), "{m}"),
+            Err(e) => panic!("a digest-only Lume create is an invalid argument: {e:?}"),
+            Ok(_) => panic!("a digest-only Lume reference was placed"),
+        }
     }
 
     /// Any OCI rootfs without cua-spacesd is injected one on the kinds that

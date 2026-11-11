@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.10](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.9...cua-driver-rs-v0.47.10) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-driver/linux:** never remove XI2 master pairs; pool them instead ([#7358](https://github.com/trycua/cua/issues/7358)) ([e1c2a08](https://github.com/trycua/cua/commit/e1c2a0851a4a41fcae2e359ec5f8f956d3f5f950)), closes [#7325](https://github.com/trycua/cua/issues/7325)
+
 ## [0.47.9](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.8...cua-driver-rs-v0.47.9) (2026-11-11)
 
 

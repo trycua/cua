@@ -51,6 +51,40 @@ async function runsAgents(model: AppModel): Promise<boolean> {
   return model.agents.persistent.count > 0;
 }
 
+const updatesModels = new WeakMap<AppModel, UpdatesModel>();
+
+/**
+ * The updater's model, made once per app model. The bridge asks for it at
+ * start (to tell the page when the updater moves on) without making the
+ * other parts, which read their own state when first asked.
+ */
+export function updatesModel(ctx: BridgeContext): UpdatesModel {
+  const known = updatesModels.get(ctx.model);
+  if (known) return known;
+  const { model, platform } = ctx;
+  const system = ctx.system ?? null;
+  const updates = new UpdatesModel(
+    model.native,
+    system?.updater ?? null,
+    { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
+    system?.updater?.channel === "nightly"
+      ? model.native.AppUpdateChannel.Nightly
+      : system?.updater
+        ? model.native.AppUpdateChannel.Stable
+        : model.settings.updateChannel,
+    (channel) => {
+      model.settings = { ...model.settings, updateChannel: channel };
+      model.saveSettings();
+    },
+    platform,
+  );
+  // Read when an event is recorded: the app model is given its telemetry after the bridge starts.
+  updates.telemetry = { record: (signals) => model.telemetry?.record(signals) };
+  updates.subscribe(() => model.changed("update"));
+  updatesModels.set(ctx.model, updates);
+  return updates;
+}
+
 export function hostParts(ctx: BridgeContext): HostParts {
   const known = parts.get(ctx.model);
   if (known) return known;
@@ -60,18 +94,7 @@ export function hostParts(ctx: BridgeContext): HostParts {
   const tool = () => (model.servicesIn ? (name: string, args: Record<string, unknown> = {}) => model.backend.tool(name, args) : null);
   const telemetry = model.telemetry;
 
-  const updates = new UpdatesModel(
-    native,
-    system?.updater ?? null,
-    { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
-    system?.updater?.channel === "beta" ? native.AppUpdateChannel.Beta : system?.updater ? native.AppUpdateChannel.Stable : model.settings.updateChannel,
-    (channel) => {
-      model.settings = { ...model.settings, updateChannel: channel };
-      model.saveSettings();
-    },
-    platform,
-  );
-  updates.telemetry = telemetry;
+  const updates = updatesModel(ctx);
 
   const loginItem = new LoginItemModel(
     native,
@@ -87,10 +110,15 @@ export function hostParts(ctx: BridgeContext): HostParts {
     (feature) => model.recordFeature(feature),
   );
 
-  const storage = new StorageModel(native, (name, args) => {
-    const t = tool();
-    return t ? t(name, args) : Promise.reject(new Error("No cua daemon"));
-  }, platform, system?.home ?? userHome(ctx.env));
+  const storage = new StorageModel(
+    native,
+    (name, args) => {
+      const t = tool();
+      return t ? t(name, args) : Promise.reject(new Error("No cua daemon"));
+    },
+    platform,
+    system?.home ?? userHome(ctx.env),
+  );
   storage.telemetry = telemetry;
 
   const notifications = new NotificationsModel(native, tool, {
@@ -105,8 +133,7 @@ export function hostParts(ctx: BridgeContext): HostParts {
   // Approving a device asks the person here first; a device asking to join is announced.
   if (system) {
     model.devices.presence = (reason) => system.confirmPresence(reason);
-    model.devices.notify = (prompt) =>
-      system.notify({ id: `device-${prompt.deviceId}`, title: prompt.notifyTitle, body: prompt.notifyBody, route: "/settings/devices" });
+    model.devices.notify = (prompt) => system.notify({ id: `device-${prompt.deviceId}`, title: prompt.notifyTitle, body: prompt.notifyBody, route: "/spaces" });
   }
 
   const onboarding = new OnboardingStore(path.join(path.dirname(model.settingsPath), "onboarding.json"));

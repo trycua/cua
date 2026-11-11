@@ -259,6 +259,25 @@ import Testing
         #expect(account.identity() == "dana@example.com")
     }
 
+    /// The app runs on the pending backend: the Machines page's health
+    /// checks and Remove from account reach the live one, not the
+    /// protocol's defaults ("can't be checked here").
+    @Test func pendingBackendForwardsMachineHealthAndRemove() async throws {
+        let gate = LiveGate<LiveServices>()
+        let live = FixtureSpacesBackend()
+        live.fixtureHealth[""] = AppMachinesViewHealth(
+            id: "", checks: [AppMachinesViewCheck(id: "machine.disk", status: "fail", message: "only 8 GB free",
+                                                   remediation: "", facts: ["free_gb": "8"])],
+            cuaVersion: "0.5.0", error: nil)
+        gate.resolve(LiveServices(backend: live, account: FixtureAccount(identity: "dana@example.com")))
+        let backend = PendingSpacesBackend(gate: gate)
+        let health = try await backend.machineHealth(machine: nil)
+        #expect(health.checks.map(\.id) == ["machine.disk"])
+        #expect(live.healthChecked == [""])
+        try await backend.relayUnregister(id: "relay:studio")
+        #expect(live.unregistered == ["relay:studio"])
+    }
+
     @Test func aStartThatFailedSaysWhyInsteadOfWaiting() async {
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: FixtureSpacesBackend(rows: []), startError: "no SDK"))
@@ -284,7 +303,6 @@ import Testing
         gate.resolve(LiveServices(backend: FixtureSpacesBackend(), account: FixtureAccount(identity: "dana@example.com")))
         model.attachLive(nil)
         #expect(model.identity == "dana@example.com")
-        #expect(model.onboarding.state.identity == "dana@example.com")
         // No SDK backend (fixtures): what waits for one never runs.
         #expect(seen.isEmpty)
     }

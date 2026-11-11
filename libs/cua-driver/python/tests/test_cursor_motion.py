@@ -220,6 +220,8 @@ class CursorMotionGoldenTests(unittest.TestCase):
         spec = n.cursor_motion_spec_for_style(c.CursorMotionStyle.COMET_SWOOP, params)
         self.assertIsNotNone(spec)
         params.style = c.CursorMotionStyle.COMET_SWOOP
+        # A raw spec matches the planned move under native timing; the default (steady) adds a floor.
+        params.timing = c.CursorMotionTiming.NATIVE
         a = n.plan_cursor_move(params, request).samples()
         b = n.plan_cursor_spec(spec, request).samples()
         self.assertEqual(a, b)

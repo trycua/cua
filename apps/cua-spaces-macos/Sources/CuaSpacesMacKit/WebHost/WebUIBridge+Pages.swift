@@ -31,12 +31,70 @@ extension WebUIBridge {
             let row = try await cloudTool("cloud_connect", target)
             await model.cloud.refresh()
             return row
+        case "clouds.disconnect":
+            let receipt = try await cloudTool("cloud_disconnect",
+                                              ["provider": try string(args, "provider"),
+                                               "delete": args["deleteResources"] as? Bool ?? false])
+            await model.cloud.refresh()
+            return receipt
+        case "clouds.approve":
+            try await model.approveCloud(try string(args, "provider"), approve: args["approve"] as? Bool ?? false)
+            return NSNull()
 
         // Teleport and Share
         case "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
-             "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered",
+             "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.readiness",
+             "teleport.remembered",
              "teleport.streamWindow":
             return try await teleport(method, args)
+        // Links to things you run (`cua share`): the daemon's shares.
+        case "links.list":
+            return ["links": try await model.backend.links().map { BridgeValue.encode($0) }] as [String: Any]
+        case "links.create":
+            let ttl = (args["ttlSeconds"] as? NSNumber).map { $0.uint32Value }
+            // A public TCP share (Labs): a TCP service in a Space at a public address (agents and the CLI ask for them).
+            if args["tcp"] as? Bool == true {
+                let options = TcpShareOptions(
+                    route: args["route"] as? String, allow: args["allow"] as? [String] ?? [],
+                    checkHost: args["checkHost"] as? Bool ?? false, consent: args["consent"] as? Bool ?? false)
+                return BridgeValue.encode(try await model.backend.createTcpLink(
+                    target: try string(args, "target"), service: args["service"] as? String, ttlSeconds: ttl, name: args["name"] as? String,
+                    options: options))
+            }
+            return BridgeValue.encode(try await model.backend.createLink(
+                target: try string(args, "target"), access: args["access"] as? String, ttlSeconds: ttl, name: args["name"] as? String))
+        case "links.stop":
+            return ["stopped": try await model.backend.stopLink(id: try string(args, "id"))] as [String: Any]
+        // A waiting public TCP share (an agent asked, or the first through a
+        // share edge): the person's answer.
+        case "links.approve":
+            return BridgeValue.encode(try await model.backend.approveLink(id: try string(args, "id"), always: args["always"] as? Bool ?? false))
+        case "links.deny":
+            let id = try string(args, "id")
+            try await model.backend.denyLink(id: id)
+            return ["denied": id] as [String: Any]
+        case "shares.settings.get":
+            return BridgeValue.encode(try await model.backend.shareSettings())
+        case "shares.settings.set":
+            guard let s = args["settings"] as? [String: Any] else { throw Failure.badArgs("settings: object") }
+            let landing = s["landing"] as? String ?? "auto"
+            return BridgeValue.encode(try await model.backend.setShareSettings(ShareSettingsRow(
+                landing: ["only_my_cloud", "allow_relay"].contains(landing) ? landing : "auto",
+                relayFallback: s["relayFallback"] as? Bool ?? true,
+                dailyCapMib: (s["dailyCapMib"] as? NSNumber)?.uint64Value ?? 0,
+                defaultAllow: s["defaultAllow"] as? [String] ?? [],
+                approveAgentShares: s["approveAgentShares"] as? Bool ?? true,
+                alwaysAllowSpaces: s["alwaysAllowSpaces"] as? [String] ?? [],
+                edgeConsent: s["edgeConsent"] as? [String] ?? [],
+                usedToday: 0, edgeCloud: nil, edgeHost: nil, edgeMonthlyUsd: nil)))
+        case "shares.edge.remove":
+            return ["ended": try await model.backend.removeShareEdge()] as [String: Any]
+        // The Space thread (CUA-2155): the daemon's tools, answered as-is;
+        // the page maps them (`ops/thread.ts`).
+        case "thread.read", "thread.post", "thread.members", "thread.setRights",
+             "thread.agentAdd", "thread.agentRemove",
+             "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings":
+            return try await threadTool(method, args)
         case "sharing.list":
             return BridgeValue.encode(try await model.backend.shares(id: try spaceId(args)))
         case "sharing.share":
@@ -45,14 +103,68 @@ extension WebUIBridge {
         case "sharing.unshare":
             return BridgeValue.encode(try await model.backend.unshare(id: try spaceId(args), who: try string(args, "who")))
 
-        // Settings, Agents: the daemon's agent_keys methods (the key travels
+        // Sharing is for teams: who lost access, and "seen" (empty when signed
+        // out or from a server that predates it).
+        case "sharing.removals":
+            guard model.identity != nil, let reader = model.teamsReader else { return [] as [Any] }
+            return BridgeValue.encode(try await reader.shareRemovals())
+        case "sharing.ackRemovals":
+            if model.identity != nil { try await model.teamsReader?.ackShareRemovals() }
+            return NSNull()
+
+        // Settings, Connections: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")
+        // The providers are asked whether the saved API keys still work (answers cached for minutes).
+        case "agentKeys.check": return try await model.agentKeys.call("agent_keys.check")
         case "agentKeys.set":
-            var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": try string(args, "value")]
+            // A custom endpoint may have no key: `value` is then empty.
+            var keyArgs: [String: Any] = ["provider": try string(args, "provider"), "value": (args["value"] as? String) ?? ""]
             if let env = args["env"] as? String, !env.isEmpty { keyArgs["env"] = env }
+            if let region = args["region"] as? String, !region.isEmpty { keyArgs["region"] = region }
+            if let fields = args["fields"] as? [String: String], !fields.isEmpty { keyArgs["fields"] = fields }
+            // Another key beside the first one for the provider, named (it replaces nothing).
+            if args["add"] as? Bool == true { keyArgs["add"] = true }
+            if let label = args["label"] as? String, !label.isEmpty { keyArgs["label"] = label }
             return try await model.agentKeys.call("agent_keys.set", keyArgs)
-        case "agentKeys.remove": return try await model.agentKeys.call("agent_keys.remove", ["env": try string(args, "env")])
+        case "agentKeys.remove":
+            var removeArgs: [String: Any] = ["env": try string(args, "env")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { removeArgs["slot"] = slot }
+            if args["keep_others"] as? Bool == true { removeArgs["keep_others"] = true }
+            return try await model.agentKeys.call("agent_keys.remove", removeArgs)
+        // Which saved credential an app that takes any provider uses from its next run (no env: the first that works).
+        case "agentKeys.use":
+            var useArgs: [String: Any] = ["app": try string(args, "app")]
+            if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
+            if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.use", useArgs)
+        // A saved key or sign-in gets a name (no slot: the first saved for env).
+        case "agentKeys.rename":
+            var renameArgs: [String: Any] = ["env": try string(args, "env"), "label": try string(args, "label")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { renameArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.rename", renameArgs)
+        // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
+        case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
+        case "agentKeys.copySignIn":
+            guard let on = args["on"] as? Bool else { throw Failure.badArgs("on: boolean") }
+            return try await model.agentKeys.call("agent_keys.copy_sign_in", ["on": on])
+        case "agentKeys.fromShell":
+            var shellArgs: [String: Any] = ["env": try string(args, "env")]
+            if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
+            if let fields = args["fields"] as? [String: String], !fields.isEmpty { shellArgs["fields"] = fields }
+            return try await model.agentKeys.call("agent_keys.from_shell", shellArgs)
+
+        // Settings, Connections, GitHub: the daemon's github.* app methods. They answer the hosts, the
+        // accounts, the source in use and the scopes of the sign-in the host uses for an approved push
+        // (never a token); the page maps them. Not `agentKeys`: these answers are not the key list.
+        case "github.status", "github.rescan": return try await tool(method)
+        case "github.use":
+            var useArgs: [String: Any] = ["host": try string(args, "host")]
+            if let login = args["login"] as? String, !login.isEmpty { useArgs["login"] = login }
+            return try await tool("github.use", useArgs)
+        case "github.enable":
+            guard let enabled = args["enabled"] as? Bool else { throw Failure.badArgs("enabled: boolean") }
+            return try await tool("github.enable", ["host": try string(args, "host"), "enabled": enabled])
 
         // Cua Volume
         case "volume.overview": return try await volumeOverview()
@@ -89,6 +201,18 @@ extension WebUIBridge {
             input["checking"] = true
             return input
 
+        // The in-app update indicator: Sparkle downloads in the background,
+        // and the page asks to restart.
+        case "update.get": return model.updates.updateState.json
+        case "update.install":
+            guard model.updates.updater != nil else { throw Failure.unsupported("Updates are off in this build") }
+            // The app quits to install: answer first, then start.
+            let answer = model.updates.updateState.json
+            if model.updates.updateState.status == .downloaded {
+                DispatchQueue.main.async { [model] in model.updates.installUpdate() }
+            }
+            return answer
+
         // Settings, launch at login
         case "loginItem.get":
             model.readLoginItem()
@@ -102,10 +226,79 @@ extension WebUIBridge {
             await model.press(row: "launch-at-login-approve")
             return NSNull()
 
+        // "Add a computer" and "Share": the account's Teams (Settings, Teams)
+        // and the current one.
+        case "teams.list":
+            await model.reloadTeams()
+            var teams: [[String: Any]] = []
+            if case .ready(let list) = model.teamsState {
+                teams = list.map { ["id": $0.id, "alias": $0.alias, "name": $0.name, "role": $0.role, "plan": $0.plan] }
+            }
+            return ["teams": teams, "currentTeamId": model.settings.currentTeamId.map { $0 as Any } ?? NSNull()] as [String: Any]
+
         // Settings, Devices
         case "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
-             "devices.revoke", "devices.confirmMachine":
+             "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
+             "devices.revokePairingCode":
             return try await devices(method, args)
+
+        // Settings, Relay usage, and the notice past the allowance: the
+        // same read as the native row (`app_relay_usage`). Signed out, or
+        // a relay that meters nothing: null.
+        case "relay.usage":
+            let devices = model.devices
+            guard devices.signedIn, let relay = devices.devices else { return NSNull() }
+            guard let usage = try await relay.relayUsage(), usage.metered else { return NSNull() }
+            return BridgeValue.encode(usage)
+
+        // Processor, memory and disk for Home, the Spaces page and a
+        // Space's page: the SDK's snapshot (every Space of yours, here and
+        // on your other computers); This Mac's own numbers
+        // (`HostResourceSampler`) while the SDK can't answer.
+        case "resources.get":
+            let visible = args["visible"] as? Bool ?? true
+            if let snapshot = await model.backend.resources(visible: visible) {
+                return resourcesJSON(snapshot)
+            }
+            return HostResourceSampler.shared.sample().snapshot()
+        // The Machines page: rename a machine, Remove from account (what
+        // each does to which machine is the core's `machines_view`).
+        case "machines.rename":
+            try await model.renameMachine(id: try string(args, "id"), name: try string(args, "name"))
+            return NSNull()
+        case "machines.remove":
+            let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
+            // The Spaces made on it are detached unless the page asked to delete them too.
+            try await model.removeMachine(machine: machine, device: device, deleteSpaces: args["deleteSpaces"] as? Bool == true)
+            return NSNull()
+
+        // The account's default Space (the relay keeps it, so the apps, the
+        // CLI and agents agree) and where a new task goes now. Signed out or
+        // not enrolled: null. Nothing here creates a Space.
+        case "spaces.settings":
+            guard let relay = signedInDevices() else { return NSNull() }
+            return BridgeValue.encode(try await relay.spacesSettings())
+        case "spaces.setSettings":
+            let defaultSpace = (args["defaultSpace"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let fallback = try strings(args, "fallback")
+            guard let fallbackOn = args["fallbackOn"] as? Bool else { throw Failure.badArgs("fallbackOn: boolean") }
+            for id in [defaultSpace].compactMap({ $0 }) + fallback where !Self.isRelaySpaceId(id) {
+                throw Failure.badArgs("not a Space id: \(id)")
+            }
+            guard let relay = signedInDevices() else { return NSNull() }
+            let saved = try await relay.setSpacesSettings(
+                SpacesSettings(defaultSpace: defaultSpace, fallback: fallback, fallbackOn: fallbackOn, updatedAt: 0))
+            return BridgeValue.encode(saved)
+        case "spaces.resolveDefault":
+            guard let relay = signedInDevices() else { return NSNull() }
+            return BridgeValue.encode(try await relay.resolveDefaultSpace())
+        // Each machine's own daemon checks its health; the next
+        // `machines.list` view carries the issues.
+        case "machines.checkHealth":
+            await model.checkMachineHealth()
+            return NSNull()
 
         // Settings, Storage
         case "storage.get":
@@ -117,12 +310,17 @@ extension WebUIBridge {
 
         // Notifications
         case "notifications.list":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             await model.persistent.pollNotifications()
-            return BridgeValue.encode(model.persistent.feed)
+            return model.persistent.feedRows()
         case "notifications.markAllRead":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             await model.persistent.markAllRead()
+            return NSNull()
+        case "notifications.markRead":
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
+            guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
+            await model.persistent.markRead(ids: ids)
             return NSNull()
 
         // Usage events
@@ -132,12 +330,37 @@ extension WebUIBridge {
             // signal here, before the SDK's own check.
             guard let telemetry = model.telemetrySink, telemetry.status().enabled else { return NSNull() }
             let signals = raw.compactMap(Self.telemetrySignal)
+            // The page's first run moved past Welcome: its usage notice was
+            // on screen, so events may be sent from here (this one included).
+            if raw.contains(where: Self.leftWelcome) { telemetry.acknowledgeNotice() }
             if !signals.isEmpty { telemetry.record(signals) }
             return NSNull()
+
+        // The one-time notice that usage data is now linked to the account
+        // (CUA-1881); no telemetry (a bare model) has none.
+        case "telemetry.linkNotice":
+            guard let telemetry = model.telemetrySink else { return NSNull() }
+            let n = telemetry.linkNotice()
+            return ["due": n.due, "title": n.title, "body": n.body, "okLabel": n.okLabel,
+                    "turnOffLabel": n.turnOffLabel, "detailsLabel": n.detailsLabel, "docsUrl": n.docsUrl] as [String: Any]
+        case "telemetry.acknowledgeLinkNotice":
+            model.telemetrySink?.acknowledgeLinkNotice()
+            return NSNull()
+        // The page's crash reporter (CUA-2343): its consent and build config.
+        case "crashReporting.config":
+            let status = model.telemetrySink?.status()
+            return CrashReporting.bridgeConfig(
+                info: Bundle.main.infoDictionary ?? [:],
+                allowed: status.map { CrashReporting.isAllowed(enabled: $0.enabled, noticeShown: $0.noticeShown) } ?? false,
+                env: ProcessInfo.processInfo.environment)
 
         // A Space's detail
         case "spaces.usage":
             return BridgeValue.encode(await model.backend.usage(id: try spaceId(args)))
+        case "spaces.reach":
+            // Whether the Space can take work now: the relay's word and a health check
+            // (the SDK's `spaces.reach`), asked before a job is handed to it.
+            return Self.reach(try await model.backend.reach(id: try spaceId(args)))
         case "spaces.windows":
             let stream = try await stream(for: try spaceId(args))
             await stream.rows.refresh()
@@ -160,12 +383,22 @@ extension WebUIBridge {
             } else {
                 throw Failure.notFound("no window \(row)")
             }
-            if type == "open" { stream.pips.popOut(source) } else { stream.pips.popIn(source) }
+            if type == "open" {
+                try await popOut(source, of: try spaceId(args), stream: stream)
+            } else {
+                stream.pips.popIn(source)
+            }
             return stream.rows.openRows(openKeys: stream.pips.openKeys)
 
         // This machine
         case "host.setUp":
             guard let host = model.host.host else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
+            // A sign-in here already set it up (`addAfterSignIn`): wait for
+            // that, and don't set it up twice.
+            if let running = model.host.signInSetUp {
+                await running.value
+                if model.host.status?.configured == true { return hostStatus() }
+            }
             let request = try hostRequest(try object(args, "request"))
             do {
                 try await model.host.setUp(request, on: host)
@@ -177,10 +410,41 @@ extension WebUIBridge {
                     : HostSetupFailure.presenting(LiveSpacesBackend.words(error)))
             }
             return hostStatus()
+        case "host.joinWithCode":
+            let relay = args["relay"] as? String
+            guard let code = args["code"] as? String,
+                  let cliArgs = JoinWithCode.arguments(code: code, relay: relay) else {
+                throw Failure.badArgs("code: string")
+            }
+            guard let cua = AppEnvironment.bundledCuaPath else {
+                throw Failure.unsupported("This build has no bundled cua to join with")
+            }
+            let was = model.host.providesSpaces
+            do {
+                try await JoinWithCode.run(cua: cua, args: cliArgs)
+            } catch let failed as JoinWithCode.FailedRun {
+                throw Failure(code: "failed", message: failed.message)
+            }
+            await model.host.refresh()
+            model.host.followProviding(from: was)
+            return hostStatus()
         case "host.action":
             guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
             let id = try hostAction(try string(args, "action"))
             await model.host.run(id)
+            if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
+            return hostStatus()
+        case "host.limits":
+            guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }
+            func count(_ key: String) throws -> UInt32? {
+                guard let v = args[key], !(v is NSNull) else { return nil }
+                guard let n = (v as? NSNumber)?.doubleValue, n >= 0, n <= 1_000_000, n == n.rounded() else {
+                    throw Failure.badArgs("\(key): a whole number, 0 or more")
+                }
+                return UInt32(n)
+            }
+            await model.host.setLimits(maxSpaces: try count("maxSpaces"), maxMemoryGb: try count("maxMemoryGb"),
+                                       maxDiskGb: try count("maxDiskGb"), maxRunMinutes: try count("maxRunMinutes"))
             if let failure = model.host.actionFailure { throw Self.hostFailure(failure) }
             return hostStatus()
         case "host.openSettings":
@@ -188,7 +452,21 @@ extension WebUIBridge {
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
                 throw Failure.badArgs("Only System Settings panes open here")
             }
-            NSWorkspace.shared.open(u)
+            // Local Network: the daemon connects (which makes macOS ask, in a
+            // dialog of its own); the pane opens only when it stays blocked
+            // and no macOS prompt is waiting for an answer.
+            if url.contains("Privacy_LocalNetwork") {
+                // Explained here, so a later macOS Space create does not explain it again.
+                UserDefaults.standard.set(true, forKey: LocalNetworkGate.askedKey)
+                await model.checkLocalNetworkFromDaemon(every: 0)
+                if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
+                    NSWorkspace.shared.open(u)
+                }
+                return NSNull()
+            }
+            // Screen Recording and Accessibility: the app's guide to the
+            // pane (PermissionFlow), never macOS's bare prompt.
+            if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }
             return NSNull()
 
         default:
@@ -199,6 +477,14 @@ extension WebUIBridge {
     // MARK: - Arguments
 
     func spaceId(_ args: [String: Any]) throws -> String { try string(args, "spaceId") }
+
+    /// `spaces.reach`'s answer as the page reads it (`SpaceReach`): the SDK's snake_case in camelCase.
+    static func reach(_ answer: Any) -> [String: Any] {
+        let r = answer as? [String: Any] ?? [:]
+        return ["reachable": r["reachable"] as? Bool ?? false,
+                "listedOffline": r["listed_offline"] as? Bool ?? false,
+                "reason": (r["reason"] as? String).map { $0 as Any } ?? NSNull()]
+    }
 
     func object(_ args: [String: Any], _ key: String) throws -> [String: Any] {
         guard let v = args[key] as? [String: Any] else { throw Failure.badArgs("\(key): object") }
@@ -217,17 +503,181 @@ extension WebUIBridge {
 
     /// One of the daemon's Spaces tools the native pages run.
     func tool(_ name: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard model.persistent.canCallTools else { throw Failure.unsupported("This needs the cua daemon") }
+        guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         return try await model.persistent.daemonTool(name, args)
     }
 
+    /// `agents.recentThreads {limit?, agents?}` and `agents.threadHistory {agent, id, limit?}`:
+    /// the person-only daemon tools `agent_threads` and `agent_thread_read`,
+    /// their JSON back untouched (`ops/agent-threads.ts` maps it). `agents`
+    /// (the agent picked in setup) is read by the daemon, as on every host. A
+    /// daemon without them answers `unsupported`, and the Ready screen hides the list.
+    func agentThreads(_ method: String, _ args: [String: Any]) async throws -> Any {
+        var out: [String: Any] = [:]
+        if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+        if method == "agents.recentThreads", let agents = args["agents"] as? [String], !agents.isEmpty { out["agents"] = agents }
+        let name: String
+        if method == "agents.threadHistory" {
+            guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+            guard let id = args["id"] as? String, !id.isEmpty else { throw Failure.badArgs("id: string") }
+            out["agent"] = agent
+            out["id"] = id
+            name = "agent_thread_read"
+        } else {
+            name = "agent_threads"
+        }
+        do {
+            return try await tool(name, out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see agent chats.") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
+    /// `agents.computerSignIn {space, agent, action, code?, afterRefusal?}`: the
+    /// person-only daemon tool `agent_sign_in` (the agent's own sign-in on
+    /// another computer, CUA-3907), its JSON back untouched
+    /// (`ops/agent-sign-in.ts` maps it). A daemon without it answers `unsupported`.
+    func computerSignIn(_ args: [String: Any]) async throws -> Any {
+        guard let space = args["space"] as? String, !space.isEmpty else { throw Failure.badArgs("space: string") }
+        guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+        let action = args["action"] as? String ?? "status"
+        guard ["status", "start", "code", "cancel"].contains(action) else { throw Failure.badArgs("action: status, start, code or cancel") }
+        var out: [String: Any] = ["space": space, "agent": agent, "action": action]
+        if action == "code" {
+            guard let code = args["code"] as? String, !code.isEmpty else { throw Failure.badArgs("code: string") }
+            out["code"] = code
+        }
+        if args["afterRefusal"] as? Bool == true { out["after_refusal"] = true }
+        do {
+            return try await tool("agent_sign_in", out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to sign agents in on other computers.") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
+    /// `thread.read`, `thread.post`, `thread.members`, `thread.setRights`,
+    /// `thread.agentAdd`, `thread.agentRemove`, `thread.joinCodeCreate`,
+    /// `thread.joinCodeList`, `thread.joinCodeCancel`, `thread.settings`: the operation's
+    /// arguments as the tool's (`threadReadArgs` in the web bridge), and the
+    /// tool's JSON back untouched. A daemon (or SDK) without the thread
+    /// answers `unsupported`, so the page keeps its classic layout.
+    func threadTool(_ method: String, _ args: [String: Any]) async throws -> Any {
+        let (name, out) = try Self.threadToolCall(method, args)
+        do {
+            return try await tool(name, out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see this Space's thread.") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
+    /// The tool and its arguments for one of the thread's methods.
+    static func threadToolCall(_ method: String, _ args: [String: Any]) throws -> (String, [String: Any]) {
+        guard let space = args["spaceId"] as? String, !space.isEmpty else { throw Failure.badArgs("spaceId: string") }
+        var out: [String: Any] = ["space": space]
+        switch method {
+        case "thread.read":
+            if let after = args["after"] as? NSNumber { out["after"] = after }
+            if let before = args["before"] as? NSNumber { out["before"] = before }
+            if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+            if args["markRead"] as? Bool == true { out["mark_read"] = true }
+            if let follow = (args["followMs"] as? NSNumber)?.intValue, follow > 0 {
+                out["follow_ms"] = min(follow, 25_000)
+                // The stage key last seen: the wait also ends when an agent's stage changes.
+                if let live = args["liveAfter"] as? String { out["live_after"] = live }
+            }
+            // The Agents tab's DM with one agent member (CUA-2266).
+            if let with = args["with"] as? String, !with.isEmpty { out["with"] = with }
+            return ("thread_read", out)
+        case "thread.post":
+            guard let text = args["text"] as? String else { throw Failure.badArgs("text: string") }
+            out["text"] = text
+            if let reply = args["replyTo"] as? NSNumber { out["reply_to"] = reply }
+            if let answer = args["answer"] as? [String: Any], let approval = answer["approval"] as? NSNumber {
+                var a: [String: Any] = ["approval": approval, "approve": answer["approve"] as? Bool ?? false]
+                if let note = answer["note"] as? String, !note.isEmpty { a["note"] = note }
+                out["answer"] = a
+            }
+            if let session = args["toSession"] as? NSNumber { out["to_session"] = session }
+            return ("thread_post", out)
+        case "thread.members":
+            // The Agents tab asks for each agent's DM summary too (CUA-2266).
+            if args["overview"] as? Bool == true { out["overview"] = true }
+            return ("agent_members", out)
+        case "thread.setRights":
+            // Member names are unique per machine: the tool takes the name, not the Space.
+            guard let name = args["name"] as? String, !name.isEmpty else { throw Failure.badArgs("name: string") }
+            var rights: [String: Any] = ["name": name]
+            for key in ["task", "control", "approve"] {
+                if let group = args[key] as? String {
+                    rights[key] = group
+                } else if let accounts = args[key] as? [String] {
+                    rights[key] = accounts
+                }
+            }
+            return ("agent_set_rights", rights)
+        case "thread.agentAdd":
+            guard let name = args["name"] as? String, !name.isEmpty else { throw Failure.badArgs("name: string") }
+            guard let harness = args["harness"] as? String, !harness.isEmpty else { throw Failure.badArgs("harness: string") }
+            out["name"] = name
+            out["agent"] = harness
+            if let model = args["model"] as? String, !model.isEmpty { out["model"] = model }
+            if let standby = args["standby"] as? Bool { out["standby"] = standby }
+            if let brief = args["brief"] as? String, !brief.isEmpty { out["brief"] = brief }
+            return ("agent_add", out)
+        case "thread.agentRemove":
+            // Member names are unique per machine: the tool takes the name.
+            guard let name = args["name"] as? String, !name.isEmpty else { throw Failure.badArgs("name: string") }
+            return ("agent_remove", ["name": name])
+        case "thread.joinCodeCreate":
+            if let ttl = args["ttlS"] as? NSNumber { out["ttl_s"] = ttl }
+            if let canTask = args["canTask"] as? String {
+                guard canTask == "owner" || canTask == "members" else { throw Failure.badArgs("canTask: owner or members") }
+                out["can_task"] = canTask
+            }
+            if let ask = args["askBeforeJoin"] as? Bool { out["ask_before_join"] = ask }
+            return ("thread_join_code_create", out)
+        case "thread.joinCodeList":
+            return ("thread_join_code_list", out)
+        case "thread.joinCodeCancel":
+            guard let id = args["id"] as? String, !id.isEmpty else { throw Failure.badArgs("id: string") }
+            out["id"] = id
+            return ("thread_join_code_cancel", out)
+        case "thread.settings":
+            if let ask = args["askBeforeJoin"] as? Bool { out["ask_before_join"] = ask }
+            return ("thread_settings", out)
+        default:
+            throw Failure.unimplemented(method)
+        }
+    }
+
+    /// The SDK's `NotFound("Spaces tool thread_read")` or the daemon's
+    /// `unknown tool thread_read` (`isMissingThreadTool` in the web bridge).
+    static func missingThreadTool(_ message: String) -> Bool {
+        let m = message.lowercased()
+        let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read", "agent_sign_in"]
+        return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
+    }
+
     func cloudTool(_ name: String, _ args: [String: Any]) async throws -> Any {
-        guard let clouds = model.backend as? CloudToolRunning else { throw Failure.unsupported("Clouds need the cua daemon") }
+        guard let clouds = model.backend as? CloudToolRunning else { throw Failure.unsupported(serviceDownMessage) }
         return try await clouds.cloudTool(name, args)
     }
 
     func volumeOverview() async throws -> Any {
-        guard model.persistent.canCallTools else { throw Failure.unsupported("Cua Volume needs the cua daemon") }
+        guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         func list(_ v: Any?, _ key: String) -> Any { (v as? [String: Any])?[key] as? [Any] ?? [] }
         async let requests = try? tool("volume_requests")
         async let grants = try? tool("volume_grants")
@@ -300,7 +750,7 @@ extension WebUIBridge {
             var input = BridgeValue.encode(devices.input) as? [String: Any] ?? [:]
             input["readError"] = devices.error ?? NSNull()
             // What the native page names this Mac before the relay does.
-            input["deviceName"] = Foundation.Host.current().localizedName ?? NSNull()
+            input["deviceName"] = ComputerName.current ?? NSNull()
             return input
         case "devices.enroll":
             let r = try await relay.enroll()
@@ -326,11 +776,35 @@ extension WebUIBridge {
             try await relay.revoke(id: try string(args, "id"))
         case "devices.confirmMachine":
             try await relay.confirmMachine(id: try string(args, "id"))
+        // "Add a computer": the relay keeps the one-time code.
+        case "devices.createPairingCode":
+            let team = (args["team"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return BridgeValue.encode(try await relay.createPairingCode(team: team))
+        case "devices.pairingCodes":
+            return BridgeValue.encode(try await relay.pairingCodes())
+        case "devices.revokePairingCode":
+            try await relay.revokePairingCode(id: try string(args, "id"))
+            return NSNull()
         default:
             throw Failure.unimplemented(method)
         }
         await devices.refresh()
         return NSNull()
+    }
+
+    /// The page's first run moved past Welcome (its usage notice was on
+    /// screen): any page left or shown other than Welcome being shown, or
+    /// "Set up later".
+    static func leftWelcome(_ raw: Any) -> Bool {
+        guard let s = raw as? [String: Any] else { return false }
+        switch s["type"] as? String {
+        case "onboarding-page":
+            // Welcome being shown (`shown`, or the funnel's `step_viewed`) is before the notice.
+            let action = s["action"] as? String
+            return !(s["page"] as? String == "welcome" && (action == "shown" || action == "step_viewed"))
+        case "step": return s["step"] as? String == "onboarding_skipped"
+        default: return false
+        }
     }
 
     /// A usage event as the core's signal: known kinds with every field a
@@ -381,8 +855,13 @@ extension WebUIBridge {
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let outcome = word("outcome"), let phase = word("failedPhase"), let stalled = flag("stalled"),
                   let elapsed = ms("elapsedMs"), let gpu = flag("gpu"), let errorVariant = variant("errorVariant") else { return nil }
+            // A retried create's final outcome (pages before it send neither).
+            let attempt = (s["retryAttempt"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() ? 2 : $0.intValue } ?? 0
+            guard attempt == 0 || attempt == 1,
+                  let subclass = s["errorSubclass"] == nil ? "none" : word("errorSubclass") else { return nil }
             return .spaceCreate(location: location, guestOs: os, kind: kind, outcome: outcome, failedPhase: phase,
-                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant)
+                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant,
+                                retryAttempt: UInt32(attempt), errorSubclass: subclass)
         case "space-create-started":
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let gpu = flag("gpu") else { return nil }
@@ -392,8 +871,11 @@ extension WebUIBridge {
                   let method = word("mountMethod"), let outcome = word("outcome") else { return nil }
             return .volumeSetup(surface: surface, storage: storage, addToFinder: finder, mountMethod: method, outcome: outcome)
         case "share":
-            guard let action = word("action"), let role = word("role"), let outcome = word("outcome") else { return nil }
-            return .share(action: action, role: role, outcome: outcome)
+            // Why and where a share failed (CUA-1855); a page from before them sends neither.
+            guard let action = word("action"), let role = word("role"), let outcome = word("outcome"),
+                  let errorKind = s["errorKind"] == nil ? "none" : word("errorKind"),
+                  let failedStage = s["failedStage"] == nil ? "none" : word("failedStage") else { return nil }
+            return .share(action: action, role: role, outcome: outcome, errorKind: errorKind, failedStage: failedStage)
         case "app-update":
             guard let action = word("action"), let channel = word("channel"), let trigger = word("trigger") else { return nil }
             return .appUpdate(action: action, channel: channel, trigger: trigger)
@@ -412,6 +894,13 @@ extension WebUIBridge {
             }
             guard words.count == list.count else { return nil }
             return .experimentsOn(experiments: words)
+        // A plan limit shown, or its (or an upgrade prompt's) link opened (CUA-1881).
+        case "plan-limit-shown":
+            guard let surface = word("surface"), let kind = word("kind"), let plan = word("plan") else { return nil }
+            return .planLimitShown(surface: surface, kind: kind, plan: plan)
+        case "upgrade-link-opened":
+            guard let surface = word("surface"), let kind = word("kind"), let plan = word("plan") else { return nil }
+            return .upgradeLinkOpened(surface: surface, kind: kind, plan: plan)
         default:
             return nil
         }
@@ -458,8 +947,42 @@ extension WebUIBridge {
         let s = (rows: StreamRowsModel(space: space, provider: provider, backend: model.backend),
                  pips: StreamPiPSet(provider: provider))
         streams[id] = s
+        watchPanels(of: id, pips: s.pips, rows: s.rows)
         return s
     }
+
+    /// Pops a source out. The desktop shows this window's own viewer
+    /// session (the inline desktop's), held while the panel is open: no
+    /// second stream opens, and closing the panel hands the same live
+    /// session back to the page, with no reconnect. A window (or a window
+    /// with no native video) gets a session of its own.
+    func popOut(_ source: StreamSource, of id: String,
+                stream: (rows: StreamRowsModel, pips: StreamPiPSet)) async throws {
+        guard source == .desktop, !stream.pips.isOpen(.desktop), let surfaces = host?.videoSurfaces else {
+            stream.pips.popOut(source)
+            return
+        }
+        let session = try await surfaces.holdViewer(spaceId: id)
+        heldDesktops.insert(id)
+        stream.pips.popOut(.desktop, sharing: session)
+    }
+
+    /// Follows a Space's open panels: tells the page when they change (a
+    /// panel closed by its own button), and lets go of the viewer session a
+    /// closed desktop panel held.
+    func watchPanels(of id: String, pips: StreamPiPSet, rows: StreamRowsModel) {
+        pipWatches[id] = pips.$openKeys.dropFirst().removeDuplicates().sink { [weak self, weak rows] keys in
+            guard let self else { return }
+            if !keys.contains(StreamSource.desktop.pipKey), self.heldDesktops.remove(id) != nil {
+                self.host?.videoSurfaces?.releaseViewer(spaceId: id)
+            }
+            let open = rows?.openRows(openKeys: keys) ?? []
+            self.host?.emit(Self.pipChangedEvent, payload: ["spaceId": id, "open": open])
+        }
+    }
+
+    /// The page's `PIP_CHANGED_EVENT` (apps/cua-spaces-web/src/bridge/space-detail.ts).
+    static let pipChangedEvent = "stream.pipChanged"
 
     /// Closes and drops the streams of Spaces that are gone (a loaded
     /// roster only: an empty one is a launch, not a deletion).
@@ -469,6 +992,7 @@ extension WebUIBridge {
         for id in streams.keys where !ids.contains(id) {
             streams[id]?.pips.popInAll()
             streams[id] = nil
+            pipWatches[id] = nil
         }
     }
 
@@ -589,7 +1113,13 @@ extension WebUIBridge {
             // Counts per site, never values; the daemon asks for Touch ID
             // before it shows names, as for the native review.
             guard let client = model.keyvault.client else { throw Failure.unsupported("The Keyvault is not available") }
-            return BridgeValue.encode(try await client.inventory(app: try string(args, "providerId"), profile: nil))
+            return BridgeValue.encode(try await client.inventory(app: try string(args, "providerId"), profile: Self.profile(args)))
+        case "teleport.readiness":
+            // Whether a teleport can work now, in plain words: the Keyvault,
+            // what macOS lets the daemon read, the profiles. Reads no value
+            // and asks for no presence.
+            guard let client = model.keyvault.client else { throw Failure.unsupported("The Keyvault is not available") }
+            return BridgeValue.encode(try await client.readiness(app: try string(args, "providerId"), profile: Self.profile(args)))
         case "teleport.remembered":
             let key = appReviewRememberKey(app: try string(args, "providerId"), space: spaceName(try string(args, "spaceId")))
             return appReviewRemembered(choices: model.settings.teleportChoices, key: key).map { $0 as Any } ?? NSNull()
@@ -630,7 +1160,7 @@ extension WebUIBridge {
     /// through `sdkConsent`, the same path `TeleportModel.confirm` takes, so
     /// every field (Save to Keyvault included) reaches the run.
     static func teleportConsent(_ c: [String: Any]) -> TeleportConsent {
-        sdkConsent(AppTeleportConsent(
+        var consent = sdkConsent(AppTeleportConsent(
             approved: c["approved"] as? Bool ?? false,
             acknowledgeSensitive: c["acknowledgeSensitive"] as? Bool ?? false,
             saveToKeyvault: c["saveToKeyvault"] as? Bool ?? false,
@@ -638,7 +1168,17 @@ extension WebUIBridge {
             cookieDomains: c["cookieDomains"] as? [String],
             exclude: c["exclude"] as? [String] ?? [],
             fromVault: c["fromVault"] as? [String],
-            includePasswords: c["includePasswords"] as? Bool ?? false))
+            includePasswords: c["includePasswords"] as? Bool ?? false,
+            passwordDomains: c["passwordDomains"] as? [String]))
+        // The browser profile chosen in the setup sheet; absent reads Default.
+        consent.profile = profile(c)
+        return consent
+    }
+
+    /// The browser profile an argument names (`Profile 1`), or nil.
+    static func profile(_ args: [String: Any]) -> String? {
+        guard let p = args["profile"] as? String, !p.isEmpty else { return nil }
+        return p
     }
 
     /// A run's report, as the page reads it (`RunReport`).
@@ -656,5 +1196,19 @@ extension WebUIBridge {
         else if data.first == UInt8(ascii: "<") { type = "image/svg+xml" }
         else { type = "application/octet-stream" }
         return "data:\(type);base64,\(data.base64EncodedString())"
+    }
+}
+
+extension WebUIBridge {
+    /// The session's relay devices, or nil (signed out, or before the SDK is in).
+    func signedInDevices() -> DevicesRunning? {
+        let devices = model.devices
+        guard devices.signedIn else { return nil }
+        return devices.devices
+    }
+
+    /// A Space id the relay keeps: `relay:<machine>` or `relay:<machine>/<name>`.
+    static func isRelaySpaceId(_ id: String) -> Bool {
+        id.range(of: #"^relay:[^/\s]+(/[a-z0-9-]{1,63})?$"#, options: .regularExpression) != nil
     }
 }

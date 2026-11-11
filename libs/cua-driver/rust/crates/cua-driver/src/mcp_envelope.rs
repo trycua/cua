@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Opt-in typed envelopes over an existing MCP transport, never an agent tool.
 //!
 //! One service registry belongs to one accepted transport. The existing receiver
@@ -5,6 +8,7 @@
 //! No listener, credential issuer, action replay or runtime fallback is added.
 
 use crate::driver_service_http::{Request as ServiceRequest, Service};
+use cua_driver_core::mcp_wire::ProtocolSession;
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -164,6 +168,7 @@ where
     let mut pending = HashSet::new();
     let mut reaper = tokio::time::interval(Duration::from_secs(30));
     let mut session_observed = false;
+    let mut protocol = ProtocolSession::default();
     loop {
         // read_until is cancellation-safe. Keep partial bytes across task and
         // reaper wakeups, and retain the original total line budget.
@@ -220,6 +225,10 @@ where
         // Responding to a duplicate active ID would itself be ambiguous. End
         // this transport rather than miscorrelating an action or replaying it.
         anyhow::ensure!(!pending.contains(&key), "duplicate active MCP request ID");
+        if let Err(response) = protocol.validate(&request) {
+            write_response(&writer, response).await?;
+            continue;
+        }
         if request.method == "initialize" {
             let mut result = initialize_result();
             result["capabilities"]["experimental"][CAPABILITY] = json!({"version": 1});
@@ -639,6 +648,8 @@ mod tests {
             serde_json::from_str(&line).unwrap()
         }
         async fn open(&mut self) -> Value {
+            self.send(1, "initialize", json!({})).await;
+            self.receive().await;
             self.send(1, &format!("{PREFIX}open"), json!({})).await;
             let mut result = self.receive().await["result"].clone();
             result
@@ -696,6 +707,88 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(closed.load(Ordering::SeqCst), 1);
+        sdk.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn envelope_legacy_and_typed_calls_wait_for_the_permission_gate() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let service = Service::for_sdk(sdk.clone()).unwrap();
+        let (mut client, task) = start(sdk.clone(), service);
+        let mut binding = client.open().await;
+        let legacy = json!({"name": "get_screen_size", "arguments": {}});
+        let typed = |id: &str| {
+            let mut envelope = envelope(id);
+            envelope["operation"] = json!("call");
+            envelope["name"] = json!("get_screen_size");
+            envelope
+        };
+
+        driver.set_awaiting_permissions(true);
+        client.send(2, "tools/call", legacy.clone()).await;
+        let pending = client.receive().await;
+        assert_eq!(
+            pending["result"]["structuredContent"]["refusal"]["code"], "permissions_pending",
+            "{pending}"
+        );
+        binding["envelope"] = typed("typed-pending");
+        client
+            .send(3, &format!("{PREFIX}exchange"), binding.clone())
+            .await;
+        let pending = client.receive().await;
+        assert_eq!(
+            pending["result"]["result"]["structuredContent"]["refusal"]["code"],
+            "permissions_pending",
+            "{pending}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "no tool may run while pending"
+        );
+
+        driver.set_awaiting_permissions(false);
+        client.send(4, "tools/call", legacy).await;
+        client.receive().await;
+        binding["envelope"] = typed("typed-open");
+        client.send(5, &format!("{PREFIX}exchange"), binding).await;
+        let open = client.receive().await;
+        assert_eq!(open["result"]["ok"], true, "{open}");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        client.write.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+        sdk.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn requests_before_initialize_are_refused_without_dispatch() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let sdk = sdk().await;
+        let (service, _, _) = service(false);
+        let (mut client, task) = start(sdk.clone(), service);
+        for (id, method, params) in [
+            (
+                1,
+                "tools/call".to_owned(),
+                json!({"name":"get_config","arguments":{}}),
+            ),
+            (2, "tools/list".to_owned(), json!({})),
+            (3, format!("{PREFIX}open"), json!({})),
+        ] {
+            client.send(id, &method, params).await;
+            let refused = client.receive().await;
+            assert_eq!(refused["id"], id, "{method}");
+            assert_eq!(refused["error"]["code"], -32602, "{method}");
+            assert!(refused.get("result").is_none(), "{method}");
+        }
+        client.send(4, "initialize", json!({})).await;
+        assert!(client.receive().await.get("result").is_some());
+        client.send(5, "tools/list", json!({})).await;
+        assert!(client.receive().await["result"]["tools"].is_array());
+        client.write.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
         sdk.shutdown().await.unwrap();
     }
 

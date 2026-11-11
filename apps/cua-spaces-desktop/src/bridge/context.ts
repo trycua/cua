@@ -12,6 +12,7 @@ import type { CredentialAnswer, UnlockAnswer } from "../model/keyvault";
 import type { TeleportCache } from "../model/teleport";
 import type { BridgeEvents } from "./host";
 import type { SystemServices } from "./system";
+import type { DropTargetRect } from "../window-drop";
 
 /** What the bridge asks the shell's windows to do (Electron owns them). */
 export interface BridgeUi {
@@ -21,8 +22,12 @@ export interface BridgeUi {
   setBackground(window: unknown, color: string, appearance: "system" | "light" | "dark" | null): void;
   /** Brings the app to the front (a keychain prompt shows over the app that asked). */
   activate(): void;
+  /** Where the calling window's Space tiles are, for a real window dragged onto one (macOS; none elsewhere). */
+  setDropTargets?(window: unknown, targets: DropTargetRect[]): void;
   /** "Send file…": the native file picker over the calling window (files and folders, several); null when cancelled. */
   chooseFiles?(window: unknown): Promise<string[] | null>;
+  /** Settings, Advanced's "Browse…": one program, over the calling window; null when cancelled. */
+  chooseProgram?(window: unknown): Promise<string | null>;
   /** A Space's picture-in-picture panels (floating windows). */
   pip?: PipPresenter;
   /**

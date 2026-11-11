@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -17,7 +20,7 @@ fn def() -> &'static ToolDef {
             - running: is a process for this app live? (pid is 0 when false)\n\
             - active: is it the system-frontmost app? (implies running)\n\
             - launch_path: filesystem path to the `.app` bundle, when known. \
-            Pass this to `launch_app` to start the app cold.\n\
+            Pass this as `name` to `launch_app` to start the app cold.\n\
             - kind: `\"desktop\"` for `.app` bundles on macOS.\n\
             - last_used: RFC3339 timestamp from the bundle's filesystem mtime, \
             when readable.\n\n\

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import type { VaultApp, VaultFiles, VaultRow, VaultSite, VaultView } from "@/bridge/contracts/keyvault";
+import type { HostSettings, SettingsRow } from "@/bridge";
 
 /** One line of the flattened vault list: an app, a site, the files of an app
  * or an item (the SwiftUI list's `VaultLine`). The core decides what is open. */
@@ -28,4 +29,14 @@ export function vaultLines(view: VaultView): VaultLine[] {
     }
   }
   return out;
+}
+
+/**
+ * The Settings, Keyvault rows the host told the page about: the core lays
+ * out the site icons switch from a default, so it shows only where the host
+ * reports the setting (the SwiftUI app and Electron do).
+ */
+export function keyvaultRows(rows: SettingsRow[], hostSettings: HostSettings | undefined): SettingsRow[] {
+  const icons = hostSettings?.keyvaultSiteIcons != null;
+  return rows.filter((r) => icons || !r.id.startsWith("keyvault-site-icons"));
 }

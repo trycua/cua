@@ -1,0 +1,75 @@
+name: "Release: Bundle the new cua in Cua Spaces"
+
+# Cua Spaces bundles the `cua` CLI and daemon built from libs/cua, but
+# Release Please opens a cua-spaces release only for a user-facing commit
+# under apps/cua-spaces-macos. A cua-sdk release (a chore commit under
+# libs/cua) therefore never produced a Mac app release, and the app kept
+# bundling the old cua while other machines moved on (CUA-1989).
+#
+# When libs/cua/VERSION changes on main, this opens a `fix(spaces-macos)`
+# PR that records the version in apps/cua-spaces-macos/BUNDLED_CUA_VERSION.
+# Merging it makes Release Please open the next cua-spaces release PR, which
+# builds the app from that commit and so bundles the new cua.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - libs/cua/VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-spaces-bundle-cua
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the bundle PR when the app is behind
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '[:space:]' < libs/cua/VERSION)
+          MARKER=apps/cua-spaces-macos/BUNDLED_CUA_VERSION
+          if [[ "$(tr -d '[:space:]' < "$MARKER" 2>/dev/null || true)" == "$VERSION" ]]; then
+            echo "Cua Spaces already records cua $VERSION"
+            exit 0
+          fi
+          BRANCH="chore/cua-spaces-bundle-cua-$VERSION"
+          if [[ -n "$(gh pr list --state open --head "$BRANCH" --json number -q '.[0].number')" ]]; then
+            echo "A bundle PR for cua $VERSION is already open"
+            exit 0
+          fi
+          git config user.name "trycua-release[bot]"
+          git config user.email "trycua-release[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          echo "$VERSION" > "$MARKER"
+          git add "$MARKER"
+          git commit -m "fix(spaces-macos): bundle cua $VERSION in Cua Spaces" \
+            -m "cua $VERSION was released, and the Mac app bundles the cua it is built with. Merging this lets Release Please open the next Cua Spaces release, so the app and the machines running cua $VERSION match."
+          git push --force-with-lease origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "fix(spaces-macos): bundle cua $VERSION in Cua Spaces" \
+            --body "cua $VERSION was released, and Cua Spaces for Mac bundles the cua it is built with. Merging this lets Release Please open the next Cua Spaces release so the app catches up. Opened automatically when libs/cua/VERSION changes (CUA-1989)."
+          gh pr merge --auto --squash "$BRANCH"

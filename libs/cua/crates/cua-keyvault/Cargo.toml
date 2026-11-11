@@ -27,6 +27,7 @@ serde_json.workspace = true
 base64.workspace = true
 hex.workspace = true
 thiserror.workspace = true
+cua-home.workspace = true
 tracing.workspace = true
 # Teleport and consent counts (cua-telemetry; nothing from the vault).
 cua-telemetry.workspace = true

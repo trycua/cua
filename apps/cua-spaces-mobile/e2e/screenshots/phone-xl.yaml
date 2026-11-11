@@ -1,0 +1,14 @@
+# Dynamic Type at the extra-large accessibility size on an iPhone Simulator: Home and the thread. See phone.yaml.
+appId: ai.cua.spaces.mobile
+---
+- launchApp
+- assertVisible: "Sample data. Not your account."
+- extendedWaitUntil:
+    visible: ".*Needs you.*"
+    timeout: 10000
+- takeScreenshot: home-${NAME}
+- tapOn:
+    text: "Claude Code.*"
+    index: 0
+- assertVisible: ".*wants to push a branch.*"
+- takeScreenshot: thread-approval-${NAME}

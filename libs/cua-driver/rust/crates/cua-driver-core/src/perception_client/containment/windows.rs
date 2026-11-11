@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows worker containment.
 //!
 //! The worker runs as an AppContainer (LowBox) identity with no capabilities,
@@ -1015,7 +1018,7 @@ struct PrivateDesktop {
 
 impl PrivateDesktop {
     fn create(token: &str, security: &PrivateSecurity) -> Result<Self, VisualParseError> {
-        let name = wide(&format!("cua-perception-{token}"));
+        let name = wide(format!("cua-perception-{token}"));
         let attributes = security.attributes();
         let handle = unsafe {
             CreateDesktopW(

@@ -1,6 +1,4 @@
-"""Sidecar containers, private-registry credentials and cloud image builds.
-
-The same options mean the same thing locally and in the cloud:
+"""Sidecar containers, private-registry credentials and local image builds.
 
 * ``Sandbox.create(image, sidecars=[Container("redis:7-alpine", ports=[6379], name="db")])``
   runs extra containers next to the sandbox, addressed by name on every
@@ -9,17 +7,14 @@ The same options mean the same thing locally and in the cloud:
   port for use from outside. Local containers share the sandbox's network
   namespace (``localhost`` works too) and run on runc: pass ``runtime="runc"``
   (where gVisor would run, the SDK refuses the group, since separate gVisor
-  containers cannot share a network namespace). Cloud gVisor sandboxes run
-  them in the same pod; cloud VM (KubeVirt) sandboxes run them in a companion
-  pod named in the guest's ``/etc/hosts``. Local VM sandboxes refuse sidecars.
-  With sidecars the service names ``main``, ``sidecars`` and ``sc`` are
+  containers cannot share a network namespace). Local VM sandboxes refuse
+  sidecars. With sidecars the service names ``main``, ``sidecars`` and ``sc`` are
   reserved.
 * ``Image.from_registry(ref, secret=RegistrySecret(...))`` pulls a private
-  image: locally with the credentials, in the cloud through a registry pull
-  secret the SDK writes for the sandbox. Credentials are never logged or
-  saved in ``~/.cua``.
-* Image layers (``pip_install``, ``run``, ``copy``, ``env``, ...) with
-  ``local=False`` build remotely on the image as base, cached by content.
+  image with the credentials. Credentials are never logged or saved in
+  ``~/.cua``.
+* Image layers (``pip_install``, ``run``, ``copy``, ``env``, ...) build a
+  container image on this machine with the image as base, cached by content.
 
 Everything here converts to the native ``cua`` SDK types; the Rust core does
 the work.
@@ -166,8 +161,8 @@ class RegistrySecret:
         return hash((self._kind, self._a, self.registry))
 
 
-#: Layer types a cloud build (a container image on a registry base) runs.
-_CLOUD_LAYERS = {"apt_install", "pip_install", "uv_install", "run"}
+#: Layer types a build (a container image on a registry base) runs.
+_BUILD_LAYERS = {"apt_install", "pip_install", "uv_install", "run"}
 
 
 def has_build(image: "Image") -> bool:
@@ -177,15 +172,14 @@ def has_build(image: "Image") -> bool:
 
 def buildable(image: "Image") -> bool:
     """Whether every layer of *image* can run in a container image build."""
-    return all(layer.get("type") in _CLOUD_LAYERS for layer in image._layers)
+    return all(layer.get("type") in _BUILD_LAYERS for layer in image._layers)
 
 
-def image_build(image: "Image", *, where: str = "cloud") -> Any:
+def image_build(image: "Image") -> Any:
     """The native ``ImageBuild`` for *image*'s layers (``None`` without any).
 
-    Builds make a container image on the registry base, in the cloud (a
-    remote build) or on this machine (``where="local"``: the container
-    engine), cached by the same content hash. VM-only and other-OS layers
+    Builds make a container image on the registry base on this machine (the
+    container engine), cached by content hash. VM-only and other-OS layers
     (``app_install``, ``brew_install``, ``winget_install``, ...) are refused
     with :class:`~cua_sandbox.Unsupported`.
     """
@@ -197,11 +191,10 @@ def image_build(image: "Image", *, where: str = "cloud") -> Any:
     layers = []
     for layer in image._layers:
         kind = layer.get("type")
-        if kind not in _CLOUD_LAYERS:
-            place = "in the cloud" if where == "cloud" else "into a container image"
+        if kind not in _BUILD_LAYERS:
             raise Unsupported(
-                f"{kind} layers do not build {place} (a build makes a Linux container "
-                "image); use pip_install, uv_install, apt_install, run, copy or env"
+                f"{kind} layers do not build into a container image (a build makes a Linux "
+                "container image); use pip_install, uv_install, apt_install, run, copy or env"
             )
         if kind == "apt_install":
             layers.append(n.ImageLayer.APT_INSTALL(packages=list(layer["packages"])))

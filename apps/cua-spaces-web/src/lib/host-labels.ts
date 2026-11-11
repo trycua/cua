@@ -3,6 +3,8 @@
 
 import { hostOs, osOfPlatform, THIS_MACHINE, type HostOs } from "@/bridge/host-os";
 
+import { t } from "@/i18n";
+
 import { isMacPlatform } from "./utils";
 
 export { hostOs, osOfPlatform, type HostOs };
@@ -21,9 +23,8 @@ export function thisComputerText(platform?: string): string {
 }
 
 /**
- * The menu bar switch and the global shortcut belong to the macOS app (the
- * notch, ⌘⇧Space). The Windows and Linux shells have a tray icon and no
- * global shortcut, so Settings leaves both rows out there.
+ * The menu bar switch belongs to the macOS app (the notch). The Windows and
+ * Linux shells have a tray icon instead, so Settings leaves the row out there.
  */
 export function showsMacShellSettings(platform?: string): boolean {
   return isMacPlatform(platform);
@@ -38,8 +39,22 @@ export function creatingLine(detail: string, platform?: string): string {
   return os === "macos" ? detail : detail.replace(/^This Mac(?= \u00b7 )/, THIS_MACHINE[os]);
 }
 
+/** The core's "12 MB leaves this Mac" review line, naming this computer in
+ * the words of its system ("leaves this PC"). */
+export function leavesLine(text: string, platform?: string): string {
+  const os = osOf(platform);
+  return os === "macos" ? text : text.replace(/ leaves this Mac$/, ` leaves ${thisComputerText(platform)}`);
+}
+
 /** What keeps the Keyvault's key besides a passphrase: "Touch ID",
  * "Windows Hello", "the system keyring" (Linux). */
 export function keyvaultUnlockWay(platform?: string): string {
-  return { macos: "Touch ID", windows: "Windows Hello", linux: "the system keyring" }[osOf(platform)];
+  return { macos: "Touch ID", windows: "Windows Hello", linux: t("computers.status.keyring") }[osOf(platform)];
+}
+
+/** The line under Settings' "Global shortcut" row: none while the keys work
+ * (the row's label says what they do); when the system refused them, why they
+ * do nothing and how to fix it (the host tries again each time Settings opens). */
+export function globalShortcutLine(shortcut: { label: string; registered: boolean }): string | null {
+  return shortcut.registered ? null : t("computers.status.shortcut_taken", { shortcut: shortcut.label });
 }

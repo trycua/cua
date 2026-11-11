@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_window_state` perception contract,
 //! asserted on each platform's native controlled-harness app.
 //!
@@ -19,6 +22,8 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use cua_driver_testkit::ax::element_index_by_id;
 use cua_driver_testkit::e2e::{
     execute_case, native_readonly_case, recording_evidence, DriverRoute, Evidence, Observation,
     OracleKind, Targeting,
@@ -129,16 +134,17 @@ fn snapshot_settled(driver: &mut McpDriver, pid: u32, wid: u64, mode: &str) -> T
 /// Snapshot with NO capture_mode / no extra args (the default path), retrying
 /// until the tree settles.
 fn snapshot_settled_default(driver: &mut McpDriver, pid: u32, wid: u64) -> ToolResponse {
+    // A cold window can serve its tree before its first frame is capturable,
+    // so settle on both halves of the default response, not the tree alone.
     let args = serde_json::json!({ "pid": pid as i64, "window_id": wid });
-    let mut resp = driver.call("get_window_state", args.clone());
-    for _ in 0..16 {
-        if tree_has_marker(&resp) {
-            break;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        if (tree_has_marker(&resp) && has_image(&resp)) || std::time::Instant::now() >= deadline {
+            return resp;
         }
-        std::thread::sleep(Duration::from_millis(500));
-        resp = driver.call("get_window_state", args.clone());
+        std::thread::sleep(Duration::from_millis(100));
     }
-    resp
 }
 
 /// Snapshot with `include_screenshot:false` (the perf opt-out), retrying until
@@ -659,6 +665,24 @@ fn background_screenshot_preserves_desktop() {
             .expect("required source-built driver did not start");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, wid) = launch(&mut driver).expect("required WPF capture harness did not start");
+        let ready = snapshot_settled_default(&mut driver, pid, wid);
+        assert!(tree_has_marker(&ready) && has_image(&ready));
+        let (reference, reference_width, reference_height) =
+            platform_windows::wgc::screenshot_window_via_wgc_software(wid)
+                .expect("WARP must capture the visible WPF window");
+        assert!(reference_width > 0 && reference_height > 0);
+        assert_eq!(
+            reference.len(),
+            reference_width as usize * reference_height as usize * 4
+        );
+        assert!(
+            reference
+                .chunks_exact(4)
+                .filter(|pixel| pixel[..3] != [0, 0, 0])
+                .count()
+                > reference.len() / 40,
+            "visible WARP capture must contain WPF pixels"
+        );
         let sentinel = ForegroundSentinel::launch(&mut driver);
         sentinel
             .assert_background_posture(TargetWindow {
@@ -676,21 +700,24 @@ fn background_screenshot_preserves_desktop() {
                 },
             )
             .expect("re-establish capture background posture after recording setup");
-        let (response, mut passed) = sentinel
+        let ((response, (warp_pixels, warp_width, warp_height)), mut passed) = sentinel
             .observe_background(
                 TargetWindow {
                     pid,
                     native_id: wid,
                 },
                 || {
-                    driver.call(
+                    let response = driver.call(
                         "get_window_state",
                         serde_json::json!({
                             "pid": pid as i64,
                             "window_id": wid,
                             "capture_mode": "vision"
                         }),
-                    )
+                    );
+                    let warp = platform_windows::wgc::screenshot_window_via_wgc_software(wid)
+                        .expect("WARP must capture the covered WPF window");
+                    (response, warp)
                 },
             )
             .unwrap_or_else(|error| panic!("background screenshot disturbed the desktop: {error}"));
@@ -702,6 +729,20 @@ fn background_screenshot_preserves_desktop() {
         assert!(
             has_image(&response),
             "background screenshot returned no image"
+        );
+        assert_eq!(
+            (warp_width, warp_height),
+            (reference_width, reference_height)
+        );
+        assert_eq!(warp_pixels.len(), reference.len());
+        let unchanged = reference
+            .chunks_exact(4)
+            .zip(warp_pixels.chunks_exact(4))
+            .filter(|(before, after)| before[..3] == after[..3])
+            .count();
+        assert!(
+            unchanged > reference.len() / 8,
+            "WARP must capture the WPF window, not the covering sentinel"
         );
         for required in [
             OracleKind::Focus,
@@ -717,4 +758,219 @@ fn background_screenshot_preserves_desktop() {
         passed.push(OracleKind::Pixels);
         Observation::delivered(passed, Evidence::default())
     });
+}
+
+// ── JPEG screenshots (macOS) ────────────────────────────────────────────────
+
+/// The structured `elements` entry for the marker button. On AppKit the
+/// marker is only the accessibility identifier, shown as `id=...` in the tree
+/// text, so find its `[N]` index there and join on `element_index`.
+#[cfg(target_os = "macos")]
+fn marker_element(resp: &ToolResponse) -> Option<&serde_json::Value> {
+    let index = element_index_by_id(resp.tree_text(), TREE_MARKER)?;
+    resp.structured()["elements"]
+        .as_array()?
+        .iter()
+        .find(|e| e["element_index"].as_u64() == Some(index))
+}
+
+/// A session label unique to one test invocation, so it never matches a
+/// tombstone left on the shared daemon by an earlier session.
+#[cfg(target_os = "macos")]
+fn jpeg_session(case: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("jpeg-capture-{case}-{}-{nanos}", std::process::id())
+}
+
+/// `get_window_state` with `extra` merged into the request, retried until the
+/// `btn-increment` element and a screenshot (inline or written to a file) are
+/// both present, or a bounded deadline passes.
+#[cfg(target_os = "macos")]
+fn snapshot_with(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    session: &str,
+    extra: serde_json::Value,
+) -> ToolResponse {
+    let mut args = serde_json::json!({
+        "pid": pid as i64,
+        "window_id": wid,
+        "session": session,
+        "tree_format": "both",
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let resp = driver.call("get_window_state", args.clone());
+        let shot = has_image(&resp)
+            || resp.structured()["screenshot_file_path"]
+                .as_str()
+                .is_some_and(|p| !p.is_empty());
+        if (marker_element(&resp).is_some() && shot) || Instant::now() >= deadline {
+            return resp;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn image_parts(resp: &ToolResponse) -> Vec<serde_json::Value> {
+    resp.raw["result"]["content"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|c| c["type"].as_str() == Some("image"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn assert_jpeg_at_screenshot_size(bytes: &[u8], resp: &ToolResponse) {
+    assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "JPEG SOI marker");
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).unwrap();
+    let s = resp.structured();
+    assert_eq!(
+        (u64::from(decoded.width()), u64::from(decoded.height())),
+        (
+            s["screenshot_width"].as_u64().unwrap(),
+            s["screenshot_height"].as_u64().unwrap()
+        )
+    );
+}
+
+/// The `screenshot_frame` of the `btn-increment` element, as `[x, y, w, h]`.
+#[cfg(target_os = "macos")]
+fn marker_frames(resp: &ToolResponse) -> ([f64; 4], [f64; 4]) {
+    let text = resp.tree_text();
+    let element = marker_element(resp)
+        .unwrap_or_else(|| panic!("{TREE_MARKER} element not found in elements: {text}"))
+        .clone();
+    let get = |v: &serde_json::Value, keys: [&str; 4]| {
+        keys.map(|k| {
+            v[k].as_f64()
+                .unwrap_or_else(|| panic!("{k} is not a number: {v}"))
+        })
+    };
+    (
+        get(&element["frame"], ["x", "y", "w", "h"]),
+        get(&element["screenshot_frame"], ["x", "y", "w", "h"]),
+    )
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_keeps_pixel_mapping_and_mints_no_capture_id() {
+    run_capture_case(
+        "jpeg_pixel_mapping",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            use base64::Engine as _;
+            let session = jpeg_session("pixel-mapping");
+            let png = snapshot_with(driver, pid, wid, &session, serde_json::json!({}));
+            assert!(
+                marker_element(&png).is_some(),
+                "PNG read lacks {TREE_MARKER}"
+            );
+            assert!(!png.is_error(), "PNG read errored: {}", png.text());
+            let p = png.structured();
+            assert_eq!(p["screenshot_mime_type"], "image/png");
+            assert!(
+                p["capture_id"].as_str().is_some_and(|id| !id.is_empty()),
+                "a PNG read must mint a capture_id: {p}"
+            );
+
+            let jpeg = snapshot_with(
+                driver,
+                pid,
+                wid,
+                &session,
+                serde_json::json!({ "screenshot_format": "jpeg" }),
+            );
+            assert!(
+                marker_element(&jpeg).is_some(),
+                "JPEG read lacks {TREE_MARKER}"
+            );
+            assert!(!jpeg.is_error(), "JPEG read errored: {}", jpeg.text());
+            let j = jpeg.structured();
+            let parts = image_parts(&jpeg);
+            assert_eq!(parts.len(), 1, "exactly one image part");
+            assert_eq!(parts[0]["mimeType"], "image/jpeg");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(parts[0]["data"].as_str().unwrap())
+                .unwrap();
+            assert_jpeg_at_screenshot_size(&bytes, &jpeg);
+            assert_eq!(j["screenshot_mime_type"], "image/jpeg");
+            assert!(j.get("capture_id").is_none(), "JPEG minted a capture_id");
+            assert!(j.get("snapshot_id").is_some(), "snapshot_id missing");
+
+            for key in [
+                "screenshot_width",
+                "screenshot_height",
+                "screenshot_scale",
+                "window_bounds",
+            ] {
+                assert!(!j[key].is_null(), "{key} missing");
+                assert_eq!(p[key], j[key], "{key} differs between PNG and JPEG");
+            }
+
+            let (png_frame, png_shot) = marker_frames(&png);
+            let (jpeg_frame, jpeg_shot) = marker_frames(&jpeg);
+            assert_eq!(png_shot, jpeg_shot, "screenshot_frame differs");
+            assert_eq!(png_frame, jpeg_frame, "frame differs");
+            let bounds = &j["window_bounds"];
+            let scale = j["screenshot_width"].as_f64().unwrap() / bounds["width"].as_f64().unwrap();
+            let (ox, oy) = (bounds["x"].as_f64().unwrap(), bounds["y"].as_f64().unwrap());
+            let [x, y, w, h] = jpeg_frame;
+            let expected = [
+                ((x - ox) * scale).round(),
+                ((y - oy) * scale).round(),
+                (w * scale).round(),
+                (h * scale).round(),
+            ];
+            assert_eq!(jpeg_shot, expected, "screenshot_frame mapping");
+        },
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn jpeg_screenshot_out_file_contains_jpeg() {
+    run_capture_case(
+        "jpeg_out_file",
+        vec![OracleKind::AxState, OracleKind::Pixels],
+        |pid, wid, driver| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("shot.jpg");
+            let resp = snapshot_with(
+                driver,
+                pid,
+                wid,
+                &jpeg_session("out-file"),
+                serde_json::json!({
+                    "screenshot_format": "jpeg",
+                    "screenshot_out_file": path.to_str().unwrap(),
+                }),
+            );
+            assert!(!resp.is_error(), "JPEG read errored: {}", resp.text());
+            assert!(
+                image_parts(&resp).is_empty(),
+                "out file must omit the image part"
+            );
+            let s = resp.structured();
+            assert_eq!(s["screenshot_file_path"], path.to_str().unwrap());
+            assert_jpeg_at_screenshot_size(&std::fs::read(&path).unwrap(), &resp);
+            assert_eq!(s["screenshot_mime_type"], "image/jpeg");
+            assert!(s.get("capture_id").is_none(), "JPEG minted a capture_id");
+        },
+    );
 }

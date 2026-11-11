@@ -11,7 +11,8 @@
 # Adds: ai.cua.image.os=macos, ai.cua.spacesd=true, ai.cua.env-driver=true
 # (pre-rename key), ai.cua.image.variant=lume, ai.cua.image.variants
 # {"lume": "<repo>:NEW_TAG"}, ai.cua.image.source (<repo>:SOURCE_TAG@digest),
-# org.opencontainers.image.source, and with the options ai.cua.image.tier and
+# org.opencontainers.image.source, and with the options ai.cua.image.tier (the
+# xcode tier also gets ai.cua.image.notice: its Apple-license notice) and
 # ai.cua.image.content-key (tools/content-key.py; a scheduled rebuild moves
 # a floating tag only when its key differs). Move the floating tag afterwards with
 # `crane tag <repo>@<printed digest> 26`, once the strict doctor passed on
@@ -39,6 +40,7 @@ crane manifest "$REPOSITORY@$src_digest" >"$WORK/src.json"
 [ "$(jq -r .mediaType "$WORK/src.json")" = "$MT" ] || { echo "$SRC is not an OCI manifest" >&2; exit 1; }
 jq --arg variants "{\"lume\":\"$REPOSITORY:$NEW\"}" --arg source "$REPOSITORY:$SRC@$src_digest" \
     --arg tier "$TIER" --arg key "$KEY" \
+    --arg notice "Xcode and the iOS Simulator runtimes in this image are Apple software under Apple's license, for use on Apple-branded hardware." \
     '.annotations = ((.annotations // {}) + {
         "ai.cua.image.os": "macos",
         "ai.cua.spacesd": "true",
@@ -48,6 +50,7 @@ jq --arg variants "{\"lume\":\"$REPOSITORY:$NEW\"}" --arg source "$REPOSITORY:$S
         "ai.cua.image.source": $source,
         "org.opencontainers.image.source": "https://github.com/trycua/cua"}
         + (if $tier != "" then {"ai.cua.image.tier": $tier} else {} end)
+        + (if $tier == "xcode" then {"ai.cua.image.notice": $notice} else {} end)
         + (if $key != "" then {"ai.cua.image.content-key": $key} else {} end))' \
     "$WORK/src.json" >"$WORK/new.json"
 # Content is unchanged: same config and layers.

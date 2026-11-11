@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { hasTauri } from './bridge';
-import { agentsToolCall, driveRevealCall, type ToolCall } from './persistent';
+import { hasTauri } from "./bridge";
+import { agentsToolCall, driveRevealCall, type ToolCall } from "./persistent";
 
 /**
  * The Cua Volume's storage, mount and cache for Settings and the first run:
@@ -24,21 +24,18 @@ export interface DriveBridge {
 
 export function createDriveBridge(): DriveBridge {
   if (hasTauri()) {
-    const core = import('@tauri-apps/api/core');
+    const core = import("@tauri-apps/api/core");
     return {
       call: agentsToolCall(),
       reveal: driveRevealCall(),
-      openSettings: async (url) => (await core).invoke<void>('host_open_settings', { url }),
-      home: () =>
-        import('@tauri-apps/api/path')
-          .then(({ homeDir }) => homeDir())
-          .catch(() => null),
+      openSettings: async (url) => (await core).invoke<void>("host_open_settings", { url }),
+      home: () => import("@tauri-apps/api/path").then(({ homeDir }) => homeDir()).catch(() => null),
     };
   }
   return {
     call: agentsToolCall(),
     reveal: driveRevealCall(),
-    openSettings: () => Promise.reject(new Error('Opening System Settings needs the Cua Spaces app')),
+    openSettings: () => Promise.reject(new Error("Opening System Settings needs the Cua Spaces app")),
     home: async () => null,
   };
 }
@@ -46,7 +43,7 @@ export function createDriveBridge(): DriveBridge {
 /** A tool's JSON object answer, or null when the daemon cannot answer. */
 export function answerOrNull<T>(call: ToolCall, tool: string, args?: Record<string, unknown>): Promise<T | null> {
   return call(tool, args).then(
-    (r) => (r !== null && typeof r === 'object' && !Array.isArray(r) ? (r as T) : null),
+    (r) => (r !== null && typeof r === "object" && !Array.isArray(r) ? (r as T) : null),
     () => null,
   );
 }

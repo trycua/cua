@@ -30,6 +30,8 @@ function electron(platform = "darwin") {
   const desktop: CuaDesktopBridge = {
     invoke: async (_channel, request) => {
       const r = request as { id: string } & Call;
+      // Presence (the panel joins it): none here; components/video/presence.test.ts covers it.
+      if (r.method.startsWith("presence.")) return { id: r.id, ok: false, error: { message: "no presence", code: "unsupported" } };
       calls.push({ method: r.method, args: r.args });
       return { id: r.id, ok: true, result: r.method === "spaces.openStream" ? { wsUrl: "ws://127.0.0.1:1/m", expiresAt: null } : null };
     },
@@ -62,7 +64,14 @@ describe("the picture-in-picture view's address", () => {
       windowId: "w-1",
       epoch: 3,
     });
-    expect(pipParams("?space=local%3Aa&title=Desktop")).toEqual({ spaceId: "local:a", spaceName: "", title: "Desktop", os: undefined, windowId: undefined, epoch: undefined });
+    expect(pipParams("?space=local%3Aa&title=Desktop")).toEqual({
+      spaceId: "local:a",
+      spaceName: "",
+      title: "Desktop",
+      os: undefined,
+      windowId: undefined,
+      epoch: undefined,
+    });
   });
 
   it("shows the Swift panel's status chip until the stream is live", () => {

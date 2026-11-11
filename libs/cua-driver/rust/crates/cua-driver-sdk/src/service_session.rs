@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Authenticated, connection-bound session client for an explicit service.
 //!
 //! The accepted service connection owns exactly one trusted session. Authority
 //! is never returned as a bearer value and cannot move to another connection.
 
 use crate::{DriverError, TrustedSessionOptions};
+#[cfg(unix)]
+use cua_driver_core::daemon::REPLY_DEADLINE;
 use cua_driver_core::daemon::{DaemonClientKind, DaemonRequest, DaemonResponse};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
@@ -12,8 +17,6 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
-#[cfg(unix)]
-const SERVICE_REQUEST_DEADLINE: Duration = Duration::from_secs(120);
 const RESUME_REGISTRATION_RETRIES: usize = 20;
 const RESUME_REGISTRATION_DELAY: Duration = Duration::from_millis(10);
 
@@ -292,7 +295,7 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
     cua_driver_core::socket_io::write_all_with_retry(
         writer,
         &frame,
-        Instant::now() + SERVICE_REQUEST_DEADLINE,
+        Instant::now() + REPLY_DEADLINE,
     )
 }
 
@@ -305,7 +308,7 @@ fn write_request(writer: &mut impl Write, request: &DaemonRequest) -> std::io::R
 
 #[cfg(unix)]
 fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<Option<String>> {
-    let deadline = Instant::now() + SERVICE_REQUEST_DEADLINE;
+    let deadline = Instant::now() + REPLY_DEADLINE;
     let mut bytes = Vec::new();
     loop {
         match reader.read_until(b'\n', &mut bytes) {
@@ -325,7 +328,7 @@ fn read_response_line(reader: &mut BufReader<ServiceStream>) -> std::io::Result<
                 if Instant::now() >= deadline {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
-                        "timed out after 120s waiting for trusted service response",
+                        format!("timed out after {REPLY_DEADLINE:?} waiting for trusted service response"),
                     ));
                 }
             }
@@ -439,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn next_call_resumes_with_single_use_host_credential_after_disconnect() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("resumable-service.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {
@@ -555,7 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn transient_read_timeouts_are_poll_intervals_not_action_deadlines() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("delayed-service.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {

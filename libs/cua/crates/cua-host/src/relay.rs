@@ -19,6 +19,7 @@
 //! PATCH  /v1/devices/{id}                 enrolled device     -> DeviceView
 //! DELETE /v1/devices/{id}                 enrolled device     -> DeviceView
 //! GET    /v1/audit                        account             -> {events}
+//! GET    /v1/usage                        account             -> RelayUsage
 //! ```
 //!
 //! Account calls other than registering a machine carry the client
@@ -28,16 +29,13 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// The relay the app and CLI use unless configured otherwise.
+/// The production relay (`CUA_RELAY_URL` and `CUA_ENV` change it).
 pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
 
-/// `CUA_RELAY_URL` when set and non-empty, else [`DEFAULT_RELAY_URL`].
+/// `CUA_RELAY_URL` when set and non-empty, else the relay of `CUA_ENV`
+/// ([`DEFAULT_RELAY_URL`] in production).
 pub fn relay_url_from_env() -> String {
-    std::env::var("CUA_RELAY_URL")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| DEFAULT_RELAY_URL.to_string())
+    cua_home::env::relay_url()
 }
 
 /// Supplies a fresh cua.ai account access token (refreshing as needed).
@@ -88,9 +86,10 @@ pub struct NoAccount;
 #[async_trait::async_trait]
 impl AccountTokens for NoAccount {
     async fn access_token(&self) -> Result<String> {
-        Err(Error::Unauthenticated(
-            "not signed in to cua.ai (run `cua auth login` or sign in from the app)".into(),
-        ))
+        Err(Error::Unauthenticated(format!(
+            "not signed in to cua.ai (run `{} auth login` or sign in from the app)",
+            crate::cli()
+        )))
     }
 }
 
@@ -153,7 +152,9 @@ pub struct Machine {
     /// Unix seconds of the current session.
     #[serde(default)]
     pub connected_at: Option<u64>,
-    /// `<relay>/m/<id>`: the spacesd URL clients connect to.
+    /// The machine's spacesd URL as the relay lists it: `https://<id>.<host
+    /// domain>` on a relay with a host domain (cua.ai: `m.cua.sh`), else
+    /// `<relay>/m/<id>`. `<relay>/m/<id>` works on the hosted relay too.
     #[serde(default)]
     pub url: String,
     /// Allowlist (owner view only): accounts with full use (editors).
@@ -181,6 +182,10 @@ pub struct Machine {
     /// never retroactively flagged "new".
     #[serde(default = "confirmed_default")]
     pub confirmed: bool,
+    /// The team the caller reaches this machine through (`team-…`), when
+    /// it is a team machine and not shared with the caller directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
 }
 
 fn confirmed_default() -> bool {
@@ -206,8 +211,32 @@ pub struct RegisterRequest {
     pub meta: std::collections::BTreeMap<String, String>,
 }
 
+/// `POST /v1/machines/{id}/leave` response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveReply {
+    /// The machine left.
+    #[serde(default)]
+    pub id: String,
+    /// The caller's own entries taken off its allowlist and viewers.
+    #[serde(default)]
+    pub removed: Vec<String>,
+    /// The team the caller reaches it through, when it is now hidden from
+    /// their listing (the team keeps it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_team: Option<String>,
+}
+
+/// What a call the relay does not know yet fails with
+/// ([`RelayClient::leave`] on a relay that predates it).
+pub const RELAY_NEEDS_UPDATE: &str = "the Cua relay needs an update";
+
+/// Whether `e` says the relay is too old for the call.
+pub fn is_relay_outdated(e: &Error) -> bool {
+    matches!(e, Error::Relay(m) if m == RELAY_NEEDS_UPDATE)
+}
+
 /// `POST /v1/machines` response.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Registration {
     /// The machine.
     pub machine: Machine,
@@ -216,6 +245,76 @@ pub struct Registration {
     /// The relay's signing keys (JWKS), pinned by the host.
     #[serde(default)]
     pub jwks: serde_json::Value,
+}
+
+impl std::fmt::Debug for Registration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registration")
+            .field("machine", &self.machine)
+            .field("machine_token", &"<redacted>")
+            .field("jwks", &self.jwks)
+            .finish()
+    }
+}
+
+/// The account's default Space and the order to try when it is offline
+/// (`GET`/`PUT /v1/spaces/settings`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpacesSettings {
+    /// `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+    #[serde(default)]
+    pub default_space: Option<String>,
+    /// Ids to try, in order, when the default is offline. Empty: every
+    /// online computer you can use, oldest first.
+    #[serde(default)]
+    pub fallback: Vec<String>,
+    /// false: only the default, then this device.
+    #[serde(default = "fallback_on_default")]
+    pub fallback_on: bool,
+    /// Unix seconds the relay saved it (ignored on write).
+    #[serde(default)]
+    pub updated_at: u64,
+}
+
+fn fallback_on_default() -> bool {
+    true
+}
+
+/// One entry of [`DefaultSpace::order`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DefaultSpaceStep {
+    /// The Space id.
+    pub space: String,
+    /// Its display name.
+    #[serde(default)]
+    pub name: String,
+    /// Connected and sharing now.
+    #[serde(default)]
+    pub online: bool,
+    /// `default`, `fallback` or `here`.
+    #[serde(default)]
+    pub role: String,
+}
+
+/// `GET /v1/spaces/default`: where "my default Space" resolves now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DefaultSpace {
+    /// The first online entry of the order; none with reason `here` when
+    /// this device is the answer.
+    #[serde(default)]
+    pub space: Option<String>,
+    /// `default`, `fallback`, `here` or `unset`.
+    #[serde(default)]
+    pub reason: String,
+    /// The chosen default, online or not.
+    #[serde(default)]
+    pub default_space: Option<String>,
+    /// Whether the default is online (none when unset).
+    #[serde(default)]
+    pub default_online: Option<bool>,
+    /// The order the relay tried.
+    #[serde(default)]
+    pub order: Vec<DefaultSpaceStep>,
 }
 
 /// `PATCH /v1/machines/{id}` body.
@@ -233,6 +332,23 @@ pub struct MachinePatch {
     /// Sharing on/off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sharing: Option<bool>,
+    /// Meta keys to set (merged into the machine's [`Machine::meta`]; an
+    /// empty value removes the key). Older relays ignore it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// What opening a link once returned (see [`RelayClient::open_link`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkProbe {
+    /// HTTP status of the final response.
+    pub status: u16,
+    /// Its content type.
+    pub content_type: String,
+    /// Body bytes read (capped).
+    pub bytes: usize,
+    /// `Location`, when the final response was a redirect.
+    pub location: Option<String>,
 }
 
 /// `GET /v1/info`.
@@ -241,8 +357,9 @@ pub struct RelayInfo {
     /// Public base URL.
     #[serde(default)]
     pub public_url: String,
-    /// Assertion issuer.
-    #[serde(default)]
+    /// Assertion issuer (empty on a static-token relay, which sends
+    /// `null`).
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub issuer: String,
     /// Accepts account tokens.
     #[serde(default)]
@@ -250,6 +367,23 @@ pub struct RelayInfo {
     /// Accepts static relay tokens.
     #[serde(default)]
     pub static_tokens: bool,
+    /// The WireGuard®-based mesh this relay coordinates, if any.
+    #[serde(default)]
+    pub mesh: Option<RelayMeshInfo>,
+}
+
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+/// What a relay says about its mesh (`/v1/info` `mesh`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayMeshInfo {
+    /// Mesh protocol version.
+    pub version: u32,
+    /// STUN servers it advertises.
+    #[serde(default)]
+    pub stun: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -377,6 +511,55 @@ pub struct AuditEvent {
     pub detail: Option<String>,
 }
 
+/// The account's relay allowance this month (`GET /v1/usage`). A live
+/// session is a connection to one remote machine through the relay; relay
+/// hours are the time with at least one. Past the allowance nothing stops:
+/// the relay only says so (`soft_limit_reached`). Every field has a
+/// default, so older and newer relays both parse.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelayUsage {
+    /// The relay meters this account (false: no allowance applies).
+    pub metered: bool,
+    /// The month counted (`2026-10`).
+    pub period: String,
+    /// `free`, `pro`, `team`, ...
+    pub plan: String,
+    /// The team whose allowance is pooled, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<RelayUsageTeam>,
+    /// Computers in use now.
+    pub live_sessions: u32,
+    /// Computers in use allowed at once (none: no limit).
+    pub live_sessions_limit: Option<u32>,
+    /// Relay hours used this month (the team's, when pooled).
+    pub hours_used: f64,
+    /// Relay hours allowed this month (none: no limit).
+    pub hours_limit: Option<f64>,
+    /// This account's own relay hours this month.
+    pub my_hours_used: f64,
+    /// Past the allowance (sessions keep working).
+    pub soft_limit_reached: bool,
+    /// What is past it: `sessions` and/or `hours`.
+    pub reasons: Vec<String>,
+    /// Free plan only: `free_limit_sessions` and/or `free_limit_relay_hours`
+    /// when at or over that allowance (CUA-1745). Older relays send none.
+    pub warnings: Vec<String>,
+    /// Where to get more.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_url: Option<String>,
+}
+
+/// The team behind a pooled allowance.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelayUsageTeam {
+    /// Team id.
+    pub id: String,
+    /// Seats sharing the allowance.
+    pub seats: u32,
+}
+
 #[derive(Deserialize)]
 struct DeviceReply {
     device: DeviceView,
@@ -397,6 +580,45 @@ pub struct DeviceSession {
     pub expires_at: u64,
 }
 
+/// Most times one request is sent while the proxy throttles this client.
+const THROTTLE_ATTEMPTS: u32 = 8;
+/// Most time spent waiting between those attempts.
+const THROTTLE_BUDGET: Duration = Duration::from_secs(60);
+
+/// How long to wait before sending again after the `attempt`th throttled
+/// answer: the proxy's `Retry-After` (`retry_after_secs`) or a capped
+/// exponential backoff (1 s, 2 s, 4 s, 8 s), whichever is longer, plus up to
+/// a quarter of that as jitter so many clients do not return together.
+fn throttle_wait(retry_after_secs: u64, attempt: u32) -> Duration {
+    let backoff = 1u64 << attempt.saturating_sub(1).min(3);
+    // Clamped before jitter so a absurd `Retry-After` cannot overflow
+    // `Duration`; anything past the budget makes the caller give up anyway.
+    let secs = retry_after_secs
+        .max(backoff)
+        .min(THROTTLE_BUDGET.as_secs() + 1);
+    let base = Duration::from_secs(secs);
+    base + base.mul_f64(rand::random::<f64>() * 0.25)
+}
+
+/// The proxy's own 429 has the generic body `Too Many Requests` (or none).
+fn is_proxy_throttle(body: &str) -> bool {
+    let b = body.trim();
+    b.is_empty() || b.eq_ignore_ascii_case("too many requests")
+}
+
+/// `Retry-After` as a wait: whole seconds or an HTTP date.
+fn retry_after(h: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let v = h.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(secs) = v.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    let at = httpdate::parse_http_date(v).ok()?;
+    Some(
+        at.duration_since(std::time::SystemTime::now())
+            .unwrap_or_default(),
+    )
+}
+
 /// Times a machine registration is tried again after a transient failure.
 const REGISTER_RETRIES: u32 = 3;
 /// The first wait before trying again (doubling each time).
@@ -405,12 +627,43 @@ const REGISTER_RETRY_BASE: Duration = Duration::from_secs(1);
 #[cfg(test)]
 const REGISTER_RETRY_BASE: Duration = Duration::from_millis(5);
 
+/// Times a read (a GET, which changes nothing) is tried again when the
+/// relay was not reached or answered 429, 502 or 503, before the caller
+/// sees the failure.
+const READ_RETRIES: u32 = 2;
+/// The first wait before reading again (tripled each time).
+#[cfg(not(test))]
+const READ_RETRY_BASE: Duration = Duration::from_millis(250);
+#[cfg(test)]
+const READ_RETRY_BASE: Duration = Duration::from_millis(5);
+
 /// HTTP client for one relay.
 #[derive(Clone, Debug)]
 pub struct RelayClient {
     base: String,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     device_session: Option<String>,
+    sleeper: Sleeper,
+}
+
+/// Waits between throttled attempts. Unit tests of this crate record the
+/// waits instead of sleeping them.
+#[derive(Clone, Debug, Default)]
+struct Sleeper {
+    #[cfg(test)]
+    waits: std::sync::Arc<std::sync::Mutex<Vec<Duration>>>,
+}
+
+impl Sleeper {
+    #[cfg(not(test))]
+    async fn sleep(&self, d: Duration) {
+        tokio::time::sleep(d).await;
+    }
+
+    #[cfg(test)]
+    async fn sleep(&self, d: Duration) {
+        self.waits.lock().unwrap().push(d);
+    }
 }
 
 impl RelayClient {
@@ -418,15 +671,20 @@ impl RelayClient {
     /// `wss://…` is accepted and mapped to `https://…`).
     pub fn new(base: &str) -> Result<Self> {
         let base = normalize_base(base)?;
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| Error::Relay(e.to_string()))?;
+        // One client per process (cua_auth::http): a client per call read
+        // the OS roots and opened a new TLS connection for every relay call
+        // (F53). Its pool keeps connections to the relay alive between calls.
+        let http = cua_auth::http::shared(cua_auth::http::Shape {
+            connect_timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(30),
+            user_agent: None,
+        })
+        .map_err(|e| Error::Relay(e.to_string()))?;
         Ok(Self {
             base,
             http,
             device_session: None,
+            sleeper: Sleeper::default(),
         })
     }
 
@@ -446,11 +704,77 @@ impl RelayClient {
         format!("{}/m/{id}", self.base)
     }
 
-    fn url(&self, path: &str) -> String {
+    pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
 
-    async fn send<T: serde::de::DeserializeOwned>(
+    /// Opens `url` once the way a signed-in device would: GET with the
+    /// account token (when given) and this client's device session, and
+    /// redirects followed only within the same host (the credentials never
+    /// leave it). Reads at most `max_body` bytes. Used to confirm a shared
+    /// link loads before it is handed to anyone.
+    pub async fn open_link(
+        &self,
+        url: &str,
+        bearer: Option<&str>,
+        max_body: usize,
+    ) -> Result<LinkProbe> {
+        let start =
+            reqwest::Url::parse(url).map_err(|e| Error::InvalidArgument(format!("{url}: {e}")))?;
+        let host = start.host_str().map(str::to_owned);
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() >= 5 {
+                    attempt.error("too many redirects")
+                } else if attempt.url().host_str().map(str::to_owned) == host {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            }))
+            .build()
+            .map_err(|e| Error::Relay(e.to_string()))?;
+        let mut req = http.get(start);
+        if let Some(b) = bearer {
+            req = req.bearer_auth(b);
+            if let Some(session) = &self.device_session {
+                req = req.header(DEVICE_SESSION_HEADER, session);
+            }
+        }
+        let mut resp = req
+            .send()
+            .await
+            .map_err(|e| Error::Relay(format!("{url}: {e}")))?;
+        let status = resp.status().as_u16();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let mut bytes = 0usize;
+        while let Ok(Some(chunk)) = resp.chunk().await {
+            bytes += chunk.len();
+            if bytes >= max_body {
+                break;
+            }
+        }
+        Ok(LinkProbe {
+            status,
+            content_type,
+            bytes,
+            location,
+        })
+    }
+
+    pub(crate) async fn send<T: serde::de::DeserializeOwned>(
         &self,
         req: reqwest::RequestBuilder,
         bearer: &str,
@@ -458,29 +782,94 @@ impl RelayClient {
         self.send_once(req, bearer).await.map_err(|(e, _)| e)
     }
 
-    /// One request. On failure, also whether the relay certainly did not
-    /// act on it and it may be sent again: the connection never opened, or
-    /// the relay (or the proxy in front of it) answered 429, 502 or 503.
+    /// One request, sent again while the proxy in front of the relay is
+    /// throttling this client (see [`throttle_wait`]). On failure, also
+    /// whether the relay certainly did not act on it and it may be sent
+    /// again: the connection never opened, or the relay (or the proxy in
+    /// front of it) answered 502 or 503. A throttled request never reached
+    /// the relay, so sending it again is safe for any method.
     async fn send_once<T: serde::de::DeserializeOwned>(
         &self,
         req: reqwest::RequestBuilder,
         bearer: &str,
     ) -> std::result::Result<T, (Error, bool)> {
-        let mut req = req.bearer_auth(bearer);
-        if let Some(session) = &self.device_session {
-            req = req.header(DEVICE_SESSION_HEADER, session);
+        self.send_with(req, Some(bearer)).await
+    }
+
+    async fn send_with<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        bearer: Option<&str>,
+    ) -> std::result::Result<T, (Error, bool)> {
+        let mut waited = Duration::ZERO;
+        let mut attempt = 0u32;
+        let mut req = req;
+        loop {
+            // A body that cannot be copied (a stream) is sent once.
+            let next = req.try_clone();
+            let result = self.send_attempt(req, bearer).await;
+            let (Err((Error::Throttled { retry_after_secs }, _)), Some(next)) = (&result, next)
+            else {
+                return result;
+            };
+            attempt += 1;
+            let wait = throttle_wait(*retry_after_secs, attempt);
+            if attempt >= THROTTLE_ATTEMPTS || waited + wait > THROTTLE_BUDGET {
+                return result;
+            }
+            tracing::debug!(attempt, ?wait, "relay is throttling this client, retrying");
+            self.sleeper.sleep(wait).await;
+            waited += wait;
+            req = next;
+        }
+    }
+
+    async fn send_attempt<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        bearer: Option<&str>,
+    ) -> std::result::Result<T, (Error, bool)> {
+        let mut req = req;
+        if let Some(b) = bearer {
+            req = req.bearer_auth(b);
+            if let Some(session) = &self.device_session {
+                req = req.header(DEVICE_SESSION_HEADER, session);
+            }
         }
         let resp = req
             .send()
             .await
             .map_err(|e| (Error::Relay(format!("{}: {e}", self.base)), e.is_connect()))?;
         let status = resp.status();
+        let limit = plan_limit(resp.headers());
+        let retry_after = retry_after(resp.headers());
         let body = resp
             .text()
             .await
             .map_err(|e| (Error::Relay(e.to_string()), false))?;
         if !status.is_success() {
-            let retry = matches!(status.as_u16(), 429 | 502 | 503);
+            // A plan limit is a decision, not a hiccup: sending it again
+            // gets the same answer.
+            if let (429, Some(l)) = (status.as_u16(), limit) {
+                return Err((Error::PlanLimit(l.sentence()), false));
+            }
+            if status.as_u16() == 429 {
+                // Only the proxy's bare answer is a throttle. The relay's
+                // own 429s (quotas, pairing-code caps) say why in the body
+                // and sending them again gets the same answer.
+                if is_proxy_throttle(&body) {
+                    // An hour at most, so the message and any countdown stay sane.
+                    let secs = retry_after.map_or(1, |d| d.as_secs().clamp(1, 3600));
+                    return Err((
+                        Error::Throttled {
+                            retry_after_secs: secs,
+                        },
+                        false,
+                    ));
+                }
+                return Err((http_error(429, &body), false));
+            }
+            let retry = matches!(status.as_u16(), 502 | 503);
             return Err((http_error(status.as_u16(), &body), retry));
         }
         let body = if body.trim().is_empty() {
@@ -492,37 +881,54 @@ impl RelayClient {
             .map_err(|e| (Error::Relay(format!("bad relay response: {e}")), false))
     }
 
+    /// `GET path`, tried again (twice, about a second in all) when the
+    /// relay is briefly unreachable or overloaded. A read changes nothing,
+    /// so sending it again is always safe.
+    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str, bearer: &str) -> Result<T> {
+        let mut delay = READ_RETRY_BASE;
+        let mut attempt = 0;
+        loop {
+            match self.send_once(self.http.get(self.url(path)), bearer).await {
+                // Not a timeout: one that hung would hang again.
+                Err((e, true)) if attempt < READ_RETRIES => {
+                    attempt += 1;
+                    tracing::debug!(attempt, path, "relay read failed, retrying: {e}");
+                    tokio::time::sleep(delay).await;
+                    delay *= 3;
+                }
+                r => return r.map_err(|(e, _)| e),
+            }
+        }
+    }
+
+    /// One call with an optional JSON body (see [`RelayClient::send`]).
+    pub(crate) async fn send_json<B: Serialize, T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&B>,
+        bearer: &str,
+    ) -> Result<T> {
+        let mut req = self.http.request(method, self.url(path));
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        self.send(req, bearer).await
+    }
+
     /// `GET /v1/info` (no auth).
     pub async fn info(&self) -> Result<RelayInfo> {
-        let resp = self
-            .http
-            .get(self.url("/v1/info"))
-            .send()
+        self.send_with(self.http.get(self.url("/v1/info")), None)
             .await
-            .map_err(|e| Error::Relay(format!("{}: {e}", self.base)))?;
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(http_error(status.as_u16(), &body));
-        }
-        serde_json::from_str(&body).map_err(|e| Error::Relay(format!("bad relay response: {e}")))
+            .map_err(|(e, _)| e)
     }
 
     /// `GET /.well-known/jwks.json` (no auth): the relay's assertion
     /// signing keys, as a registration returns them (a machine pins them).
     pub async fn jwks(&self) -> Result<serde_json::Value> {
-        let resp = self
-            .http
-            .get(self.url("/.well-known/jwks.json"))
-            .send()
+        self.send_with(self.http.get(self.url("/.well-known/jwks.json")), None)
             .await
-            .map_err(|e| Error::Relay(format!("{}: {e}", self.base)))?;
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(http_error(status.as_u16(), &body));
-        }
-        serde_json::from_str(&body).map_err(|e| Error::Relay(format!("bad relay response: {e}")))
+            .map_err(|(e, _)| e)
     }
 
     /// Registers (or re-registers, rotating the machine token) a machine
@@ -679,21 +1085,28 @@ impl RelayClient {
         Ok(list.events)
     }
 
+    /// The account's relay allowance this month; `None` from a relay that
+    /// does not meter (no `/v1/usage`).
+    pub async fn usage(&self, account_token: &str) -> Result<Option<RelayUsage>> {
+        match self
+            .send(self.http.get(self.url("/v1/usage")), account_token)
+            .await
+        {
+            Ok(usage) => Ok(Some(usage)),
+            Err(Error::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Machines the account owns or that are shared with it.
     pub async fn machines(&self, account_token: &str) -> Result<Vec<Machine>> {
-        let list: MachineList = self
-            .send(self.http.get(self.url("/v1/machines")), account_token)
-            .await?;
+        let list: MachineList = self.get("/v1/machines", account_token).await?;
         Ok(list.machines)
     }
 
     /// One machine (`credential` = account token or the machine token).
     pub async fn machine(&self, credential: &str, id: &str) -> Result<Machine> {
-        self.send(
-            self.http.get(self.url(&format!("/v1/machines/{id}"))),
-            credential,
-        )
-        .await
+        self.get(&format!("/v1/machines/{id}"), credential).await
     }
 
     /// Renames / changes the allowlist / toggles sharing (owner).
@@ -712,6 +1125,66 @@ impl RelayClient {
         .await
     }
 
+    /// The account's default Space settings (`GET /v1/spaces/settings`).
+    /// A relay that predates them answers [`RELAY_NEEDS_UPDATE`]
+    /// ([`is_relay_outdated`]).
+    pub async fn spaces_settings(&self, account_token: &str) -> Result<SpacesSettings> {
+        self.spaces_route(
+            self.http.get(self.url("/v1/spaces/settings")),
+            account_token,
+        )
+        .await
+    }
+
+    /// Replaces the account's default Space settings (`PUT`, whole object).
+    pub async fn set_spaces_settings(
+        &self,
+        account_token: &str,
+        settings: &SpacesSettings,
+    ) -> Result<SpacesSettings> {
+        self.spaces_route(
+            self.http
+                .put(self.url("/v1/spaces/settings"))
+                .json(settings),
+            account_token,
+        )
+        .await
+    }
+
+    /// Where the default Space resolves now (`GET /v1/spaces/default`).
+    /// `here` is this computer's own machine id, when it has one.
+    pub async fn resolve_default_space(
+        &self,
+        account_token: &str,
+        here: Option<&str>,
+    ) -> Result<DefaultSpace> {
+        let mut url = self.url("/v1/spaces/default");
+        if let Some(h) = here.filter(|h| !h.is_empty()) {
+            url.push_str("?here=");
+            url.push_str(h);
+        }
+        self.spaces_route(self.http.get(url), account_token).await
+    }
+
+    /// One request to a `/v1/spaces/...` route, mapping "no such route" to
+    /// [`RELAY_NEEDS_UPDATE`].
+    async fn spaces_route<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        account_token: &str,
+    ) -> Result<T> {
+        match self.send_once::<T>(req, account_token).await {
+            Ok(r) => Ok(r),
+            Err((Error::NotFound(m), _)) if m.trim_end() == "relay:" => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((Error::Relay(m), _)) if m.starts_with("HTTP 405") => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
     /// Vouches for a machine that registered without proof (S5): shows it
     /// as "new" no longer. Owner only, from an enrolled device
     /// ([`RelayClient::with_device_session`]); a machine cannot confirm
@@ -727,14 +1200,115 @@ impl RelayClient {
     }
 
     /// Deletes the machine and revokes its token (owner or machine token).
+    /// The Spaces it provides stay on the account, detached: they come
+    /// back when the computer registers again under the same id.
     pub async fn delete(&self, credential: &str, id: &str) -> Result<()> {
+        self.delete_machine(credential, id, false).await
+    }
+
+    /// [`RelayClient::delete`], and with `delete_spaces` (owner only) the
+    /// records of the Spaces it provides go too
+    /// (`DELETE /v1/machines/{id}?spaces=delete`). Their files are the
+    /// caller's to delete through the computer first.
+    pub async fn delete_machine(
+        &self,
+        credential: &str,
+        id: &str,
+        delete_spaces: bool,
+    ) -> Result<()> {
+        let mut url = self.url(&format!("/v1/machines/{id}"));
+        if delete_spaces {
+            url.push_str("?spaces=delete");
+        }
+        let _: serde_json::Value = self.send(self.http.delete(url), credential).await?;
+        Ok(())
+    }
+
+    /// Takes the caller off machine `id` shared with them
+    /// (`POST /v1/machines/{id}/leave`): their own allowlist or viewer
+    /// entry goes, a team machine is hidden from their listing. Not for
+    /// the owner. A relay that predates it answers
+    /// [`RELAY_NEEDS_UPDATE`] ([`is_relay_outdated`]).
+    pub async fn leave(&self, account_token: &str, id: &str) -> Result<LeaveReply> {
+        let url = self.url(&format!("/v1/machines/{id}/leave"));
+        match self
+            .send_once::<LeaveReply>(
+                self.http.post(url).json(&serde_json::json!({})),
+                account_token,
+            )
+            .await
+        {
+            Ok(r) => Ok(r),
+            // No such route: a 404 without the relay's JSON error, or 405.
+            Err((Error::NotFound(m), _)) if m.trim_end() == "relay:" => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((Error::Relay(m), _)) if m.starts_with("HTTP 405") => {
+                Err(Error::Relay(RELAY_NEEDS_UPDATE.into()))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
+    /// Allocates a public TCP port for a share of machine `id`
+    /// (`POST /v1/machines/{id}/tcp-shares`, owner or machine token).
+    pub async fn tcp_share_allocate(
+        &self,
+        credential: &str,
+        id: &str,
+        req: &TcpShareRequest,
+    ) -> Result<TcpShareView> {
+        self.send(
+            self.http
+                .post(self.url(&format!("/v1/machines/{id}/tcp-shares")))
+                .json(req),
+            credential,
+        )
+        .await
+    }
+
+    /// Renews a TCP share's lease.
+    pub async fn tcp_share_keepalive(
+        &self,
+        credential: &str,
+        id: &str,
+        port: u16,
+    ) -> Result<TcpShareView> {
+        self.send(
+            self.http
+                .post(self.url(&format!("/v1/machines/{id}/tcp-shares/{port}/keepalive"))),
+            credential,
+        )
+        .await
+    }
+
+    /// Closes a TCP share's port.
+    pub async fn tcp_share_close(&self, credential: &str, id: &str, port: u16) -> Result<()> {
         let _: serde_json::Value = self
             .send(
-                self.http.delete(self.url(&format!("/v1/machines/{id}"))),
+                self.http
+                    .delete(self.url(&format!("/v1/machines/{id}/tcp-shares/{port}"))),
                 credential,
             )
             .await?;
         Ok(())
+    }
+
+    /// The computer's TCP share ports.
+    pub async fn tcp_shares(&self, credential: &str, id: &str) -> Result<Vec<TcpShareView>> {
+        #[derive(serde::Deserialize)]
+        struct List {
+            #[serde(default)]
+            shares: Vec<TcpShareView>,
+        }
+        let l: List = self
+            .send(
+                self.http
+                    .get(self.url(&format!("/v1/machines/{id}/tcp-shares"))),
+                credential,
+            )
+            .await?;
+        Ok(l.shares)
     }
 
     /// Cuts every client and refuses new ones (owner or machine token).
@@ -758,18 +1332,141 @@ impl RelayClient {
     }
 }
 
+/// The plan-limit refusal the relay's headers describe, if it is one.
+fn plan_limit(h: &reqwest::header::HeaderMap) -> Option<cua_home::plan_limit::PlanLimit> {
+    use cua_home::plan_limit as pl;
+    let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok());
+    pl::PlanLimit::from_headers(
+        get(pl::ERROR_HEADER),
+        get(pl::PLAN_HEADER),
+        get(pl::USED_HEADER),
+        get(pl::LIMIT_HEADER),
+    )
+}
+
+/// The `code` the relay sends with a refusal of a new computer that came
+/// with no proof it is the account's owner (an enrolled device, a sign-in
+/// with a second factor, or a pairing code). Mirrors the relay's
+/// `api::NEW_COMPUTER_NEEDS_PROOF`.
+pub const NEW_COMPUTER_NEEDS_PROOF: &str = "new_computer_needs_proof";
+
+/// What a relay from before the code said for [`NEW_COMPUTER_NEEDS_PROOF`].
+const NEW_COMPUTER_NEEDS_PROOF_REASON: &str =
+    "add computers from a computer you already added, or with a pairing code";
+
+/// The code a refusal carries (see [`refusal_code`]), in the error's own
+/// words: `relay: <reason> [code: <code>]`.
+const CODE_OPEN: &str = " [code: ";
+
+/// The relay's code for a refusal (HTTP 403), when it gave one: the
+/// machine-readable half of the error, which survives every layer that
+/// passes errors on as text (the SDK, the FFI, the apps' bridges).
+pub fn refusal_code(message: &str) -> Option<&str> {
+    let start = message.rfind(CODE_OPEN)? + CODE_OPEN.len();
+    let code = message[start..].strip_suffix(']')?;
+    (!code.is_empty() && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')).then_some(code)
+}
+
 fn http_error(status: u16, body: &str) -> Error {
-    let message = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
+    let json = serde_json::from_str::<serde_json::Value>(body).ok();
+    let message = json
+        .as_ref()
         .and_then(|v| v["error"].as_str().map(str::to_string))
         .unwrap_or_else(|| body.chars().take(300).collect());
+    let code = json
+        .as_ref()
+        .and_then(|v| v["code"].as_str().map(str::to_string))
+        .filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+        // A relay from before the code: the same refusal, by its words.
+        .or_else(|| {
+            (status == 403 && message == NEW_COMPUTER_NEEDS_PROOF_REASON)
+                .then(|| NEW_COMPUTER_NEEDS_PROOF.to_string())
+        });
     match status {
         401 => Error::Unauthenticated(format!("relay: {message}")),
-        403 => Error::PermissionDenied(format!("relay: {message}")),
+        403 => Error::PermissionDenied(match code {
+            Some(code) => format!("relay: {message}{CODE_OPEN}{code}]"),
+            None => format!("relay: {message}"),
+        }),
         404 => Error::NotFound(format!("relay: {message}")),
         409 => Error::Conflict(format!("relay: {message}")),
         _ => Error::Relay(format!("HTTP {status}: {message}")),
     }
+}
+
+/// Body of a TCP share allocation (see the relay's `tcp_shares`).
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TcpShareRequest {
+    /// The share's token (40 hex).
+    pub token: String,
+    /// Port in the Space.
+    pub target_port: u16,
+    /// Lifetime in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+    /// SRV service (`minecraft`): also makes a name people can type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// Name for lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Who may connect (CIDRs, at most 32); empty: anyone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Drop Minecraft Java connections that did not dial this share's
+    /// address (needs `service` `minecraft`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check_host: bool,
+    /// The most bytes the share may move (the owner's daily data cap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+}
+
+impl std::fmt::Debug for TcpShareRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TcpShareRequest")
+            .field("token", &"<redacted>")
+            .field("target_port", &self.target_port)
+            .field("ttl_secs", &self.ttl_secs)
+            .field("service", &self.service)
+            .field("name", &self.name)
+            .field("allow", &self.allow)
+            .field("check_host", &self.check_host)
+            .field("max_bytes", &self.max_bytes)
+            .finish()
+    }
+}
+
+/// One TCP share port as the relay reports it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TcpShareView {
+    /// Public port.
+    pub port: u16,
+    /// `host:port`.
+    pub address: String,
+    /// Public host.
+    pub host: String,
+    /// The name people type, when there is an SRV record.
+    #[serde(default)]
+    pub srv_name: Option<String>,
+    /// Port in the Space.
+    pub target_port: u16,
+    /// Unix seconds.
+    pub lease_until: u64,
+    /// Unix seconds.
+    pub ends: u64,
+    /// Open connections now.
+    #[serde(default)]
+    pub connections: u32,
+    /// Who may connect (CIDRs); empty: anyone.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Bytes moved since the port opened.
+    #[serde(default)]
+    pub bytes: u64,
+    /// The share's data cap (0: none).
+    #[serde(default)]
+    pub max_bytes: u64,
 }
 
 /// `wss://x/` → `https://x`, `ws://` → `http://`, trims the trailing slash.
@@ -822,7 +1519,67 @@ fn sharing_default() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_static_relays_info_parses() {
+        // A static-token relay has no OIDC issuer: `null`. Rejecting it
+        // kept self-hosted relays' clients off their mesh (CUA-1426).
+        let info: RelayInfo = serde_json::from_str(
+            r#"{"account_auth":false,"issuer":null,"mesh":{"stun":[],"version":1},"public_url":"http://relay","state_writable":true,"static_tokens":true}"#,
+        )
+        .unwrap();
+        assert_eq!(info.issuer, "");
+        assert!(info.static_tokens);
+        assert_eq!(info.mesh.map(|m| m.version), Some(1));
+    }
+
     use super::*;
+
+    /// A refusal keeps the relay's code next to its reason, so an app can
+    /// tell which refusal it was after the error has crossed into text.
+    #[test]
+    fn a_refusal_keeps_the_relays_code() {
+        let e = http_error(
+            403,
+            r#"{"error":"add computers from a computer you already added, or with a pairing code","code":"new_computer_needs_proof"}"#,
+        );
+        assert!(matches!(&e, Error::PermissionDenied(_)), "{e:?}");
+        let m = e.to_string();
+        assert!(m.starts_with("relay: add computers from"), "{m}");
+        assert_eq!(refusal_code(&m), Some(NEW_COMPUTER_NEEDS_PROOF));
+        assert_eq!(e.http_status(), Some(403));
+
+        // A relay from before the code: the same refusal, by its words.
+        let old = http_error(
+            403,
+            r#"{"error":"add computers from a computer you already added, or with a pairing code"}"#,
+        );
+        assert_eq!(
+            refusal_code(&old.to_string()),
+            Some(NEW_COMPUTER_NEEDS_PROOF)
+        );
+
+        // Any other refusal keeps its own code; one without a code has none.
+        let other = http_error(
+            403,
+            r#"{"error":"a phone does not host computers","code":"phone"}"#,
+        );
+        assert_eq!(refusal_code(&other.to_string()), Some("phone"));
+        let bare = http_error(
+            403,
+            r#"{"error":"that host is shared with you to watch only"}"#,
+        );
+        assert_eq!(
+            bare.to_string(),
+            "relay: that host is shared with you to watch only"
+        );
+        assert_eq!(refusal_code(&bare.to_string()), None);
+        // A code that is not a plain word is not echoed.
+        let odd = http_error(403, r#"{"error":"no","code":"<b>x</b>"}"#);
+        assert_eq!(refusal_code(&odd.to_string()), None);
+        // Other statuses are unchanged.
+        let missing = http_error(404, r#"{"error":"no such device","code":"not_found"}"#);
+        assert_eq!(missing.to_string(), "relay: no such device");
+    }
 
     #[test]
     fn normalizes_relay_urls() {
@@ -862,5 +1619,428 @@ mod tests {
         assert_eq!(m.connected_at, None);
         let bare: Machine = serde_json::from_str(r#"{"id":"abcd1234"}"#).unwrap();
         assert!(!bare.online);
+    }
+
+    #[test]
+    fn usage_parses_with_missing_and_unknown_fields() {
+        let u: RelayUsage = serde_json::from_str(
+            r#"{"metered":true,"period":"2026-10","plan":"free","team":{"id":"acme","seats":2},
+                "live_sessions":1,"live_sessions_limit":2,"hours_used":3.4,"hours_limit":20,
+                "my_hours_used":3.4,"soft_limit_reached":true,"reasons":["hours"],
+                "upgrade_url":"https://cua.ai/pricing","later":1}"#,
+        )
+        .unwrap();
+        assert_eq!(u.team.as_ref().unwrap().seats, 2);
+        assert_eq!(u.hours_limit, Some(20.0));
+        assert_eq!(u.reasons, ["hours"]);
+        let bare: RelayUsage = serde_json::from_str("{}").unwrap();
+        assert!(!bare.metered && bare.live_sessions_limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn leaving_takes_only_your_own_entry_and_an_old_relay_says_it_needs_an_update() {
+        let relay = crate::testing::FakeRelay::start().await;
+        relay.add_account("ada-tok", "ada", Some("ada@example.com"));
+        relay.add_account("bob-tok", "bob", Some("bob@example.com"));
+        relay.add_account("eve-tok", "eve", Some("eve@example.com"));
+        let client = RelayClient::new(&relay.url).unwrap();
+        let id = "space-0000leave0001";
+        client
+            .register(
+                "ada-tok",
+                &RegisterRequest {
+                    id: id.into(),
+                    name: "qa-shared".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .patch(
+                "ada-tok",
+                id,
+                &MachinePatch {
+                    allow: Some(vec!["Bob@example.com".into(), "cat@example.com".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let left = client.leave("bob-tok", id).await.unwrap();
+        assert_eq!(left.removed, vec!["Bob@example.com".to_string()]);
+        assert_eq!(
+            relay.machine(id).unwrap().allow,
+            vec!["cat@example.com".to_string()]
+        );
+        // The owner deletes instead; a stranger finds nothing to leave.
+        assert!(matches!(
+            client.leave("ada-tok", id).await.unwrap_err(),
+            Error::PermissionDenied(m) if m.contains("delete it instead")
+        ));
+        let e = client.leave("eve-tok", id).await.unwrap_err();
+        assert!(matches!(&e, Error::NotFound(_)), "{e:?}");
+        assert!(!is_relay_outdated(&e));
+        // A relay that predates the route.
+        relay.without_leave(true);
+        let e = client.leave("bob-tok", id).await.unwrap_err();
+        assert!(is_relay_outdated(&e), "{e:?}");
+        assert_eq!(e.to_string(), "relay: the Cua relay needs an update");
+    }
+
+    /// The default-Space routes and `spaces=delete`, against a mock relay
+    /// that records what it was sent.
+    #[tokio::test]
+    async fn default_space_routes_send_what_the_contract_says() {
+        use axum::extract::{Query, State};
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        type Log = Arc<Mutex<Vec<String>>>;
+        let log: Log = Arc::default();
+        let app = axum::Router::new()
+            .route(
+                "/v1/spaces/settings",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({"default_space": "relay:abc",
+                        "fallback": ["relay:def"], "fallback_on": false, "updated_at": 7}))
+                })
+                .put(|State(l): State<Log>, body: String| async move {
+                    l.lock().unwrap().push(format!("PUT {body}"));
+                    axum::Json(serde_json::json!({"default_space": null,
+                        "fallback": [], "fallback_on": true, "updated_at": 9}))
+                }),
+            )
+            .route(
+                "/v1/spaces/default",
+                axum::routing::get(
+                    |State(l): State<Log>, Query(q): Query<HashMap<String, String>>| async move {
+                        l.lock().unwrap().push(format!("here={:?}", q.get("here")));
+                        axum::Json(serde_json::json!({"space": "relay:def", "reason": "fallback",
+                            "default_space": "relay:abc", "default_online": false,
+                            "order": [{"space": "relay:abc", "name": "Studio", "online": false, "role": "default"},
+                                      {"space": "relay:def", "name": "PC", "online": true, "role": "fallback"}]}))
+                    },
+                ),
+            )
+            .route(
+                "/v1/machines/m1",
+                axum::routing::delete(
+                    |State(l): State<Log>, Query(q): Query<HashMap<String, String>>| async move {
+                        l.lock().unwrap().push(format!("DELETE spaces={:?}", q.get("spaces")));
+                        axum::Json(serde_json::json!({"ok": true}))
+                    },
+                ),
+            )
+            .with_state(log.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+
+        let got = client.spaces_settings("tok").await.unwrap();
+        assert_eq!(got.default_space.as_deref(), Some("relay:abc"));
+        assert_eq!(got.fallback, vec!["relay:def".to_string()]);
+        assert!(!got.fallback_on && got.updated_at == 7);
+
+        let put = SpacesSettings {
+            default_space: None,
+            fallback: vec![],
+            fallback_on: true,
+            updated_at: 0,
+        };
+        assert_eq!(
+            client
+                .set_spaces_settings("tok", &put)
+                .await
+                .unwrap()
+                .updated_at,
+            9
+        );
+
+        let d = client
+            .resolve_default_space("tok", Some("here1"))
+            .await
+            .unwrap();
+        assert_eq!(d.reason, "fallback");
+        assert_eq!(d.default_online, Some(false));
+        assert_eq!(d.order.len(), 2);
+        assert_eq!(d.order[1].role, "fallback");
+        client.resolve_default_space("tok", None).await.unwrap();
+
+        client.delete("tok", "m1").await.unwrap();
+        client.delete_machine("tok", "m1", true).await.unwrap();
+
+        let log = log.lock().unwrap().clone();
+        let put_body: serde_json::Value =
+            serde_json::from_str(log[0].strip_prefix("PUT ").unwrap()).unwrap();
+        assert_eq!(put_body["default_space"], serde_json::Value::Null);
+        assert_eq!(put_body["fallback_on"], true);
+        assert_eq!(
+            &log[1..],
+            [
+                "here=Some(\"here1\")",
+                "here=None",
+                "DELETE spaces=None",
+                "DELETE spaces=Some(\"delete\")"
+            ]
+        );
+
+        // A relay that predates the routes (its own 404 has no JSON error).
+        let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let old_addr = old.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(old, axum::Router::new()).await.unwrap() });
+        let e = RelayClient::new(&format!("http://{old_addr}"))
+            .unwrap()
+            .spaces_settings("tok")
+            .await
+            .unwrap_err();
+        assert!(is_relay_outdated(&e), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn a_plan_limit_refusal_is_one_plain_sentence_and_is_not_retried() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/machines",
+            axum::routing::get(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [
+                            ("x-cua-relay-error", "plan_limit_sessions"),
+                            ("x-cua-relay-plan", "pro"),
+                            ("x-cua-relay-used", "5"),
+                            ("x-cua-relay-limit", "5"),
+                        ],
+                        "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams: https://x",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(matches!(e, Error::PlanLimit(_)), "{e:?}");
+        assert_eq!(
+            e.to_string(),
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
+        );
+        assert_eq!(e.http_status(), Some(429));
+        assert!(!e.is_transient());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// A relay that answers the first `throttled` calls to `/v1/machines`
+    /// with the proxy's bare 429 (`retry_after` as the header), then `[]`.
+    async fn throttling_relay(
+        throttled: usize,
+        retry_after: &'static str,
+        body: &'static str,
+    ) -> (RelayClient, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/machines",
+            axum::routing::get(move || {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n < throttled {
+                        (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            [("retry-after", retry_after)],
+                            body,
+                        )
+                            .into_response()
+                    } else {
+                        (axum::http::StatusCode::OK, "[]").into_response()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (RelayClient::new(&format!("http://{addr}")).unwrap(), hits)
+    }
+
+    use axum::response::IntoResponse;
+
+    #[tokio::test]
+    async fn proxy_throttling_is_retried_until_it_succeeds() {
+        let (client, hits) = throttling_relay(2, "1", "Too Many Requests").await;
+        let machines = client.machines("tok").await.unwrap();
+        assert!(machines.is_empty());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // Two waits: Retry-After (1 s) and the backoff (2 s), plus jitter.
+        let waits = client.sleeper.waits.lock().unwrap().clone();
+        assert_eq!(waits.len(), 2);
+        assert!(waits[0] >= Duration::from_secs(1) && waits[0] <= Duration::from_millis(1250));
+        assert!(waits[1] >= Duration::from_secs(2) && waits[1] <= Duration::from_millis(2500));
+    }
+
+    #[tokio::test]
+    async fn retry_after_is_honoured_in_seconds_and_as_a_date() {
+        let (client, _) = throttling_relay(1, "7", "").await;
+        client.machines("tok").await.unwrap();
+        assert!(client.sleeper.waits.lock().unwrap()[0] >= Duration::from_secs(7));
+
+        let date = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(9));
+        let (client, _) = throttling_relay(1, Box::leak(date.into_boxed_str()), "").await;
+        client.machines("tok").await.unwrap();
+        let wait = client.sleeper.waits.lock().unwrap()[0];
+        assert!(wait >= Duration::from_secs(7), "{wait:?}");
+    }
+
+    #[tokio::test]
+    async fn it_gives_up_after_the_cap_with_a_plain_message() {
+        let (client, hits) = throttling_relay(usize::MAX, "2", "Too Many Requests").await;
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(
+            matches!(
+                e,
+                Error::Throttled {
+                    retry_after_secs: 2
+                }
+            ),
+            "{e:?}"
+        );
+        assert_eq!(
+            e.to_string(),
+            "Too many attempts right now. Wait 2 seconds, then try again."
+        );
+        assert_eq!(e.http_status(), Some(429));
+        assert!(e.is_transient());
+        // Waits of about 2, 2, 4, 8, 8, ... s stop at the 60 s cap.
+        let total: Duration = client.sleeper.waits.lock().unwrap().iter().sum();
+        assert!(total <= Duration::from_secs(60), "{total:?}");
+        assert!(total >= Duration::from_secs(30), "{total:?}");
+        let tries = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert!((4..=8).contains(&tries), "{tries}");
+        assert_eq!(client.sleeper.waits.lock().unwrap().len(), tries - 1);
+    }
+
+    #[tokio::test]
+    async fn a_post_is_retried_too_because_a_throttled_call_never_arrived() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/devices",
+            axum::routing::post(move |body: String| {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            "Too Many Requests",
+                        )
+                            .into_response()
+                    } else {
+                        assert!(body.contains("\"k\""), "{body}");
+                        (
+                            axum::http::StatusCode::OK,
+                            r#"{"device_id":"d","user_id":"u"}"#,
+                        )
+                            .into_response()
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+        let r = client
+            .send_json::<_, serde_json::Value>(
+                reqwest::Method::POST,
+                "/v1/devices",
+                Some(&serde_json::json!({"k": 1})),
+                "tok",
+            )
+            .await;
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_backoff_doubles_to_a_cap_and_never_undercuts_retry_after() {
+        for (retry_after, attempt, floor) in [
+            (1, 1, 1),
+            (1, 2, 2),
+            (1, 3, 4),
+            (1, 4, 8),
+            (1, 9, 8),
+            (30, 1, 30),
+        ] {
+            let w = throttle_wait(retry_after, attempt);
+            let floor = Duration::from_secs(floor);
+            assert!(
+                w >= floor && w <= floor.mul_f64(1.25),
+                "{retry_after} {attempt} {w:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_huge_retry_after_is_clamped_and_never_panics() {
+        let w = throttle_wait(u64::MAX, 1);
+        assert!(w > THROTTLE_BUDGET && w <= THROTTLE_BUDGET * 2, "{w:?}");
+    }
+
+    #[tokio::test]
+    async fn a_huge_retry_after_gives_up_at_once_with_a_sane_wait() {
+        let (client, hits) = throttling_relay(usize::MAX, "18446744073709551615", "").await;
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(
+            matches!(
+                e,
+                Error::Throttled {
+                    retry_after_secs: 3600
+                }
+            ),
+            "{e:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(client.sleeper.waits.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn retry_after_parses_seconds_dates_and_junk() {
+        let h = |v: &str| {
+            let mut m = reqwest::header::HeaderMap::new();
+            m.insert(reqwest::header::RETRY_AFTER, v.parse().unwrap());
+            m
+        };
+        assert_eq!(retry_after(&h("5")), Some(Duration::from_secs(5)));
+        assert_eq!(retry_after(&h(" 12 ")), Some(Duration::from_secs(12)));
+        assert_eq!(
+            retry_after(&h("Wed, 21 Oct 2015 07:28:00 GMT")),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(retry_after(&h("soon")), None);
+        assert_eq!(retry_after(&reqwest::header::HeaderMap::new()), None);
+    }
+
+    #[tokio::test]
+    async fn the_relays_own_429s_are_not_retried() {
+        for body in [
+            "computer limit for this token reached",
+            "at most 5 unused pairing codes",
+        ] {
+            let (client, hits) = throttling_relay(usize::MAX, "1", body).await;
+            let e = client.machines("tok").await.unwrap_err();
+            assert!(matches!(e, Error::Relay(_)), "{e:?}");
+            assert!(e.to_string().contains(body), "{e}");
+            assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
     }
 }

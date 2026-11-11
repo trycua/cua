@@ -127,7 +127,6 @@ fn direct(url: &str) -> SandboxCreateOptions {
         image: String::new(),
         name: Some("teleport-direct".into()),
         token: Some(TOKEN.into()),
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -136,12 +135,9 @@ fn direct(url: &str) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: Default::default(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
+        pool: None,
+        ttl_seconds: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -149,6 +145,10 @@ fn direct(url: &str) -> SandboxCreateOptions {
         overlays: vec![],
         keep_on_failure: false,
         gpu: None,
+        headless: false,
+        spacesd: None,
+        profile: None,
+        forkable: None,
     }
 }
 

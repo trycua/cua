@@ -320,7 +320,7 @@ message NegotiatedAudio {
 }
 
 // Direct QUIC media endpoint. Only reachable when the client can reach the
-// guest's UDP port directly (not through the Fleet gateway or relay).
+// guest's UDP port directly (not through a gateway or the relay).
 message QuicEndpoint {
   // UDP port (normally 3212).
   uint32 port = 1;
@@ -352,8 +352,8 @@ message OpenMediaResponse {
   // When the ticket stops being accepted for new attaches.
   google.protobuf.Timestamp ticket_expires_at = 3;
   // WebSocket path relative to the spacesd base URL, including the
-  // ticket, for example "/media?ticket=…". Works through the Fleet gateway
-  // and the relay.
+  // ticket, for example "/media?ticket=…". Works through gateways and the
+  // relay.
   string ws_path = 4;
   // Direct QUIC endpoint, when requested and available.
   QuicEndpoint quic = 5;

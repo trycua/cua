@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cua Cursor Motion through the UniFFI boundary.
 //!
 //! The planner lives in the dependency-free `cua-cursor-motion` crate; this
@@ -30,6 +33,10 @@ fn timing_in(timing: CursorMotionTiming) -> cm::MotionTiming {
         CursorMotionTiming::Native => cm::MotionTiming::Native,
         CursorMotionTiming::Fitts => cm::MotionTiming::Fitts,
         CursorMotionTiming::Fixed => cm::MotionTiming::Fixed,
+        CursorMotionTiming::Relaxed => cm::MotionTiming::Relaxed,
+        CursorMotionTiming::Steady => cm::MotionTiming::Steady,
+        CursorMotionTiming::Calm => cm::MotionTiming::Calm,
+        CursorMotionTiming::Deliberate => cm::MotionTiming::Deliberate,
     }
 }
 
@@ -109,7 +116,7 @@ pub fn default_cursor_motion_params() -> CursorMotionParams {
     let d = cm::MotionParams::default();
     CursorMotionParams {
         style: style_out(d.style),
-        timing: CursorMotionTiming::Native,
+        timing: CursorMotionTiming::Steady,
         effects: CursorMotionEffects::default(),
         start_handle: d.start_handle,
         end_handle: d.end_handle,
@@ -691,8 +698,11 @@ mod tests {
 
     #[test]
     fn the_ffi_planner_matches_the_crate() {
+        // A style's raw spec matches its planned move under `native` timing; the default
+        // (`steady`) adds a floor and a sine ease on top of the spec.
         let params = CursorMotionParams {
             style: CursorMotionStyle::CometSwoop,
+            timing: CursorMotionTiming::Native,
             ..default_cursor_motion_params()
         };
         let request = CursorMoveRequest {

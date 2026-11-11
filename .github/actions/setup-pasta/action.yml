@@ -1,0 +1,28 @@
+name: "Set up pasta for the secure network"
+description: >-
+  Every Linux QEMU guest runs inside a pasta network namespace (Secure Spaces
+  is always on). On a hosted Ubuntu 24.04 runner AppArmor blocks the user
+  namespace pasta needs ("Couldn't write to /proc/self/uid_map"), and the VM
+  then fails to start with a misleading IPv6 error. This action installs passt
+  through the cached apt-install action, adds an AppArmor profile that lets
+  /usr/bin/pasta create user namespaces, and smoke-tests pasta. Use it in
+  every job that boots a Linux VM or container through cua, before the first
+  VM starts. Linux runners only.
+
+runs:
+  using: composite
+  steps:
+    - name: Install passt
+      uses: ./.github/actions/apt-install
+      with:
+        packages: passt
+    - name: Let pasta create user namespaces (AppArmor) and smoke-test it
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Ubuntu 24.04 lets only profiled programs create user namespaces.
+        printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cua-pasta /usr/bin/pasta flags=(unconfined) {\n  userns,\n}\n' \
+          | sudo tee /etc/apparmor.d/cua-pasta >/dev/null
+        sudo apparmor_parser -r /etc/apparmor.d/cua-pasta
+        pasta --config-net -q -- true
+        echo "pasta works: $(pasta --version 2>&1 | head -1)"

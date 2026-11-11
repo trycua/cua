@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Folding interactive batches into one-shot gestures.
 //!
 //! Some platforms can deliver input only as whole gestures (a click, a drag,

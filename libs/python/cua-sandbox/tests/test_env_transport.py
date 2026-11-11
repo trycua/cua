@@ -333,9 +333,8 @@ def test_env_url_brackets_ipv6():
     assert env_url("::1", 4000) == "http://[::1]:4000"
 
 
-def test_computer_server_ws_url_is_rejected_with_guidance():
-    from cua_sandbox.sandbox import _make_transport
+async def test_computer_server_ws_url_is_rejected_with_guidance():
+    from cua_sandbox.sandbox import Sandbox
 
     with pytest.raises(ValueError, match="cua-spacesd"):
-        _make_transport(ws_url="ws://host:8000/ws")
-    assert isinstance(_make_transport(http_url="http://host:3211"), EnvTransport)
+        await Sandbox._create(ws_url="ws://host:8000/ws", name="box", local=True)

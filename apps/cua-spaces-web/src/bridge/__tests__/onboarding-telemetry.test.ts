@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OnboardingAction, OnboardingFlowState } from "../contracts/onboarding";
 import { onboardingInitial, onboardingReduce } from "../onboarding";
 import { sanitizeSignals } from "../ops/telemetry";
 import { telemetryLaunched, telemetryOnboarding, type TelemetrySignal } from "../telemetry";
 import { testCore, wasmBuilt } from "./testCore";
 
-const words = (s: TelemetrySignal[]) =>
-  s.map((x) => (x.type === "step" ? x.step : x.type === "onboarding-page" ? `${x.page} ${x.action}` : x.type));
+const words = (s: TelemetrySignal[]) => s.map((x) => (x.type === "step" ? x.step : x.type === "onboarding-page" ? `${x.page} ${x.action}` : x.type));
 
 async function run(actions: OnboardingAction[]): Promise<string[][]> {
   const core = await testCore();
@@ -68,10 +67,21 @@ describe("the launched signal crossing the bridge", () => {
     expect(sanitizeSignals([{ type: "launched", onboardingEligible: null }])).toHaveLength(1);
     expect(sanitizeSignals([{ type: "launched", onboardingEligible: "maya@example.com" }])).toEqual([]);
   });
+
+  it("passes the Ready screen's events as fixed words and drops a command or a path", () => {
+    for (const action of ["step_viewed", "step_command_copied", "step_chat_picked_up", "step_completed"]) {
+      const ok = { type: "onboarding-page", page: "ready", action, choice: "claude_code" } as const;
+      expect(sanitizeSignals([ok])).toEqual([ok]);
+      expect(sanitizeSignals([{ ...ok, choice: 'claude "Build this in /Users/alice/app"' }])).toEqual([]);
+    }
+  });
 });
 
 describe.skipIf(!wasmBuilt)("first-run usage events from the web pages", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("never reports the Menu bar page it passes through, and counts Set up later", async () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     const { act, render, waitFor } = await import("@testing-library/react");
     const { createElement } = await import("react");
     const { BridgeProvider, useOnboarding } = await import("../index");

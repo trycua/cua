@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -82,11 +85,10 @@ impl Tool for GetConfigTool {
             "agent_cursor": {
                 "enabled": cursor_enabled,
             },
-            "cursor": {
-                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
-            },
+            "cursor": cursor_overlay::cursor_options::saved_config_json(),
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry,
+            "fast_path": cua_driver_core::fast_path::wire::config_value(),
         }))
     }
 }

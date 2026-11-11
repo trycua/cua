@@ -7,8 +7,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 const quit = vi.fn();
-vi.mock("electron", () => ({ app: { quit, on: () => {}, isPackaged: false }, Menu: {}, nativeImage: {}, Tray: class {} }));
-const { accelerator, trayTemplate } = await import("../src/tray");
+vi.mock("electron", () => ({
+  app: { quit, on: () => {}, isPackaged: false },
+  Menu: {},
+  nativeImage: {},
+  nativeTheme: { on: () => {}, shouldUseDarkColors: false },
+  Tray: class {},
+}));
+const { accelerator, linuxTrayIconName, trayTemplate } = await import("../src/tray");
 
 const items = [
   { id: "status", label: "2 Spaces", enabled: false },
@@ -34,7 +40,16 @@ describe("the menu bar item and the tray", () => {
   it("is the core's menu on macOS, with its shortcuts and no Space list", () => {
     const { log, actions: a } = actions();
     const t = trayTemplate(items, spaces, a, "darwin");
-    expect(t.map((i) => (i.type === "separator" ? "---" : i.label))).toEqual(["2 Spaces", "---", "Open Cua Spaces", "New Space…", "Settings…", "1 conflict", "---", "Quit Cua Spaces"]);
+    expect(t.map((i) => (i.type === "separator" ? "---" : i.label))).toEqual([
+      "2 Spaces",
+      "---",
+      "Open Cua Spaces",
+      "New Space…",
+      "Settings…",
+      "1 conflict",
+      "---",
+      "Quit Cua Spaces",
+    ]);
     expect(t[0]!.enabled).toBe(false);
     expect(t.find((i) => i.label === "Settings…")!.accelerator).toBe("Command+,");
     expect(t.find((i) => i.label === "Quit Cua Spaces")!.accelerator).toBe("Command+Q");
@@ -58,5 +73,19 @@ describe("the menu bar item and the tray", () => {
     expect(accelerator("⌘,", "darwin")).toBe("Command+,");
     expect(accelerator("⌘Q", "win32")).toBeUndefined();
     expect(accelerator(undefined, "darwin")).toBeUndefined();
+  });
+});
+
+describe("the Linux tray glyph", () => {
+  it("is light on GNOME's dark top bar whatever the app theme", () => {
+    expect(linuxTrayIconName("ubuntu:GNOME", false)).toBe("tray-light.png");
+    expect(linuxTrayIconName("GNOME", false)).toBe("tray-light.png");
+    expect(linuxTrayIconName("Budgie:GNOME", true)).toBe("tray-light.png");
+  });
+
+  it("follows the system theme on desktops with a themed panel", () => {
+    expect(linuxTrayIconName("KDE", false)).toBe("tray-dark.png");
+    expect(linuxTrayIconName("XFCE", true)).toBe("tray-light.png");
+    expect(linuxTrayIconName(undefined, false)).toBe("tray-dark.png");
   });
 });

@@ -43,6 +43,12 @@ export interface Tile {
   progress?: number;
   progressLabel?: string;
   signedIn: boolean;
+  /** One of your other machines' desktops, not a Space it provides. */
+  desktop?: boolean;
+  /** Pinned to the notch. */
+  pinned?: boolean;
+  /** Why a pinned desktop cannot be opened now ("Offline", "Not shared"). */
+  note?: string;
 }
 
 export interface Activity {
@@ -150,6 +156,8 @@ export type HostMessage =
   | StateMessage
   | { type: "thumbnail"; id: string; image?: string }
   | { type: "ghost"; image?: string }
+  /** Which window is at a global top-left point under the dragged window `below` (is a tile in this app's window covered there?). */
+  | { type: "windowUnder"; id: number; x: number; y: number; below?: number }
   | { type: "quit" };
 
 export type HelperAction =
@@ -165,7 +173,9 @@ export type HelperMessage =
   | { type: "event"; event: NotchInput }
   | ({ type: "action" } & HelperAction)
   | { type: "stage"; open: boolean }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** The answer to `windowUnder`: that window's number (`kCGWindowNumber`), none when no window is there. */
+  | { type: "windowUnder"; id: number; window?: number };
 
 /** One message as a line. */
 export function encodeMessage(message: HostMessage): string {
@@ -247,9 +257,7 @@ function parseAction(m: Record<string, unknown>): HelperMessage | null {
     case "openPermissionSettings":
       return isStr(m.pane) ? { type: "action", action: "openPermissionSettings", pane: m.pane } : null;
     case "drop":
-      return isStr(m.spaceId) && Array.isArray(m.paths) && m.paths.every(isStr)
-        ? { type: "action", action: "drop", spaceId: m.spaceId, paths: m.paths }
-        : null;
+      return isStr(m.spaceId) && Array.isArray(m.paths) && m.paths.every(isStr) ? { type: "action", action: "drop", spaceId: m.spaceId, paths: m.paths } : null;
     default:
       return null;
   }
@@ -282,6 +290,9 @@ export function parseHelperMessage(line: string): HelperMessage | null {
       return typeof m.open === "boolean" ? { type: "stage", open: m.open } : null;
     case "error":
       return isStr(m.message) ? { type: "error", message: m.message } : null;
+    case "windowUnder":
+      if (!isNum(m.id) || (m.window !== undefined && !isNum(m.window))) return null;
+      return m.window === undefined ? { type: "windowUnder", id: m.id } : { type: "windowUnder", id: m.id, window: m.window };
     default:
       return null;
   }

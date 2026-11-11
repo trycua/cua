@@ -1,0 +1,13 @@
+{
+  "common": {
+    "app_name": "Cua Spaces"
+  },
+  "common.action.dismiss": "关闭",
+  "common.action.retry": "重试",
+  "common.action.cancel": "取消",
+  "common.action.close": "关闭",
+  "common.action.reconnect": "重新连接",
+  "common.status.connecting": "正在连接…",
+  "common.action.back": "返回",
+  "common.action.done": "完成"
+}

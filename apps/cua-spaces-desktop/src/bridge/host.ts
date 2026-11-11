@@ -32,6 +32,10 @@ export interface PresentedFailure {
   title: string;
   details: string;
   actionLabel: string;
+  /** Which failure it is (`HostFailureKind`), for a page that answers it with a screen of its own. */
+  kind?: string;
+  /** The relay's code for a refusal, when it gave one. */
+  refusalCode?: string;
 }
 
 /** A method's failure, with the code the page reads. */
@@ -73,6 +77,8 @@ export interface BridgeError {
   title?: string;
   details?: string;
   actionLabel?: string;
+  kind?: string;
+  refusalCode?: string;
 }
 
 export type BridgeResponse = { id: string; ok: true; result: unknown } | { id: string; ok: false; error: BridgeError };
@@ -83,6 +89,8 @@ export function reply(id: string, error: Failure): BridgeResponse {
     e.title = error.presented.title;
     e.details = error.presented.details;
     e.actionLabel = error.presented.actionLabel;
+    if (error.presented.kind) e.kind = error.presented.kind;
+    if (error.presented.refusalCode) e.refusalCode = error.presented.refusalCode;
   }
   return { id, ok: false, error: e };
 }
@@ -148,20 +156,21 @@ export interface BridgeEvent {
 }
 
 export class BridgeEvents {
-  private readonly listeners = new Set<(e: BridgeEvent) => void>();
+  private readonly listeners = new Set<(e: BridgeEvent, to?: unknown) => void>();
 
-  emit(event: string, payload?: unknown): void {
+  /** `to`: only that window gets it (a presence session's events); none: every window. */
+  emit(event: string, payload?: unknown, to?: unknown): void {
     const e: BridgeEvent = payload === undefined ? { event } : { event, payload };
     for (const l of [...this.listeners]) {
       try {
-        l(e);
+        l(e, to);
       } catch (error) {
         console.error("[cua-spaces] bridge event listener failed", error);
       }
     }
   }
 
-  subscribe(listener: (e: BridgeEvent) => void): () => void {
+  subscribe(listener: (e: BridgeEvent, to?: unknown) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }

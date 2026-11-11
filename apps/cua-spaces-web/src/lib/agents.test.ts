@@ -20,6 +20,7 @@ const agent = (name: string, state: AgentSummary["state"], run: AgentSummary["ru
   lastActivityMs: 0,
   run,
   lastError: null,
+  record: { name, harness: "claude-code", space: "local:dev", paused: state === "paused", spaceState: "running", savedMs: 0 },
 });
 
 const run = (runId: string, agentName: string | null = null): AgentRunSummary => ({

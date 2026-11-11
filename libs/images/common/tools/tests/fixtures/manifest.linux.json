@@ -93,13 +93,22 @@
   "features_not_applicable": [],
   "features_optional": [
     "hotspot",
+    "exit",
+    "host_ports",
+    "process.services",
     "relay_attach",
     "h264_hw",
     "audio.per_app",
     "clipboard.files",
     "clipboard.image",
     "teleport.*",
-    "volume.mount"
+    "volume.mount",
+    "process.exec_ledger",
+    "files.multipart",
+    "fs.run_as",
+    "fs.xattr",
+    "process.run_as",
+    "volume.binds"
   ],
   "features_required": [
     "pty",
@@ -119,7 +128,9 @@
     "presence.cursor_shape",
     "audio.desktop",
     "audio.uplink",
-    "audio.opus"
+    "audio.opus",
+    "process.exec_ledger",
+    "spawn"
   ],
   "fixtures": {
     "apps": [
@@ -224,6 +235,13 @@
         "--version"
       ],
       "expect": "^cmake version 3\\."
+    },
+    "cua": {
+      "argv": [
+        "cua",
+        "--version"
+      ],
+      "expect": "^cua [0-9]"
     },
     "curl": {
       "argv": [

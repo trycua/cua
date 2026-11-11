@@ -6,15 +6,17 @@
  * (`onboarding.initial`, `.reduce`, `.view`, `.copy`), the same one the
  * SwiftUI and Tauri apps draw.
  *
- * One of the core's pages needs the native app, so a web host passes
- * through it with the answer a native user gets by not changing anything:
- * Menu bar (the notch), `presentation-picked` with the current setting.
- *
- * The pages left are Welcome (with the usage-data switch), Sign in, AI
- * agents (with the cua-driver card), Cua Volume (only with its experiment
+ * The pages are Welcome (with the usage-data switch), Sign in, AI agents
+ * (with the cua-driver card), Menu bar (where the app shows: the notch and
+ * the menu bar, or the menu bar only), Cua Volume (only with its experiment
  * on; `volume.ts` runs its commands), This machine (with the permissions
  * still to grant) and Done. The order, titles, buttons and answers are the
  * core's.
+ *
+ * Menu bar is a Mac's: the notch is the macOS app's (the SwiftUI app, and
+ * the Electron app's notch helper). Off a Mac there is no notch, so the
+ * flow passes through that page with the answer a user gets by not
+ * changing anything, `presentation-picked` with the current setting.
  *
  * Without the core, small TypeScript stand-ins keep the demo usable. They
  * are not the product's behaviour.
@@ -29,22 +31,38 @@ import type {
   OnboardingFlowState,
   OnboardingStep,
   OnboardingTelemetry,
+  OnboardingTodo,
   OnboardingView,
   PermissionRow,
   SandboxImage,
 } from "./contracts/onboarding";
 import type { SpaceOs } from "./contracts/spaces";
 
-/** The core's pages a web host passes through (see above). */
-export const NATIVE_ONLY_STEPS: readonly OnboardingStep[] = ["presentation"];
+/** Whether the host has the notch, so the Menu bar page has a choice to
+ * offer: the macOS app's (the same rule as Settings' "Spaces tab in the
+ * notch" row). */
+export function hasNotch(os: HostOs = hostOs()): boolean {
+  return os === "macos";
+}
 
-/** Done's summary facts about native-only pages; the web leaves them out. */
-const NATIVE_ONLY_FACTS = new Set(["cua command", "Shows in"]);
+/** The core's pages this host passes through (see above). */
+export function passedSteps(os: HostOs = hostOs()): readonly OnboardingStep[] {
+  return hasNotch(os) ? [] : ["presentation"];
+}
+
+/** Done's summary facts about pages the web passes through: Shows in
+ * follows Menu bar. (The Cua CLI install is the SwiftUI app's own page:
+ * the core leaves it off Done for the web, `withoutCli`.) */
+function passedFacts(os: HostOs): Set<string> {
+  return new Set(hasNotch(os) ? [] : ["Shows in"]);
+}
 
 /** What the pass-through answers need from the host. */
 export interface OnboardingContext {
   /** The "Spaces tab in the notch" setting now (`menuBar`). */
   menuBar: boolean;
+  /** The system the app runs on (default: this host's). */
+  os?: HostOs;
   /** Sees every step the core takes, with the state before it (usage events). */
   observe?: (before: OnboardingFlowState, action: OnboardingAction) => void;
 }
@@ -68,17 +86,15 @@ function reduceOnce(core: CoreClient, state: OnboardingFlowState, action: Onboar
 }
 
 /**
- * The core's reducer, then past any native-only page: forward with its
- * default answer, or on back when the action was Back.
+ * The core's reducer, then past any page this host passes through: forward
+ * with its default answer, or on back when the action was Back. Landing on
+ * Menu bar, the choice starts from the setting now (it may have changed in
+ * Settings since the flow started), as the SwiftUI page does on appear.
  */
-export function onboardingReduce(
-  core: CoreClient,
-  state: OnboardingFlowState,
-  action: OnboardingAction,
-  ctx: OnboardingContext,
-): OnboardingFlowState {
+export function onboardingReduce(core: CoreClient, state: OnboardingFlowState, action: OnboardingAction, ctx: OnboardingContext): OnboardingFlowState {
+  const passed = passedSteps(ctx.os);
   let s = reduceOnce(core, state, action, ctx);
-  for (let guard = 0; guard < NATIVE_ONLY_STEPS.length + 1 && NATIVE_ONLY_STEPS.includes(s.step); guard++) {
+  for (let guard = 0; guard < passed.length + 1 && passed.includes(s.step); guard++) {
     const before = s.step;
     if (action.type === "back") {
       s = reduceOnce(core, s, { type: "back" }, ctx);
@@ -90,17 +106,23 @@ export function onboardingReduce(
     }
     if (s.step === before) break;
   }
+  if (s.step === "presentation" && state.step !== "presentation" && s.menuBar !== ctx.menuBar) {
+    s = reduceOnce(core, s, { type: "presentation-picked", menuBar: ctx.menuBar }, ctx);
+  }
   return s;
 }
 
-/** The page as drawn, without the native-only pages' dots and facts, in
- * the words of the system the app runs on (the tray off a Mac). */
+/** The page as drawn, without the dots and facts of the pages this host
+ * passes through, in the words of the system the app runs on (the tray off
+ * a Mac). */
 export function onboardingView(core: CoreClient, state: OnboardingFlowState, os: HostOs = hostOs()): OnboardingView {
-  const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os }) ?? fallbackView(state, os);
+  const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os, withoutCli: true }) ?? fallbackView(state, os);
+  const passed = passedSteps(os);
+  const facts = passedFacts(os);
   return {
     ...v,
-    dots: v.dots.filter((d) => !NATIVE_ONLY_STEPS.includes(d.step)),
-    summary: v.summary.filter((f) => !NATIVE_ONLY_FACTS.has(f.label)),
+    dots: v.dots.filter((d) => !passed.includes(d.step)),
+    summary: v.summary.filter((f) => !facts.has(f.label)),
   };
 }
 
@@ -117,9 +139,7 @@ export function onboardingCopy(core: CoreClient): OnboardingCopy {
 
 /** "Signed in as ada@example.com." */
 export function signedInText(core: CoreClient, identity: string | null): string {
-  return (
-    core.tryCall<string>("onboarding.signedInText", { identity }) ?? (identity ? `Signed in as ${identity}.` : "Signed in.")
-  );
+  return core.tryCall<string>("onboarding.signedInText", { identity }) ?? (identity ? `Signed in as ${identity}.` : "Signed in.");
 }
 
 /** "Confirm ABCD-EFGH in your browser." or "Finish in your browser." */
@@ -141,19 +161,19 @@ export function permissionRows(core: CoreClient, hints: PermissionHint[]): Permi
   }));
   return (
     core.tryCall<PermissionRow[]>("host.permissionRows", { permissions }) ??
-    permissions
-      .filter((p) => !p.granted)
-      .map((p) => ({ id: p.id, title: p.title, help: p.instructions ?? "", settingsUrl: p.settingsUrl || null }))
+    permissions.filter((p) => !p.granted).map((p) => ({ id: p.id, title: p.title, help: p.instructions ?? "", settingsUrl: p.settingsUrl || null }))
   );
 }
 
 /**
  * One image per OS for the first Space: the core's picker catalog, first
- * published full image of each (the New Space picker's first rows).
+ * published full image of each (the New Space picker's first rows). No
+ * macOS image off macOS.
  */
-export function firstSpaceImages(core: CoreClient): SandboxImage[] {
+export function firstSpaceImages(core: CoreClient, os: HostOs = hostOs()): SandboxImage[] {
   const all = core.tryCall<SandboxImage[]>("wizard.pickerImages") ?? FALLBACK_IMAGES;
-  const order: SpaceOs[] = ["macos", "linux", "windows"];
+  // macOS images run on Lume (Apple silicon): not offered on Linux or Windows.
+  const order: SpaceOs[] = os === "macos" ? ["macos", "linux", "windows"] : ["linux", "windows"];
   return order.flatMap((os) => {
     const published = all.filter((i) => i.published && i.os === os && i.group === "canonical");
     const pick = published.find((i) => i.tier !== "slim") ?? published[0];
@@ -170,7 +190,7 @@ const LABELS: Record<OnboardingStep, string> = {
   agents: "AI agents",
   presentation: "Menu bar",
   drive: "Cua Volume",
-  mode: "This machine",
+  mode: "This computer",
   done: "Done",
 };
 
@@ -185,6 +205,8 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
       return at("signin") ? { ...s, step: "agents" } : s;
     case "agents-done":
       return at("agents") ? { ...s, agents: a.configured, step: "presentation" } : s;
+    case "agents-detected":
+      return { ...s, agents: [...new Set([...(Array.isArray(s.agents) ? (s.agents as string[]) : []), ...a.configured])] };
     case "presentation-picked":
       return at("presentation") ? { ...s, menuBar: a.menuBar } : s;
     case "presentation-done":
@@ -205,13 +227,58 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
   }
 }
 
+/** Done's to-do list without the core (the core's `done_todos`, less the Cua CLI). */
+function fallbackTodos(s: OnboardingFlowState): OnboardingTodo[] {
+  const agents = Array.isArray(s.agents) ? (s.agents as string[]) : [];
+  return [
+    {
+      id: "signin",
+      title: "Account",
+      note: s.identity ? `Signed in as ${s.identity}.` : "Reach your computers from any computer.",
+      done: Boolean(s.identity),
+      optional: false,
+      action: s.identity ? null : "Sign in",
+    },
+    {
+      id: "agents",
+      title: "AI agents",
+      note: agents.length ? `${agents.join(", ")} can use Cua.` : "Let Claude Code, Codex and others use Cua.",
+      done: agents.length > 0,
+      optional: false,
+      action: agents.length ? null : "Connect an AI agent",
+    },
+  ];
+}
+
+/** How the copy names the computer the app runs on (the core's `this_computer`). */
+function thisComputer(os: HostOs): string {
+  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
+}
+
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
-    welcome: ["Welcome to Cua Spaces", "Computers for you and your agents.", "Get started"],
-    signin: ["Sign in", "Connect your machines and your team.", "Continue"],
-    mode: ["How will you use this machine?", "You can change this later.", "Continue"],
+    welcome: ["Welcome to Cua Spaces", "Computers for you and your AI agents.", "Get started"],
+    signin: ["Sign in", "Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later.", "Continue"],
+    presentation: ["Where should Cua Spaces show up?", "You can change this in Settings.", "Continue"],
+    mode: [
+      `How do you want to use ${thisComputer(os)}?`,
+      "Use it only to open your other computers, or let your other computers reach it too. You can change this later.",
+      "Continue",
+    ],
     done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };
+  const todos = s.step === "done" ? fallbackTodos(s) : [];
+  const left = todos.filter((t) => !t.done && !t.optional).length;
+  const place = os === "macos" ? "the menu bar" : "the system tray";
+  if (left > 0) {
+    pages.done = [
+      "Almost done",
+      left === 1
+        ? `One thing is left. You can finish it now, or later from ${place}.`
+        : `${left} things are left. You can finish them now, or later from ${place}.`,
+      "Start using Cua Spaces",
+    ];
+  }
   const [title, lede, primaryLabel] = pages[s.step] ?? ["", "", "Continue"];
   const pre = s.installerMode ?? "client";
   const locked = s.telemetry?.lockedBy || null;
@@ -228,25 +295,38 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
     summary:
       s.step === "done"
         ? [
-            { label: "Account", value: s.identity ?? "not signed in" },
-            { label: "AI agents", value: Array.isArray(s.agents) && s.agents.length ? s.agents.join(", ") : "none" },
-            { label: "This machine", value: s.mode === "host" ? "Set up for unattended access" : "Access other machines" },
+            { label: "Shows in", value: s.menuBar ? "Menu bar only" : "Notch and menu bar" },
+            { label: "This computer", value: s.mode === "host" ? "Your other computers can reach it" : "Opens your other computers" },
           ]
         : [],
+    todos,
     choices:
       s.step === "mode"
         ? [
-            { mode: "client", label: "Access other machines", preselected: pre === "client" },
-            { mode: "host", label: "Set up this machine for unattended access", preselected: pre === "host" },
+            { mode: "client", label: `Just use ${thisComputer(os)} to open my other computers`, preselected: pre === "client" },
+            { mode: "host", label: `Let my other computers reach ${thisComputer(os)}`, preselected: pre === "host" },
           ]
         : [],
-    notice: s.step === "welcome" ? "Cua collects anonymous usage data. Change it here or in Settings, Privacy." : null,
+    presentations:
+      s.step === "presentation"
+        ? [
+            {
+              menuBar: false,
+              title: "Notch and menu bar",
+              id: "onboarding-notch",
+              imageLabel: "The Spaces tiles open from the notch, and the menu bar menu",
+              selected: !s.menuBar,
+            },
+            { menuBar: true, title: "Menu bar only", id: "onboarding-menu-bar", imageLabel: "The menu bar menu alone", selected: s.menuBar },
+          ]
+        : [],
+    notice: s.step === "welcome" ? "Features you use and errors, linked to your account. Never your files, typing or screen." : null,
     noticeLinkLabel: s.step === "welcome" ? "What is collected" : null,
     noticeLinkUrl: s.step === "welcome" ? "https://cua.ai/docs/cua-sdk/concepts/telemetry" : null,
     usage:
       s.step === "welcome"
         ? {
-            label: "Share anonymous usage data",
+            label: "Share usage data to help improve Cua",
             on: s.telemetry?.enabled ?? true,
             enabled: !locked,
             help: locked ? `Set by ${locked}` : null,
@@ -264,9 +344,9 @@ const FALLBACK_COPY: OnboardingCopy = {
   signInWaiting: "Waiting for the browser…",
   permissionsTitle: "Grant in System Settings",
   openSettings: "Open Settings",
-  teams: "Teams · coming soon",
-  teamsLink: "Join the waitlist",
-  teamsUrl: "https://cua.ai/teams",
+  teams: "Teams · manage them at app.cua.ai",
+  teamsLink: "Open the account app",
+  teamsUrl: "https://app.cua.ai/welcome",
 };
 
 const FALLBACK_IMAGES: SandboxImage[] = [

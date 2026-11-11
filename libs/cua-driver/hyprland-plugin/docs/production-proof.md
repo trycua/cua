@@ -39,7 +39,7 @@ assertions and evidence requirements intact, and preserve failed results.
 
 This addendum records a strategy change, not completed native certification.
 Exact package versions, operation limits, existing Driver policy, and the
-separate release/package/Fleet requirements remain in force.
+separate release/package/image requirements remain in force.
 
 ## Bounded real-app smoke
 

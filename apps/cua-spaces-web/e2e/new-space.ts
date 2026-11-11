@@ -2,24 +2,27 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * New Space and "Connect a cloud" on the real screen: every distinct
- * wizard and sheet state a parity flow reached goes on screen through
- * `window.__cuaParity` (`showWizard`, `showCloudConnect`), and what the
- * screen draws must be what the core's view says: the step and its title,
- * Continue or Create and whether it can be pressed, the fields, tiles and
- * errors, the Run on menu entry by entry, the Resources lines, the
- * Summary, the address form, and the sheet's rows, fields and buttons.
+ * New Space on the real screen: every distinct wizard state a parity flow
+ * reached goes on screen through `window.__cuaParity` (`showWizard`), and
+ * what the screen draws must be what the core's view says: the step and its
+ * title, Continue or Create and whether it can be pressed, the fields,
+ * tiles and errors, the Run on menu entry by entry, the Resources lines,
+ * the Summary and the address form. ("Connect a cloud" is the picker and
+ * sheets of `cloudSheet`, tested in `connect-cloud.test.tsx`; the parity
+ * flow of the older sheet is the native apps'.)
  */
 
 import { expect, type Locator, type Page } from "@playwright/test";
 
-import type { CloudConnectView, WizardEnv, WizardState, WizardView } from "../src/bridge/contracts/new-space";
+import type { WizardEnv, WizardState, WizardView } from "../src/bridge/contracts/new-space";
 import type { ParityCheckpoint } from "../src/bridge/parity";
 
 const texts = (l: Locator) => l.evaluateAll((els) => els.map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim()));
 const attrs = (l: Locator, name: string) => l.evaluateAll((els, n) => els.map((el) => el.getAttribute(n) ?? ""), name);
 
-const LINKS = new Set(["connect-cloud", "connect-by-address"]);
+/** Fields the page does not draw as a row: "Add your cloud account" is the last entry of Run on. */
+const LINKS = new Set(["connect-cloud"]);
+const ADD_CLOUD = { id: "add:cloud", label: "Add your cloud account\u2026" };
 
 async function expectCheckbox(box: Locator, on: boolean, enabled = true): Promise<void> {
   await expect(box).toHaveAttribute("aria-checked", String(on));
@@ -51,11 +54,16 @@ async function expectTiles(root: Locator, id: string, tiles: WizardView["osTiles
 async function expectRunOnMenu(page: Page, v: WizardView): Promise<void> {
   await page.locator("[data-run-on]").click();
   const items = page.locator("[data-run-on-option]:visible");
-  await expect(items).toHaveCount(v.placements.length);
-  expect(await attrs(items, "data-value")).toEqual(v.placements.map((o) => o.id));
-  expect(await items.evaluateAll((els) => els.map((el) => el.hasAttribute("data-disabled")))).toEqual(v.placements.map((o) => !o.enabled));
+  // Only with the Your cloud experiment (the core's `connect-cloud` field), last, after a rule.
+  const entries = [
+    ...v.placements.map((o) => ({ id: o.id, label: o.label, enabled: o.enabled })),
+    ...(v.fields.some((f) => f.id === "connect-cloud") ? [{ ...ADD_CLOUD, enabled: true }] : []),
+  ];
+  await expect(items).toHaveCount(entries.length);
+  expect(await attrs(items, "data-value")).toEqual(entries.map((o) => o.id));
+  expect(await items.evaluateAll((els) => els.map((el) => el.hasAttribute("data-disabled")))).toEqual(entries.map((o) => !o.enabled));
   const labels = await items.evaluateAll((els) => els.map((el) => el.querySelector("[data-item-label]")?.textContent ?? ""));
-  expect(labels).toEqual(v.placements.map((o) => o.label));
+  expect(labels).toEqual(entries.map((o) => o.label));
   await page.keyboard.press("Escape");
   await expect(items).toHaveCount(0);
 }
@@ -96,7 +104,12 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
   const field = (id: string) => shown.find((f) => f.id === id);
 
   if (v.step === 0) {
-    expect((await attrs(root.locator("[data-field]"), "data-field")).sort()).toEqual(shown.map((f) => f.id).sort());
+    expect((await attrs(root.locator("[data-field]"), "data-field")).sort()).toEqual(
+      shown
+        .filter((f) => !LINKS.has(f.id))
+        .map((f) => f.id)
+        .sort(),
+    );
     const errors: Record<string, string> = {};
     for (const f of shown) {
       if (f.id === "image") {
@@ -113,7 +126,11 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     if (advanced) await expect(root.locator("[data-advanced-toggle]")).toHaveAttribute("aria-expanded", String(v.advanced));
 
     if (field("os")) await expectTiles(root, "os", v.osTiles);
-    if (field("kind")) await expectTiles(root, "kind", v.kindTiles);
+    if (field("kind")) {
+      await expectTiles(root, "kind", v.kindTiles);
+      // No line under Kind: why MicroVM is greyed out is Settings, Advanced's.
+      await expect(root.locator("[data-kind-help]")).toHaveCount(0);
+    }
     if (field("image")) {
       const input = root.locator("[data-image-input]");
       await expect(input).toHaveValue(v.imageField.text);
@@ -136,16 +153,28 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     }
     if (v.placementHint) await expect(root.locator("[data-placement-hint]")).toHaveText(v.placementHint);
   } else if (v.step === 1) {
-    const value = (id: string) => root.locator(`[data-value-text="${id}"]`);
-    if (field("cpus")) await expect(value("cpus")).toHaveText(v.cpusText);
-    else await expect(value("cpus")).toHaveCount(0);
-    if (field("memory")) await expect(value("memory")).toHaveText(v.memoryText);
-    else await expect(value("memory")).toHaveCount(0);
+    // A slider's number, or the field it is typed in (with why it can't be used).
+    const edit = v.resourceEdit ?? null;
+    const value = async (id: "cpus" | "memory" | "disk", text: string) => {
+      if (edit?.field === id) {
+        await expect(root.locator(`[data-value-input="${id}"]`)).toHaveValue(edit.text);
+        await expect(root.locator(`[data-value-text="${id}"]`)).toHaveCount(0);
+        if (edit.error) await expect(root.locator(`[data-field-error="${id}"]`)).toHaveText(edit.error);
+        else await expect(root.locator(`[data-field-error="${id}"]`)).toHaveCount(0);
+      } else await expect(root.locator(`[data-value-text="${id}"]`)).toHaveText(text);
+    };
+    const none = (id: string) => expect(root.locator(`[data-value-text="${id}"]`)).toHaveCount(0);
+    if (field("cpus")) await value("cpus", v.cpusText);
+    else await none("cpus");
+    if (field("memory")) await value("memory", v.memoryText);
+    else await none("memory");
     if (v.diskEditable) {
-      await expect(value("disk")).toHaveText(v.diskText);
-      if (v.diskNote) await expect(root.locator("[data-disk-note]")).toHaveText(v.diskNote);
-      await expect(root.locator("[data-disk-reset]")).toHaveCount(v.diskResetLabel ? 1 : 0);
-    } else await expect(value("disk")).toHaveCount(0);
+      await value("disk", v.diskText);
+      // A typed disk value's error takes the note's place.
+      const typingDisk = edit?.field === "disk" && Boolean(edit.error);
+      if (v.diskNote && !typingDisk) await expect(root.locator("[data-disk-note]")).toHaveText(v.diskNote);
+      await expect(root.locator("[data-disk-reset]")).toHaveCount(v.diskResetLabel && !typingDisk ? 1 : 0);
+    } else await none("disk");
     if (v.gpu) {
       await expect(root.locator("[data-gpu-label]")).toHaveText(v.gpu.label);
       await expectCheckbox(root.locator("[data-gpu]"), v.gpu.on, v.gpu.enabled);
@@ -165,6 +194,9 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     else await expect(root.locator("[data-resources-error]")).toHaveCount(0);
   } else if (v.step === 2) {
     await expect(root.locator("[data-name-input]")).toHaveValue(v.name);
+    // Left empty, the name it gets is the placeholder.
+    const placeholder = v.fields.find((f) => f.id === "name")?.placeholder;
+    if (placeholder) await expect(root.locator("[data-name-input]")).toHaveAttribute("placeholder", placeholder);
     await expect(root.locator("[data-name-input]")).toHaveAttribute("aria-invalid", String(v.nameInvalid));
     if (v.nameError) await expect(root.locator('[data-field-error="name"]')).toHaveText(v.nameError);
     else await expect(root.locator('[data-field-error="name"]')).toHaveCount(0);
@@ -172,48 +204,17 @@ async function checkWizard(page: Page, state: WizardState, v: WizardView, menuCh
     if (v.streamNote) await expect(root.locator("[data-stream-note]")).toHaveText(v.streamNote);
     else await expect(root.locator("[data-stream-note]")).toHaveCount(0);
   } else {
-    const rows = await root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
-    expect(rows).toEqual(v.summary.map((f) => [f.label, f.value]));
+    // The developer-only rows sit under "Advanced" (the page's SUMMARY_ADVANCED), after the plain ones.
+    const technical = new Set(["Image", "Kind", "Architecture", "Runtime"]);
+    const plain = v.summary.filter((f) => !technical.has(f.label));
+    const tech = v.summary.filter((f) => technical.has(f.label));
+    await expect(root.locator("[data-advanced-toggle]")).toHaveCount(tech.length ? 1 : 0);
+    const rowsOf = () => root.locator("[data-summary-row]").evaluateAll((els) => els.map((el) => [...el.children].map((c) => c.textContent ?? "")));
+    expect(await rowsOf()).toEqual((v.advanced ? [...plain, ...tech] : plain).map((f) => [f.label, f.value]));
   }
 }
 
-async function checkCloudConnect(page: Page, v: CloudConnectView): Promise<void> {
-  const root = page.locator("[data-connect-cloud]");
-  await expect(root.locator("[data-cloud-title]")).toHaveText(v.title);
-  const rows = root.locator("[data-cloud-row]");
-  expect(await attrs(rows, "data-cloud-row")).toEqual(v.rows.map((r) => r.id));
-  expect(await attrs(rows, "aria-checked")).toEqual(v.rows.map((r) => String(r.selected)));
-  expect(await texts(root.locator("[data-cloud-row-title]"))).toEqual(v.rows.map((r) => r.title));
-  expect(await texts(root.locator("[data-cloud-row-detail]"))).toEqual(v.rows.map((r) => r.detail));
-  expect(await rows.evaluateAll((els) => els.map((el) => el.querySelector("[data-cloud-found]") !== null))).toEqual(v.rows.map((r) => r.found));
-
-  const fields = [v.field, v.profileField].filter((f) => f !== null);
-  const drawn = root.locator("[data-cloud-field]");
-  expect(await attrs(drawn, "data-cloud-field")).toEqual(fields.map((f) => f.id));
-  expect(await drawn.locator("input").evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value))).toEqual(fields.map((f) => f.value));
-  if (v.field) await expectCheckbox(root.locator("[data-make-default]"), v.makeDefault);
-  else await expect(root.locator("[data-make-default]")).toHaveCount(0);
-
-  expect(await texts(root.locator("[data-cloud-touches] p"))).toEqual(v.touches);
-  expect(await attrs(root.locator("[data-cloud-check]"), "data-cloud-check")).toEqual(v.checks.map((c) => (c.ok ? "ok" : "failed")));
-  expect(await texts(root.locator("[data-cloud-check]"))).toEqual(v.checks.map((c) => c.text));
-  if (v.result) await expect(root.locator("[data-cloud-result]")).toHaveText(v.result);
-  else await expect(root.locator("[data-cloud-result]")).toHaveCount(0);
-  if (v.error) await expect(root.locator("[data-cloud-error]")).toHaveText(v.error);
-  else await expect(root.locator("[data-cloud-error]")).toHaveCount(0);
-
-  await expect(root.locator("[data-cloud-cancel]")).toHaveText(v.cancelLabel);
-  const test = root.locator("[data-cloud-test]");
-  await expect(test).toHaveText(v.testLabel);
-  if (v.canTest) await expect(test).toBeEnabled();
-  else await expect(test).toBeDisabled();
-  const connect = root.locator("[data-cloud-connect]");
-  await expect(connect).toHaveText(v.connectLabel);
-  if (v.canConnect) await expect(connect).toBeEnabled();
-  else await expect(connect).toBeDisabled();
-}
-
-/** Puts each distinct New Space and sheet state on screen and checks it. */
+/** Puts each distinct New Space state on screen and checks it. */
 export async function checkNewSpace(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
   const seen = new Set<string>();
   let lastMenu = "";
@@ -223,17 +224,16 @@ export async function checkNewSpace(page: Page, checkpoints: ParityCheckpoint[])
       if (seen.has(key)) continue;
       seen.add(key);
       await page.evaluate(([state, env]) => window.__cuaParity!.showWizard(state, env), [cp.state, cp.env] as [WizardState, WizardEnv]);
+      // When a typed value's field closes, the dialog (Base UI's
+      // restoreFocus: "popup") takes focus back again on the next frame. Let
+      // that frame pass, or on a slow one it takes focus from the next
+      // state's field, whose blur commits the value.
+      await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const menu = JSON.stringify(cp.view.placements);
       // The open image suggestions cover the menu; it is checked on a later state.
       const menuChanged = cp.view.mode === "create" && cp.view.step === 0 && !cp.view.imageField.open && menu !== lastMenu;
       await checkWizard(page, cp.state, cp.view, menuChanged);
       if (menuChanged && cp.view.fields.some((f) => f.id === "placement")) lastMenu = menu;
-    } else if (cp.kind === "cloud-connect") {
-      const key = JSON.stringify(["sheet", cp.view]);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      await page.evaluate(([input, state]) => window.__cuaParity!.showCloudConnect(input, state), [cp.input, cp.state] as const);
-      await checkCloudConnect(page, cp.view);
     }
   }
   return seen.size;

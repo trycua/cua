@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.AppKit Swift app.
 //!
 //! Mirror of `harness_wpf_test.rs` for the macOS AppKit hosting pattern.
@@ -31,10 +34,10 @@ use std::time::{Duration, Instant};
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing, has_id, looks_empty};
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
-    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
+    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
 };
 use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
-use cua_driver_testkit::sentinel::run_with_background_oracles;
+use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
 #[path = "support/appkit_snapshot_publication.rs"]
@@ -99,6 +102,18 @@ impl Harness {
             false,
             None,
             &[("CUA_APPKIT_ERRORING_TOGGLES", "1")],
+        )
+        .presented()
+    }
+
+    /// Launch with the opt-in disabled checkbox (`disabled_control` scenario).
+    fn launch_with_disabled_control() -> Self {
+        Self::spawn(
+            None,
+            None,
+            false,
+            None,
+            &[("CUA_APPKIT_DISABLED_CONTROL", "1")],
         )
         .presented()
     }
@@ -262,6 +277,17 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
         .and_then(|element| element["element_token"].as_str())
         .unwrap_or_else(|| panic!("{identifier} element_token not found"))
         .to_owned()
+}
+
+/// The AppKit harness's `activations=` count (`disabled_control` scenario).
+fn activations(snapshot: &ToolResponse) -> u64 {
+    snapshot
+        .tree_text()
+        .split("activations=")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no activations= label:\n{}", snapshot.tree_text()))
 }
 
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
@@ -618,6 +644,106 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
 
 #[test]
 #[ignore]
+fn harness_appkit_middle_click_px_background_reaches_exact_window() {
+    let case = native_background_case(
+        "appkit",
+        "middle_click",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-middle-click")
+            .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create middle-click journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::launch_with_oracles(None, Some(&journal));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find middle-click receiver window");
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(initial.len(), 1, "receiver must be idle: {initial:?}");
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[0]["window_id"].as_u64(), Some(wid));
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid: harness.pid,
+                native_id: wid,
+            },
+            |driver| {
+                let response = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": harness.pid, "window_id": wid,
+                        "x": width / 2.0, "y": height / 2.0,
+                        "button": "middle", "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !response.is_error(),
+                    "middle-click request: {}",
+                    response.text()
+                );
+                assert_eq!(response.action_delivery_mode(), Some("background"));
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let events = read_events();
+                    if events.iter().any(|event| event["kind"] == "middle_up") {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "middle-click did not arrive: {events:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                std::thread::sleep(Duration::from_millis(750));
+                let events = read_events();
+                let received = &events[1..];
+                assert_eq!(
+                    received.len(),
+                    2,
+                    "one request must deliver one native middle down/up pair: {received:?}"
+                );
+                assert_eq!(received[0]["kind"], "middle_down");
+                assert_eq!(received[1]["kind"], "middle_up");
+                let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
+                let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
+                for event in received {
+                    assert_eq!(event["window_id"].as_u64(), Some(wid));
+                    assert!((event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0);
+                    assert!((event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0);
+                }
+            },
+        )
+        .expect("middle-click must preserve background desktop state");
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_smoke() {
     run_case(
         native_readonly_case(
@@ -934,7 +1060,9 @@ fn harness_appkit_invoke_menu_live_path() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")),
+                    .is_some_and(
+                        |message| message.contains("path segment 2 \"Missing\" was not found")
+                    ),
                 "{}",
                 refused.raw
             );
@@ -946,6 +1074,60 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+            // The target revalidates the item only once it has processed
+            // losing activation, and until then AppKit still reports it
+            // enabled. Wait for that, so the call below runs in the background
+            // state it is meant to test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let state = snapshot_elements(driver, pid, wid);
+                if state
+                    .tree_text()
+                    .contains("[id=menu-window-arrange-left enabled=false")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Window > Arrange > Left stayed enabled with the distractor in front: {}",
+                    state.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+
+            // invoke_menu does not activate a background app (#4955): with
+            // the distractor in front, the item stays disabled and the call
+            // refuses without touching the fixture.
+            let background = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                background.is_error(),
+                "a disabled background menu item was invoked: {}",
+                background.raw
+            );
+            assert_eq!(
+                background.structured()["refusal"]["code"],
+                "background_unavailable",
+                "{}",
+                background.raw
+            );
+            assert!(snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=none"));
+
+            // The foreground route the refusal names: bring the exact window
+            // to front, then invoke the menu.
+            let raised = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid, "window_id": wid}),
+            );
+            assert!(!raised.is_error(), "bring_to_front failed: {}", raised.raw);
 
             let invoked = driver.call(
                 "invoke_menu",
@@ -961,13 +1143,21 @@ fn harness_appkit_invoke_menu_live_path() {
                 invoked.text()
             );
             assert_eq!(invoked.action_effect(), Some("unverifiable"));
-            std::thread::sleep(Duration::from_millis(300));
-            let post = snapshot_elements(driver, pid, wid);
-            assert!(
-                post.tree_text().contains("menu_action=window_arrange_left"),
-                "menu action did not reach fixture: {}",
-                post.tree_text()
-            );
+            // Poll for the fixture's menu_action instead of sleeping a fixed
+            // 300 ms: a loaded runner delivers the action later.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let post = snapshot_elements(driver, pid, wid);
+                if post.tree_text().contains("menu_action=window_arrange_left") {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "menu action did not reach fixture: {}",
+                    post.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
     );
@@ -1031,7 +1221,8 @@ fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
             assert!(
                 refused.structured()["refusal"]["message"]
                     .as_str()
-                    .is_some_and(|message| message.contains("path segment 2 was not found")
+                    .is_some_and(|message| message
+                        .contains("path segment 2 \"Missing\" was not found")
                         && message.contains("No menu window this call opened is still on screen")),
                 "{}",
                 refused.raw
@@ -1698,6 +1889,281 @@ fn harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved() {
     });
 }
 
+/// A disabled control is published with `enabled: false` and its frame, and a
+/// press on its token is refused without changing it (#3949).
+#[test]
+#[ignore]
+fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
+    let case = native_background_case(
+        "appkit",
+        "disabled_control_press",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let snapshot = snapshot_elements(driver, pid, wid);
+                assert!(
+                    snapshot.tree_text().contains("disabled_checked=false"),
+                    "disabled checkbox did not start off"
+                );
+                let index = element_index_by_id(snapshot.tree_text(), "chk-disabled")
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the disabled checkbox has no element_index:\n{}",
+                            snapshot.tree_text()
+                        )
+                    });
+                let element = snapshot.structured()["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["element_index"].as_u64() == Some(index))
+                    })
+                    .cloned()
+                    .expect("the disabled checkbox is missing from elements");
+                assert_eq!(element["enabled"], false, "{element}");
+                assert!(
+                    element["frame"]["w"].as_f64().unwrap_or(0.0) > 0.0,
+                    "the disabled checkbox has no frame: {element}"
+                );
+
+                let refused = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element["element_token"],
+                        "action": "press",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    refused.is_error(),
+                    "a press on a disabled control was reported as performed: {}",
+                    refused.raw
+                );
+                assert!(
+                    refused.text().contains("AXEnabled=false"),
+                    "{}",
+                    refused.raw
+                );
+                assert_eq!(
+                    refused.structured()["code"],
+                    "element_disabled",
+                    "{}",
+                    refused.raw
+                );
+
+                // Every other token writer refuses the same control the same way.
+                let token = &element["element_token"];
+                let writers = [
+                    ("set_value", serde_json::json!({ "value": "1" })),
+                    ("right_click", serde_json::json!({})),
+                    ("double_click", serde_json::json!({})),
+                    ("click", serde_json::json!({ "button": "middle" })),
+                    ("type_text", serde_json::json!({ "text": "x" })),
+                ];
+                for (tool, mut args) in writers {
+                    args["pid"] = serde_json::json!(pid as i64);
+                    args["window_id"] = serde_json::json!(wid);
+                    args["element_token"] = token.clone();
+                    let refused = driver.call(tool, args);
+                    assert!(
+                        refused.is_error() && refused.structured()["code"] == "element_disabled",
+                        "{tool} on a disabled control was not refused as element_disabled: {}",
+                        refused.raw
+                    );
+                }
+
+                std::thread::sleep(Duration::from_millis(200));
+                let after = snapshot_elements(driver, pid, wid);
+                assert!(
+                    after.tree_text().contains("disabled_checked=false"),
+                    "a refused action changed the disabled checkbox:\n{}",
+                    after.tree_text()
+                );
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+/// A foreground call into a background app skips the early `AXEnabled` read so
+/// activation can enable the control, and reads it again before input. A
+/// control enabled only while its app is active reads `enabled: false` from
+/// behind another app and is acted on; one that stays disabled is refused as
+/// `element_disabled`, not clicked, double-clicked, middle-clicked or typed
+/// into.
+#[test]
+#[ignore]
+fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
+    let case = native_foreground_case(
+        "appkit",
+        "activation_enablement",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
+
+        // (tool, target id, extra args, fixture label after delivery, or None
+        // when the target stays disabled and the call must be refused)
+        let calls = [
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=click"),
+            ),
+            (
+                "double_click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=double_click"),
+            ),
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({ "button": "middle" }),
+                Some("active_only=middle_click"),
+            ),
+            (
+                "type_text",
+                "txt-active-only",
+                serde_json::json!({ "text": "ok" }),
+                Some("active_only=text:ok"),
+            ),
+            ("double_click", "chk-disabled", serde_json::json!({}), None),
+            (
+                "click",
+                "chk-disabled",
+                serde_json::json!({ "button": "middle" }),
+                None,
+            ),
+            (
+                "type_text",
+                "chk-disabled",
+                serde_json::json!({ "text": "x" }),
+                None,
+            ),
+        ];
+        for (tool, id, mut args, delivered) in calls {
+            // Each call starts with the harness behind another app, the case
+            // in which the early read is skipped.
+            sentinel
+                .prepare_background_observation(&mut driver, target)
+                .unwrap_or_else(|error| panic!("put the harness in the background: {error}"));
+            let snapshot = snapshot_elements(&mut driver, pid, wid);
+            let index = element_index_by_id(snapshot.tree_text(), id)
+                .unwrap_or_else(|| panic!("{id} has no element_index:\n{}", snapshot.tree_text()));
+            let element = snapshot.structured()["elements"]
+                .as_array()
+                .and_then(|elements| {
+                    elements
+                        .iter()
+                        .find(|element| element["element_index"].as_u64() == Some(index))
+                })
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} is missing from elements"));
+            assert_eq!(
+                element["enabled"], false,
+                "{id} is not disabled while its app is in the background: {element}"
+            );
+            let activations_before = activations(&snapshot);
+            args["pid"] = serde_json::json!(pid as i64);
+            args["window_id"] = serde_json::json!(wid);
+            args["element_token"] = element["element_token"].clone();
+            args["delivery_mode"] = serde_json::json!("foreground");
+            let response = driver.call(tool, args);
+            let Some(expected) = delivered else {
+                assert!(
+                    response.is_error() && response.structured()["code"] == "element_disabled",
+                    "foreground {tool} on {id}, which stays disabled, was not refused as \
+                     element_disabled: {}",
+                    response.raw
+                );
+                // An early refusal returns the same code; the activation count
+                // shows this one came from the read after activation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let after = snapshot_elements(&mut driver, pid, wid);
+                    if activations(&after) > activations_before {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "foreground {tool} on {id} was refused without activating the app:\n{}",
+                        after.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            };
+            assert!(
+                !response.is_error(),
+                "foreground {tool} on {id}, which activation enables, failed: {}",
+                response.raw
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let after = snapshot_elements(&mut driver, pid, wid);
+                if after.tree_text().contains(expected) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "foreground {tool} on {id} did not record {expected}:\n{}",
+                    after.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot_elements(&mut driver, pid, wid);
+        assert!(
+            after.tree_text().contains("disabled_checked=false"),
+            "a refused foreground action changed the disabled checkbox:\n{}",
+            after.tree_text()
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
 /// Resolve the native AppKit button from a screenshot-space PX target, then
 /// deliver through the background-safe AX hit-test bridge while another app
 /// remains fully foreground.
@@ -2036,12 +2502,14 @@ fn harness_appkit_slider_drag_px_background() {
         "slider_drag",
         Targeting::Px,
         DriverRoute::MacosCgEventPid,
-    )
-    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    );
     run_case(case, |pid, wid, driver| {
         let pre = snapshot_elements(driver, pid, wid);
         assert!(pre.tree_text().contains("slider_value=0"));
         let (x, y, width, height) = element_pixel_frame(&pre, "sld-value");
+        // The background oracles fail the case if the drag moves the user's
+        // pointer, raises or activates the fixture, or takes key focus from
+        // the foreground sentinel.
         let (response, mut passed) = run_with_background_oracles(
             driver,
             TargetWindow {
@@ -2067,30 +2535,26 @@ fn harness_appkit_slider_drag_px_background() {
         )
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
         assert!(
-            response.is_error(),
-            "AppKit background drag unexpectedly reported delivery: {}",
+            !response.is_error(),
+            "AppKit background drag failed: {}",
             response.text()
         );
-        assert_eq!(
-            response.structured()["code"].as_str(),
-            Some("background_unavailable"),
-            "AppKit background drag returned the wrong refusal: {}",
-            response.text()
-        );
-        std::thread::sleep(Duration::from_millis(200));
         assert!(
-            snapshot_elements(driver, pid, wid)
+            response
+                .text()
+                .contains("background: routed to the window's pid"),
+            "AppKit background drag was not routed to the window's pid: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            !snapshot_elements(driver, pid, wid)
                 .tree_text()
                 .contains("slider_value=0"),
-            "refused AppKit background drag changed the slider"
+            "AppKit background drag did not move the slider"
         );
         passed.push(OracleKind::FixtureState);
-        Observation::refused(
-            RefusalCode::BackgroundUnavailable,
-            passed,
-            response.text(),
-            Evidence::default(),
-        )
+        Observation::delivered_with_fixture_state(passed)
     });
 }
 
@@ -2236,6 +2700,131 @@ fn harness_appkit_context_menu_keeps_front_key_focus_background() {
                     .contains("menu_action=Copy"),
                 "context menu item did not fire"
             );
+        },
+    );
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WarpPoint {
+    x: f64,
+    y: f64,
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGWarpMouseCursorPosition(point: WarpPoint) -> i32;
+}
+
+/// Regression for trycua/cua#5476. With the real pointer parked outside the
+/// target window, a window screenshot came back the size of the window but
+/// with the window drawn smaller (about 96.5%) and pushed down by ~31 px, so
+/// pixel targets read off it missed by ~37 px. The window must fill its own
+/// screenshot edge to edge, whatever the pointer is doing.
+#[test]
+#[ignore]
+fn harness_appkit_window_capture_ignores_pointer_outside_window() {
+    run_case(
+        native_readonly_case(
+            "appkit",
+            "window_capture_ignores_pointer_outside_window",
+            Targeting::NotApplicable,
+            DriverRoute::WindowState,
+            vec![OracleKind::Pixels],
+        ),
+        |pid, wid, driver| {
+            use base64::Engine as _;
+
+            // Offset the window from the screen origin and leave room above
+            // it. Keep its current size: the harness window is not resizable
+            // (no settable AXSize), and set_window_frame only writes AXSize
+            // when the size changes.
+            let listed = driver.call("list_windows", serde_json::json!({ "pid": pid as i64 }));
+            assert!(!listed.is_error(), "list_windows: {}", listed.text());
+            let current = listed.structured()["windows"]
+                .as_array()
+                .and_then(|windows| {
+                    windows
+                        .iter()
+                        .find(|w| w["window_id"].as_u64() == Some(wid))
+                })
+                .map(|w| w["bounds"].clone())
+                .expect("AppKit harness window bounds");
+            let width = current["width"].as_f64().expect("window width");
+            let height = current["height"].as_f64().expect("window height");
+            let (x, y) = (180.0, 260.0);
+            let moved = driver.call(
+                "set_window_frame",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "x": x, "y": y, "width": width, "height": height
+                }),
+            );
+            assert!(!moved.is_error(), "set_window_frame: {}", moved.text());
+
+            // Park the real pointer just above the window, outside its frame
+            // but close enough for ScreenCaptureKit to fold it into the
+            // capture (a benchmark parked it 27 pt above a window's top edge).
+            // SAFETY: plain CoreGraphics call with a by-value point.
+            unsafe {
+                CGWarpMouseCursorPosition(WarpPoint {
+                    x: x + width / 2.0,
+                    y: y - 24.0,
+                })
+            };
+            std::thread::sleep(Duration::from_millis(300));
+
+            let snapshot = snapshot_elements(driver, pid, wid);
+            assert!(!snapshot.is_error(), "capture: {}", snapshot.text());
+            let structured = snapshot.structured();
+            assert_eq!(structured["screenshot_frame_valid"], true, "{structured}");
+            let scale = structured["screenshot_scale"]
+                .as_f64()
+                .expect("screenshot scale");
+            let bounds = &structured["window_bounds"];
+            let data = snapshot.raw["result"]["content"]
+                .as_array()
+                .and_then(|parts| parts.iter().find(|part| part["type"] == "image"))
+                .and_then(|part| part["data"].as_str())
+                .expect("window screenshot image part");
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .expect("decode screenshot");
+            let image = image::load_from_memory(&png)
+                .expect("load screenshot")
+                .to_rgba8();
+            let (w, h) = image.dimensions();
+            assert_eq!(
+                (f64::from(w), f64::from(h)),
+                (
+                    (bounds["width"].as_f64().unwrap() * scale).round(),
+                    (bounds["height"].as_f64().unwrap() * scale).round()
+                ),
+                "screenshot size must match the window bounds at the reported scale"
+            );
+
+            // The bug left a transparent band across the top and down the
+            // right side of the image. Sample just inside each edge, away
+            // from the rounded corners: every sample must be the window's own
+            // opaque pixels.
+            let inset = (4.0 * scale) as u32;
+            let samples = [
+                (w / 2, inset),         // top centre (title bar)
+                (w / 4, inset),         // top, left of centre
+                (3 * w / 4, inset),     // top, right of centre
+                (w - 1 - inset, h / 2), // right edge
+                (w - 1 - inset, h / 4), // right edge, upper
+                (w / 2, h - 1 - inset), // bottom centre
+            ];
+            for (sx, sy) in samples {
+                let alpha = image.get_pixel(sx, sy).0[3];
+                assert_eq!(
+                    alpha, 255,
+                    "pixel ({sx},{sy}) of a {w}x{h} window screenshot is transparent: \
+                     the window does not fill its own capture"
+                );
+            }
+            Observation::delivered(vec![OracleKind::Pixels], Evidence::default())
         },
     );
 }

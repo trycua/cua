@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window screenshot via PrintWindow + GDI BitBlt on Windows.
 //!
 //! `PW_RENDERFULLCONTENT` (0x2) renders the window contents even if it is
@@ -420,35 +423,21 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
 /// surfaces that PrintWindow can't reach, as long as the window is on-screen
 /// (the daemon's typical case — see module docs).
 unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32, FrameGeometry)> {
-    use windows::Win32::Foundation::RECT;
-    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, GetWindowRect, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
         SM_YVIRTUALSCREEN,
     };
-
-    let mut rect = RECT::default();
-    GetWindowRect(hwnd, &mut rect)?;
 
     // Under Per-Monitor V2 DPI awareness, GetWindowRect already returns
     // PHYSICAL pixels (coordinate virtualization only applies to
     // DPI-unaware/system-aware processes), and BitBlt operates in physical
     // pixels too — use the rect as-is. Scaling by DPI/96 here would shift
     // and oversize the captured screen region (issue #1879).
-    let geometry = FrameGeometry::from_bounds((rect.left, rect.top, rect.right, rect.bottom))
-        .ok_or_else(|| anyhow::anyhow!("screen-region fallback: invalid window bounds"))?;
+    let (geometry, dwm_bounds) = window_geometry(hwnd)
+        .map_err(|error| anyhow::anyhow!("screen-region fallback: {error}"))?;
     // Match PrintWindow's DWM crop and the bitmap_to_screen input mapping.
     // Capturing the raw GetWindowRect would include invisible shadow margins
     // and shift clicks derived from the screenshot by those margins.
-    let mut dwm = RECT::default();
-    let dwm_bounds = DwmGetWindowAttribute(
-        hwnd,
-        DWMWA_EXTENDED_FRAME_BOUNDS,
-        &mut dwm as *mut _ as *mut _,
-        std::mem::size_of::<RECT>() as u32,
-    )
-    .ok()
-    .map(|_| (dwm.left, dwm.top, dwm.right, dwm.bottom));
     let geometry = geometry.cropped(dwm_bounds);
     let physical_left = geometry.left;
     let physical_top = geometry.top;
@@ -992,6 +981,10 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
         if let Err(error) = blt_result {
+            // A locked PC or a disconnected Remote Desktop session: say which.
+            if let Some(why) = crate::diagnostics::desktop_unavailable() {
+                bail!("{} (BitBlt: {error})", why.message());
+            }
             bail!("desktop capture: BitBlt failed: {error}");
         }
         if ok != h {

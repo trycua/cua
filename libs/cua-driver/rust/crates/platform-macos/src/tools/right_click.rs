@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -36,15 +39,15 @@ fn def() -> &'static ToolDef {
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
                `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
-             Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always \
-             required."
+             Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is \
+             required with `x`, `y`; an `element_token` carries its own pid."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid"],
+            "required": [],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "window_id": {
                     "type": "integer",
@@ -138,6 +141,11 @@ impl Tool for RightClickTool {
                 Ok(lease) => lease,
                 Err(refusal_result) => return refusal_result,
             };
+            if let Some(refusal) =
+                super::refuse_if_disabled(pid, wid, &element_guard, "AXShowMenu", false).await
+            {
+                return refusal;
+            }
 
             // The context menu steals key focus from the user's app when the
             // target is in the background; the guard hands it back.

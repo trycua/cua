@@ -1,0 +1,8 @@
+{
+  "devices.banner.label": "기기 등록",
+  "devices.section.label": "기기",
+  "devices.section.title": "기기",
+  "devices.recent.not_yours_label": "내 기기가 아님",
+  "devices.enroll.code_label": "일회용 코드",
+  "devices.approve.passphrase_label": "키볼트 암호"
+}

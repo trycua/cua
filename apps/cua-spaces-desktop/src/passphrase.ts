@@ -10,6 +10,7 @@
 // its labels, and `kvPassphraseCheck` for the hint and whether it can be sent.
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
+import { showWhenReady } from "./show-when-ready";
 import type { KvCredentialForm, KvFormMode, KvPassphraseCheck } from "./native/generated/index";
 import type { CredentialAnswer } from "./model/keyvault";
 
@@ -25,8 +26,7 @@ export interface PassphraseCheck {
   hint: string | null;
 }
 
-export const escapeHtml = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** The core's check as the page reads it. */
 export function checkView(c: KvPassphraseCheck): PassphraseCheck {
@@ -153,11 +153,7 @@ export function askPassphraseWindow(
   return turn;
 }
 
-async function showForm(
-  parent: unknown,
-  form: KvCredentialForm,
-  check: (passphrase: string, confirm: string) => PassphraseCheck,
-): Promise<CredentialAnswer> {
+async function showForm(parent: unknown, form: KvCredentialForm, check: (passphrase: string, confirm: string) => PassphraseCheck): Promise<CredentialAnswer> {
   const { BrowserWindow, ipcMain, nativeTheme } = await import("electron");
   const owner = parent instanceof BrowserWindow && !parent.isDestroyed() && parent.isVisible() ? parent : undefined;
   const session = new PassphraseSession(check);
@@ -185,7 +181,8 @@ async function showForm(
   });
   win.setMenuBarVisibility(false);
   const mine = (e: { sender: unknown }) => e.sender === win.webContents;
-  const onCheck = (e: Electron.IpcMainInvokeEvent, p: unknown, c: unknown) => (mine(e) ? session.checkFields(p, c) : { canSubmit: false, strength: null, hint: null });
+  const onCheck = (e: Electron.IpcMainInvokeEvent, p: unknown, c: unknown) =>
+    mine(e) ? session.checkFields(p, c) : { canSubmit: false, strength: null, hint: null };
   const onSubmit = (e: Electron.IpcMainEvent, p: unknown, c: unknown) => {
     if (mine(e)) session.submit(p, c);
   };
@@ -197,7 +194,7 @@ async function showForm(
   ipcMain.on(PASSPHRASE_CANCEL, onCancel);
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  win.once("ready-to-show", () => win.show());
+  showWhenReady(win, () => win.show());
   win.on("closed", () => session.cancel());
   void session.answer.then(() => {
     ipcMain.removeHandler(PASSPHRASE_CHECK);

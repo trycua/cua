@@ -32,11 +32,18 @@ extension WebUIBridge {
         }
     }
 
-    /// The files on the last drag's pasteboard whose names the page saw
-    /// dropped (an older drag's files never match).
+    /// The apps and files of the last drop on a notch tile whose names the
+    /// page asks for, else the files on the last drag's pasteboard whose
+    /// names the page saw dropped (an older drag's files never match).
     func dropped(names: [String]) -> [URL] {
         let wanted = Set(names)
         guard !wanted.isEmpty else { return [] }
+        // A drop on a notch tile, handed over once.
+        let fromNotch = WebUIWindowController.notchDrop.filter { wanted.contains($0.lastPathComponent) }
+        if !fromNotch.isEmpty {
+            WebUIWindowController.notchDrop = []
+            return fromNotch
+        }
         let urls = dragPasteboard().readObjects(forClasses: [NSURL.self],
                                                 options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         return urls.filter { wanted.contains($0.lastPathComponent) }

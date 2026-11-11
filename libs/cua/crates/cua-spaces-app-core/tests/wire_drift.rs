@@ -169,9 +169,11 @@ fn items_callers_grants_rules_deliveries_status() {
         browse_until_ms: Some(9),
         skip_unlock_prompt: Some(true),
         reset_notice: Some("set aside".into()),
+        features: vec![cua_keyvault::broker::FEATURE_PASSWORD_DOMAINS.into()],
     };
     let kv: KvStatus = round(&st);
     assert_eq!(kv.unlock_protectors, ["passphrase", "recovery"]);
+    assert_eq!(kv.features, ["password_domains"]);
     assert_eq!(kv.auto_wipe, Some(true));
     assert_eq!(kv.browse_until_ms, Some(9));
     assert_eq!(kv.skip_unlock_prompt, Some(true));
@@ -249,4 +251,36 @@ fn the_inventory_mirror_decodes_the_brokers() {
     assert_eq!(k.domains[0].unavailable, 3);
     assert_eq!(k.domains[0].unavailable_reason, "app-bound");
     assert!(k.domains[0].signin);
+}
+
+#[test]
+fn the_readiness_mirror_decodes_the_brokers() {
+    use cua_keyvault::broker::{Access, BrowserProfile, Readiness, ReadinessCheck};
+    let r = Readiness {
+        provider_id: "chrome".into(),
+        app_display: "Google Chrome".into(),
+        profile: Some("Profile 1".into()),
+        default_profile: Some("Default".into()),
+        profiles: vec![BrowserProfile {
+            dir: "Profile 1".into(),
+            name: "Work".into(),
+            account: Some("me@work.example".into()),
+            last_used: true,
+        }],
+        files: ReadinessCheck {
+            state: Access::Denied,
+            say: "turn on Full Disk Access".into(),
+        },
+        tabs: ReadinessCheck {
+            state: Access::Unknown,
+            say: String::new(),
+        },
+        profile_empty: true,
+    };
+    let k: cua_spaces_app_core::keyvault::KvReadiness = round(&r);
+    assert_eq!(k.files.state, "denied");
+    assert_eq!(k.tabs.state, "unknown");
+    assert_eq!(k.profiles[0].account.as_deref(), Some("me@work.example"));
+    assert!(k.profiles[0].last_used && k.profile_empty);
+    assert_eq!(k.default_profile.as_deref(), Some("Default"));
 }

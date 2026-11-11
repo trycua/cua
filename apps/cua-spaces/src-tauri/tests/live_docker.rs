@@ -210,8 +210,8 @@ async fn live_add_send_stream_teleport_delete() {
         .await
         .unwrap();
 
-    // 4b. The daemon media bridge (what Fleet Spaces use): register this
-    //     Space with the daemon and attach through its loopback ticket URL.
+    // 4b. The daemon media bridge: register this Space with the daemon and
+    //     attach through its loopback ticket URL.
     let daemon = app.daemon(false).await.unwrap();
     let name = "cua-e2e-app-direct";
     daemon

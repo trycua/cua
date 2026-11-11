@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Path shapes with an arc-length table, so speed curves act on distance.
 
 use crate::geom::{dist, lerp, lerp_pt, perp, unit, Pt};

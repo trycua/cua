@@ -8,6 +8,15 @@
 #   stop_cua_driver_daemons          ↔  Stop-CuaDriverDaemons
 #   show_cua_driver_daemon_survivors ↔  Show-CuaDriverDaemonSurvivors
 #
+# macOS-only, no PowerShell counterpart:
+#
+#   cua_driver_release_processes      — every process of the current user that
+#                                       runs a com.trycua.driver bundle, wherever
+#                                       the app lives and whatever its version
+#   cua_driver_stop_release_processes — stop those: graceful, then TERM, then KILL
+#   unregister_other_cua_driver_copies — make LaunchServices forget every other
+#                                       copy of the app (never deletes files)
+#
 # This script is sourced (not exec'd) by the Rust install helpers:
 #
 #   * _install-rust.sh           (production Rust delegate)
@@ -109,7 +118,13 @@ stop_cua_driver_daemons() {
         # PowerShell module after schtasks /End.
         sleep 0.2 2>/dev/null || sleep 1
 
-        if command -v pkill >/dev/null 2>&1; then
+        if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
+            # macOS: stop what we can PROVE is Cua Driver (bundle id
+            # com.trycua.driver, any path, any version) instead of every
+            # process that happens to be named `cua-driver`. Another app can
+            # ship its own helper with that name; it is not ours to kill.
+            cua_driver_stop_release_processes
+        elif command -v pkill >/dev/null 2>&1; then
             # `-x` = exact match on process name so we don't kill a
             # user's `cua-driver-rs-foo` test harness or any script
             # named "cua-driver-something". The Rust + Swift binaries
@@ -145,6 +160,24 @@ stop_cua_driver_daemons() {
 # Idempotent — safe to call even when stop_cua_driver_daemons did
 # clean up everything. Prints nothing in the common case.
 show_cua_driver_daemon_survivors() {
+    if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
+        # A stop request starts short-lived cua-driver processes of its own (the
+        # CLI re-executes itself); give them a moment before calling them
+        # survivors.
+        local mac_survivors waited=0 limit=$(( ${CUA_DRIVER_STOP_TIMEOUT:-5} * 2 ))
+        while :; do
+            mac_survivors=$(cua_driver_release_processes | awk -F '\t' '{ printf "%s%s", sep, $1; sep = ", " }')
+            [ -n "$mac_survivors" ] || return 0
+            [ "$waited" -lt "$limit" ] || break
+            sleep 0.5 2>/dev/null || sleep 1
+            waited=$((waited + 1))
+        done
+        printf 'Note: Cua Driver process(es) still running after the stop attempt (pid: %s).\n' "$mac_survivors"
+        printf '      They ignored SIGTERM and SIGKILL. Log out and back in, or run\n'
+        printf '      `kill -9 <pid>` yourself, then re-run this installer.\n'
+        return 0
+    fi
+
     # `pgrep -x` matches the exact process name the same way `pkill -x`
     # did above, so the survivor list is exactly what the kill couldn't
     # reach (not random other cua-driver-* binaries).
@@ -186,5 +219,301 @@ show_cua_driver_daemon_survivors() {
         "$yellow" "$normal"
     printf '%s      Or log out and back in. Until they exit, the OLD binary keeps running.%s\n' \
         "$yellow" "$normal"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# macOS: find and stop every Cua Driver process, wherever its app lives
+# ---------------------------------------------------------------------------
+#
+# A Mac can hold several copies of CuaDriver.app (an old release in ~/Downloads,
+# one in the Trash, a benchmark folder) and `open -a CuaDriver` may start any of
+# them. A daemon from such a copy is not the file we are about to replace, so
+# neither the pid file nor the install path finds it. We therefore identify
+# processes by what they are: an executable named cua-driver inside an app
+# bundle whose CFBundleIdentifier is com.trycua.driver, owned by this user.
+# Other users' processes (ps -U <uid>) and other apps (a different bundle id,
+# CuaDriverLocal's com.trycua.driver.local included) are never touched.
+
+CUA_DRIVER_RELEASE_BUNDLE_ID="com.trycua.driver"
+
+# Value of a top-level string key in an Info.plist. PlistBuddy reads binary and
+# XML plists; the awk fallback reads XML plists, so test fixtures and hosts
+# without PlistBuddy work too.
+cua_driver_plist_string() {
+    local plist="$1" key="$2" value=""
+    [ -f "$plist" ] || return 1
+    if [ -x /usr/libexec/PlistBuddy ]; then
+        value="$(/usr/libexec/PlistBuddy -c "Print :$key" "$plist" 2>/dev/null)" || value=""
+    fi
+    if [ -z "$value" ]; then
+        value="$(awk -v key="$key" '
+            function text(line) { sub(".*<string>", "", line); sub("</string>.*", "", line); return line }
+            index($0, "<key>" key "</key>") {
+                if ($0 ~ /<string>/) { print text($0); exit }
+                want = 1; next
+            }
+            want && /<string>/ { print text($0); exit }
+            want && /<key>/ { exit }
+        ' "$plist" 2>/dev/null)" || value=""
+    fi
+    [ -n "$value" ] || return 1
+    printf '%s' "$value"
+}
+
+# The .app directory when "$1" (a process command line) runs a cua-driver
+# executable inside an app bundle. Paths with spaces are fine: we cut at the
+# fixed /Contents/MacOS/cua-driver suffix, not at the first space.
+cua_driver_bundle_of_command() {
+    local command_line="$1" bundle
+    case "$command_line" in
+        */Contents/MacOS/cua-driver|*/Contents/MacOS/cua-driver\ *) ;;
+        *) return 1 ;;
+    esac
+    bundle="${command_line%%/Contents/MacOS/cua-driver*}"
+    case "$bundle" in
+        /*.app) printf '%s' "$bundle" ;;
+        *) return 1 ;;
+    esac
+}
+
+# True when the bundle is a Cua Driver release app. The bundle's own Info.plist
+# decides. If it cannot be read (the app was deleted while its daemon kept
+# running) only the stock names CuaDriver.app / CuaDriver-<version>.app count.
+cua_driver_bundle_is_release() {
+    local bundle="$1" id=""
+    id="$(cua_driver_plist_string "$bundle/Contents/Info.plist" CFBundleIdentifier)" || id=""
+    if [ -n "$id" ]; then
+        [ "$id" = "$CUA_DRIVER_RELEASE_BUNDLE_ID" ]
+        return
+    fi
+    case "${bundle##*/}" in
+        CuaDriver.app|CuaDriver-*.app|"CuaDriver "*.app) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# This shell and every parent: an installer started by `cua-driver update` or by
+# an agent that runs under a cua-driver process must not stop its own caller.
+cua_driver_ancestor_pids() {
+    local pid="$$" depth=0 parent
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 32 ]; do
+        printf '%s\n' "$pid"
+        parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')" || break
+        [ -n "$parent" ] || break
+        pid="$parent"
+        depth=$((depth + 1))
+    done
+}
+
+# One "<pid><TAB><bundle dir>" line per running Cua Driver process of this user.
+cua_driver_release_processes() {
+    local uid ancestors line pid command_line bundle
+    uid="$(id -u 2>/dev/null)" || return 0
+    command -v ps >/dev/null 2>&1 || return 0
+    ancestors="$(cua_driver_ancestor_pids)"
+    ps -U "$uid" -ww -o pid= -o command= 2>/dev/null | while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        pid="${line%%[[:space:]]*}"
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        command_line="${line#"$pid"}"
+        command_line="${command_line#"${command_line%%[![:space:]]*}"}"
+        printf '%s\n' "$ancestors" | grep -qx "$pid" && continue
+        bundle="$(cua_driver_bundle_of_command "$command_line")" || continue
+        cua_driver_bundle_is_release "$bundle" || continue
+        printf '%s\t%s\n' "$pid" "$bundle"
+    done
+}
+
+# The bundle dir if "$1" is STILL a Cua Driver process (guards against pid reuse
+# between listing and signalling).
+cua_driver_pid_release_bundle() {
+    local command_line bundle
+    command_line="$(ps -ww -o command= -p "$1" 2>/dev/null)" || return 1
+    command_line="${command_line#"${command_line%%[![:space:]]*}"}"
+    bundle="$(cua_driver_bundle_of_command "$command_line")" || return 1
+    cua_driver_bundle_is_release "$bundle" || return 1
+    printf '%s' "$bundle"
+}
+
+# Wait up to $2 seconds for pid $1 to exit.
+cua_driver_wait_gone() {
+    local pid="$1" tenths=$(( ${2:-5} * 10 ))
+    while kill -0 "$pid" 2>/dev/null; do
+        [ "$tenths" -gt 0 ] || return 1
+        sleep 0.1 2>/dev/null || sleep 1
+        tenths=$((tenths - 1))
+    done
+    return 0
+}
+
+# Run a command, giving up (and killing it) after $1 seconds. Output is dropped.
+cua_driver_run_bounded() {
+    local limit="$1" child tenths
+    shift
+    "$@" >/dev/null 2>&1 &
+    child=$!
+    tenths=$((limit * 10))
+    while kill -0 "$child" 2>/dev/null && [ "$tenths" -gt 0 ]; do
+        sleep 0.1 2>/dev/null || sleep 1
+        tenths=$((tenths - 1))
+    done
+    kill "$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+}
+
+# Stop every Cua Driver process of this user, wherever its app lives. Order:
+# the daemon's own `stop` request (clean shutdown), then SIGTERM, then SIGKILL,
+# each given CUA_DRIVER_STOP_TIMEOUT seconds (default 5). Prints one line per
+# process saying how it ended. Returns 1 if any process survived.
+cua_driver_stop_release_processes() {
+    local timeout="${CUA_DRIVER_STOP_TIMEOUT:-5}" list pid bundle version label how helper tab failed=0
+    tab="$(printf '\t')"
+    list="$(cua_driver_release_processes)"
+    [ -n "$list" ] || return 0
+    while IFS="$tab" read -r pid bundle; do
+        [ -n "$pid" ] || continue
+        version="$(cua_driver_plist_string "$bundle/Contents/Info.plist" CFBundleShortVersionString)" || version=""
+        label="pid $pid, ${version:+version $version, }$bundle"
+        how=""
+
+        # 1. Ask the daemon to shut down through its own bundle's CLI. Old
+        #    releases do not know --expected-pid and simply fail; that is fine.
+        helper="$bundle/Contents/MacOS/cua-driver"
+        if [ -x "$helper" ] && cua_driver_pid_release_bundle "$pid" >/dev/null; then
+            cua_driver_run_bounded "$timeout" "$helper" --expected-pid "$pid" stop
+            if cua_driver_wait_gone "$pid" 1; then
+                how="a graceful stop request"
+            fi
+        fi
+        # 2. SIGTERM, re-checking the pid still belongs to Cua Driver.
+        if [ -z "$how" ] && cua_driver_pid_release_bundle "$pid" >/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+            if cua_driver_wait_gone "$pid" "$timeout"; then
+                how="SIGTERM"
+            fi
+        fi
+        # 3. SIGKILL.
+        if [ -z "$how" ] && cua_driver_pid_release_bundle "$pid" >/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+            if cua_driver_wait_gone "$pid" 2; then
+                how="SIGKILL after it ignored SIGTERM for ${timeout}s"
+            fi
+        fi
+        if [ -z "$how" ] && ! kill -0 "$pid" 2>/dev/null; then
+            how="its own exit"
+        fi
+        if [ -n "$how" ]; then
+            printf '==> stopped Cua Driver (%s) with %s\n' "$label" "$how"
+        else
+            printf '==> could not stop Cua Driver (%s); it is still running\n' "$label" >&2
+            failed=1
+        fi
+    done <<EOF
+$list
+EOF
+    return "$failed"
+}
+
+# ---------------------------------------------------------------------------
+# macOS: make LaunchServices forget every other copy of the app
+# ---------------------------------------------------------------------------
+#
+# `open -a CuaDriver`, a bundle-id lookup and System Settings' permission rows
+# all resolve to whichever registered copy macOS likes best, which is how an old
+# copy in the Trash became the "CuaDriver-0.34.0" row. After an install only the
+# installed bundle should stay registered. `lsregister -u` removes the
+# registration only; no file is deleted.
+
+# Where lsregister lives. CUA_DRIVER_LSREGISTER overrides it (tests).
+cua_driver_lsregister_path() {
+    printf '%s' "${CUA_DRIVER_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}"
+}
+
+# Paths of every bundle with the given id that LaunchServices (lsregister -dump)
+# or Spotlight (mdfind) knows about, one per line, sorted and unique. The dump
+# is slow on a busy Mac (tens of seconds), so it is capped by
+# CUA_DRIVER_LSREGISTER_TIMEOUT seconds (default 120).
+cua_driver_known_bundle_paths() {
+    local bundle_id="${1:-$CUA_DRIVER_RELEASE_BUNDLE_ID}" lsregister dump pid waited=0 limit
+    lsregister="$(cua_driver_lsregister_path)"
+    limit="${CUA_DRIVER_LSREGISTER_TIMEOUT:-120}"
+    {
+        if [ -x "$lsregister" ]; then
+            dump="$(mktemp -t cua-lsdump.XXXXXX 2>/dev/null)" || dump=""
+            if [ -n "$dump" ]; then
+                "$lsregister" -dump >"$dump" 2>/dev/null &
+                pid=$!
+                while kill -0 "$pid" 2>/dev/null; do
+                    if [ "$waited" -ge "$limit" ]; then
+                        kill "$pid" 2>/dev/null || true
+                        break
+                    fi
+                    sleep 1
+                    waited=$((waited + 1))
+                done
+                wait "$pid" 2>/dev/null || true
+                # A dump is a series of blocks split by a line of dashes; each
+                # block has "path:" and "identifier:" lines.
+                awk -v id="$bundle_id" '
+                    function flush() { if (path != "" && matches) print path; path = ""; matches = 0 }
+                    /^----------/ { flush(); next }
+                    /^path:[ \t]/ {
+                        p = $0; sub(/^path:[ \t]+/, "", p); sub(/[ \t]+\(0x[0-9a-fA-F]+\)$/, "", p)
+                        path = p; next
+                    }
+                    /^identifier:[ \t]/ {
+                        i = $0; sub(/^identifier:[ \t]+/, "", i); sub(/[ \t]+$/, "", i)
+                        matches = (i == id); next
+                    }
+                    END { flush() }
+                ' "$dump"
+                rm -f "$dump"
+            fi
+        fi
+        if command -v mdfind >/dev/null 2>&1; then
+            mdfind "kMDItemCFBundleIdentifier == '$bundle_id'" 2>/dev/null || true
+        fi
+    } | sed '/^$/d' | sort -u
+}
+
+# unregister_other_cua_driver_copies <installed bundle dir>
+# Unregisters every other com.trycua.driver bundle and prints one summary line.
+# Best effort: never fails the install, never deletes anything.
+unregister_other_cua_driver_copies() {
+    local active="$1" lsregister active_real path real found=0 paths word on_disk="" on_disk_count=0
+    lsregister="$(cua_driver_lsregister_path)"
+    [ -x "$lsregister" ] || return 0
+    active_real="$(cd "$active" 2>/dev/null && pwd -P)" || active_real="$active"
+    paths="$(cua_driver_known_bundle_paths "$CUA_DRIVER_RELEASE_BUNDLE_ID")"
+    [ -n "$paths" ] || return 0
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        real="$path"
+        if [ -d "$path" ]; then
+            real="$(cd "$path" 2>/dev/null && pwd -P)" || real="$path"
+        fi
+        if [ "$path" = "$active" ] || [ "$real" = "$active_real" ]; then
+            continue
+        fi
+        found=$((found + 1))
+        if ! "$lsregister" -u "$path" >/dev/null 2>&1; then
+            printf 'warning: could not unregister the old Cua Driver copy at %s\n' "$path" >&2
+        fi
+        if [ -d "$path" ]; then
+            on_disk_count=$((on_disk_count + 1))
+            [ "$on_disk_count" -gt 3 ] || on_disk="${on_disk:+$on_disk, }$path"
+        fi
+    done <<EOF
+$paths
+EOF
+    [ "$found" -gt 0 ] || return 0
+    word="copies"
+    [ "$found" -ne 1 ] || word="copy"
+    printf 'Found %s old Cua Driver %s; macOS will now only use %s\n' "$found" "$word" "$active"
+    if [ "$on_disk_count" -gt 0 ]; then
+        [ "$on_disk_count" -le 3 ] || on_disk="$on_disk and $((on_disk_count - 3)) more"
+        printf 'Their files were left in place (delete them when you no longer need them): %s\n' "$on_disk"
+    fi
     return 0
 }

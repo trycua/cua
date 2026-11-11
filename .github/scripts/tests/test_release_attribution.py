@@ -13,6 +13,7 @@ from release_attribution import (
     PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
+    unresolved_coauthor_identities,
     build_manifest,
     changelog_references_change,
     commits_in_range,
@@ -21,6 +22,9 @@ from release_attribution import (
     linked_issue_numbers,
     login_from_email,
     merge_contributors,
+    GitHubClient,
+    merge_unresolved_issue_body,
+    report_unresolved_identities,
     release_bump,
     release_entries,
     render_body,
@@ -357,6 +361,9 @@ def test_published_installer_bump_subject_is_recognized_narrowly():
     assert PUBLISHED_INSTALLER_BUMP_RE.match(
         "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
     )
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 (#5536)"
+    )
     assert not PUBLISHED_INSTALLER_BUMP_RE.match(
         "chore(cua-driver): advance published installer version to nightly [skip ci]"
     )
@@ -600,33 +607,297 @@ def test_nightly_manifest_attributes_maintenance_prs_without_a_versioned_changel
         )
 
 
-def test_unresolved_human_coauthor_fails_closed():
-    commit = CommitRecord(
+BEST_EFFORT_CONFIG = {
+    "bots": [],
+    "coauthorOverrides": {},
+    "ignoredCoauthorEmails": [],
+    "identityOverrides": {},
+    "internalHandles": [],
+    "optOutHandles": [],
+}
+UNRESOLVED_COMMIT = CommitRecord(
+    "deadbeef",
+    "fix(driver): preserve focus",
+    "Co-authored-by: Unknown Person <private@example.com>",
+)
+UNRESOLVED_PULL = {
+    "user": {"login": "author"},
+    "author_association": "NONE",
+    "body": "",
+    "labels": [],
+}
+
+
+def test_unresolved_coauthor_is_credited_by_name_without_a_mention():
+    unresolved: list[dict[str, str]] = []
+    contributors, _, _ = _change_contributors(
+        UNRESOLVED_PULL,
+        UNRESOLVED_COMMIT,
+        FakeGitHub("deadbeef"),
+        "trycua/cua",
+        BEST_EFFORT_CONFIG,
+        unresolved=unresolved,
+    )
+    assert contributors == [
+        {"login": "author", "role": "author", "external": True},
+        {"login": "Unknown Person", "role": "coauthor", "external": True, "mention": False},
+    ]
+    assert unresolved == [
+        {"sha": "deadbeef", "name": "Unknown Person", "email": "private@example.com"}
+    ]
+
+
+class LinkedGitHub(FakeGitHub):
+    def __init__(self, commit_sha, *, commits=(), searched=None):
+        super().__init__(commit_sha)
+        self._commits = list(commits)
+        self._searched = searched or {}
+
+    def pull_commits(self, repository, number):
+        return self._commits
+
+    def login_for_email(self, email):
+        return self._searched.get(email)
+
+
+def test_unresolved_coauthor_resolves_through_commits_api_and_email_search():
+    via_commits = LinkedGitHub(
         "deadbeef",
-        "fix(driver): preserve focus",
+        commits=[
+            {
+                "author": {"login": "from-commits"},
+                "commit": {"author": {"email": "private@example.com"}},
+            }
+        ],
+    )
+    contributors, _, _ = _change_contributors(
+        {**UNRESOLVED_PULL, "number": 12}, UNRESOLVED_COMMIT, via_commits, "trycua/cua", BEST_EFFORT_CONFIG
+    )
+    assert {"login": "from-commits", "role": "coauthor", "external": True} in contributors
+
+    via_search = LinkedGitHub("deadbeef", searched={"private@example.com": "from-search"})
+    unresolved: list[dict[str, str]] = []
+    contributors, _, _ = _change_contributors(
+        UNRESOLVED_PULL,
+        UNRESOLVED_COMMIT,
+        via_search,
+        "trycua/cua",
+        BEST_EFFORT_CONFIG,
+        unresolved=unresolved,
+    )
+    assert {"login": "from-search", "role": "coauthor", "external": True} in contributors
+    assert unresolved == []
+
+
+def test_render_credits_unresolved_names_without_mentions():
+    manifest = {
+        "displayName": "Cua Driver",
+        "version": "1.0.0",
+        "tag": "cua-driver-rs-v1.0.0",
+        "repository": "trycua/cua",
+        "previousTag": None,
+        "compareUrl": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v1.0.0",
+        "changes": [
+            {
+                "type": "fix",
+                "summary": "preserve focus",
+                "pr": 12,
+                "contributors": [
+                    {"login": "author", "role": "author", "external": True},
+                    {
+                        "login": "Unknown Person",
+                        "role": "coauthor",
+                        "external": True,
+                        "mention": False,
+                    },
+                ],
+            }
+        ],
+        "contributors": merge_contributors(
+            [
+                {"login": "author", "role": "author", "external": True},
+                {"login": "Unknown Person", "role": "coauthor", "external": True, "mention": False},
+            ]
+        ),
+    }
+    body = render_body(manifest)
+    assert "Thanks @author, Unknown Person." in body
+    assert "Thanks to @author, Unknown Person for contributing" in body
+    assert "@Unknown" not in body
+
+
+def test_stable_release_with_unresolved_coauthor_publishes(tmp_path: Path):
+    """A stable manifest builds, credits by name, and lists the identity for the issue."""
+    root = tmp_path
+    git(root, "init")
+    ident = ("-c", "user.name=Test", "-c", "user.email=test@example.invalid")
+    (root / "libs/cua-driver").mkdir(parents=True)
+    (root / "libs/cua-driver/CHANGELOG.md").write_text(
+        "## 0.8.2\n\n- fix(driver): preserve focus (#12) (abc)\n"
+    )
+    git(root, "add", ".")
+    git(root, *ident, "commit", "-m", "chore: start")
+    git(root, "tag", "cua-driver-rs-v0.8.1")
+    (root / "libs/cua-driver/a.txt").write_text("x")
+    git(root, "add", ".")
+    git(
+        root,
+        *ident,
+        "commit",
+        "-m",
+        "fix(driver): preserve focus (#12)",
+        "-m",
         "Co-authored-by: Unknown Person <private@example.com>",
     )
-    pull = {
-        "user": {"login": "author"},
-        "author_association": "NONE",
-        "body": "",
-        "labels": [],
-    }
-    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
-        _change_contributors(
-            pull,
-            commit,
-            FakeGitHub("deadbeef"),
-            "trycua/cua",
-            {
-                "bots": [],
-                "coauthorOverrides": {},
-                "ignoredCoauthorEmails": [],
-                "identityOverrides": {},
-                "internalHandles": [],
-                "optOutHandles": [],
-            },
-        )
+    sha = git(root, "rev-parse", "HEAD")
+
+    class Hub(FakeGitHub):
+        def pull(self, repository, number):
+            return {
+                "number": 12,
+                "user": {"login": "pr-author"},
+                "author_association": "NONE",
+                "body": "",
+                "labels": [],
+            }
+
+    manifest = build_manifest(
+        repo_root=root,
+        repository="trycua/cua",
+        product="cua-driver-rs",
+        display_name="Cua Driver",
+        version="0.8.2",
+        tag="cua-driver-rs-v0.8.2",
+        release_ref=sha,
+        previous_tag="cua-driver-rs-v0.8.1",
+        expected_sha=sha,
+        paths=("libs/cua-driver",),
+        changelog_path=root / "libs/cua-driver/CHANGELOG.md",
+        attribution_config=BEST_EFFORT_CONFIG,
+        github=Hub(sha),
+    )
+
+    assert manifest["unresolvedIdentities"] == [
+        {"sha": sha, "name": "Unknown Person", "email": "private@example.com"}
+    ]
+    assert {"login": "Unknown Person", "roles": ["coauthor"], "external": True, "mention": False} in (
+        manifest["contributors"]
+    )
+    assert "@Unknown" not in render_body(manifest)
+
+
+def test_rolling_issue_body_dedupes_and_drops_resolved_identities():
+    first = merge_unresolved_issue_body(
+        "",
+        [
+            {"sha": "aaa", "name": "Some One", "email": "some@example.com"},
+            {"sha": "bbb", "name": "Some One", "email": "SOME@example.com"},
+            {"sha": "ccc", "name": "Other", "email": "other@example.com"},
+        ],
+        BEST_EFFORT_CONFIG,
+        "v1",
+    )
+    assert first.count("`some@example.com`") == 1
+    assert "`other@example.com`" in first
+    refreshed = merge_unresolved_issue_body(
+        first,
+        [{"sha": "ddd", "name": "New", "email": "new@example.com"}],
+        {**BEST_EFFORT_CONFIG, "identityOverrides": {"other@example.com": "other-login"}},
+        "v2",
+    )
+    assert "`other@example.com`" not in refreshed
+    assert "`some@example.com`" in refreshed and "`new@example.com`" in refreshed
+
+
+class SearchHub:
+    """GitHub client double: fixed GET responses, recorded writes."""
+
+    login_for_email = GitHubClient.login_for_email
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.writes = []
+
+    def get(self, path):
+        return self.responses[path]
+
+    def send(self, method, path, payload):
+        self.writes.append((method, path, payload))
+        return {"number": 77}
+
+
+def _search_path(email):
+    return f"search/users?q={email.replace('@', '%40').replace(':', '%3A')}%20in%3Aemail&per_page=2"
+
+
+def test_email_search_requires_exact_public_email_match():
+    email = "who@example.com"
+    search = {"items": [{"login": "someone", "type": "User"}]}
+    hub = SearchHub({
+        _search_path(email).replace("%20", "%20"): search,
+        "users/someone": {"login": "someone", "email": "other@example.com"},
+    })
+    assert hub.login_for_email(email) is None
+    hub = SearchHub({
+        _search_path(email): search,
+        "users/someone": {"login": "someone", "email": "Who@Example.com"},
+    })
+    assert hub.login_for_email(email) == "someone"
+    hub = SearchHub({_search_path(email): {**search, "incomplete_results": True}})
+    assert hub.login_for_email(email) is None
+
+
+def test_rolling_issue_refresh_clears_entries_that_now_resolve():
+    body = merge_unresolved_issue_body(
+        "",
+        [
+            {"sha": "a", "name": "One", "email": "one@example.com"},
+            {"sha": "b", "name": "Two", "email": "two@example.com"},
+            {"sha": "c", "name": "Three", "email": "three@example.com"},
+        ],
+        BEST_EFFORT_CONFIG,
+        "v1",
+    )
+    config = {**BEST_EFFORT_CONFIG, "coauthorOverrides": {"Two <two@example.com>": "two"}}
+    refreshed = merge_unresolved_issue_body(
+        body, [], config, "v2", resolves=lambda email: "three" if email.startswith("three") else None
+    )
+    assert "`one@example.com`" in refreshed
+    assert "two@example.com" not in refreshed and "three@example.com" not in refreshed
+
+    only_resolved = merge_unresolved_issue_body(
+        body,
+        [],
+        {**config, "identityOverrides": {"one@example.com": "one"}},
+        "v3",
+        resolves=lambda email: "x",
+    )
+    assert "_None right now._" in only_resolved
+
+    hub = SearchHub({
+        "search/issues?q=repo%3Atrycua/cua%20is%3Aissue%20is%3Aopen%20in%3Atitle%20%22Contributor%20attribution%3A%20unresolved%20identities%22&per_page=20": {
+            "items": [
+                {
+                    "number": 5,
+                    "title": "Contributor attribution: unresolved identities",
+                    "body": body,
+                }
+            ]
+        }
+    })
+    report_unresolved_identities(hub, "trycua/cua", [], {**config, "identityOverrides": {
+        "one@example.com": "one", "two@example.com": "two", "three@example.com": "three"}}, "v4")
+    assert hub.writes and hub.writes[0][0] == "PATCH"
+    assert "_None right now._" in hub.writes[0][2]["body"]
+
+
+def test_checked_in_override_resolves_adam():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commits = [
+        CommitRecord("b2", "fix: y", "Co-authored-by: adam <admr0805@gmail.com>"),
+    ]
+    assert unresolved_coauthor_identities(commits, config) == []
+    assert config["identityOverrides"]["admr0805@gmail.com"] == "0xABAN"
 
 
 def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
@@ -708,7 +979,7 @@ class SquashTrailerGitHub:
 SQUASH_4500 = CommitRecord(
     "c8edda06",
     "fix(cua-driver): batch Windows foreground multiline input (#4500)",
-    "Co-authored-by: Dillon DuPont <dillondupont808@gmail.com>",
+    "Co-authored-by: Dillon DuPont <dev@example.com>",
 )
 PULL_4500 = {
     "number": 4500,
@@ -766,15 +1037,20 @@ def test_pr_4500_squash_trailer_resolves_with_the_checked_in_config():
         ("ddupont808", [("", "Dillon DuPont")]),
     ],
 )
-def test_squash_trailer_without_maintainer_provenance_fails_closed(merger, commits):
-    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
-        _change_contributors(
-            PULL_4500,
-            SQUASH_4500,
-            SquashTrailerGitHub(merger, commits),
-            "trycua/cua",
-            SQUASH_CONFIG,
-        )
+def test_squash_trailer_without_maintainer_provenance_is_credited_by_name(merger, commits):
+    unresolved: list[dict[str, str]] = []
+    contributors, _, _ = _change_contributors(
+        PULL_4500,
+        SQUASH_4500,
+        SquashTrailerGitHub(merger, commits),
+        "trycua/cua",
+        SQUASH_CONFIG,
+        unresolved=unresolved,
+    )
+    assert unresolved
+    assert all(
+        item.get("mention") is False for item in contributors if item["role"] == "coauthor"
+    )
 
 
 def _commit(root: Path, path: str, content: str, subject: str) -> str:

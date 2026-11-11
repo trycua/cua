@@ -207,6 +207,98 @@ struct HelperNotchTests {
         #expect(n.query == "", "the core cleared it (the panel closed)")
     }
 
+    /// Other state can change before the core receives the next search.
+    @Test(arguments: ["", "a"])
+    func aRepeatedSearchEchoDoesNotUndoNewerTyping(older: String) throws {
+        let (n, sink) = try notch()
+        var s = try fixtureState()
+        s.query = ""
+        n.receive(.state(s))
+        sink.messages = []
+        if !older.isEmpty { n.search(older) }
+        n.search("ab")
+        s.query = older
+        n.receive(.state(s))
+        #expect(n.query == "ab")
+        s.dragging.toggle()
+        n.receive(.state(s))
+        #expect(n.query == "ab")
+        #expect(n.dragging == s.dragging, "the rest of the repeated state still applies")
+        s.query = "ab"
+        n.receive(.state(s))
+        #expect(n.query == "ab")
+        let searches = older.isEmpty ? ["ab"] : [older, "ab"]
+        #expect(sink.messages == searches.map { .event(.search(query: $0)) }, "receiving state never emits typing")
+    }
+
+    @Test func theCoreCanClearTheSearchWhileTypingIsInFlight() throws {
+        let (n, _) = try notch()
+        var s = try fixtureState()
+        s.query = "a"
+        n.receive(.state(s))
+        n.search("ab")
+        s.query = ""
+        n.receive(.state(s))
+        #expect(n.query == "", "Escape clears the search while the panel stays open")
+        n.search("c")
+        s.query = "c"
+        n.receive(.state(s))
+        #expect(n.query == "c")
+    }
+
+    /// Closing wins over both an unchanged empty state and an echo of a
+    /// pending backspace to empty.
+    @Test(arguments: ["", "a"])
+    func closingThePanelClearsAnUnacknowledgedSearch(initial: String) throws {
+        let (n, _) = try notch()
+        var s = try fixtureState()
+        s.query = initial
+        n.receive(.state(s))
+        n.search("")
+        n.search("ab")
+        s.query = ""
+        s.view.phase = .closed
+        n.receive(.state(s))
+        #expect(n.query == "")
+        s.view.phase = .tiles
+        n.receive(.state(s))
+        #expect(n.query == "", "reopening starts with the core's cleared search")
+    }
+
+    @Test func backspacingToAnEarlierSearchStillAcknowledgesNewTyping() throws {
+        let (n, _) = try notch()
+        var s = try fixtureState()
+        s.query = "a"
+        n.receive(.state(s))
+        n.search("ab")
+        n.search("a")
+        n.search("ac")
+        for echo in ["a", "ab", "ab", "a", "a", "ac"] {
+            s.query = echo
+            n.receive(.state(s))
+            #expect(n.query == "ac")
+        }
+        s.query = ""
+        n.receive(.state(s))
+        #expect(n.query == "")
+    }
+
+    /// A window dragged over the app's own window: the window under the
+    /// dragged one at that point goes back with the request's id.
+    @Test func windowUnderIsAnsweredWithTheRequestsId() throws {
+        let (n, sink) = try notch()
+        var asked: (Double, Double, Int?)?
+        n.windowUnder = { x, y, below in
+            asked = (x, y, below)
+            return x < 1000 ? 4242 : nil
+        }
+        sink.messages = []
+        #expect(n.receive(.windowUnder(id: 7, x: 640.5, y: 412, below: 5120)))
+        #expect(n.receive(.windowUnder(id: 8, x: 2000, y: 10, below: nil)))
+        #expect(sink.messages == [.windowUnder(id: 7, window: 4242), .windowUnder(id: 8, window: nil)])
+        #expect(asked?.0 == 2000 && asked?.2 == nil)
+    }
+
     @Test func theSelftestPasses() {
         #expect(NotchHelperRunner.selftest() == 0)
     }

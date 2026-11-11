@@ -25,7 +25,7 @@ struct TeleportBridgeTests {
                              telemetry: FixtureTelemetry())
         await model.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
-        bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        bridge.actions = WebUIActions(openSpace: { _ in })
         return (bridge, model)
     }
 
@@ -55,10 +55,19 @@ struct TeleportBridgeTests {
         ])
         #expect(on == sdkConsent(AppTeleportConsent(
             approved: true, acknowledgeSensitive: true, saveToKeyvault: true, acknowledgeRelayPlaintext: true,
-            cookieDomains: ["github.com"], exclude: ["Default/Bookmarks"], fromVault: ["a", "b"], includePasswords: true)))
+            cookieDomains: ["github.com"], exclude: ["Default/Bookmarks"], fromVault: ["a", "b"], includePasswords: true, passwordDomains: nil)))
         #expect(on.saveToKeyvault)
         let off = WebUIBridge.teleportConsent(["approved": true, "acknowledgeSensitive": true])
         #expect(!off.saveToKeyvault && off.exclude.isEmpty && off.cookieDomains == nil)
+    }
+
+    /// The profile chosen in the setup sheet reaches the SDK's consent; a
+    /// blank or absent one reads Default.
+    @Test func theChosenProfileReachesTheSdkConsent() {
+        let named = WebUIBridge.teleportConsent(["approved": true, "acknowledgeSensitive": true, "profile": "Profile 1"])
+        #expect(named.profile == "Profile 1")
+        #expect(WebUIBridge.teleportConsent(["approved": true, "profile": ""]).profile == nil)
+        #expect(WebUIBridge.teleportConsent(["approved": true]).profile == nil)
     }
 
     // MARK: - Keyvault, as the SwiftUI list does it

@@ -103,7 +103,7 @@ struct Run: AsyncParsableCommand {
 
     @Option(
         name: .customLong("network"),
-        help: "Optional network override: 'nat', 'bridged', or 'bridged:<interface>' (e.g. 'bridged:en0'). Defaults to the VM's configured mode.")
+        help: "Optional network override: 'nat', 'bridged', 'bridged:<interface>' (e.g. 'bridged:en0'), or 'gateway:<socket path>' (a Cua network gateway's datagram socket). Defaults to the VM's configured mode.")
     var network: String?
 
     @Flag(
@@ -119,7 +119,7 @@ struct Run: AsyncParsableCommand {
             }
             guard let mode = NetworkMode.parse(network) else {
                 throw ValidationError(
-                    "Invalid network mode '\(network)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+                    "Invalid network mode '\(network)'. Expected 'nat', 'bridged', 'bridged:<interface>' or 'gateway:<socket path>'."
                 )
             }
             return mode

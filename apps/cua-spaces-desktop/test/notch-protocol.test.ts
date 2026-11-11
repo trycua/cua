@@ -44,7 +44,7 @@ function bindingView() {
         targeted: false,
         symbol: "ubuntu",
         label: "build, starting",
-        location: "Cua Cloud",
+        location: "This Mac",
         progress: 420,
         progressLabel: "Starting",
         signedIn: false,
@@ -121,6 +121,8 @@ describe("notch protocol", () => {
       '{"type":"action","action":"drop","spaceId":"a","paths":[1]}',
       '{"type":"screens","notch":{"frame":{}}}',
       '{"type":"stage","open":"yes"}',
+      '{"type":"windowUnder"}',
+      '{"type":"windowUnder","id":1,"window":"900"}',
     ]) {
       expect(parseHelperMessage(line), line).toBeNull();
     }

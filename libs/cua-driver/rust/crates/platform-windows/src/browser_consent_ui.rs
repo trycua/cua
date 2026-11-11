@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Windows UIA handling for Chromium's browser-owned debugging consent.
 
 use std::time::{Duration, Instant};
@@ -21,10 +24,6 @@ struct ConsentButtonCandidate {
     element_ptr: usize,
     rect: (i32, i32, i32, i32),
     has_keyboard_focus: bool,
-}
-
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
 }
 
 fn release_nodes(nodes: &[UiaNode]) {
@@ -172,7 +171,7 @@ fn native_button_properties(element_ptr: usize) -> Result<(String, bool), Browse
     };
     std::mem::forget(element);
     properties.map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!("could not prove a native Chromium consent button: {error}"),
         )
@@ -204,7 +203,7 @@ fn select_language_independent_actions(
     // Cancel focus is additional contradiction evidence when the browser is
     // active; an inactive browser legitimately reports no focused button.
     if candidates.len() != 3 {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the native Chromium consent prompt did not expose exactly three distinct dialog buttons",
         ));
@@ -216,7 +215,7 @@ fn select_language_independent_actions(
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     if focused_indices.len() > 1 {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the native Chromium consent prompt exposed multiple focused dialog buttons",
         ));
@@ -234,7 +233,7 @@ fn select_language_independent_actions(
     let [(standard_gap, first_standard, second_standard), (extra_gap, _, _), _] =
         pairwise_gaps.as_slice()
     else {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the native Chromium consent buttons did not form one exact non-overlapping dialog row",
         ));
@@ -247,7 +246,7 @@ fn select_language_independent_actions(
         || *standard_gap > first_width.max(second_width)
         || *extra_gap < standard_gap.saturating_mul(2)
     {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the native Chromium consent prompt had no uniquely separated standard button pair",
         ));
@@ -268,7 +267,7 @@ fn select_language_independent_actions(
         (Some(first_gap), Some(second_gap)) if first_gap < second_gap => *first_standard,
         (Some(first_gap), Some(second_gap)) if second_gap < first_gap => *second_standard,
         _ => {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the native Chromium consent prompt had no unique standard button adjacent to the extra action",
             ));
@@ -283,7 +282,7 @@ fn select_language_independent_actions(
         .first()
         .is_some_and(|focused| *focused != cancel_index)
     {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the native Chromium consent prompt focus contradicted the structural cancel button",
         ));
@@ -335,11 +334,27 @@ where
                 has_keyboard_focus,
             });
         }
-        matches.push(select_language_independent_actions(&candidates)?);
+        let (allow, cancel) = select_language_independent_actions(&candidates)?;
+        let rect_of = |ptr: usize| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.element_ptr == ptr)
+                .map(|candidate| candidate.rect)
+        };
+        let geometry = (node_name(&nodes[start]), rect_of(allow), rect_of(cancel));
+        // The same prompt can bind twice in one walk (a nested surface, or
+        // UIA repeating its rows with fresh element pointers). Its title and
+        // exact button geometry identify it; any other prompt still refuses.
+        if !matches
+            .iter()
+            .any(|(_, existing_geometry)| *existing_geometry == geometry)
+        {
+            matches.push(((allow, cancel), geometry));
+        }
     }
     match matches.as_slice() {
-        [element] => Ok(Some(*element)),
-        _ => Err(refusal(
+        [(element, _)] => Ok(Some(*element)),
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "multiple bound native Chromium consent prompts exposed structural allow actions",
         )),
@@ -372,7 +387,7 @@ unsafe fn invoke(element_ptr: usize) -> Result<(), BrowserRefusal> {
         .and_then(|pattern| pattern.Invoke());
     std::mem::forget(element);
     result.map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!("the exact browser consent action failed: {error}"),
         )
@@ -383,7 +398,7 @@ fn prove_window_owner(hwnd: u64, pid: u32) -> Result<(), BrowserRefusal> {
     let mut owner = 0u32;
     unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut owner)) };
     if owner != pid {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             "the approved browser window changed ownership before consent",
         ));
@@ -406,7 +421,7 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
         let cancel = exact_cancel_button(&tree.nodes);
         let invoked = match cancel {
             Ok(Some(element)) => unsafe { invoke(element) },
-            Ok(None) => Err(refusal(
+            Ok(None) => Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the exact remote-debugging consent prompt exposed no structural cancel action",
             )),
@@ -416,7 +431,7 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
         invoked?;
         dismissed = true;
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the remote-debugging consent prompt remained after its exact cancel action",
             ));
@@ -429,7 +444,7 @@ pub async fn handle(
     request: BrowserConsentRequest,
 ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
     let pid = u32::try_from(request.pid).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "the approved browser pid is outside the Windows process-id range",
         )
@@ -445,7 +460,7 @@ pub async fn handle(
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not inspect the browser consent UI: {error}"),
             )
@@ -466,13 +481,13 @@ pub async fn handle(
             }
         }
         if saw_prompt && !prompt_present {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRevoked,
                 "the person dismissed the browser consent prompt",
             ));
         }
         if Instant::now() >= deadline {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!(
                     "no exact Chromium remote-debugging consent prompt appeared for reconnect attempt {}",
@@ -742,6 +757,21 @@ mod tests {
             exact_allow_button_with(&browser_root, properties).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn matcher_binds_one_prompt_reported_twice_with_the_same_geometry() {
+        let mut nodes = pane_rooted_prompt("same title", ["A", "B", "C"]);
+        let mut repeated = pane_rooted_prompt("same title", ["A", "B", "C"]);
+        for node in &mut repeated {
+            if node.element_ptr != 0 {
+                node.element_ptr += 1000;
+            }
+        }
+        nodes.extend(repeated);
+        assert!(exact_allow_button_with(&nodes, properties)
+            .unwrap()
+            .is_some());
     }
 
     #[test]

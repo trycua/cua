@@ -233,6 +233,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -649,6 +677,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -949,7 +1005,11 @@
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -2172,6 +2232,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -2375,6 +2463,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -2980,6 +3096,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },
@@ -3701,6 +3845,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -3951,6 +4123,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -4120,7 +4320,7 @@
             "type": "number"
           },
           "glide_duration_ms": {
-            "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+            "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
             "type": "number"
           },
           "idle_hide_ms": {
@@ -4152,11 +4352,15 @@
             "type": "string"
           },
           "timing": {
-            "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+            "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
             "enum": [
               "native",
               "fitts",
-              "fixed"
+              "fixed",
+              "relaxed",
+              "steady",
+              "calm",
+              "deliberate"
             ],
             "type": "string"
           },
@@ -4244,7 +4448,11 @@
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -4566,6 +4774,34 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "route": {
             "enum": [
               "accessibility",
@@ -4699,7 +4935,7 @@
                 "type": "number"
               },
               "glide_duration_ms": {
-                "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+                "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
                 "type": "number"
               },
               "idle_hide_ms": {
@@ -4727,11 +4963,15 @@
                 "type": "string"
               },
               "timing": {
-                "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+                "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -4902,7 +5142,11 @@
                 "enum": [
                   "native",
                   "fitts",
-                  "fixed"
+                  "fixed",
+                  "relaxed",
+                  "steady",
+                  "calm",
+                  "deliberate"
                 ],
                 "type": "string"
               },
@@ -5176,6 +5420,34 @@
             },
             "type": [
               "array",
+              "null"
+            ]
+          },
+          "fast_path": {
+            "type": "object"
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_call": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "type": "object"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool",
+              "arguments"
+            ],
+            "type": [
+              "object",
               "null"
             ]
           },

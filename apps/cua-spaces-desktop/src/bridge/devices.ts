@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // Settings → Devices (`devices.*`): enrolling this machine, approving,
-// renaming and revoking devices, confirming machines (the SwiftUI host's
+// renaming and revoking devices, confirming machines, and the one-time
+// codes that add a machine by link or QR code (the SwiftUI host's
 // WebUIBridge+Pages `devices`, over `model/devices.ts`). Approving asks the
 // person at this machine first, as the native sheet does.
 import { computerName, DevicesUnavailable } from "../model/devices";
@@ -68,6 +69,16 @@ export function devicesMethods(ctx: BridgeContext): Handlers {
     "devices.confirmMachine": async (args) => {
       const id = string(args, "id");
       await run(() => devices.confirmMachine(id));
+      return null;
+    },
+    "devices.createPairingCode": async (args) => {
+      const team = optionalString(args, "team");
+      return encode(await run(() => devices.createPairingCode(team)));
+    },
+    "devices.pairingCodes": async () => encode(await run(() => devices.pairingCodes())),
+    "devices.revokePairingCode": async (args) => {
+      const id = string(args, "id");
+      await run(() => devices.revokePairingCode(id));
       return null;
     },
   };

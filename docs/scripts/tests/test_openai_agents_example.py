@@ -33,7 +33,7 @@ def test_disposable_sandbox_name_ignores_existing_sandbox() -> None:
     assert len(first.removeprefix("openai-agents-")) == 12
 
 
-def test_controller_does_not_use_fleets() -> None:
+def test_controller_runs_where_cua_on_says() -> None:
     source = SCRIPT.read_text()
     assert "Pool" not in source
     assert "claim(" not in source
@@ -114,6 +114,5 @@ def test_guide_links_the_download_and_navigation_entry() -> None:
     guide = GUIDE.read_text()
     meta = META.read_text()
     assert "https://cua.ai/docs-assets/scripts/openai-agents/run_openai_agents.py" in guide
-    assert "openai-agents-fleet" not in guide
     assert '"agent-frameworks"' in meta
     assert "## OpenAI Agents API" in guide

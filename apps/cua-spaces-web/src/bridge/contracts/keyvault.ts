@@ -168,6 +168,8 @@ export interface KvStatus {
   browse_until_ms?: number;
   skip_unlock_prompt?: boolean;
   reset_notice?: string;
+  /** What the daemon supports beyond the original protocol (`password_domains`). */
+  features?: string[];
 }
 
 export interface KvVerification {
@@ -431,6 +433,11 @@ export interface VaultSource {
   newestMs: number;
   ids: string[];
   passwordIds: string[];
+  /** The same passwords with their site and username, never a value. */
+  passwords?: { id: string; site: string; username: string }[];
+  /** The Keyvault daemon enforces a choice of passwords by site
+   * (`password_domains`); without it the review offers none to pick. */
+  passwordPicks?: boolean;
 }
 
 /* ---- The approval sheet (approval.rs) ------------------------------------- */

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Planned agent-cursor trajectories.
 //!
 //! The motion math lives in the `cua-cursor-motion` crate, the single source of

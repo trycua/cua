@@ -7,15 +7,20 @@
 // data. Bounded where the app waits on it.
 import type { Native } from "../native/load";
 import type {
-  AppCloudPricing,
   AppCreateSpaceArgs,
   AppGpuChoice,
+  AppRuntime,
+  AppRuntimeKindInput,
+  AppRuntimePathCheck,
   AppSpaceAgentRun,
   AppSpaceHost,
   AppSpaceKind,
   AppSpaceOs,
   AppSpaceRow,
+  AppSpaceSharingFacts,
   AppSentFileInfo,
+  BulkResult as SdkBulkResult,
+  SpaceSharing,
   AppShareEntryInput,
   AppSpaceUsage,
   AppStreamDisplay,
@@ -24,14 +29,145 @@ import type {
   LocalStorage,
   SpaceAppIconRequest,
   SpaceCreateProgress,
+  Share,
+  ShareAccess,
+  ShareLanding,
+  ShareSettings,
   SpaceShares,
   SpaceWindow,
   SpaceLike,
+  SpacePresenceLike,
+  PresenceIdentity,
+  RepoCacheStatus,
+  ResourcesSnapshot,
   TeleportLike,
 } from "../native/generated/index";
 import { words } from "./errors";
 import type { StreamWindow } from "./streams";
 import { bounded, withTimeout } from "./time";
+
+/** A link as the page's `links.*` operations carry it. */
+export interface ShareLinkRow {
+  id: string;
+  url: string;
+  name: string | null;
+  access: "private" | "team" | "public";
+  kind: string;
+  target: string;
+  owner: string;
+  createdAtUnix: number | null;
+  expiresAtUnix: number | null;
+  /** A public TCP share: what people connect to (a name or host:port). */
+  tcpConnectWith: string | null;
+  /** A public TCP share: host:port on the relay. */
+  tcpAddress: string | null;
+  /** A public TCP share's route: `host`, `edge` or `relay`. */
+  route: string | null;
+  /** The route in plain words ("Through your AWS account", "Through Cua"). */
+  routeLine: string | null;
+  /** Addresses (CIDRs) that may connect; empty: anyone. */
+  allow: string[];
+  /** `approval` or `consent` while the share is not live. */
+  waiting: "approval" | "consent" | null;
+  waitingText: string | null;
+}
+
+/** Options of a public TCP share beyond its target and game. */
+export interface TcpShareOptions {
+  route?: string | null;
+  allow?: string[] | null;
+  checkHost?: boolean;
+  consent?: boolean;
+}
+
+/** The share settings as the page's `shares.settings.*` operations carry them. */
+export interface ShareSettingsRow {
+  landing: "auto" | "only_my_cloud" | "allow_relay";
+  relayFallback: boolean;
+  dailyCapMib: number;
+  defaultAllow: string[];
+  approveAgentShares: boolean;
+  alwaysAllowSpaces: string[];
+  edgeConsent: string[];
+  usedToday: number;
+  edgeCloud: string | null;
+  edgeHost: string | null;
+  edgeMonthlyUsd: number | null;
+}
+
+/** The binding's enum values are its words, spelled its own way ("OnlyMyCloud", "only_my_cloud"): compare without case or underscores. */
+const landingWord = (l: ShareLanding): ShareSettingsRow["landing"] => {
+  const w = String(l)
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  return w === "onlymycloud" ? "only_my_cloud" : w === "allowrelay" ? "allow_relay" : "auto";
+};
+
+export function shareSettingsRow(s: ShareSettings): ShareSettingsRow {
+  return {
+    landing: landingWord(s.landing),
+    relayFallback: s.relayFallback,
+    dailyCapMib: Number(s.dailyCapMib),
+    defaultAllow: s.defaultAllow,
+    approveAgentShares: s.approveAgentShares,
+    alwaysAllowSpaces: s.alwaysAllowSpaces,
+    edgeConsent: s.edgeConsent,
+    usedToday: Number(s.usedToday),
+    edgeCloud: s.edgeCloud ?? null,
+    edgeHost: s.edgeHost ?? null,
+    edgeMonthlyUsd: s.edgeMonthlyUsd ?? null,
+  };
+}
+
+export function linkRow(s: Share): ShareLinkRow {
+  const n = (v: bigint | undefined) => (v === undefined ? null : Number(v));
+  return {
+    id: s.id,
+    url: s.url,
+    name: s.name ?? null,
+    // The enum's values are its words (a type import: the binding loads the native library).
+    access: s.access === ("team" as ShareAccess) ? "team" : s.access === ("public" as ShareAccess) ? "public" : "private",
+    kind: s.kind,
+    target: s.target,
+    owner: s.owner,
+    createdAtUnix: n(s.createdAtUnix),
+    expiresAtUnix: n(s.expiresAtUnix),
+    tcpConnectWith: s.tcpConnectWith ?? null,
+    tcpAddress: s.tcpAddress ?? null,
+    route: s.route ?? null,
+    routeLine: s.routeLine ?? null,
+    allow: s.allow ?? [],
+    waiting: s.waiting === "approval" || s.waiting === "consent" ? s.waiting : null,
+    waitingText: s.waitingText ?? null,
+  };
+}
+
+/** One Space's outcome of a bulk delete or leave, as the page reads it. */
+export interface BulkResult {
+  id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function bulkResult(r: SdkBulkResult): BulkResult {
+  return r.ok ? { id: r.id, ok: true } : { id: r.id, ok: false, error: r.error ?? "It didn't go through." };
+}
+
+/** The SDK's sharing facts as the core's row field (empty texts absent). */
+export function sharingFacts(s: SpaceSharing | undefined): AppSpaceSharingFacts | undefined {
+  if (!s) return undefined;
+  return {
+    ownerId: s.ownerId,
+    ownerEmail: text(s.ownerEmail),
+    ownerName: text(s.ownerName),
+    role: s.role,
+    team: text(s.team),
+    teamName: text(s.teamName),
+    editors: s.editors,
+    viewers: s.viewers,
+    teams: s.teams.map((t) => ({ key: t.key, name: t.name, role: t.role })),
+  };
+}
 
 export interface LocalRuntimes {
   /** The ready backends (lowercase names). */
@@ -40,9 +176,38 @@ export interface LocalRuntimes {
   details: Map<string, string>;
 }
 
+/** One read of the Space list and how far it got (the SDK's `SpaceList`). */
+export interface ListRead {
+  rows: AppSpaceRow[];
+  /** Some of your computers have not answered yet: not "no Spaces". */
+  incomplete: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching: number;
+  /** Your other computers' rows are the last known ones. */
+  stale: boolean;
+  /** Why your other computers could not be read, when they could not. */
+  notice: string;
+  /** Spaces your other computers are creating now (the SDK's `SpaceList.creating`). */
+  creating?: CreatingElsewhereRow[];
+}
+
+/** A Space another of your computers is creating, as the page reads it (`spaces.list`'s `creatingElsewhere`). */
+export interface CreatingElsewhereRow {
+  machineId: string;
+  machineName: string;
+  name: string;
+  os: string;
+  phase: string;
+  percent: number;
+}
+
 export interface SpacesBackend {
   /** The registry, one row per Space, with a bounded reachability probe. */
   rows(): Promise<AppSpaceRow[]>;
+  /** `rows` with how far the read got (`Spaces.list_known`): this machine's
+   * Spaces at once, your other computers as they answer. Undefined: the
+   * backend lists complete lists only. */
+  listRead?(): Promise<ListRead>;
   /** Creates a Space, reporting the SDK's progress until it is ready; its id. */
   create(args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void): Promise<string>;
   cancelCreate(createId: string): Promise<void>;
@@ -52,17 +217,74 @@ export interface SpacesBackend {
   reportedHostname(id: string): string | null;
   add(url: string, token: string | null, name: string | null): Promise<void>;
   remove(id: string, removeOnly: boolean): Promise<void>;
+  /** Deletes several Spaces (the SDK turns running ones off first); one result per id. */
+  deleteMany(ids: string[]): Promise<BulkResult[]>;
+  /** Takes you off Spaces shared with you; one result per id. */
+  leave(ids: string[]): Promise<BulkResult[]>;
+  /** Gives a Space a new name (the SDK's `Spaces.rename`); its id stays the same. */
+  rename(id: string, name: string): Promise<void>;
+  /** A Space's network, clipboard and Volume settings, as the web page's
+   * `network.get` reads them (the SDK's `Spaces.network` and the Space's
+   * row). Absent in a backend without the SDK. */
+  network?(id: string): Promise<SpaceNetworkJson>;
+  /** `network.set`: the preset word and lists (the SDK's `Spaces.set_network`). */
+  setNetwork?(id: string, word: string, allow: string[], deny: string[], widen: boolean, tree: boolean, via?: string): Promise<"now" | "next_start">;
+  /** `network.log`: what a Space tried to reach and its network blocked. */
+  networkLog?(id: string): Promise<NetworkEventJson[]>;
+  /** The Spaces on this machine whose internet traffic exits through it
+   * ("Exit through: This Mac"), for the notch's hotspot indicator. */
+  exitsThroughThisMachine?(): Promise<string[]>;
+  /** `network.ackNotice`: the one-time notice about the new default was shown. */
+  ackNetworkNotice?(id: string): Promise<void>;
+  /** `spaces.setAccess`: a Space's clipboard and/or Volume setting. */
+  setAccess?(id: string, clipboard: string | null, volume: string | null): Promise<void>;
+  /** `spaces.tree`: every Space's parent, depth and whether it may make
+   * children (the SDK's `Spaces.list`). */
+  spaceTree?(): Promise<TreeNodeJson[]>;
+  /** `children.set`: lets a Space make child Spaces, or stops it. */
+  setChildren?(id: string, enabled: boolean): Promise<void>;
+  /** `budget.get` / `budget.set`: a Space's tree's budget and use. */
+  treeBudget?(id: string): Promise<TreeBudgetJson>;
+  setTreeBudget?(id: string, limits: TreeBudgetLimitsJson): Promise<TreeBudgetJson>;
+  /** `services.list` / `services.control`: the commands a Space keeps running. */
+  services?(id: string): Promise<ServiceJson[]>;
+  controlService?(id: string, name: string, action: string): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. The Spaces made on
+   * it are detached, or with `deleteSpaces` deleted too (the SDK's `relay_unregister_computer`). */
+  relayUnregister(machineId: string, deleteSpaces?: boolean): Promise<void>;
+  /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
+  machineHealth(machine: string | null): Promise<MachineHealthReport>;
   setPower(id: string, on: boolean): Promise<void>;
   localRuntimes(): Promise<LocalRuntimes | null>;
   lumeSource(): Promise<string | null>;
   setLumeSource(value: string): Promise<void>;
   linuxSource(): Promise<string | null>;
   setLinuxSource(value: string): Promise<void>;
+  /** Each kind of Space's runtime setting and what is installed for it (`runtime_kinds`); null when unknown. */
+  runtimeKinds(): Promise<AppRuntimeKindInput[] | null>;
+  /** What `path` is for `kind` (`container`, `vm`, `microvm`). */
+  runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck>;
+  /** Writes a runtime setting (`runtime.container`, `runtime.vm_path`), or unsets it (null). */
+  setRuntimeSetting(key: string, value: string | null): Promise<void>;
+  /** The repo cache: on or off, what it holds and saved (`repo_cache_status`); null when unknown. */
+  repoCacheStatus(): Promise<RepoCacheStatus | null>;
+  /** Turns the repo cache on or off and sets its size in GB (null: automatic); a missing field keeps its value. */
+  setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null>;
+  /** Deletes every repository the repo cache holds. */
+  clearRepoCache(): Promise<RepoCacheStatus | null>;
   localStorage(): Promise<LocalStorage | null>;
-  cloudAvailable(): Promise<boolean>;
+  /** A Cua account is signed in (or client credentials are set). */
+  loggedIn(): Promise<boolean>;
   runningMacosVms(): Promise<number | null>;
-  cloudPricing(): Promise<AppCloudPricing | null>;
   usage(id: string): Promise<AppSpaceUsage | null>;
+  /**
+   * Processor, memory and disk (the SDK's `Spaces.resources`, the daemon's
+   * one sampler): this computer, its Spaces, your other computers'
+   * summaries and what your Spaces there take on them. `visible` says a
+   * window shows them. Null when the daemon can't say; absent in a backend
+   * without the SDK.
+   */
+  resources?(visible: boolean): Promise<ResourcesSnapshot | null>;
   /** The Space's coding-agent runs as rows (the core's mapping of the runs, attention first). */
   agentRuns(id: string): Promise<AppSpaceAgentRun[]>;
   /** The Space's windows that can be streamed (its Stream section; throws when they can't be read). */
@@ -79,14 +301,40 @@ export interface SpacesBackend {
   share(id: string, who: string, role: string): Promise<AppShareEntryInput[]>;
   /** Stops sharing it with `who`; who it is shared with now. */
   unshare(id: string, who: string): Promise<AppShareEntryInput[]>;
+  /** Links to things you run (`cua share`), owned by the cua daemon. */
+  links(): Promise<ShareLinkRow[]>;
+  /** Shares `target` (a port, `space:NAME:PORT`, an absolute path) and returns the link. */
+  createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null): Promise<ShareLinkRow>;
+  /** Shares a TCP service in a Space (`space:NAME:PORT`) at a public address (Labs: Public TCP shares). Optional: hosts without it refuse. */
+  createTcpLink?(target: string, service: string | null, ttlSeconds: number | null, name: string | null, options?: TcpShareOptions): Promise<ShareLinkRow>;
+  /** A waiting TCP share goes live; `always`: its Space may share without asking from now on. Optional: hosts without it refuse. */
+  approveLink?(id: string, always: boolean): Promise<ShareLinkRow>;
+  /** Turns down a waiting TCP share. */
+  denyLink?(id: string): Promise<void>;
+  /** The public TCP share settings, with today's data and the share edge. */
+  shareSettings?(): Promise<ShareSettingsRow>;
+  /** Saves the settings (the read-only fields are ignored); the saved ones. */
+  setShareSettings?(settings: ShareSettingsRow): Promise<ShareSettingsRow>;
+  /** Removes the share edge from the owner's cloud; the ids of the shares that ended. */
+  removeShareEdge?(): Promise<string[]>;
+  /** Stops one link, or every link for `"all"`; the ids stopped. */
+  stopLink(id: string): Promise<string[]>;
   /** One of the daemon's Spaces tools (`agent_*`, `volume_*`, `cloud_*`), its JSON answer. */
   tool(tool: string, args: Record<string, unknown>): Promise<unknown>;
   /** The SDK's teleport handle and the Space handle, for "Teleport an app"; null without a live SDK. Throws when the Space is unreachable. */
   teleportContext(id: string): Promise<{ teleport: TeleportLike; space: SpaceLike } | null>;
   /** The SDK's teleport handle, for drops (no Space needed). */
   teleportHandle(): TeleportLike | null;
+  /** Joins a Space's presence as `identity`, waiting up to `timeoutMs` for the roster. */
+  joinPresence(id: string, identity: PresenceIdentity, timeoutMs: number): Promise<SpacePresenceLike>;
   /** A Space's app icons in one call (`Space.appIcons`, through its one icon cache): 64 px PNG or SVG bytes, null where it has none. */
   appIcons(id: string, requests: SpaceAppIconRequest[]): Promise<(Uint8Array | null)[]>;
+}
+
+/** A machine's health as its daemon reported it (the SDK's `MachineHealth`, the parts the Machines page reads). */
+export interface MachineHealthReport {
+  cuaVersion: string;
+  checks: { id: string; status: string; message: string; remediation: string; facts: Map<string, string> }[];
 }
 
 /** A Space's thumbnail as the SDK returns it: the encoded image (PNG or JPEG), its size and when it was captured. */
@@ -152,7 +400,46 @@ export function osOf(native: Native, word: string): AppSpaceOs | undefined {
 export function kindOf(native: Native, word: string): AppSpaceKind | undefined {
   if (word === "container") return native.AppSpaceKind.Container;
   if (word === "vm") return native.AppSpaceKind.Vm;
+  if (word === "microvm") return native.AppSpaceKind.Microvm;
   return undefined;
+}
+
+/** The engines built into the SDK, by the word a create passes. */
+const BUILT_IN_RUNTIMES = ["auto", "gvisor", "runc", "qemu", "lume", "firecracker", "vz", "containerization"] as const;
+
+/** A runtime word the app core accepts (its `valid_runtime_word`): a built-in engine or an external provider's name. */
+export function isRuntimeWord(word: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,31}$/.test(word);
+}
+
+/** The core's runtime for a create's word: a built-in engine, else an external provider (`Other`). */
+export function runtimeOf(native: Native, word: string): AppRuntime | undefined {
+  if (!isRuntimeWord(word)) return undefined;
+  switch (word as (typeof BUILT_IN_RUNTIMES)[number]) {
+    case "auto":
+      return new native.AppRuntime.Auto();
+    case "gvisor":
+      return new native.AppRuntime.Gvisor();
+    case "runc":
+      return new native.AppRuntime.Runc();
+    case "qemu":
+      return new native.AppRuntime.Qemu();
+    case "lume":
+      return new native.AppRuntime.Lume();
+    case "firecracker":
+      return new native.AppRuntime.Firecracker();
+    case "vz":
+      return new native.AppRuntime.Vz();
+    case "containerization":
+      return new native.AppRuntime.Containerization();
+    default:
+      return new native.AppRuntime.Other(word);
+  }
+}
+
+/** The SDK's word for the core's runtime (`auto`, `qemu`, ..., or an external provider's name). */
+export function runtimeWord(runtime: AppRuntime): string {
+  return runtime.tag === "Other" ? runtime.inner[0] : runtime.tag.toLowerCase();
 }
 
 const text = (s: string | undefined) => (s ? s : undefined);
@@ -184,7 +471,17 @@ export function gpuChoices(support: GpuSupport[]): AppGpuChoice[] {
     const o = s.options[0];
     if (!o) return [];
     const reason = o.reason.trim();
-    return [{ runtime: s.runtime, id: o.id, label: o.label, experimental: o.experimental, supported: o.supported, reason: reason || undefined, learnMore: o.learnMore }];
+    return [
+      {
+        runtime: s.runtime,
+        id: o.id,
+        label: o.label,
+        experimental: o.experimental,
+        supported: o.supported,
+        reason: reason || undefined,
+        learnMore: o.learnMore,
+      },
+    ];
   });
 }
 
@@ -211,13 +508,32 @@ export class LiveSpacesBackend implements SpacesBackend {
   ) {}
 
   async rows(): Promise<AppSpaceRow[]> {
+    return (await this.listRead()).rows;
+  }
+
+  /** This machine's Spaces at once, your other computers as far as they answered (`Spaces.list_known`). */
+  async listRead(): Promise<ListRead> {
+    const list = await this.cua.spaces().listKnown();
+    const creating = (list.creating ?? []).map((c) => ({
+      machineId: c.machineId,
+      machineName: c.machineName,
+      name: c.name,
+      os: c.os,
+      phase: c.phase,
+      percent: c.percent,
+    }));
+    return { rows: await this.probe(list.spaces), incomplete: list.incomplete, reaching: list.reaching, stale: list.stale, notice: list.notice, creating };
+  }
+
+  /** The rows of `infos`, each with a bounded reachability probe. */
+  private async probe(infos: Awaited<ReturnType<ReturnType<CuaLike["spaces"]>["list"]>>): Promise<AppSpaceRow[]> {
     const spaces = this.cua.spaces();
-    const infos = await spaces.list();
     return Promise.all(
       infos.map(async (info) => {
         const row: AppSpaceRow = {
           id: info.id,
           name: info.name,
+          displayName: text(info.displayName),
           provider: info.provider,
           spacesdVersion: info.spacesdVersion,
           features: info.features,
@@ -229,6 +545,8 @@ export class LiveSpacesBackend implements SpacesBackend {
           imageDigest: text(info.imageDigest),
           kind: kindOf(this.native, info.kind),
           arch: text(info.arch),
+          // The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+          hidden: Boolean(info.labels?.has("cua.hidden")),
           reachable: false,
           error: undefined,
           host: text(info.host),
@@ -238,6 +556,8 @@ export class LiveSpacesBackend implements SpacesBackend {
           cloud: text(info.cloud),
           cloudPlace: text(info.cloudPlace),
           cloudDelete: text(info.cloudDelete),
+          stopReason: text(info.stopReason),
+          sharing: sharingFacts(info.sharing),
         };
         // Turned off on purpose: no probe (it would only time out).
         if (info.powerState === "suspended" || info.powerState === "stopped") return row;
@@ -278,12 +598,17 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async create(args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void): Promise<string> {
+    // The New Space's Network choice (`config.network`), by create id.
+    // Kept until the whole create is over: the model runs a failed one once more.
+    const network = createNetworks.get(createId);
+    const extras = createExtras.get(createId) ?? {};
     const result = await this.cua.spaces().createWithProgress(
       {
+        ...(network ? { networkSettings: networkSettingsOf(network, [], []) } : {}),
         image: args.image,
         on: args.on,
         kind: args.kind,
-        runtime: args.runtime,
+        runtime: runtimeWord(args.runtime),
         name: args.name,
         cpus: args.cpus,
         memoryMb: args.memoryMb === undefined ? undefined : BigInt(args.memoryMb),
@@ -297,6 +622,10 @@ export class LiveSpacesBackend implements SpacesBackend {
         spacesd: args.spacesd,
         gpu: args.gpu,
         createId,
+        durable: false,
+        volumes: [],
+        labels: new Map(Object.entries(extras.labels ?? {})),
+        ...(extras.children ? { children: true } : {}),
       },
       { onProgress: progress },
     );
@@ -326,6 +655,158 @@ export class LiveSpacesBackend implements SpacesBackend {
     else await this.cua.spaces().delete_(id);
   }
 
+  async deleteMany(ids: string[]): Promise<BulkResult[]> {
+    return (await this.cua.spaces().deleteMany(ids)).map(bulkResult);
+  }
+
+  async leave(ids: string[]): Promise<BulkResult[]> {
+    return (await this.cua.spaces().leaveMany(ids)).map(bulkResult);
+  }
+
+  async rename(id: string, name: string): Promise<void> {
+    await this.cua.spaces().rename(id, name);
+  }
+
+  async network(id: string): Promise<SpaceNetworkJson> {
+    const spaces = this.cua.spaces();
+    const n = await spaces.network(id);
+    const row = (await spaces.list()).find((s) => s.id === id);
+    return {
+      preset: n.settings.preset || "internet",
+      localhostPorts: [...n.settings.localhostPorts],
+      allLocalhostPorts: n.settings.allLocalhostPorts,
+      allow: [...n.settings.allow],
+      deny: [...n.settings.deny],
+      customBase: n.settings.customBase,
+      widenedBy: n.settings.widenedBy ?? null,
+      summary: n.summary,
+      widenings: [...n.widenings],
+      enforcement: n.enforcement,
+      point: n.point,
+      note: n.note ?? null,
+      parent: n.parent ?? null,
+      root: n.root ?? null,
+      alwaysBlocked: [...n.alwaysBlocked],
+      noticePending: n.noticePending,
+      via: n.settings.via ?? null,
+      topologyJson: n.topologyJson ?? "",
+      clipboard: row?.clipboard || "viewing",
+      volume: row?.volume || "own",
+    };
+  }
+
+  async setNetwork(id: string, word: string, allow: string[], deny: string[], widen: boolean, tree: boolean, via?: string): Promise<"now" | "next_start"> {
+    const r = await this.cua.spaces().setNetwork(id, networkSettingsOf(word, allow, deny, via), widen, tree);
+    return r.applied === "now" ? "now" : "next_start";
+  }
+
+  async exitsThroughThisMachine(): Promise<string[]> {
+    const spaces = this.cua.spaces();
+    const local = (await spaces.list()).filter((s) => s.id.startsWith("local:"));
+    const out: string[] = [];
+    for (const s of local) {
+      const n = await spaces.network(s.id).catch(() => null);
+      if (n?.settings.via === "this-machine") out.push(s.id);
+    }
+    return out;
+  }
+
+  async networkLog(id: string): Promise<NetworkEventJson[]> {
+    return (await this.cua.spaces().networkLog(id)).map((e) => ({
+      reason: e.reason,
+      dst: e.dst,
+      proto: e.proto ?? null,
+      count: Number(e.count),
+      lastUnix: e.lastUnix === undefined || e.lastUnix === null ? null : Number(e.lastUnix),
+    }));
+  }
+
+  async ackNetworkNotice(id: string): Promise<void> {
+    await this.cua.spaces().ackNetworkNotice(id);
+  }
+
+  async setAccess(id: string, clipboard: string | null, volume: string | null): Promise<void> {
+    if (clipboard) await this.cua.spaces().setClipboard(id, clipboard);
+    if (volume) await this.cua.spaces().setVolume(id, volume);
+  }
+
+  async spaceTree(): Promise<TreeNodeJson[]> {
+    return (await this.cua.spaces().list()).map((s) => ({
+      id: s.id,
+      parent: s.parent ?? null,
+      depth: Number(s.depth),
+      children: Boolean(s.children),
+      home: s.labels.get("cua.home") === "1" ? (s.labels.get("cua.home.agent") ?? "") : null,
+    }));
+  }
+
+  async setChildren(id: string, enabled: boolean): Promise<void> {
+    await this.cua.spaces().setChildren(id, enabled);
+  }
+
+  async treeBudget(id: string): Promise<TreeBudgetJson> {
+    return budgetJson(await this.cua.spaces().treeBudget(id));
+  }
+
+  async setTreeBudget(id: string, l: TreeBudgetLimitsJson): Promise<TreeBudgetJson> {
+    const big = (v: number | null | undefined) => (v === null || v === undefined ? undefined : BigInt(Math.round(v)));
+    const n = (v: number | null | undefined) => (v === null || v === undefined ? undefined : v);
+    return budgetJson(
+      await this.cua.spaces().setTreeBudget(id, {
+        maxSpaces: n(l.maxSpaces),
+        maxVcpus: n(l.maxVcpus),
+        maxMemoryMb: big(l.maxMemoryMb),
+        usdPerHour: n(l.usdPerHour),
+        usdTotal: n(l.usdTotal),
+      }),
+    );
+  }
+
+  async services(id: string): Promise<ServiceJson[]> {
+    const space = await this.cua.spaces().space(id);
+    return (await space.keptServices()).map((s) => ({
+      name: s.name,
+      command: s.command,
+      state: s.state,
+      restarts: Number(s.restarts),
+      lastEnd: s.lastEnd,
+      probeError: s.probeError,
+    }));
+  }
+
+  async controlService(id: string, name: string, action: string): Promise<void> {
+    const space = await this.cua.spaces().space(id);
+    switch (action) {
+      case "start":
+        await space.startService(name);
+        return;
+      case "stop":
+        await space.stopService(name);
+        return;
+      case "restart":
+        await space.restartService(name);
+        return;
+      case "remove":
+        await space.deleteService(name);
+        return;
+      default:
+        throw new Error(`no service action ${action}`);
+    }
+  }
+
+  async relayUnregister(machineId: string, deleteSpaces = false): Promise<void> {
+    if (deleteSpaces) await this.cua.spaces().relayUnregisterComputer(`relay:${machineId}`, true);
+    else await this.cua.spaces().relayUnregister(`relay:${machineId}`);
+  }
+
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    const h = await this.cua.spaces().machineHealth(machine ?? undefined);
+    return {
+      cuaVersion: h.cuaVersion,
+      checks: h.checks.map((c) => ({ id: c.id, status: c.status, message: c.message, remediation: c.remediation, facts: new Map(c.facts) })),
+    };
+  }
+
   async setPower(id: string, on: boolean): Promise<void> {
     if (on) await this.cua.spaces().start(id);
     else await this.cua.spaces().stop(id);
@@ -335,9 +816,10 @@ export class LiveSpacesBackend implements SpacesBackend {
     const report = await bounded(PROBE_SECONDS, () => this.cua.local().doctor());
     if (!report) return null;
     const ok = this.native.RuntimeCheckStatus.Ok;
-    // Lume and the built-in Linux runtime count as ready when cua sets them
-    // up by itself on the first create that needs them.
-    const setsUpItself = new Set(["lume", "managed"]);
+    // Lume, the built-in Linux runtime and Apple's container (microVMs)
+    // count as ready when cua sets them up by itself on the first create
+    // that needs them.
+    const setsUpItself = new Set(["lume", "managed", "containerization", "firecracker"]);
     const ready = report.checks
       .filter((c) => c.status === ok || (c.status === this.native.RuntimeCheckStatus.Installable && setsUpItself.has(c.name.toLowerCase())))
       .map((c) => c.name.toLowerCase());
@@ -363,20 +845,56 @@ export class LiveSpacesBackend implements SpacesBackend {
     this.native.configSet("runtime.lume", value);
   }
 
+  /** The built-in Linux runtime (a VM with Docker and gVisor) runs on a Mac only: elsewhere there is no setting, so Settings has no Linux row. */
   async linuxSource(): Promise<string | null> {
-    return this.config("runtime.linux");
+    return this.platform === "darwin" ? this.config("runtime.linux") : null;
   }
 
   async setLinuxSource(value: string): Promise<void> {
     this.native.configSet("runtime.linux", value);
   }
 
+  async runtimeKinds(): Promise<AppRuntimeKindInput[] | null> {
+    const kinds = await bounded(PROBE_SECONDS, () => this.cua.local().runtimeKinds());
+    return kinds?.map((k) => ({ kind: k.kind, source: k.source, path: k.path, detected: k.detected, check: k.check, expected: k.expected })) ?? null;
+  }
+
+  async runtimeCheckPath(kind: string, path: string): Promise<AppRuntimePathCheck> {
+    return this.cua.local().runtimeCheckPath(kind, path);
+  }
+
+  async setRuntimeSetting(key: string, value: string | null): Promise<void> {
+    if (value === null) this.native.configUnset(key);
+    else this.native.configSet(key, value);
+  }
+
+  async repoCacheStatus(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  async setRepoCache(change: { enabled?: boolean; sizeGb?: number | null }): Promise<RepoCacheStatus | null> {
+    if (change.enabled !== undefined) this.native.configSet("cache.repos", change.enabled ? "on" : "off");
+    if (change.sizeGb !== undefined) this.native.configSet("cache.repos_size_gb", change.sizeGb === null ? "auto" : String(change.sizeGb));
+    return this.repoCacheStatus();
+  }
+
+  async clearRepoCache(): Promise<RepoCacheStatus | null> {
+    try {
+      return this.native.repoCacheClear();
+    } catch {
+      return null;
+    }
+  }
+
   async localStorage(): Promise<LocalStorage | null> {
     return bounded(PROBE_SECONDS, () => this.cua.local().storage());
   }
 
-  async cloudAvailable(): Promise<boolean> {
-    if (this.env.FLEETS_TOKEN !== undefined || this.env.CUA_CLIENT_ID !== undefined) return true;
+  async loggedIn(): Promise<boolean> {
     return (await bounded(PROBE_SECONDS, () => this.cua.auth().status().loggedIn)) ?? false;
   }
 
@@ -391,15 +909,25 @@ export class LiveSpacesBackend implements SpacesBackend {
     return runningMacosVms(answer);
   }
 
-  async cloudPricing(): Promise<AppCloudPricing | null> {
-    if (!(await this.cloudAvailable())) return null;
-    const p = await bounded(PROBE_SECONDS, () => this.cua.fleet().usagePricing());
-    return p ? { vcpuHourUsd: p.vcpuHourUsd, memoryGibHourUsd: p.memoryGibHourUsd } : null;
-  }
-
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
-    return u ? { memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+    return u
+      ? {
+          cpuCount: u.cpuCount,
+          cpuPercent: u.cpuPercent,
+          loadAverage1m: u.loadAverage1m,
+          memoryUsed: u.memoryUsed,
+          memoryTotal: u.memoryTotal,
+          memoryLimited: u.memoryLimited,
+          diskUsed: u.diskUsed,
+          diskTotal: u.diskTotal,
+          diskLimited: u.diskLimited,
+        }
+      : null;
+  }
+
+  async resources(visible: boolean): Promise<ResourcesSnapshot | null> {
+    return bounded(PROBE_SECONDS, () => this.cua.spaces().resources(visible));
   }
 
   async agentRuns(id: string): Promise<AppSpaceAgentRun[]> {
@@ -418,7 +946,9 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async thumbnail(id: string, maxAgeMs: number | null): Promise<SpaceThumbnailData | null> {
-    const t = await bounded(5, async () => (await this.cua.spaces().space(id)).thumbnail(maxAgeMs === null ? undefined : BigInt(Math.max(0, Math.round(maxAgeMs)))));
+    const t = await bounded(5, async () =>
+      (await this.cua.spaces().space(id)).thumbnail(maxAgeMs === null ? undefined : BigInt(Math.max(0, Math.round(maxAgeMs)))),
+    );
     if (!t || t.image.byteLength === 0) return null;
     return {
       image: new Uint8Array(t.image),
@@ -451,6 +981,77 @@ export class LiveSpacesBackend implements SpacesBackend {
     return shareRows(await (await this.cua.spaces().space(id)).unshare(who));
   }
 
+  async links(): Promise<ShareLinkRow[]> {
+    return (await this.cua.shares()).map(linkRow);
+  }
+
+  async createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null): Promise<ShareLinkRow> {
+    const a = access === "team" || access === "public" ? (access as ShareAccess) : undefined;
+    return linkRow(await this.cua.share(target, a, ttlSeconds ?? undefined, name ?? undefined));
+  }
+
+  async createTcpLink(
+    target: string,
+    service: string | null,
+    ttlSeconds: number | null,
+    name: string | null,
+    options: TcpShareOptions = {},
+  ): Promise<ShareLinkRow> {
+    const allow = options.allow && options.allow.length > 0 ? options.allow : undefined;
+    return linkRow(
+      await this.cua.shareTcp(
+        target,
+        service ?? undefined,
+        ttlSeconds ?? undefined,
+        name ?? undefined,
+        options.route ?? undefined,
+        allow,
+        options.checkHost === true,
+        options.consent === true,
+      ),
+    );
+  }
+
+  async approveLink(id: string, always: boolean): Promise<ShareLinkRow> {
+    return linkRow(await this.cua.approveShare(id, always));
+  }
+
+  async denyLink(id: string): Promise<void> {
+    await this.cua.denyShare(id);
+  }
+
+  async shareSettings(): Promise<ShareSettingsRow> {
+    return shareSettingsRow(await this.cua.shareSettings());
+  }
+
+  async setShareSettings(s: ShareSettingsRow): Promise<ShareSettingsRow> {
+    // The binding's enum values (a runtime import: the native library is already loaded here).
+    const { ShareLanding: Landing } = await import("../native/generated/index");
+    const landing = s.landing === "only_my_cloud" ? Landing.OnlyMyCloud : s.landing === "allow_relay" ? Landing.AllowRelay : Landing.Auto;
+    const saved = await this.cua.setShareSettings({
+      landing,
+      relayFallback: s.relayFallback,
+      dailyCapMib: BigInt(Math.max(0, Math.floor(s.dailyCapMib))),
+      defaultAllow: s.defaultAllow,
+      approveAgentShares: s.approveAgentShares,
+      alwaysAllowSpaces: s.alwaysAllowSpaces,
+      edgeConsent: s.edgeConsent,
+      usedToday: 0n,
+      edgeCloud: undefined,
+      edgeHost: undefined,
+      edgeMonthlyUsd: undefined,
+    });
+    return shareSettingsRow(saved);
+  }
+
+  async removeShareEdge(): Promise<string[]> {
+    return this.cua.removeShareEdge();
+  }
+
+  async stopLink(id: string): Promise<string[]> {
+    return id === "all" ? this.cua.stopAllShares() : this.cua.stopShare(id);
+  }
+
   async tool(tool: string, args: Record<string, unknown>): Promise<unknown> {
     const r = await this.cua.spaces().callToolJson(tool, JSON.stringify(args));
     if (r.isError) throw new ToolError(r.text.startsWith("error: ") ? r.text.slice(7) : r.text);
@@ -470,6 +1071,10 @@ export class LiveSpacesBackend implements SpacesBackend {
     return this.teleport;
   }
 
+  async joinPresence(id: string, identity: PresenceIdentity, timeoutMs: number): Promise<SpacePresenceLike> {
+    return (await this.cua.spaces().space(id)).joinPresence(identity, BigInt(timeoutMs));
+  }
+
   async appIcons(id: string, requests: SpaceAppIconRequest[]): Promise<(Uint8Array | null)[]> {
     try {
       const icons = await (await this.cua.spaces().space(id)).appIcons(requests);
@@ -478,4 +1083,180 @@ export class LiveSpacesBackend implements SpacesBackend {
       return requests.map(() => null);
     }
   }
+}
+
+/** A Space's network as the web page's `network.get` answers it. */
+export interface SpaceNetworkJson {
+  preset: string;
+  localhostPorts: number[];
+  allLocalhostPorts: boolean;
+  allow: string[];
+  deny: string[];
+  customBase: string;
+  widenedBy: string | null;
+  summary: string;
+  widenings: string[];
+  enforcement: string;
+  point: string;
+  note: string | null;
+  parent: string | null;
+  root: string | null;
+  alwaysBlocked: string[];
+  noticePending: boolean;
+  /** Where its internet traffic leaves; null: its own network. */
+  via: string | null;
+  /** Its topology (name, exit, host ports, paths) as JSON text. */
+  topologyJson: string;
+  clipboard: string;
+  volume: string;
+}
+
+/** A Space's place in its tree, as `spaces.tree` answers it. */
+export interface TreeNodeJson {
+  id: string;
+  parent: string | null;
+  depth: number;
+  children: boolean;
+  /** The agent it is the home of (its `cua.home` labels), or null. */
+  home: string | null;
+}
+
+/** A tree's limits, as `budget.set` takes them. */
+export interface TreeBudgetLimitsJson {
+  maxSpaces?: number | null;
+  maxVcpus?: number | null;
+  maxMemoryMb?: number | null;
+  usdPerHour?: number | null;
+  usdTotal?: number | null;
+}
+
+/** A tree's budget and use, as `budget.get` answers it. */
+export interface TreeBudgetJson {
+  root: string;
+  set: TreeBudgetLimitsJson;
+  maxSpaces: number;
+  maxVcpus: number;
+  maxMemoryMb: number;
+  usdPerHour: number;
+  usdTotal: number | null;
+  spaces: number;
+  vcpus: number;
+  memoryMb: number;
+  usdPerHourUsed: number;
+  usdSpent: number;
+}
+
+/** A kept command, as `services.list` answers it. */
+export interface ServiceJson {
+  name: string;
+  command: string;
+  state: string;
+  restarts: number;
+  lastEnd: string;
+  probeError: string;
+}
+
+type SdkLimits = { maxSpaces?: number; maxVcpus?: number; maxMemoryMb?: bigint | number; usdPerHour?: number; usdTotal?: number };
+type SdkBudget = {
+  root: string;
+  set: SdkLimits;
+  maxSpaces: number;
+  maxVcpus: number;
+  maxMemoryMb: bigint | number;
+  usdPerHour: number;
+  usdTotal?: number;
+  spaces: number;
+  vcpus: number;
+  memoryMb: bigint | number;
+  usdPerHourUsed: number;
+  usdSpent: number;
+};
+
+/** The SDK's `TreeBudget` as JSON (u64s as numbers). */
+function budgetJson(b: SdkBudget): TreeBudgetJson {
+  const opt = (v: bigint | number | undefined) => (v === undefined || v === null ? null : Number(v));
+  return {
+    root: b.root,
+    set: {
+      maxSpaces: opt(b.set.maxSpaces),
+      maxVcpus: opt(b.set.maxVcpus),
+      maxMemoryMb: opt(b.set.maxMemoryMb),
+      usdPerHour: opt(b.set.usdPerHour),
+      usdTotal: opt(b.set.usdTotal),
+    },
+    maxSpaces: Number(b.maxSpaces),
+    maxVcpus: Number(b.maxVcpus),
+    maxMemoryMb: Number(b.maxMemoryMb),
+    usdPerHour: b.usdPerHour,
+    usdTotal: opt(b.usdTotal),
+    spaces: Number(b.spaces),
+    vcpus: Number(b.vcpus),
+    memoryMb: Number(b.memoryMb),
+    usdPerHourUsed: b.usdPerHourUsed,
+    usdSpent: b.usdSpent,
+  };
+}
+
+/** One kind of blocked connection, as `network.log` answers it. */
+export interface NetworkEventJson {
+  reason: string;
+  dst: string;
+  proto: string | null;
+  count: number;
+  lastUnix: number | null;
+}
+
+/** The New Space's Network choice by create id, until its create runs. */
+export const createNetworks = new Map<string, string>();
+
+/** What an agent home is created with besides the plan's fields (CUA-2630): the spawn capability and its `cua.home.*` labels. */
+export interface CreateExtras {
+  children?: boolean;
+  labels?: Record<string, string>;
+}
+
+/** The extras of a create, by create id, until its create runs. */
+export const createExtras = new Map<string, CreateExtras>();
+
+/** The extras in a `spaces.create` config; anything of the wrong type is ignored, a label that is not text is dropped. */
+export function createExtrasOf(config: Record<string, unknown>): CreateExtras {
+  const out: CreateExtras = {};
+  if (config.children === true) out.children = true;
+  const l = config.labels;
+  if (l && typeof l === "object" && !Array.isArray(l)) {
+    const labels = Object.fromEntries(Object.entries(l as Record<string, unknown>).filter(([k, v]) => k !== "" && typeof v === "string" && v !== "")) as Record<
+      string,
+      string
+    >;
+    if (Object.keys(labels).length) out.labels = labels;
+  }
+  return out;
+}
+
+/** The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
+ * `localhost:5432,3000`, `localhost:all`, `lan`, `localhost+lan:5432,3000`, `custom`,
+ * `custom:none`, `unprotected`) and lists. `via`: where its internet traffic leaves
+ * (`internet`, `this-machine`, `space:<id>`, `socks5://...`); left out:
+ * the exit it has. */
+export function networkSettingsOf(word: string, allow: string[], deny: string[], via?: string) {
+  const [preset, rest = ""] = word.trim().toLowerCase().split(":", 2) as [string, string?];
+  const opensLocalhost = preset === "localhost" || preset === "localhost+lan";
+  const all = opensLocalhost && rest === "all";
+  const ports =
+    opensLocalhost && !all
+      ? rest
+          .split(",")
+          .map((p) => Number(p.trim()))
+          .filter((p) => Number.isInteger(p) && p > 0 && p < 65536)
+      : [];
+  return {
+    preset,
+    localhostPorts: ports,
+    allLocalhostPorts: all,
+    allow,
+    deny,
+    customBase: preset === "custom" && rest === "none" ? "none" : "",
+    widenedBy: undefined,
+    via,
+  };
 }

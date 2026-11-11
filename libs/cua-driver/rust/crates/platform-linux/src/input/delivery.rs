@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared delivery-mode logic for cua-driver Linux input tools.
 //!
 //! Mirrors macOS `tools::DeliveryMode` and Windows `input::delivery`: each
@@ -65,8 +68,8 @@ pub enum BackgroundUnavailable {
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
-    /// addressed to an occluded, unfocused renderer without briefly moving
-    /// focus, which background delivery forbids.
+    /// addressed to an unfocused window without briefly moving focus, which
+    /// background delivery forbids.
     ChromiumInput,
     /// The remaining backend can only inject into the globally focused widget.
     FocusedInputOnly,
@@ -92,12 +95,13 @@ impl BackgroundUnavailable {
                  unavailable/denied): synthetic input has no actuator"
             }
             Self::ChromiumInput => {
-                "Chromium/Electron does not accept pointer or keyboard input \
-                 addressed to an occluded, unfocused renderer through X11 \
-                 background injection"
+                "Chromium/Electron drops synthetic pointer and keyboard events sent to \
+                 a window that does not have the input focus. In the background only \
+                 accessibility actions reach it: a left click on a button, link or \
+                 other control, by element_token or at its pixel"
             }
             Self::FocusedInputOnly => {
-                "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
+                "the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget"
             }
             Self::WebKitSyntheticInput => {
                 "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
@@ -129,6 +133,35 @@ pub fn background_unavailable_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focused_input_refusal_does_not_claim_an_x11_backend() {
+        let result = background_unavailable_error(BackgroundUnavailable::FocusedInputOnly);
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+        assert_eq!(
+            structured["suggestion"],
+            cua_driver_core::delivery::FOREGROUND_RETRY_SUGGESTION
+        );
+        let detail = structured["detail"].as_str().unwrap();
+        assert!(detail.contains("globally focused widget"));
+        assert!(!detail.contains("XTest"));
+        assert!(!detail.contains("X11"));
+        let text = result
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                cua_driver_core::protocol::Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!text.contains("XTest"));
+        assert!(!text.contains("X11"));
+        assert!(text.contains("delivery_mode:\"foreground\""));
+    }
 
     #[test]
     fn delivery_mode_schema_advertises_two_modes() {

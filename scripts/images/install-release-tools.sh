@@ -50,7 +50,7 @@ for tool in crane oras; do
 done
 if [ "$PUSH_ONLY" = 0 ]; then
     # KVM for the VM lanes when the runner exposes it; gVisor as a docker runtime.
-    if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+    "$HERE/enable-kvm.sh"
     "$HERE/install-gvisor.sh"
 fi
 if [ "$FREE" = 1 ]; then

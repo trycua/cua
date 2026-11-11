@@ -1770,7 +1770,7 @@
    "read_only": true
   },
   {
-   "description": "Move the synthetic agent cursor without changing the user's pointer. Only an explicit scope=desktop request moves the real OS pointer in get_desktop_state coordinates.",
+   "description": "Move the synthetic agent cursor without changing the user's pointer. With target {kind: \"window\", pid, window_id}, x/y are window screenshot pixels (as for click); on Hyprland the background app is also hovered through Cua's own input seat, so hover styles, hover-only controls and tooltips appear while the user's pointer stays put, and the result says whether the app saw the hover (hover_delivered). Without a target, x/y are screen coordinates for the overlay only. Only an explicit scope=desktop request moves the real OS pointer in get_desktop_state coordinates.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1826,7 +1826,7 @@
       "type": "object"
      },
      "x": {
-      "description": "Destination X. Window scope: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels.",
+      "description": "Destination X. Window target: window screenshot pixels. No target: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels.",
       "type": "number"
      },
      "y": {

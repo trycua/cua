@@ -8,12 +8,7 @@ import { ambientDots, countActive, sortByMru, touchSpace } from "./mru";
 
 describe("sortByMru", () => {
   it("orders fixtures This Mac, Windows QA, Linux Build, Research", () => {
-    expect(sortByMru(FIXTURE_SPACES).map((s) => s.name)).toEqual([
-      "This Mac",
-      "Windows QA",
-      "Linux Build",
-      "Research",
-    ]);
+    expect(sortByMru(FIXTURE_SPACES).map((s) => s.name)).toEqual(["This Mac", "Windows QA", "Linux Build", "Research"]);
   });
 
   it("does not mutate the input", () => {

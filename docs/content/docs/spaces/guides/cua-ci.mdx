@@ -1,0 +1,586 @@
+---
+title: Cua CI
+description: 'Run GitHub Actions jobs on your own Macs and Linux computers, each job in a fresh Space that is deleted afterwards: one command to connect, the runs-on line, status and logs, repositories, fork pull requests and budgets, a pull request that updates your workflows, your own GitHub App, and security on public repositories.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+  Cua CI is an experiment and is off until you turn it on:
+  `cua experiments enable ci-runners`, or in the app under Settings, Advanced,
+  Labs. Until then the `cua ci` commands and the CI Runners page are hidden.
+</Callout>
+
+Cua CI runs your GitHub Actions jobs on your own computers. Every job runs in
+a Space of its own: a macOS VM cloned copy-on-write from an image, or a Linux
+container or VM. The runner in it takes exactly one job, and then the Space
+is deleted. The next job gets a new Space; nothing from one job is left for
+another.
+
+## Connect
+
+One command signs you in, installs the Cua CI GitHub app on your
+organization, and makes this computer serve jobs:
+
+```bash test="cli-shape" id="ci-connect"
+cua ci connect
+```
+
+It does this:
+
+1. signs in to your Cua account in the browser, unless you already are;
+2. opens GitHub to install the Cua CI app. You pick the organization and the
+   repositories on GitHub's own page, and nothing else needs creating: no
+   GitHub App of your own, no key file, no list of labels;
+3. shows the repositories the app can see and asks which of them Cua CI may
+   serve. Until you choose, it serves none;
+4. registers this computer as capacity (two macOS jobs at once on an Apple
+   silicon Mac, Linux jobs by core count) and starts a service that serves
+   jobs: a launch agent in your login session on macOS, a systemd user
+   service on Linux;
+5. prints the line to put in your workflows.
+
+That is the whole setup: this computer serves jobs as soon as it is connected,
+with no cloud account needed.
+
+On a computer without a browser, such as a Mac you reach over SSH, add
+`--no-browser`: the sign-in and GitHub links are printed and you open them on
+any computer. Choose repositories without being asked with `--allow`:
+
+```bash test="cli-shape" id="ci-connect-allow"
+cua ci connect --allow acme/app --allow acme/api
+```
+
+Cua CI installs on a GitHub organization. For a personal account, or for a
+setup that must not use a Cua service, bring your own GitHub App (below).
+
+### How a job runs
+
+When GitHub queues a job for `runs-on: cua`, the Cua service hands it to one
+of your computers. The computer starts a fresh Space, and only then asks the
+service for the runner's configuration for that one job. That configuration
+registers one runner for one job and goes into the Space as a file. The
+GitHub App's key stays with the service and never reaches a computer or a
+Space; no long-lived key sits on your hardware. When the job ends, the Space
+is deleted.
+
+## Use it in a workflow
+
+```yaml test="config" id="ci-workflow"
+jobs:
+  build:
+    runs-on: cua
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+```
+
+`cua` runs the job on whichever of your computers has a free macOS slot, and
+on a Linux slot when none does. Name the class when it matters: `cua-macos`
+or `cua-linux`. Add `cua-arm64` or `cua-x64` for an architecture and
+`cua-large` for twice the cores and memory.
+
+Let Cua change your workflows for you:
+
+```bash test="cli-shape" id="ci-connect-open-pr"
+cua ci connect --allow acme/app --open-pr
+```
+
+`--open-pr` uses your own GitHub sign-in (`gh auth login`, or the `GH_TOKEN`
+environment variable), never Cua's. For each repository it opens a pull
+request from a new branch that changes only the `runs-on` lines that named a
+GitHub-hosted runner (`ubuntu-latest` becomes `cua-linux`, `macos-latest`
+becomes `cua-macos`). Lines it cannot judge, such as expressions and
+matrices, are listed and left alone, and a workflow that runs on
+`pull_request_target`, `issue_comment` or `workflow_run` is never touched.
+Nothing is pushed to your default branch. `--workflows` limits the change to
+named files.
+
+On a public repository, read [Security on public
+repositories](#security-on-public-repositories) first.
+
+## Status and logs
+
+```bash test="cli-shape" id="ci-status"
+cua ci status
+cua ci logs
+cua ci logs --repo acme/app
+cua ci logs 9912345678/27300000111
+```
+
+`status` shows your computers and their free slots, the jobs waiting and
+running, and the last 7 days (jobs, minutes, how many passed, failed and were
+stopped by Cua CI itself, the median start time and the slowest 1 in 20). `logs` lists recent jobs; give
+it a job's `run/job` key to see that job's timeline and Cua CI's own log for
+it (the Space starting, the runner, the teardown). A job's step output stays
+at GitHub. `--follow` keeps showing new lines until the job ends, and
+`--json` on any of them prints data for scripts.
+
+## The CI Runners page
+
+The Cua Spaces app has a CI Runners row in its sidebar, which does everything
+above without a terminal.
+
+- **Set up.** A short checklist until all four steps are done: connect
+  GitHub, give access to repositories, use the runner label in a workflow, and
+  see a job pass. **Connect GitHub** opens GitHub in your browser, where you
+  pick the organization and the repositories. The page carries on by itself
+  when you finish there, and the steps tick off. When you cannot install the
+  Cua CI app on GitHub, **Use a token instead** takes an organization and a
+  GitHub token (needs the `repo` and `admin:org` scopes). It makes a pool of
+  your own GitHub credential, the same as `cua ci connect --own-app
+  --token-stdin`. The token is kept on this computer only (the keychain on macOS),
+  never sent to Cua. Leave the field empty and the page uses the GitHub token you
+  saved in Settings, Connections.
+- **Overview.** Starts in the last 24 hours, jobs in 7 days, how many passed,
+  and what the 7 days cost.
+- **Jobs.** Tabs for All, Running and Failed. Each row has the job and its
+  repository, how long it waited for a computer, how long it ran, what it cost
+  and when. Open a row for the timeline, the cost, the computer it
+  ran on, **Open on GitHub**, and the job's own log (the Space starting, the
+  runner and the end of the job; the output of each step stays at GitHub).
+  Jobs that ran on your own computer are free.
+- **Repositories.** Which repositories can run jobs, with a search and a switch
+  for each. **Choose on GitHub** opens the installation's page.
+
+The page reads the same data as `cua ci overview`, and `--live` adds the
+repositories the service lists:
+
+```bash test="cli-shape" id="ci-overview-live"
+cua ci overview
+cua ci overview --live
+```
+
+## Repositories and fork pull requests
+
+`cua ci config` shows the settings, and changes them when you give options:
+
+```bash test="cli-shape" id="ci-config"
+cua ci config
+cua ci config --allow acme/api
+cua ci config --max-jobs 4 --max-macos-jobs 2 --max-job-minutes 90
+cua ci config --repo acme/app --fork-prs deny
+```
+
+- **Repositories.** Cua CI serves only the repositories on its list, which is
+  empty until you choose. `--allow` adds one, `--remove` takes one off. The
+  app must be able to see a repository: add it to the installation at GitHub
+  first. `--allow-org-wide` accepts `owner/*`.
+- **Fork pull requests.** The default, `restricted`, serves a fork's pull
+  request without secrets, with read-only caches and with no access to your
+  private network. GitHub's own approval for outside contributors still
+  applies before the job is queued. `--fork-prs deny` never serves them (the
+  job stays queued, so give such workflows a hosted fallback);
+  `--fork-prs allow` treats them like your own code for caches and network,
+  and needs `--yes`. GitHub sends a fork's pull request no secrets in any
+  case. `--repo` makes the choice for one repository.
+- **Limits.** `--max-jobs`, `--max-macos-jobs` and `--max-job-minutes` cap
+  concurrency and a job's length, and `--queue-timeout` sets how long a job
+  waits for capacity before it is marked as not served. `none` removes a
+  cap.
+- **Network.** `--egress off` gives job Spaces access to your private
+  network and needs `--yes`.
+
+## Add capacity
+
+This computer serves jobs as soon as it is connected. To serve more at once, add
+another computer you rent or own:
+
+```bash test="cli-shape" id="ci-add-host"
+cua ci add host root@build.example.com
+```
+
+Cua connects over SSH, installs `cua` if it is missing, and the computer joins
+as one more computer of your account. You may be asked for its password and to
+sign in to Cua there. Jobs on it run in Spaces too, and `cua ci remove host
+root@build.example.com` takes it out again. Cloud accounts are not part of
+this build yet.
+
+## Speed
+
+Cua CI keeps what makes a job start and finish sooner on by default: warm
+Spaces that wait ready (a job claims one in about a second), a saved
+starting point (a golden image of your tools, started from saved memory where
+the computer can), read-only dependency caches for pnpm, Cargo, SwiftPM and
+sccache that only jobs on the default branch can write, and a read-only
+mirror of each repository so `actions/checkout` fetches only what is new. A
+fork pull request reads the default-branch cache of a public repository and
+never writes one, and never gets anything of a private repository.
+
+Docker pulls in a Linux job go through a pull-through mirror of Docker Hub
+(Google's public cache, `https://mirror.gcr.io`, unless you set another).
+Docker Hub limits anonymous pulls by address, and the addresses of cloud
+computers are shared: in a measured run of a job that pulls five images, 7 of
+20 failed with `429 Too Many Requests`. The Docker daemon asks the mirror
+first and falls back to the hub, and Docker checks every image's digest, so
+the mirror cannot change what a digest-pinned image contains. To use your
+own cache, or to turn mirrors off, set the list in `perf.toml`:
+
+```toml test="config" id="ci-registry-mirrors"
+[registry]
+mirrors = ["https://registry-cache.example.com:5000"]   # [] turns it off
+```
+
+Credentials are never put in a VM, so a mirror address with a user name or
+password in it is refused. To lift Docker Hub's limit with an account, run a
+pull-through cache that holds the account (the `registry` image with
+`proxy.remoteurl` and credentials) on a computer you control and list it
+here, allowing its address in `egress_allow` if it is on a private network,
+or log in inside the workflow with `docker/login-action` and a GitHub
+secret. Image names are not rewritten, so pulls from other registries such
+as `ghcr.io` are unaffected, and the mirror setting does not apply to macOS
+jobs, which have no Docker.
+
+Each pool's settings are in `perf.toml` in its folder under `~/.cua/ci/`
+(`enabled = false`, or `CUA_CI_PERF=off` in the service's environment, turns the whole thing off and every job starts from the
+image, as it did before). `cua ci cache clear` empties the caches and
+mirrors for a cold run:
+
+```bash test="cli-shape" id="ci-cache-clear"
+cua ci cache clear
+cua ci cache clear --pool hosted-macos-3f9a12c0
+```
+
+## Disconnect
+
+```bash test="cli-shape" id="ci-disconnect"
+cua ci disconnect
+cua ci disconnect --repo acme/old
+cua ci disconnect --all-machines --unlink
+```
+
+`disconnect` stops this computer's service, deletes the Spaces of running jobs
+and removes the computer from Cua CI. The app stays installed on GitHub, so
+`cua ci connect` serves again at once. `--repo` only takes a repository off
+the list. `--unlink` also removes Cua's runner group and runners from your
+organization, and `--uninstall` uninstalls the app from GitHub.
+
+## Two macOS VMs per Mac
+
+Apple's macOS license allows two macOS VMs on a Mac, and Apple's
+virtualization framework refuses a third. One Mac therefore runs at most two
+macOS jobs at a time, and fewer when other macOS Spaces already run there.
+When the Mac is full, the job waits for a VM to end rather than counting a
+failure. GitHub keeps a job queued until a runner
+takes it (for up to 24 hours).
+
+Because two jobs share the Mac, each macOS job gets half of its cores and up
+to 8 GiB of memory. The memory is capped because a job VM starts from a saved
+copy of a prepared VM and restoring it takes time in proportion to its memory
+(on a Mac mini, a first job step after 19 seconds with 8 GiB and 42 seconds
+with 60 GB; the number of cores made no difference); change it with
+`--memory-mb` for jobs that need more. To run more macOS jobs at once,
+connect more Macs: each runs up to two. Linux jobs have no such limit; the
+number of cores sets how many run at once (`--linux-slots` changes it).
+
+## Security on public repositories
+
+On a public repository, anyone can open a pull request from a fork, and a
+pull request can change the workflow files it runs with. A self-hosted
+runner that takes such a job runs a stranger's code on your computer. A fresh
+Space per job keeps one job away from the next, but it does not make the
+code trustworthy, and the Space still sits on your network. Use all of these:
+
+- **Require approval for outside contributors.** In the repository, open
+  **Settings**, **Actions**, **General**, and under **Approval for running
+  fork pull request workflows from contributors** choose **Require approval
+  for all external contributors**.
+- **Prefer the default fork policy.** Cua CI serves a fork's pull request without secrets, with read-only caches and off your private network; `cua ci config --fork-prs deny` stops serving them.
+- **Use the self-hosted labels only for trusted events.** Gate `runs-on` so
+  a fork's pull request falls back to a GitHub-hosted runner. A pull request
+  could edit the gate away, which is why the approval above matters too:
+
+  ```yaml test="config" id="ci-same-repo-gate"
+  jobs:
+    build:
+      runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'cua' || 'macos-latest' }}
+  ```
+
+  Never use these labels in workflows that run on `pull_request_target`,
+  `issue_comment` or `workflow_run`: those run with the repository's
+  privileges for events anyone can cause.
+- **Restrict the runner group** to the repositories that need the runners
+  (selected repositories; with your own App, as in [Create a GitHub App](#create-a-github-app)).
+- **Keep secrets out of runner Spaces.** The GitHub App key stays with the
+  Cua service (with your own App, in this computer's keychain or key file). A Space receives only its one-job runner
+  configuration, and the job gets its own short-lived `GITHUB_TOKEN` from
+  GitHub as on any runner. Pass repository secrets only to jobs that run for
+  trusted events.
+- **Limit what a runner can reach.** By default (`--egress deny-private`) a
+  Linux runner's Space cannot open connections to private addresses
+  (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), carrier-grade NAT and
+  tailnet addresses (`100.64.0.0/10`), link-local and cloud metadata
+  addresses (`169.254.0.0/16`), `198.18.0.0/15`, or IPv6 unique-local and
+  link-local addresses. Your computer enforces it outside the Space, so
+  nothing in the job can change it. The Space's own DNS resolver stays
+  reachable when it sits in one of those ranges, so name lookups keep
+  working. The internet stays reachable.
+
+<Callout type="warn">
+  macOS VMs cannot enforce an egress policy yet. They share Apple's network
+  for VMs, which only the system packet filter can restrict, and that needs
+  administrator rights. A macOS runner can reach your local network, the
+  services of the Mac it runs on and your tailnet. `cua ci status` says
+  so for the pool, and `--require-egress` refuses to start macOS runners
+  instead. Until then, run macOS pools for public repositories on a Mac
+  that has nothing else on its network, or add a packet filter rule on the
+  Mac as below.
+</Callout>
+
+On the Mac, as an administrator, you can limit the VMs to the internet with
+a `pf` anchor. The VMs use the `192.168.64.0/24` network on a bridge
+interface of the Mac (`ifconfig` shows it with the address `192.168.64.1`,
+usually `bridge100`), and the Mac answers their DHCP and DNS there. The
+rules below only refuse new connections (TCP connection requests, UDP and
+ICMP), so they never get in the way of the Mac's own connections to its VMs
+or of the VMs' network address translation. Save them as
+`/etc/pf.anchors/cua-ci`, with your bridge's name and your Mac's own
+network in place of `203.0.113.0/24`:
+
+```text skip="host-install"
+vm_if = "{ bridge100, bridge101 }"
+ext_if = "{ en0, en1 }"
+table <vms> const { 192.168.64.0/18 }
+table <private> const { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16, 224.0.0.0/4, 203.0.113.0/24 }
+table <private6> const { fc00::/7, fe80::/10, ff00::/8 }
+table <admin> const { 100.64.0.0/10, fd7a:115c:a1e0::/48, 127.0.0.0/8, ::1 }
+# The VMs: DHCP and DNS from the Mac, then the internet only.
+pass in quick on $vm_if proto { udp, tcp } from any to any port 53 no state
+pass in quick on $vm_if proto udp from any to any port { 67, 547 } no state
+block in quick on $vm_if proto tcp from <vms> to <private> flags S/SA
+block in quick on $vm_if proto { udp, icmp } from <vms> to <private>
+block in quick on $vm_if inet6 proto tcp from any to <private6> flags S/SA
+block in quick on $vm_if inet6 proto udp from any to <private6>
+# The Mac itself: no new connections from other networks, except from
+# the addresses you administer it from (here a tailnet and loopback).
+block in quick on $ext_if proto tcp from ! <admin> to any flags S/SA
+```
+
+Load it into the anchor macOS already evaluates, and turn the packet filter
+on:
+
+```bash skip="host-install"
+sudo pfctl -a com.apple/250.CuaCi -f /etc/pf.anchors/cua-ci
+sudo pfctl -E
+```
+
+Load it again at boot from a launch daemon. Test it from a runner Space
+before you rely on it: `cua sb exec <space> 'nc -z -G 3 192.168.64.1 22'`
+must fail and `curl -sI https://github.com` must work. The last rule closes
+every port of the Mac to other networks, so make sure you can still reach
+it the way you administer it (for example over Tailscale) before you load
+it, and keep a way back, such as a timed job that removes the anchor
+unless you cancel it.
+
+Lume's screen-sharing (VNC) server for each macOS VM listens on every
+network interface of the Mac, not only on the Mac itself. On a runner host,
+turn it off; Cua's own viewer does not need it:
+
+```bash skip="host-install"
+cat >> ~/.cua/config.toml <<'TOML'
+[runtime]
+lume_vnc = "disabled"
+TOML
+```
+
+Check your own workflows before you connect a repository: no job that a fork's pull request, `pull_request_target`, `issue_comment` or `workflow_run` can trigger should name a self-hosted label. Search your `.github/workflows` folder for those triggers next to `runs-on: cua` or any self-hosted label.
+
+## Your own GitHub App
+
+To keep GitHub credentials on your own computer and use no Cua service, make
+a pool with a GitHub App that you own. It also covers a repository under a
+personal account. Everything below this heading is about such pools:
+`--own-app` selects them, and their options (`--warm`, `--max`, `--image`,
+and the rest) do not apply to the hosted service, which sizes and warms
+Spaces itself.
+
+### Create a GitHub App
+
+The pool talks to GitHub as a GitHub App that you own. Create it once:
+
+1. In your organization, open **Settings**, **Developer settings**,
+   **GitHub Apps**, **New GitHub App**. Give it a name, any homepage URL,
+   and turn off **Webhook**: the pool asks GitHub instead of waiting for
+   webhooks.
+2. Give it these permissions and nothing else:
+   - **Organization permissions**, **Self-hosted runners**: Read and write.
+   - **Repository permissions**, **Actions**: Read-only.
+   - For a pool that serves one repository instead of an organization, also
+     **Repository permissions**, **Administration**: Read and write
+     (GitHub keeps repository runners under it).
+3. Create the App, note its **App ID**, then **Generate a private key**. Your
+   browser downloads a `.pem` file.
+4. **Install App** on your organization. Choosing only the repositories that
+   should use the runners is enough.
+
+For an organization, also create a runner group so that only the
+repositories you choose can send jobs to these runners: **Settings**,
+**Actions**, **Runner groups**, **New runner group**, with **Repository
+access** set to selected repositories.
+
+### Connect a pool
+
+Run `connect --own-app` with the App's ID and key on the computer that should run the
+jobs:
+
+```bash test="cli-shape" id="ci-own-app-connect"
+cua ci connect --own-app --org trycua --group cua --app-id 123456 --private-key-file ~/Downloads/my-runners.private-key.pem
+```
+
+It checks the App with GitHub, then:
+
+- stores the key in the login keychain (service `cua-ci-github-app`,
+  account the pool's name; on Linux, a file only you can read under
+  `~/.cua/ci/secrets/`). Delete the `.pem` file afterwards;
+- writes the pool's configuration to `~/.cua/ci/<pool>.toml`. It holds
+  no secret;
+- starts a service that runs `cua ci serve --pool <pool>`: a launch agent
+  in your login session on macOS, a systemd user service on Linux. It keeps
+  running after you close the terminal and starts again when you log in.
+
+A repository pool uses `--repo owner/name` instead of `--org`. A token with
+the same rights works in place of an App: pipe it to `--token-stdin`.
+
+| Option | Default | What it sets |
+|---|---|---|
+| `--image` | `ghcr.io/trycua/macos:26` | The image each runner's Space starts from. A Linux image such as `ghcr.io/trycua/linux:24.04` gives Linux runners; `checkpoint:<name>` forks a [golden image](#caches). |
+| `--on` | `local` | Where the Spaces run: `local` (this computer), `auto` (any of your computers) or `host:<computer>`. |
+| `--max` | `2` | The most runners at once. |
+| `--warm` | `--max` | How many idle runners to keep ready. |
+| `--cpus`, `--memory-mb`, `--disk-gb` | see below | The size of each runner's Space. |
+| `--job-timeout` | `6h` | A job that runs longer is stopped and its Space deleted. |
+| `--idle-timeout` | `60m` | An idle runner older than this is replaced by a fresh one. |
+| `--labels` | none | More labels for `runs-on`, comma-separated. |
+| `--egress` | `deny-private` | `off` to give runner Spaces your whole network. See [security](#security-on-public-repositories). |
+| `--require-egress` | off | Refuse to start runners where the egress policy cannot be enforced. |
+| `--key-file` | none | Read the App's key from this file (yours, mode 0600) on every start instead of storing it. For a [Mac without a desktop session](#a-mac-without-a-desktop-session). |
+| `--secret-store` | `keychain` | `file` stores the key in a file only you can read under `~/.cua/ci/secrets/` instead of the keychain. |
+| `--no-service` | off | Write the configuration only; run `cua ci serve` yourself. |
+
+Run it again with other options to change a pool; it keeps the stored key
+unless you give a new one.
+
+### A Mac without a desktop session
+
+The login keychain works only for someone signed in at the Mac's desktop.
+On a headless Mac, or one you set up over SSH, macOS refuses to use it
+("User interaction is not allowed"). Keep the App's key in a file of its
+own there instead. From your own computer, send the key over SSH's input so
+it never appears in a command line, and make the file readable by you only:
+
+```bash skip="host-install"
+ssh mac 'umask 077; mkdir -p ~/.cua/ci; cat > ~/.cua/ci/github-app.pem' < my-runners.private-key.pem
+```
+
+Then connect the pool with `--key-file` in place of `--private-key-file`:
+
+```bash test="cli-shape" id="ci-own-app-connect-key-file"
+cua ci connect --own-app --org trycua --group cua --app-id 123456 --key-file ~/.cua/ci/github-app.pem
+```
+
+The pool reads the key from that file each time it starts and keeps it in
+memory only. It refuses a key file that another user owns or that anyone
+else can read or write; `chmod 600` fixes the second. The
+`CUA_CI_GITHUB_APP_KEY_FILE` environment variable names a key file too,
+and wins over the one in the pool's configuration (`private_key_file` in its
+`[github]` table). A pool uses a key file first and the keychain only when
+it has none.
+
+### Warm runners
+
+With `enabled = true` in `~/.cua/ci/<pool>/perf.toml`, a pool also gets the
+speed features described above (warm Spaces that register ahead of time,
+saved starts, caches, the repository mirror).
+
+A pool keeps `--warm` runners registered and idle, so a job starts within
+seconds of being queued. Without an idle runner, a job waits for a Space to
+be created first: about 20 seconds for a macOS Space on Apple silicon once
+the image has been downloaded. An idle runner is replaced after
+`--idle-timeout`, so it never sits on an old image or registration for long.
+
+### Caches
+
+- **The runner itself.** The GitHub Actions runner is downloaded once per
+  version to `~/.cua/ci/cache/`, checked against the SHA-256 that GitHub
+  publishes for it, and copied into each Space from there. A download whose
+  hash does not match is refused. To skip the copy, use an image that has
+  the runner in `~/actions-runner` already.
+- **The image.** Spaces start from the image on this computer, so only the
+  first runner downloads it. A macOS Space is a copy-on-write clone: it
+  takes almost no disk until the job writes.
+- **A golden image.** To have Xcode, simulators, Homebrew packages or the
+  runner itself ready in every job, set them up once in a Space, save it as
+  a checkpoint, and start the pool's Spaces from it. Each job's Space is a
+  fork of the checkpoint:
+
+  ```bash test="cli-shape" id="ci-own-app-golden"
+  cua sb checkpoint xcode-build xcode-26 --pin
+  cua ci connect --own-app --org trycua --app-id 123456 --image checkpoint:xcode-26 --os macos
+  ```
+
+  A checkpoint does not record its OS, so `--os` is needed with it.
+- **Your build caches.** Nothing is kept in a Space between jobs. Use
+  `actions/cache` and the setup actions' caches as you would on
+  GitHub-hosted runners.
+
+### Make jobs start and finish sooner
+
+A fresh Space per job means every job starts cold. These keep that cheap,
+roughly in the order they pay off:
+
+- **Keep runners warm.** With `--warm` idle runners, a job is picked up
+  within a second or two of being queued, instead of waiting about 20
+  seconds for a macOS Space to start and its runner to register.
+- **Bake a golden image.** Install Xcode, the GitHub Actions runner and the
+  tools your jobs set up every time (Homebrew packages, language
+  toolchains) once, checkpoint the Space and start the pool from
+  `checkpoint:<name>`. On a Mac Studio, an Xcode image with the runner
+  baked in starts a job's Space in about 20 seconds, and setting up Xcode
+  in each job (several minutes) goes away.
+- **Start from saved memory.** With a Lume that can save a VM's state, a
+  checkpoint of a running Space keeps its memory, and each fork resumes
+  where the checkpoint was instead of booting macOS again.
+- **Cache dependencies, but only from trusted jobs.** Restoring package and
+  build caches (`actions/cache`, a mirror for Swift packages, crates or npm
+  packages, a reference clone of a large repository) saves minutes per job.
+  A cache that a fork's pull request can write is a way into every later
+  job, so let only jobs on the default branch save caches, and let other
+  jobs read them, never write.
+
+### What is cleaned up, and when
+
+- A Space runs one job and is deleted afterwards. It is never reused.
+- A runner that crashes, never starts, never comes online within 10 minutes,
+  idles past `--idle-timeout` or runs a job past `--job-timeout` is removed
+  with its Space.
+- A Space that disappears (deleted elsewhere, or its computer went away) has
+  its runner removed at GitHub.
+- When the service starts, and every 5 minutes, the pool removes Spaces
+  labelled with its name that it does not own, and runners named after it
+  that have no Space. A runner that is still busy in a Space the pool lost
+  track of is taken back instead of stopped.
+- `cua ci disconnect --pool <pool>` deletes every Space and runner of the
+  pool, its service, its configuration and its stored key.
+
+### Status and logs of a pool
+
+```bash test="cli-shape" id="ci-own-app-status"
+cua ci status --pool trycua
+cua ci ls --pool trycua
+cua ci logs --pool trycua
+cua ci logs --pool trycua --slot 3f9a12c0
+```
+
+`status` shows the pool's runners, whether its service runs, what its
+egress policy does, and the last 7 days: jobs, failures, waits for a free
+macOS VM, and the median and 95th percentile of the time from create to
+ready, the time a runner waited for its job and the job's duration. `ls`
+lists the runners now. `logs` shows the pool's recent events, or with
+`--slot` one runner's logs. Every event is also in
+`~/.cua/ci/<pool>/events.jsonl`, and each runner's logs are copied to
+`~/.cua/ci/<pool>/logs/<slot>/` before its Space is deleted and kept for
+7 days. Add `--json` to any of them for scripts.
+
+`cua ci stop --pool <pool>` stops the service and `cua ci start
+--pool <pool>` starts it again.
+

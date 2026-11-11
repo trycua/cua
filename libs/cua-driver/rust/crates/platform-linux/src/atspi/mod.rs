@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AT-SPI accessibility tree walking for Linux.
 //!
 //! AT-SPI2 is exposed over D-Bus. We talk to it natively in Rust via the
@@ -156,7 +159,7 @@ pub(crate) fn walk_tree_for_recording(
 
 /// Walk the AT-SPI tree with caller-supplied caps. `None` for either cap
 /// means "use the walker's built-in default" (5 000 nodes; unlimited depth).
-/// Issue #22865: caps protect against Electron / large web apps that
+/// These caps protect against Electron / large web apps that
 /// produce 10k+ element trees and blow context windows.
 pub fn walk_tree_bounded(
     pid: u32,
@@ -265,15 +268,66 @@ pub fn walk_tree_bounded_within(
     // Fallback: X11 window properties as minimal tree.
     let mut fallback = walk_via_x11_properties(xid, query);
     fallback.elapsed_ms = started.elapsed().as_millis();
-    fallback.degraded_reason = native_failure.map(|error| format!("atspi_walk_failed: {error}"));
+    fallback.degraded_reason = empty_walk_reason(native_failure, pid);
     fallback
 }
 
-/// Perform the first advertised action on a node that a walk of window `xid`
-/// found, through the node's own D-Bus object, once a fresh walk proves the
-/// node still belongs to that window ([`require_window_element`]). The node's
-/// index is never looked up again: another snapshot of the process, or an
-/// application-wide walk, numbers elements differently.
+/// Why a walk came back with no tree: the walk's own failure, else what the
+/// process's environment can explain.
+fn empty_walk_reason(native_failure: Option<String>, pid: u32) -> Option<String> {
+    native_failure
+        .map(|error| format!("atspi_walk_failed: {error}"))
+        .or_else(|| process_bridge_reason(pid))
+}
+
+/// `NO_AT_BRIDGE=1` in a process's environment, as a reason. Electron sets it
+/// for itself, so anything started from an Electron terminal or agent host
+/// inherits it. GTK3 and other apps using at-spi2-atk then stay off the
+/// accessibility bus. GTK4 and Qt ignore it (measured on KWin 6.6.6), so this
+/// says what the variable does, not that this process stayed off.
+fn bridge_disabled_reason(environ: &[u8]) -> Option<String> {
+    environ
+        .split(|&byte| byte == 0)
+        .any(|entry| entry == b"NO_AT_BRIDGE=1")
+        .then(|| {
+            "atspi_bridge_disabled: the target runs with NO_AT_BRIDGE=1, which keeps GTK3 and \
+             other ATK apps off the accessibility bus. Start it with launch_app, or with that \
+             variable unset, to get its tree."
+                .to_owned()
+        })
+}
+
+fn process_bridge_reason(pid: u32) -> Option<String> {
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    bridge_disabled_reason(&environ)
+}
+
+/// Why no list shows a window for `pid`, when its environment can explain it.
+/// Only on Wayland: there a window that stays off the accessibility bus can have
+/// no attested pid. An X11 window is listed whatever the variable says.
+pub fn unlisted_window_note(pid: u32) -> Option<String> {
+    crate::wayland::is_wayland()
+        .then(|| process_bridge_reason(pid))
+        .flatten()
+}
+
+/// The error for a pid with no window to choose. Blocks, so call it off the
+/// async runtime.
+pub fn no_windows_error(pid: u32) -> String {
+    let note = unlisted_window_note(pid)
+        .filter(|_| crate::wayland::list_windows_dispatch(Some(pid)).is_empty());
+    no_windows_message(pid, note)
+}
+
+fn no_windows_message(pid: u32, note: Option<String>) -> String {
+    let advice = format!("No windows found for pid {pid}. Provide window_id.");
+    match note {
+        Some(note) => format!("{advice} {note}"),
+        None => advice,
+    }
+}
+
+/// Perform the first advertised action on element `idx` within pid's app tree.
 /// Returns `Ok((action_name, suspected_noop, unacknowledged))` on success —
 /// `suspected_noop` is true when the actuated node looked like a silent
 /// no-op (a passive display role, or no advertised action), so the caller
@@ -283,6 +337,16 @@ pub fn walk_tree_bounded_within(
 /// acceptance nor effect is known — the caller must report this as
 /// `unverifiable` with an explicit note, never as a plain confirmed/dispatched
 /// success.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return TokenElement::new(idx, observed, WindowProof::NotRequired)
+            .act(native::perform_action_ref, |idx| {
+                native::perform_action(pid, idx)
+            });
+    }
+    native::perform_action(pid, idx)
+}
+
 pub fn perform_action_walked(pid: u32, xid: u64, node: &AtspiNode) -> Result<(String, bool, bool)> {
     let (identity, object_ref) = walked_object(node)?;
     require_window_element(pid, xid, WindowElement::Identity(identity))?;
@@ -323,7 +387,28 @@ pub fn element_showing_observed(element: &cache::CachedElement) -> Result<bool> 
     native::element_showing_ref(object_ref)
 }
 
+/// Give an indexed AT-SPI element keyboard focus without activating its window.
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return focus_token(
+            pid,
+            &TokenElement::new(idx, observed, WindowProof::NotRequired),
+        );
+    }
+    native::focus_element(pid, idx)
+}
+
 pub use native::ScrollProgress;
+
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    native::scroll_element(pid, &WindowElement::Index(idx), direction, amount, by)
+}
 
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing
 /// fallback for Wayland compositors without `zwlr_foreign_toplevel_management`
@@ -385,7 +470,9 @@ pub fn perform_action_at_point_in(
                 if skip_focus_roles && is_focus_taking_role(&element.role) {
                     return Ok(None);
                 }
-                if native::is_container_role(&element.role) {
+                if native::is_container_role(&element.role)
+                    || native::is_web_document_role(&element.role)
+                {
                     // The cached snapshot's smallest covering element is a
                     // container (list / icon view / pane): its activation
                     // opens the current selection, not the item under the
@@ -456,12 +543,18 @@ fn select_option(object_ref: &native::ObjectRef, value: &str) -> Option<Result<(
     match native::select_option_ref(object_ref, value) {
         Ok(native::OptionPick::Picked { .. }) => Some(Ok(())),
         Ok(native::OptionPick::NoMatch { options }) => Some(Err(no_such_option(value, &options))),
-        Ok(native::OptionPick::Unavailable) => None,
+        Ok(native::OptionPick::NoOptions | native::OptionPick::Unavailable) => None,
         Err(error) => Some(Err(error)),
     }
 }
 
-fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+pub(crate) fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+    if options.is_empty() {
+        return anyhow::anyhow!(
+            "{}: no option {value:?}; it lists no options",
+            native::NO_SUCH_OPTION
+        );
+    }
     anyhow::anyhow!(
         "{}: no option {value:?}; options: {options:?}",
         native::NO_SUCH_OPTION
@@ -634,13 +727,9 @@ pub fn set_value_token(pid: u32, token: &TokenElement, value: &str) -> Result<()
 }
 
 /// The open popup of the token's combo box: activate the option `value`
-/// names. `Ok(None)` when the popup lists no options yet.
-pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<Option<String>> {
-    match native::activate_option_ref(token.object()?, value)? {
-        native::OptionPick::Picked { name } => Ok(Some(name)),
-        native::OptionPick::NoMatch { options } => Err(no_such_option(value, &options)),
-        native::OptionPick::Unavailable => Ok(None),
-    }
+/// names.
+pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<native::OptionPick> {
+    native::activate_option_ref(token.object()?, value)
 }
 
 /// Whether the popup of the token's combo box is open.
@@ -1053,5 +1142,104 @@ mod token_dispatch_tests {
             |_| panic!("re-resolved after the observed object answered"),
         );
         assert_eq!(observed.unwrap(), "/window_b/text");
+    }
+}
+
+#[cfg(test)]
+mod bridge_disabled_reason_tests {
+    use super::{bridge_disabled_reason, empty_walk_reason, no_windows_message};
+    use std::process::{Child, Command, Stdio};
+
+    const REASON: &str = "atspi_bridge_disabled: the target runs with NO_AT_BRIDGE=1, which \
+        keeps GTK3 and other ATK apps off the accessibility bus. Start it with launch_app, or \
+        with that variable unset, to get its tree.";
+
+    struct Sleeper(Child);
+
+    impl Sleeper {
+        fn with_bridge(value: &str) -> Self {
+            let child = Command::new("sleep")
+                .arg("30")
+                .env("NO_AT_BRIDGE", value)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn sleep");
+            // Built before polling so a timed-out wait still kills and reaps the child.
+            let sleeper = Self(child);
+            // `spawn` can return before the kernel has finished the child's exec,
+            // and until then its environ doesn't hold what it was given.
+            let expected = format!("NO_AT_BRIDGE={value}").into_bytes();
+            let environ = format!("/proc/{}/environ", sleeper.0.id());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !std::fs::read(&environ)
+                .unwrap_or_default()
+                .split(|&byte| byte == 0)
+                .any(|entry| entry == expected.as_slice())
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "sleep never finished exec"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            sleeper
+        }
+    }
+
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn an_empty_walk_reads_the_reason_from_the_real_process() {
+        let off = Sleeper::with_bridge("1");
+        let on = Sleeper::with_bridge("0");
+
+        assert_eq!(empty_walk_reason(None, off.0.id()).as_deref(), Some(REASON));
+        assert_eq!(empty_walk_reason(None, on.0.id()), None);
+        assert_eq!(empty_walk_reason(None, u32::MAX), None);
+    }
+
+    #[test]
+    fn the_walk_s_own_failure_wins_over_the_environment() {
+        let off = Sleeper::with_bridge("1");
+
+        assert_eq!(
+            empty_walk_reason(Some("no bus".to_owned()), off.0.id()).as_deref(),
+            Some("atspi_walk_failed: no bus")
+        );
+    }
+
+    #[test]
+    fn no_windows_keeps_its_advice_with_or_without_a_note() {
+        assert_eq!(
+            no_windows_message(7, None),
+            "No windows found for pid 7. Provide window_id."
+        );
+        assert_eq!(
+            no_windows_message(7, Some("why".to_owned())),
+            "No windows found for pid 7. Provide window_id. why"
+        );
+    }
+
+    #[test]
+    fn only_the_exact_variable_counts() {
+        assert_eq!(
+            bridge_disabled_reason(b"HOME=/home/test\0NO_AT_BRIDGE=1\0LANG=C\0").as_deref(),
+            Some(REASON)
+        );
+        for environ in [
+            &b"HOME=/home/test\0"[..],
+            b"NO_AT_BRIDGE=0\0",
+            b"NO_AT_BRIDGE=\0",
+            b"XNO_AT_BRIDGE=1\0",
+            b"",
+        ] {
+            assert_eq!(bridge_disabled_reason(environ), None);
+        }
     }
 }

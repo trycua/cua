@@ -13,6 +13,10 @@ use cua_mesh::{Error, Mesh, MeshConfig, Mode, NodeKind, Path, PublicKey, static_
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const READY: Duration = Duration::from_secs(10);
+/// Tests that restart the coordinator must not wait out the production
+/// reconnect pacing (a jittered 1s plus up to 10s of spread after a relay
+/// drop), which can exceed `READY` on a slow runner.
+const FAST_RECONNECT: u32 = 20;
 
 async fn node(
     coord: &FakeCoordinator,
@@ -20,6 +24,17 @@ async fn node(
     dir: &std::path::Path,
     name: &str,
     relay_only: bool,
+) -> Mesh {
+    node_on_media_port(coord, kind, dir, name, relay_only, cua_mesh::MEDIA_UDP_PORT).await
+}
+
+async fn node_on_media_port(
+    coord: &FakeCoordinator,
+    kind: NodeKind,
+    dir: &std::path::Path,
+    name: &str,
+    relay_only: bool,
+    media_udp_port: u16,
 ) -> Mesh {
     let mut headers = Vec::new();
     if kind == NodeKind::Machine {
@@ -34,6 +49,8 @@ async fn node(
     cfg.name = name.to_owned();
     cfg.stun = vec![coord.stun.to_string()];
     cfg.relay_only = relay_only;
+    cfg.media_udp_port = media_udp_port;
+    cfg.reconnect_speedup = FAST_RECONNECT;
     cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
     let m = Mesh::start(cfg).await.expect("start");
     m.wait_ready(READY).await.expect("ready");
@@ -131,6 +148,53 @@ async fn streams_go_direct_and_carry_data() {
         .find(|p| p.node_key == client.node_key())
         .unwrap();
     assert_eq!(seen.grant.unwrap().account, "acct-1");
+}
+
+/// A node whose network refuses the local network (`lan = false`) still
+/// carries streams, and none of its paths is a local-network one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_without_the_local_network_still_carries_streams() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let start = |kind: NodeKind, name: &'static str| {
+        let coord = &coord;
+        let dir = dir.path().to_path_buf();
+        async move {
+            let mut headers = Vec::new();
+            if kind == NodeKind::Machine {
+                headers.push(("x-cua-machine-id".to_owned(), format!("machine-{name}")));
+            }
+            let mut cfg = MeshConfig::new(
+                coord.url.clone(),
+                kind,
+                Some(dir.join(format!("{name}.json"))),
+                static_auth(headers),
+            );
+            cfg.name = name.to_owned();
+            cfg.stun = vec![coord.stun.to_string()];
+            cfg.lan = false;
+            cfg.reconnect_speedup = FAST_RECONNECT;
+            cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
+            let m = Mesh::start(cfg).await.expect("start");
+            m.wait_ready(READY).await.expect("ready");
+            m
+        }
+    };
+    let machine = start(NodeKind::Machine, "m").await;
+    let client = start(NodeKind::Client, "c").await;
+    serve_echo(&machine);
+    wait_peer(&client, &machine.node_key()).await;
+    let mut s = client
+        .open_stream(&machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    roundtrip(&mut s, 256 * 1024).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    for m in [&machine, &client] {
+        for p in m.status().peers {
+            assert_ne!(p.path_kind, "lan", "{p:?}");
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -240,30 +304,28 @@ async fn a_nat_rebinding_falls_back_and_finds_a_new_direct_path() {
         .await
         .unwrap();
     roundtrip(&mut s, 1024).await;
-    let before = wait_path(&client, &machine.node_key(), true, Duration::from_secs(10)).await;
+    wait_path(&client, &machine.node_key(), true, Duration::from_secs(10)).await;
 
-    // The client moves to a new port, as after a network change.
+    // The client moves to new ports, as after a network change.
     client.rebind().await.unwrap();
     roundtrip(&mut s, 128 * 1024).await;
-    let after = wait_path(&machine, &client.node_key(), true, Duration::from_secs(15)).await;
-    let Path::Direct(before) = before else {
-        unreachable!()
-    };
-    let _ = before;
-    let Path::Direct(after) = after else {
-        unreachable!()
-    };
-    let (v4, _) = client
-        .status()
-        .endpoints
-        .first()
-        .map(|e| (e.port(), ()))
-        .unwrap_or((0, ()));
-    assert_eq!(
-        after.port(),
-        v4,
-        "the machine follows the client's new port"
-    );
+    // The machine's direct path lands on one of the client's new ports. The
+    // IPv4 and IPv6 sockets can get different ports (Windows hands the IPv6
+    // one the next free port), and the machine's old path stays trusted for
+    // a moment, so poll for any new port rather than the first endpoint's.
+    let ports: Vec<u16> = client.status().endpoints.iter().map(|e| e.port()).collect();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let p = machine.path(&client.node_key()).expect("peer");
+        if matches!(p, Path::Direct(a) if ports.contains(&a.port())) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the machine follows the client's new ports {ports:?}: path stayed {p}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     roundtrip(&mut s, 128 * 1024).await;
 }
 
@@ -361,6 +423,77 @@ async fn loopback_forwards_carry_tcp_and_udp() {
     assert!(ok, "udp echo over the mesh");
 }
 
+/// Whether a datagram sent to the forward's UDP side comes back echoed
+/// within `tries` half-seconds.
+async fn udp_echoes(to: std::net::SocketAddr, tries: usize) -> bool {
+    let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    for _ in 0..tries {
+        udp.send_to(b"media", to).await.unwrap();
+        let mut buf = [0u8; 64];
+        if let Ok(Ok((n, _))) =
+            tokio::time::timeout(Duration::from_millis(500), udp.recv_from(&mut buf)).await
+        {
+            assert_eq!(&buf[..n], b"media");
+            return true;
+        }
+    }
+    false
+}
+
+/// A machine that serves its media on another mesh UDP port (a Cua Spaces
+/// Local host) is reached by a client that dials that port, and by no one
+/// that dials the default.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_media_udp_port_is_configurable() {
+    const LOCAL_PORT: u16 = 3222;
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let machine = node_on_media_port(
+        &coord,
+        NodeKind::Machine,
+        dir.path(),
+        "m",
+        false,
+        LOCAL_PORT,
+    )
+    .await;
+    assert_eq!(machine.media_udp_port(), LOCAL_PORT);
+    let default_client = node(&coord, NodeKind::Client, dir.path(), "d", false).await;
+    assert_eq!(default_client.media_udp_port(), cua_mesh::MEDIA_UDP_PORT);
+    let local_client =
+        node_on_media_port(&coord, NodeKind::Client, dir.path(), "l", false, LOCAL_PORT).await;
+    serve_echo(&machine);
+    let udp_echo = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let echo_addr = udp_echo.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 2048];
+        loop {
+            let (n, src) = udp_echo.recv_from(&mut buf).await.unwrap();
+            udp_echo.send_to(&buf[..n], src).await.unwrap();
+        }
+    });
+    machine.serve_udp(LOCAL_PORT, echo_addr).unwrap();
+    wait_peer(&local_client, &machine.node_key()).await;
+    wait_peer(&default_client, &machine.node_key()).await;
+
+    let to_local = local_client
+        .forward(machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    assert!(
+        udp_echoes(to_local.local, 20).await,
+        "a client on the host's port reaches its media"
+    );
+    let to_default = default_client
+        .forward(machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    assert!(
+        !udp_echoes(to_default.local, 4).await,
+        "a client on the default port does not"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn removed_peers_are_cut() {
     let dir = tempfile::tempdir().unwrap();
@@ -373,6 +506,7 @@ async fn removed_peers_are_cut() {
     );
     cfg.approved_path = Some(dir.path().join("approved.json"));
     cfg.pair_verifier = Some(Arc::new(|_, _, _| true));
+    cfg.reconnect_speedup = FAST_RECONNECT;
     let machine = Mesh::start(cfg).await.unwrap();
     machine.wait_ready(READY).await.unwrap();
     serve_echo(&machine);
@@ -418,6 +552,9 @@ async fn a_revoked_device_fails_fast_with_the_reason() {
         static_auth(vec![("x-test-device".into(), "dev-c".into())]),
     );
     cfg.name = "c".into();
+    // The reconnect after the relay's close waits up to ~11 s (backoff plus
+    // the spread); the speed-up keeps that inside the deadline below.
+    cfg.reconnect_speedup = FAST_RECONNECT;
     let client = Mesh::start(cfg).await.unwrap();
     client.wait_ready(READY).await.unwrap();
     serve_echo(&machine);
@@ -513,4 +650,328 @@ async fn a_machine_off_the_mesh_is_reported_without_waiting() {
         .await
         .expect("a machine on the mesh is found");
     assert_eq!(found.node_key, machine.node_key());
+}
+
+/// Two machines of one account (CUA-1783): each sees the other with the
+/// machine grant, and one forwards a loopback port to a `port:<n>` service
+/// on the other in both directions at once (a gang's ring), direct and
+/// relayed. Without machine peering they never see each other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn machines_of_one_account_forward_ports_to_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(a.machine("machine-b").is_none(), "no machine peering yet");
+
+    coord.set_machine_peering(true);
+    let b_info = a
+        .wait_machine("machine-b", READY)
+        .await
+        .expect("b in a's map");
+    let grant = b_info.grant.expect("a machine peer carries a grant");
+    assert_eq!(grant.role, cua_mesh::proto::ROLE_MACHINE);
+    let a_info = b
+        .wait_machine("machine-a", READY)
+        .await
+        .expect("a in b's map");
+    assert_eq!(a_info.node_key, a.node_key());
+
+    // Each side serves `port:<n>` streams with an echo.
+    for m in [&a, &b] {
+        let m = m.clone();
+        tokio::spawn(async move {
+            while let Some(i) = m.accept().await {
+                assert_eq!(
+                    cua_mesh::proto::parse_port_service(&i.header.service),
+                    Some(47012)
+                );
+                tokio::spawn(async move {
+                    let (mut r, mut w) = tokio::io::split(i.stream);
+                    let _ = tokio::io::copy(&mut r, &mut w).await;
+                    let _ = w.shutdown().await;
+                });
+            }
+        });
+    }
+    let service = cua_mesh::proto::port_service(47012);
+    let ab = a.forward(b.node_key(), &service, None).await.unwrap();
+    let ba = b.forward(a.node_key(), &service, None).await.unwrap();
+    let echo = |local: std::net::SocketAddr, n: usize| async move {
+        let mut tcp = tokio::net::TcpStream::connect(local).await.unwrap();
+        let data: Vec<u8> = (0..n).map(|i| (i * 13) as u8).collect();
+        let (mut r, mut w) = tcp.split();
+        let mut got = vec![0u8; n];
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(async { w.write_all(&data).await.unwrap() }, async {
+                r.read_exact(&mut got).await.unwrap()
+            })
+        })
+        .await
+        .expect("echo through the forward");
+        assert_eq!(got, data);
+    };
+    tokio::join!(echo(ab.local, 1 << 20), echo(ba.local, 1 << 20));
+    wait_path(&a, &b.node_key(), true, Duration::from_secs(10)).await;
+    wait_path(&b, &a.node_key(), true, Duration::from_secs(10)).await;
+    tokio::join!(echo(ab.local, 4 << 20), echo(ba.local, 4 << 20));
+
+    // Machine peering off again: the peers leave both maps.
+    coord.set_machine_peering(false);
+    for _ in 0..100 {
+        if a.machine("machine-b").is_none() && b.machine("machine-a").is_none() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("machines stayed peers after peering was turned off");
+}
+
+/// The control socket (CUA-1783): a job runner on machine A asks A's
+/// mesh node for a forward to a port on machine B, uses it, and the
+/// forward ends when the runner hangs up. An unknown machine is an error.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_control_socket_makes_forwards_that_live_with_the_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    let echo = b.clone();
+    tokio::spawn(async move {
+        while let Some(i) = echo.accept().await {
+            assert_eq!(i.header.service, "port:47012");
+            tokio::spawn(async move {
+                let (mut r, mut w) = tokio::io::split(i.stream);
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    let sock = dir.path().join("host").join(cua_mesh::gang::CONTROL_SOCKET);
+    let server = cua_mesh::gang::serve_control(a.clone(), &sock).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+    let mut ctl = cua_mesh::gang::ControlClient::connect(&sock).await.unwrap();
+    let f = ctl.forward("machine-b", 47012).await.unwrap();
+    assert!(f.local.ip().is_loopback());
+    assert_eq!(f.path, "direct", "loopback peers find a direct path");
+    assert_eq!(f.peer, "b");
+    let mut tcp = tokio::net::TcpStream::connect(f.local).await.unwrap();
+    tcp.write_all(b"ring").await.unwrap();
+    let mut got = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(20), tcp.read_exact(&mut got))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&got, b"ring");
+    let err = ctl.forward("machine-nope", 47012).await.unwrap_err();
+    assert!(err.contains("not on this machine's mesh"), "{err}");
+
+    // The runner hangs up: its forwards stop listening.
+    drop(ctl);
+    let mut gone = false;
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(f.local).await.is_err() {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(gone, "the forward outlived its control connection");
+    server.abort();
+}
+
+/// The control socket reports how traffic reaches each other machine and
+/// takes a path pin; lifting the pin goes back to automatic.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_control_socket_reports_paths_and_takes_a_pin() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let _b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    let sock = dir.path().join("host").join(cua_mesh::gang::CONTROL_SOCKET);
+    let server = cua_mesh::gang::serve_control(a.clone(), &sock).unwrap();
+    let mut ctl = cua_mesh::gang::ControlClient::connect(&sock).await.unwrap();
+
+    let (prefer, _paths) = ctl.status().await.unwrap();
+    assert_eq!(prefer, cua_mesh::Prefer::Auto);
+
+    ctl.set_prefer(cua_mesh::Prefer::Relay).await.unwrap();
+    assert_eq!(a.prefer(), cua_mesh::Prefer::Relay);
+    let (prefer, paths) = ctl.status().await.unwrap();
+    assert_eq!(prefer, cua_mesh::Prefer::Relay);
+    for p in paths {
+        assert_ne!(p.kind, "lan", "a relay pin keeps traffic off direct paths");
+    }
+
+    ctl.set_prefer(cua_mesh::Prefer::Auto).await.unwrap();
+    assert_eq!(a.prefer(), cua_mesh::Prefer::Auto);
+    server.abort();
+}
+
+/// Bulk rank traffic (CUA-1783): 256 MiB one way through a machine's
+/// loopback forward, spliced on the other machine to a local TCP sink.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_forward_carries_bulk_traffic_to_a_local_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    // B's "gang member": counts bytes, then answers one byte.
+    let sink = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sink_addr = sink.local_addr().unwrap();
+    const N: usize = 256 << 20;
+    let counted = tokio::spawn(async move {
+        let (mut s, _) = sink.accept().await.unwrap();
+        let mut buf = vec![0u8; 1 << 20];
+        let mut got = 0usize;
+        while got < N {
+            let n = s.read(&mut buf).await.unwrap();
+            assert!(n > 0, "the stream ended after {got} bytes");
+            got += n;
+        }
+        s.write_all(b"k").await.unwrap();
+        got
+    });
+    let mb = b.clone();
+    tokio::spawn(async move {
+        while let Some(i) = mb.accept().await {
+            tokio::spawn(async move {
+                let mut tcp = tokio::net::TcpStream::connect(sink_addr).await.unwrap();
+                let mut st = i.stream;
+                let _ = tokio::io::copy_bidirectional(&mut st, &mut tcp).await;
+            });
+        }
+    });
+    b.machine("machine-a");
+    let f = a
+        .forward(
+            a.wait_machine("machine-b", READY).await.unwrap().node_key,
+            "port:1",
+            None,
+        )
+        .await
+        .unwrap();
+    let mut tcp = tokio::net::TcpStream::connect(f.local).await.unwrap();
+    let block = vec![0u8; 1 << 20];
+    let t = std::time::Instant::now();
+    for _ in 0..(N >> 20) {
+        tcp.write_all(&block).await.unwrap();
+    }
+    let mut k = [0u8; 1];
+    tokio::time::timeout(Duration::from_secs(120), tcp.read_exact(&mut k))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(counted.await.unwrap(), N);
+    println!("256 MiB in {:?}", t.elapsed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_the_relay_keeps_replacing_stops_retrying_and_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_REPLACED,
+        "replaced: another connection with the same node key took over",
+    )));
+    let mut cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    cfg.reconnect_speedup = 1000;
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    let reason = loop {
+        if let Some(r) = client.control_state().denied {
+            break r;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "it never gave up");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(reason.contains("another copy of Spaces"), "{reason}");
+    // It stopped: no connect after the third.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(coord.welcomes(), 3);
+    let last = client.control_state().last_error.unwrap();
+    assert!(last.contains("4001") && last.contains("replaced"), "{last}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_RELAY_CHANGED,
+        "relay changed",
+    )));
+    let mut cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    cfg.reconnect_speedup = 1000;
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    while coord.welcomes() < 5 {
+        assert!(t.elapsed() < Duration::from_secs(20), "it stopped retrying");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(client.control_state().denied.is_none());
+}
+
+/// A dial to a machine the map lists offline fails, but once the map lists
+/// it online again the next stream dials it at once, instead of answering
+/// with the old failure for a few seconds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_machine_back_online_is_dialed_again_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let machine = node(&coord, NodeKind::Machine, dir.path(), "m", false).await;
+    let key = machine.node_key();
+    let client = node(&coord, NodeKind::Client, dir.path(), "c", false).await;
+    wait_peer(&client, &key).await;
+    machine.shutdown();
+    drop(machine);
+    let online = |c: &Mesh| c.machine("machine-m").is_some_and(|p| p.online);
+    for _ in 0..100 {
+        if !online(&client) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!online(&client), "the map never listed the machine offline");
+    // The dial times out (only that is remembered) and starts the hold.
+    let failed_at = std::time::Instant::now();
+    assert!(client.open_stream(&key, "echo", None).await.is_err());
+
+    // The same machine (same identity) comes back.
+    let machine = node(&coord, NodeKind::Machine, dir.path(), "m", false).await;
+    assert_eq!(machine.node_key(), key);
+    serve_echo(&machine);
+    for _ in 0..100 {
+        if online(&client) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(online(&client), "the map never listed the machine online");
+    // Inside the hold, or this test passes without the fix.
+    assert!(failed_at.elapsed() < Duration::from_secs(5));
+    let mut s = client
+        .open_stream(&key, "echo", None)
+        .await
+        .expect("a machine back online is dialed again");
+    roundtrip(&mut s, 1024).await;
 }

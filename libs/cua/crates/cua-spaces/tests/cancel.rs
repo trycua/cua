@@ -7,7 +7,6 @@
 //! (or one after a daemon restart) is harmless.
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::placement::On;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
@@ -301,49 +300,30 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
         assert!(dir.join(format!("{name}.cancel")).exists());
     }
     assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["orphan"]);
-}
 
-/// A cloud create cancelled while its claim waits to bind releases the
-/// claim it made.
-#[tokio::test]
-#[ignore = "Cua Cloud has ended (CUA-1854); removed with the Fleet provider"]
-async fn a_cancelled_cloud_create_releases_its_claim() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-cx")
-        .build();
-    let pool = spaces.fleet_pool_name(
-        cua_spaces::contract::inputs::FleetRuntime::Kubevirt,
-        "ghcr.io/trycua/linux:24.04-disk",
+    // Once the retained sandbox is gone (removed by hand, or never started),
+    // the next recovery retires its journal and marker instead of reporting
+    // it again on every restart. One whose sandbox still exists stays.
+    e.rt.running.lock().unwrap().remove("marked");
+    let got = e
+        .spaces
+        .recover_interrupted_creates(Duration::from_secs(1))
+        .await;
+    let outcome = |id: &str| got.iter().find(|r| r.id == id).map(|r| r.outcome.clone());
+    assert_eq!(
+        outcome("local:marked"),
+        Some(cua_spaces::RecoveryOutcome::NothingLeft),
+        "{got:?}"
     );
-    // No replica ever becomes ready: the claim waits to bind.
-    let s = spaces.clone();
-    let create = tokio::spawn(async move {
-        s.create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some("ghcr.io/trycua/linux:24.04-disk".into()),
-            name: Some("cua-e2e-cancel".into()),
-            ..Default::default()
-        })
-        .await
-    });
-    until("the claim exists", || {
-        fake.exists("claim", &pool, "cua-e2e-cancel")
-    })
-    .await;
-    let o = spaces.cancel_create("cloud:cua-e2e-cancel").await.unwrap();
-    assert_eq!(o.state, CancelState::Cancelled, "{o:?}");
-    assert!(
-        o.message.contains("released its cloud sandbox"),
-        "{}",
-        o.message
-    );
-    assert_eq!(create.await.unwrap().unwrap_err().tag(), "cancelled");
-    assert!(!fake.exists("claim", &pool, "cua-e2e-cancel"), "released");
-    assert!(spaces.list().unwrap().is_empty());
+    assert!(matches!(
+        outcome("local:borrowed"),
+        Some(cua_spaces::RecoveryOutcome::Failed(_))
+    ));
+    assert!(!dir.join("marked.json").exists());
+    assert!(!dir.join("marked.cancel").exists());
+    assert!(dir.join("borrowed.json").exists());
+    assert!(e.rt.running.lock().unwrap().contains_key("borrowed"));
+    assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["orphan"]);
 }
 
 /// Cancelled after the instance is up, while the create waits for its
@@ -434,45 +414,4 @@ async fn a_failed_create_never_deletes_an_existing_space_of_that_name() {
         "{:?}",
         e.rt.deleted.lock().unwrap()
     );
-}
-
-#[tokio::test]
-async fn interrupted_nonlocal_recovery_still_releases_its_claim() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .build();
-    fake.put_object(
-        "claim",
-        "test-pool",
-        "claim",
-        serde_json::json!({
-            "metadata": {"name": "claim", "namespace": "test-pool"}, "spec": {}
-        }),
-    );
-    let dir = reg.path().join("creating");
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut child = std::process::Command::new("true").spawn().unwrap();
-    let pid = child.id();
-    child.wait().unwrap();
-    std::fs::write(
-        dir.join("claim.json"),
-        serde_json::json!({
-            "kind": "cloud", "name": "claim", "id": "cloud:claim", "pid": pid, "started": 0,
-            "made": [{"type": "fleet_claim", "namespace": "test-pool", "name": "claim"}],
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let got = spaces
-        .recover_interrupted_creates(Duration::from_millis(20))
-        .await;
-    assert!(
-        matches!(got.as_slice(), [r] if matches!(r.outcome, cua_spaces::RecoveryOutcome::Deleted(_))),
-        "{got:?}"
-    );
-    assert!(!fake.exists("claim", "test-pool", "claim"));
-    assert!(!dir.join("claim.json").exists());
 }

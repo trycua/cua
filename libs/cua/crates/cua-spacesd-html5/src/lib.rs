@@ -13,7 +13,7 @@
 //! - **Standalone** (feature `standalone`): one server for many sandboxes.
 //!   `/s/<id>/viewer/` serves the same page and `/s/<id>/...` is a
 //!   transparent pipe to that sandbox's spacesd, adding only the transport
-//!   credentials (a Fleet gateway bearer, say). The viewer ticket still
+//!   credentials (a gateway bearer, say). The viewer ticket still
 //!   authorizes every call at the spacesd.
 //!
 //! The page is public (it carries no secrets); tickets never appear in a

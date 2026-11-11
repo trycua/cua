@@ -8,7 +8,7 @@ The package is MIT. The live screen (`CuaSpacesStreaming`: stream sessions,
 H.264 decode, interactive input, presence cursors and the SwiftUI stream
 views) is part of Cua Spaces and lives in
 [`libs/spaces-app-swift`](../spaces-app-swift), source-available under
-FSL-1.1-MIT. See [LICENSING.md](../../LICENSING.md).
+FSL-1.1-MIT. See [LICENSING.md](../../legal/LICENSING.md).
 
 It is a **thin overlay on the generated cua SDK** ([`libs/cua/swift`](../cua/swift),
 product `Cua`). Every call runs the Rust `cua-spaces` implementation, either in
@@ -39,10 +39,10 @@ _ = try await run.delete()
 
 This SDK was not designed and then validated. It was **extracted**. A full
 product,
-[`samples/openkoalabot-example-swift`](../../samples/openkoalabot-example-swift), was built
+[`examples/openkoalabot-example-swift`](../../examples/openkoalabot-example-swift), was built
 against the raw Spaces protocol first, and every place the protocol forced an
 awkward shape on the app was written down as it happened. That log,
-[`samples/openkoalabot-example-swift/FRICTION.md`](../../samples/openkoalabot-example-swift/FRICTION.md), has
+[`examples/openkoalabot-example-swift/FRICTION.md`](../../examples/openkoalabot-example-swift/FRICTION.md), has
 46 entries, and it is the requirements document for this package. OpenKoalaBots
 now consumes the SDK instead of its own binding.
 

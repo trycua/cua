@@ -1,0 +1,31 @@
+# Real screenshots on an iPad Simulator (the list beside the chat). See phone.yaml.
+appId: ai.cua.spaces.mobile
+---
+- launchApp
+- assertVisible: "Sample data. Not your account."
+- extendedWaitUntil:
+    visible: ".*Needs you.*"
+    timeout: 10000
+- takeScreenshot: home-${NAME}
+- tapOn:
+    text: "Claude Code.*"
+    index: 0
+- assertVisible: ".*wants to push a branch.*"
+- takeScreenshot: thread-approval-${NAME}
+- tapOn:
+    id: "card-expander"
+- assertVisible: ".*test_ws_reconnect.*"
+- takeScreenshot: thread-approval-changes-${NAME}
+- tapOn: "Open the live desktop of checkout-api"
+- assertVisible: "Sample screen"
+- takeScreenshot: thread-stream-${NAME}
+- tapOn: "Search Spaces, apps or agents"
+- inputText: "design-review"
+- pressKey: Enter
+- tapOn:
+    text: "Reviewer.*"
+    index: 0
+- extendedWaitUntil:
+    visible: ".*Asleep, a message wakes it.*"
+    timeout: 10000
+- takeScreenshot: thread-asleep-${NAME}

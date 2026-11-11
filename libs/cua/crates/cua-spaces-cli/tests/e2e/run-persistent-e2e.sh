@@ -11,6 +11,8 @@
 #
 #   run-persistent-e2e.sh [--image REF] [--evidence DIR]
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$HERE/../../../.." && pwd)" # libs/cua
 case "$(uname -m)" in arm64|aarch64) ARCH=aarch64; DARCH=arm64 ;; *) ARCH=x86_64; DARCH=amd64 ;; esac

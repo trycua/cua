@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Extended browser pointer actions.
 //!
 //! This module deliberately shares the exact-or-refused posture of the
@@ -442,7 +445,29 @@ impl BrowserPointerTool {
                 json!([]),
             ),
             PointerAction::Scroll => (
-                "function(dx,dy) { const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view:this.ownerDocument.defaultView}; this.dispatchEvent(new WheelEvent('wheel',o)); let n=this; while (n && n !== this.ownerDocument.documentElement) { const s=this.ownerDocument.defaultView.getComputedStyle(n); if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break; n=n.parentElement; } const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement; const beforeX=target.scrollLeft; const beforeY=target.scrollTop; target.scrollBy(dx,dy); const changed=target.scrollLeft !== beforeX || target.scrollTop !== beforeY; if (changed) target.dispatchEvent(new Event('scroll')); return changed; }",
+                r#"async function(dx,dy) {
+                    const view=this.ownerDocument.defaultView;
+                    const o={deltaX:dx,deltaY:dy,bubbles:true,cancelable:true,composed:true,view};
+                    this.dispatchEvent(new WheelEvent('wheel',o));
+                    let n=this;
+                    while (n && n !== this.ownerDocument.documentElement) {
+                        const s=view.getComputedStyle(n);
+                        if (/(auto|scroll)/.test(s.overflow+s.overflowX+s.overflowY)) break;
+                        n=n.parentElement;
+                    }
+                    const target=n || this.ownerDocument.scrollingElement || this.ownerDocument.documentElement;
+                    const beforeX=target.scrollLeft;
+                    const beforeY=target.scrollTop;
+                    target.scrollBy(dx,dy);
+                    // Smooth scrolling can start after this JavaScript task returns.
+                    const deadline=view.performance.now()+250;
+                    while (target.scrollLeft === beforeX && target.scrollTop === beforeY) {
+                        if (view.performance.now() >= deadline) return false;
+                        await new Promise(resolve => view.setTimeout(resolve,25));
+                    }
+                    target.dispatchEvent(new Event('scroll'));
+                    return true;
+                }"#,
                 json!([{ "value": request.delta_x }, { "value": request.delta_y }]),
             ),
             PointerAction::Drag => {
@@ -486,6 +511,7 @@ impl BrowserPointerTool {
                     "functionDeclaration": function,
                     "arguments": arguments,
                     "returnByValue": true,
+                    "awaitPromise": request.action == PointerAction::Scroll,
                 }),
             )
             .await
@@ -746,7 +772,7 @@ impl Tool for BrowserPointerTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -756,7 +782,7 @@ impl Tool for BrowserPointerTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
         } else {

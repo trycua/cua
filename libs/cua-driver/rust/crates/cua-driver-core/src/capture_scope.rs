@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-session capture/action scope policy.
 //!
 //! The policy is keyed exclusively by the public, caller-declared `session`
@@ -191,8 +194,6 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
             | "verify_state"
             | "get_accessibility_tree"
             | "get_app_state"
-            | "screenshot"
-            | "screenshot_compat"
             | "zoom"
             | "page"
     ) || tool_name == "get_browser_state"

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
-from cua_sandbox._config import FLEET_CREDENTIALS_MISSING, get_api_key, get_base_url
+from cua_sandbox._config import get_api_key, get_base_url
 from cua_sandbox._paths import cua_home, patched_or
 
 _CUA_DIR = cua_home()
@@ -51,7 +51,7 @@ def whoami(*, api_key: Optional[str] = None) -> Dict[str, Any]:
     """
     key = get_api_key(api_key)
     if not key:
-        raise RuntimeError(FLEET_CREDENTIALS_MISSING)
+        raise RuntimeError("No API key: run login(), pass api_key=, or set CUA_API_KEY")
     resp = httpx.get(
         f"{get_base_url()}/v1/whoami",
         headers={"Authorization": f"Bearer {key}"},

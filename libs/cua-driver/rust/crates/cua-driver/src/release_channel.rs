@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Persistent stable/nightly update-channel preference.
 
 use std::fmt;
@@ -89,8 +92,8 @@ fn selected_at(path: &std::path::Path) -> Result<ReleaseChannel, String> {
 }
 
 pub fn set(channel: ReleaseChannel) -> Result<(), String> {
-    if crate::updater::is_pacman_managed() {
-        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    if let Some(owner) = crate::updater::update_owner() {
+        return Err(owner.guidance());
     }
     let path = state_path()?;
     set_at(&path, channel)
@@ -122,11 +125,11 @@ fn set_at(path: &std::path::Path, channel: ReleaseChannel) -> Result<(), String>
 }
 
 pub fn state_path() -> Result<PathBuf, String> {
-    if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME") {
+    if let Some(home) = crate::env_vars::var_os("CUA_DRIVER_RS_HOME") {
         return Ok(PathBuf::from(home).join(FILE_NAME));
     }
-    let root = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    let root = crate::env_vars::var_os("HOME")
+        .or_else(|| crate::env_vars::var_os("USERPROFILE"))
         .ok_or_else(|| "neither HOME nor USERPROFILE is set".to_owned())?;
     Ok(PathBuf::from(root)
         .join(crate::bundle::user_home_subdirectory())

@@ -1,0 +1,3420 @@
+{
+ "package": "@daytona/sdk",
+ "symbols": {
+  "Accessibility": {
+   "construct": [
+    "(apiClient: ComputerUseApi) => Accessibility"
+   ],
+   "kind": "class",
+   "members": {
+    "findNodes": [
+     "(options?: FindAccessibilityNodesRequest) => Promise<AccessibilityNodesResponse>"
+    ],
+    "focusNode": [
+     "(id: string) => Promise<void>"
+    ],
+    "getTree": [
+     "(options?: AccessibilityTreeOptions) => Promise<AccessibilityTreeResponse>"
+    ],
+    "invokeNode": [
+     "(id: string, action?: string) => Promise<void>"
+    ],
+    "setNodeValue": [
+     "(id: string, value: string) => Promise<void>"
+    ]
+   },
+   "static": {}
+  },
+  "AccessibilityFindOptions": {
+   "kind": "type",
+   "type": "FindAccessibilityNodesRequest"
+  },
+  "AccessibilityTreeOptions": {
+   "kind": "interface",
+   "members": {
+    "maxDepth": [
+     "?",
+     "number"
+    ],
+    "pid": [
+     "?",
+     "number"
+    ],
+    "scope": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "BarChart": {
+   "kind": "type",
+   "type": "BarChart"
+  },
+  "BarData": {
+   "kind": "type",
+   "type": "BarData"
+  },
+  "BoxAndWhiskerChart": {
+   "kind": "type",
+   "type": "BoxAndWhiskerChart"
+  },
+  "BoxAndWhiskerData": {
+   "kind": "type",
+   "type": "BoxAndWhiskerData"
+  },
+  "Chart": {
+   "kind": "type",
+   "type": "Chart"
+  },
+  "Chart2D": {
+   "kind": "type",
+   "type": "Chart2D"
+  },
+  "ChartElement": {
+   "kind": "type",
+   "type": "ChartElement"
+  },
+  "ChartType": {
+   "kind": "enum",
+   "members": {
+    "BAR": "ChartType.BAR",
+    "BOX_AND_WHISKER": "ChartType.BOX_AND_WHISKER",
+    "COMPOSITE_CHART": "ChartType.COMPOSITE_CHART",
+    "LINE": "ChartType.LINE",
+    "PIE": "ChartType.PIE",
+    "SCATTER": "ChartType.SCATTER",
+    "UNKNOWN": "ChartType.UNKNOWN"
+   }
+  },
+  "CodeLanguage": {
+   "kind": "enum",
+   "members": {
+    "JAVASCRIPT": "CodeLanguage.JAVASCRIPT",
+    "PYTHON": "CodeLanguage.PYTHON",
+    "TYPESCRIPT": "CodeLanguage.TYPESCRIPT"
+   }
+  },
+  "CodeRunParams": {
+   "construct": [
+    "() => CodeRunParams"
+   ],
+   "kind": "class",
+   "members": {
+    "argv": [
+     "?",
+     "string[]"
+    ],
+    "env": [
+     "?",
+     "Record<string, string>"
+    ]
+   },
+   "static": {}
+  },
+  "CompositeChart": {
+   "kind": "type",
+   "type": "CompositeChart"
+  },
+  "ComputerUse": {
+   "construct": [
+    "(apiClient: ComputerUseApi) => ComputerUse"
+   ],
+   "kind": "class",
+   "members": {
+    "accessibility": "Accessibility",
+    "display": "Display",
+    "getProcessErrors": [
+     "(processName: string) => Promise<ProcessErrorsResponse>"
+    ],
+    "getProcessLogs": [
+     "(processName: string) => Promise<ProcessLogsResponse>"
+    ],
+    "getProcessStatus": [
+     "(processName: string) => Promise<ProcessStatusResponse>"
+    ],
+    "getStatus": [
+     "() => Promise<ComputerUseStatusResponse>"
+    ],
+    "keyboard": "Keyboard",
+    "mouse": "Mouse",
+    "recording": "RecordingService",
+    "restartProcess": [
+     "(processName: string) => Promise<ProcessRestartResponse>"
+    ],
+    "screenshot": "Screenshot",
+    "start": [
+     "() => Promise<ComputerUseStartResponse>"
+    ],
+    "stop": [
+     "() => Promise<ComputerUseStopResponse>"
+    ]
+   },
+   "static": {}
+  },
+  "CreateSandboxBaseParams": {
+   "kind": "type",
+   "type": "CreateSandboxBaseParams"
+  },
+  "CreateSandboxFromImageParams": {
+   "kind": "type",
+   "type": "CreateSandboxFromImageParams"
+  },
+  "CreateSandboxFromSnapshotParams": {
+   "kind": "type",
+   "type": "CreateSandboxFromSnapshotParams"
+  },
+  "CreateSecretParams": {
+   "kind": "interface",
+   "members": {
+    "description": [
+     "?",
+     "string"
+    ],
+    "hosts": [
+     "?",
+     "string[]"
+    ],
+    "name": "string",
+    "value": "string"
+   }
+  },
+  "CreateSnapshotParams": {
+   "kind": "type",
+   "type": "CreateSnapshotParams"
+  },
+  "CreateWarmPool": {
+   "kind": "interface",
+   "members": {
+    "pool": "number",
+    "snapshot": "string",
+    "target": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "Daytona": {
+   "construct": [
+    "(config?: DaytonaConfig) => Daytona"
+   ],
+   "kind": "class",
+   "members": {
+    "create": [
+     "(params?: CreateSandboxFromImageParams, options?: { onSnapshotCreateLogs?: (chunk: string) => void; timeout?: number; }) => Promise<Sandbox>",
+     "(params?: CreateSandboxFromSnapshotParams, options?: { timeout?: number; }) => Promise<Sandbox>"
+    ],
+    "delete": [
+     "(sandbox: Sandbox, timeout?: number, wait?: boolean) => Promise<void>"
+    ],
+    "fork": [
+     "(sandbox: Sandbox, params?: ForkSandboxParams, timeout?: number) => Promise<Sandbox>"
+    ],
+    "get": [
+     "(sandboxIdOrName: string) => Promise<Sandbox>"
+    ],
+    "list": [
+     "(query?: ListSandboxesQuery) => AsyncIterableIterator<Sandbox>"
+    ],
+    "secret": "SecretService",
+    "snapshot": "SnapshotService",
+    "start": [
+     "(sandbox: Sandbox, timeout?: number) => Promise<void>"
+    ],
+    "stop": [
+     "(sandbox: Sandbox) => Promise<void>"
+    ],
+    "volume": "VolumeService",
+    "warmPool": "WarmPoolService"
+   },
+   "static": {
+    "createAxiosInstance": [
+     "(requestTimeoutMs?: number) => AxiosInstance"
+    ]
+   }
+  },
+  "DaytonaA11yUnavailableError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaA11yUnavailableError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaAuthenticationError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaAuthenticationError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaAuthorizationError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaAuthorizationError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaBadGatewayError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaBadGatewayError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaBadRequestError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaBadRequestError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaCommandAlreadyCompletedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaCommandAlreadyCompletedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaConfig": {
+   "kind": "interface",
+   "members": {
+    "apiKey": [
+     "?",
+     "string"
+    ],
+    "apiUrl": [
+     "?",
+     "string"
+    ],
+    "jwtToken": [
+     "?",
+     "string"
+    ],
+    "organizationId": [
+     "?",
+     "string"
+    ],
+    "otelEnabled": [
+     "?",
+     "boolean"
+    ],
+    "requestTimeoutMs": [
+     "?",
+     "number"
+    ],
+    "serverUrl": [
+     "?",
+     "string"
+    ],
+    "target": [
+     "?",
+     "string"
+    ],
+    "useDeprecatedPolling": [
+     "?",
+     "boolean"
+    ]
+   }
+  },
+  "DaytonaConflictError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaConflictError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaConnectionError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaConnectionError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaConnectionTimeoutError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaConnectionTimeoutError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaFileAccessDeniedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaFileAccessDeniedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaFileNotFoundError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaFileNotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaFileReadFailedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaFileReadFailedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaForbiddenError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaForbiddenError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitAuthFailedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitAuthFailedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitBranchExistsError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitBranchExistsError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitBranchNotFoundError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitBranchNotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitDirtyWorktreeError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitDirtyWorktreeError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitMergeConflictError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitMergeConflictError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitPushRejectedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitPushRejectedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitRemoteRejectedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitRemoteRejectedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitRepoNotFoundError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitRepoNotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGitTransportFailedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGitTransportFailedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaGoneError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaGoneError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaInternalServerError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaInternalServerError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaInvalidArgumentError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaInvalidArgumentError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaInvalidFilePathError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaInvalidFilePathError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaLspServerNotInitializedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaLspServerNotInitializedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaNotFoundError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaNotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaProcessExecutionTimeoutError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaProcessExecutionTimeoutError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaProcessNotFoundError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaProcessNotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaQueueTimeoutError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaQueueTimeoutError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaRateLimitError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaRateLimitError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaRecordingFfmpegNotFoundError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaRecordingFfmpegNotFoundError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaRecordingStillActiveError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaRecordingStillActiveError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaServiceUnavailableError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaServiceUnavailableError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaSessionEndedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaSessionEndedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaSpotEvictedError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaSpotEvictedError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaTimeoutError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaTimeoutError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaUnprocessableEntityError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaUnprocessableEntityError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "DaytonaValidationError": {
+   "construct": [
+    "(message: string, statusCode?: number, headers?: AxiosHeaders, code?: string, source?: string) => DaytonaValidationError"
+   ],
+   "kind": "class",
+   "members": {
+    "cause": [
+     "?",
+     "unknown"
+    ],
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": "string",
+    "headers": [
+     "?",
+     "AxiosHeaders"
+    ],
+    "message": "string",
+    "name": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "stack": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   },
+   "static": {
+    "captureStackTrace": [
+     "(targetObject: object, constructorOpt?: Function) => void"
+    ],
+    "prepareStackTrace": [
+     "(err: Error, stackTraces: CallSite[]) => any"
+    ],
+    "stackTraceLimit": "number"
+   }
+  },
+  "Display": {
+   "construct": [
+    "(apiClient: ComputerUseApi) => Display"
+   ],
+   "kind": "class",
+   "members": {
+    "getInfo": [
+     "() => Promise<DisplayInfoResponse>"
+    ],
+    "getWindows": [
+     "() => Promise<WindowsResponse>"
+    ]
+   },
+   "static": {}
+  },
+  "DownloadMetadata": {
+   "kind": "interface",
+   "members": {
+    "destination": [
+     "?",
+     "string"
+    ],
+    "error": [
+     "?",
+     "string"
+    ],
+    "errorDetails": [
+     "?",
+     "FileDownloadErrorDetails"
+    ],
+    "result": [
+     "?",
+     "string | Buffer<ArrayBufferLike> | Uint8Array<ArrayBufferLike>"
+    ]
+   }
+  },
+  "DownloadProgress": {
+   "kind": "type",
+   "type": "DownloadProgress"
+  },
+  "DownloadStreamOptions": {
+   "kind": "type",
+   "type": "DownloadStreamOptions"
+  },
+  "ExecutionError": {
+   "kind": "interface",
+   "members": {
+    "name": "string",
+    "traceback": [
+     "?",
+     "string"
+    ],
+    "value": "string"
+   }
+  },
+  "ExecutionResult": {
+   "kind": "interface",
+   "members": {
+    "error": [
+     "?",
+     "ExecutionError"
+    ],
+    "stderr": "string",
+    "stdout": "string"
+   }
+  },
+  "FileDownloadErrorDetails": {
+   "kind": "interface",
+   "members": {
+    "code": [
+     "?",
+     "string"
+    ],
+    "errorCode": [
+     "?",
+     "string"
+    ],
+    "message": "string",
+    "source": [
+     "?",
+     "string"
+    ],
+    "statusCode": [
+     "?",
+     "number"
+    ]
+   }
+  },
+  "FileDownloadRequest": {
+   "kind": "interface",
+   "members": {
+    "destination": [
+     "?",
+     "string"
+    ],
+    "source": "string"
+   }
+  },
+  "FileDownloadResponse": {
+   "kind": "interface",
+   "members": {
+    "error": [
+     "?",
+     "string"
+    ],
+    "errorDetails": [
+     "?",
+     "FileDownloadErrorDetails"
+    ],
+    "result": [
+     "?",
+     "string | Buffer<ArrayBufferLike>"
+    ],
+    "source": "string"
+   }
+  },
+  "FileInfo": {
+   "kind": "interface",
+   "members": {
+    "group": "string",
+    "isDir": "boolean",
+    "modTime": "string",
+    "mode": "string",
+    "modifiedAt": "string",
+    "name": "string",
+    "owner": "string",
+    "path": [
+     "?",
+     "string"
+    ],
+    "permissions": "string",
+    "size": "number"
+   }
+  },
+  "FilePermissionsParams": {
+   "kind": "type",
+   "type": "FilePermissionsParams"
+  },
+  "FileSystem": {
+   "construct": [
+    "(clientConfig: Configuration, apiClient: FileSystemApi) => FileSystem"
+   ],
+   "kind": "class",
+   "members": {
+    "createFolder": [
+     "(path: string, mode: string) => Promise<void>"
+    ],
+    "deleteFile": [
+     "(path: string, recursive?: boolean) => Promise<void>"
+    ],
+    "downloadFile": [
+     "(remotePath: string, localPath: string, timeout?: number) => Promise<void>",
+     "(remotePath: string, timeout?: number) => Promise<Buffer<ArrayBufferLike>>"
+    ],
+    "downloadFileStream": [
+     "(remotePath: string, options?: DownloadStreamOptions) => Promise<Readable>",
+     "(remotePath: string, timeout?: number) => Promise<Readable>"
+    ],
+    "downloadFiles": [
+     "(files: FileDownloadRequest[], timeoutSec?: number) => Promise<FileDownloadResponse[]>"
+    ],
+    "findFiles": [
+     "(path: string, pattern: string) => Promise<Match[]>"
+    ],
+    "getFileDetails": [
+     "(path: string) => Promise<FileInfo>"
+    ],
+    "listFiles": [
+     "(path: string, options?: { depth?: number; }) => Promise<FileInfo[]>"
+    ],
+    "moveFiles": [
+     "(source: string, destination: string) => Promise<void>"
+    ],
+    "replaceInFiles": [
+     "(files: string[], pattern: string, newValue: string) => Promise<ReplaceResult[]>"
+    ],
+    "searchFiles": [
+     "(path: string, pattern: string) => Promise<SearchFilesResponse>"
+    ],
+    "setFilePermissions": [
+     "(path: string, permissions: FilePermissionsParams) => Promise<void>"
+    ],
+    "uploadFile": [
+     "(file: Buffer<ArrayBufferLike>, remotePath: string, timeout?: number) => Promise<void>",
+     "(localPath: string, remotePath: string, timeout?: number) => Promise<void>"
+    ],
+    "uploadFileStream": [
+     "(source: UploadSource, remotePath: string, options?: UploadStreamOptions) => Promise<void>"
+    ],
+    "uploadFiles": [
+     "(files: FileUpload[], timeout?: number) => Promise<void>"
+    ]
+   },
+   "static": {}
+  },
+  "FileUpload": {
+   "kind": "interface",
+   "members": {
+    "destination": "string",
+    "source": "string | Buffer<ArrayBufferLike>"
+   }
+  },
+  "ForkSandboxParams": {
+   "kind": "type",
+   "type": "ForkSandboxParams"
+  },
+  "Git": {
+   "construct": [
+    "(apiClient: GitApi) => Git"
+   ],
+   "kind": "class",
+   "members": {
+    "add": [
+     "(path: string, files: string[]) => Promise<void>"
+    ],
+    "branches": [
+     "(path: string) => Promise<ListBranchResponse>"
+    ],
+    "checkoutBranch": [
+     "(path: string, branch: string) => Promise<void>"
+    ],
+    "clone": [
+     "(url: string, path: string, branch?: string, commitId?: string, username?: string, password?: string, insecureSkipTls?: boolean, depth?: number) => Promise<void>"
+    ],
+    "commit": [
+     "(path: string, message: string, author: string, email: string, allowEmpty?: boolean) => Promise<GitCommitResponse>"
+    ],
+    "configureUser": [
+     "(name: string, email: string, scope?: string, path?: string) => Promise<void>"
+    ],
+    "createBranch": [
+     "(path: string, name: string) => Promise<void>"
+    ],
+    "dangerouslyAuthenticate": [
+     "(username: string, password: string, host?: string, protocol?: string) => Promise<void>"
+    ],
+    "deleteBranch": [
+     "(path: string, name: string) => Promise<void>"
+    ],
+    "getConfig": [
+     "(key: string, scope?: string, path?: string) => Promise<string>"
+    ],
+    "init": [
+     "(path: string, bare?: boolean, initialBranch?: string) => Promise<void>"
+    ],
+    "pull": [
+     "(path: string, username?: string, password?: string, branch?: string, remote?: string) => Promise<void>"
+    ],
+    "push": [
+     "(path: string, username?: string, password?: string, branch?: string, remote?: string, setUpstream?: boolean) => Promise<void>"
+    ],
+    "remoteAdd": [
+     "(path: string, name: string, url: string, fetch?: boolean, overwrite?: boolean) => Promise<void>"
+    ],
+    "remoteGet": [
+     "(path: string, name: string) => Promise<string>"
+    ],
+    "remotes": [
+     "(path: string) => Promise<ListRemotesResponse>"
+    ],
+    "reset": [
+     "(path: string, mode?: string, target?: string, files?: string[]) => Promise<void>"
+    ],
+    "restore": [
+     "(path: string, files: string[], staged?: boolean, worktree?: boolean, source?: string) => Promise<void>"
+    ],
+    "setConfig": [
+     "(key: string, value: string, scope?: string, path?: string) => Promise<void>"
+    ],
+    "status": [
+     "(path: string) => Promise<GitStatus>"
+    ]
+   },
+   "static": {}
+  },
+  "GitStatus": {
+   "kind": "interface",
+   "members": {
+    "ahead": [
+     "?",
+     "number"
+    ],
+    "behind": [
+     "?",
+     "number"
+    ],
+    "branchPublished": [
+     "?",
+     "boolean"
+    ],
+    "currentBranch": "string",
+    "detached": [
+     "?",
+     "boolean"
+    ],
+    "fileStatus": "FileStatus[]",
+    "upstream": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "GpuType": {
+   "kind": "type",
+   "type": "GpuType"
+  },
+  "Image": {
+   "construct": [
+    "() => Image"
+   ],
+   "kind": "class",
+   "members": {
+    "addLocalDir": [
+     "(localPath: string, remotePath: string) => Image"
+    ],
+    "addLocalFile": [
+     "(localPath: string, remotePath: string) => Image"
+    ],
+    "cmd": [
+     "(cmd: string[]) => Image"
+    ],
+    "contextList": "Context[]",
+    "dockerfile": "string",
+    "dockerfileCommands": [
+     "(dockerfileCommands: string[], contextDir?: string, options?: { strictContext?: boolean; }) => Image"
+    ],
+    "entrypoint": [
+     "(entrypointCommands: string[]) => Image"
+    ],
+    "env": [
+     "(envVars: Record<string, string>) => Image"
+    ],
+    "pipInstall": [
+     "(packages: string | string[], options?: PipInstallOptions) => Image"
+    ],
+    "pipInstallFromPyproject": [
+     "(pyprojectToml: string, options?: PyprojectOptions) => Image"
+    ],
+    "pipInstallFromRequirements": [
+     "(requirementsTxt: string, options?: PipInstallOptions) => Image"
+    ],
+    "runCommands": [
+     "(...commands: (string | string[])[]) => Image"
+    ],
+    "workdir": [
+     "(dirPath: string) => Image"
+    ]
+   },
+   "static": {
+    "base": [
+     "(image: string) => Image"
+    ],
+    "debianSlim": [
+     "(pythonVersion?: \"3.9\" | \"3.10\" | \"3.11\" | \"3.12\" | \"3.13\") => Image"
+    ],
+    "fromDockerfile": [
+     "(path: string, options?: { strictContext?: boolean; }) => Image"
+    ]
+   }
+  },
+  "Keyboard": {
+   "construct": [
+    "(apiClient: ComputerUseApi) => Keyboard"
+   ],
+   "kind": "class",
+   "members": {
+    "down": [
+     "(key: string) => Promise<void>"
+    ],
+    "hotkey": [
+     "(keys: string) => Promise<void>"
+    ],
+    "press": [
+     "(key: string, modifiers?: string[]) => Promise<void>"
+    ],
+    "type": [
+     "(text: string, delay?: number) => Promise<void>"
+    ],
+    "up": [
+     "(key: string) => Promise<void>"
+    ]
+   },
+   "static": {}
+  },
+  "LineChart": {
+   "kind": "type",
+   "type": "LineChart"
+  },
+  "ListBranchResponse": {
+   "kind": "interface",
+   "members": {
+    "branches": "string[]",
+    "current": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "ListSandboxesQuery": {
+   "kind": "interface",
+   "members": {
+    "autoDestroyAtAfter": [
+     "?",
+     "Date"
+    ],
+    "autoDestroyAtBefore": [
+     "?",
+     "Date"
+    ],
+    "createdAtAfter": [
+     "?",
+     "Date"
+    ],
+    "createdAtBefore": [
+     "?",
+     "Date"
+    ],
+    "id": [
+     "?",
+     "string"
+    ],
+    "isPublic": [
+     "?",
+     "boolean"
+    ],
+    "isRecoverable": [
+     "?",
+     "boolean"
+    ],
+    "labels": [
+     "?",
+     "Record<string, string>"
+    ],
+    "lastActivityAfter": [
+     "?",
+     "Date"
+    ],
+    "lastActivityBefore": [
+     "?",
+     "Date"
+    ],
+    "limit": [
+     "?",
+     "number"
+    ],
+    "maxCpu": [
+     "?",
+     "number"
+    ],
+    "maxDiskGib": [
+     "?",
+     "number"
+    ],
+    "maxMemoryGib": [
+     "?",
+     "number"
+    ],
+    "minCpu": [
+     "?",
+     "number"
+    ],
+    "minDiskGib": [
+     "?",
+     "number"
+    ],
+    "minMemoryGib": [
+     "?",
+     "number"
+    ],
+    "name": [
+     "?",
+     "string"
+    ],
+    "order": [
+     "?",
+     "SandboxListSortDirection"
+    ],
+    "snapshots": [
+     "?",
+     "string[]"
+    ],
+    "sort": [
+     "?",
+     "SandboxListSortField"
+    ],
+    "states": [
+     "?",
+     "SandboxState[]"
+    ],
+    "targets": [
+     "?",
+     "string[]"
+    ]
+   }
+  },
+  "ListSecretsPaginatedOrderEnum": {
+   "kind": "type",
+   "type": "ListSecretsPaginatedOrderEnum"
+  },
+  "ListSecretsPaginatedSortEnum": {
+   "kind": "type",
+   "type": "ListSecretsPaginatedSortEnum"
+  },
+  "ListSecretsQuery": {
+   "kind": "interface",
+   "members": {
+    "cursor": [
+     "?",
+     "string"
+    ],
+    "limit": [
+     "?",
+     "number"
+    ],
+    "name": [
+     "?",
+     "string"
+    ],
+    "order": [
+     "?",
+     "ListSecretsPaginatedOrderEnum"
+    ],
+    "sort": [
+     "?",
+     "ListSecretsPaginatedSortEnum"
+    ]
+   }
+  },
+  "ListSecretsResponse": {
+   "kind": "interface",
+   "members": {
+    "items": "Secret[]",
+    "nextCursor": "string",
+    "total": "number"
+   }
+  },
+  "ListSnapshotsQuery": {
+   "kind": "interface",
+   "members": {
+    "limit": [
+     "?",
+     "number"
+    ],
+    "page": [
+     "?",
+     "number"
+    ],
+    "sourceSandboxId": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "LspLanguageId": {
+   "kind": "enum",
+   "members": {
+    "JAVASCRIPT": "LspLanguageId.JAVASCRIPT",
+    "PYTHON": "LspLanguageId.PYTHON",
+    "TYPESCRIPT": "LspLanguageId.TYPESCRIPT"
+   }
+  },
+  "MAX_PREFIX_LEN": {
+   "kind": "value",
+   "type": "number"
+  },
+  "Match": {
+   "kind": "interface",
+   "members": {
+    "content": "string",
+    "file": "string",
+    "line": "number"
+   }
+  },
+  "Mouse": {
+   "construct": [
+    "(apiClient: ComputerUseApi) => Mouse"
+   ],
+   "kind": "class",
+   "members": {
+    "click": [
+     "(x: number, y: number, button?: string, double?: boolean, clicks?: number, modifiers?: string[]) => Promise<MouseClickResponse>"
+    ],
+    "down": [
+     "(x?: number, y?: number, button?: string) => Promise<MousePositionResponse>"
+    ],
+    "drag": [
+     "(startX: number, startY: number, endX: number, endY: number, button?: string, modifiers?: string[]) => Promise<MouseDragResponse>"
+    ],
+    "getPosition": [
+     "() => Promise<MousePositionResponse>"
+    ],
+    "move": [
+     "(x: number, y: number) => Promise<MousePositionResponse>"
+    ],
+    "scroll": [
+     "(x: number, y: number, direction: \"up\" | \"down\" | \"left\" | \"right\", amount?: number, modifiers?: string[]) => Promise<boolean>"
+    ],
+    "up": [
+     "(x?: number, y?: number, button?: string) => Promise<MousePositionResponse>"
+    ]
+   },
+   "static": {}
+  },
+  "OutputMessage": {
+   "kind": "interface",
+   "members": {
+    "output": "string"
+   }
+  },
+  "PaginatedSnapshots": {
+   "kind": "interface",
+   "members": {
+    "items": "Snapshot[]",
+    "page": "number",
+    "total": "number",
+    "totalPages": "number"
+   }
+  },
+  "PieChart": {
+   "kind": "type",
+   "type": "PieChart"
+  },
+  "PieData": {
+   "kind": "type",
+   "type": "PieData"
+  },
+  "PointChart": {
+   "kind": "type",
+   "type": "PointChart"
+  },
+  "PointData": {
+   "kind": "type",
+   "type": "PointData"
+  },
+  "Process": {
+   "construct": [
+    "(clientConfig: Configuration, apiClient: ProcessApi, getPreviewToken: () => Promise<string>, language?: string, requestTimeoutMs?: number) => Process"
+   ],
+   "kind": "class",
+   "members": {
+    "codeRun": [
+     "(code: string, params?: CodeRunParams, timeout?: number) => Promise<ExecuteResponse>"
+    ],
+    "connectPty": [
+     "(sessionId: string, options?: PtyConnectOptions) => Promise<PtyHandle>"
+    ],
+    "createPty": [
+     "(options?: PtyCreateOptions & PtyConnectOptions) => Promise<PtyHandle>"
+    ],
+    "createSession": [
+     "(sessionId: string) => Promise<void>"
+    ],
+    "deleteSession": [
+     "(sessionId: string) => Promise<void>"
+    ],
+    "executeCommand": [
+     "(command: string, cwd?: string, env?: Record<string, string>, timeout?: number) => Promise<ExecuteResponse>"
+    ],
+    "executeSessionCommand": [
+     "(sessionId: string, req: SessionExecuteRequest, timeout?: number) => Promise<SessionExecuteResponse>"
+    ],
+    "getEntrypointLogs": [
+     "() => Promise<SessionCommandLogsResponse>",
+     "(onStdout: (chunk: string) => void, onStderr: (chunk: string) => void) => Promise<void>"
+    ],
+    "getEntrypointSession": [
+     "() => Promise<Session>"
+    ],
+    "getPtySessionInfo": [
+     "(sessionId: string) => Promise<PtySessionInfo>"
+    ],
+    "getSession": [
+     "(sessionId: string) => Promise<Session>"
+    ],
+    "getSessionCommand": [
+     "(sessionId: string, commandId: string) => Promise<Command>"
+    ],
+    "getSessionCommandLogs": [
+     "(sessionId: string, commandId: string) => Promise<SessionCommandLogsResponse>",
+     "(sessionId: string, commandId: string, onStdout: (chunk: string) => void, onStderr: (chunk: string) => void) => Promise<void>"
+    ],
+    "killPtySession": [
+     "(sessionId: string) => Promise<void>"
+    ],
+    "listPtySessions": [
+     "() => Promise<PtySessionInfo[]>"
+    ],
+    "listSessions": [
+     "() => Promise<Session[]>"
+    ],
+    "resizePtySession": [
+     "(sessionId: string, cols: number, rows: number) => Promise<PtySessionInfo>"
+    ],
+    "sendSessionCommandInput": [
+     "(sessionId: string, commandId: string, data: string) => Promise<void>"
+    ]
+   },
+   "static": {}
+  },
+  "PtyConnectOptions": {
+   "kind": "interface",
+   "members": {
+    "onData": [
+     "(data: Uint8Array<ArrayBufferLike>) => void | Promise<void>"
+    ]
+   }
+  },
+  "PtyCreateOptions": {
+   "kind": "interface",
+   "members": {
+    "cols": [
+     "?",
+     "number"
+    ],
+    "cwd": [
+     "?",
+     "string"
+    ],
+    "envs": [
+     "?",
+     "Record<string, string>"
+    ],
+    "id": "string",
+    "rows": [
+     "?",
+     "number"
+    ]
+   }
+  },
+  "PtyHandle": {
+   "construct": [
+    "(ws: WebSocket, handleResize: (cols: number, rows: number) => Promise<PtySessionInfo>, handleKill: () => Promise<void>, onPty: (data: Uint8Array<ArrayBufferLike>) => void | Promise<void>, sessionId: string) => PtyHandle"
+   ],
+   "kind": "class",
+   "members": {
+    "disconnect": [
+     "() => Promise<void>"
+    ],
+    "error": "string",
+    "exitCode": "number",
+    "isConnected": [
+     "() => boolean"
+    ],
+    "kill": [
+     "() => Promise<void>"
+    ],
+    "resize": [
+     "(cols: number, rows: number) => Promise<PtySessionInfo>"
+    ],
+    "sendInput": [
+     "(data: string | Uint8Array<ArrayBufferLike>) => Promise<void>"
+    ],
+    "sessionId": "string",
+    "wait": [
+     "() => Promise<PtyResult>"
+    ],
+    "waitForConnection": [
+     "() => Promise<void>"
+    ]
+   },
+   "static": {}
+  },
+  "PtyResult": {
+   "kind": "interface",
+   "members": {
+    "error": [
+     "?",
+     "string"
+    ],
+    "exitCode": [
+     "?",
+     "number"
+    ]
+   }
+  },
+  "ReplaceResult": {
+   "kind": "interface",
+   "members": {
+    "error": [
+     "?",
+     "string"
+    ],
+    "file": [
+     "?",
+     "string"
+    ],
+    "success": [
+     "?",
+     "boolean"
+    ]
+   }
+  },
+  "Resources": {
+   "kind": "interface",
+   "members": {
+    "cpu": [
+     "?",
+     "number"
+    ],
+    "disk": [
+     "?",
+     "number"
+    ],
+    "gpu": [
+     "?",
+     "number"
+    ],
+    "gpuType": [
+     "?",
+     "GpuType | GpuType[]"
+    ],
+    "memory": [
+     "?",
+     "number"
+    ]
+   }
+  },
+  "RunCodeOptions": {
+   "kind": "interface",
+   "members": {
+    "context": [
+     "?",
+     "InterpreterContext"
+    ],
+    "envs": [
+     "?",
+     "Record<string, string>"
+    ],
+    "onError": [
+     "?",
+     [
+      "(error: ExecutionError) => any"
+     ]
+    ],
+    "onStderr": [
+     "?",
+     [
+      "(message: OutputMessage) => any"
+     ]
+    ],
+    "onStdout": [
+     "?",
+     [
+      "(message: OutputMessage) => any"
+     ]
+    ],
+    "timeout": [
+     "?",
+     "number"
+    ]
+   }
+  },
+  "SOURCE_API": {
+   "kind": "value",
+   "type": "\"DAYTONA_API\""
+  },
+  "SOURCE_DAEMON": {
+   "kind": "value",
+   "type": "\"DAYTONA_DAEMON\""
+  },
+  "SOURCE_PROXY": {
+   "kind": "value",
+   "type": "\"DAYTONA_PROXY\""
+  },
+  "STDERR_PREFIX_BYTES": {
+   "kind": "value",
+   "type": "Uint8Array<ArrayBuffer>"
+  },
+  "STDOUT_PREFIX_BYTES": {
+   "kind": "value",
+   "type": "Uint8Array<ArrayBuffer>"
+  },
+  "Sandbox": {
+   "construct": [
+    "(sandboxDto: Sandbox | SandboxListItem, clientConfig: Configuration, axiosInstance: AxiosInstance, sandboxApi: SandboxApi, getAnalyticsApiUrl: () => Promise<string>, subscriptionManager: EventSubscriptionManager, requestTimeoutMs?: number) => Sandbox"
+   ],
+   "kind": "class",
+   "members": {
+    "archive": [
+     "() => Promise<void>"
+    ],
+    "autoArchiveInterval": [
+     "?",
+     "number"
+    ],
+    "autoDeleteInterval": [
+     "?",
+     "number"
+    ],
+    "autoDestroyAt": [
+     "?",
+     "string"
+    ],
+    "autoPauseInterval": [
+     "?",
+     "number"
+    ],
+    "autoStopInterval": [
+     "?",
+     "number"
+    ],
+    "backupCreatedAt": [
+     "?",
+     "string"
+    ],
+    "backupState": [
+     "?",
+     "SandboxBackupStateEnum"
+    ],
+    "buildInfo": [
+     "?",
+     "BuildInfo"
+    ],
+    "codeInterpreter": "CodeInterpreter",
+    "computerUse": "ComputerUse",
+    "cpu": "number",
+    "createLspServer": [
+     "(languageId: string, pathToProject: string) => Promise<LspServer>"
+    ],
+    "createSnapshot": [
+     "(name: string, timeout?: number) => Promise<void>"
+    ],
+    "createSshAccess": [
+     "(expiresInMinutes?: number) => Promise<SshAccessDto>"
+    ],
+    "createdAt": [
+     "?",
+     "string"
+    ],
+    "daemonVersion": [
+     "?",
+     "string"
+    ],
+    "delete": [
+     "(timeout?: number, wait?: boolean) => Promise<void>"
+    ],
+    "desiredState": [
+     "?",
+     "SandboxDesiredState"
+    ],
+    "disk": "number",
+    "domainAllowList": [
+     "?",
+     "string"
+    ],
+    "downloadUrl": [
+     "(path: string, ttlSeconds?: number) => Promise<string>"
+    ],
+    "env": [
+     "?",
+     "Record<string, string>"
+    ],
+    "errorReason": [
+     "?",
+     "string"
+    ],
+    "expireSignedPreviewUrl": [
+     "(port: number, token: string) => Promise<void>"
+    ],
+    "fork": [
+     "(params?: ForkSandboxParams, timeout?: number) => Promise<Sandbox>"
+    ],
+    "fs": "FileSystem",
+    "getMetrics": [
+     "(start?: Date, end?: Date) => Promise<SandboxMetrics[]>"
+    ],
+    "getMetricsLatest": [
+     "() => Promise<SandboxMetrics>"
+    ],
+    "getPreviewLink": [
+     "(port: number) => Promise<PortPreviewUrl>"
+    ],
+    "getSignedPreviewUrl": [
+     "(port: number, expiresInSeconds?: number) => Promise<SignedPortPreviewUrl>"
+    ],
+    "getUserHomeDir": [
+     "() => Promise<string>"
+    ],
+    "getUserRootDir": [
+     "() => Promise<string>"
+    ],
+    "getWorkDir": [
+     "() => Promise<string>"
+    ],
+    "git": "Git",
+    "gpu": "number",
+    "gpuType": [
+     "?",
+     "GpuType"
+    ],
+    "id": "string",
+    "kvm": [
+     "?",
+     "boolean"
+    ],
+    "labels": "Record<string, string>",
+    "lastActivityAt": [
+     "?",
+     "string"
+    ],
+    "linkedSandboxId": [
+     "?",
+     "string"
+    ],
+    "memory": "number",
+    "name": "string",
+    "networkAllowList": [
+     "?",
+     "string"
+    ],
+    "networkBlockAll": [
+     "?",
+     "boolean"
+    ],
+    "organizationId": "string",
+    "otelEndpointOverride": [
+     "?",
+     "string"
+    ],
+    "outboundProxyUrl": [
+     "?",
+     "string"
+    ],
+    "pause": [
+     "(timeout?: number) => Promise<void>"
+    ],
+    "process": "Process",
+    "public": "boolean",
+    "queueTimedOutAt": [
+     "?",
+     "string"
+    ],
+    "queueTimeout": [
+     "?",
+     "number"
+    ],
+    "recover": [
+     "(timeout?: number) => Promise<void>"
+    ],
+    "recoverable": [
+     "?",
+     "boolean"
+    ],
+    "refreshActivity": [
+     "() => Promise<void>"
+    ],
+    "refreshData": [
+     "() => Promise<void>"
+    ],
+    "resize": [
+     "(resources: Pick<Resources, \"cpu\" | \"memory\" | \"disk\">, timeout?: number) => Promise<void>"
+    ],
+    "revokeSshAccess": [
+     "(token: string) => Promise<void>"
+    ],
+    "rotateSigningKey": [
+     "() => Promise<void>"
+    ],
+    "sandboxClass": [
+     "?",
+     "SandboxClass"
+    ],
+    "setAutoArchiveInterval": [
+     "(interval: number) => Promise<void>"
+    ],
+    "setAutoDeleteInterval": [
+     "(interval: number) => Promise<void>"
+    ],
+    "setAutoPauseInterval": [
+     "(interval: number) => Promise<void>"
+    ],
+    "setAutostopInterval": [
+     "(interval: number) => Promise<void>"
+    ],
+    "setLabels": [
+     "(labels: Record<string, string>) => Promise<Record<string, string>>"
+    ],
+    "setPublic": [
+     "(isPublic: boolean) => Promise<void>"
+    ],
+    "setTtl": [
+     "(ttlMinutes: number) => Promise<void>"
+    ],
+    "snapshot": [
+     "?",
+     "string"
+    ],
+    "spot": [
+     "?",
+     "boolean"
+    ],
+    "spotEvictedAt": [
+     "?",
+     "string"
+    ],
+    "start": [
+     "(timeout?: number) => Promise<void>"
+    ],
+    "state": [
+     "?",
+     "SandboxState"
+    ],
+    "stop": [
+     "(timeout?: number, force?: boolean) => Promise<void>"
+    ],
+    "target": "string",
+    "toolboxProxyUrl": "string",
+    "updateEnv": [
+     "(env: Record<string, string>, options?: { unset?: string[]; }) => Promise<void>"
+    ],
+    "updateNetworkSettings": [
+     "(settings: UpdateSandboxNetworkSettings) => Promise<void>"
+    ],
+    "updateSecrets": [
+     "(secrets: Record<string, string>) => Promise<void>"
+    ],
+    "updatedAt": [
+     "?",
+     "string"
+    ],
+    "uploadUrl": [
+     "(path: string, ttlSeconds?: number) => Promise<string>"
+    ],
+    "user": "string",
+    "validateSshAccess": [
+     "(token: string) => Promise<SshAccessValidationDto>"
+    ],
+    "volumes": [
+     "?",
+     "SandboxVolume[]"
+    ],
+    "waitForResizeComplete": [
+     "(timeout?: number) => Promise<void>"
+    ],
+    "waitUntilStarted": [
+     "(timeout?: number) => Promise<void>"
+    ],
+    "waitUntilStopped": [
+     "(timeout?: number) => Promise<void>"
+    ],
+    "warmPoolId": [
+     "?",
+     "string"
+    ]
+   },
+   "static": {}
+  },
+  "SandboxClass": {
+   "kind": "type",
+   "type": "SandboxClass"
+  },
+  "SandboxListSortDirection": {
+   "kind": "type",
+   "type": "SandboxListSortDirection"
+  },
+  "SandboxListSortField": {
+   "kind": "type",
+   "type": "SandboxListSortField"
+  },
+  "SandboxMetrics": {
+   "kind": "interface",
+   "members": {
+    "cpuCount": "number",
+    "cpuUsedPct": "number",
+    "diskTotal": "number",
+    "diskUsed": "number",
+    "memCache": "number",
+    "memTotal": "number",
+    "memUsed": "number",
+    "timestamp": "Date"
+   }
+  },
+  "SandboxState": {
+   "kind": "type",
+   "type": "SandboxState"
+  },
+  "ScatterChart": {
+   "kind": "type",
+   "type": "ScatterChart"
+  },
+  "Screenshot": {
+   "construct": [
+    "(apiClient: ComputerUseApi) => Screenshot"
+   ],
+   "kind": "class",
+   "members": {
+    "takeCompressed": [
+     "(options?: ScreenshotOptions) => Promise<ScreenshotResponse>"
+    ],
+    "takeCompressedRegion": [
+     "(region: ScreenshotRegion, options?: ScreenshotOptions) => Promise<ScreenshotResponse>"
+    ],
+    "takeFullScreen": [
+     "(showCursor?: boolean) => Promise<ScreenshotResponse>"
+    ],
+    "takeRegion": [
+     "(region: ScreenshotRegion, showCursor?: boolean) => Promise<ScreenshotResponse>"
+    ]
+   },
+   "static": {}
+  },
+  "ScreenshotOptions": {
+   "kind": "interface",
+   "members": {
+    "format": [
+     "?",
+     "string"
+    ],
+    "quality": [
+     "?",
+     "number"
+    ],
+    "scale": [
+     "?",
+     "number"
+    ],
+    "showCursor": [
+     "?",
+     "boolean"
+    ]
+   }
+  },
+  "ScreenshotRegion": {
+   "kind": "interface",
+   "members": {
+    "height": "number",
+    "width": "number",
+    "x": "number",
+    "y": "number"
+   }
+  },
+  "SearchFilesResponse": {
+   "kind": "interface",
+   "members": {
+    "files": "string[]"
+   }
+  },
+  "Secret": {
+   "kind": "type",
+   "type": "Secret"
+  },
+  "SessionCommandLogsResponse": {
+   "kind": "interface",
+   "members": {
+    "output": [
+     "?",
+     "string"
+    ],
+    "stderr": [
+     "?",
+     "string"
+    ],
+    "stdout": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "SessionExecuteResponse": {
+   "kind": "interface",
+   "members": {
+    "cmdId": "string",
+    "exitCode": [
+     "?",
+     "number"
+    ],
+    "output": [
+     "?",
+     "string"
+    ],
+    "stderr": [
+     "?",
+     "string"
+    ],
+    "stdout": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "Snapshot": {
+   "kind": "type",
+   "type": "Snapshot"
+  },
+  "SnapshotState": {
+   "kind": "type",
+   "type": "SnapshotState"
+  },
+  "UpdateSecretParams": {
+   "kind": "interface",
+   "members": {
+    "description": [
+     "?",
+     "string"
+    ],
+    "hosts": [
+     "?",
+     "string[]"
+    ],
+    "value": [
+     "?",
+     "string"
+    ]
+   }
+  },
+  "UpdateWarmPool": {
+   "kind": "interface",
+   "members": {
+    "pool": "number"
+   }
+  },
+  "UploadProgress": {
+   "kind": "type",
+   "type": "UploadProgress"
+  },
+  "UploadSource": {
+   "kind": "type",
+   "type": "UploadSource"
+  },
+  "UploadStreamOptions": {
+   "kind": "type",
+   "type": "UploadStreamOptions"
+  },
+  "VolumeMount": {
+   "kind": "interface",
+   "members": {
+    "mountPath": "string",
+    "subpath": [
+     "?",
+     "string"
+    ],
+    "volumeId": "string"
+   }
+  },
+  "WarmPool": {
+   "kind": "type",
+   "type": "WarmPool"
+  }
+ },
+ "version": "0.225.0"
+}

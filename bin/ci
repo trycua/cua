@@ -1,0 +1,1637 @@
+#!/usr/bin/env python3
+"""bin/ci: run, on your machine, the CI checks that your change affects.
+
+It reads the files that differ from the merge base with origin/main (plus
+anything uncommitted), picks the checks those files can break, runs them in
+parallel and prints the exact command that fixes each failure. The commands
+are the ones the GitHub workflows run; `bin/ci --verify-sync` fails when a
+workflow stops running one of them, so the two cannot drift apart unseen.
+
+  bin/ci                 checks for the files you changed (default)
+  bin/ci --quick         seconds: formatting, lockfiles, headers, lint; no builds
+                         (use this on shared hosts; heavy checks go to CI or a VM)
+  bin/ci --full          every check, whatever you changed
+  bin/ci --fix           apply the safe fixers (formatters, lockfiles,
+                         generators), then check again
+  bin/ci --list          show the plan without running it
+  bin/ci --only ID,...   run only these checks (ids from --list)
+  bin/ci --signoff       after a green run, set the `local-ci` commit status
+  bin/ci --install-hook  run bin/ci before every git push (opt-in)
+
+Disk safety: heavy checks (cargo test/clippy/build, cross-target checks) run one
+at a time, lean (no incremental, no debuginfo, sccache if installed) in a
+per-run target dir that is deleted on exit (--keep-target keeps it). They are
+skipped when free disk is below CUA_CI_MIN_FREE_GB (default 40), and stopped
+when the target dir passes CUA_CI_MAX_TARGET_GB (default 15) or free disk drops
+below CUA_CI_MIN_FREE_FLOOR_GB (default 25). Exit code 3 means a guard stopped
+the run: rerun in CI.
+
+Run `bin/ci --help` for every option. Docs: docs/contributing/CI.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import contextlib
+import concurrent.futures
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+
+# CUA_CI_ROOT runs this copy against another checkout (used to replay old commits).
+ROOT = Path(os.environ.get("CUA_CI_ROOT") or Path(__file__).resolve().parent.parent).resolve()
+HOOK_MARKER = "# bin/ci pre-push hook"
+CHAINED_HOOK = "pre-push.pre-bin-ci"
+STATUS_CONTEXT = "local-ci"
+IS_WINDOWS = os.name == "nt"
+
+
+def find_bash() -> str:
+    """The bash that runs the checks' commands (they are bash). On Windows that is Git for
+    Windows' bash (CUA_CI_BASH overrides it): a bare `bash` there is usually System32\\bash.exe,
+    which is WSL and would run the checks inside a Linux distribution."""
+    if not IS_WINDOWS:
+        return "bash"
+    given = os.environ.get("CUA_CI_BASH")
+    if given:
+        return given
+    git = shutil.which("git")
+    if git:
+        # .../Git/cmd/git.exe, .../Git/bin/git.exe or .../Git/mingw64/bin/git.exe: the Git root is above it.
+        for root in list(Path(git).resolve().parents)[:3]:
+            for rel in (("bin", "bash.exe"), ("usr", "bin", "bash.exe")):
+                candidate = root.joinpath(*rel)
+                if candidate.exists():
+                    return str(candidate)
+    sys.exit("bin/ci: needs Git for Windows' bash (install Git for Windows, or set CUA_CI_BASH to its bash.exe); it will not use `bash` from PATH, which may be WSL")
+
+
+BASH = find_bash()
+_shim_dir: Optional[str] = None
+
+
+def python3_shim_dir() -> Optional[str]:
+    """Windows: a directory with a `python3` for the checks (Python there is `python`, or the Store stub)."""
+    global _shim_dir
+    if not IS_WINDOWS:
+        return None
+    if _shim_dir is None:
+        _shim_dir = tempfile.mkdtemp(prefix="bin-ci-shim-")
+        exe = Path(sys.executable).as_posix()
+        for name in ("python3", "python"):
+            with open(os.path.join(_shim_dir, name), "w", newline="\n") as fh:
+                fh.write(f'#!/bin/sh\nexec "{exe}" "$@"\n')
+        atexit.register(shutil.rmtree, _shim_dir, True)
+    return _shim_dir
+
+# ---------------------------------------------------------------- model
+
+
+@dataclass
+class Check:
+    id: str
+    title: str
+    cmd: str  # bash, run from `cwd`
+    cwd: str = "."
+    fix: Optional[str] = None  # shell command that repairs a failure
+    safe_fix: bool = False  # bin/ci --fix may run `fix` on its own
+    fix_from_output: Optional[str] = None  # regex: group 1 is a fix command
+    hint: str = ""  # shown on failure when there is no fix command
+    tools: Tuple[str, ...] = ()  # executables that must exist
+    requires: Tuple[Tuple[str, str], ...] = ()  # (path that must exist, how to create it)
+    group: Optional[str] = None  # checks in one group run one at a time
+    heavy: bool = False  # builds something large; skipped by --quick
+    tier: str = "quick"  # quick | build (skipped by --quick)
+    env: Dict[str, str] = field(default_factory=dict)
+    ci: Tuple[Tuple[str, str], ...] = ()  # (workflow, text it must contain)
+    advisory: bool = False  # never fails the run
+    isolate_home: bool = False  # run with an empty HOME, as on a fresh CI runner
+    classify: Optional[Callable[[str, int], Tuple[str, str]]] = None  # (log, rc) -> (status, detail)
+    skip_reason: Optional[str] = None  # planned but cannot run here
+
+
+@dataclass
+class Result:
+    check: Check
+    status: str  # pass | FAIL | skip | fixed | warn
+    seconds: float = 0.0
+    log: Optional[Path] = None
+    detail: str = ""
+
+
+
+# ---------------------------------------------------------------- disk guard
+
+GUARD_EXIT = 3
+GUARD_WATCH_SECS = 15.0
+
+
+def env_gb(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def min_free_gb() -> float:
+    return env_gb("CUA_CI_MIN_FREE_GB", 40.0)
+
+
+def floor_free_gb() -> float:
+    return env_gb("CUA_CI_MIN_FREE_FLOOR_GB", 25.0)
+
+
+def max_target_gb() -> float:
+    return env_gb("CUA_CI_MAX_TARGET_GB", 15.0)
+
+
+def is_heavy(c: "Check") -> bool:
+    """Checks that build something large: the ones the disk guard watches."""
+    return c.heavy or c.tier == "build"
+
+
+def disk_free_gb(path: Path) -> float:
+    """Free GB on the volume holding `path` (its nearest existing parent).
+
+    CUA_CI_FAKE_FREE_GB overrides it, for tests of the guard.
+    """
+    fake = os.environ.get("CUA_CI_FAKE_FREE_GB")
+    if fake:
+        try:
+            return float(fake)
+        except ValueError:
+            pass
+    p = Path(path)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return shutil.disk_usage(p).free / 1e9
+
+
+def dir_size_gb(path: Path) -> float:
+    if not Path(path).exists():
+        return 0.0
+    try:
+        out = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True)
+        return int(out.stdout.split()[0]) * 1024 / 1e9
+    except (IndexError, ValueError, OSError):
+        total = 0
+        for dp, _, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.lstat(os.path.join(dp, f)).st_size
+                except OSError:
+                    pass
+        return total / 1e9
+
+
+def preflight_reason(free_gb: float, min_free: float) -> Optional[str]:
+    """Why heavy checks must not start, or None."""
+    if free_gb < min_free:
+        return f"skipped: low disk ({free_gb:.0f} GB free, need {min_free:.0f} GB); CI will run these"
+    return None
+
+
+def watch_reason(free_gb: float, target_gb: float, floor: float, cap: float) -> Optional[str]:
+    """Why a running heavy check must be stopped, or None."""
+    if target_gb > cap:
+        return f"target dir is {target_gb:.1f} GB, over the {cap:.0f} GB cap (CUA_CI_MAX_TARGET_GB)"
+    if free_gb < floor:
+        return f"free disk is {free_gb:.0f} GB, under the {floor:.0f} GB floor (CUA_CI_MIN_FREE_FLOOR_GB)"
+    return None
+
+
+class DiskGuard:
+    """Watches the target dir and free disk while cargo runs; stops it when over budget."""
+
+    def __init__(self, target: Path, interval: Optional[float] = None) -> None:
+        self.target = Path(target)
+        self.interval = interval if interval is not None else env_gb("CUA_CI_WATCH_SECS", GUARD_WATCH_SECS)
+        self.tripped: Optional[str] = None
+        self.procs: Dict[int, subprocess.Popen] = {}
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop.set()
+
+    def register(self, proc: subprocess.Popen) -> None:
+        with self.lock:
+            self.procs[proc.pid] = proc
+
+    def unregister(self, proc: subprocess.Popen) -> None:
+        with self.lock:
+            self.procs.pop(proc.pid, None)
+
+    def check_once(self) -> Optional[str]:
+        reason = watch_reason(disk_free_gb(self.target), dir_size_gb(self.target), floor_free_gb(), max_target_gb())
+        if reason and not self.tripped:
+            self.tripped = reason
+            self.kill_all()
+        return reason
+
+    def kill_all(self) -> None:
+        with self.lock:
+            procs = list(self.procs.values())
+        if IS_WINDOWS:
+            for p in procs:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
+            return
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            for p in procs:
+                try:
+                    os.killpg(p.pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            if sig == signal.SIGTERM:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and any(p.poll() is None for p in procs):
+                    time.sleep(0.1)
+
+    def _loop(self) -> None:
+        while not self.stop.wait(self.interval):
+            if self.check_once():
+                return
+
+
+def lean_env() -> Dict[str, str]:
+    """Defaults that keep cargo's disk use small; anything already in the environment wins."""
+    env = {"CARGO_INCREMENTAL": "0", "CARGO_PROFILE_DEV_DEBUG": "0", "CARGO_PROFILE_TEST_DEBUG": "0"}
+    if have("sccache"):
+        env["RUSTC_WRAPPER"] = "sccache"
+    return {k: v for k, v in env.items() if k not in os.environ}
+
+
+def run_target_dir(keep: bool) -> Tuple[Path, bool]:
+    """(target dir, delete it on exit). A CARGO_TARGET_DIR you set is never deleted."""
+    if os.environ.get("CARGO_TARGET_DIR"):
+        return Path(os.environ["CARGO_TARGET_DIR"]).resolve(), False
+    if keep:
+        return ROOT / ".bin-ci-target", False
+    return ROOT / f".bin-ci-target-{os.getpid()}", True
+
+
+def sweep_stale_targets() -> None:
+    """Delete per-run target dirs left by runs that were killed."""
+    for d in ROOT.glob(".bin-ci-target-*"):
+        m = re.fullmatch(r"\.bin-ci-target-(\d+)", d.name)
+        if not m:
+            continue
+        try:
+            os.kill(int(m.group(1)), 0)
+        except ProcessLookupError:
+            shutil.rmtree(d, ignore_errors=True)
+        except PermissionError:
+            pass
+
+
+def per_crate(template: str, names: Sequence[str], tail: str = "") -> str:
+    """One cargo invocation per crate (smaller builds), failing if any failed.
+
+    template has a `{p}` placeholder, e.g. "cargo clippy --locked {p} --all-targets".
+    """
+    if len(names) <= 1:
+        return template.format(p=" ".join(f"-p {n}" for n in names)) + tail
+    steps = "; ".join(f"{template.format(p='-p ' + n)}{tail} || rc=1" for n in names)
+    return f"rc=0; {steps}; exit $rc"
+
+
+# ---------------------------------------------------------------- shell helpers
+
+
+def sh(cmd: Sequence[str], cwd: Optional[Path] = None, check: bool = False) -> str:
+    out = subprocess.run(list(cmd), cwd=str(cwd or ROOT), capture_output=True, text=True)
+    if check and out.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)}: {out.stderr.strip()}")
+    return out.stdout
+
+
+def git(*args: str) -> str:
+    return sh(["git", *args])
+
+
+def have(tool: str) -> bool:
+    return shutil.which(tool) is not None
+
+
+def color(text: str, code: str) -> str:
+    if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+# ---------------------------------------------------------------- toolchains
+
+
+def pinned_rust_channel() -> Optional[str]:
+    """The toolchain CI pins (dtolnay/rust-toolchain@1.97.1 and rust-toolchain.toml)."""
+    for p in (ROOT / "libs/cua/rust-toolchain.toml", ROOT / "libs/cua-driver/rust/rust-toolchain.toml"):
+        if p.exists():
+            m = re.search(r'^channel\s*=\s*"([^"]+)"', p.read_text(), re.M)
+            if m:
+                return m.group(1)
+    return None
+
+
+def rust_env(notes: List[str]) -> Dict[str, str]:
+    """PATH and RUSTUP_TOOLCHAIN so `cargo` is the pinned rustup toolchain.
+
+    A Homebrew `cargo` ahead of the rustup proxies ignores rust-toolchain.toml,
+    and a newer rustfmt or clippy reports different findings than CI does.
+    """
+    env: Dict[str, str] = {}
+    channel = pinned_rust_channel()
+    rustup = find_rustup()
+    if not rustup or not channel:
+        if have("cargo"):
+            notes.append("rustup not found: using the cargo on PATH; rustfmt and clippy may differ from CI")
+        return env
+    installed = sh([rustup, "toolchain", "list"])
+    if not any(line.startswith(channel) for line in installed.splitlines()):
+        notes.append(
+            f"Rust {channel} (the CI toolchain) is not installed; using the default toolchain. "
+            f"Install it: rustup toolchain install {channel} --component clippy,rustfmt"
+        )
+        return env
+    env["RUSTUP_TOOLCHAIN"] = channel
+    proxy_dirs = [Path(rustup).resolve().parent, Path(rustup).parent]
+    brew = Path(rustup).resolve().parent.parent / "bin"  # Homebrew keeps the proxies next to rustup
+    for d in (*RUSTUP_DIRS, Path.home() / ".cargo/bin", brew, *proxy_dirs):
+        if (d / "cargo").exists() and (d / "cargo-clippy").exists():
+            current = shutil.which("cargo")
+            if current is None or Path(current).parent != d:
+                env["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
+            break
+    return env
+
+
+# Homebrew's rustup is keg-only: its `rustup` and the cargo/clippy proxies live
+# here, not on PATH, while Homebrew's own `cargo` (a different version that
+# ignores rust-toolchain.toml) is.
+RUSTUP_DIRS = (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"))
+
+
+def find_rustup() -> Optional[str]:
+    found = shutil.which("rustup")
+    if found:
+        return found
+    exe = "rustup.exe" if IS_WINDOWS else "rustup"
+    for d in (Path.home() / ".cargo/bin", *RUSTUP_DIRS):
+        if (d / exe).exists():
+            return str(d / exe)
+    return None
+
+
+def rust_pin_error(env: Dict[str, str]) -> Optional[str]:
+    """None when the `cargo` and `cargo clippy` bin/ci will run match the pinned toolchain, else why not.
+
+    A cargo from outside rustup (Homebrew's, a distro's) ignores rust-toolchain.toml and
+    reports lint findings CI never sees.
+    """
+    channel = pinned_rust_channel()
+    if not channel or not re.fullmatch(r"\d+\.\d+(\.\d+)?", channel) or not have("cargo"):
+        return None
+    full = {**os.environ, **env}
+    probes = (("cargo --version", ["cargo", "--version"], rf"^cargo {re.escape(channel)}\b"),
+              ("cargo clippy --version", ["cargo", "clippy", "--version"], rf"^clippy 0\.1\.{channel.split('.')[1]}\b"))
+    for label, cmd, rx in probes:
+        out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT / "libs/cua-driver/rust" if (ROOT / "libs/cua-driver/rust").exists() else ROOT), env=full)
+        got = out.stdout.strip() or out.stderr.strip()
+        if out.returncode != 0 or not re.search(rx, got):
+            if label == "cargo clippy --version" and out.returncode != 0 and "no such command" in got:
+                return f"clippy is not installed for Rust {channel}: rustup component add clippy --toolchain {channel}"
+            return (f"`{label}` reports {got!r}, but CI pins Rust {channel} (rust-toolchain.toml). "
+                    f"Homebrew's cargo ignores the pin. Use rustup's: put ~/.cargo/bin (or /opt/homebrew/opt/rustup/bin) "
+                    f"before /opt/homebrew/bin on PATH, and run `rustup toolchain install {channel} --component clippy,rustfmt`.")
+    return None
+
+
+PNPM_SHIM_DIR = ROOT / "scripts/ci/lib/pnpm"
+PNPM_PIN_RX = re.compile(r"pnpm@\d+\.\d+\.\d+(\+\S+)?")
+
+
+def use_pnpm_shim() -> None:
+    """Put the corepack pnpm shim first on PATH for this run and everything it starts.
+
+    Like the rustup handling above: the pnpm on a machine is whatever it is (pnpm 11 on
+    ours), but each lockfile must be written by the pnpm that package pins in
+    packageManager, which is what CI's pnpm/action-setup installs. The shim runs that
+    version through corepack and fails with a clear message when it cannot.
+    """
+    if IS_WINDOWS or not (PNPM_SHIM_DIR / "pnpm").exists():
+        return
+    path = os.environ.get("PATH", "")
+    if str(PNPM_SHIM_DIR) not in path.split(os.pathsep):
+        os.environ["PATH"] = f"{PNPM_SHIM_DIR}{os.pathsep}{path}"
+
+
+def pnpm_pin_problems() -> List[str]:
+    """Every package with a pnpm-lock.yaml must pin its pnpm in package.json (packageManager)."""
+    problems = []
+    for lock in sorted(set(git("ls-files", "--cached", "--others", "--exclude-standard", "--", "*pnpm-lock.yaml").split())):
+        if re.search(r"(^|/)(node_modules|target)/", lock):
+            continue
+        pkg = (ROOT / lock).parent / "package.json"
+        rel = pkg.relative_to(ROOT).as_posix()
+        if not pkg.exists():
+            problems.append(f"{lock}: no package.json next to the lockfile")
+            continue
+        try:
+            pin = json.loads(pkg.read_text(encoding="utf-8")).get("packageManager", "")
+        except ValueError as e:
+            problems.append(f"{rel}: not valid JSON ({e})")
+            continue
+        if not PNPM_PIN_RX.fullmatch(pin or ""):
+            problems.append(f'{rel}: "packageManager" is {pin!r}; pin the pnpm that wrote {lock}, e.g. "packageManager": "pnpm@9.0.4"')
+    return problems
+
+
+def pnpm_cmd(version: Optional[str] = None) -> str:
+    """The pnpm command for a package. On Unix it is `pnpm`: the shim (use_pnpm_shim) resolves
+    the version from the package's own packageManager pin, so no version is passed around."""
+    if not IS_WINDOWS:
+        return "pnpm"
+    # Windows has no sh shim: fall back to npx at the pinned version when the local major differs.
+    if not version:
+        return "pnpm"
+    local = sh(["pnpm", "--version"], cwd=Path(tempfile.gettempdir())).strip() if have("pnpm") else ""
+    if local.split(".")[0] == version.split(".")[0]:
+        return "pnpm"
+    return f"npx -y pnpm@{version}"
+
+
+def package_manager(pkg_dir: Path) -> Optional[str]:
+    p = pkg_dir / "package.json"
+    if not p.exists():
+        return None
+    m = re.match(r"pnpm@([0-9.]+)", json.loads(p.read_text()).get("packageManager", ""))
+    return m.group(1) if m else None
+
+
+# ---------------------------------------------------------------- change set
+
+
+@dataclass
+class Changes:
+    base: str
+    base_desc: str
+    files: List[str]  # every changed path, deleted ones included
+    full: bool = False
+
+    def touches(self, pattern: str) -> List[str]:
+        if self.full:
+            return ["(full run)"]
+        rx = re.compile(pattern)
+        return [f for f in self.files if rx.search(f)]
+
+    def existing(self, pattern: str, suffixes: Iterable[str] = ()) -> List[str]:
+        rx = re.compile(pattern)
+        suf = tuple(suffixes)
+        return [f for f in self.files if rx.search(f) and (ROOT / f).is_file() and (not suf or f.endswith(suf))]
+
+
+def find_base(explicit: Optional[str]) -> Tuple[str, str]:
+    if explicit:
+        sha = git("rev-parse", "--verify", f"{explicit}^{{commit}}").strip()
+        if not sha:
+            sys.exit(f"bin/ci: cannot resolve --base {explicit}")
+        return sha, explicit
+    for ref in ("origin/main", "main"):
+        if git("rev-parse", "-q", "--verify", ref).strip():
+            mb = git("merge-base", "HEAD", ref).strip()
+            if mb:
+                return mb, f"merge base with {ref}"
+    sys.exit("bin/ci: cannot find origin/main; run `git fetch origin main` or pass --base REF")
+
+
+def changed_files(base: str) -> List[str]:
+    out = set()
+    for args in (("diff", "--name-only", f"{base}...HEAD"), ("diff", "--name-only", "HEAD"), ("ls-files", "--others", "--exclude-standard")):
+        out.update(line for line in git(*args).splitlines() if line)
+    return sorted(out)
+
+
+# ---------------------------------------------------------------- Rust workspaces
+
+# The Windows CI lane of each workspace, read from its workflow so the
+# cross-compiled local run checks exactly the packages CI does:
+# workspace -> (workflow, regex whose group 1 is the cargo arguments, local cargo subcommand)
+WINDOWS_LANES = {
+    "libs/cua": ("ci-cua-sdk.yml", r"- name: Clippy \(native\)\s+run: >\s+cargo clippy (--locked .*? -- -D warnings)", "clippy"),
+    "libs/cua-spacesd": ("ci-cua-spacesd.yml", r"- name: Clippy\s+run: cargo clippy (--workspace --all-targets --locked -- -D warnings)", "clippy"),
+    "libs/cua-driver/rust": ("ci-rust-windows.yml", r"run: cargo test (-p cua-driver .*?--all-targets) --no-run --locked", "check"),
+}
+
+
+def windows_lane(root: str) -> Optional[Tuple[str, List[str]]]:
+    """(cargo args, packages) of the workspace's Windows CI lane, or None."""
+    lane = WINDOWS_LANES.get(root)
+    if not lane:
+        return None
+    path = ROOT / ".github/workflows" / lane[0]
+    m = re.search(lane[1], path.read_text(), re.S) if path.exists() else None
+    if not m:
+        return None
+    args = " ".join(m.group(1).split())
+    return args, re.findall(r"-p (\S+)", args)
+
+
+@dataclass
+class Workspace:
+    root: str  # repo-relative dir
+    members: Dict[str, str]  # package name -> repo-relative dir
+    path_deps: Dict[str, List[str]]  # package -> in-workspace packages it depends on
+
+
+_ws_cache: Dict[str, Optional[Workspace]] = {}
+_ws_lock = threading.Lock()
+
+
+def package_of(path: str) -> Optional[Tuple[str, str]]:
+    """(package dir, package name) of the crate that owns `path`."""
+    d = (ROOT / path).parent
+    while d != ROOT and ROOT in d.parents:
+        manifest = d / "Cargo.toml"
+        if manifest.exists():
+            text = manifest.read_text(errors="replace")
+            m = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', text, re.M | re.S)
+            if m:
+                return d.relative_to(ROOT).as_posix(), m.group(1)
+        d = d.parent
+    return None
+
+
+def workspace_of(pkg_dir: str, env: Dict[str, str]) -> Optional[Workspace]:
+    out = subprocess.run(
+        ["cargo", "locate-project", "--workspace", "--message-format", "plain"],
+        cwd=str(ROOT / pkg_dir), capture_output=True, text=True, env={**os.environ, **env},
+    )
+    if out.returncode != 0:
+        return None
+    root = str(Path(out.stdout.strip()).parent.relative_to(ROOT))
+    with _ws_lock:
+        if root in _ws_cache:
+            return _ws_cache[root]
+    meta = subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1", "--offline"],
+        cwd=str(ROOT / root), capture_output=True, text=True, env={**os.environ, **env},
+    )
+    ws: Optional[Workspace] = None
+    if meta.returncode == 0:
+        data = json.loads(meta.stdout)
+        members = {p["name"]: str(Path(p["manifest_path"]).parent.relative_to(ROOT)) for p in data["packages"]}
+        deps = {p["name"]: sorted({d["name"] for d in p["dependencies"] if d.get("path") and d["name"] in members}) for p in data["packages"]}
+        ws = Workspace(root, members, deps)
+    with _ws_lock:
+        _ws_cache[root] = ws
+    return ws
+
+
+def dependents(ws: Workspace, changed: Iterable[str]) -> List[str]:
+    rev: Dict[str, List[str]] = {}
+    for pkg, deps in ws.path_deps.items():
+        for d in deps:
+            rev.setdefault(d, []).append(pkg)
+    seen, todo = set(changed), list(changed)
+    while todo:
+        for r in rev.get(todo.pop(), []):
+            if r not in seen:
+                seen.add(r)
+                todo.append(r)
+    return sorted(seen - set(changed))
+
+
+def deps_closure(ws: Workspace, roots: Iterable[str]) -> set:
+    seen, todo = set(), [r for r in roots if r in ws.members]
+    while todo:
+        p = todo.pop()
+        if p not in seen:
+            seen.add(p)
+            todo.extend(ws.path_deps.get(p, []))
+    return seen
+
+
+def changed_crates(changes: Changes, env: Dict[str, str]) -> Dict[str, Tuple[Workspace, set]]:
+    """workspace root -> (workspace, changed package names)."""
+    out: Dict[str, Tuple[Workspace, set]] = {}
+    for f in changes.files:
+        if not (f.endswith(".rs") or f.endswith("Cargo.toml") or "/src/" in f or "/tests/" in f or "/benches/" in f):
+            continue
+        owner = package_of(f)
+        if not owner:
+            continue
+        pkg_dir, name = owner
+        ws = workspace_of(pkg_dir, env)
+        if not ws or name not in ws.members:
+            continue
+        out.setdefault(ws.root, (ws, set()))[1].add(name)
+    return out
+
+
+# ---------------------------------------------------------------- the checks
+
+LOCKFILE_RX = r"(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|uv\.lock|pyproject\.toml|rust-toolchain\.toml)$|^scripts/ci/(check-lockfiles\.sh|lockfile-drift-allowlist\.txt)$"
+TSX = "node docs/node_modules/tsx/dist/cli.mjs"
+# The pre-commit hook's Prettier.
+PRETTIER = "npx -y prettier@3.6.2"
+SPACES_APPS = "apps/cua-spaces/ apps/cua-spaces-web/ apps/cua-spaces-desktop/ apps/cua-spaces-mobile/"
+SPACES_PRETTIER_RX = r"^apps/cua-spaces(-web|-desktop|-mobile)?/.*\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|json|md|ya?ml|css|html)$"
+# CI's pnpm/action-setup reads the root package.json packageManager for docs.
+DOCS_DEPS = ("docs/node_modules/tsx/dist/cli.mjs", "{pnpm} --dir docs install --frozen-lockfile")
+
+def docs_install() -> str:
+    return DOCS_DEPS[1].format(pnpm=pnpm_cmd(package_manager(ROOT)))
+
+
+# Docs generators that build Rust (or need extra tools) before they can compare.
+DOCS_GENERATOR_NEEDS: Dict[str, Tuple[Tuple[str, ...], Tuple[Tuple[str, str], ...], bool]] = {
+    # library: (tools, requires, heavy)
+    "cua-driver": (("cargo",), (), True),
+    "cua-sdk": (("cargo", "protoc"), (), True),
+    "cua-cli": (("cargo", "protoc"), (), True),
+    "cua-rust": (("cargo", "protoc", "rustup"), (), True),
+    "cua-proto": (("buf",), (), False),
+    "cua-sdk-python": (("uv",), (), False),
+    "cua-bench": (("uv",), (), False),
+    "cua-sdk-ts": ((), (("libs/cua/typescript/node_modules", "npm --prefix libs/cua/typescript ci --ignore-scripts"),), False),
+    "lume": (("swift",), (), True),
+}
+
+# Web packages: (dir, trigger regex, None for pnpm at the package.json pin or "npm", install, [(id, title, cmd, fix)])
+WEB_PACKAGES = [
+    ("apps/cua-spaces-web", r"^(apps/cua-spaces-web/|apps/cua-spaces/core-wasm/|libs/cua/crates/cua-spaces-app-core/)",
+     None, "pnpm install --ignore-workspace --frozen-lockfile", [
+         ("typecheck", "typecheck", "pnpm typecheck", None),
+         ("design-lint", "design lint (drift guard)", "pnpm exec vitest run src/lib/design-lint.test.ts", None),
+         ("test", "tests and bridge contract", "pnpm test", None),
+     ]),
+    ("apps/cua-spaces-desktop", r"^apps/cua-spaces-desktop/", None, "pnpm install --frozen-lockfile", [
+        ("typecheck", "typecheck", "pnpm typecheck", None),
+        ("test", "tests and router contract", "pnpm test", None),
+    ]),
+    ("apps/cua-spaces", r"^(apps/cua-spaces/(?!src-tauri/)|libs/cua/crates/cua-spaces-app-core/)", None, "pnpm install --frozen-lockfile", [
+        ("typecheck", "typecheck (builds the core wasm)", "pnpm typecheck", None),
+        ("test", "vitest (app core parity)", "pnpm test", None),
+    ]),
+    ("libs/typescript", r"^libs/typescript/", None, "pnpm install --frozen-lockfile", [
+        ("typecheck", "typecheck", "pnpm typecheck", None),
+        ("format", "prettier", "pnpm format:check", "pnpm exec prettier --write ."),
+    ]),
+    ("libs/cua/typescript", r"^libs/cua/typescript/", "npm", "npm ci --ignore-scripts", [
+        ("typecheck", "typecheck", "npm run typecheck", None),
+    ]),
+    ("libs/cua-driver/typescript", r"^libs/cua-driver/typescript/", "npm", "npm ci", [
+        ("typecheck", "typecheck", "npm run typecheck", None),
+    ]),
+]
+
+# Text CI must keep containing for each local check (checked by --verify-sync).
+SYNC_REFS: List[Tuple[str, str, str]] = [
+    # (check id prefix, workflow, text)
+    ("rust-fmt", "ci-cua-sdk.yml", "-- --check"),
+    ("rust-clippy", "ci-cua-sdk.yml", "--all-targets --features cua-daemon/test-fixtures,cua-media-client/media-decode,cua-spaces-cli/contrib-modal -- -D warnings"),
+    ("rust-test", "ci-cua-sdk.yml", "CUA_ENV_TEST_SANDBOX: \"1\""),
+    ("web:apps/cua-spaces-web", "ci-cua-spaces-web.yml", "pnpm install --ignore-workspace --frozen-lockfile"),
+    ("web:apps/cua-spaces-web", "ci-cua-spaces-web.yml", "run: pnpm typecheck"),
+    ("web:apps/cua-spaces", "ci-cua-spaces.yml", "- run: pnpm typecheck"),
+    ("web:libs/typescript", "ci-lint-typescript.yml", "pnpm -C libs/typescript typecheck"),
+    ("web:libs/typescript", "ci-lint-typescript.yml", "pnpm -C libs/typescript format:check"),
+    # The standalone workflows for spdx, lockfiles, actionlint, larger runners, image refs, Python lint and
+    # rustfmt are gone: `CI: Quick` runs them through this script, with missing tools made fatal.
+    ("quick", "ci-quick.yml", "python3 bin/ci --quick"),
+    ("quick", "ci-quick.yml", 'CUA_CI_REQUIRE_TOOLS: "1"'),
+    ("docs-ref", "ci-check-docs.yml", "runner.ts --changed-files-file"),
+    ("docs-ref", "ci-check-docs.yml", "runner.ts --library ${{ matrix.library }} --check"),
+]
+
+
+# Checks whose standalone GitHub workflow was deleted because `CI: Quick` runs them (CUA-3558). On a
+# runner (CUA_CI_REQUIRE_TOOLS=1, set by ci-quick.yml) a missing tool fails them instead of skipping
+# them, so a runner image change can never turn one of these checks into a silent pass.
+QUICK_COVERED_IDS = "spdx,spdx-driver,spaces-prettier,lockfiles,actionlint,larger-runners,image-refs,image-tests,python,rust-fmt,docs-image-refs"
+REQUIRED_TOOL_CHECKS = set(QUICK_COVERED_IDS.split(",")) if os.environ.get("CUA_CI_REQUIRE_TOOLS") == "1" else set()
+
+
+
+def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
+    checks: List[Check] = []
+    add = checks.append
+
+    if changes.touches(r"\.(rs|py|ts|tsx|js|mjs|swift|sh)$|^scripts/spdx-headers\.py$"):
+        add(Check("spdx", "SPDX headers (FSL)", "python3 scripts/spdx-headers.py --fsl --check",
+                  fix="python3 scripts/spdx-headers.py --fsl --apply", safe_fix=True))
+    if changes.touches(r"^libs/cua-driver/.*\.(rs|swift)$"):
+        add(Check("spdx-driver", "SPDX headers (Cua Driver, MIT)", "python3 scripts/spdx-headers.py --check libs/cua-driver",
+                  fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True))
+
+    # Each Spaces app has its own .prettierrc.yaml. Only the changed files are checked: some files are not
+    # formatted yet, and each one is formatted the next time it changes. git lists the files, so a large
+    # change does not overflow the Windows command line.
+    if changes.existing(SPACES_PRETTIER_RX):
+        files = (f"{{ git diff -z --name-only --diff-filter=d {changes.base} -- {SPACES_APPS}; "
+                 f"git ls-files -z --others --exclude-standard -- {SPACES_APPS}; }} | {{ grep -zE '{SPACES_PRETTIER_RX}' || true; }} | sort -zu | xargs -0 -r ")
+        add(Check("spaces-prettier", "Prettier on the changed Cua Spaces app files", f"{files}{PRETTIER} --check",
+                  fix=f"{files}{PRETTIER} --write", safe_fix=True, tools=("npx",)))
+
+    lock_hits = changes.touches(LOCKFILE_RX)
+    if lock_hits:
+        kinds = set()
+        for f in lock_hits:
+            if changes.full or re.search(r"(Cargo\.(toml|lock)|rust-toolchain\.toml)$", f):
+                kinds.add("cargo")
+            if changes.full or re.search(r"(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$", f):
+                kinds.update({"pnpm", "npm"})
+            if changes.full or re.search(r"(package-lock\.json)$", f):
+                kinds.add("npm")
+            if changes.full or re.search(r"(pyproject\.toml|uv\.lock)$", f):
+                kinds.add("uv")
+            if re.search(r"^scripts/ci/", f):
+                kinds.update({"cargo", "pnpm", "npm", "uv"})
+        # check-lockfiles.sh falls back to `npx pnpm@<version>`, so a runner without pnpm still checks.
+        tools = {"cargo": "cargo", "pnpm": "npx", "npm": "npm", "uv": "uv"}
+        add(Check("lockfiles", f"lockfiles match manifests ({', '.join(sorted(kinds))})",
+                  "scripts/ci/check-lockfiles.sh " + " ".join(f"--kind {k}" for k in sorted(kinds)),
+                  fix_from_output=r"^FAIL .*?; fix: (.+)$", safe_fix=True,
+                  tools=tuple(sorted(tools[k] for k in kinds)), group="lockfiles"))
+
+    if changes.touches(r"^\.github/(workflows|actions)/|^\.github/actionlint\.yaml$"):
+        add(Check("actionlint", "actionlint (workflows)", "actionlint -shellcheck= -pyflakes=",
+                  tools=("actionlint",), hint="install: brew install actionlint (CI pins v1.7.12)"))
+
+    if changes.touches(r"^\.github/(workflows/|larger-runners-allowed\.txt|scripts/check_no_larger_runners\.py)"):
+        add(Check("larger-runners", "no paid larger runners in workflows",
+                  "python3 .github/scripts/check_no_larger_runners.py",
+                  hint="use ubuntu-latest, macos-26 or windows-latest; opt-outs: .github/larger-runners-allowed.txt"))
+
+    # Repo-wide gate (no path filter in CI): every image ref comes from the catalog.
+    if changes.files or changes.full:
+        add(Check("image-refs", "image refs come from the catalog",
+                  "python3 scripts/images/check-image-refs.py && python3 scripts/images/gen-image-constants.py --check "
+                  "&& python3 scripts/images/record-image-sizes.py --check",
+                  hint="reference images through the catalog (scripts/images/README.md) or allowlist them in scripts/images/image-refs-allowlist.json; stale constants: python3 scripts/images/gen-image-constants.py"))
+    if changes.touches(r"^(scripts/images/|libs/images/)"):
+        add(Check("image-tests", "image tooling unit tests", "python3 -m unittest discover -s scripts/images/tests"))
+
+    if changes.touches(r"^docs/content/|^docs/code-block-(baseline|policy)\.json$|^tests/e2e/cua-sdk/docs/"):
+        add(Check("docs-code-blocks", "docs code blocks have a disposition",
+                  f'b="$(mktemp)"; git show {changes.base}:docs/code-block-baseline.json > "$b" 2>/dev/null '
+                  f'&& args=(--baseline-base "$b") || args=(); python3 tests/e2e/cua-sdk/docs/extract.py --lint "${{args[@]}}"; rc=$?; rm -f "$b"; exit $rc',
+                  hint='give each new fence a disposition: test="<lane>" id="<id>", skip="<reason>" or output (tests/e2e/cua-sdk/docs/README.md)',
+                  ci=(("ci-check-docs-links.yml", "python3 tests/e2e/cua-sdk/docs/extract.py --lint"),)))
+
+    docs_img = changes.touches(r"^(docs/|skills/|README\.md$|libs/.*README\.md$|libs/cua/crates/cua-image/src/(canonical|resolve)\.rs$|scripts/images/(check-docs-image-refs|doctor_ledger)\.py$|scripts/images/docs-image-refs-baseline\.json$)")
+    if docs_img:
+        c = Check("docs-image-refs", "docs image refs have passing doctor reports",
+                  f'set -e; l="$(mktemp -d)"; trap \'rm -rf "$l"\' EXIT; '
+                  f'git fetch -q origin image-doctor-ledger 2>/dev/null && git archive FETCH_HEAD | tar -x -C "$l" || true; '
+                  f'b="$l/.base.json"; args=(--ledger "$l"); git show {changes.base}:scripts/images/docs-image-refs-baseline.json > "$b" 2>/dev/null && args+=(--baseline-base "$b"); '
+                  f'python3 scripts/images/check-docs-image-refs.py "${{args[@]}}"',
+                  tools=("crane",), hint="install crane: brew install crane")
+        add(c)
+
+    # Generated reference docs: the docs runner itself says which generators a change affects.
+    if changes.files or changes.full:
+        for lib in ctx.docs_generators(changes):
+            tools, requires, heavy = DOCS_GENERATOR_NEEDS.get(lib, ((), (), False))
+            add(Check(f"docs-ref:{lib}", f"generated reference is current ({lib})",
+                      f"{TSX} scripts/docs-generators/runner.ts --library {lib} --check",
+                      fix=f"{TSX} scripts/docs-generators/runner.ts --library {lib}   # = pnpm --dir docs docs:generate:{lib}",
+                      safe_fix=True, tools=("node",) + tools, requires=((DOCS_DEPS[0], docs_install()),) + requires,
+                      heavy=heavy, tier="build" if heavy else "quick",
+                      group="cargo:libs/cua" if lib in ("cua-sdk", "cua-cli", "cua-rust") else ("cargo:libs/cua-driver/rust" if lib == "cua-driver" else None),
+                      ci=(("ci-check-docs.yml", "runner.ts --library ${{ matrix.library }} --check"),)))
+
+    # Generated bindings and contract manifests.
+    if changes.touches(r"^libs/cua/(crates/cua-sdk/|crates/cua-bindgen/|VERSION$|scripts/generate-uniffi-bindings\.mjs$|scripts/uniffi-python-postprocess\.mjs$|typescript/package-lock\.json$|python/|swift/|kotlin/|typescript/src/generated/|Cargo\.lock$)"):
+        add(Check("sdk-bindings", "cua SDK UniFFI bindings are current (Python, Swift, Kotlin, TS)",
+                  "node libs/cua/scripts/generate-uniffi-bindings.mjs --check",
+                  fix="node libs/cua/scripts/generate-uniffi-bindings.mjs", safe_fix=True,
+                  tools=("node", "cargo"), requires=(("libs/cua/typescript/node_modules", "npm --prefix libs/cua/typescript ci --ignore-scripts"),),
+                  group="cargo:libs/cua", heavy=True, tier="build",
+                  ci=(("ci-cua-sdk.yml", "node libs/cua/scripts/generate-uniffi-bindings.mjs --check"),)))
+    if ctx.crate_trigger(changes, "libs/cua", ["cua-spaces-contract", "cua-spaces"], r"^libs/cua/spaces-contract/"):
+        add(Check("spaces-contract", "Spaces contract manifest and control fixtures are current",
+                  "cargo run --locked -q -p cua-spaces-contract --bin cua-spaces-contract-gen -- --check && "
+                  "cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check",
+                  cwd="libs/cua",
+                  fix="(cd libs/cua && cargo run --locked -q -p cua-spaces-contract --bin cua-spaces-contract-gen && "
+                      "cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures)",
+                  safe_fix=True, tools=("cargo", "protoc"), group="cargo:libs/cua", tier="build",
+                  ci=(("ci-cua-sdk.yml", "cargo run --locked -q -p cua-spaces-contract --bin cua-spaces-contract-gen -- --check"),
+                      ("ci-cua-sdk.yml", "cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check"))))
+    if ctx.crate_trigger(changes, "libs/cua-driver/rust", ["cua-driver-contract"], r"^libs/cua-driver/contract/"):
+        add(Check("driver-contract", "Cua Driver contract files are current",
+                  "cargo run --locked -q -p cua-driver-contract --bin cua-contract-gen -- all --check", cwd="libs/cua-driver/rust",
+                  fix="(cd libs/cua-driver/rust && cargo run --locked -q -p cua-driver-contract --bin cua-contract-gen -- all)",
+                  safe_fix=True, tools=("cargo",), group="cargo:libs/cua-driver/rust", tier="build",
+                  ci=(("ci-cua-driver-contract-clients.yml", "cargo run --locked -p cua-driver-contract --bin cua-contract-gen -- all --check"),)))
+    if ctx.crate_trigger(changes, "libs/cua-driver/rust", ["cua-driver-sdk", "cua-driver-bindgen"],
+                         r"^libs/cua-driver/(scripts/generate-uniffi-bindings\.mjs$|python/src/cua_driver/_native|typescript/src/native/)"):
+        add(Check("driver-bindings", "Cua Driver UniFFI bindings are current (release build)",
+                  "node scripts/generate-uniffi-bindings.mjs --check", cwd="libs/cua-driver",
+                  fix="(cd libs/cua-driver && node scripts/generate-uniffi-bindings.mjs)", safe_fix=True,
+                  tools=("node", "cargo"), requires=(("libs/cua-driver/typescript/node_modules", "npm --prefix libs/cua-driver/typescript ci"),),
+                  group="cargo:libs/cua-driver/rust", heavy=True, tier="build",
+                  ci=(("ci-cua-driver-contract-clients.yml", "node scripts/generate-uniffi-bindings.mjs --check"),)))
+    # The Spaces app library (cua-spaces-ffi) re-exports the SDK; only UniFFI crates change its interface.
+    if changes.touches(r"^libs/cua/crates/(cua-sdk|cua-spaces-ffi)/.*\.rs$|^apps/cua-spaces-desktop/src/native/generated/|^libs/spaces-app-swift/"):
+        desk_pnpm = pnpm_cmd(package_manager(ROOT / "apps/cua-spaces-desktop"))
+        add(Check("spaces-app-bindings", "Electron app bindings are current (release build of cua-spaces-ffi)",
+                  f"{desk_pnpm} native -- --check-bindings", cwd="apps/cua-spaces-desktop",
+                  fix=f"(cd apps/cua-spaces-desktop && {desk_pnpm} native -- --bindings)", safe_fix=True,
+                  tools=("node", "cargo"), requires=(("apps/cua-spaces-desktop/node_modules", f"(cd apps/cua-spaces-desktop && {desk_pnpm} install --frozen-lockfile)"),),
+                  group="cargo:libs/cua", heavy=True, tier="build",
+                  ci=(("ci-cua-spaces-macos.yml", "pnpm native -- --skip-build --check-bindings"),)))
+        if sys.platform == "darwin":
+            add(Check("spaces-swift-bindings", "SwiftUI app binding is current (release build of cua-spaces-ffi)",
+                      "node libs/spaces-app-swift/scripts/generate-bindings.mjs --check",
+                      fix="node libs/spaces-app-swift/scripts/generate-bindings.mjs", safe_fix=True,
+                      tools=("node", "cargo"), group="cargo:libs/cua", heavy=True, tier="build",
+                      ci=(("ci-cua-spaces-macos.yml", "node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build"),)))
+
+    # Self-tests for this tool and the CI helper scripts.
+    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/|.*\.sh$)"):
+        add(Check("bin-ci-tests", "bin/ci tests and workflow sync", "python3 -m unittest discover -s scripts/ci/tests -q && python3 bin/ci --verify-sync",
+                  ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s scripts/ci/tests"),)))
+    if changes.touches(r"^\.github/scripts/"):
+        add(Check("gh-scripts-tests", ".github/scripts tests",
+                  "cd .github/scripts && uv run --no-project -q --with pytest --with cryptography --with jsonschema --with pyyaml --with toml pytest tests/ -q",
+                  tools=("uv",), tier="build", ci=(("ci-test-scripts.yml", "pytest tests/ -v"),)))
+    return checks
+
+
+def python_checks(changes: Changes) -> List[Check]:
+    # The same command and paths as CI (whole tree, seconds with the tools'
+    # caches): a formatter bump in uv.lock can fail files the change never touched.
+    if not changes.touches(r"^(libs/python/|tests/).*\.pyi?$|^(pyproject\.toml|uv\.lock)$"):
+        return []
+    paths = "libs/python tests"
+    return [Check("python", "Python isort, black, ruff (libs/python, tests)",
+                  f"uv run -q isort --check-only {paths} && uv run -q black --check {paths} && uv run -q ruff check {paths}",
+                  fix=f"uv run -q isort {paths} && uv run -q black {paths} && uv run -q ruff check --fix {paths}",
+                  safe_fix=True, tools=("uv",), group="uv")]
+
+
+def web_checks(changes: Changes) -> List[Check]:
+    out: List[Check] = []
+    for pkg, rx, pm, install, steps in WEB_PACKAGES:
+        if not (ROOT / pkg / "package.json").exists() or not changes.touches(rx):
+            continue
+        if pm == "npm":
+            runner, inst = "npm", install
+        else:
+            runner = pnpm_cmd(pm or package_manager(ROOT / pkg))
+            inst = install.replace("pnpm", runner, 1)
+        for sid, title, cmd, fix in steps:
+            cmd = cmd.replace("pnpm", runner, 1) if cmd.startswith("pnpm") else cmd
+            heavy = "core wasm" in title or "parity" in title or pkg == "apps/cua-spaces"
+            out.append(Check(f"web:{pkg}:{sid}", f"{pkg}: {title}", cmd, cwd=pkg,
+                             fix=f"(cd {pkg} && {fix.replace('pnpm', runner, 1)})" if fix else None, safe_fix=bool(fix),
+                             tools=("node",) + (("pnpm",) if runner == "pnpm" else ()),
+                             requires=((f"{pkg}/node_modules", f"(cd {pkg} && {inst})"),),
+                             group=f"web:{pkg}", heavy=heavy, tier="build" if sid == "test" or heavy else "quick"))
+    return out
+
+
+UNIX_ONLY_RX = re.compile(r"std::os::unix|\bUnix(Stream|Listener|Datagram)\b|\blibc::(?!c_)|\bnix::|PermissionsExt|\.mode\(0o|std::os::fd|symlink\(")
+
+
+def unix_api_scan(changes: Changes) -> List[str]:
+    """Added lines that use Unix-only APIs in files with no cfg(unix) at all."""
+    hits = []
+    for f in changes.existing(r"\.rs$"):
+        text = (ROOT / f).read_text(errors="replace")
+        if re.search(r"cfg\((all\()?(unix|not\(windows\)|not\(target_os = \"windows\"\)|target_os = \"(linux|macos)\")", text):
+            continue
+        if re.search(r"(^|/)(unix|linux|macos|darwin)[^/]*\.rs$|/platform-(linux|macos)/", f):
+            continue
+        diff = git("diff", "-U0", changes.base, "--", f)
+        for line in diff.splitlines():
+            if line.startswith("+") and not line.startswith("+++") and UNIX_ONLY_RX.search(line):
+                hits.append(f"{f}: {line[1:].strip()[:100]}")
+    return hits
+
+
+def classify_xwin(log: str, rc: int) -> Tuple[str, str]:
+    """A C dependency that cannot be cross-built here is not a finding.
+
+    `--keep-going` checks every crate that does not need it; only rustc
+    errors in those crates fail the check.
+    """
+    if rc == 0:
+        return "pass", ""
+    if re.search(r"could not compile `[^`]+`", log):
+        return "FAIL", ""
+    blocked = sorted(set(re.findall(r"failed to run custom build command for `([^`]+)`", log)))
+    if blocked:
+        return "warn", (f"could not cross-build {', '.join(blocked)} for Windows on this machine; "
+                        "the crates that need it were not checked, every other crate passed")
+    return "FAIL", ""
+
+
+def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
+    out: List[Check] = []
+    if not have("cargo"):
+        return [Check("rust", "Rust checks", "true", skip_reason="cargo not installed")] if changes.existing(r"\.rs$") else []
+    if changes.full:
+        crates = {}
+        for root in ("libs/cua", "libs/cua-driver/rust", "libs/cua-spacesd"):
+            ws = workspace_of(root, ctx.rust_env)
+            if ws:
+                crates[ws.root] = (ws, set(ws.members))
+    else:
+        crates = changed_crates(changes, ctx.rust_env)
+    for root, (ws, names) in sorted(crates.items()):
+        names = sorted(names)
+        plist = " ".join(f"-p {n}" for n in names)
+        label = f"{root}: {', '.join(names) if len(names) <= 4 else f'{len(names)} crates'}"
+        group = f"cargo:{root}"
+        out.append(Check(f"rust-fmt:{root}", f"rustfmt ({label})", f"cargo fmt {plist} -- --check", cwd=root,
+                         fix=f"(cd {root} && cargo fmt {plist})", safe_fix=True, tools=("cargo",)))
+        lint = names + ([] if changes.full else dependents(ws, names))
+        if not changes.full and len(lint) > len(names) + 12:  # a core crate: lint its direct dependents only
+            direct = sorted({p for p, deps in ws.path_deps.items() if set(deps) & set(names)} - set(names))
+            ctx.notes.append(f"{root}: {len(lint) - len(names)} crates depend on the {len(names)} you changed; linting the {len(direct)} direct ones (bin/ci --full for all)")
+            lint = names + direct
+        lflags = "--workspace" if changes.full else " ".join(f"-p {n}" for n in sorted(set(lint)))
+        llabel = f"{root}: {len(set(lint))} crates" if len(set(lint)) > 4 else label
+        clippy_cmd = (f"cargo clippy --locked {lflags} --all-targets -- -D warnings" if changes.full
+                      else per_crate("cargo clippy --locked {p} --all-targets", sorted(set(lint)), " -- -D warnings"))
+        out.append(Check(f"rust-clippy:{root}", f"clippy -D warnings ({llabel})",
+                         clippy_cmd, cwd=root,
+                         tools=("cargo",), group=group, tier="build",
+                         hint="fix the warnings above; `cargo clippy --fix --allow-dirty` applies the machine-applicable ones"))
+        lane = windows_lane(root)
+        if lane:
+            args, lane_pkgs = lane
+            closure = deps_closure(ws, lane_pkgs) if lane_pkgs else set(ws.members)
+            if changes.full or set(names) & closure:
+                sub = WINDOWS_LANES[root][2]
+                if "--locked" not in args:
+                    args += " --locked"
+                if sub == "check":
+                    cmd = f"cargo xwin check --keep-going --target x86_64-pc-windows-msvc {args}"
+                else:
+                    cmd = f"cargo xwin clippy --keep-going --target x86_64-pc-windows-msvc {args}"
+                wf = WINDOWS_LANES[root][0]
+                if ctx.xwin:
+                    out.append(Check(f"rust-windows:{root}", f"Windows {sub}, cross-compiled (the {wf} Windows lane)", cmd,
+                                     cwd=root, tools=("cargo",), group="xwin", tier="build", heavy=True, classify=classify_xwin,
+                                     hint="code that only Unix uses must be #[cfg(unix)] too (or #[cfg_attr(windows, allow(dead_code))] with a reason)"))
+                else:
+                    hits = unix_api_scan(changes)
+                    out.append(Check(f"rust-windows:{root}", "Windows cfg (grep for Unix-only APIs; cargo-xwin not installed)",
+                                     "printf '%s\\n' " + " ".join(shlex.quote(h) for h in hits) + " && exit 1" if hits else "true",
+                                     advisory=True,
+                                     hint="these lines use Unix-only APIs outside #[cfg(unix)]; for a real Windows compile: "
+                                          "cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc"))
+        tflags = "--workspace" if changes.full else plist
+        test_cmd = (f"cargo test --locked --no-fail-fast {tflags} -- --test-threads=4" if changes.full
+                    else per_crate("cargo test --locked --no-fail-fast {p}", names, " -- --test-threads=4"))
+        out.append(Check(f"rust-test:{root}", f"unit tests ({label})",
+                         test_cmd, cwd=root,
+                         tools=("cargo",), group=group, tier="build",
+                         env={"CUA_ENV_TEST_SANDBOX": "1", "RUST_MIN_STACK": "8388608"}, isolate_home=True))
+    return out
+
+
+# ---------------------------------------------------------------- context and plan
+
+
+class Context:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.args = args
+        self.notes: List[str] = []
+        self.rust_env = rust_env(self.notes)
+        self.xwin = have("cargo") and subprocess.run(
+            ["cargo", "xwin", "--version"], capture_output=True, env={**os.environ, **self.rust_env}
+        ).returncode == 0
+        self.docs_ready = (ROOT / DOCS_DEPS[0]).exists()
+        self.target, self.delete_target = run_target_dir(getattr(args, "keep_target", False))
+        self.lean = lean_env()
+        self.guard: Optional[DiskGuard] = None
+
+    def env(self) -> Dict[str, str]:
+        env = {**self.lean, **os.environ, **self.rust_env, "CARGO_TARGET_DIR": str(self.target), "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1"}
+        shim = python3_shim_dir()
+        if shim:
+            key = next((k for k in env if k.upper() == "PATH"), "PATH")
+            env[key] = shim + os.pathsep + env.get(key, "")
+        return env
+
+    def cleanup_target(self) -> None:
+        if self.guard:
+            self.guard.close()
+        if self.delete_target and self.target.exists():
+            shutil.rmtree(self.target, ignore_errors=True)
+
+    def ensure_docs_deps(self) -> bool:
+        if self.docs_ready:
+            return True
+        if self.args.no_install or not have("node"):
+            return False
+        print(f"bin/ci: installing docs dependencies ({docs_install()}) to route the docs generators ...", flush=True)
+        ok = subprocess.run(docs_install(), shell=True, cwd=str(ROOT), stdout=subprocess.DEVNULL, env=self.env()).returncode == 0
+        self.docs_ready = ok and (ROOT / DOCS_DEPS[0]).exists()
+        return self.docs_ready
+
+    def docs_generators(self, changes: Changes) -> List[str]:
+        if changes.full:
+            return ["cua-driver", "cua-bench", "sandbox", "cua-cli", "cua-sdk", "cua-sdk-python", "cua-sdk-ts", "cua-rust", "cua-proto", "spaces"] + (["lume"] if sys.platform == "darwin" else [])
+        if not self.ensure_docs_deps():
+            self.notes.append(f"docs generators not routed: run {docs_install()}")
+            return []
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write("\n".join(changes.files) + "\n")
+        try:
+            out = subprocess.run([BASH, "-c", f"{TSX} scripts/docs-generators/runner.ts --changed-files-file {shlex.quote(Path(fh.name).as_posix())}"],
+                                 cwd=str(ROOT), capture_output=True, text=True, env=self.env())
+        finally:
+            os.unlink(fh.name)
+        if out.returncode != 0:
+            self.notes.append("the docs generator router failed: " + out.stderr.strip()[-200:])
+            return []
+        return out.stdout.split()
+
+    def crate_trigger(self, changes: Changes, ws_root: str, roots: List[str], path_rx: str) -> bool:
+        if changes.full or changes.touches(path_rx):
+            return True
+        if not have("cargo"):
+            return False
+        ws = workspace_of(ws_root, self.rust_env)
+        if not ws:
+            return False
+        closure = deps_closure(ws, roots)
+        crates = changed_crates(changes, self.rust_env)
+        return bool(crates.get(ws.root, (None, set()))[1] & closure)
+
+
+def build_plan(changes: Changes, ctx: Context) -> List[Check]:
+    checks = static_checks(changes, ctx) + rust_checks(changes, ctx) + python_checks(changes) + web_checks(changes)
+    seen, plan = set(), []
+    for c in checks:
+        if c.id not in seen:
+            seen.add(c.id)
+            plan.append(c)
+    if ctx.args.only:
+        wanted = [w.strip() for w in ctx.args.only.split(",") if w.strip()]
+        plan = [c for c in plan if any(c.id == w or c.id.startswith(w + ":") or c.id.startswith(w) for w in wanted)]
+    for c in plan:
+        if c.skip_reason:
+            continue
+        if ctx.args.quick and c.tier != "quick":
+            c.skip_reason = "--quick"
+            continue
+        missing = [t for t in c.tools if not have(t)]
+        if missing and c.id.split(":")[0] in REQUIRED_TOOL_CHECKS:
+            continue  # CI: a missing tool must fail the check, never skip it (the standalone workflow is gone)
+        if missing:
+            c.skip_reason = f"{', '.join(missing)} not installed" + (f"; {c.hint}" if c.hint and "install" in c.hint else "")
+    return plan
+
+
+# ---------------------------------------------------------------- running
+
+ERROR_RX = re.compile(r"(error|Diff in|would reformat|FAIL|stale|out of sync|drift|panicked|not up to date|missing|no disposition|differ|warning: unused|✗|❌)", re.I)
+
+
+def read_log(log: Path) -> str:
+    """Log text, or "" when the file is gone (another bin/ci run pruned it); a report must never crash on that."""
+    try:
+        return log.read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def excerpt(log: Path, limit: int = 14) -> List[str]:
+    lines = [l.rstrip() for l in read_log(log).splitlines() if l.strip()]
+    rustc = [l for l in lines if re.match(r"(error(\[E\d+\])?: (?!failed to run custom build|could not compile|build failed)|\s+--> )", l)]
+    if rustc:
+        return [l[:220] for l in rustc[:limit]]
+    hits = [l for l in lines if ERROR_RX.search(l) and not l.lstrip().startswith(("Compiling", "Checking", "Downloaded", "test ", "Running"))]
+    pick = hits[:limit] if hits else lines[-limit:]
+    return [l[:220] for l in pick]
+
+
+class Runner:
+    def __init__(self, ctx: Context, logdir: Path, quiet: bool = False) -> None:
+        self.ctx = ctx
+        self.quiet = quiet
+        self.logdir = logdir
+        self.locks: Dict[str, threading.Lock] = {}
+        self.print_lock = threading.Lock()
+        self.installs: Dict[str, threading.Lock] = {}
+        self.heavy_lock = threading.Lock()  # heavy checks run one at a time
+
+    def _lock(self, name: Optional[str], table: Dict[str, threading.Lock]) -> threading.Lock:
+        with self.print_lock:
+            return table.setdefault(name or "", threading.Lock()) if name else threading.Lock()
+
+    def _prepare(self, c: Check, log) -> Optional[str]:
+        for path, how in c.requires:
+            with self._lock(path, self.installs):
+                if (ROOT / path).exists():
+                    continue
+                if self.ctx.args.no_install:
+                    return f"missing {path}: run {how}"
+                log.write(f"$ {how}\n".encode())
+                log.flush()
+                rc = subprocess.run([BASH, "-c", how], cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=self.ctx.env()).returncode
+                if rc != 0 or not (ROOT / path).exists():
+                    return f"could not install {path} ({how}); see the log"
+        return None
+
+    def run(self, c: Check) -> Result:
+        if c.skip_reason:
+            return Result(c, "skip", detail=c.skip_reason)
+        logfile = self.logdir / (re.sub(r"[^A-Za-z0-9._-]+", "_", c.id) + ".log")
+        start = time.monotonic()
+        heavy = is_heavy(c)
+        with self._lock(c.group, self.locks), (self.heavy_lock if heavy else contextlib.nullcontext()):
+            with open(logfile, "wb") as log:
+                if heavy:
+                    guard = self.ctx.guard
+                    if guard and guard.tripped:
+                        return Result(c, "skip", time.monotonic() - start, logfile, f"stopped earlier: {guard.tripped}; rerun in CI")
+                    why = preflight_reason(disk_free_gb(self.ctx.target), min_free_gb())
+                    if why:
+                        return Result(c, "skip", time.monotonic() - start, logfile, why)
+                problem = self._prepare(c, log)
+                if problem:
+                    return Result(c, "skip", time.monotonic() - start, logfile, problem)
+                log.write(f"$ (cd {c.cwd} && {c.cmd})\n".encode())
+                log.flush()
+                env = {**self.ctx.env(), **c.env}
+                home = None
+                if c.isolate_home:
+                    # Tests that read the host's apps or config pass on a clean
+                    # runner and fail here; keep the toolchains where they are.
+                    real = Path.home()
+                    env.setdefault("CARGO_HOME", str(real / ".cargo"))
+                    env.setdefault("RUSTUP_HOME", str(real / ".rustup"))
+                    home = tempfile.mkdtemp(prefix="bin-ci-home-")
+                    env["HOME"] = home
+                proc = subprocess.Popen([BASH, "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, env=env, start_new_session=not IS_WINDOWS)
+                guard = self.ctx.guard if heavy else None
+                if guard:
+                    guard.register(proc)
+                try:
+                    rc = proc.wait()
+                finally:
+                    if guard:
+                        guard.unregister(proc)
+                    if home:
+                        shutil.rmtree(home, ignore_errors=True)
+        status = "pass" if rc == 0 else ("warn" if c.advisory else "FAIL")
+        detail = ""
+        if heavy and self.ctx.guard and self.ctx.guard.tripped and rc != 0:
+            res = Result(c, "FAIL", time.monotonic() - start, logfile, f"stopped by the disk guard: {self.ctx.guard.tripped}")
+            if not self.quiet:
+                self.report(res)
+            return res
+        if c.classify:
+            status, detail = c.classify(read_log(logfile), rc)
+        res = Result(c, status, time.monotonic() - start, logfile, detail)
+        if not self.quiet:
+            self.report(res)
+        return res
+
+    def report(self, r: Result) -> None:
+        with self.print_lock:
+            print_result(r)
+
+
+def fix_commands(r: Result) -> List[str]:
+    c = r.check
+    cmds = []
+    if c.fix_from_output and r.log:
+        rx = re.compile(c.fix_from_output)
+        for line in read_log(r.log).splitlines():
+            m = rx.search(line.strip())
+            if m and m.group(1) not in cmds:
+                cmds.append(m.group(1))
+    if c.fix and not cmds:
+        cmds.append(c.fix)
+    return cmds
+
+
+def fmt_secs(s: float) -> str:
+    return f"{s:.1f}s" if s < 60 else f"{int(s // 60)}m{int(s % 60):02d}s"
+
+
+def print_result(r: Result) -> None:
+    tag = {"pass": color("ok  ", "32"), "FAIL": color("FAIL", "31;1"), "skip": color("skip", "33"),
+           "fixed": color("fixed", "36"), "warn": color("warn", "33")}[r.status]
+    secs = fmt_secs(r.seconds) if r.seconds else ""
+    print(f"  {tag}  {r.check.title}  {color(secs, '2')}".rstrip(), flush=True)
+    if r.status == "skip":
+        print(f"        {r.detail}")
+    if r.status == "FAIL" and r.detail.startswith("stopped by the disk guard"):
+        print(f"        {r.detail}")
+        print("        rerun in CI: push the branch and let CI run this check, or run it on a VM")
+        return
+    if r.status == "warn" and r.detail:
+        print(f"        {r.detail}")
+    elif r.status in ("FAIL", "warn") and r.log:
+        for line in excerpt(r.log):
+            print(f"        | {line}")
+        fixes = fix_commands(r)
+        for f in fixes:
+            print(f"        {color('fix:', '1')} {f}")
+        if not fixes and r.check.hint:
+            print(f"        {color('fix:', '1')} {r.check.hint}")
+        rel = os.path.relpath(r.log, ROOT)
+        print(f"        log: {rel if not rel.startswith('..') else r.log}")
+    if r.status == "fixed":
+        print(f"        {r.detail}")
+
+
+def run_plan(plan: List[Check], ctx: Context, logdir: Path) -> List[Result]:
+    runner = Runner(ctx, logdir)
+    results: Dict[str, Result] = {}
+    order = sorted(plan, key=lambda c: (c.skip_reason is None, c.heavy, c.tier != "quick"))
+    for c in order:
+        if c.skip_reason:
+            results[c.id] = Result(c, "skip", detail=c.skip_reason)
+            print_result(results[c.id])
+    jobs = ctx.args.jobs or max(2, min(6, (os.cpu_count() or 4) // 2))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = {pool.submit(runner.run, c): c for c in order if not c.skip_reason}
+        for fut in concurrent.futures.as_completed(futures):
+            r = fut.result()
+            results[r.check.id] = r
+            if r.status == "skip" and r.log is not None:
+                runner.report(r)
+    return [results[c.id] for c in plan]
+
+
+def apply_fixes(results: List[Result], ctx: Context, logdir: Path) -> List[Result]:
+    out = []
+    for r in results:
+        cmds = fix_commands(r) if r.status == "FAIL" and r.check.safe_fix else []
+        if not cmds:
+            out.append(r)
+            continue
+        print(f"  {color('fixing', '36')} {r.check.title}: {'; '.join(cmds)}", flush=True)
+        ok = all(subprocess.run([BASH, "-c", cmd], cwd=str(ROOT), env=ctx.env()).returncode == 0 for cmd in cmds)
+        again = Runner(ctx, logdir, quiet=True).run(r.check) if ok else r
+        if again.status == "pass":
+            again.status, again.detail = "fixed", "fixed; review and commit the changes"
+        print_result(again)
+        out.append(again)
+    return out
+
+
+# ---------------------------------------------------------------- state, sign-off, hook
+
+
+def state_dir() -> Path:
+    d = Path(git("rev-parse", "--absolute-git-dir").strip()) / "bin-ci"
+    (d / "logs").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def new_run_logdir(root: Path, max_age: float = 6 * 3600) -> Path:
+    """A log directory owned by this run only. Runs sharing one worktree (a --quick and a --signoff, a hook, a retry)
+    used to wipe each other's logs at start, which crashed the report at default parallelism. Prune only old dirs."""
+    now = time.time()
+    for old in root.iterdir():
+        try:
+            if old.is_file():  # logs left by older versions of bin/ci
+                old.unlink()
+            elif old.name.startswith("run-") and now - old.stat().st_mtime > max_age:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:  # Windows: still open elsewhere; another run may have removed it already
+            pass
+    d = root / f"run-{os.getpid()}-{int(now)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def worktree_clean() -> bool:
+    return not git("status", "--porcelain", "--untracked-files=normal").strip()
+
+
+def save_state(results: List[Result], mode: str, seconds: float) -> dict:
+    data = {
+        "head": git("rev-parse", "HEAD").strip(), "clean": worktree_clean(), "mode": mode,
+        "seconds": round(seconds, 1),
+        "passed": [r.check.id for r in results if r.status in ("pass", "fixed")],
+        "failed": [r.check.id for r in results if r.status == "FAIL"],
+        "skipped": [r.check.id for r in results if r.status == "skip"],
+        "at": int(time.time()),
+    }
+    (state_dir() / "last-run.json").write_text(json.dumps(data, indent=2))
+    return data
+
+
+def github_repo() -> Optional[str]:
+    url = git("remote", "get-url", "origin").strip()
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(\.git)?$", url)
+    return m.group(1) if m else None
+
+
+def signoff(state: dict) -> int:
+    if state["failed"] or not state["passed"]:
+        print("bin/ci: not signing off: the run is not green")
+        return 1
+    if not state["clean"]:
+        print("bin/ci: not signing off: uncommitted changes; commit them and run again")
+        return 1
+    if state["skipped"]:
+        print(f"bin/ci: not signing off: {len(state['skipped'])} check(s) skipped ({', '.join(state['skipped'])}); install what they need")
+        return 1
+    repo = github_repo()
+    if not repo or not have("gh"):
+        print("bin/ci: not signing off: needs the gh CLI and a GitHub origin")
+        return 1
+    desc = f"bin/ci {state['mode']}: {len(state['passed'])} checks passed in {fmt_secs(state['seconds'])} ({sys.platform})"
+    out = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repo}/statuses/{state['head']}", "-f", "state=success",
+                          "-f", f"context={STATUS_CONTEXT}", "-f", f"description={desc[:140]}"], capture_output=True, text=True)
+    if out.returncode != 0:
+        if "No commit found" in out.stdout + out.stderr or "422" in out.stderr:
+            print(f"bin/ci: {state['head'][:10]} is not on GitHub yet; push, then run `bin/ci --signoff` again (it reuses this green run)")
+        else:
+            print("bin/ci: gh api failed: " + (out.stderr.strip() or out.stdout.strip())[:300])
+        return 1
+    print(f"bin/ci: set {STATUS_CONTEXT} = success on {state['head'][:10]} ({desc})")
+    return 0
+
+
+HOOK_SCRIPT = f"""#!/bin/sh
+{HOOK_MARKER} (installed by `bin/ci --install-hook`; remove: `bin/ci --uninstall-hook`).
+# Runs the checks your push affects. Skip it once: CUA_SKIP_LOCAL_CI=1 git push ...
+# (`git push --no-verify` also skips it, and every other pre-push hook with it.)
+here=$(cd "$(dirname "$0")" && pwd)
+refs=$(mktemp) || exit 1
+trap 'rm -f "$refs"' EXIT
+cat > "$refs"
+if [ -x "$here/{CHAINED_HOOK}" ]; then
+  "$here/{CHAINED_HOOK}" "$@" < "$refs" || exit $?
+fi
+if [ "${{CUA_SKIP_LOCAL_CI:-0}}" = 1 ]; then
+  echo "bin/ci: skipped (CUA_SKIP_LOCAL_CI=1)" >&2
+  exit 0
+fi
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$root/bin/ci" ] || exit 0
+"$root/bin/ci" --hook ${{CUA_LOCAL_CI_ARGS:-}} < "$refs"
+"""
+
+
+def install_hook(force: bool) -> int:
+    hooks = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir").strip()) / "hooks"
+    hooks.mkdir(exist_ok=True)
+    hook = hooks / "pre-push"
+    if hook.exists() and HOOK_MARKER not in hook.read_text(errors="replace"):
+        chained = hooks / CHAINED_HOOK
+        if chained.exists() and not force:
+            print(f"bin/ci: {hook} exists and so does {chained}; pass --force to replace {hook}")
+            return 1
+        hook.rename(chained)
+        print(f"bin/ci: kept your existing pre-push hook as {chained}; it still runs first")
+    hook.write_text(HOOK_SCRIPT)
+    hook.chmod(0o755)
+    print(f"bin/ci: installed {hook}")
+    hooks_path = git("config", "--get", "core.hooksPath").strip()
+    if hooks_path:
+        dispatch = Path(os.path.expanduser(hooks_path)) / "pre-push"
+        chains = dispatch.exists() and "git-common-dir" in dispatch.read_text(errors="replace") + (
+            (dispatch.parent / "_dispatch").read_text(errors="replace") if (dispatch.parent / "_dispatch").exists() else "")
+        if chains:
+            print(f"bin/ci: core.hooksPath is {hooks_path}; its pre-push runs first and then chains to this hook")
+        else:
+            print(f"bin/ci: warning: core.hooksPath is {hooks_path}, so git will not run {hook}. "
+                  f"Call it from {dispatch}, or run bin/ci yourself before pushing.")
+    return 0
+
+
+def uninstall_hook() -> int:
+    hooks = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir").strip()) / "hooks"
+    hook = hooks / "pre-push"
+    if not hook.exists() or HOOK_MARKER not in hook.read_text(errors="replace"):
+        print("bin/ci: no bin/ci pre-push hook installed")
+        return 0
+    hook.unlink()
+    chained = hooks / CHAINED_HOOK
+    if chained.exists():
+        chained.rename(hook)
+        print(f"bin/ci: removed the hook and restored your previous {hook}")
+    else:
+        print(f"bin/ci: removed {hook}")
+    return 0
+
+
+def hook_refs_are_deletions(stdin_text: str) -> bool:
+    lines = [l.split() for l in stdin_text.splitlines() if l.strip()]
+    return bool(lines) and all(len(p) >= 2 and set(p[1]) == {"0"} for p in lines)
+
+
+# ---------------------------------------------------------------- sync check
+
+
+def all_check_refs() -> List[Tuple[str, str, str]]:
+    """Every (check id, workflow, text) pair, from a full plan without running anything."""
+    class Dummy:
+        notes: List[str] = []
+        rust_env: Dict[str, str] = {}
+
+        def docs_generators(self, changes):
+            return ["cua-sdk"]
+
+        def crate_trigger(self, *a):
+            return True
+
+    full = Changes("HEAD", "HEAD", ["x.rs", "x.py", ".github/workflows/x.yml", "Cargo.toml", "docs/content/x.mdx", "libs/cua/crates/cua-sdk/x.rs", ".github/scripts/x.py", "libs/cua-driver/x.rs", "scripts/images/x.py", "bin/ci"], full=False)
+    refs = []
+    for c in static_checks(full, Dummy()):  # type: ignore[arg-type]
+        refs.extend((c.id, wf, text) for wf, text in c.ci)
+    for c in python_checks(Changes("HEAD", "HEAD", [], full=True)):
+        refs.extend((c.id, wf, text) for wf, text in c.ci)
+    refs.extend(SYNC_REFS)
+    return refs
+
+
+def verify_sync() -> int:
+    bad = 0
+    for root, (wf, _, _) in WINDOWS_LANES.items():
+        if not windows_lane(root):
+            bad += 1
+            print(f"out of sync: rust-windows:{root}: cannot find the Windows lane command in .github/workflows/{wf}")
+    for cid, wf, text in all_check_refs():
+        path = ROOT / ".github/workflows" / wf
+        body = path.read_text() if path.exists() else ""
+        if text not in body:
+            bad += 1
+            print(f"out of sync: {cid}: .github/workflows/{wf} no longer contains: {text}")
+    if bad:
+        print("bin/ci --verify-sync: update bin/ci so it runs what CI runs (or put the text back in the workflow)")
+        return 1
+    print(f"bin/ci --verify-sync: {len(all_check_refs())} workflow commands match")
+    return 0
+
+
+# ---------------------------------------------------------------- main
+
+
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="bin/ci", description=__doc__.split("\n\n")[0],
+                                formatter_class=argparse.RawDescriptionHelpFormatter, epilog="\n\n".join(__doc__.split("\n\n")[1:]))
+    p.add_argument("--full", action="store_true", help="run every check, not only the affected ones")
+    p.add_argument("--quick", action="store_true", help="only checks that build nothing (seconds)")
+    p.add_argument("--keep-target", action="store_true", help="keep the cargo target dir (.bin-ci-target) between runs instead of deleting a per-run one")
+    p.add_argument("--fix", action="store_true", help="apply the safe fixers for failed checks, then re-check")
+    p.add_argument("--list", action="store_true", help="print the plan and exit")
+    p.add_argument("--only", metavar="IDS", help="comma-separated check ids or prefixes (see --list)")
+    p.add_argument("--base", metavar="REF", help="compare with REF (default: merge base with origin/main)")
+    p.add_argument("--jobs", "-j", type=int, help="checks to run at once (default: half the CPUs, 2 to 6)")
+    p.add_argument("--no-install", action="store_true", help="never install node_modules a check needs; skip it instead")
+    p.add_argument("--signoff", action="store_true", help=f"set the `{STATUS_CONTEXT}` commit status after a green run")
+    p.add_argument("--install-hook", action="store_true", help="install the opt-in pre-push hook")
+    p.add_argument("--uninstall-hook", action="store_true", help="remove the pre-push hook")
+    p.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--hook", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--verify-sync", action="store_true", help="fail if a workflow no longer runs a command bin/ci mirrors")
+    return p.parse_args(argv)
+
+
+def raise_open_file_limit(want: int = 65536) -> None:
+    """macOS shells default to 256 open files; a parallel cargo build under sccache
+    hits "Too many open files" and fails the test checks for no code reason."""
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = want if hard == resource.RLIM_INFINITY else min(want, hard)
+        if soft == resource.RLIM_INFINITY or soft >= target:
+            return
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        except (ValueError, OSError):  # macOS caps at kern.maxfilesperproc
+            resource.setrlimit(resource.RLIMIT_NOFILE, (10240, hard))
+    except (ImportError, ValueError, OSError):
+        pass
+
+
+def main(argv: Sequence[str]) -> int:
+    if IS_WINDOWS and not sys.flags.utf8_mode:
+        # Windows reads files in the ANSI code page by default; the repo is UTF-8. Run again in UTF-8
+        # mode (children inherit PYTHONUTF8).
+        return subprocess.run([sys.executable, "-X", "utf8", str(Path(__file__).resolve()), *argv], env={**os.environ, "PYTHONUTF8": "1"}).returncode
+    args = parse_args(argv)
+    os.chdir(ROOT)
+    raise_open_file_limit()
+    use_pnpm_shim()
+    problems = pnpm_pin_problems()
+    if problems and not args.verify_sync and not args.hook:
+        print("bin/ci: every package with a pnpm-lock.yaml must pin its pnpm version:", file=sys.stderr)
+        for p in problems:
+            print(f"  {p}", file=sys.stderr)
+        return 2
+    if args.verify_sync:
+        return verify_sync()
+    if args.install_hook:
+        return install_hook(args.force)
+    if args.uninstall_hook:
+        return uninstall_hook()
+    if args.hook:
+        stdin_text = sys.stdin.read() if not sys.stdin.isatty() else ""
+        if hook_refs_are_deletions(stdin_text):
+            return 0
+        print("bin/ci: checking what this push changes (skip once: CUA_SKIP_LOCAL_CI=1 git push)", flush=True)
+
+    mode = "full" if args.full else ("quick" if args.quick else "affected")
+    if args.signoff and not args.full and not args.quick and not args.only:
+        last = state_dir() / "last-run.json"
+        if last.exists():
+            state = json.loads(last.read_text())
+            if state.get("head") == git("rev-parse", "HEAD").strip() and state.get("clean") and worktree_clean() and state.get("mode") in ("affected", "full"):
+                print(f"bin/ci: reusing the {state['mode']} run of {state['head'][:10]}")
+                return signoff(state)
+
+    base, base_desc = find_base(args.base)
+    changes = Changes(base, base_desc, changed_files(base), full=args.full)
+    if not changes.files and not args.full:
+        print(f"bin/ci: nothing changed against {base[:10]} ({base_desc})")
+        return 0
+    ctx = Context(args)
+    started = time.monotonic()
+    plan = build_plan(changes, ctx)
+    if not args.list and any("cargo" in c.tools and not c.skip_reason for c in plan):
+        pin_error = rust_pin_error(ctx.rust_env)
+        if pin_error:
+            print(f"bin/ci: wrong Rust toolchain: {pin_error}", file=sys.stderr)
+            return 2
+    scope = "every check" if args.full else f"{len(changes.files)} changed file(s) since {base[:10]} ({base_desc})"
+    print(f"bin/ci: {mode} mode, {scope}: {len(plan)} check(s)")
+    for n in ctx.notes:
+        print(f"  note: {n}")
+    if args.list:
+        for c in plan:
+            extra = f"  [{c.skip_reason}]" if c.skip_reason else (" (heavy)" if c.heavy else "")
+            print(f"  {c.id:<38} {c.title}{extra}")
+            print(f"  {'':<38} $ (cd {c.cwd} && {c.cmd[:160]}{'...' if len(c.cmd) > 160 else ''})")
+        return 0
+    if not plan:
+        print("bin/ci: no local check covers these files")
+        return 0
+
+    logdir = new_run_logdir(state_dir() / "logs")
+    sweep_stale_targets()
+    atexit.register(ctx.cleanup_target)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    if any(is_heavy(c) and not c.skip_reason for c in plan):
+        ctx.guard = DiskGuard(ctx.target)
+        ctx.guard.start()
+        print(f"bin/ci: disk guard on: heavy checks need {min_free_gb():.0f} GB free, stop at a {max_target_gb():.0f} GB target dir or {floor_free_gb():.0f} GB free; "
+              f"target dir {ctx.target.name}{'' if not ctx.delete_target else ' (deleted on exit)'}")
+    try:
+        results = run_plan(plan, ctx, logdir)
+    finally:
+        ctx.cleanup_target()
+    if args.fix and any(r.status == "FAIL" for r in results):
+        results = apply_fixes(results, ctx, logdir)
+    elapsed = time.monotonic() - started
+    state = save_state(results, mode, elapsed)
+
+    failed = [r for r in results if r.status == "FAIL"]
+    counts = {s: sum(1 for r in results if r.status == s) for s in ("pass", "fixed", "FAIL", "skip", "warn")}
+    summary = ", ".join(f"{n} {label}" for label, n in (("passed", counts["pass"]), ("fixed", counts["fixed"]), ("failed", counts["FAIL"]),
+                                                          ("skipped", counts["skip"]), ("warnings", counts["warn"])) if n)
+    print(f"bin/ci: {summary} in {fmt_secs(elapsed)}")
+    if ctx.guard and ctx.guard.tripped:
+        print(f"bin/ci: STOPPED by the disk guard: {ctx.guard.tripped}. Rerun in CI (push the branch) or on a VM; `bin/ci --quick` runs only the cheap checks.")
+        return GUARD_EXIT
+    if failed:
+        safe = [r for r in failed if r.check.safe_fix and fix_commands(r)]
+        if safe and not args.fix:
+            print(f"bin/ci: `bin/ci --fix` repairs {len(safe)} of the {len(failed)} failure(s): {', '.join(r.check.id for r in safe)}")
+        if args.hook:
+            print("bin/ci: push stopped. Fix the failures, or push anyway with CUA_SKIP_LOCAL_CI=1 git push")
+        return 1
+    if args.signoff:
+        return signoff(state)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)

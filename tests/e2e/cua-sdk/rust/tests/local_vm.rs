@@ -8,6 +8,9 @@
 //! everything in the guest. `local_qemu_canonical_disk_gets_an_env_token`
 //! goes through `Sandboxes.create(local)` instead, where the SDK mints and
 //! delivers the token itself. Limits: one VM at a time, <= 4 GiB.
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,7 +61,7 @@ async fn smoke_by_url(url: &str, token: &str, marker: Option<&str>) -> Res<Strin
                 let _ = env.sh("sync".into(), Some(10_000)).await;
                 Res::Ok(m.to_string())
             }
-            None => Ok(String::from_utf8(env.download(path).await?)?),
+            None => Ok(String::from_utf8(env.download(path, None).await?)?),
         }
     }
     .await;
@@ -172,7 +175,7 @@ async fn local_lume_reference_image() {
 
 /// The canonical containerDisk through `Sandboxes.create(local)` with no
 /// token and no manual steps: the SDK mints a per-sandbox token, cua-vmm
-/// delivers it through the NoCloud seed as the Fleet claim-token contract
+/// delivers it through the NoCloud seed as the token-file contract
 /// (root 0600 `/run/cua/env-token` on a private tmpfs, spacesd in
 /// await-token-file mode, token-sync mirroring it for the driver's user),
 /// and `sb.spacesd()` runs a command and takes a screenshot.
@@ -192,9 +195,6 @@ async fn local_qemu_canonical_disk_gets_an_env_token() {
             let state = tmp_dir("state-canonical");
             let c = cua::Cua::embedded(cua::CuaConfig {
                 state_dir: Some(state.display().to_string()),
-                fleet: None,
-                fleet_from_env: false,
-                env_probe_timeout_ms: None,
                 spaces_home: Some(tmp_dir("spaces").display().to_string()),
                 ..Default::default()
             })?;
@@ -225,7 +225,7 @@ async fn local_qemu_canonical_disk_gets_an_env_token() {
                 let env = wait_env(&sb, 600).await?;
                 let summary = env_smoke(&env, true, false).await?;
                 eprintln!("canonical disk env smoke: {summary}");
-                // The Fleet contract inside the guest: a private mount at
+                // The token-file contract inside the guest: a private mount at
                 // /run/cua and the driver user's 0600 copy.
                 let mount = sh_ok(&env, "findmnt -no FSTYPE,OPTIONS /run/cua").await?;
                 assert!(mount.starts_with("tmpfs"), "/run/cua: {mount}");
@@ -257,6 +257,89 @@ async fn local_qemu_canonical_disk_gets_an_env_token() {
             }
             .await;
             sb.delete().await?;
+            r
+        },
+    )
+    .await;
+}
+
+/// Fork fan-out through the SDK: a forkable (bake) VM of the reference
+/// disk dirties RAM, is checkpointed and pinned; two forks of the
+/// checkpoint hold its RAM, are independent, and the pinned checkpoint is
+/// kept until unpinned, then pruned.
+#[tokio::test]
+async fn local_qemu_fork_fan_out_of_a_pinned_checkpoint() {
+    e2e(
+        "local-qemu-fork",
+        "qemu",
+        "forkable disk: checkpoint(pin) -> 2 independent forks -> pinned kept -> prune",
+        30 * MIN,
+        None,
+        || async {
+            let _one_vm = ONE_VM.lock().await;
+            let disk = desktop_disk();
+            if !disk.exists() {
+                return skip(&format!("missing {}", disk.display()));
+            }
+            let c = embedded_local();
+            let sbx = c.sandboxes();
+            let mut o = opts("local");
+            o.image = format!("vm:{}", disk.display());
+            o.name = Some(name("bake"));
+            o.cpus = Some(2);
+            o.memory_mb = Some(3072);
+            o.forkable = Some(true);
+            o.ready_timeout_ms = Some(900_000);
+            let bake = sbx.create(o).await?;
+            let ck = name("ck");
+            let mut forks = vec![];
+            let r = async {
+                let env = wait_env(&bake, 300).await?;
+                let _ = env
+                    .sh(
+                        "cloud-init status --wait >/dev/null 2>&1; true".into(),
+                        Some(300_000),
+                    )
+                    .await;
+                let world = sh_ok(
+                    &env,
+                    "head -c 64M /dev/urandom >/dev/shm/world && sha256sum /dev/shm/world | cut -d' ' -f1",
+                )
+                .await?;
+                let summary = sbx.checkpoint(bake.name(), ck.clone(), true).await?;
+                assert!(summary.pinned && summary.shared_memory, "{summary:?}");
+                for i in 0..2 {
+                    forks.push(sbx.fork(ck.clone(), name(&format!("fork{i}"))).await?);
+                }
+                for f in &forks {
+                    let fenv = wait_env(f, 120).await?;
+                    let got = sh_ok(&fenv, "sha256sum /dev/shm/world | cut -d' ' -f1").await?;
+                    assert_eq!(got.trim(), world.trim());
+                    sh_ok(&fenv, &format!("echo {} >/dev/shm/me", f.name())).await?;
+                }
+                for f in &forks {
+                    let fenv = wait_env(f, 60).await?;
+                    assert_eq!(sh_ok(&fenv, "cat /dev/shm/me").await?.trim(), f.name().as_str());
+                }
+                let refused = sbx.delete_checkpoint(ck.clone()).await;
+                assert!(
+                    refused.as_ref().is_err_and(|e| e.to_string().contains("pinned")),
+                    "{refused:?}"
+                );
+                assert!(!sbx.pin_checkpoint(ck.clone(), false).await?.pinned);
+                for f in forks.drain(..) {
+                    f.delete().await?;
+                }
+                assert!(sbx.prune_checkpoints().await?.contains(&ck));
+                Res::Ok(())
+            }
+            .await;
+            for f in forks {
+                let _ = f.delete().await;
+            }
+            let _ = sbx.pin_checkpoint(ck.clone(), false).await;
+            let _ = sbx.delete_checkpoint(ck.clone()).await;
+            bake.delete().await?;
             r
         },
     )

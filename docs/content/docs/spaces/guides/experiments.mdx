@@ -1,0 +1,30 @@
+---
+title: Experiments
+description: Features that are still being built have one switch each, off until you turn them on, with the cua experiments command or in the app's Settings.
+---
+
+An experiment is a feature that works but is still being built. Each is off until you turn it on. Ask first, Secure Spaces, Child Spaces and Warm start used to be experiments; they are always on now and have no switch (a switch you turned off for one of them is ignored). Turning an experiment off puts everything back the way it was before: nothing the experiment made is deleted, and the commands and settings it added disappear from help and from the app.
+
+## Turn one on or off
+
+```bash skip="no-runner"
+cua experiments list                  # every experiment and whether it is on
+cua experiments enable ci-runners
+cua experiments disable ci-runners
+```
+
+The switches live in the Cua home (`experiments/<name>`), so the command, the daemon and the Spaces apps agree. In the app, every experiment has a switch under Settings, Advanced, Labs, and it does what the command does; a change made with the command shows there the next time the app starts. To turn one on for a single process, set `CUA_EXPERIMENTS=ci-runners` (or `-ci-runners` to force it off).
+
+A command that belongs to an experiment that is off is left out of `--help`. If you run it anyway it says which experiment to turn on.
+
+## The experiments
+
+| Name | What it does |
+| --- | --- |
+| `ci-runners` | GitHub Actions jobs run in a fresh Space each, on your computers, with `cua ci` and the CI Runners page. See [Cua CI](/spaces/guides/cua-ci). |
+| `tcp-shares` | Share a raw TCP service in a Space, such as a game server, at a public address. See [Share a game server](/spaces/guides/share-a-game-server). |
+| `mobile` | Your computers answer the Cua Spaces phone app: the daemon serves a phone's tools (start a task, tool rows, changes and diffs, approval scopes) and reports events for push alerts. See [Cua Spaces on your phone](/spaces/guides/phone). |
+
+## Turning one off
+
+Turning an experiment off takes effect for what you start afterwards. Turning it back on later brings back the settings you chose.

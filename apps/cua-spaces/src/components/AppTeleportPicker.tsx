@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { type CatalogEntry, MOVE_LABEL, type RunReport, type TeleportHost } from "@trycua/cua/teleport";
+import { type CatalogEntry, type RunReport, type TeleportHost } from "@trycua/cua/teleport";
 
 import {
   TeleportPickerController,
@@ -24,6 +24,7 @@ import { hasTauri } from "../native/bridge";
 import { useGridLoads } from "./pickerLoads";
 import { PickerTileView } from "./PickerTile";
 import { SearchGlyph } from "./SearchGlyph";
+import { tMsg, useT } from "../i18n";
 
 /**
  * "Teleport an app…": every app on this machine, classified by the cua SDK
@@ -60,6 +61,7 @@ export function AppTeleportPicker({
   /** The home folder, for `~/...` paths; read from the shell when omitted. */
   home?: string | null;
 }) {
+  const t = useT(["teleport", "common"]);
   const home = useHome(homeProp);
   const controller = useMemo(
     () =>
@@ -121,7 +123,7 @@ export function AppTeleportPicker({
   switch (s.step) {
     case "loading":
       return (
-        <Status title="Looking for apps…" spinner />
+        <Status title={t("teleport.app_picker.loading")} spinner />
       );
     case "pick":
       return (
@@ -149,8 +151,8 @@ export function AppTeleportPicker({
               type="search"
               value={s.query}
               autoFocus
-              placeholder="Search apps"
-              aria-label="Search apps"
+              placeholder={t("teleport.app_picker.search_placeholder")}
+              aria-label={t("teleport.app_picker.search_label")}
               onChange={(ev) => controller.dispatch({ type: "query", query: ev.target.value })}
             />
           </div>
@@ -168,7 +170,7 @@ export function AppTeleportPicker({
           <footer className="hp-footer">
             <div className="hp-footer-right">
               <button type="button" className="hp-cancel" onClick={onClose}>
-                Cancel
+                {t("common.action.cancel")}
               </button>
               <button
                 type="button"
@@ -194,7 +196,7 @@ export function AppTeleportPicker({
             )}
             <h1 className="hp-status-title">{e.name}</h1>
           </header>
-          <div className="ta-choices" role="radiogroup" aria-label="What moves">
+          <div className="ta-choices" role="radiogroup" aria-label={t("teleport.app_picker.what_moves_label")}>
             {e.moves.map((m) => (
               <label key={m} className="ta-choice">
                 <input
@@ -203,12 +205,12 @@ export function AppTeleportPicker({
                   checked={s.move === m}
                   onChange={() => controller.dispatch({ type: "move", move: m })}
                 />
-                <span>{MOVE_LABEL[m]}</span>
+                <span>{t(`teleport.move.${m}`)}</span>
               </label>
             ))}
           </div>
           {sensitiveOptions(s).length > 0 && (
-            <div className="ta-choices" aria-label="Also send">
+            <div className="ta-choices" aria-label={t("teleport.app_picker.also_send_label")}>
               {sensitiveOptions(s).map((o) => (
                 <label key={o.group} className="ta-choice ta-optin">
                   <input
@@ -217,8 +219,8 @@ export function AppTeleportPicker({
                     onChange={(ev) => controller.dispatch({ type: "sensitive", group: o.group, value: ev.target.checked })}
                   />
                   <span>
-                    <span className="ta-optin-label">{o.label}</span>
-                    <span className="ta-optin-detail">{o.detail}</span>
+                    <span className="ta-optin-label">{tMsg(o.label)}</span>
+                    <span className="ta-optin-detail">{tMsg(o.detail)}</span>
                   </span>
                 </label>
               ))}
@@ -230,13 +232,13 @@ export function AppTeleportPicker({
                 <div key={f} className="ta-file">
                   <span title={f}>{displayPath(f, home)}</span>
                   <button type="button" className="hp-cancel" onClick={() => controller.dispatch({ type: "remove-file", path: f })}>
-                    Remove
+                    {t("teleport.app_picker.remove_file")}
                   </button>
                 </div>
               ))}
               {host.chooseFiles ? (
                 <button type="button" className="hp-button" onClick={() => void controller.chooseFiles()}>
-                  Add files or folders…
+                  {t("teleport.app_picker.add_files")}
                 </button>
               ) : null}
             </div>
@@ -245,12 +247,12 @@ export function AppTeleportPicker({
           <footer className="hp-footer">
             {s.entries ? (
               <button type="button" className="hp-cancel" onClick={() => controller.dispatch({ type: "back" })}>
-                Back
+                {t("common.action.back")}
               </button>
             ) : null}
             <div className="hp-footer-right">
               <button type="button" className="hp-cancel" onClick={onClose}>
-                Cancel
+                {t("common.action.cancel")}
               </button>
               <button
                 type="button"
@@ -258,7 +260,7 @@ export function AppTeleportPicker({
                 disabled={!canPlan(s)}
                 onClick={() => void controller.plan()}
               >
-                Review
+                {t("teleport.app_picker.review")}
               </button>
             </div>
           </footer>
@@ -266,23 +268,23 @@ export function AppTeleportPicker({
       );
     }
     case "planning":
-      return <Status title={`Preparing ${s.entry?.name ?? "the teleport"}…`} spinner />;
+      return <Status title={t("teleport.app_picker.preparing", { name: s.entry?.name ?? t("teleport.app_picker.preparing_fallback") })} spinner />;
     case "consent": {
       const p = s.plan!;
       return (
         <div className="hp-consent ta-consent">
           <header className="hp-consent-head">
             <h1 className="hp-consent-title">
-              Teleport {p.app.name} to {spaceName}?
+              {t("teleport.app_picker.consent_title", { app: p.app.name, space: spaceName })}
             </h1>
           </header>
-          <ul className="hp-items" role="list" aria-label="What moves">
+          <ul className="hp-items" role="list" aria-label={t("teleport.app_picker.what_moves_label")}>
             {p.consent.map((c) => (
               <li key={`${c.kind}:${c.key}`} className="hp-item" data-sensitive={c.sensitive} data-kind={c.kind}>
                 <span className="hp-item-label" title={displayPaths(c.detail, home)}>
                   {displayPaths(c.label, home)}
                 </span>
-                {c.sensitive && <span className="hp-flag">Secret</span>}
+                {c.sensitive && <span className="hp-flag">{t("teleport.app_picker.secret_flag")}</span>}
                 <span className="hp-item-meta">{c.bytes ? formatBytes(c.bytes) : ""}</span>
               </li>
             ))}
@@ -299,17 +301,17 @@ export function AppTeleportPicker({
                 checked={s.acknowledged}
                 onChange={(ev) => controller.dispatch({ type: "acknowledge", value: ev.target.checked })}
               />
-              <span>Send the secrets above</span>
+              <span>{t("teleport.app_picker.send_secrets")}</span>
             </label>
           )}
           {p.sensitive && (
-            <label className="ta-choice ta-save-to-keyvault" title="Keep this signed-in session sealed in your Cua Keyvault so it can be delivered again without asking again.">
+            <label className="ta-choice ta-save-to-keyvault" title={t("teleport.app_picker.keyvault_hint")}>
               <input
                 type="checkbox"
                 checked={s.saveToKeyvault}
                 onChange={(ev) => controller.dispatch({ type: "save-to-keyvault", value: ev.target.checked })}
               />
-              <span>Save to Keyvault for reuse</span>
+              <span>{t("teleport.app_picker.save_to_keyvault")}</span>
             </label>
           )}
           {p.relayUnsealed && (
@@ -321,19 +323,19 @@ export function AppTeleportPicker({
                   controller.dispatch({ type: "acknowledge-relay-plaintext", value: ev.target.checked })
                 }
               />
-              <span>Send without end-to-end encryption</span>
+              <span>{t("teleport.app_picker.send_unencrypted")}</span>
             </label>
           )}
           <footer className="hp-footer">
             <button type="button" className="hp-cancel" onClick={() => controller.dispatch({ type: "back" })}>
-              Back
+              {t("common.action.back")}
             </button>
             <span className="hp-footer-note">
-              {p.totalBytes ? `${formatBytes(p.totalBytes)} leaves this Mac` : "Nothing leaves this Mac"}
+              {p.totalBytes ? t("teleport.app_picker.bytes_leave", { size: formatBytes(p.totalBytes) }) : t("teleport.app_picker.nothing_leaves")}
             </span>
             <div className="hp-footer-right">
               <button type="button" className="hp-cancel" onClick={onClose}>
-                Cancel
+                {t("common.action.cancel")}
               </button>
               <button
                 type="button"
@@ -341,7 +343,7 @@ export function AppTeleportPicker({
                 disabled={!canConfirm(s)}
                 onClick={() => void controller.confirm()}
               >
-                Teleport
+                {t("teleport.app_picker.confirm")}
               </button>
             </div>
           </footer>
@@ -354,38 +356,38 @@ export function AppTeleportPicker({
       return (
         <div className="hp-status">
           <h1 className="hp-status-title">
-            Teleporting {s.plan?.app.name} to {spaceName}…
+            {t("teleport.app_picker.running_title", { app: s.plan?.app.name, space: spaceName })}
           </h1>
           <div className="ta-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
             <span style={{ width: `${pct}%` }} />
           </div>
-          <p className="hp-status-hint">{last ? `${last.kind}: ${last.detail}` : "Starting…"}</p>
+          <p className="hp-status-hint">{last ? t("teleport.app_picker.event_line", { kind: last.kind, detail: last.detail }) : t("teleport.app_picker.starting")}</p>
         </div>
       );
     }
     case "done": {
       const r = s.report!;
       const parts = [
-        r.installed.length ? `Installed ${r.installed.join(", ")}.` : "",
-        r.sent.length ? `Sent ${r.sent.length} item(s).` : "",
-        r.imported.length ? `Imported ${r.imported.length} item(s).` : "",
-        r.launched ? "Opened." : "",
+        r.installed.length ? t("teleport.app_picker.done_installed", { apps: r.installed.join(", ") }) : "",
+        r.sent.length ? t("teleport.app_picker.done_sent", { count: r.sent.length }) : "",
+        r.imported.length ? t("teleport.app_picker.done_imported", { count: r.imported.length }) : "",
+        r.launched ? t("teleport.app_picker.done_opened") : "",
       ].filter(Boolean);
       return (
         <Status
-          title={`${s.plan?.app.name ?? "The app"} is in ${spaceName}`}
+          title={t("teleport.app_picker.done_title", { app: s.plan?.app.name ?? t("teleport.app_picker.done_title_fallback"), space: spaceName })}
           hint={parts.join(" ")}
-          primary={{ label: "Done", onClick: onClose }}
+          primary={{ label: t("common.action.done"), onClick: onClose }}
         />
       );
     }
     case "error":
       return (
         <Status
-          title={`Could not teleport${s.entry ? ` ${s.entry.name}` : ""}`}
+          title={s.entry ? t("teleport.app_picker.error_title_named", { name: s.entry.name }) : t("teleport.app_picker.error_title")}
           error={s.error ?? ""}
-          secondary={{ label: "Back", onClick: () => controller.dispatch({ type: "back" }) }}
-          primary={{ label: "Close", onClick: onClose }}
+          secondary={{ label: t("common.action.back"), onClick: () => controller.dispatch({ type: "back" }) }}
+          primary={{ label: t("common.action.close"), onClick: onClose }}
         />
       );
   }

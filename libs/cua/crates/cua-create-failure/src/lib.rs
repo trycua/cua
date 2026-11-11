@@ -9,6 +9,10 @@
 //! the same cause the same way. Callers pass the result through
 //! `cua_telemetry::events::error_kind`, which keeps only schema words.
 
+pub mod local_network;
+pub mod preflight;
+pub mod retry;
+
 /// Enum cases that say little on their own (compared lowercase, without
 /// underscores): the error text decides instead.
 const GENERIC: &[&str] = &[
@@ -18,6 +22,11 @@ const GENERIC: &[&str] = &[
 /// The kind for a failed create: a cause word when the text or the enum
 /// case names one, else the caller's enum case (`Runtime`, `Env`), else
 /// `other`. Never empty and never `none`.
+///
+/// Local Network failures come out as their subclass
+/// (`local_network_denied`, `local_network_vpn`; [`local_network`]), which
+/// `cua_telemetry::events::error_kind` reads as the kind `local_network`
+/// and `cua_telemetry::events::error_subclass` as the subclass.
 ///
 /// - `message`: the error's text (read here, never returned).
 /// - `phase`: the create phase it failed in (`preparing`, `pulling`,
@@ -36,8 +45,23 @@ pub fn create_failure_kind<'v>(
     let phase = phase.trim();
     let variant = variant.trim();
     let flat = flatten(variant);
+    // Cua Cloud has ended: every cloud create is refused, whatever the error
+    // case that carries it (`Unsupported`, `CloudEnded`). Its own word keeps a
+    // known refusal out of the failures that need a fix.
+    if flat == "cloudended" || message.to_ascii_lowercase().contains("cua cloud has ended") {
+        return "cloud_ended";
+    }
     match flat.as_str() {
         "cloudcreditexhausted" | "creditexhausted" | "limitexceeded" => return "quota_exceeded",
+        // The app's own Local Network check (typed: `preflight::IssueKind`).
+        "localnetworkdenied" => return local_network::DENIED,
+        "localnetworkvpn" | "localnetworkblockedbyvpn" => return local_network::VPN,
+        "localnetwork" => {
+            return match preflight::IssueKind::of_text(message) {
+                Some(preflight::IssueKind::LocalNetworkVpn) => local_network::VPN,
+                _ => local_network::DENIED,
+            };
+        }
         // A specific case from the caller stays; a timeout is refined by
         // the text and the phase.
         f if f != "timeout" && !GENERIC.contains(&f) => return variant,
@@ -93,6 +117,10 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     ) {
         return Some("cancelled");
     }
+    // A preflight sentence (`preflight::evaluate`) a create carried on.
+    if let Some(kind) = preflight::IssueKind::of_text(&l) {
+        return Some(kind.error_subclass().unwrap_or(kind.error_kind()));
+    }
     if has(
         &l,
         &[
@@ -106,12 +134,14 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         return Some("insufficient_disk");
     }
     let vmnet = l.contains("192.168.64.");
+    // Older daemons' words for missing Local Network access.
     if l.contains("local network access")
         || (vmnet && has(&l, &["no route to host", "os error 65"]))
     {
-        return Some("local_network");
+        return Some(local_network::DENIED);
     }
     if l.contains("virtualmachinelimitexceeded")
+        || l.contains("running macos guests reached")
         || (has(&l, &["virtual machine", "vms"])
             && l.contains("limit")
             && has(&l, &["exceed", "maximum", "reached"]))
@@ -174,7 +204,19 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         if (l.contains(" is not available: ") && !l.contains("network route"))
             || (l.contains("qemu") && l.contains("not found on path"))
         {
-            return Some("runtime_missing");
+            // What is missing is the text before " is not available: "
+            // (behind any `local runtime: [local] `): QEMU, Lume, UEFI
+            // firmware or Homebrew is a VM runtime; anything else (the
+            // container engine, gVisor) is the container runtime.
+            let what = l
+                .split_once(" is not available: ")
+                .map_or(l.as_str(), |(w, _)| w);
+            let vm = has(what, &["qemu", "lume", "uefi firmware", "homebrew"]);
+            return Some(if vm {
+                "vm_runtime_missing"
+            } else {
+                "runtime_missing"
+            });
         }
     }
     if let Some(kind) = image_pull(&l, phase) {
@@ -183,9 +225,66 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     if l.contains("unauthenticated") {
         return Some("unauthenticated");
     }
+    // Causes that used to land in `other`: they name the problem but not
+    // the runtime, so they apply to every phase.
+    if has(
+        &l,
+        &[
+            "not enough memory",
+            "out of memory",
+            "cannot allocate memory",
+            "failed to allocate memory",
+        ],
+    ) {
+        return Some("out_of_memory");
+    }
+    if has(
+        &l,
+        &[
+            "address already in use",
+            "port is already allocated",
+            "port is already in use",
+            "only one usage of each socket address",
+        ],
+    ) {
+        return Some("port_in_use");
+    }
+    if has(
+        &l,
+        &[
+            "access is denied",
+            "os error 5)",
+            "being used by another process",
+            "path too long",
+            "file name too long",
+            "filename too long",
+            "read-only file system",
+        ],
+    ) {
+        return Some("file_access");
+    }
+    if has(
+        &l,
+        &[
+            "could not resolve host",
+            "dns error",
+            "name or service not known",
+            "no such host",
+            "temporary failure in name resolution",
+            "network is unreachable",
+            "no internet",
+            "tls handshake",
+            "certificate verify failed",
+            "proxyconnect",
+            "failed to lookup address",
+        ],
+    ) {
+        return Some("network");
+    }
     // The Space booted but its service (cua-spacesd, the computer server)
     // did not answer.
     if l.contains("cua-spacesd did not answer within ")
+        || l.contains("could not reach its agent through its network")
         || (phase == "waiting_for_services"
             && has(
                 &l,
@@ -205,6 +304,19 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     let timed_out = has(&l, &["timed out", "timeout", "not ready after", "deadline"]);
     if timed_out {
         return Some(timeout_in(phase));
+    }
+    // The rest of a local `runtime` failure, by cause (the same words as
+    // `cua_vmm::error::failure_kind`, which names them for the app).
+    if local {
+        if has(&l, &["exited right after start", "' exited (code "]) {
+            return Some("container_exited");
+        }
+        if has(&l, &["lume api ", "qmp: ", "could not launch "]) {
+            return Some("vm_error");
+        }
+        if has(&l, &["container engine: ", "did not answer ping"]) {
+            return Some("engine_error");
+        }
     }
     None
 }
@@ -310,7 +422,8 @@ fn image_pull(l: &str, phase: &str) -> Option<&'static str> {
 pub const TEXT_KINDS: &[&str] = &[
     "cancelled",
     "insufficient_disk",
-    "local_network",
+    "local_network_denied",
+    "local_network_vpn",
     "vm_limit",
     "quota_exceeded",
     "virtualization_unavailable",
@@ -322,7 +435,15 @@ pub const TEXT_KINDS: &[&str] = &[
     "runtime_permission",
     "runtime_not_running",
     "runtime_missing",
+    "vm_runtime_missing",
+    "container_exited",
+    "vm_error",
+    "engine_error",
     "unauthenticated",
+    "out_of_memory",
+    "port_in_use",
+    "file_access",
+    "network",
     "services_unreachable",
     "vm_boot_timeout",
     "timeout",
@@ -336,14 +457,183 @@ mod tests {
         create_failure_kind(message, phase, variant, true)
     }
 
+    /// The rest of a local `runtime` failure is named by cause, and the
+    /// words agree with `cua_vmm::error::failure_kind` (the app's own).
+    #[test]
+    fn the_rest_of_a_local_runtime_failure_is_named_by_cause() {
+        for (message, want) in [
+            (
+                "local runtime: [local] QEMU is not available: download QEMU for Windows",
+                "vm_runtime_missing",
+            ),
+            (
+                "local runtime: [local] lume serve at http://127.0.0.1:7777 is not available: start it",
+                "vm_runtime_missing",
+            ),
+            (
+                "local runtime: [local] UEFI firmware for x86_64 is not available: install edk2",
+                "vm_runtime_missing",
+            ),
+            (
+                "local runtime: [local] a container engine is not available: no socket",
+                "runtime_missing",
+            ),
+            (
+                "local runtime: [local] gVisor (runsc) is not available: install it",
+                "runtime_missing",
+            ),
+            (
+                "local runtime: [local] container 'a' exited right after start (status Stopped)",
+                "container_exited",
+            ),
+            (
+                "local runtime: [local] container 'a' exited (code 1) before Tcp(8000) passed",
+                "container_exited",
+            ),
+            ("local runtime: [local] lume API 500: boom", "vm_error"),
+            ("local runtime: [local] qmp: closed", "vm_error"),
+            (
+                "local runtime: [local] container engine: create: conflict",
+                "engine_error",
+            ),
+        ] {
+            assert_eq!(
+                create_failure_kind(message, "", "Runtime", true),
+                want,
+                "{message}"
+            );
+            assert!(
+                cua_telemetry::schema::ERROR_KINDS.contains(&want),
+                "{want} missing from ERROR_KINDS"
+            );
+        }
+        // An earlier, more specific cause still wins over these.
+        assert_eq!(
+            create_failure_kind(
+                "local runtime: [local] container engine: pull ghcr.io/x/y:1: manifest unknown",
+                "pulling",
+                "Runtime",
+                true
+            ),
+            "image_pull_not_found"
+        );
+        assert_eq!(
+            create_failure_kind("lume API 500: boom", "", "Runtime", false),
+            "Runtime",
+            "a cloud create has no local runtime to name"
+        );
+    }
+
     #[test]
     fn every_cause_word_is_in_the_telemetry_schema() {
-        for k in TEXT_KINDS.iter().chain(&["quota_exceeded", "other"]) {
+        for k in TEXT_KINDS
+            .iter()
+            .chain(&["quota_exceeded", "cloud_ended", "other"])
+        {
+            // A subclass word is sent as its kind plus the subclass.
+            let kind = cua_telemetry::events::error_kind(k);
             assert!(
-                cua_telemetry::schema::ERROR_KINDS.contains(k),
+                kind != "other" || *k == "other",
+                "{k} missing from ERROR_KINDS"
+            );
+            assert!(
+                cua_telemetry::schema::ERROR_KINDS.contains(&kind),
                 "{k} missing from ERROR_KINDS"
             );
         }
+        assert_eq!(
+            cua_telemetry::events::error_kind(local_network::DENIED),
+            "local_network"
+        );
+        assert_eq!(
+            retry::subclass(local_network::VPN, ""),
+            retry::Subclass::LocalNetworkVpn
+        );
+        assert_eq!(
+            retry::subclass(local_network::DENIED, ""),
+            retry::Subclass::LocalNetworkDenied
+        );
+    }
+
+    #[test]
+    fn local_network_failures_come_from_the_typed_check_or_the_text() {
+        // The app's typed check, by its variant, whatever the text.
+        assert_eq!(
+            kind("whatever", "preparing", "LocalNetworkDenied"),
+            "local_network_denied"
+        );
+        assert_eq!(
+            kind("whatever", "", "local_network_vpn"),
+            "local_network_vpn"
+        );
+        // The daemon's fixed sentences.
+        let denied = preflight::local_network_denied("Cua Spaces");
+        assert_eq!(
+            kind(&denied, "waiting_for_services", "Runtime"),
+            "local_network_denied"
+        );
+        assert_eq!(
+            kind(
+                preflight::LOCAL_NETWORK_VPN,
+                "waiting_for_services",
+                "Runtime"
+            ),
+            "local_network_vpn"
+        );
+        let wrapped = format!(
+            "runtime: Local Network access is not available: {} (the VM at 192.168.64.3:3211: No route to host)",
+            preflight::LOCAL_NETWORK_VPN
+        );
+        assert_eq!(
+            kind(&wrapped, "waiting_for_services", "Runtime"),
+            "local_network_vpn"
+        );
+        assert_eq!(kind(&wrapped, "", "LocalNetwork"), "local_network_vpn");
+        // Older daemons' text stays missing access.
+        assert_eq!(
+            kind(
+                "cua-spacesd did not answer within 120s (nothing answered at http://192.168.64.234:3211/ \
+                 (it may still be starting; retry in a few seconds): gRPC: tcp connect error \
+                 (No route to host (os error 65)))",
+                "waiting_for_services",
+                "Timeout"
+            ),
+            "local_network_denied"
+        );
+    }
+
+    #[test]
+    fn former_other_texts_get_a_kind() {
+        fn k(m: &str) -> &str {
+            kind(m, "preparing", "Runtime")
+        }
+        assert_eq!(k("Cannot allocate memory (os error 12)"), "out_of_memory");
+        assert_eq!(k("QEMU: not enough memory for the guest"), "out_of_memory");
+        assert_eq!(
+            k("bind: address already in use on 127.0.0.1:5900"),
+            "port_in_use"
+        );
+        assert_eq!(
+            k("Bind for 0.0.0.0:8080 failed: port is already allocated"),
+            "port_in_use"
+        );
+        assert_eq!(k("Access is denied. (os error 5)"), "file_access");
+        assert_eq!(
+            k("the file is being used by another process"),
+            "file_access"
+        );
+        assert_eq!(
+            k("error sending request: dns error: failed to lookup address information"),
+            "network"
+        );
+        assert_eq!(k("x509: certificate verify failed"), "network");
+        // A pull keeps its own, finer kinds.
+        assert_eq!(
+            kind("dns error: no such host", "pulling", "Runtime"),
+            "image_pull_network"
+        );
+        assert_eq!(k("something nobody has seen"), "Runtime");
+        assert_eq!(kind("something nobody has seen", "", ""), "other");
     }
 
     #[test]
@@ -417,7 +707,7 @@ mod tests {
                 "waiting_for_services",
                 "Runtime"
             ),
-            "local_network"
+            "local_network_denied"
         );
         assert_eq!(
             kind(
@@ -425,10 +715,18 @@ mod tests {
                 "waiting_for_services",
                 ""
             ),
-            "local_network"
+            "local_network_denied"
         );
         assert_eq!(
             kind("VZErrorDomain virtualMachineLimitExceeded", "booting", ""),
+            "vm_limit"
+        );
+        assert_eq!(
+            kind(
+                "lume API 409: VM start rejected: host limit of 2 running macOS guests reached",
+                "booting",
+                ""
+            ),
             "vm_limit"
         );
         assert_eq!(
@@ -436,6 +734,28 @@ mod tests {
             "quota_exceeded"
         );
         assert_eq!(kind("", "", "cloud_credit_exhausted"), "quota_exceeded");
+    }
+
+    /// Cua Cloud ended: a cloud create is refused with its own word, not the
+    /// generic `unsupported` that hid a known refusal among real failures.
+    #[test]
+    fn a_cloud_create_after_the_end_of_cua_cloud_is_cloud_ended() {
+        let msg = "unsupported: Cua Cloud has ended; use a local sandbox or your own computer. \
+                   See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
+        assert_eq!(
+            create_failure_kind(msg, "", "Unsupported", false),
+            "cloud_ended"
+        );
+        assert_eq!(create_failure_kind(msg, "", "", false), "cloud_ended");
+        assert_eq!(
+            create_failure_kind("", "", "CloudEnded", false),
+            "cloud_ended"
+        );
+        // Other unsupported errors keep their case.
+        assert_eq!(
+            create_failure_kind("no such feature", "", "Unsupported", true),
+            "Unsupported"
+        );
     }
 
     #[test]
@@ -478,7 +798,7 @@ mod tests {
                 "pulling",
                 ""
             ),
-            "runtime_missing"
+            "vm_runtime_missing"
         );
         assert_eq!(
             kind(
@@ -532,6 +852,15 @@ mod tests {
                 "probe http://10.0.0.2:8000/health: connection refused",
                 "waiting_for_services",
                 ""
+            ),
+            "services_unreachable"
+        );
+        assert_eq!(
+            kind(
+                "The computer started, but Cua could not reach its agent through its network: \
+                 nothing forwards the agent's port 3211 from this Mac into it.",
+                "",
+                "Other"
             ),
             "services_unreachable"
         );

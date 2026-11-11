@@ -1,0 +1,500 @@
+name: "Nightly: Cua Spaces"
+
+# The Nightly update channel of Cua Spaces on macOS, Windows and Linux
+# (CUA-1991, CUA-3503; channel switch: Settings, Advanced, Updates). Nightly
+# replaces the old ad-hoc betas: there are no beta tags any more
+# (cd-cua-spaces.yml refuses them), and pre-release testing uses this
+# channel or a manual run of this workflow.
+#
+# Every night, when main's Spaces CI is green (.github/scripts/
+# spaces_nightly_gate.py: the ci-cua-spaces*.yml runs of main's head, or of
+# the newest commit that ran them) and the release inputs changed since the
+# last nightly (the input tree hash of .github/scripts/spaces_inputs_tree.sh,
+# recorded in nightly.json), builds main with cd-cua-spaces-build.yml
+# (`channel: nightly`): signed and notarized like a release (macOS Developer
+# ID, notarized and stapled; Windows Authenticode through Azure Artifact
+# Signing; Linux sha512 in the updater feed). Then publishes everything that
+# built to ONE rolling prerelease, `cua-spaces-nightly`: never "Latest", tag
+# never `cua-spaces-v*`, so no release workflow runs and no draft is ever
+# left behind. Each night replaces its assets.
+#
+# Feeds (all on `cua-spaces-nightly`; the stable and beta feeds on
+# `cua-spaces-latest` are never touched):
+#  - macOS: cua-spaces-nightly-appcast.xml, Sparkle items on the `nightly`
+#    channel (sparkle_feed.py nightly checks no stable item gets in). Only
+#    apps set to Nightly read this feed.
+#  - Windows: nightly.yml; Linux: nightly-linux.yml, nightly-linux-arm64.yml
+#    (electron-updater channel `nightly`, apps/cua-spaces-desktop/scripts/
+#    nightly-feeds.mjs refuses a latest*/beta* file, a non-nightly version
+#    or an installer outside this release). Stable apps read latest*.yml on
+#    `cua-spaces-latest` and never see these.
+#
+# Downloads that keep their name every night (for docs and testers):
+# cua-spaces-nightly-darwin-universal.dmg, -windows-<arch>-setup.exe,
+# -linux-<arch>.AppImage and -linux-<arch>.deb on the same release.
+#
+# Versions: VERSION X.Y.Z on main builds
+# X.(Y+1).0-nightly.YYYYMMDD.<run number>+<sha7> (a prerelease X.Y.Z-pre
+# builds X.Y.Z-nightly...). The run number makes every nightly unique and
+# ordered, even two on one day (semver compares numeric identifiers as
+# numbers; an HHMM time would need a leading zero, which semver forbids).
+# The Electron apps carry it without the +<sha7> (electron-builder takes no
+# build metadata), and asset names join it with a dot (a GitHub asset name
+# has no '+').
+# CFBundleVersion, which Sparkle compares, is X.Y.Z.<YYYYMMDDHHMM>
+# (X.Y.Z.0.<...> for a prerelease): above every build of the release it came
+# from, below the next release, so an app back on Stable takes the next
+# stable release. electron-updater compares the semver version.
+#
+# A platform whose build failed keeps last night's build and feed; the others
+# still publish, and the run ends red. The input tree is recorded only when
+# every platform published, so the next night builds again.
+#
+# Immutable tag: the rolling release moves every night, so after a fully
+# green build and publish the last publish step also tags the built commit
+# `cua-spaces-nightly-YYYYMMDD.<run number>` (a lightweight tag at the exact
+# GITHUB_SHA that was built, never a later main). Anyone can read the code of
+# a nightly version or pin to it. The tag is never moved or force-updated: if
+# it exists at another commit the job fails. A red nightly (a platform failed)
+# makes no tag. The tag name and commit are recorded in nightly.json (`tag`,
+# `tagCommit`) and in the release notes; old tags are not pruned here. The
+# tag does not match `cua-spaces-v*`, so no release workflow runs.
+#
+# Cost: the last job writes the run's runner minutes per OS to the summary.
+#
+# workflow_dispatch: `force` builds even when nothing changed; `ignore_ci`
+# builds even when main's Spaces CI is red or still running.
+
+on:
+  schedule:
+    # 07:30 UTC: night in the Americas, morning in Europe.
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if nothing changed since the last nightly"
+        type: boolean
+        default: false
+      ignore_ci:
+        description: "Build even if main's Spaces CI is red or still running"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-cua-spaces
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TAG: cua-spaces-nightly
+  APPCAST: cua-spaces-nightly-appcast.xml
+
+jobs:
+  plan:
+    name: Plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Includes up to 90 minutes waiting for main's Spaces CI to finish (not with ignore_ci).
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      version: ${{ steps.plan.outputs.version }}
+      electron_version: ${{ steps.plan.outputs.electron_version }}
+      bundle_version: ${{ steps.plan.outputs.bundle_version }}
+      tree: ${{ steps.plan.outputs.tree }}
+      nightly_tag: ${{ steps.plan.outputs.nightly_tag }}
+      previous_sha: ${{ steps.plan.outputs.previous_sha }}
+      previous_tree: ${{ steps.plan.outputs.previous_tree }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+          filter: blob:none
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          IGNORE_CI: ${{ github.event_name == 'workflow_dispatch' && inputs.ignore_ci }}
+        run: |
+          set -euo pipefail
+          tree="$(.github/scripts/spaces_inputs_tree.sh HEAD)"
+          last="$(gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nightly.json --output - 2>/dev/null || echo '{}')"
+          last_tree="$(jq -r '.tree // ""' <<<"$last")"
+          previous_sha="$(jq -r '.sha // ""' <<<"$last")"
+          skip=false; why=""
+          if [ "$tree" = "$last_tree" ] && [ "$FORCE" != true ]; then
+            skip=true; why="nothing changed since the last nightly"
+          fi
+          ci=skipped
+          if [ "$skip" = false ] && [ "$IGNORE_CI" = true ]; then
+            # The person asked to ignore main's CI: do not wait for it either
+            # (the wait is up to 90 minutes while main's CI is still running).
+            ci=ignored
+          elif [ "$skip" = false ]; then
+            ci="$(python3 -I .github/scripts/spaces_nightly_gate.py "$GITHUB_REPOSITORY" "$GITHUB_SHA" --wait-minutes 90)"
+            if [ "$ci" != green ]; then
+              skip=true; why="main's Spaces CI is $ci at ${GITHUB_SHA:0:7}"
+            fi
+          fi
+
+          base="$(tr -d '[:space:]' < apps/cua-spaces-macos/VERSION)"
+          [[ "$base" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad VERSION: $base"; exit 1; }
+          x="${BASH_REMATCH[1]}"; y="${BASH_REMATCH[2]}"; z="${BASH_REMATCH[3]}"; pre="${BASH_REMATCH[4]}"
+          stamp="$(date -u +%Y%m%d%H%M)"
+          day="${stamp:0:8}"
+          sha="${GITHUB_SHA:0:7}"
+          if [ -z "$pre" ]; then
+            electron_version="$x.$((y + 1)).0-nightly.$day.$GITHUB_RUN_NUMBER"
+            bundle_version="$x.$y.$z.$stamp"
+          else
+            electron_version="$x.$y.$z-nightly.$day.$GITHUB_RUN_NUMBER"
+            bundle_version="$x.$y.$z.0.$stamp"
+          fi
+          version="$electron_version+$sha"
+          {
+            echo "skip=$skip"
+            echo "version=$version"
+            echo "electron_version=$electron_version"
+            echo "bundle_version=$bundle_version"
+            echo "tree=$tree"
+            echo "nightly_tag=cua-spaces-nightly-$day.$GITHUB_RUN_NUMBER"
+            echo "previous_sha=$previous_sha"
+            echo "previous_tree=$last_tree"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Plan"
+            echo "- Inputs tree \`$tree\` (last nightly: \`${last_tree:-none}\`)"
+            echo "- main's Spaces CI at ${GITHUB_SHA:0:7}: **$ci**"
+            if [ "$skip" = true ]; then
+              echo "- **Skipped:** $why."
+            else
+              echo "- Building **$version** (Electron $electron_version, CFBundleVersion $bundle_version) from $GITHUB_SHA."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$skip" = true ] && echo "::notice::Nightly skipped: $why" || true
+
+  # Every platform, signed (and notarized on macOS): the release build, nightly version.
+  build:
+    name: Build
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    # Everything a job of the called workflow asks for, also the jobs a
+    # nightly skips (GitHub checks them all; test_reusable_workflow_permissions.py).
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/cd-cua-spaces-build.yml
+    with:
+      channel: nightly
+      version: ${{ needs.plan.outputs.version }}
+      bundle_version: ${{ needs.plan.outputs.bundle_version }}
+    secrets: inherit
+
+  # What built goes to the rolling `cua-spaces-nightly` release: installers
+  # first, then the feeds that point at them, then nightly.json.
+  publish:
+    name: Publish to the nightly channel
+    needs: [plan, build]
+    # A platform that failed must not hold back the others.
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.skip != 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    # Holds the Sparkle EdDSA key; restricted to main.
+    environment: cua-driver-release-signing
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      ELECTRON_VERSION: ${{ needs.plan.outputs.electron_version }}
+      BASE_URL: https://github.com/${{ github.repository }}/releases/download/cua-spaces-nightly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download what built
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: part-*
+          path: ${{ runner.temp }}/parts
+      - name: What built
+        id: built
+        run: |
+          set -euo pipefail
+          parts="$RUNNER_TEMP/parts"
+          mkdir -p "$parts" out/installers out/feeds
+          macos=false; windows=false; linux=""
+          if [ -f "$parts/part-darwin-universal/cua-spaces-$VERSION-darwin-universal.dmg" ]; then
+            grep -q "Developer ID signed and notarized" "$parts/part-darwin-universal/signing-darwin-universal.txt" ||
+              { echo "::error::the nightly disk image is not signed and notarized"; exit 1; }
+            macos=true
+          fi
+          # Windows: both architectures or neither (one feed lists both installers).
+          if [ -f "$parts/part-winfeed-x64/nightly.yml" ] && [ -f "$parts/part-winfeed-arm64/nightly.yml" ]; then
+            windows=true
+          elif [ -d "$parts/part-winfeed-x64" ] || [ -d "$parts/part-winfeed-arm64" ]; then
+            echo "::warning::only one Windows architecture built: Windows keeps last night's build"
+          fi
+          for arch in x64 arm64; do
+            [ -n "$(ls "$parts/part-linux-$arch"/nightly-linux*.yml 2>/dev/null)" ] && linux="$linux $arch"
+          done
+          linux="${linux# }"
+          { echo "macos=$macos"; echo "windows=$windows"; echo "linux=$linux"; } >> "$GITHUB_OUTPUT"
+          echo "Built: macos=$macos windows=$windows linux=${linux:-none}"
+          [ "$macos" = true ] || [ "$windows" = true ] || [ -n "$linux" ] || { echo "::error::nothing built"; exit 1; }
+
+          # The installers, under their own names and under names that stay the same every night.
+          feeds=()
+          if [ "$windows" = true ]; then
+            for arch in x64 arm64; do
+              exe="$parts/part-windows-$arch/Cua-Spaces-Setup-$ELECTRON_VERSION-$arch.exe"
+              cp "$exe" "$exe.blockmap" out/installers/
+              cp "$exe" "out/installers/cua-spaces-nightly-windows-$arch-setup.exe"
+              feeds+=("$parts/part-winfeed-$arch")
+            done
+          fi
+          for arch in $linux; do
+            dir="$parts/part-linux-$arch"
+            file_arch="$([ "$arch" = x64 ] && echo x86_64 || echo arm64)"
+            deb_arch="$([ "$arch" = x64 ] && echo amd64 || echo arm64)"
+            cp "$dir/Cua-Spaces-$ELECTRON_VERSION-$file_arch.AppImage" "$dir/cua-spaces_${ELECTRON_VERSION}_$deb_arch.deb" out/installers/
+            cp "$dir/Cua-Spaces-$ELECTRON_VERSION-$file_arch.AppImage" "out/installers/cua-spaces-nightly-linux-$file_arch.AppImage"
+            cp "$dir/cua-spaces_${ELECTRON_VERSION}_$deb_arch.deb" "out/installers/cua-spaces-nightly-linux-$deb_arch.deb"
+            feeds+=("$dir")
+          done
+          if [ ${#feeds[@]} -gt 0 ]; then
+            node apps/cua-spaces-desktop/scripts/nightly-feeds.mjs --base "$BASE_URL" \
+              --version "$ELECTRON_VERSION" --out out/feeds "${feeds[@]}"
+          fi
+      - name: Sparkle appcast
+        if: steps.built.outputs.macos == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+          PREVIOUS_SHA: ${{ needs.plan.outputs.previous_sha }}
+        run: |
+          set -euo pipefail
+          [ -n "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" ] || { echo "::error::no CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: cannot sign the nightly appcast"; exit 1; }
+          # A GitHub asset name has no '+': the build metadata joins with a dot.
+          asset="cua-spaces-${VERSION//+/.}-darwin-universal.dmg"
+          mv "$RUNNER_TEMP/parts/part-darwin-universal/cua-spaces-$VERSION-darwin-universal.dmg" "out/installers/$asset"
+          cp "out/installers/$asset" out/installers/cua-spaces-nightly-darwin-universal.dmg
+
+          # What changed since the last nightly (the release inputs only).
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "Nightly build of main at ${GITHUB_SHA:0:7}. Nightly builds get the newest changes from main every day. They may break; switch back to Stable in Settings, Advanced."
+            echo
+            range="$GITHUB_SHA"
+            [ -n "$PREVIOUS_SHA" ] && git cat-file -e "$PREVIOUS_SHA^{commit}" 2>/dev/null && range="$PREVIOUS_SHA..$GITHUB_SHA"
+            git log --no-merges --format='- %s' -n 40 "$range" -- \
+              apps/cua-spaces-macos apps/cua-spaces apps/cua-spaces-desktop apps/cua-spaces-web libs/cua libs/cua-spacesd/VERSION
+          } > "$notes"
+
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$APPCAST" \
+            --dir "$RUNNER_TEMP/previous" 2>/dev/null || true
+          apps/cua-spaces-macos/scripts/make-appcast.sh \
+            --dmg "out/installers/$asset" --version "$VERSION" \
+            --download-base "$BASE_URL/" \
+            --previous "$RUNNER_TEMP/previous/$APPCAST" --notes "$notes" \
+            --out "out/feeds/$APPCAST"
+          python3 -I .github/scripts/sparkle_feed.py nightly "out/feeds/$APPCAST"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TREE: ${{ needs.plan.outputs.tree }}
+          PREVIOUS_TREE: ${{ needs.plan.outputs.previous_tree }}
+          BUNDLE_VERSION: ${{ needs.plan.outputs.bundle_version }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          MACOS: ${{ steps.built.outputs.macos }}
+          WINDOWS: ${{ steps.built.outputs.windows }}
+          LINUX: ${{ steps.built.outputs.linux }}
+        run: |
+          set -euo pipefail
+          body="The newest Cua Spaces for Mac, Windows and Linux, built from main every night. Nightly builds get the newest changes from main every day. They may break. To get them, open Cua Spaces, Settings, Advanced, and choose Nightly. Latest: $VERSION."
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Cua Spaces Nightly" --notes "$body" --prerelease --latest=false
+          fi
+          # The installers first, then the feeds that point at them, then the record.
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber out/installers/*
+          if [ -n "$(ls out/feeds)" ]; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber out/feeds/*
+          fi
+
+          # nightly.json: what each platform has now. The input tree moves only
+          # when every platform published, so a failed one is built again tomorrow.
+          last="$(gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nightly.json --output - 2>/dev/null || echo '{}')"
+          tree="$TREE"
+          [ "$BUILD_RESULT" = success ] || tree="$PREVIOUS_TREE"
+          at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          now="$(jq -n --arg version "$VERSION" --arg sha "$GITHUB_SHA" --arg at "$at" --arg run "$GITHUB_RUN_ID" \
+            '{version: $version, sha: $sha, builtAt: $at, run: ($run | tonumber)}')"
+          jq --arg version "$VERSION" --arg electron "$ELECTRON_VERSION" --arg bundle "$BUNDLE_VERSION" \
+            --arg sha "$GITHUB_SHA" --arg tree "$tree" --arg run "$GITHUB_RUN_ID" --arg at "$at" \
+            --argjson now "$now" --arg macos "$MACOS" --arg windows "$WINDOWS" --arg linux "$LINUX" \
+            '. as $last | {version: $version, electronVersion: $electron, bundleVersion: $bundle, sha: $sha,
+              tree: $tree, run: ($run | tonumber), builtAt: $at,
+              platforms: (($last.platforms // {})
+                + (if $macos == "true" then {macos: $now} else {} end)
+                + (if $windows == "true" then {windows: ($now + {version: $electron})} else {} end)
+                + (if ($linux | contains("x64")) then {"linux-x64": ($now + {version: $electron})} else {} end)
+                + (if ($linux | contains("arm64")) then {"linux-arm64": ($now + {version: $electron})} else {} end))}' \
+            <<<"$last" > nightly.json
+          cat nightly.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber nightly.json
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$body" --prerelease --latest=false
+
+          # Installers no feed names any more go (the fixed-name downloads stay).
+          mkdir -p "$RUNNER_TEMP/live"
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" \
+            --dir "$RUNNER_TEMP/live" --clobber
+          keep="$(python3 -I - "$RUNNER_TEMP/live" <<'PY'
+          import os, re, sys, urllib.parse
+          import xml.etree.ElementTree as ET
+          d = sys.argv[1]
+          for name in os.listdir(d):
+              p = os.path.join(d, name)
+              if name.endswith(".xml"):
+                  urls = [e.get("url", "") for e in ET.parse(p).iter("enclosure")]
+              else:
+                  urls = re.findall(r"^\s*(?:- )?(?:url|path):\s*['\"]?([^'\"\n]+?)['\"]?\s*$", open(p).read(), re.M)
+              for u in urls:
+                  n = urllib.parse.unquote(u.rsplit("/", 1)[-1])
+                  print(n)
+                  print(n + ".blockmap")
+          PY
+          )"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            grep -E '\.(dmg|exe|blockmap|AppImage|deb)$' | grep -v '^cua-spaces-nightly-' | while read -r name; do
+              grep -qxF "$name" <<<"$keep" || gh release delete-asset "$TAG" "$name" --repo "$GITHUB_REPOSITORY" --yes
+            done
+          {
+            echo "## Published"
+            echo "- **$VERSION** (Electron $ELECTRON_VERSION, CFBundleVersion $BUNDLE_VERSION)"
+            echo "- macOS: $MACOS; Windows: $WINDOWS; Linux: ${LINUX:-none}"
+            echo "- Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Always a prerelease. Nothing reads the repo-wide Latest.
+          [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true ] ||
+            { echo "::error::$TAG is not a prerelease"; exit 1; }
+          # Every installer a nightly feed names, and every fixed-name download, resolves.
+          dir="$RUNNER_TEMP/check"; mkdir -p "$dir"
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" --dir "$dir" --clobber
+          [ ! -f "$dir/$APPCAST" ] || python3 -I .github/scripts/sparkle_feed.py nightly "$dir/$APPCAST"
+          urls="$( { grep -hoE 'https://[^"'"'"' ]+' "$dir"/*.yml 2>/dev/null || true; \
+                     grep -hoE 'url="https://[^"]+"' "$dir"/*.xml 2>/dev/null | sed 's/^url="//; s/"$//' || true; } | sort -u)"
+          fixed="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name | select(startswith("cua-spaces-nightly-"))')"
+          for name in $fixed; do urls="$urls"$'\n'"$BASE_URL/$name"; done
+          bad=0
+          while read -r url; do
+            [ -n "$url" ] || continue
+            # GitHub's release CDN answers 5xx for minutes at a time: retry with a pause.
+            for attempt in 1 2 3 4 5; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 --max-time 60 "$url" || true)"
+              case "$code" in 200|206|404) break ;; esac
+              sleep $((15 * attempt))
+            done
+            if [ "$code" = 200 ] || [ "$code" = 206 ]; then echo "ok $url"; else echo "::error::$url answers $code"; bad=1; fi
+          done <<<"$urls"
+          # The stable feeds are not this workflow's: they hold no nightly.
+          stable="$RUNNER_TEMP/stable"; mkdir -p "$stable"
+          gh release download cua-spaces-latest --repo "$GITHUB_REPOSITORY" --pattern "latest*.yml" --pattern cua-spaces-appcast.xml --dir "$stable" 2>/dev/null || true
+          if grep -l -- '-nightly' "$stable"/latest*.yml 2>/dev/null; then echo "::error::a stable feed names a nightly"; bad=1; fi
+          [ ! -f "$stable/cua-spaces-appcast.xml" ] || python3 -I .github/scripts/sparkle_feed.py check "$stable/cua-spaces-appcast.xml" || bad=1
+          exit "$bad"
+      # Only after a fully successful build, publish and channel check (a
+      # failed or partial nightly leaves no tag). Lightweight tag at the built
+      # commit through the git refs API; never moved. Then the record and the
+      # notes name it (additive field in nightly.json).
+      - name: Tag the commit
+        if: needs.build.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_TAG: ${{ needs.plan.outputs.nightly_tag }}
+        run: |
+          set -euo pipefail
+          .github/scripts/spaces_nightly_tag.sh "$NIGHTLY_TAG" "$GITHUB_SHA"
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern nightly.json --output nightly.json --clobber
+          jq --arg tag "$NIGHTLY_TAG" --arg sha "$GITHUB_SHA" '. + {tag: $tag, tagCommit: $sha}' nightly.json > nightly.tagged.json
+          mv nightly.tagged.json nightly.json
+          cat nightly.json
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber nightly.json
+          body="The newest Cua Spaces for Mac, Windows and Linux, built from main every night. Nightly builds get the newest changes from main every day. They may break. To get them, open Cua Spaces, Settings, Advanced, and choose Nightly. Latest: $VERSION (tag $NIGHTLY_TAG, commit $GITHUB_SHA)."
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$body" --prerelease --latest=false
+          echo "- Tag: https://github.com/$GITHUB_REPOSITORY/tree/$NIGHTLY_TAG (commit $GITHUB_SHA)" >> "$GITHUB_STEP_SUMMARY"
+      - name: A platform failed
+        if: needs.build.result != 'success'
+        run: |
+          echo "::error::the nightly build did not fully succeed (${{ needs.build.result }}); what built was published, the rest keeps last night's build"
+          exit 1
+
+  # Runner minutes per OS.
+  cost:
+    name: Cost summary
+    needs: [plan, build, publish]
+    if: always() && needs.plan.outputs.skip != 'true' && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cost summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/scripts/spaces_build_summary.py "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [plan, publish]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-spaces-nightly

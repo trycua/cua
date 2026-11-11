@@ -43,6 +43,12 @@ export interface Tile {
   progress?: number;
   progressLabel?: string;
   signedIn: boolean;
+  /** One of your other machines' desktops, not a Space it provides. */
+  desktop?: boolean;
+  /** Pinned to the notch. */
+  pinned?: boolean;
+  /** Why a pinned desktop cannot be opened now ("Offline", "Not shared"). */
+  note?: string;
 }
 
 export interface Activity {
@@ -251,9 +257,7 @@ function parseAction(m: Record<string, unknown>): HelperMessage | null {
     case "openPermissionSettings":
       return isStr(m.pane) ? { type: "action", action: "openPermissionSettings", pane: m.pane } : null;
     case "drop":
-      return isStr(m.spaceId) && Array.isArray(m.paths) && m.paths.every(isStr)
-        ? { type: "action", action: "drop", spaceId: m.spaceId, paths: m.paths }
-        : null;
+      return isStr(m.spaceId) && Array.isArray(m.paths) && m.paths.every(isStr) ? { type: "action", action: "drop", spaceId: m.spaceId, paths: m.paths } : null;
     default:
       return null;
   }

@@ -13,11 +13,6 @@ YELLOW = "\033[33m"
 RED = "\033[91m"
 GREY = "\033[90m"
 
-# Default configuration for image push
-DEFAULT_API_URL = "https://api.cua.ai"
-CONFIG_DIR = Path.home() / ".config" / "cua-bench"
-TOKEN_FILE = CONFIG_DIR / "token.json"
-
 
 def register_parser(subparsers):
     """Register the agent subcommand and its subcommands."""
@@ -76,30 +71,12 @@ def register_parser(subparsers):
         help="Image tag (default: agent directory name)",
     )
 
-    # cb agent push <image-name>
-    push_parser = agent_subparsers.add_parser(
-        "push",
-        help="Deprecated: agent images are no longer used",
-        description="Push a Docker image through the CUA API proxy with workspace namespacing.",
-        **examples(("Push an agent image (deprecated)", "cb agent push my-agent:dev")),
-    )
-    push_parser.add_argument(
-        "image_name",
-        nargs="?",
-        default="cua-bench:latest",
-        help="Docker image to push (default: cua-bench:latest)",
-    )
-    push_parser.add_argument(
-        "--registry",
-        help=f"Custom API proxy URL (default: {DEFAULT_API_URL})",
-    )
-
 
 def execute(args):
     """Execute agent subcommands."""
     if not hasattr(args, "agent_command") or args.agent_command is None:
         print("Usage: cb agent <command>")
-        print("Commands: init, build, push")
+        print("Commands: init, build")
         print("Run 'cb agent <command> --help' for more information.")
         return 1
 
@@ -107,8 +84,6 @@ def execute(args):
         return create_agent_scaffold(args.name, args.output_dir)
     elif args.agent_command == "build":
         return build_agent(args.path, getattr(args, "tag", None))
-    elif args.agent_command == "push":
-        return push_image(args.image_name, getattr(args, "registry", None))
 
     print(f"Unknown agent command: {args.agent_command}")
     return 1
@@ -121,16 +96,6 @@ def build_agent(agent_path: str, tag: str | None = None) -> int:
         f"this Python environment. Install the agent package (pip install -e {agent_path}) and "
         f"run it with --agent-import-path module:Class, or give it an import_path in "
         f".cua/agents.yaml.{RESET}"
-    )
-    return 0
-
-
-def push_image(image_name: str, registry_url: str | None = None) -> int:
-    """Deprecated: agent images for the retired api.cua.ai backend."""
-    print(
-        f"{YELLOW}cb agent push is deprecated and does nothing: agent images were for the "
-        f"retired api.cua.ai backend. cb run executes agents in-process "
-        f"(--agent-import-path module:Class).{RESET}"
     )
     return 0
 
@@ -227,8 +192,5 @@ def create_agent_scaffold(name: str, output_dir: str | None = None) -> int:
     print(f"{BOLD}Build and run locally:{RESET}")
     print(f"  {CYAN}cb agent build ./{name}{RESET}")
     print(f"  {CYAN}cb run <task> --agent-import-path ./{name}{RESET}")
-    print()
-    print(f"{BOLD}Push to CUA Cloud:{RESET}")
-    print(f"  {CYAN}cb agent push {name}:latest{RESET}")
 
     return 0

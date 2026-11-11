@@ -18,9 +18,7 @@ export function fallbackWords(platform: NodeJS.Platform, reason: string, why: st
   const prompt = PROMPT_NAME[platform] ?? "the system's prompt";
   return {
     message: "Approve this device?",
-    detail:
-      `Cua Spaces can't confirm it is you with ${prompt}: ${why}. ` +
-      `It is asking to ${reason}. Approve only a device you are setting up yourself.`,
+    detail: `Cua Spaces can't confirm it is you with ${prompt}: ${why}. ` + `It is asking to ${reason}. Approve only a device you are setting up yourself.`,
   };
 }
 

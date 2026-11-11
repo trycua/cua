@@ -1,0 +1,21 @@
+id = "ai-gateway"
+name = "Vercel AI Gateway"
+icon = "ai-gateway"
+tier = "more"
+rank = 210
+kind = "aggregator"
+aliases = ["vercel"]
+wire = "openai-chat"
+base_url = "https://ai-gateway.vercel.sh/v1"
+base_url_env = "AI_GATEWAY_BASE_URL"
+default_model = "anthropic/claude-sonnet-5"
+hermes_id = "ai-gateway"
+key_help = "Create a key in the Vercel dashboard under AI Gateway."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "AI_GATEWAY_API_KEY"
+
+[delivery]
+hermes = ["AI_GATEWAY_API_KEY"]

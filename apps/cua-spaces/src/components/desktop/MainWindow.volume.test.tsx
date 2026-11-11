@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeHostBridge } from "../../native/host";
 import { createFakeInstallerBridge } from "../../native/installer";
 import { createAgentsBridgeOver } from "../../native/persistent";
-import { fakeFleetBridge } from "../../test/fakeFleet";
+import { fakeSpacesBridge } from "../../test/fakeSpacesBridge";
 import { MainWindow } from "./MainWindow";
 
 /** The shell's events, as the main window listens to them. */
@@ -21,10 +21,10 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 function setup() {
-  const fleet = fakeFleetBridge({
+  const bridge = fakeSpacesBridge({
     isNative: true,
     listSpaces: async () => [],
-    status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
   });
   const host = createFakeHostBridge({ onboarding: { completed: true, mode: "client" } });
   const agents = createAgentsBridgeOver(async (tool) => {
@@ -35,7 +35,7 @@ function setup() {
   });
   render(
     <MainWindow
-      fleet={fleet}
+      bridge={bridge}
       host={host}
       installer={createFakeInstallerBridge({ plan: { installed: true, upToDate: true, onPath: true } })}
       agents={agents}
@@ -58,10 +58,10 @@ describe("MainWindow and the menu bar item", () => {
 
   it("opens the Volume page for Cua Volume's conflicts (main:volume)", async () => {
     window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ cuaVolume: true }));
-    const fleet = fakeFleetBridge({
+    const bridge = fakeSpacesBridge({
       isNative: true,
       listSpaces: async () => [],
-      status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+      status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     });
     const host = createFakeHostBridge({ onboarding: { completed: true, mode: "client" } });
     const agents = createAgentsBridgeOver(async (tool) => {
@@ -72,7 +72,7 @@ describe("MainWindow and the menu bar item", () => {
     });
     render(
       <MainWindow
-        fleet={fleet}
+        bridge={bridge}
         host={host}
         installer={createFakeInstallerBridge({ plan: { installed: true, upToDate: true, onPath: true } })}
         agents={agents}

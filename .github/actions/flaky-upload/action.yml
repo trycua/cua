@@ -1,0 +1,19 @@
+name: Upload flaky-test results
+description: "Uploads what .github/scripts/flaky/flaky.py found, for flaky-issues.yml (job summary, and the weekly \"Flaky tests this week\" issue). Run with if: always()."
+inputs:
+  suite:
+    description: "The suite name given to flaky.py run (unique per job, matrix legs included)."
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/upload-artifact@v4
+      with:
+        name: flaky-${{ inputs.suite }}
+        path: ${{ runner.temp }}/flaky-results/
+        if-no-files-found: ignore
+        retention-days: 10
+    # Per-file test times written by flaky.py run (timings.py), for the weekly CI speed report.
+    - uses: ./.github/actions/ci-timings-upload
+      with:
+        suite: ${{ inputs.suite }}

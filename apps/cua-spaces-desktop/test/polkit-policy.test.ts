@@ -59,7 +59,9 @@ describe("the polkit policy", () => {
     const actions = parsePolicy(readFileSync(policyFile, "utf8"));
     expect([...actions.keys()]).toEqual(["ai.cua.spaces.keyvault", "ai.cua.spaces.devices"]);
     for (const a of actions.values()) {
-      expect(a).toMatchObject({ allow_any: "no", allow_inactive: "no", allow_active: "auth_self" });
+      // A remote desktop (xrdp, VNC) is a session polkit files under "any":
+      // it asks there too, with the user's own password (CUA-1725).
+      expect(a).toMatchObject({ allow_any: "auth_self", allow_inactive: "no", allow_active: "auth_self" });
       // polkit fills placeholders only from details, which a non-root caller may not pass.
       expect(a.message).not.toMatch(/\$\(/);
       expect(a.message).not.toBe("");

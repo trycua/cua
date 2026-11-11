@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep a document's edited state in step with accessibility text writes.
 //!
 //! An `AXValue` write, or an `AXSelectedText` insert, changes an `NSTextView`'s
@@ -18,7 +21,8 @@
 use std::time::Duration;
 
 use crate::ax::bindings::{
-    copy_element_attr, copy_string_attr, AXUIElementRef, AXUIElementSetAttributeValue,
+    copy_element_attr, copy_string_attr, kAXValueCFRangeType, AXUIElementRef,
+    AXUIElementSetAttributeValue, AXValueCreate,
 };
 
 /// What the document's edited mark showed after an AX text write.
@@ -60,12 +64,6 @@ impl DocumentEdited {
     }
 }
 
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn AXValueCreate(the_type: u32, value_ptr: *const std::ffi::c_void) -> *const std::ffi::c_void;
-}
-const AX_VALUE_CF_RANGE: u32 = 4;
-
 #[repr(C)]
 struct CfRange {
     location: isize,
@@ -97,7 +95,7 @@ unsafe fn keys_reach_element_window(pid: i32, element: AXUIElementRef) -> bool {
     };
     let own = crate::ax::bindings::ax_get_window_id(window);
     core_foundation::base::CFRelease(window as _);
-    own.is_some() && crate::ax::bindings::focused_window_id_of_pid(pid) == own
+    own.is_some() && crate::ax::bindings::focused_window_id_of_pid(pid).map(|w| w.own) == own
 }
 
 /// After an AX text write on `element` (in `pid`) that changed its value, make
@@ -143,7 +141,7 @@ pub unsafe fn ensure_marked_after_ax_write(
         None => return DocumentEdited::NotMarked,
         Some(false) => {}
     }
-    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
+    let previous = crate::ax::bindings::focused_window_id_of_pid(pid).map(|w| w.own);
     if !crate::input::skylight::activate_without_raise_with(pid, own, false) {
         return DocumentEdited::NotMarked;
     }
@@ -221,7 +219,7 @@ unsafe fn caret_to_end_of(element: AXUIElementRef) {
         location: len as isize,
         length: 0,
     };
-    let value = AXValueCreate(AX_VALUE_CF_RANGE, &range as *const CfRange as *const _);
+    let value = AXValueCreate(kAXValueCFRangeType, &range as *const CfRange as *const _);
     if !value.is_null() {
         use core_foundation::{base::TCFType, string::CFString};
         let attr = CFString::new("AXSelectedTextRange");

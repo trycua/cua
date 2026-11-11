@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Enumerate top-level windows on Windows.
 //!
 //! Two enumeration sources, then union + dedupe by HWND:
@@ -398,178 +401,6 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
     }
 }
 
-#[cfg(test)]
-mod exact_window_tests {
-    use super::{
-        exact_window_from_probe, lookup_window_for_pid_with, owner_chain_reaches_target,
-        post_action_foreground_allowed, win32_first_with, PidWindowLookup,
-        PostActionForegroundRelation, WindowInfo,
-    };
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn window(pid: u32, hwnd: u64) -> WindowInfo {
-        WindowInfo {
-            hwnd,
-            pid,
-            title: "Exact target".into(),
-            x: 0,
-            y: 0,
-            width: 100,
-            height: 100,
-            is_on_screen: true,
-            minimized: false,
-        }
-    }
-
-    #[test]
-    fn pid_window_lookup_skips_full_enumeration_on_exact_hit() {
-        let found = lookup_window_for_pid_with(
-            42,
-            0x1234,
-            |pid, hwnd| Some(window(pid, hwnd)),
-            || panic!("exact hit must not enumerate the desktop"),
-        );
-        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234 && w.pid == 42));
-    }
-
-    #[test]
-    fn pid_window_lookup_falls_back_for_uia_only_window() {
-        let calls = AtomicUsize::new(0);
-        let found = lookup_window_for_pid_with(
-            42,
-            0x1234,
-            |_, _| None,
-            || {
-                calls.fetch_add(1, Ordering::SeqCst);
-                vec![window(7, 0x9999), window(42, 0x1234)]
-            },
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234));
-    }
-
-    #[test]
-    fn pid_window_lookup_reports_other_pid_and_missing() {
-        let other = lookup_window_for_pid_with(42, 0x1234, |_, _| None, || vec![window(7, 0x1234)]);
-        assert!(matches!(other, PidWindowLookup::OtherPid(7)));
-
-        let missing = lookup_window_for_pid_with(42, 0x1234, |_, _| None, Vec::new);
-        assert!(matches!(missing, PidWindowLookup::Missing));
-    }
-
-    #[test]
-    fn win32_first_listing_consults_uia_only_when_win32_is_empty() {
-        let listed = win32_first_with(
-            || vec![window(42, 0x1)],
-            || panic!("Win32 hit must not enumerate UIA"),
-        );
-        assert_eq!(listed.len(), 1);
-
-        let calls = AtomicUsize::new(0);
-        let listed = win32_first_with(Vec::new, || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            vec![window(42, 0x2)]
-        });
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(listed[0].hwnd, 0x2);
-    }
-
-    #[test]
-    fn exact_lookup_probes_only_the_requested_native_handle() {
-        let calls = AtomicUsize::new(0);
-        let found = exact_window_from_probe(42, 0x1234, |hwnd| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(hwnd, 0x1234);
-            Some(window(42, hwnd))
-        });
-
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(found.map(|window| window.hwnd), Some(0x1234));
-    }
-
-    #[test]
-    fn exact_lookup_rejects_wrong_pid_or_handle() {
-        assert!(exact_window_from_probe(42, 7, |_| Some(window(43, 7))).is_none());
-        assert!(exact_window_from_probe(42, 7, |_| Some(window(42, 8))).is_none());
-    }
-
-    fn relation(
-        exact_match: bool,
-        same_pid: bool,
-        ownership_reaches_target: bool,
-    ) -> PostActionForegroundRelation {
-        PostActionForegroundRelation {
-            exact_match,
-            target_identity_live: true,
-            target_gone: false,
-            actual_live: true,
-            actual_visible: true,
-            same_pid,
-            ownership_reaches_target,
-            actual_is_prior_owner: false,
-        }
-    }
-
-    #[test]
-    fn exact_or_owned_modal_foreground_is_allowed() {
-        assert!(post_action_foreground_allowed(relation(true, true, false)));
-        assert!(post_action_foreground_allowed(relation(false, true, true)));
-    }
-
-    #[test]
-    fn nested_owned_popup_chain_reaches_exact_target() {
-        let owners = [(30, 20), (20, 10)];
-        assert!(owner_chain_reaches_target(10, 30, |hwnd| {
-            owners
-                .iter()
-                .find_map(|(child, owner)| (*child == hwnd).then_some(*owner))
-        }));
-    }
-
-    #[test]
-    fn unrelated_same_pid_sibling_and_foreign_foreground_are_denied() {
-        assert!(!post_action_foreground_allowed(relation(
-            false, true, false
-        )));
-        assert!(!post_action_foreground_allowed(relation(
-            false, false, true
-        )));
-        assert!(!owner_chain_reaches_target(10, 30, |hwnd| {
-            (hwnd == 30).then_some(40)
-        }));
-    }
-
-    #[test]
-    fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
-        let mut dismissed = relation(false, true, false);
-        dismissed.target_identity_live = false;
-        dismissed.target_gone = true;
-        dismissed.actual_is_prior_owner = true;
-        assert!(post_action_foreground_allowed(dismissed));
-
-        dismissed.actual_is_prior_owner = false;
-        assert!(!post_action_foreground_allowed(dismissed));
-
-        dismissed.actual_is_prior_owner = true;
-        dismissed.same_pid = false;
-        assert!(!post_action_foreground_allowed(dismissed));
-    }
-
-    #[test]
-    fn stale_reused_invisible_or_cyclic_foreground_is_denied() {
-        let mut stale = relation(false, true, true);
-        stale.target_identity_live = false;
-        assert!(!post_action_foreground_allowed(stale));
-        stale.target_identity_live = true;
-        stale.actual_live = false;
-        assert!(!post_action_foreground_allowed(stale));
-        stale.actual_live = true;
-        stale.actual_visible = false;
-        assert!(!post_action_foreground_allowed(stale));
-        assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
-    }
-}
-
 fn window_class_name(hwnd: HWND) -> String {
     let mut buf = [0u16; 256];
     let n = unsafe { GetClassNameW(hwnd, &mut buf) };
@@ -772,4 +603,176 @@ pub fn resolve_uwp_app_pid(host_pid: u32, frame_hwnd: u64) -> Option<u32> {
         );
     }
     scan.app_pid
+}
+
+#[cfg(test)]
+mod exact_window_tests {
+    use super::{
+        exact_window_from_probe, lookup_window_for_pid_with, owner_chain_reaches_target,
+        post_action_foreground_allowed, win32_first_with, PidWindowLookup,
+        PostActionForegroundRelation, WindowInfo,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn window(pid: u32, hwnd: u64) -> WindowInfo {
+        WindowInfo {
+            hwnd,
+            pid,
+            title: "Exact target".into(),
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            is_on_screen: true,
+            minimized: false,
+        }
+    }
+
+    #[test]
+    fn pid_window_lookup_skips_full_enumeration_on_exact_hit() {
+        let found = lookup_window_for_pid_with(
+            42,
+            0x1234,
+            |pid, hwnd| Some(window(pid, hwnd)),
+            || panic!("exact hit must not enumerate the desktop"),
+        );
+        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234 && w.pid == 42));
+    }
+
+    #[test]
+    fn pid_window_lookup_falls_back_for_uia_only_window() {
+        let calls = AtomicUsize::new(0);
+        let found = lookup_window_for_pid_with(
+            42,
+            0x1234,
+            |_, _| None,
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                vec![window(7, 0x9999), window(42, 0x1234)]
+            },
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(found, PidWindowLookup::Found(w) if w.hwnd == 0x1234));
+    }
+
+    #[test]
+    fn pid_window_lookup_reports_other_pid_and_missing() {
+        let other = lookup_window_for_pid_with(42, 0x1234, |_, _| None, || vec![window(7, 0x1234)]);
+        assert!(matches!(other, PidWindowLookup::OtherPid(7)));
+
+        let missing = lookup_window_for_pid_with(42, 0x1234, |_, _| None, Vec::new);
+        assert!(matches!(missing, PidWindowLookup::Missing));
+    }
+
+    #[test]
+    fn win32_first_listing_consults_uia_only_when_win32_is_empty() {
+        let listed = win32_first_with(
+            || vec![window(42, 0x1)],
+            || panic!("Win32 hit must not enumerate UIA"),
+        );
+        assert_eq!(listed.len(), 1);
+
+        let calls = AtomicUsize::new(0);
+        let listed = win32_first_with(Vec::new, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            vec![window(42, 0x2)]
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(listed[0].hwnd, 0x2);
+    }
+
+    #[test]
+    fn exact_lookup_probes_only_the_requested_native_handle() {
+        let calls = AtomicUsize::new(0);
+        let found = exact_window_from_probe(42, 0x1234, |hwnd| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(hwnd, 0x1234);
+            Some(window(42, hwnd))
+        });
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(found.map(|window| window.hwnd), Some(0x1234));
+    }
+
+    #[test]
+    fn exact_lookup_rejects_wrong_pid_or_handle() {
+        assert!(exact_window_from_probe(42, 7, |_| Some(window(43, 7))).is_none());
+        assert!(exact_window_from_probe(42, 7, |_| Some(window(42, 8))).is_none());
+    }
+
+    fn relation(
+        exact_match: bool,
+        same_pid: bool,
+        ownership_reaches_target: bool,
+    ) -> PostActionForegroundRelation {
+        PostActionForegroundRelation {
+            exact_match,
+            target_identity_live: true,
+            target_gone: false,
+            actual_live: true,
+            actual_visible: true,
+            same_pid,
+            ownership_reaches_target,
+            actual_is_prior_owner: false,
+        }
+    }
+
+    #[test]
+    fn exact_or_owned_modal_foreground_is_allowed() {
+        assert!(post_action_foreground_allowed(relation(true, true, false)));
+        assert!(post_action_foreground_allowed(relation(false, true, true)));
+    }
+
+    #[test]
+    fn nested_owned_popup_chain_reaches_exact_target() {
+        let owners = [(30, 20), (20, 10)];
+        assert!(owner_chain_reaches_target(10, 30, |hwnd| {
+            owners
+                .iter()
+                .find_map(|(child, owner)| (*child == hwnd).then_some(*owner))
+        }));
+    }
+
+    #[test]
+    fn unrelated_same_pid_sibling_and_foreign_foreground_are_denied() {
+        assert!(!post_action_foreground_allowed(relation(
+            false, true, false
+        )));
+        assert!(!post_action_foreground_allowed(relation(
+            false, false, true
+        )));
+        assert!(!owner_chain_reaches_target(10, 30, |hwnd| {
+            (hwnd == 30).then_some(40)
+        }));
+    }
+
+    #[test]
+    fn dismissed_owned_modal_may_return_to_its_snapshotted_owner_only() {
+        let mut dismissed = relation(false, true, false);
+        dismissed.target_identity_live = false;
+        dismissed.target_gone = true;
+        dismissed.actual_is_prior_owner = true;
+        assert!(post_action_foreground_allowed(dismissed));
+
+        dismissed.actual_is_prior_owner = false;
+        assert!(!post_action_foreground_allowed(dismissed));
+
+        dismissed.actual_is_prior_owner = true;
+        dismissed.same_pid = false;
+        assert!(!post_action_foreground_allowed(dismissed));
+    }
+
+    #[test]
+    fn stale_reused_invisible_or_cyclic_foreground_is_denied() {
+        let mut stale = relation(false, true, true);
+        stale.target_identity_live = false;
+        assert!(!post_action_foreground_allowed(stale));
+        stale.target_identity_live = true;
+        stale.actual_live = false;
+        assert!(!post_action_foreground_allowed(stale));
+        stale.actual_live = true;
+        stale.actual_visible = false;
+        assert!(!post_action_foreground_allowed(stale));
+        assert!(!owner_chain_reaches_target(10, 30, |_| Some(30)));
+    }
 }

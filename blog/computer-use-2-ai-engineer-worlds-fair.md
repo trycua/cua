@@ -177,7 +177,7 @@ The same reservation works for longer jobs. A run can keep its sandbox for as lo
 
 _Cua Fleets spans Linux, Windows, and Android, with macOS in Labs preview on Cua's virtualization stack._
 
-Cua Cloud (Fleets) ended on 16 October 2026. For shared computers that teams and agents use together, see [Cua Spaces](https://cua.ai/spaces).
+Cua Cloud (Fleets) ended on 18 October 2026. For shared computers that teams and agents use together, see [Cua Spaces](https://cua.ai/spaces).
 
 The code and docs behind the talk are here:
 

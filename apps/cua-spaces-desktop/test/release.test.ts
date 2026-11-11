@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { absolutize } from "../scripts/feed-urls.mjs";
 
 vi.mock("electron", () => ({ app: { getVersion: () => "0.0.0", isPackaged: false }, BrowserWindow: { getAllWindows: () => [] } }));
-const { buildChannel, channelServed, feedChannel, STABLE_FEED } = await import("../src/updater");
+const { bakedFeedUrl, buildChannel, channelServed, feedChannel, feedUrlFor, STABLE_FEED } = await import("../src/updater");
 
 const require = createRequire(import.meta.url);
 const configPath = require.resolve("../electron-builder.config.cjs");
@@ -62,9 +62,7 @@ describe("release config", () => {
     const pkg = JSON.parse(readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"));
     expect(c.extraMetadata.version).toBe(pkg.version);
     expect(c.buildVersion).toBe(`${pkg.version}.0`);
-    expect(c.publish).toEqual([
-      { provider: "generic", url: "https://github.com/trycua/cua/releases/download/cua-spaces-latest", channel: "latest" },
-    ]);
+    expect(c.publish).toEqual([{ provider: "generic", url: "https://github.com/trycua/cua/releases/download/cua-spaces-latest", channel: "latest" }]);
   });
 
   it("prerelease: the tag's version on the beta channel, feed on the building repository", () => {
@@ -72,9 +70,7 @@ describe("release config", () => {
     expect(c.extraMetadata.version).toBe("0.8.0-beta.1");
     // The Swift app's CFBundleVersion scheme: X.Y.Z.<run number>.
     expect(c.buildVersion).toBe("0.8.0.412");
-    expect(c.publish).toEqual([
-      { provider: "generic", url: "https://github.com/example/cua-fork/releases/download/cua-spaces-latest", channel: "beta" },
-    ]);
+    expect(c.publish).toEqual([{ provider: "generic", url: "https://github.com/example/cua-fork/releases/download/cua-spaces-latest", channel: "beta" }]);
   });
 
   it("refuses a malformed version, build number or repository", () => {
@@ -85,17 +81,38 @@ describe("release config", () => {
 });
 
 describe("updater channels", () => {
-  it("a suffixed version is a beta", () => {
-    expect(buildChannel("0.8.0-beta.1")).toBe("beta");
-    expect(buildChannel("0.8.0-staging.3")).toBe("beta");
+  it("a suffixed version (a nightly, or a beta from before Nightly) is on Nightly", () => {
+    expect(buildChannel("0.21.0-nightly.20261105.42")).toBe("nightly");
+    expect(buildChannel("0.21.0-nightly.20261105")).toBe("nightly");
+    expect(buildChannel("0.8.0-beta.1")).toBe("nightly");
+    expect(buildChannel("0.8.0-staging.3")).toBe("nightly");
     expect(buildChannel("0.8.0")).toBe("stable");
-    expect(feedChannel("beta")).toBe("beta");
+    expect(feedChannel("nightly")).toBe("nightly");
     expect(feedChannel("stable")).toBe("latest");
   });
 
-  it("serves stable on Windows and Linux, and on macOS only after the cutover", () => {
+  it("reads each channel's feed from its own rolling release, whatever the build baked in", () => {
+    const latest = "https://github.com/trycua/cua/releases/download/cua-spaces-latest";
+    const nightly = "https://github.com/trycua/cua/releases/download/cua-spaces-nightly";
+    for (const baked of [latest, nightly, `${latest}/`]) {
+      expect(feedUrlFor("stable", baked)).toBe(latest);
+      expect(feedUrlFor("nightly", baked)).toBe(nightly);
+    }
+    // A fork's build follows the fork's releases.
+    expect(feedUrlFor("nightly", "https://github.com/example/cua-fork/releases/download/cua-spaces-latest")).toBe(
+      "https://github.com/example/cua-fork/releases/download/cua-spaces-nightly",
+    );
+    expect(bakedFeedUrl(`provider: generic\nurl: ${nightly}\nchannel: nightly\nupdaterCacheDirName: x\n`)).toBe(nightly);
+    expect(bakedFeedUrl(`url: '${latest}'\n`)).toBe(latest);
+    expect(bakedFeedUrl(null)).toBe(latest);
+    expect(bakedFeedUrl("url: http://insecure.example/x\n")).toBe(latest);
+  });
+
+  it("serves both channels on Windows and Linux; on macOS only Stable, after the cutover", () => {
     expect(STABLE_FEED).toBe(false);
-    for (const platform of ["darwin", "win32", "linux"] as const) expect(channelServed("beta", false, platform)).toBe(true);
+    for (const platform of ["win32", "linux"] as const) expect(channelServed("nightly", false, platform)).toBe(true);
+    expect(channelServed("nightly", false, "darwin")).toBe(false);
+    expect(channelServed("nightly", true, "darwin")).toBe(false);
     expect(channelServed("stable", false, "darwin")).toBe(false);
     expect(channelServed("stable", true, "darwin")).toBe(true);
     expect(channelServed("stable", false, "win32")).toBe(true);

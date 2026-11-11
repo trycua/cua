@@ -2,7 +2,7 @@
 
 ## Contributor authorship
 
-Follow [Preserve Contributor Authorship](CONTRIBUTING.md#preserve-contributor-authorship).
+Follow [Preserve Contributor Authorship](.github/CONTRIBUTING.md#preserve-contributor-authorship).
 
 - A `Salvaged from #<pr>` source pull request must differ from the landing pull request.
 - When adapting a contribution directly in its existing pull request, keep the
@@ -17,10 +17,10 @@ Do not reimplement submitted work solely to remove its authorship history.
 ## Issue and pull request workflow
 
 Follow the contribution and selection contract in
-[`CONTRIBUTING.md`](CONTRIBUTING.md#choose-where-work-starts),
-[`MAINTAINERS.md`](MAINTAINERS.md#select-and-start-work), the
-GitHub issue forms, [`rfcs/README.md`](rfcs/README.md), and
-[`SECURITY.md`](SECURITY.md). Keep those files canonical instead of duplicating
+[`CONTRIBUTING.md`](.github/CONTRIBUTING.md#choose-where-work-starts),
+[`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#select-and-start-work), the
+GitHub issue forms, [`rfcs/README.md`](docs/rfcs/README.md), and
+[`SECURITY.md`](.github/SECURITY.md). Keep those files canonical instead of duplicating
 their field lists, polling ladder, or RFC lifecycle here.
 
 Coding agents act as workers within that contract, not as a planning authority.
@@ -37,19 +37,19 @@ understand, reproduce, or continue the work.
 - avoid noisy periodic status comments; keep progress in the linked pull request
   description; and
 - route suspected vulnerabilities through the private process in
-  [`SECURITY.md`](SECURITY.md), never a public issue, RFC, pull request, log, or
+  [`SECURITY.md`](.github/SECURITY.md), never a public issue, RFC, pull request, log, or
   screenshot.
 
 ### Polling for work
 
 When asked what to work on, follow
-[`MAINTAINERS.md`](MAINTAINERS.md#pull-model) and the
+[`MAINTAINERS.md`](docs/contributing/MAINTAINERS.md#pull-model) and the
 [polling skill](.agents/skills/poll-github-work/SKILL.md).
 
 ## Repository layout
 
-[`Development.md`](Development.md) maps components to paths and toolchains;
-[`TESTING.md`](TESTING.md) maps them to test commands and CI workflows. Rules
+[`Development.md`](docs/contributing/Development.md) maps components to paths and toolchains;
+[`TESTING.md`](docs/contributing/TESTING.md) maps them to test commands and CI workflows. Rules
 that are easy to miss:
 
 - `libs/cua` (cua SDK, `cua` CLI, `cua daemon`) is the only client library.
@@ -62,9 +62,40 @@ that are easy to miss:
   additive and pass `buf breaking`.
 - Sandboxes are daemon-agnostic: lifecycle and readiness must not assume
   cua-spacesd or any other in-guest service.
-- `libs/fleet` is a read-only mirror. Never edit it.
-- Tests that start VMs, containers, Fleet claims, or host input are opt-in
+- Tests that start VMs, containers, or host input are opt-in
   (off by default) and clean up what they create.
+
+## Before you push: `bin/ci`
+
+Run `bin/ci` before every push, and `bin/ci --fix` when it reports a failure
+it can repair (formatting, lockfiles, generated bindings and reference docs).
+It runs the CI checks your diff against `origin/main` affects and prints the
+exact fix command for each failure. `bin/ci --install-hook` runs it for you
+before every `git push`.
+
+- **Quick stage.** CI starts with a `quick` job that runs `bin/ci --quick`
+  (formatting, lockfiles, headers, lint). The heavy jobs wait for it, so a
+  failure there stops the run in about a minute.
+- **Agent pull requests need a sign-off.** After a green `bin/ci` on a clean
+  tree, push and run `bin/ci --signoff`. That sets the `local-ci` status on the
+  head commit. `ci-gate` reports an agent PR without it (and blocks it once
+  `REQUIRE_LOCAL_CI` is on): "Run bin/ci and bin/ci --signoff on this head
+  commit." Sign off again after every new commit.
+
+Reviewers of an agent PR check, before approving, that the `local-ci` status is
+`success` on the current head commit (`gh api repos/trycua/cua/commits/<sha>/statuses`)
+and that the PR's `bin/ci` checklist item is ticked. No status, no approval.
+
+**Agents on shared hosts (the dev host that runs live VMs) use `bin/ci --quick`.**
+It runs only the cheap checks (formatting, lockfiles, headers, lint) and builds
+nothing. Heavy checks (cargo test, clippy, build, cross-target) go to CI or a
+VM. A full `bin/ci` is disk-guarded: it skips heavy steps below
+`CUA_CI_MIN_FREE_GB` (40) free, and stops cargo and exits 3 if the target dir
+passes `CUA_CI_MAX_TARGET_GB` (15) or free disk falls under 25 GB. The target
+dir is per run and deleted on exit unless you pass `--keep-target`.
+
+A green `bin/ci` does not replace CI: the end-to-end, image and native Windows
+lanes still run there. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
 
 ## Cross-platform Cua Driver behavior
 
@@ -130,8 +161,8 @@ These rules come from the #4094 test audit.
 
 ## Pull request titles and component releases
 
-Follow the [release-title rules](CONTRIBUTING.md#agent-assisted-contributions)
-and [Sandbox release rules](CONTRIBUTING.md#sandbox-releases).
+Follow the [release-title rules](.github/CONTRIBUTING.md#agent-assisted-contributions)
+and [Sandbox release rules](.github/CONTRIBUTING.md#sandbox-releases).
 Do not use `no-release` to hide a user-visible change.
 
 Before declaring a pull request ready or merging it, inspect its final changed
@@ -139,7 +170,24 @@ files and query its current GitHub title. Correct the title yourself when the
 scope or release impact changed during implementation, and wait for
 `CI: Release metadata` to pass. Do not leave title correction for a maintainer.
 
+When you add notes to a Release Please PR body, put them below its version
+heading (`## [x.y.z](...)`), never above it. Release Please reads the version
+from that heading; with text above it, it tags every component with the PR's
+version (#6350). `CI: Release metadata` and the release workflow both check this.
+
+## Cua Spaces: no betas
+
+Never tag a Cua Spaces beta (`cua-spaces-vX.Y.Z-beta.N`): the release workflow
+refuses it unless the repository variable `ALLOW_SPACES_BETA` is `true`. For
+pre-release testing, use the Nightly channel (Settings, Advanced, Nightly), or
+run the **Nightly: Cua Spaces** workflow (`nightly-cua-spaces.yml`) to build
+main now. Stable stays Release Please plus the canary gate. Details:
+[docs/contributing/releasing-cua-spaces.md](docs/contributing/releasing-cua-spaces.md).
+
 ## Monorepo component release resolution
+
+Follow [`docs/component-release-workflow.md`](docs/component-release-workflow.md)
+for the normal Release Please preparation, publication, and verification path.
 
 Cua is a monorepo with independent component release streams. Never use
 GitHub's repository-wide "Latest" release badge, the `/releases/latest`
@@ -152,6 +200,14 @@ release-managed baked version. Their API fallback selects the highest semantic
 version whose tag matches `cua-driver-rs-v*`. Both download assets from the
 exact component tag; neither depends on GitHub's repository-wide "Latest"
 release.
+
+Nothing may depend on "Latest" at all (decided 5 Nov 2026). Installers,
+update checks, the download page, docs and CI read an explicit per-product
+source: a release-managed baked version, a release list filtered by the
+product's tag prefix, or a fixed-tag rolling release that holds a feed or
+manifest (`cua-install-latest`, `cua-spaces-latest`). Which release GitHub
+marks Latest is cosmetic, for people browsing the repository.
+`.github/scripts/tests/test_no_latest_consumers.py` fails on any new lookup.
 
 Before making a release-status or installation-version claim:
 

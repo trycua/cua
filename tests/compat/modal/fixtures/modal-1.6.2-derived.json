@@ -1,0 +1,281 @@
+{
+ "cases": {
+  "cloud_bucket_mount_public_bucket": {
+   "derived_from": "cloud_bucket_mount.py: a bucket without a secret is mounted anonymously (public buckets)",
+   "expect": {
+    "listed": true
+   }
+  },
+  "dict_and_queue": {
+   "derived_from": "dict.py, queue.py",
+   "expect": {
+    "dict": [
+     1,
+     {
+      "x": [
+       1,
+       2
+      ]
+     },
+     2,
+     "none"
+    ],
+    "queue": [
+     1,
+     [
+      2,
+      3
+     ],
+     0
+    ]
+   }
+  },
+  "entrypoint_stdout_streams_in_order": {
+   "derived_from": "io_streams.py _StreamReaderThroughServer (V1) / router stdio (V2): output arrives while the process runs",
+   "expect": {
+    "lines": [
+     "1\n",
+     "2\n",
+     "3\n"
+    ],
+    "returncode": 0,
+    "streamed": true
+   }
+  },
+  "exec_after_terminate": {
+   "derived_from": "_common.py _result_returncode TERMINATED=137; exec on a finished task",
+   "expect": {
+    "exec": "NotFoundError",
+    "poll": 137
+   },
+   "note": "the error class for an exec on a terminated sandbox is a guess (differences-modal.md)"
+  },
+  "exec_default_user_cwd_env": {
+   "derived_from": "Modal containers run as root with HOME=/root and the image WORKDIR (Docker default /); MODAL_SANDBOX_ID/MODAL_TASK_ID are set in sandbox containers (docs: sandbox guide)",
+   "expect": {
+    "returncode": 0,
+    "stdout": "0\n/\n/root\nsb-\ntask\n"
+   }
+  },
+  "exec_streams_and_exit_code": {
+   "derived_from": "modal/container_process.py wait(): TaskExecWait exit_status.code; io_streams.py _TextStreamReaderThroughCommandRouter",
+   "expect": {
+    "returncode": 3,
+    "stderr": "err\n",
+    "stdout": "out\n"
+   }
+  },
+  "exec_timeout_kills_the_process": {
+   "derived_from": "container_process.py: ExecTimeoutError at the client deadline gives returncode -1; the worker enforces timeout_secs",
+   "expect": {
+    "process": "gone\n",
+    "returncode": -1,
+    "within_5s": true
+   }
+  },
+  "filesystem_large_file": {
+   "derived_from": "_filesystem.py write_bytes/read_bytes/copy_to_local",
+   "expect": {
+    "copy_to_local": true,
+    "roundtrip": true
+   }
+  },
+  "filesystem_stat_symlink_list": {
+   "derived_from": "modal/sandbox/_filesystem.py stat/list_files: FileInfo fields; stat does not follow symlinks (docstring)",
+   "expect": {
+    "dir": [
+     "directory",
+     "drwxr-xr-x"
+    ],
+    "file": [
+     "file",
+     3,
+     "-rw-r-----",
+     "root",
+     "root",
+     33184
+    ],
+    "link": [
+     "symlink",
+     "/tmp/fs/f"
+    ],
+    "list": [
+     "d",
+     "f",
+     "l"
+    ]
+   },
+   "note": "mode and permissions formats are a guess: the closed guest tool is not observable (differences-modal.md #8)"
+  },
+  "filesystem_watch": {
+   "derived_from": "_filesystem.py watch(): FileWatchEventType Create/Modify/Remove",
+   "expect": {
+    "kinds": [
+     "Create",
+     "Modify",
+     "Remove"
+    ]
+   }
+  },
+  "function_remote_and_map_in_a_space": {
+   "derived_from": "_functions.py remote/map/remote_gen, secrets, volumes: Functions run in containers of the Function's image",
+   "expect": {
+    "gen": [
+     0,
+     10,
+     20
+    ],
+    "map": [
+     1,
+     4,
+     9
+    ],
+    "remote": 49,
+    "secret": "hi",
+    "volume": "from-function"
+   }
+  },
+  "idle_timeout": {
+   "derived_from": "sandbox/_sandbox.py create idle_timeout: the Sandbox ends after that long without activity",
+   "expect": {
+    "poll_is_set": true
+   }
+  },
+  "image_run_function": {
+   "derived_from": "_image.py run_function: the function runs in a container of the image so far and what it writes is in the resulting image",
+   "expect": {
+    "content": "built!"
+   }
+  },
+  "images_python_and_pip": {
+   "derived_from": "_image.py debian_slim(python_version), pip_install, env, workdir",
+   "expect": {
+    "out": "1.16.0 (3, 11) set /work\n"
+   }
+  },
+  "invalid_utf8_in_text_mode": {
+   "derived_from": "io_streams.py: codecs incremental decoder errors='strict'",
+   "expect": {
+    "exception": "UnicodeDecodeError"
+   }
+  },
+  "killed_by_signal_is_128_plus": {
+   "derived_from": "container_process.py wait(): returncode = 128 + signal",
+   "expect": {
+    "returncode": 137
+   }
+  },
+  "memory_snapshot_keeps_processes": {
+   "derived_from": "sandbox/_sandbox.py _experimental_snapshot docstring: includes both the filesystem and memory state, so processes carry over",
+   "expect": {
+    "content": "mem\n",
+    "processes": "carried\n"
+   }
+  },
+  "parallel_execs": {
+   "derived_from": "independent exec ids (uuid4) in TaskExecStartRequest",
+   "expect": {
+    "distinct": true,
+    "parallel": true
+   }
+  },
+  "pty_exec": {
+   "derived_from": "_sandbox.py exec(pty=True): output multiplexed into stdout, stderr empty (docstring)",
+   "expect": {
+    "has_hi": true,
+    "has_pts": true,
+    "returncode": 0,
+    "stderr": ""
+   }
+  },
+  "readiness_probe_and_connect_token": {
+   "derived_from": "sandbox/_sandbox.py create_connect_token docstring (a token authorizes HTTP requests to a port) and Probe/wait_until_ready; the 401 for a request without the token is a derived guess",
+   "expect": {
+    "with_token": true,
+    "without_token": 401
+   }
+  },
+  "sandbox_env_secrets_and_exec_env": {
+   "derived_from": "modal/sandbox/_sandbox.py _create (env becomes a Secret) and _exec (secret_sources: secrets then env)",
+   "expect": {
+    "default": "1 2\n",
+    "override": "x 2 3\n"
+   }
+  },
+  "sandbox_timeout_is_124_and_space_ends": {
+   "derived_from": "_sandbox.py wait(): GENERIC_STATUS_TIMEOUT; _result_returncode",
+   "expect": {
+    "exception": "SandboxTimeoutError",
+    "returncode": 124
+   }
+  },
+  "snapshot_directory_and_mount_image": {
+   "derived_from": "sandbox/_sandbox.py snapshot_directory, mount_image, unmount_image docstrings: the directory's content is an Image mounted read-only at a path, and gone after unmount",
+   "expect": {
+    "after_unmount": "0",
+    "mounted": "snap\n"
+   }
+  },
+  "snapshot_filesystem_boots_fresh": {
+   "derived_from": "_sandbox.py snapshot_filesystem docstring: an Image with the same filesystem to spawn a new Sandbox; processes: Modal boots fresh, Cua carries the machine (differences-modal #5), so only the files are compared",
+   "expect": {
+    "content": "v1\n"
+   }
+  },
+  "stdin_binary_roundtrip": {
+   "derived_from": "io_streams.py _StreamWriterThroughCommandRouterSandboxExec: offsets, eof; text=False reader",
+   "expect": {
+    "returncode": 0,
+    "sha_matches": true
+   }
+  },
+  "stdout_binary_large": {
+   "derived_from": "io_streams.py _BytesStreamReaderThroughCommandRouter",
+   "expect": {
+    "length": 3000000,
+    "sha_matches": true
+   }
+  },
+  "tunnels_encrypted_and_raw": {
+   "derived_from": "_sandbox.py tunnels(), Tunnel.url / tcp_socket; Probe.with_tcp + wait_until_ready",
+   "expect": {
+    "raw": true,
+    "tls": true
+   }
+  },
+  "volume_mount_roundtrip": {
+   "derived_from": "volume.py batch_upload/listdir/read_file/remove_file; _sandbox.py volumes=",
+   "expect": {
+    "listdir": [
+     "up/out.txt",
+     "up/self.py"
+    ],
+    "mounted_listing": "self.py\n",
+    "read": "from-sandbox\n"
+   }
+  },
+  "volume_read_only_and_sub_path": {
+   "derived_from": "volume.py read_only(), with_mount_options(sub_path=): a read-only mount refuses writes; a sub_path mount shows that folder; v1 volumes commit a container's changes when it ends",
+   "expect": {
+    "committed_at_exit": "from-sandbox\n",
+    "read_only_write": true,
+    "sub": "self.py\n"
+   }
+  },
+  "workdir": {
+   "derived_from": "_sandbox.py: definition.workdir; TaskExecStartRequest.workdir",
+   "expect": {
+    "exec_workdir": "/etc\n",
+    "sandbox_workdir": "/tmp/wd\n"
+   }
+  }
+ },
+ "image_console_scripts_are_on_path": {
+  "derived_from": "_image.py debian_slim runs on python:<v>-slim, whose interpreter prefix is /usr/local: pip console scripts are on PATH",
+  "expect": {
+   "on_path": true
+  }
+ },
+ "label": "derived",
+ "modal": "1.6.2"
+}

@@ -62,7 +62,7 @@
 #               every logon (Windows-native equivalent of macOS LaunchAgent).
 #               The task runs with LogonType=Interactive so it lands in
 #               Session 1+ with an attached desktop — required for the
-#               GUI tools (click, type_text, screenshot, get_window_state)
+#               GUI tools (click, type_text, get_window_state, get_desktop_state)
 #               to function. Default off; the post-install message prints
 #               the registration command so you can opt in later. Safe to
 #               re-run: existing task is replaced.
@@ -79,6 +79,16 @@
 #               this when you manage PATH out-of-band (chezmoi, a dotfiles
 #               repo, group policy). Idempotent either way: if the dir is
 #               already on PATH, nothing changes.
+#   -NoConnect  do not connect Claude Code, Codex and Cursor to Cua Driver.
+#               Same as $env:CUA_DRIVER_NO_CONNECT=1 (use the env var with
+#               `irm | iex`, which cannot take switches).
+#   -NoTest     do not run `cua-driver test` at the end. Same as
+#               $env:CUA_DRIVER_NO_TEST=1.
+#
+# After installing, this script runs `cua-driver connect` and then
+# `cua-driver test`. Each is skipped when the installed binary does not have
+# it yet, and a failing step never fails the install. There is no permission
+# step on Windows.
 #
 # Windows installer for the cross-platform cua-driver Rust implementation.
 
@@ -100,8 +110,12 @@ param(
     [switch]$AutoStart = $true,
     [switch]$NoAutoStart,
     [switch]$NoPathUpdate,
-    [switch]$RequireSignature
+    [switch]$RequireSignature,
+    [switch]$NoConnect,
+    [switch]$NoTest
 )
+if ($env:CUA_DRIVER_NO_CONNECT -eq '1') { $NoConnect = $true }
+if ($env:CUA_DRIVER_NO_TEST -eq '1') { $NoTest = $true }
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
 if ($NoAutoStart) { $AutoStart = $false }
@@ -149,7 +163,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.36.0" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.47.7" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a release published without valid
@@ -327,8 +341,11 @@ function Get-AssetArchLabel($targetTriple) {
 #     create one as long as the source path is a real directory on a
 #     local NTFS volume.
 
+$script:JunctionTypeUnavailable = $false
+
 function Add-JunctionSupportType {
     if ("CuaDriverInstaller.Junction" -as [type]) { return }
+    if ($script:JunctionTypeUnavailable) { return }
 
     $source = @'
 using System;
@@ -536,7 +553,12 @@ namespace CuaDriverInstaller
 }
 '@
 
-    Add-Type -TypeDefinition $source -Language CSharp
+    try {
+        Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
+    } catch {
+        $script:JunctionTypeUnavailable = $true
+        Write-WarningStep "P/Invoke junction support unavailable; using mklink fallback (PowerShell 5.1 Add-Type can fail on non-ASCII code pages)."
+    }
 }
 
 function Test-IsJunction([string]$path) {
@@ -548,14 +570,99 @@ function Test-IsJunction([string]$path) {
     return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
 }
 
+function Invoke-MklinkJunction([string]$linkPath, [string]$targetPath) {
+    $cmd = "mklink /J `"$linkPath`" `"$targetPath`""
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $env:ComSpec /d /c $cmd 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    if ($exitCode -ne 0) {
+        throw "mklink /J failed for $linkPath -> $targetPath (exit $exitCode): $($output -join ' ')"
+    }
+}
+
 function Set-JunctionTarget([string]$linkPath, [string]$targetPath) {
     Add-JunctionSupportType
-    [CuaDriverInstaller.Junction]::SetTarget($linkPath, $targetPath)
+    if (-not $script:JunctionTypeUnavailable) {
+        [CuaDriverInstaller.Junction]::SetTarget($linkPath, $targetPath)
+        return
+    }
+
+    $parent = Split-Path -Parent $linkPath
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $linkPath)) {
+        Invoke-MklinkJunction $linkPath $targetPath
+        return
+    }
+    if (-not (Test-IsJunction $linkPath)) {
+        throw "found existing non-junction directory at $linkPath; refusing to replace"
+    }
+
+    $suffix = [guid]::NewGuid().ToString("N")
+    $stagePath = Join-Path $parent ".cua-junction-stage-$suffix"
+    $backupPath = Join-Path $parent ".cua-junction-backup-$suffix"
+    try {
+        Invoke-MklinkJunction $stagePath $targetPath
+        [System.IO.Directory]::Move($linkPath, $backupPath)
+        try {
+            [System.IO.Directory]::Move($stagePath, $linkPath)
+        } catch {
+            $replaceError = $_.Exception.Message
+            try {
+                [System.IO.Directory]::Move($backupPath, $linkPath)
+            } catch {
+                throw "junction swap failed: $replaceError; previous junction remains at '$backupPath' because restoring '$linkPath' also failed: $($_.Exception.Message)"
+            }
+            throw "junction swap failed: $replaceError; restored previous junction at '$linkPath'"
+        }
+        [System.IO.Directory]::Delete($backupPath, $false)
+    } finally {
+        if (Test-Path -LiteralPath $stagePath) {
+            [System.IO.Directory]::Delete($stagePath, $false)
+        }
+    }
 }
 
 function Get-JunctionTarget([string]$linkPath) {
     Add-JunctionSupportType
-    return [CuaDriverInstaller.Junction]::GetTarget($linkPath)
+    if (-not $script:JunctionTypeUnavailable) {
+        return [CuaDriverInstaller.Junction]::GetTarget($linkPath)
+    }
+
+    try {
+        $item = Get-Item -LiteralPath $linkPath -Force -ErrorAction Stop
+        $targetProperty = $item.PSObject.Properties["Target"]
+        if ($targetProperty) {
+            $targets = @(@($targetProperty.Value) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ($targets.Count -gt 0) { return [string]$targets[0] }
+        }
+
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & $env:ComSpec /d /c "fsutil reparsepoint query `"$linkPath`"" 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEAP
+        }
+        if ($exitCode -ne 0) { return $null }
+        foreach ($line in @($output)) {
+            $text = [string]$line
+            $driveSeparator = $text.IndexOf(':\', [System.StringComparison]::Ordinal)
+            if ($driveSeparator -gt 0 -and [char]::IsLetter($text[$driveSeparator - 1])) {
+                return $text.Substring($driveSeparator - 1).Trim()
+            }
+        }
+        return $null
+    } catch {
+        return $null
+    }
 }
 
 # Ensure a junction at $linkPath points at $targetPath. Refuses to clobber
@@ -1305,11 +1412,23 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
         $cosign = Get-Command cosign -ErrorAction SilentlyContinue
         if ($cosign) {
             $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
-            & $cosign verify-blob --bundle $bundlePath `
-                --certificate-identity $identity `
-                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
-            if ($LASTEXITCODE -ne 0) {
-                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $verified = $false
+            $why = ''
+            try {
+                & $cosign verify-blob --bundle $bundlePath `
+                    --certificate-identity $identity `
+                    --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
+                $verified = $LASTEXITCODE -eq 0
+            } catch {
+                # A cosign that cannot start throws instead of setting $LASTEXITCODE.
+                $why = ' (cosign could not start)'
+            } finally {
+                $ErrorActionPreference = $prevEAP
+            }
+            if (-not $verified) {
+                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag$why; refusing to install it."
                 exit 1
             }
             Write-Step "verified the Sigstore signature of $zipName"
@@ -1913,22 +2032,73 @@ elseif ($AutoStart) {
     }
 }
 
+# Connect the user's agents and run the self-test, so one paste leaves Cua
+# Driver ready to use. Calls use the absolute path (the visible bin dir may not
+# be on this session's PATH yet) and are guarded so an older binary without
+# `connect` / `test` falls back to the hints below. A failing step never fails
+# the install.
+function Test-CuaDriverCommand {
+    param([string]$Binary, [string]$Name)
+    try {
+        $helpText = (& $Binary --help 2>&1 | Out-String)
+    } catch { return $false }
+    return [bool]($helpText -match "(?m)^Subcommands:.*(: |, )$([regex]::Escape($Name))(,|\s*$)")
+}
+
+$ConnectedAgent = ''
+if (-not $NoConnect -and (Test-CuaDriverCommand $installedBinary 'connect')) {
+    $connectOut = @()
+    $connectRc = 1
+    try {
+        $connectOut = @(& $installedBinary connect 2>$null)
+        $connectRc = $LASTEXITCODE
+    } catch { }
+    $connectOut | ForEach-Object { Write-Host $_ }
+    if ($connectRc -eq 0) {
+        foreach ($agentName in @('Claude Code', 'Codex', 'Cursor')) {
+            if ($connectOut -match "^$([regex]::Escape($agentName)): (already )?connected$") {
+                $ConnectedAgent = $agentName
+                break
+            }
+        }
+    }
+}
+
+if (-not $NoTest -and (Test-CuaDriverCommand $installedBinary 'test')) {
+    Write-Host ""
+    $testRc = 1
+    try {
+        & $installedBinary test
+        $testRc = $LASTEXITCODE
+    } catch { }
+    if ($testRc -ne 0) {
+        Write-Host "The test did not pass. Run it again later: $installedBinary test" -ForegroundColor Yellow
+    }
+}
+
+$SkipHints = $false
+if ($ConnectedAgent) {
+    Write-Host ""
+    Write-Host "Done. Ask $ConnectedAgent (restart it first if it is open): `"Use Cua Driver to open Notepad and write a haiku.`""
+    $SkipHints = $true
+}
+
 # Unified post-install hints come from a single shared text file so the
 # 4 Rust installers (this script + _install-rust.sh + install-local.ps1 +
 # install-local.sh) never drift. The .txt holds the OS-agnostic bulk
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits (autostart) stay inline below.
 $HintsUrl = "https://cua.ai/driver/post-install-hints.txt"
-try {
+if (-not $SkipHints) { try {
     $hintsRaw = (Invoke-WebRequest -Uri $HintsUrl -UseBasicParsing -TimeoutSec 10).Content
     Write-Host ($hintsRaw -replace '\{\{BINARY\}\}', $installedBinary)
 }
 catch {
     # Network fetch failed — print one-line essentials so users always
     # get enough to recover.
-    Write-Host "Next steps: $installedBinary --version  |  $installedBinary mcp-config  |  $installedBinary skills install"
+    Write-Host "Next steps: $installedBinary --version  |  $installedBinary connect  |  $installedBinary skills install"
     Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
-}
+} }
 
 # Windows-specific autostart hint (kept inline; OS-natural location).
 Write-Host ""

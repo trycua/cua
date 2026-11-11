@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared delivery-mode logic for cua-driver Linux input tools.
 //!
 //! Mirrors macOS `tools::DeliveryMode` and Windows `input::delivery`: each
@@ -65,8 +68,8 @@ pub enum BackgroundUnavailable {
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
-    /// addressed to an occluded, unfocused renderer without briefly moving
-    /// focus, which background delivery forbids.
+    /// addressed to an unfocused window without briefly moving focus, which
+    /// background delivery forbids.
     ChromiumInput,
     /// The remaining backend can only inject into the globally focused widget.
     FocusedInputOnly,
@@ -92,9 +95,10 @@ impl BackgroundUnavailable {
                  unavailable/denied): synthetic input has no actuator"
             }
             Self::ChromiumInput => {
-                "Chromium/Electron does not accept pointer or keyboard input \
-                 addressed to an occluded, unfocused renderer through X11 \
-                 background injection"
+                "Chromium/Electron drops synthetic pointer and keyboard events sent to \
+                 a window that does not have the input focus. In the background only \
+                 accessibility actions reach it: a left click on a button, link or \
+                 other control, by element_token or at its pixel"
             }
             Self::FocusedInputOnly => {
                 "the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget"

@@ -3,7 +3,6 @@
   "pages": [
     "index",
     "cli",
-    "http-api",
-    "mcp-tools"
+    "http-api"
   ]
 }

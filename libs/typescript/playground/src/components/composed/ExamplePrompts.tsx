@@ -60,9 +60,9 @@ export const EXAMPLE_PROMPTS: ExamplePrompt[] = [
   {
     id: 'install-claude-code',
     title: 'Install Claude Code',
-    description: 'Set up Claude Code on this machine',
+    description: 'Set up Claude Code on this computer',
     icon: '/img/logos/claude-code.png',
-    prompt: `Help me install Claude Code on this machine. Here's what I need you to do:
+    prompt: `Help me install Claude Code on this computer. Here's what I need you to do:
 
 1. Take a screenshot and assess the current screen state - look at what's currently visible.
 2. Open Firefox and visit https://docs.anthropic.com/en/docs/claude-code/overview

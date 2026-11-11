@@ -1095,15 +1095,19 @@ class ComputerAgent:
             return self.agent_loop.get_capabilities()
         return ["step"]  # Default capability
 
-    def open(self, port: Optional[int] = None):
+    def open(self, port: Optional[int] = None, host: str = "127.0.0.1"):
         """
         Start the playground server and open it in the browser.
 
         This method starts a local HTTP server that exposes the /responses endpoint
         and automatically opens the Cua playground interface in the default browser.
+        The server has no authentication, so it only listens on this machine unless
+        you pass another ``host``.
 
         Args:
             port: Port to run the server on. If None, finds an available port automatically.
+            host: Interface to bind. Defaults to loopback; use "0.0.0.0" only on a
+                network you trust.
 
         Example:
             >>> agent = ComputerAgent(model="claude-sonnet-4")
@@ -1112,4 +1116,4 @@ class ComputerAgent:
         from .playground import PlaygroundServer
 
         server = PlaygroundServer(agent_instance=self)
-        server.start(port=port, open_browser=True)
+        server.start(port=port, open_browser=True, host=host)

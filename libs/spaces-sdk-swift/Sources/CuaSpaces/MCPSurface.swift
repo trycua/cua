@@ -481,3 +481,114 @@ public struct SiteLogin: Sendable, Equatable {
     public let targetID: String?
     public let tabID: String?
 }
+
+// MARK: - Keep running
+
+/// Commands the Space keeps running: restarted by their policy when they end
+/// or fail their health check, started when the Space boots, their output
+/// kept in a log file in the Space.
+public struct KeepRunning: Sendable {
+    let space: Space
+
+    /// Calls `space_service` with `action` and its arguments, and returns
+    /// the tool's JSON answer (`services`, a service, `logs` or `removed`).
+    @discardableResult
+    public func service(_ action: String, _ arguments: [String: JSONValue] = [:]) async throws -> JSONValue {
+        var args = arguments
+        args["space"] = .string(space.id.rawValue)
+        args["action"] = .string(action)
+        return try await space.connection.callTool("space_service", args)
+    }
+
+    /// Keeps `command` running as `name` (replacing a service of that name).
+    @discardableResult
+    public func add(_ name: String, command: String, restart: String = "always") async throws -> JSONValue {
+        try await service("add", ["name": .string(name), "command": .string(command),
+                                  "restart": .string(restart)])
+    }
+
+    /// The Space's services.
+    public func list() async throws -> JSONValue { try await service("list") }
+
+    /// Stops a service and forgets it.
+    public func remove(_ name: String) async throws {
+        _ = try await service("remove", ["name": .string(name)])
+    }
+}
+
+extension Space {
+    /// Commands this Space keeps running (`space_service`).
+    public var keepRunning: KeepRunning { KeepRunning(space: self) }
+}
+
+// MARK: - Background jobs
+
+/// Long commands the Space runs in the background: they keep running when
+/// the caller goes away, their output kept in a log in the Space.
+public struct SpaceJobs: Sendable {
+    let space: Space
+
+    /// Calls `space_job` with `action` and its arguments, and returns the
+    /// tool's JSON answer (a job's status, a log page, or `jobs`).
+    @discardableResult
+    public func job(_ action: String, _ arguments: [String: JSONValue] = [:]) async throws -> JSONValue {
+        var args = arguments
+        args["space"] = .string(space.id.rawValue)
+        args["action"] = .string(action)
+        return try await space.connection.callTool("space_job", args)
+    }
+
+    /// Starts `command` as a background job; `notify` wakes the caller when it ends.
+    @discardableResult
+    public func start(_ command: String, name: String? = nil, notify: Bool = false) async throws -> JSONValue {
+        var args: [String: JSONValue] = ["command": .string(command), "notify": .bool(notify)]
+        if let name { args["name"] = .string(name) }
+        return try await job("start", args)
+    }
+
+    /// A job's state and the end of its log.
+    public func status(_ id: String) async throws -> JSONValue {
+        try await job("status", ["job": .string(id)])
+    }
+
+    /// Stops a job and returns its final status.
+    @discardableResult
+    public func cancel(_ id: String) async throws -> JSONValue {
+        try await job("cancel", ["job": .string(id)])
+    }
+
+    /// This Space's jobs, newest first.
+    public func list() async throws -> JSONValue { try await job("list") }
+}
+
+extension Space {
+    /// Commands this Space runs as background jobs (`space_job`).
+    public var jobs: SpaceJobs { SpaceJobs(space: self) }
+
+    /// The Space's network: preset, what it opens, where it is enforced
+    /// (`network_show`).
+    public func network() async throws -> [String: JSONValue] {
+        try await connection.object("network_show", ["space": .string(id.rawValue)])
+    }
+
+    /// What the Space tried to reach and its network blocked, most recent
+    /// first (`network_log`). Each entry carries `reason`, `dst` and `count`,
+    /// and `proto` and `last_unix` when known.
+    public func networkLog() async throws -> [[String: JSONValue]] {
+        try await connection.array("network_log", ["space": .string(id.rawValue)])
+            .compactMap { $0.objectValue }
+    }
+
+    /// Tightens the Space's network to `internet`, `none` or `custom` with
+    /// `allow` / `deny` lists (`network_set`). Opening more is refused: the
+    /// user does that.
+    @discardableResult
+    public func setNetwork(_ preset: String, allow: [String]? = nil, deny: [String]? = nil,
+                           tree: Bool = false) async throws -> [String: JSONValue] {
+        var args: [String: JSONValue] = ["space": .string(id.rawValue),
+                                         "network": .string(preset), "tree": .bool(tree)]
+        if let allow { args["allow"] = .array(allow.map(JSONValue.string)) }
+        if let deny { args["deny"] = .array(deny.map(JSONValue.string)) }
+        return try await connection.object("network_set", args)
+    }
+}

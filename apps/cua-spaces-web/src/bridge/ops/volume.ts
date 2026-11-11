@@ -123,15 +123,15 @@ const list = <T>(v: unknown, key: string): T[] => {
   return Array.isArray(a) ? (a as T[]) : [];
 };
 
-/** Settings, Experiments as stored in the Tauri app's UI storage; missing keys read as off (sharing: as on). */
+/** Settings, Experiments as stored in the Tauri app's UI storage; a missing key reads as off; keys of Secure Spaces, Ask first, Child Spaces and Warm start, which are always on now (and of switches that are gone), are ignored. */
 export function readExperiments(raw: string | undefined): Experiments {
   try {
     const stored = raw ? (JSON.parse(raw) as Partial<Record<keyof Experiments, unknown>>) : {};
     return {
       cuaVolume: stored.cuaVolume === true,
-      yourCloud: stored.yourCloud === true,
-      sharing: stored.sharing !== false,
-      webUi: stored.webUi === true,
+      ciRunners: stored.ciRunners === true,
+      tcpShares: stored.tcpShares === true,
+      mobile: stored.mobile === true,
     };
   } catch {
     return NO_EXPERIMENTS;

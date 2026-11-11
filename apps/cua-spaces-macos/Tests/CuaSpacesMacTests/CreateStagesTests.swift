@@ -14,10 +14,10 @@ import Testing
 struct CreateStagesTests {
     @Test func aMacOSCreateOnAnotherMachineNamesEachStepWithItsDownload() throws {
         let gb: UInt64 = 1 << 30
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         creates = appCreatesReduce(state: creates, action: .start(
             id: "pending:mac", name: "", os: .macos, provider: .relay, now: 1_000, image: "macos",
-            kind: nil, hostArch: nil, gpu: false, host: "mac-mini", hostName: "Mac mini"))
+            kind: nil, hostArch: nil, gpu: false, host: "mac-mini", hostName: "Mac mini", parent: nil))
         func detail() throws -> AppSpaceDetail {
             let row = try #require(appCreatesCompose(spaces: [], state: creates).first { $0.id == "pending:mac" })
             return appSpaceDetail(space: row)

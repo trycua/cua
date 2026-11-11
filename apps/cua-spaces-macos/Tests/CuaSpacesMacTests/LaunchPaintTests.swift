@@ -41,7 +41,7 @@ import WebKit
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              host: PendingHost(gate: gate), account: PendingAccount(gate: gate),
                              telemetry: FixtureTelemetry(), agentSetup: PendingAgentSetup(gate: gate),
-                             billing: PendingBilling(gate: gate), devices: PendingDevices(gate: gate),
+                             devices: PendingDevices(gate: gate),
                              presence: FixturePresence(), loginItem: FixtureLoginItem(.enabled), startup: startup)
         return (model, gate)
     }

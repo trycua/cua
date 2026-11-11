@@ -1,5 +1,5 @@
 //! KubeVirt containerDisk images: `FROM scratch` + `/disk/disk.img` (qcow2,
-//! owned by uid/gid 107). This is the format Fleet boots, so the same ref
+//! owned by uid/gid 107). This is the KubeVirt format, so the same ref
 //! runs locally under QEMU.
 
 use std::io::{BufReader, Read, Write};

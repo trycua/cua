@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-window ↔ CDP-target correlation (pure, side-effect free).
 //!
 //! The native entrypoint is `pid + window_id`. CDP exposes page targets

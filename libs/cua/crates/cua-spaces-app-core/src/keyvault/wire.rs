@@ -123,6 +123,68 @@ pub struct KvInventory {
     pub notes: Vec<String>,
 }
 
+/// One thing a teleport needs from the OS, as the setup sheet shows it
+/// (`cua_keyvault::broker::ReadinessCheck`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvReadinessCheck {
+    /// `granted`, `denied` or `unknown` (only known by trying).
+    #[serde(default)]
+    pub state: String,
+    /// What it means and what to do, in plain words (empty when nothing).
+    #[serde(default)]
+    pub say: String,
+}
+
+/// A browser profile to choose from (`cua_keyvault::broker::BrowserProfile`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvBrowserProfile {
+    /// Directory name (`Default`, `Profile 1`).
+    pub dir: String,
+    /// The name the person gave it.
+    pub name: String,
+    /// The account signed in to it.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// The browser used it last.
+    #[serde(default)]
+    pub last_used: bool,
+}
+
+/// Whether a teleport of an app can work now: the Keyvault, what the OS
+/// allows and the profiles to choose from. Reads no value and asks for no
+/// presence (`cua_keyvault::broker::Readiness`, plus the Keyvault's state).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvReadiness {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// The Keyvault exists.
+    #[serde(default)]
+    pub keyvault_initialized: bool,
+    /// The Keyvault is unlocked.
+    #[serde(default)]
+    pub keyvault_unlocked: bool,
+    /// The profile checked: the one asked for, else the last used.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// The profile a teleport reads when none is named.
+    #[serde(default)]
+    pub default_profile: Option<String>,
+    /// Every profile.
+    #[serde(default)]
+    pub profiles: Vec<KvBrowserProfile>,
+    /// Reading the app's files (Full Disk Access).
+    #[serde(default)]
+    pub files: KvReadinessCheck,
+    /// Reading the app's open tabs (Automation).
+    #[serde(default)]
+    pub tabs: KvReadinessCheck,
+    /// The checked profile has no sign-in data.
+    #[serde(default)]
+    pub profile_empty: bool,
+}
+
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
 /// `kind`, snake_case).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

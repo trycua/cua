@@ -1,0 +1,50 @@
+[package]
+name = "cua-ci"
+description = "Cua CI: GitHub Actions jobs on Cua Spaces: a fresh Space per job registered with a just-in-time runner config, the pool reconciler, the GitHub App client, the runner tarball cache, events and status behind `cua ci`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# The in-memory Spaces, GitHub and tarball fakes (the reconciler's own
+# tests use them; other crates' tests can too).
+testing = []
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+cua-home.workspace = true
+hex.workspace = true
+# The macOS VMs Lume runs on this Mac (Spaces or not), for the two-VM budget.
+cua-vmm = { workspace = true, features = ["lume"] }
+humantime.workspace = true
+rand.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+# RS256 for the GitHub App JWT (already in the tree through rustls).
+ring = "0.17"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+toml = "0.9"
+tracing.workspace = true
+url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The GitHub App key in the login keychain (generic password).
+security-framework = { version = "3", features = ["OSX_10_15"] }
+
+[dev-dependencies]
+axum.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber.workspace = true

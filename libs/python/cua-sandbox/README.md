@@ -5,17 +5,14 @@ wrapper over the [cua SDK](../../cua/README.md) (`cua>=0.2.0`, Rust core), which
 handles local runtimes and the spacesd client.
 
 ```bash
-pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox
+pip install cua-sandbox
 # or: pip install "cua[sandbox]"  (then: from cua import Sandbox, Image)
 ```
 
-The Cua wheel index provides `cua-fleet`, the typed Fleet resource model
-(pool, template and claim builders) that `cua_sandbox` re-exports. The data
-plane (claims, spacesd, local runtimes) goes through the `cua` SDK.
+The data plane (spacesd and local runtimes) goes through the `cua` SDK.
 
 | Backend | Implementation |
 |---|---|
-| Cua Cloud (Fleet) | Ended: raises `CloudEnded` |
 | Local containers (Docker/Podman, gVisor when available), QEMU, Lume | `cua` SDK (cua-vmm), zero pre-setup |
 | Direct: any reachable cua-spacesd | `Sandbox.connect(url=..., token=...)` |
 | Tart, Hyper-V, Android emulator, OSWorld | Legacy Python adapters |
@@ -24,10 +21,10 @@ For typed desktop control through `sb.driver.connect()`, install the optional
 Driver SDK:
 
 ```bash
-pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
+pip install 'cua-sandbox[driver]'
 ```
 
-The `driver` extra pins `cua-driver==0.27.0`, which provides the typed-window API
+The `driver` extra pins `cua-driver==0.37.0`, which provides the typed-window API
 and the remote channel bridge. It requires that version to be published for your
 platform.
 
@@ -43,18 +40,14 @@ async def observe_guest(sb):
 
 ### Carriers
 
-`sb.driver.connect()` picks one carrier and never falls back to another:
+`sb.driver.connect()` rides **cua-spacesd**: the typed-envelope MCP extension
+on the spacesd's `/mcp`, sent through the cua SDK's env client with the
+sandbox's own endpoint and credentials. It works for direct
+(`Sandbox.connect(url=...)`) and local sandboxes. Explicit form:
+`connect(service="env", transport="mcp")`. Named Driver services were a Cua
+Cloud feature and are gone.
 
-- **cua-spacesd** (default): the typed-envelope MCP extension on the
-  spacesd's `/mcp`, sent through the cua SDK's env client with the sandbox's
-  own endpoint and credentials. Works for Fleet, direct (`Sandbox.connect(url=...)`)
-  and local sandboxes. Explicit form: `connect(service="env", transport="mcp")`.
-- **Fleet `driver` service**: images that publish their own private envelope
-  HTTP receiver. Used by default when the claim exposes a `driver` service;
-  explicit form: `connect(service="driver")`.
-- **Fleet named MCP service**: `connect(service="mcp", transport="mcp")`.
-
-MCP selection initializes the session and verifies
+The connection initializes the session and verifies
 `capabilities.experimental["ai.cua.driver.envelopes"].version == 1` before
 opening a receiver, so a tools-only endpoint fails before any desktop action.
 The connection keeps the receiver's generation, host-selected permissions and
@@ -66,7 +59,7 @@ See the [wire contract](../../cua-driver/docs/mcp-envelope-carrier.md) for limit
 
 ## Any image, locally
 
-Cua Cloud has ended; use a local sandbox or your own machine. Three separate
+Cua Cloud has ended; use a local sandbox or your own computer. Three separate
 choices, each optional:
 
 - `on`: `"local"` (`on="cloud"` and `local=False` raise: Cua Cloud has ended).
@@ -99,11 +92,11 @@ async with Sandbox.ephemeral(
     print(sb.id)            # what Sandbox.connect(id) and Sandbox.delete(id) take
 ```
 
-- `public_url` is a signed URL in the cloud and a loopback URL with its own
-  token locally, served by the cua daemon (started on demand; `CUA_BIN` names
-  the CLI). Revoke it with `await sb.revoke_public_url(share)`.
+- `public_url` is a loopback URL with its own token, served by the cua daemon
+  (started on demand; `CUA_BIN` names the CLI). Revoke it with
+  `await sb.revoke_public_url(share)`.
 - Status is `provisioning`, `starting`, `ready` or `stopped`. Provider internals
-  (the cloud pool and claim, the local backend) are in `info.provider_details`.
+  (such as the local backend) are in `info.provider_details`.
 
 Guides: [Sandboxes](https://cua.ai/docs/cua-sdk),
 [quickstart](https://cua.ai/docs/cua-sdk/quickstart),
@@ -118,11 +111,10 @@ Guides: [Sandboxes](https://cua.ai/docs/cua-sdk),
 variant each backend runs: the rootfs for containers, the `-disk`
 containerDisk for VMs (`kind="vm"`), Lume on a Mac. Override one with
 `CUA_IMAGE_LINUX`, `CUA_IMAGE_WINDOWS` or `CUA_IMAGE_MACOS`. The canonical
-images ship cua-spacesd, and the cloud keeps them warm by default.
+images ship cua-spacesd.
 
 Any registry image works: `Image.from_registry("python:3.12-slim")`. A private
-one takes credentials, used for the pull locally and as a registry pull secret
-in the cloud (never logged or saved in `~/.cua`):
+one takes credentials, used for the pull (never logged or saved in `~/.cua`):
 
 ```python
 from cua_sandbox import Image, RegistrySecret
@@ -132,18 +124,17 @@ img = Image.from_registry("ghcr.io/acme/app:1", secret=RegistrySecret.from_env()
 ```
 
 Layers (`apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`) apply
-at boot locally; with `local=False` they build remotely on the registry image as
-base, cached by content. See
+at boot, built on the registry image as base and cached by content. See
 [Build an image](https://cua.ai/docs/cua-sdk/guides/images) and
 [private registries](https://cua.ai/docs/cua-sdk/guides/private-registries).
 
 ## MCP servers
 
 `sb.mcp(service)` connects the official MCP Python SDK to an MCP server the
-sandbox serves, locally or in the cloud, with no cua-spacesd:
+sandbox serves, locally or in your own cloud, with no cua-spacesd:
 
 ```bash
-pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[mcp]'
+pip install 'cua-sandbox[mcp]'
 ```
 
 ```python
@@ -154,7 +145,7 @@ async with sb.mcp("mcp") as client:
 config = await sb.mcp_config("mcp")  # {"url": ..., "headers": {...}} for any MCP client
 ```
 
-Cloud headers carry a short-lived bearer: fetch a fresh config per connection.
+The headers can carry a short-lived bearer: fetch a fresh config per connection.
 See [MCP](https://cua.ai/docs/cua-sdk/guides/mcp).
 
 ## Sidecars
@@ -176,13 +167,11 @@ async with Sandbox.ephemeral(
     await sb.shell.run("python -c \"import socket; socket.create_connection(('db', 6379))\"")
 ```
 
-Sidecars are addressed by name everywhere: the sandbox reaches `db:6379` and a
+Sidecars are addressed by name: the sandbox reaches `db:6379` and a
 sidecar reaches the sandbox at `main`. With sidecars, the service names `main`,
-`sidecars` and `sc` are reserved. The cloud runs sidecars on gVisor (same pod)
-and on KubeVirt VMs (a companion pod); `runtime="runc"` is local only. Local VM
-sandboxes refuse sidecars. Cloud `env=` and registry secrets work on both
-runtimes; cloud image layers (a remote build) are not available yet. See
-[Sidecars](https://cua.ai/docs/cua-sdk/guides/sidecars).
+`sidecars` and `sc` are reserved. Local sidecars need `runtime="runc"`, and
+local VM sandboxes refuse sidecars. See
+[Sidecars](https://cua.ai/docs/cua-sdk/guides/services#sidecars).
 
 ## Ephemeral sandbox
 
@@ -259,6 +248,26 @@ unless you pass `local=False`. The `cua_sandbox.localhost` module, `Localhost`,
 and the `computer_server`, `http`, `local` and `websocket` transports are
 removed; control the local machine with cua-driver instead.
 
+## Pools: sandboxes kept ready on this machine
+
+A local create restores a snapshot when it can and boots otherwise; when creates
+of one shape repeat, `cua daemon` keeps a few ready on its own (`cua daemon
+status` says why). A pool asks for them explicitly: `min` ready at all times,
+up to `max` while creates come fast, none after `idle` without a create. A
+create from a pool takes one in about 0.1 s.
+
+```python
+from cua_sandbox import Image, Sandbox, create_pool, list_pools
+
+pool = await create_pool(Image.linux(), name="agents", min=2, max=8, idle=600)
+sb = await pool.create()                 # or Sandbox.create(pool="agents")
+print([p.name for p in await list_pools()])
+await pool.delete()                      # its ready sandboxes go; sb stays
+```
+
+Pools are kept by `cua daemon` (start it with `cua daemon start`) and survive
+its restarts; `cua sb pool create|ls|rm` is the CLI.
+
 ## Guest services and cua-spacesd
 
 Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your
@@ -267,4 +276,4 @@ Sandboxes are daemon-agnostic: readiness is the provider's "running" plus your
 the image has it and raise `SpacesdNotAvailable` otherwise. `await sb.spacesd()`
 returns the SDK's typed `SpacesdClient` and is optional.
 
-Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False`, `CloudOptions`, `Pool` and `cua_sandbox.pools` now raise that error.
+Cua Cloud has ended; see [Cua Cloud has ended](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended). `on="cloud"`, `local=False` and `pool=` raise that error.

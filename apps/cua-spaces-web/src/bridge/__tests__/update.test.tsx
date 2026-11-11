@@ -25,7 +25,12 @@ function mount(adapter: DataAdapter) {
   return hook;
 }
 
-const ready: Partial<UpdateState> = { status: "downloaded", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3" };
+const ready: Partial<UpdateState> = {
+  status: "downloaded",
+  version: "0.9.3",
+  percent: 100,
+  notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3",
+};
 
 describe("the update state (update.get, update.install, update.changed)", () => {
   it("reads where the host's updater is", async () => {
@@ -70,7 +75,10 @@ describe("the update state (update.get, update.install, update.changed)", () => 
 
   it("is unsupported on a host with no updater (Tauri)", async () => {
     const demo = createDemoAdapter({ latencyMs: 0 });
-    const adapter: DataAdapter = { ...demo, call: (op, args) => (op === "update.get" ? Promise.reject(new UnsupportedOperationError("tauri", "update.get")) : demo.call(op, args)) } as DataAdapter;
+    const adapter: DataAdapter = {
+      ...demo,
+      call: (op, args) => (op === "update.get" ? Promise.reject(new UnsupportedOperationError("tauri", "update.get")) : demo.call(op, args)),
+    } as DataAdapter;
     const hook = mount(adapter);
     await waitFor(() => expect(hook.current.unsupported).toBe(true));
     expect(hook.current.data).toBeUndefined();

@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -61,6 +61,116 @@ impl std::fmt::Display for Path {
             Path::Relay => f.write_str("relay"),
         }
     }
+}
+
+/// Which path traffic to a peer should take (`cua mesh status --prefer`,
+/// `CUA_MESH_PREFER`).
+///
+/// - `auto` (the default): the fastest answering direct path (the local
+///   network or across the internet), the relay while none answers;
+/// - `lan`: a path on the local network whenever one answers, even when a
+///   path across the internet is faster; otherwise as `auto`;
+/// - `direct`: as `auto` (direct first, the relay only while no direct path
+///   answers), named so a pin reads plainly;
+/// - `relay`: the relay always (end-to-end encrypted all the same).
+///
+/// Whatever the pin, traffic never stops: a pinned path that goes away
+/// falls back to the next one, and comes back when it answers again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Prefer {
+    /// Fastest first.
+    #[default]
+    Auto,
+    /// The local network first.
+    Lan,
+    /// Direct first.
+    Direct,
+    /// The relay only.
+    Relay,
+}
+
+impl Prefer {
+    /// The environment variable that sets the pin at start.
+    pub const ENV: &'static str = "CUA_MESH_PREFER";
+
+    /// Its word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Prefer::Auto => "auto",
+            Prefer::Lan => "lan",
+            Prefer::Direct => "direct",
+            Prefer::Relay => "relay",
+        }
+    }
+
+    /// Parses its word.
+    pub fn parse(word: &str) -> Option<Prefer> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Some(Prefer::Auto),
+            "lan" | "local" => Some(Prefer::Lan),
+            "direct" => Some(Prefer::Direct),
+            "relay" => Some(Prefer::Relay),
+            _ => None,
+        }
+    }
+
+    /// `CUA_MESH_PREFER`, else auto.
+    pub fn from_env() -> Prefer {
+        std::env::var(Self::ENV)
+            .ok()
+            .and_then(|v| Prefer::parse(&v))
+            .unwrap_or_default()
+    }
+
+    fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    fn from_u8(v: u8) -> Prefer {
+        match v {
+            1 => Prefer::Lan,
+            2 => Prefer::Direct,
+            3 => Prefer::Relay,
+            _ => Prefer::Auto,
+        }
+    }
+}
+
+/// An endpoint on the local network: a private, link-local or unique-local
+/// address (the two machines see each other without the internet).
+pub fn is_lan(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            let s = v6.segments()[0];
+            (s & 0xfe00) == 0xfc00 || (s & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// Whether a pong from `new` (round trip `rtt`) should replace the current
+/// best direct path `best` (round trip `brtt`), given the pin. `stale`: the
+/// current path missed its last round or a ping went unanswered.
+pub(crate) fn should_switch(
+    prefer: Prefer,
+    best: SocketAddr,
+    brtt: Duration,
+    new: SocketAddr,
+    rtt: Duration,
+    stale: bool,
+) -> bool {
+    if stale {
+        return true;
+    }
+    if prefer == Prefer::Lan {
+        match (is_lan(&best), is_lan(&new)) {
+            (false, true) => return true,
+            (true, false) => return false,
+            _ => {}
+        }
+    }
+    rtt.as_secs_f64() < brtt.as_secs_f64() * 0.8
 }
 
 #[derive(Debug, Default)]
@@ -180,6 +290,13 @@ pub(crate) struct Engine {
     disco_kick: Notify,
     /// Never use direct paths (tests and `CUA_MESH_RELAY_ONLY`).
     relay_only: AtomicBool,
+    /// [`Prefer`], as its `u8`.
+    prefer: AtomicU8,
+    /// Whether the local network may be used at all (default). Off for a node
+    /// whose network refuses it (a Space on the internet-only default): it
+    /// then never pings, answers on or advertises a local address, so the
+    /// refusing network sees nothing to refuse.
+    lan_allowed: AtomicBool,
     peers_changed: tokio::sync::watch::Sender<u64>,
 }
 
@@ -205,6 +322,8 @@ impl Engine {
             local_endpoints: RwLock::new(Vec::new()),
             disco_kick: Notify::new(),
             relay_only: AtomicBool::new(relay_only),
+            prefer: AtomicU8::new(Prefer::Auto.to_u8()),
+            lan_allowed: AtomicBool::new(true),
             peers_changed,
         });
         let out: Arc<dyn Outbound> = engine.clone();
@@ -221,12 +340,18 @@ impl Engine {
     /// (Re)binds the UDP sockets: `port` 0 picks a fresh one.
     pub(crate) async fn bind(self: &Arc<Self>, port: u16) -> io::Result<()> {
         let v4 = bind_udp(SocketAddr::from(([0, 0, 0, 0], port)))?;
-        let v6 = bind_udp(SocketAddr::from((
-            Ipv6Addr::UNSPECIFIED,
-            v4.local_addr()?.port(),
-        )))
-        .or_else(|_| bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))))
-        .ok();
+        // IPv6 asks for the same `port`, so an ephemeral request stays
+        // ephemeral: never the explicit port number IPv4 was given. Binding
+        // every address to an explicit UDP port is what makes Windows
+        // Firewall stop and ask the user to allow the app ("Do you want to
+        // allow public and private networks to access this app?"), which it
+        // did for `cua` and `cua-spacesd` (CUA-3515); an ephemeral bind never
+        // asks. Direct paths need no inbound rule: both peers send first, and
+        // the firewall lets each one's answers in. The two sockets need not
+        // share a port: each one's is advertised (`local_ports`, STUN).
+        let v6 = bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+            .or_else(|_| bind_udp(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))))
+            .ok();
         let mut tasks = Vec::new();
         for sock in std::iter::once(v4.clone()).chain(v6.clone()) {
             let weak = Arc::downgrade(self);
@@ -268,7 +393,10 @@ impl Engine {
 
     pub(crate) fn local_ports(&self) -> (u16, Option<u16>) {
         let s = self.sockets.read().expect("sockets");
-        let s = s.as_ref().expect("bound");
+        // Shut down (the discovery loop may run once more): no sockets.
+        let Some(s) = s.as_ref() else {
+            return (self.listen_port, None);
+        };
         (
             s.v4.local_addr()
                 .map(|a| a.port())
@@ -290,7 +418,63 @@ impl Engine {
         }
     }
 
-    pub(crate) fn set_local_endpoints(&self, endpoints: Vec<SocketAddr>) {
+    /// The path pin ([`Prefer`]).
+    pub(crate) fn prefer(&self) -> Prefer {
+        Prefer::from_u8(self.prefer.load(Ordering::Relaxed))
+    }
+
+    /// Pins the path: `relay` keeps traffic on the relay; leaving it lets
+    /// discovery find direct paths again; any change re-selects at once.
+    pub(crate) fn set_prefer(&self, prefer: Prefer) {
+        let was = self.prefer();
+        self.prefer.store(prefer.to_u8(), Ordering::SeqCst);
+        if prefer == Prefer::Relay {
+            self.set_relay_only(true);
+        } else if was == Prefer::Relay {
+            self.relay_only.store(false, Ordering::SeqCst);
+        }
+        self.forget_paths();
+    }
+
+    /// Allows or forbids paths on the local network. Forbidding drops what
+    /// was learned on it (a best path included) and stops advertising local
+    /// addresses; paths across the internet and the relay are untouched.
+    pub(crate) fn set_lan_allowed(&self, on: bool) {
+        self.lan_allowed.store(on, Ordering::SeqCst);
+        if !on {
+            for p in self.peers() {
+                let mut ps = p.path.lock().expect("path");
+                ps.candidates.retain(|a, _| !is_lan(a));
+                ps.pending.retain(|_, (a, _)| !is_lan(a));
+                if ps.best.is_some_and(|(a, _, _)| is_lan(&a)) {
+                    ps.best = None;
+                }
+            }
+            let kept: Vec<SocketAddr> = self
+                .local_endpoints
+                .read()
+                .expect("endpoints")
+                .iter()
+                .copied()
+                .filter(|a| !is_lan(a))
+                .collect();
+            self.set_local_endpoints(kept);
+        }
+    }
+
+    /// Whether `addr` may be sent to or pinged: not a local-network address
+    /// while the local network is forbidden ([`Self::set_lan_allowed`]).
+    fn may_use(&self, addr: &SocketAddr) -> bool {
+        self.lan_allowed.load(Ordering::Relaxed) || !is_lan(addr)
+    }
+
+    /// Whether relay-only is on (a pin or `CUA_MESH_RELAY_ONLY`).
+    pub(crate) fn relay_only(&self) -> bool {
+        self.relay_only.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_local_endpoints(&self, mut endpoints: Vec<SocketAddr>) {
+        endpoints.retain(|a| self.may_use(a));
         let changed = {
             let mut eps = self.local_endpoints.write().expect("endpoints");
             let changed = *eps != endpoints;
@@ -333,7 +517,7 @@ impl Engine {
                         // Keep learned candidates; refresh advertised ones.
                         path.candidates
                             .retain(|_, c| !c.advertised || c.last_pong.is_some());
-                        for e in &info.endpoints {
+                        for e in info.endpoints.iter().filter(|e| self.may_use(e)) {
                             path.candidates.entry(*e).or_default().advertised = true;
                         }
                     }
@@ -369,7 +553,7 @@ impl Engine {
         );
         let sealer = Sealer::new(&self.identity.disco, &info.disco_key);
         let mut path = PathState::default();
-        for e in &info.endpoints {
+        for e in info.endpoints.iter().filter(|e| self.may_use(e)) {
             path.candidates.entry(*e).or_default().advertised = true;
         }
         Peer {
@@ -425,6 +609,14 @@ impl Engine {
     // ---- sending ----
 
     fn send_udp(&self, dst: SocketAddr, data: &[u8]) -> io::Result<()> {
+        // The one place a datagram leaves: nothing goes to a local address
+        // while the network refuses them (not even a reply to a ping).
+        if !self.may_use(&dst) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the local network is off for this node",
+            ));
+        }
         let s = self.sockets.read().expect("sockets");
         let s = s
             .as_ref()
@@ -578,7 +770,7 @@ impl Engine {
         if let Path::Direct(addr) = path {
             // Authenticated traffic from an endpoint: worth probing.
             let mut ps = peer.path.lock().expect("path");
-            if ps.best.is_none() && !ps.candidates.contains_key(&addr) {
+            if ps.best.is_none() && !ps.candidates.contains_key(&addr) && self.may_use(&addr) {
                 ps.candidates.insert(addr, Candidate::default());
                 drop(ps);
                 self.disco_kick.notify_one();
@@ -625,6 +817,7 @@ impl Engine {
                 };
                 if let Path::Direct(a) = path
                     && !self.relay_only.load(Ordering::Relaxed)
+                    && self.may_use(&a)
                 {
                     let mut ps = peer.path.lock().expect("path");
                     let fresh = !ps.candidates.contains_key(&a);
@@ -670,14 +863,15 @@ impl Engine {
                         // The current path leaves a ping unanswered well past
                         // its round trip (the peer moved: a new NAT mapping
                         // or network), it missed its last ping round, or
-                        // this one is clearly faster.
+                        // this one is clearly faster (or on the local
+                        // network, when pinned to it).
                         let overdue = brtt * 2 + Duration::from_millis(100);
                         let best_silent = ps.pending.values().any(|(a, t)| {
                             *a == best && *t > at && now.duration_since(*t) > overdue
                         });
-                        best_silent
-                            || now.duration_since(at) > PING_INTERVAL + Duration::from_secs(1)
-                            || rtt.as_secs_f64() < brtt.as_secs_f64() * 0.8
+                        let stale = best_silent
+                            || now.duration_since(at) > PING_INTERVAL + Duration::from_secs(1);
+                        should_switch(self.prefer(), best, brtt, addr, rtt, stale)
                     }
                 };
                 if switch {
@@ -688,7 +882,7 @@ impl Engine {
                 drop(ps);
                 if !src.ip().is_unspecified() {
                     let mut eps = self.local_endpoints.write().expect("endpoints");
-                    if !eps.contains(&src) && eps.len() < 32 {
+                    if !eps.contains(&src) && eps.len() < 32 && self.may_use(&src) {
                         // Peer-reflexive: how the peer sees us.
                         eps.push(src);
                     }
@@ -702,7 +896,7 @@ impl Engine {
                 // peer is pinging us right now, so both NATs open.
                 let targets: Vec<SocketAddr> = {
                     let mut ps = peer.path.lock().expect("path");
-                    for e in &endpoints {
+                    for e in endpoints.iter().filter(|e| self.may_use(e)) {
                         ps.candidates.entry(*e).or_default();
                     }
                     ps.candidates.keys().copied().collect()
@@ -718,6 +912,9 @@ impl Engine {
     }
 
     fn ping(&self, peer: &Peer, addr: SocketAddr) {
+        if !self.may_use(&addr) {
+            return;
+        }
         let tx: disco::TxId = rand::random();
         {
             let mut ps = peer.path.lock().expect("path");
@@ -924,7 +1121,7 @@ fn bind_udp(addr: SocketAddr) -> io::Result<Arc<UdpSocket>> {
     };
     let s = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
     if addr.is_ipv6() {
-        // Native IPv6 only; IPv4 has its own socket on the same port.
+        // Native IPv6 only; IPv4 has its own socket.
         s.set_only_v6(true)?;
     }
     // Best effort: the kernel caps these (net.core.*mem_max on Linux).
@@ -981,5 +1178,172 @@ async fn maintenance(engine: std::sync::Weak<Engine>) {
         e.timers();
         e.reselect();
         e.discover();
+    }
+}
+
+#[cfg(test)]
+mod prefer_tests {
+    use super::*;
+
+    fn a(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn local_network_endpoints_are_lan() {
+        assert!(is_lan(&a("192.168.1.4:41641")));
+        assert!(is_lan(&a("10.0.0.2:1")));
+        assert!(is_lan(&a("169.254.3.3:1")));
+        assert!(is_lan(&a("[fd00::1]:1")));
+        assert!(is_lan(&a("[fe80::1]:1")));
+        assert!(!is_lan(&a("203.0.113.9:41641")));
+        assert!(!is_lan(&a("[2001:db8::1]:1")));
+    }
+
+    #[test]
+    fn auto_takes_the_clearly_faster_path() {
+        let ms = Duration::from_millis;
+        let lan = a("192.168.1.4:1");
+        let wan = a("203.0.113.9:1");
+        assert!(should_switch(Prefer::Auto, lan, ms(10), wan, ms(5), false));
+        assert!(!should_switch(Prefer::Auto, lan, ms(10), wan, ms(9), false));
+        assert!(
+            should_switch(Prefer::Auto, lan, ms(1), wan, ms(50), true),
+            "stale moves on"
+        );
+    }
+
+    #[test]
+    fn a_lan_pin_keeps_the_local_network_unless_it_goes_away() {
+        let ms = Duration::from_millis;
+        let lan = a("192.168.1.4:1");
+        let wan = a("203.0.113.9:1");
+        assert!(!should_switch(Prefer::Lan, lan, ms(10), wan, ms(1), false));
+        assert!(should_switch(Prefer::Lan, wan, ms(1), lan, ms(10), false));
+        assert!(
+            should_switch(Prefer::Lan, lan, ms(10), wan, ms(1), true),
+            "never stuck"
+        );
+    }
+
+    #[test]
+    fn prefer_words_round_trip() {
+        for p in [Prefer::Auto, Prefer::Lan, Prefer::Direct, Prefer::Relay] {
+            assert_eq!(Prefer::parse(p.as_str()), Some(p));
+            assert_eq!(Prefer::from_u8(p.to_u8()), p);
+        }
+        assert_eq!(Prefer::parse("nope"), None);
+    }
+}
+
+#[cfg(test)]
+mod lan_tests {
+    use super::*;
+    use crate::proto::NodeKind;
+
+    fn a(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    fn info(endpoints: Vec<SocketAddr>) -> PeerInfo {
+        let id = NodeIdentity::generate().unwrap();
+        PeerInfo {
+            node_key: id.public(),
+            disco_key: id.disco.public(),
+            quic_pin: id.cert_pin(),
+            kind: NodeKind::Machine,
+            machine_id: Some("m1".into()),
+            name: "m1".into(),
+            endpoints,
+            online: true,
+            version: crate::proto::VERSION,
+            grant: None,
+        }
+    }
+
+    fn candidates(e: &Engine) -> Vec<SocketAddr> {
+        let mut c: Vec<SocketAddr> = e
+            .peers()
+            .iter()
+            .flat_map(|p| {
+                p.path
+                    .lock()
+                    .unwrap()
+                    .candidates
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        c.sort();
+        c
+    }
+
+    /// A Space whose network refuses the local network (the internet-only default):
+    /// its node never learns, pings, answers on or advertises a local address, so
+    /// there is no packet for that network to refuse and count.
+    #[tokio::test]
+    async fn a_node_that_may_not_use_the_local_network_never_touches_it() {
+        let e = Engine::new(NodeIdentity::generate().unwrap(), 0, false)
+            .await
+            .unwrap();
+        e.set_lan_allowed(false);
+        e.set_peers(vec![info(vec![
+            a("192.168.0.20:41641"),
+            a("10.1.2.3:1"),
+            a("203.0.113.9:41641"),
+        ])]);
+        // Only the internet endpoint is a candidate.
+        assert_eq!(candidates(&e), vec![a("203.0.113.9:41641")]);
+        // Nothing leaves for a local address, whoever asks (a ping, a reply, the tunnel).
+        for lan in [
+            "192.168.0.20:41641",
+            "10.1.2.3:1",
+            "169.254.1.1:5",
+            "[fd00::1]:9",
+        ] {
+            let err = e.send_udp(a(lan), b"x").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{lan}");
+        }
+        let peer = e.peers().remove(0);
+        e.ping(&peer, a("192.168.0.20:41641"));
+        assert!(peer.path.lock().unwrap().pending.is_empty());
+        // Our own local addresses are not advertised either.
+        e.set_local_endpoints(vec![a("192.168.64.2:4000"), a("198.51.100.4:4000")]);
+        assert_eq!(
+            *e.local_endpoints.read().unwrap(),
+            vec![a("198.51.100.4:4000")]
+        );
+    }
+
+    /// Turning it off later forgets what was learned on the local network.
+    #[tokio::test]
+    async fn forbidding_the_local_network_later_drops_what_it_learned() {
+        let e = Engine::new(NodeIdentity::generate().unwrap(), 0, false)
+            .await
+            .unwrap();
+        e.set_peers(vec![info(vec![
+            a("192.168.0.20:41641"),
+            a("203.0.113.9:41641"),
+        ])]);
+        assert_eq!(candidates(&e).len(), 2);
+        {
+            let peer = e.peers().remove(0);
+            peer.path.lock().unwrap().best = Some((
+                a("192.168.0.20:41641"),
+                Duration::from_millis(1),
+                Instant::now(),
+            ));
+        }
+        e.set_lan_allowed(false);
+        assert_eq!(candidates(&e), vec![a("203.0.113.9:41641")]);
+        assert!(e.peers()[0].path.lock().unwrap().best.is_none());
+        // And allowed (the default) it is back to what it was.
+        e.set_lan_allowed(true);
+        assert_ne!(
+            e.send_udp(a("192.168.0.20:41641"), b"x")
+                .map_err(|e| e.kind()),
+            Err(io::ErrorKind::PermissionDenied)
+        );
     }
 }

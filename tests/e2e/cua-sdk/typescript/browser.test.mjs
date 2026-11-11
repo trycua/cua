@@ -1,8 +1,5 @@
-// create-pool-browser: the Browser tab of create-pool-with-typescript, on
-// @trycua/cua/browser (the wasm32 build). Cua Cloud has ended (CUA-1854), so
-// the browser build's Fleet client fails with the one "Cua Cloud has ended"
-// error instead of claiming from a pool; the rest of the flow, a gRPC-Web
-// session to a spacesd, is unchanged.
+// browser-sdk: @trycua/cua/browser (the wasm32 build) opens a gRPC-Web
+// session to a spacesd.
 //
 // * wasm in Node: the browser module imported directly (fetch transport).
 // * Chromium (Playwright): the same flow in a real page, served with a
@@ -30,37 +27,32 @@ after(async () => fx?.stop())
 // The flow both hosts run (kept as a string so the page runs the same code).
 // The wasm transport uses globalThis.fetch, so Node runs it too.
 const FLOW = `async (sdk, cfg) => {
-  const c = sdk.Cua.embedded(sdk.CuaConfig.create({ fleet: sdk.FleetSettings.create({ baseUrl: cfg.fleet, token: cfg.fleetToken }) }))
-  // Cua Cloud has ended: the Fleet client fails even with credentials.
-  let cloudEnded = false
-  try { c.fleet() } catch (err) { cloudEnded = sdk.CuaError.Unsupported.instanceOf(err) && /Cua Cloud has ended/.test(err.message) }
+  const c = sdk.Cua.embedded()
   const env = await c.spacesd(cfg.env, cfg.envToken)
   const out = await env.sh("echo from-browser", undefined)
   let unauth = false
   try { await c.spacesd(cfg.env, "wrong") } catch (err) { unauth = sdk.CuaError.Unauthenticated.instanceOf(err) }
-  return { cloudEnded, stdout: new TextDecoder().decode(out.stdout), unauth }
+  return { stdout: new TextDecoder().decode(out.stdout), unauth }
 }`
 
 function check(r) {
-  assert.equal(r.cloudEnded, true, "the browser Fleet client fails: Cua Cloud has ended")
   assert.equal(r.stdout, "from-browser\n")
   assert.equal(r.unauth, true)
 }
 
-e.e2eTest("create-pool-browser", "hermetic", "wasm build in Node: Fleet client fails (Cua Cloud has ended), env over gRPC-Web", async () => {
+e.e2eTest("browser-sdk", "hermetic", "wasm build in Node: env over gRPC-Web", async () => {
   needBuild()
   const sdk = await import(join(BROWSER, "index.js"))
   await sdk.initialize(readFileSync(join(BROWSER, "wasm-bindgen", "index_bg.wasm")))
   assert.equal(typeof globalThis.window, "undefined", "Node has no window")
   const flow = eval(FLOW)
-  const r = await flow(sdk, { fleet: fx.fleet_base_url, fleetToken: fx.fleet_token,
-    env: fx.env_url, envToken: fx.env_token })
+  const r = await flow(sdk, { env: fx.env_url, envToken: fx.env_token })
   check(r)
 })
 
 const MIME = { ".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "application/wasm", ".html": "text/html" }
 
-/** Static files + same-origin proxies: /env/* -> env fixture, /fleet/* -> fake Fleet. */
+/** Static files + a same-origin proxy: /env/* -> env fixture. */
 function serve() {
   const ubjs = join(e.CUA_ROOT, "typescript", "node_modules", "@ubjs", "core", "dist", "esm")
   const page = `<!doctype html><script type="importmap">{"imports":{"@ubjs/core":"/ubjs/index.js"}}</script>`
@@ -73,7 +65,6 @@ function serve() {
   }
   const server = createServer((req, res) => {
     if (req.url.startsWith("/env/")) return proxy(fx.env_url, req, res, "/env")
-    if (req.url.startsWith("/fleet/")) return proxy(fx.fleet_base_url, req, res, "/fleet")
     let file
     if (req.url === "/") { res.writeHead(200, { "content-type": "text/html" }); return res.end(page) }
     if (req.url.startsWith("/ubjs/")) file = join(ubjs, req.url.slice(6))
@@ -85,7 +76,7 @@ function serve() {
   return new Promise((r) => server.listen(0, "127.0.0.1", () => r(server)))
 }
 
-e.e2eTest("create-pool-browser", "hermetic", "Chromium (Playwright): Fleet client fails (Cua Cloud has ended), env over gRPC-Web", async () => {
+e.e2eTest("browser-sdk", "hermetic", "Chromium (Playwright): env over gRPC-Web", async () => {
   needBuild()
   let chromium
   try {
@@ -110,8 +101,7 @@ e.e2eTest("create-pool-browser", "hermetic", "Chromium (Playwright): Fleet clien
       const sdk = await import("/browser/index.js")
       await sdk.initialize("/browser/wasm-bindgen/index_bg.wasm")
       return await (0, eval)(flowSrc)(sdk, cfg)
-    }, [FLOW, { fleet: `${origin}/fleet`, fleetToken: fx.fleet_token,
-      env: `${origin}/env`, envToken: fx.env_token }])
+    }, [FLOW, { env: `${origin}/env`, envToken: fx.env_token }])
     check(r)
   } finally {
     await browser.close()

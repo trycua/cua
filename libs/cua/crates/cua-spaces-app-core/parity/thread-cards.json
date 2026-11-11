@@ -1,0 +1,386 @@
+{
+  "name": "thread-cards",
+  "about": "The cards in a Space's thread: the compact push card (the headline, `branch into base`, one diff line with +N and -N and the file count, the account, and the buttons; the first three files with a five-square bar each, the first three commits and a pull request preview behind Show changes), the button words for a push with and without a pull request, a draft, a pull request with no title, a binary file, a rename, a very large diff and an empty one, and how Cua's own entries show (the name Cua, the APP tag, the app icon) next to agents and people. All data here is made up.",
+  "steps": [
+    {
+      "step": "a push that opens a pull request",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [
+            {
+              "path": "src/net/retry.py",
+              "status": "modified",
+              "additions": 9,
+              "deletions": 3,
+              "binary": false
+            },
+            {
+              "path": "tests/test_retry.py",
+              "status": "added",
+              "additions": 21,
+              "deletions": 0,
+              "binary": false
+            },
+            {
+              "path": "docs/old-notes.md",
+              "status": "deleted",
+              "additions": 0,
+              "deletions": 14,
+              "binary": false
+            }
+          ],
+          "filesTotal": 3,
+          "additionsTotal": 30,
+          "deletionsTotal": 17,
+          "commits": [
+            {
+              "sha": "0a1b2c3d4e5f60718293",
+              "author": "Hermes",
+              "subject": "Back off between retries"
+            },
+            {
+              "sha": "9f8e7d6c5b4a39281706",
+              "author": "Hermes",
+              "subject": "Test the retry delays"
+            }
+          ],
+          "commitsTotal": 2,
+          "pr": {
+            "title": "Back off between retries",
+            "body": "Retries now wait 1s, 2s, 4s.\n\nFixes the flaky sync test.\nAdds tests/test_retry.py."
+          },
+          "account": "ada, signed in with gh",
+          "from": "release-checks"
+        }
+      }
+    },
+    {
+      "step": "a pull request opened as a draft",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [
+            {
+              "path": "src/net/retry.py",
+              "status": "modified",
+              "additions": 9,
+              "deletions": 3,
+              "binary": false
+            }
+          ],
+          "filesTotal": 1,
+          "additionsTotal": 30,
+          "deletionsTotal": 17,
+          "commits": [
+            {
+              "sha": "0a1b2c3d4e5f60718293",
+              "author": "Hermes",
+              "subject": "Back off between retries"
+            }
+          ],
+          "commitsTotal": 1,
+          "pr": {
+            "title": "Back off between retries",
+            "body": "Retries now wait 1s, 2s, 4s.\n\nFixes the flaky sync test.\nAdds tests/test_retry.py.",
+            "draft": true
+          },
+          "account": "ada, signed in with gh",
+          "from": "release-checks"
+        }
+      }
+    },
+    {
+      "step": "a pull request with no title shows no preview",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [
+            {
+              "path": "src/net/retry.py",
+              "status": "modified",
+              "additions": 9,
+              "deletions": 3,
+              "binary": false
+            },
+            {
+              "path": "tests/test_retry.py",
+              "status": "added",
+              "additions": 21,
+              "deletions": 0,
+              "binary": false
+            },
+            {
+              "path": "docs/old-notes.md",
+              "status": "deleted",
+              "additions": 0,
+              "deletions": 14,
+              "binary": false
+            }
+          ],
+          "filesTotal": 3,
+          "additionsTotal": 30,
+          "deletionsTotal": 17,
+          "commits": [
+            {
+              "sha": "0a1b2c3d4e5f60718293",
+              "author": "Hermes",
+              "subject": "Back off between retries"
+            },
+            {
+              "sha": "9f8e7d6c5b4a39281706",
+              "author": "Hermes",
+              "subject": "Test the retry delays"
+            }
+          ],
+          "commitsTotal": 2,
+          "pr": {
+            "title": "",
+            "body": "Retries now wait 1s, 2s, 4s.\n\nFixes the flaky sync test.\nAdds tests/test_retry.py."
+          },
+          "account": "ada, signed in with gh",
+          "from": "release-checks"
+        }
+      }
+    },
+    {
+      "step": "a push the connection cannot open a pull request for",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [
+            {
+              "path": "src/net/retry.py",
+              "status": "modified",
+              "additions": 9,
+              "deletions": 3,
+              "binary": false
+            },
+            {
+              "path": "tests/test_retry.py",
+              "status": "added",
+              "additions": 21,
+              "deletions": 0,
+              "binary": false
+            },
+            {
+              "path": "docs/old-notes.md",
+              "status": "deleted",
+              "additions": 0,
+              "deletions": 14,
+              "binary": false
+            }
+          ],
+          "filesTotal": 3,
+          "additionsTotal": 30,
+          "deletionsTotal": 17,
+          "commits": [
+            {
+              "sha": "0a1b2c3d4e5f60718293",
+              "author": "Hermes",
+              "subject": "Back off between retries"
+            },
+            {
+              "sha": "9f8e7d6c5b4a39281706",
+              "author": "Hermes",
+              "subject": "Test the retry delays"
+            }
+          ],
+          "commitsTotal": 2,
+          "account": "ada, signed in with gh",
+          "from": "release-checks",
+          "linkOnly": true
+        }
+      }
+    },
+    {
+      "step": "a binary file, a rename and a deep path",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [
+            {
+              "path": "img/logo.png",
+              "status": "modified",
+              "additions": null,
+              "deletions": null,
+              "binary": true
+            },
+            {
+              "path": "src/net/transport.py",
+              "status": "renamed",
+              "additions": 0,
+              "deletions": 0,
+              "binary": false,
+              "oldPath": "src/net/http.py"
+            },
+            {
+              "path": "a/b/c/d/deep.py",
+              "status": "modified",
+              "additions": 1200,
+              "deletions": 3,
+              "binary": false
+            }
+          ],
+          "filesTotal": 3,
+          "additionsTotal": 1200,
+          "deletionsTotal": 3,
+          "commits": [
+            {
+              "sha": "0a1b2c3d4e5f60718293",
+              "author": "Hermes",
+              "subject": "Back off between retries"
+            },
+            {
+              "sha": "9f8e7d6c5b4a39281706",
+              "author": "Hermes",
+              "subject": "Test the retry delays"
+            }
+          ],
+          "commitsTotal": 2,
+          "pr": {
+            "title": "Back off between retries",
+            "body": "Retries now wait 1s, 2s, 4s.\n\nFixes the flaky sync test.\nAdds tests/test_retry.py."
+          },
+          "account": "ada, signed in with gh",
+          "from": "release-checks"
+        }
+      }
+    },
+    {
+      "step": "a very large diff is cut and still counted",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [
+            {
+              "path": "pkg/mod0.rs",
+              "status": "modified",
+              "additions": 1000,
+              "deletions": 20,
+              "binary": false
+            },
+            {
+              "path": "pkg/mod1.rs",
+              "status": "modified",
+              "additions": 1000,
+              "deletions": 20,
+              "binary": false
+            },
+            {
+              "path": "pkg/mod2.rs",
+              "status": "modified",
+              "additions": 1000,
+              "deletions": 20,
+              "binary": false
+            }
+          ],
+          "filesTotal": 12345,
+          "additionsTotal": 4000000,
+          "deletionsTotal": 99000,
+          "commits": [
+            {
+              "sha": "0a1b2c3d4e5f60718293",
+              "author": "Hermes",
+              "subject": "Back off between retries"
+            },
+            {
+              "sha": "9f8e7d6c5b4a39281706",
+              "author": "Hermes",
+              "subject": "Test the retry delays"
+            }
+          ],
+          "commitsTotal": 31,
+          "pr": null,
+          "account": "ada, signed in with gh",
+          "from": "release-checks"
+        }
+      }
+    },
+    {
+      "step": "nothing changed, no account",
+      "method": "threadCards.exportCard",
+      "args": {
+        "input": {
+          "agent": "Hermes",
+          "repo": "acme/app",
+          "branch": "fix/retry-backoff",
+          "base": "main",
+          "head": "0a1b2c3d4e5f60718293",
+          "files": [],
+          "filesTotal": 0,
+          "additionsTotal": 0,
+          "deletionsTotal": 0,
+          "commits": [],
+          "commitsTotal": 0,
+          "pr": null,
+          "account": null,
+          "from": "release-checks"
+        }
+      }
+    },
+    {
+      "step": "Cua's own entry",
+      "method": "threadCards.author",
+      "args": {
+        "author": {
+          "kind": "system",
+          "id": "system:host",
+          "name": "host"
+        }
+      }
+    },
+    {
+      "step": "an agent keeps how it shows",
+      "method": "threadCards.author",
+      "args": {
+        "author": {
+          "kind": "agent",
+          "id": "agent:hermes",
+          "name": "Hermes"
+        }
+      }
+    },
+    {
+      "step": "a person keeps how they show",
+      "method": "threadCards.author",
+      "args": {
+        "author": {
+          "kind": "person",
+          "id": "acct_ada",
+          "name": "Ada"
+        }
+      }
+    }
+  ]
+}

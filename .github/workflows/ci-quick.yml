@@ -1,0 +1,180 @@
+name: "CI: Quick"
+
+# The fast first stage. It runs `bin/ci --quick` (formatting, lockfiles, SPDX headers, workflow lint and
+# the other checks that build nothing) on what the pull request changes. It is the same command a
+# contributor runs locally, so the two cannot drift; `bin/ci --verify-sync` keeps the commands aligned
+# with the workflows.
+#
+# Heavy workflows call this one as their first job (`quick`) and make their heavy jobs `needs: quick`, so
+# a pull request that fails a cheap check stops in about a minute instead of spending runner minutes on
+# builds. It also runs on its own, so the gate sees a quick failure even when no heavy workflow starts.
+# Nothing here builds, signs or reaches a service: only deterministic checks, so it cannot flake.
+#
+# It runs once per commit, not once per workflow: the first run that passes saves a marker in the cache
+# (key `ci-quick-pass-<sha>`); every other `quick` job restores it first and finishes in seconds. Jobs
+# that start before the marker exists simply run the checks themselves, so a race costs time, never
+# correctness. Only a pass is cached; a failure always fails the run that saw it.
+
+#
+# The same stage also decides whether the calling workflow runs at all (the `scope` job, CUA-3856):
+# .github/scripts/ci_gate_scope.py, read from the base commit with the area map, answers for the
+# caller's workflow file from the files the pull request (or merge queue entry) changes. Every job of
+# the caller needs `quick` and skips when `needs.quick.outputs.skip` is 'true'. It is the same
+# decision ci-gate makes about which runs to wait for, so a workflow skipped here is one the gate does
+# not wait for. If the scope job fails, the caller's jobs are skipped and its run fails, so the gate
+# fails: never a silent pass. Push, schedule and manual runs skip `quick`, so they run in full.
+#
+# Merge queue: the scope is the diff between the queue's base and the queue commit, so the lanes the
+# queued pull requests touch run on the merged result. Until the repository variable CI_QUEUE_RUNS is
+# "true", a merge_group run skips everything and ci-gate keeps reading the pull request's own results.
+
+on:
+  pull_request:
+  merge_group:
+  workflow_call:
+    outputs:
+      skip:
+        description: "'true' when the area map says the calling workflow is not needed for this change."
+        value: ${{ jobs.scope.outputs.skip }}
+
+permissions:
+  contents: read
+
+concurrency:
+  # Called from another workflow, github.workflow is the caller's name; the prefix keeps this group
+  # apart from the caller's own concurrency group, so neither cancels the other.
+  # A label event (opened + labeled fire together when a PR is created with a label) gets its own
+  # group, so it cannot cancel the run for the new head; only a newer push (synchronize) cancels.
+  group: >-
+    ci-quick-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{
+    (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.run_id || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scope:
+    name: scope
+    # Only when called by another workflow: on its own, CI: Quick is always needed.
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+      && !contains(github.workflow_ref, '/.github/workflows/ci-quick.yml@')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+    steps:
+      # The selector, the map and the base manifests come from the base commit, as in ci-gate.yml, so a
+      # pull request cannot narrow its own checks by editing them (and any .github/** change runs all).
+      - name: Check out the selector from the base commit
+        if: github.event_name == 'pull_request' || vars.CI_QUEUE_RUNS == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          path: base
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            /.github/ci-areas.json
+            /.github/scripts/ci_gate_scope.py
+            /.github/scripts/ci_graph.py
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
+          sparse-checkout-cone-mode: false
+      - name: Check out the change's manifests
+        if: github.event_name == 'pull_request' || vars.CI_QUEUE_RUNS == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: head
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            Cargo.toml
+            package.json
+            pnpm-workspace.yaml
+          sparse-checkout-cone-mode: false
+      - name: Decide whether this workflow runs
+        id: decide
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          QUEUE_RUNS: ${{ vars.CI_QUEUE_RUNS }}
+          CI_GATE_HEAD_ROOT: ${{ github.workspace }}/head
+        run: |
+          set -euo pipefail
+          workflow=${WORKFLOW_REF%%@*}
+          workflow=${workflow##*/}
+          if [[ "$GITHUB_EVENT_NAME" == merge_group && "${QUEUE_RUNS:-}" != true ]]; then
+            echo "Merge queue runs are off (CI_QUEUE_RUNS); ci-gate reads the pull request's results."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Both names of a renamed file (--no-renames), like the pull request files API.
+          git -C head fetch --no-tags --depth=1 --filter=blob:none origin "$BASE_SHA"
+          git -C head diff --name-only --no-renames "$BASE_SHA" HEAD > "$RUNNER_TEMP/files.txt"
+          # Until the selector with --workflow is on the base commit (the pull request that adds it),
+          # there is nothing trusted to ask: run everything, which is what any .github/** change does anyway.
+          if ! grep -q -- '--workflow' base/.github/scripts/ci_gate_scope.py; then
+            echo "The base commit's selector has no --workflow mode yet; running everything."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 base/.github/scripts/ci_gate_scope.py --workflow "$workflow" < "$RUNNER_TEMP/files.txt"
+
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request' || (github.event_name == 'merge_group' && vars.CI_QUEUE_RUNS == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Skip when this commit already passed
+        id: marker
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ci-quick-pass
+          key: ci-quick-pass-${{ github.sha }}
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: steps.marker.outputs.cache-hit != 'true'
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.marker.outputs.cache-hit != 'true'
+        with:
+          node-version: "22"
+      - name: Pin npm
+        if: steps.marker.outputs.cache-hit != 'true'
+        # The npm that wrote the committed package-lock.json files.
+        run: npm install -g npm@11.19.1
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        if: steps.marker.outputs.cache-hit != 'true'
+        with:
+          enable-cache: true
+      - name: Install actionlint
+        if: steps.marker.outputs.cache-hit != 'true'
+        uses: ./.github/actions/install-actionlint
+      - name: Install crane (only when the docs image refs are checked)
+        if: steps.marker.outputs.cache-hit != 'true'
+        run: |
+          if python3 bin/ci --list --quick --no-install 2>&1 | grep -q '^  docs-image-refs '; then
+            go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+            echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+          fi
+      - name: bin/ci --quick
+        if: steps.marker.outputs.cache-hit != 'true'
+        # --no-install: a check that needs a package's node_modules is skipped here (its own workflow
+        # still runs it) instead of installing it, which would make this stage slow and network-bound.
+        # CUA_CI_REQUIRE_TOOLS: the checks whose standalone workflows were deleted (spdx, lockfiles,
+        # actionlint, larger runners, image refs, Python lint, rustfmt, docs image refs) fail, never
+        # skip, when a tool is missing on the runner.
+        env:
+          CUA_CI_REQUIRE_TOOLS: "1"
+        run: python3 bin/ci --quick --no-install
+      - name: Write the pass marker
+        if: steps.marker.outputs.cache-hit != 'true'
+        run: echo "${{ github.sha }}" > "${{ runner.temp }}/ci-quick-pass"
+      - name: Remember that this commit passed
+        if: steps.marker.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ci-quick-pass
+          key: ci-quick-pass-${{ github.sha }}

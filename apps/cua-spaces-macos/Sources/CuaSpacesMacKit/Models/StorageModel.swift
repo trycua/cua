@@ -61,7 +61,7 @@ public final class StorageModel {
     }
 
     private func call(_ tool: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard let tools else { throw AgentsToolError(message: "No cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         return try await tools.agentsTool(tool, args)
     }
 

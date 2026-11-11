@@ -719,7 +719,14 @@ fn set_value_blocking(
     if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         // Menu-item selection, not an AXValue write — no read-back to report.
-        select_popup_option(element, element_index, pid, window_id, value, &element_title)
+        select_popup_option(
+            element,
+            element_index,
+            pid,
+            window_id,
+            value,
+            &element_title,
+        )
         .map(|detail| SetValueOutcome {
             detail,
             verified: None,
@@ -806,7 +813,10 @@ fn set_value_blocking(
                 crate::document_edit::DocumentEdited::NotADocument
             };
             Ok(SetValueOutcome {
-                detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}{commit_detail}{}", document.note()),
+                detail: format!(
+                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{commit_detail}{}",
+                    document.note()
+                ),
                 verified,
                 changed,
                 // A secure text field reads back empty or masked, so its
@@ -908,7 +918,9 @@ fn retype_blocking(
         );
     }
 
-    let existing = before.as_deref().map_or(0, |value| value.encode_utf16().count());
+    let existing = before
+        .as_deref()
+        .map_or(0, |value| value.encode_utf16().count());
     if existing > 0 && !select_all_text(element, existing) {
         anyhow::bail!(
             "[{element_index}] {role} refused both an AXSelectedTextRange selection and an \
@@ -1653,8 +1665,8 @@ mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, classify_write, commit_written_value,
         file_name_needs_rename, is_file_name_cell, is_get_info_name_field, judge_commit,
-        not_applied_result, refused_keystroke_plan, write_not_applied, write_plan,
-        SetValueOutcome, ToolResult, WritePlan, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
+        not_applied_result, refused_keystroke_plan, write_not_applied, write_plan, SetValueOutcome,
+        ToolResult, WritePlan, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
     use cua_driver_contract::ActionCommit;
 

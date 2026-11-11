@@ -990,7 +990,10 @@ mod tests {
 
     #[test]
     fn committed_verdicts_round_trip_and_default_to_absent() {
-        assert!(serde_json::to_value(confirmed_result()).unwrap().get("committed").is_none());
+        assert!(serde_json::to_value(confirmed_result())
+            .unwrap()
+            .get("committed")
+            .is_none());
         for (verdict, wire) in [
             (ActionCommit::Committed, "committed"),
             (ActionCommit::NotCommitted, "not_committed"),
@@ -1000,7 +1003,10 @@ mod tests {
             result.committed = Some(verdict);
             let payload = serde_json::to_value(&result).unwrap();
             assert_eq!(payload["committed"], json!(wire));
-            assert_eq!(serde_json::from_value::<ActionResult>(payload).unwrap(), result);
+            assert_eq!(
+                serde_json::from_value::<ActionResult>(payload).unwrap(),
+                result
+            );
         }
     }
 

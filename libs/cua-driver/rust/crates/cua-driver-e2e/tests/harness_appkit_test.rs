@@ -1345,7 +1345,11 @@ fn harness_appkit_set_value_replaces_a_non_bmp_value_whole() {
                         "value": value
                     }),
                 );
-                assert!(!set.is_error(), "set_value {value:?} failed: {}", set.text());
+                assert!(
+                    !set.is_error(),
+                    "set_value {value:?} failed: {}",
+                    set.text()
+                );
                 assert_eq!(
                     set.structured()["committed"],
                     serde_json::json!("committed"),

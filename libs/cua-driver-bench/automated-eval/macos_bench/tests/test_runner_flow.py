@@ -658,7 +658,10 @@ class RealCaptureTest(unittest.TestCase):
             capture_detail = rb.rec.capture_detail
             arm = "cc-cua-driver-script-only"
             ctx.mcp[arm] = (Path(tmp) / f"{arm}.json", "server")
-            for listed, message in [(["run_script"], None), (["run_script", "click"], "script-only")]:
+            for listed, message in [
+                (["run_script"], None),
+                (["run_script", "click"], "script-only"),
+            ]:
                 calls = []
                 client = mock.Mock()
 

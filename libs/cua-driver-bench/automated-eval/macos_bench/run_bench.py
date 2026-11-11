@@ -644,7 +644,8 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                     raise RuntimeError("no desktop capture tool")
                 arguments = (
                     {"screenshot_out_file": str(dest)}
-                    if "screenshot_out_file" in tools[tool].get("inputSchema", {}).get("properties", {})
+                    if "screenshot_out_file"
+                    in tools[tool].get("inputSchema", {}).get("properties", {})
                     else {}
                 )
                 result = call(tool, arguments)
@@ -847,8 +848,9 @@ def _collect_linux_evidence(artifacts: Path, arm: str, failed: bool) -> None:
     for name, log in logs.items():
         attempt(
             f"{name} log",
-            lambda name=name, log=log: log.is_file()
-            and shutil.copyfile(log, artifacts / f"{name}.log"),
+            lambda name=name, log=log: (
+                log.is_file() and shutil.copyfile(log, artifacts / f"{name}.log")
+            ),
         )
     if errors:
         try:

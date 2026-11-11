@@ -42,6 +42,8 @@ impl Tool for Probe {
         }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
+        } else if let Some(summary) = args["summary"].as_str() {
+            ToolResult::text(summary.to_owned())
         } else {
             ToolResult::text(format!("{} done", self.def.name))
         }
@@ -78,6 +80,7 @@ impl Harness {
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
                             "fail_message": {"type": "string"},
+                            "summary": {"type": "string"},
                             "element_token": {"type": "string"},
                             "value": {"type": "string"},
                             "key": {"type": "string"},
@@ -797,4 +800,31 @@ async fn non_scalar_set_value_is_rejected_before_any_batch_action() {
             .starts_with("set_value: invalid arguments at /value:"));
         assert_eq!(harness.hits("set_value"), 0);
     }
+}
+
+/// A step that `require_verified` turned into an error already delivered its
+/// input. The batch stops there and never sends it again, not even with the
+/// foreground fallback on.
+#[tokio::test]
+async fn a_strict_step_that_delivered_is_never_retried() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"foreground_fallback": true, "steps": [
+            // The summary names the foreground retry, as a background route
+            // that cannot confirm itself does.
+            {"tool": "click", "args": {"pid": 42, "window_id": 7, "x": 1, "y": 2, "require_verified": true,
+                "summary": "Sent. Retry this action with delivery_mode:\"foreground\" if nothing changed."}},
+            {"tool": "press_key", "args": {"pid": 42, "key": "a"}},
+        ]}))
+        .await;
+    assert_eq!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(structured["failed_step"], 0);
+    assert_eq!(structured["steps"][0]["code"], "action_unverified");
+    assert_eq!(
+        harness.hits("click"),
+        1,
+        "the delivered click is not repeated"
+    );
+    assert_eq!(harness.hits("press_key"), 0, "the batch stops at the step");
 }

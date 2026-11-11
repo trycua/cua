@@ -975,14 +975,23 @@ async fn run_step(
 
         let mut result = registry.invoke(tool, args.clone()).await;
         let mut refound_note = None;
-        if result.is_error == Some(true) && tool == "click" {
+        // Every retry below is for a step that was refused before any input
+        // went out. A step whose input was delivered (`require_verified` on
+        // an unconfirmed action) is never sent again.
+        let delivered = result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("execution_state"))
+            .and_then(Value::as_str)
+            == Some("delivered");
+        if result.is_error == Some(true) && !delivered && tool == "click" {
             if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
                 report["refound"] = json!(note);
                 result = registry.invoke("invoke_menu", menu_args).await;
                 refound_note = Some(note);
             }
         }
-        if result.is_error == Some(true) && refound_note.is_none() {
+        if result.is_error == Some(true) && !delivered && refound_note.is_none() {
             if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry).await;
@@ -990,6 +999,7 @@ async fn run_step(
             }
         }
         let wants_foreground = result.is_error == Some(true)
+            && !delivered
             && wants_foreground(&result)
             && args.get("delivery_mode").is_none()
             && accepts(registry, tool, "delivery_mode");

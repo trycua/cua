@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! PiP frame-push hook — registered once by `main.rs` when the
 //! `--experimental-pip` flag is on argv.
 //!

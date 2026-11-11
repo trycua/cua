@@ -107,11 +107,20 @@ function spaceJson(s: SdkSpace) {
           memoryTotal: num(u.memoryTotal),
           memoryLimited: u.memoryLimited,
           diskUsed: num(u.diskUsed),
-          diskTotal: num(u.diskTotal),
+          // Absent: no size of its own. Never a sentinel (the SDK says none).
+          diskTotal: u.diskTotal === undefined || u.diskTotal === null ? null : num(u.diskTotal),
           diskLimited: u.diskLimited,
         }
       : null,
     diskOnHost: d ? { bytes: d.bytes === undefined ? null : num(d.bytes), allocated: num(d.allocated), sharesSpace: d.sharesSpace } : null,
+    base: s.base
+      ? {
+          key: s.base.key,
+          image: s.base.image,
+          bytes: s.base.bytes === undefined || s.base.bytes === null ? null : num(s.base.bytes),
+          sharedWith: s.base.sharedWith,
+        }
+      : null,
   };
 }
 
@@ -130,7 +139,10 @@ export function snapshotJson(s: SdkSnapshot) {
 
 /** `resources.get`: the contract's `ResourcesSnapshot`, from the SDK; this
  * computer only while the SDK can't answer. */
-export function resourcesMethods(ctx: BridgeContext, read: { ticks: () => Ticks; now: () => number; home: () => string } = { ticks, now: Date.now, home: os.homedir }): Handlers {
+export function resourcesMethods(
+  ctx: BridgeContext,
+  read: { ticks: () => Ticks; now: () => number; home: () => string } = { ticks, now: Date.now, home: os.homedir },
+): Handlers {
   let last: Ticks | null = null;
   return {
     "resources.get": async (args) => {

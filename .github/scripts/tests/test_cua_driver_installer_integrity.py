@@ -88,12 +88,12 @@ show_cua_driver_daemon_survivors() { :; }
 """
 
 
-def tarball(version: str) -> tuple[str, bytes]:
+def tarball(version: str, driver: bytes = b"#!/bin/sh\nexit 0\n") -> tuple[str, bytes]:
     name = f"cua-driver-rs-{version}-linux-x86_64-binary.tar.gz"
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
         for member in ("cua-driver", "cua-cursor-theme"):
-            body = b"#!/bin/sh\nexit 0\n"
+            body = driver if member == "cua-driver" else b"#!/bin/sh\nexit 0\n"
             info = tarfile.TarInfo(member)
             info.size = len(body)
             info.mode = 0o755
@@ -136,11 +136,12 @@ class Fixture:
         *,
         sums: str | None = "good",
         bundle: str | None = "good",
+        driver: bytes | None = None,
     ) -> str:
         tag = f"cua-driver-rs-v{version}"
         directory = self.releases / tag
         directory.mkdir()
-        name, data = tarball(version)
+        name, data = tarball(version) if driver is None else tarball(version, driver)
         (directory / name).write_bytes(data)
         if sums is not None:
             write_sums(directory, name, data, sums)
@@ -192,6 +193,51 @@ def test_a_verified_release_installs(fixture: Fixture) -> None:
     assert f"verified {name} against SHA256SUMS" in result.stdout
     assert f"verified the Sigstore signature of {name}" in result.stdout
     assert fixture.installed()
+
+
+KWIN_HINT = "==> KWin window capture is off; `cua-driver kwin-capture on` turns it on"
+
+
+@linux_only
+@pytest.mark.parametrize("kwin", [True, False])
+def test_a_release_install_grants_nothing_on_kwin_and_says_how_to(fixture: Fixture, kwin: bool) -> None:
+    if kwin:
+        shim = fixture.shims / "kwin_wayland"
+        shim.write_text("#!/bin/sh\nexit 0\n")
+        shim.chmod(0o755)
+    fixture.with_cosign()
+    fixture.publish("0.31.0")
+    result = fixture.install("0.31.0")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.splitlines().count(KWIN_HINT) == int(kwin)
+    assert not (fixture.home / ".local/share/applications").exists()
+
+
+KWIN_ON_STATUS = (
+    "kwin window capture: on",
+    "desktop entry: /home/u/.local/share/applications/ai.cua.driver.desktop",
+)
+
+
+@linux_only
+def test_a_release_install_on_kwin_reports_a_switch_the_user_turned_on(fixture: Fixture) -> None:
+    shim = fixture.shims / "kwin_wayland"
+    shim.write_text("#!/bin/sh\nexit 0\n")
+    shim.chmod(0o755)
+    status = "\\n".join(KWIN_ON_STATUS)
+    driver = (
+        '#!/bin/sh\nif [ "$1 $2" = "kwin-capture status" ]; then printf "'
+        + status
+        + '\\n"; fi\nexit 0\n'
+    ).encode()
+    fixture.with_cosign()
+    fixture.publish("0.31.0", driver=driver)
+    result = fixture.install("0.31.0")
+    assert result.returncode == 0, result.stderr + result.stdout
+    lines = result.stdout.splitlines()
+    assert KWIN_HINT not in lines
+    for line in KWIN_ON_STATUS:
+        assert f"==> {line}" in lines, result.stdout
 
 
 @linux_only

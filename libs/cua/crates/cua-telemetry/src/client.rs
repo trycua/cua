@@ -581,7 +581,7 @@ impl Telemetry {
         false
     }
 
-    fn identity(&self) -> Identity {
+    pub(crate) fn identity(&self) -> Identity {
         let mut g = lock(&self.inner.identity);
         if let Some(i) = g.as_ref() {
             return i.clone();

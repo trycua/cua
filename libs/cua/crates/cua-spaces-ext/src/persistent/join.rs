@@ -146,7 +146,7 @@ pub struct DeviceArg {
 }
 
 /// What a connected agent sends with each call (`_member`).
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct MemberCredential {
     pub member_id: String,
     pub key: String,
@@ -156,6 +156,17 @@ pub struct MemberCredential {
     /// [`cua_host::device::member_message`]`(member_id, ts_ms)`.
     #[serde(default)]
     pub signature: Option<String>,
+}
+
+impl std::fmt::Debug for MemberCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemberCredential")
+            .field("member_id", &self.member_id)
+            .field("key", &"<redacted>")
+            .field("ts_ms", &self.ts_ms)
+            .field("signature", &self.signature)
+            .finish()
+    }
 }
 
 /// The per-process counters: wrong codes and posts.
@@ -201,6 +212,16 @@ fn denied(msg: impl Into<String>) -> Error {
 
 fn rate_limited(msg: impl Into<String>) -> Error {
     Error::extension("rate_limited", msg)
+}
+
+/// What the thread says when an agent is added to the Space.
+pub fn added_text(agent: &str) -> String {
+    format!("{agent} was added to this Space.")
+}
+
+/// What the thread says when a person joins the Space.
+pub fn person_joined_text(name: &str) -> String {
+    format!("{name} joined this Space.")
 }
 
 /// A person's possessive ("Ada's").
@@ -328,7 +349,10 @@ impl Persistent {
             "id": out.id,
             "code": code,
             "url": url,
-            "line": format!("Join my Cua Space \"{}\": {url}", self.space_name(&id)),
+            "line": format!(
+                "Join my Cua Space \"{}\": {url} After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.",
+                self.space_name(&id)
+            ),
             "expires_at_ms": out.expires_ms,
         }))
     }
@@ -585,9 +609,11 @@ impl Persistent {
             let handle = identity::free_handle("agent", |h| all.iter().any(|a| a.name == h));
             let rec = AgentRecord {
                 name: handle,
+                handle: None,
                 harness: "other".into(),
                 space: code.space.clone(),
                 model: None,
+                effort: None,
                 base_url: None,
                 env_from_host: vec![],
                 env: Default::default(),
@@ -601,12 +627,15 @@ impl Persistent {
                 notify: false,
                 saved_ms: 0,
                 last_error: None,
+                home_offline: false,
                 notified_error: None,
                 sessions: 1,
                 policy: super::Policy {
                     rights: Some(rights),
                     ..Default::default()
                 },
+                brief: None,
+                briefed_run: None,
                 added_by: Some(me.clone()),
                 member_since_ms: now,
                 task: None,
@@ -669,23 +698,32 @@ impl Persistent {
             "owner": owner,
             "device": {"id": device.id, "name": device.name},
             "key": key,
+            // For an agent that calls the tool itself: pass this as `_member`
+            // on each later call to act as the member (its posts then show
+            // as the agent, not as the person who signed in).
+            "member_credential": {"member_id": member_id, "key": key},
+            "next_steps": format!(
+                "You joined {} as @{}.{} {} {} {}",
+                self.space_name(&code.space),
+                rec.name,
+                if ask {
+                    " The Space's owner or an admin lets you in first; until then your calls say you are waiting."
+                } else {
+                    ""
+                },
+                cua_spaces_contract::JOIN_NEXT_STEPS,
+                cua_spaces_contract::LONG_WORK_STEPS,
+                cua_spaces_contract::COORDINATION_STEPS
+            ),
         }))
     }
 
     fn note_joined(&self, store: &ThreadStore, rec: &AgentRecord, by: &Author) -> Result<()> {
         let owner = self.owner();
         let ident = identity::identity_of(rec, &owner);
-        let from = ident
-            .device
-            .as_ref()
-            .map(|d| device_words(&d.name))
-            .unwrap_or_else(|| "a computer".into());
         store.append(Draft::event(
             "join",
-            format!(
-                "{} agent joined from {from}.",
-                possessive(&ident.owner.name)
-            ),
+            added_text(&ident.display_name),
             json!({"kind": "member_joined", "member": ident, "by": Person::from(by)}),
         ))?;
         Ok(())
@@ -750,6 +788,7 @@ impl Persistent {
                 approval: seq,
                 approve: false,
                 note: why.into(),
+                ..Default::default()
             });
             store.append(d)?;
         }
@@ -1229,5 +1268,19 @@ mod tests {
         assert_eq!(c.shown_state(100), "expired");
         assert_eq!(possessive("Ada"), "Ada's");
         assert_eq!(possessive("Linus"), "Linus'");
+    }
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::*;
+
+    #[test]
+    fn joined_notices_are_plain() {
+        assert_eq!(added_text("Hermes"), "Hermes was added to this Space.");
+        assert_eq!(person_joined_text("Ada"), "Ada joined this Space.");
+        for t in [added_text("Hermes"), person_joined_text("Ada")] {
+            assert!(!t.contains('#') && !t.contains('/') && !t.chars().any(|c| c.is_ascii_digit()));
+        }
     }
 }

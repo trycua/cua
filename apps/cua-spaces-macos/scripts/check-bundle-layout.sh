@@ -5,8 +5,10 @@
 # Checks where a built Cua Spaces app keeps its executables:
 #
 #   Contents/MacOS     only the app's own executable (CFBundleExecutable),
-#                      the `cua` CLI and the microVM monitor `cua-vz`
-#   Contents/Helpers   the host service, cua-spacesd
+#                      the `cua` CLI, the microVM monitor `cua-vz` and its
+#                      network gateway `cua-netgw`
+#   Contents/Helpers   the host service, cua-spacesd, and Cua Driver
+#                      (cua-driver, cua-cursor-theme), which it runs
 #
 # Why: AppKit and LaunchServices take a process's bundle from its
 # executable's path, and any executable in Contents/MacOS is the app. When
@@ -30,7 +32,7 @@ for f in "$app/Contents/MacOS"/*; do
   [ -e "$f" ] || continue
   name="$(basename "$f")"
   case "$name" in
-    "$main" | cua | cua-vz) ;;
+    "$main" | cua | cua-vz | cua-netgw) ;;
     *)
       echo "$app: Contents/MacOS/$name is not the app or a command-line tool; put it in Contents/Helpers (from Contents/MacOS, a process that starts AppKit registers as the app and takes over its launch)" >&2
       bad=1
@@ -41,4 +43,10 @@ if [ ! -x "$app/Contents/Helpers/cua-spacesd" ]; then
   echo "$app has no Contents/Helpers/cua-spacesd (the host service)" >&2
   bad=1
 fi
+for f in cua-driver cua-cursor-theme; do
+  if [ ! -x "$app/Contents/Helpers/$f" ]; then
+    echo "$app has no Contents/Helpers/$f (Cua Driver, which the host service runs)" >&2
+    bad=1
+  fi
+done
 exit "$bad"

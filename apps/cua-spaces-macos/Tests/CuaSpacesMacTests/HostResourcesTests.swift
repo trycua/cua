@@ -78,17 +78,26 @@ struct HostResourcesTests {
             spaces: [
                 CuaSDK.SpaceResources(id: "local:design-review", powerState: "running", cpuAllocated: 4,
                                       memoryAllocated: 8 * g, diskAllocated: 80 * g, usage: nil,
-                                      diskOnHost: CuaSDK.DiskOnHost(bytes: 19 * g, allocated: 34 * g, sharesSpace: true)),
+                                      diskOnHost: CuaSDK.DiskOnHost(bytes: 19 * g, allocated: 34 * g, sharesSpace: true),
+                                      base: CuaSDK.SharedBase(key: "sha256:m", image: "ghcr.io/trycua/macos:26",
+                                                              bytes: 25 * g, sharedWith: 2)),
                 // One of yours on the Mac mini: only its size there.
                 CuaSDK.SpaceResources(id: "relay:space-qa-1234", powerState: "stopped", cpuAllocated: 0,
                                       memoryAllocated: 0, diskAllocated: 0, usage: nil,
-                                      diskOnHost: CuaSDK.DiskOnHost(bytes: 21 * g, allocated: 21 * g, sharesSpace: false)),
+                                      diskOnHost: CuaSDK.DiskOnHost(bytes: 21 * g, allocated: 21 * g, sharesSpace: false),
+                                      base: nil),
                 // Only an upper bound, and a container with no disk at all.
                 CuaSDK.SpaceResources(id: "local:clone", powerState: "stopped", cpuAllocated: 2, memoryAllocated: 0,
                                       diskAllocated: 0, usage: nil,
-                                      diskOnHost: CuaSDK.DiskOnHost(bytes: nil, allocated: 30 * g, sharesSpace: true)),
+                                      diskOnHost: CuaSDK.DiskOnHost(bytes: nil, allocated: 30 * g, sharesSpace: true),
+                                      base: nil),
+                // A gVisor container: its guest's root has no size of its own.
                 CuaSDK.SpaceResources(id: "local:box", powerState: "running", cpuAllocated: 2, memoryAllocated: 0,
-                                      diskAllocated: 0, usage: nil, diskOnHost: nil),
+                                      diskAllocated: 0,
+                                      usage: CuaSDK.GuestUsage(cpuCount: 2, cpuPercent: 13, loadAverage1m: 0,
+                                                               memoryUsed: 1 * g, memoryTotal: 4 * g, memoryLimited: true,
+                                                               diskUsed: 249_856, diskTotal: nil, diskLimited: false),
+                                      diskOnHost: nil, base: nil),
             ],
             computers: [computer("mac-mini", "Mac mini")], warning: warning)
         let json = resourcesJSON(snapshot)
@@ -108,9 +117,15 @@ struct HostResourcesTests {
         #expect((spaces[2]["diskOnHost"] as? [String: Any])?["bytes"] is NSNull)
         #expect((spaces[2]["diskOnHost"] as? [String: Any])?["sharesSpace"] as? Bool == true)
         #expect(spaces[3]["diskOnHost"] is NSNull)
+        // No size of its own is null, never a sentinel number.
+        #expect((spaces[3]["usage"] as? [String: Any])?["diskTotal"] is NSNull)
+        let base = try #require(spaces[0]["base"] as? [String: Any])
+        #expect(base["image"] as? String == "ghcr.io/trycua/macos:26")
+        #expect(base["sharedWith"] as? Int == 2)
+        #expect(spaces[1]["base"] is NSNull)
         #expect((back["computers"] as? [[String: Any]])?.map { $0["id"] as? String } == ["mac-mini"])
         // Every field the page's contract names, no more.
-        #expect(Set(spaces[0].keys) == ["id", "powerState", "cpuAllocated", "memoryAllocated", "diskAllocated", "usage", "diskOnHost"])
+        #expect(Set(spaces[0].keys) == ["id", "powerState", "cpuAllocated", "memoryAllocated", "diskAllocated", "usage", "diskOnHost", "base"])
         #expect(Set(thisMac.keys) == Set((HostResourceSampler().sample().snapshot()["thisMac"] as? [String: Any] ?? [:]).keys))
     }
 }

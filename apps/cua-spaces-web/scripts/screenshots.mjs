@@ -7,7 +7,8 @@
 // ONLY=teleport for the Teleport and Share sheets, ONLY=thread for the Space
 // thread's call layout at the storyboards' 1500x940, ONLY=permissions for
 // agents' rights, ONLY=identity for agents' marks, owners and cards, ONLY=add-agent for
-// Add an agent, ONLY=agents-chat for the Agents tab; OUT_DIR=... to save elsewhere)
+// Add an agent, ONLY=agents-chat for the Agents tab, ONLY=ask-first for the host's push
+// card and the GitHub sign-in rows; OUT_DIR=... to save elsewhere)
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,18 @@ import { chromium } from "@playwright/test";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.env.OUT_DIR ?? `${root}docs/screenshots`;
-const ROUTES = ["spaces", "machines", "agents", "volume", "keyvault", "settings", "settings/devices", "settings/experiments", "settings/about", "notifications", "onboarding"];
+const ROUTES = [
+  "spaces",
+  "spaces/computer/this-mac",
+  "agents",
+  "volume",
+  "keyvault",
+  "settings",
+  "settings/experiments",
+  "settings/about",
+  "notifications",
+  "onboarding",
+];
 // Pages under a parameter: [path, file name].
 const DETAIL_ROUTES = [
   [`spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, "space-detail"],
@@ -137,13 +149,12 @@ async function newSpaceSteps(theme) {
   await context.close();
 }
 
-/** Devices' approval sheet, then General with Storage (the Cua Volume experiment on). */
+/** The computers waiting to be added, above your computers, then General with Storage (the Cua Volume experiment on). */
 async function settingsStates(page, theme) {
-  await page.goto(`${base}/settings/devices`, { waitUntil: "networkidle" });
-  await page.locator('[data-device-row="dev_work"] [data-device-approve]').click();
+  await page.goto(`${base}/spaces`, { waitUntil: "networkidle" });
+  await page.locator('[data-pending-machine="dev_work"]').waitFor();
   await page.waitForTimeout(300);
-  await page.screenshot({ path: `${outDir}/settings-devices-approve-${theme}.png` });
-  await page.keyboard.press("Escape");
+  await page.screenshot({ path: `${outDir}/computers-waiting-${theme}.png` });
   await page.goto(`${base}/settings/experiments`, { waitUntil: "networkidle" });
   // The demo starts with Cua Volume on (the Volume page's demo); turn it on only if it's off.
   const volumeSwitch = page.locator('[data-setting-row="experiment:cua_volume"] [data-slot="switch"]');
@@ -155,13 +166,13 @@ async function settingsStates(page, theme) {
   await page.screenshot({ path: `${outDir}/settings-storage-${theme}.png` });
 }
 
-/** This machine's buttons, then the page before setup (after Remove host
+/** This computer's buttons, then the page before setup (after Remove host
  * setup) and the setup form. */
 async function thisMachineSetup(theme) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: theme });
   await context.addInitScript((t) => localStorage.setItem("cua-spaces:theme", t), theme);
   const page = await context.newPage();
-  await page.goto(`${base}/machines`, { waitUntil: "networkidle" });
+  await page.goto(`${base}/spaces/computer/this-mac`, { waitUntil: "networkidle" });
   await page.locator("[data-host-action]").first().scrollIntoViewIfNeeded();
   await page.waitForTimeout(250);
   await page.screenshot({ path: `${outDir}/this-machine-${theme}.png` });
@@ -434,6 +445,60 @@ async function agentsChatShots(theme) {
   await context.close();
 }
 
+/** Ask first: the host's push cards in a Space's thread (compact, opened, a push of only a branch, answered),
+ * Settings, Connections, GitHub (two accounts on gh, nothing signed in) and the Labs switch. Demo data. */
+async function askFirstShots(theme) {
+  const context = await browser.newContext({ viewport: { width: 1500, height: 940 }, deviceScaleFactor: 2, colorScheme: theme, reducedMotion: "reduce" });
+  await context.addInitScript((t) => {
+    localStorage.setItem("cua-spaces:theme", t);
+    localStorage.removeItem("cua-spaces:call-split");
+  }, theme);
+  const page = await context.newPage();
+  const shot = async (name) => {
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${outDir}/ask-first-${name}-${theme}.png` });
+  };
+  const space = `${base}/spaces/${encodeURIComponent("relay:linux-box/ubuntu-build")}?demo=thread-cards`;
+  await page.goto(space, { waitUntil: "networkidle" });
+  await page.locator("[data-export-card]").first().waitFor();
+  // More room for the thread, as the storyboards show it.
+  const divider = page.locator("[data-call-divider]");
+  const box = await divider.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, 200, { steps: 8 });
+  await page.mouse.up();
+  await page.locator("[data-export-card]").first().scrollIntoViewIfNeeded();
+  await shot("card");
+  await page.locator("[data-card-expander]").first().click();
+  await shot("card-open");
+  await page.locator("[data-card-expander]").first().click();
+  await page.locator("[data-approval]").nth(1).scrollIntoViewIfNeeded();
+  await shot("card-branch-only");
+  await page.locator("[data-approval] button", { hasText: "Push and open PR" }).first().click();
+  await page.locator("[data-approval-collapsed]").first().waitFor();
+  await shot("card-answered");
+  for (const [name, demo] of [
+    ["github", "github"],
+    ["github-none", "github-none"],
+    ["github-warning", "github-warning"],
+  ]) {
+    await page.goto(`${base}/settings/connections?demo=${demo}`, { waitUntil: "networkidle" });
+    await page.locator("[data-connectors-github]").waitFor();
+    await page.locator("[data-connectors-github]").scrollIntoViewIfNeeded();
+    await shot(`settings-${name}`);
+  }
+  await page.goto(`${base}/settings/connections`, { waitUntil: "networkidle" });
+  await page.locator("[data-github-host='github.com']").click();
+  await page.locator("[data-github-detail='github.com']").waitFor();
+  await shot("settings-github-open");
+  await page.keyboard.press("Escape");
+  await page.goto(`${base}/settings/advanced`, { waitUntil: "networkidle" });
+  await page.getByText("Labs").first().waitFor();
+  await shot("settings-labs");
+  await context.close();
+}
+
 let server;
 let base = process.env.BASE_URL;
 if (!base) {
@@ -454,6 +519,10 @@ try {
   for (const theme of THEMES) {
     if (process.env.ONLY === "thread") {
       await threadShots(theme);
+      continue;
+    }
+    if (process.env.ONLY === "ask-first") {
+      await askFirstShots(theme);
       continue;
     }
     if (process.env.ONLY === "agents-chat") {

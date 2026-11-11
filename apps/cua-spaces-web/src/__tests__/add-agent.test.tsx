@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BridgeProvider } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
-import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
+import { DEMO_THREAD_SPACE, JOIN_LINE_STEPS } from "@/bridge/adapters/demo/thread";
 import { testCore } from "@/bridge/__tests__/testCore";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 import { AddAgentSheet, freeHandle } from "@/components/add-agent/add-agent-sheet";
@@ -24,7 +24,7 @@ stubBrowserApis();
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
-const LINE = 'Join my Cua Space "ubuntu-build": https://cua.ai/join/7KQ2-9FXA';
+const LINE = `Join my Cua Space "ubuntu-build": https://cua.ai/join/7KQ2-9FXA ${JOIN_LINE_STEPS}`;
 
 let clipboard: string[] = [];
 beforeEach(() => {
@@ -58,18 +58,27 @@ async function openSheet(row?: "start" | "connect") {
 const line = () => q("[data-join-line]") as HTMLTextAreaElement | null;
 
 describe("Add an agent", () => {
-  it("+ opens two rows and the marks of the agents that work", async () => {
+  it("+ opens two rows, Share with a person, and the marks of the agents that work", async () => {
     await app({ joinRedeemMs: null });
     await openSheet();
     expect(q("[data-add-agent='pick']")?.textContent).toContain("Add an agent to ubuntu-build");
-    expect(qa("[data-add-row]").map((r) => r.dataset.addRow)).toEqual(["start", "connect"]);
-    expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw", "t3code"]);
+    // Share with a person leads back to Share, where the page can share (once the Space's Share is read).
+    await waitFor(() => expect(qa("[data-add-row]").map((r) => r.dataset.addRow)).toEqual(["start", "connect", "share"]));
+    expect(q("[data-add-row='share']")?.textContent).toContain("Share with a person");
+    expect(qa("[data-add-agent-marks] [data-harness-mark]").map((m) => m.dataset.harnessMark)).toEqual([
+      "hermes",
+      "claude-code",
+      "codex",
+      "cursor",
+      "openclaw",
+      "t3code",
+    ]);
   });
 
-  it("Start an agent here: Hermes, Claude Code, Codex, Cursor, then OpenClaw; a free name; it joins asleep", async () => {
+  it("Start an agent here: Hermes, Claude Code, Codex, then OpenClaw; a free name; it joins asleep", async () => {
     await app({ joinRedeemMs: null });
     await openSheet("start");
-    expect(qa("[data-start-harness]").map((h) => h.dataset.startHarness)).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw"]);
+    expect(qa("[data-start-harness]").map((h) => h.dataset.startHarness)).toEqual(["hermes", "claude-code", "openai-codex", "openclaw"]);
     // Hermes is taken: the name moves on.
     expect((q("[data-start-name]") as HTMLInputElement).value).toBe("hermes-2");
     await click(q("[data-start-harness='openclaw']")!);
@@ -81,6 +90,33 @@ describe("Add an agent", () => {
     expect(row.dataset.memberStatus).toBe("asleep");
     expect(row.querySelector("[data-owner-badge]")?.getAttribute("data-owner-badge")).toBe("acct_ada");
     await found("[data-member-note='joined'][data-member-handle='openclaw']");
+  });
+
+  // Regression (first run): Start succeeded on a new account, and the first task failed with "Hermes
+  // needs a connected provider". The sheet says so before Start, in the core's words; with a key it says nothing.
+  it("says before Start that the agent needs a provider when none is connected", async () => {
+    await app({ joinRedeemMs: null, keys: "none" });
+    await openSheet("start");
+    const note = (await found("[data-start-needs-key]")).textContent ?? "";
+    expect(note).toMatch(/^Hermes Agent needs .* to work here\./);
+    cleanup();
+    await app({ joinRedeemMs: null, keys: "several" });
+    await openSheet("start");
+    await found("[data-start-harness='hermes']");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(q("[data-start-needs-key]")).toBeNull();
+    // Keys not read yet: nothing said, rather than a guess.
+    cleanup();
+    await mountApp(path, {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { joinRedeemMs: null, keys: "none" },
+      intercept: (op) => (op === "agentKeys.list" ? new Promise(() => {}) : undefined),
+    });
+    await openSheet("start");
+    await found("[data-start-harness='hermes']");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(q("[data-start-needs-key]")).toBeNull();
   });
 
   it("Start refuses a name that is taken, in one line", async () => {
@@ -119,7 +155,7 @@ describe("Add an agent", () => {
     await found("[data-join-expired]", 5000);
     expect(q("[data-prompt-copy]")?.hasAttribute("disabled")).toBe(true);
     await click(q("[data-join-renew]")!);
-    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4}$/));
+    await waitFor(() => expect(line()?.value).toMatch(/^Join my Cua Space "ubuntu-build": https:\/\/cua\.ai\/join\/[2-9A-Z]{4}-[2-9A-Z]{4} After you join: /));
     expect(line()?.value).not.toBe(LINE);
     expect(q("[data-join-expired]")).toBeNull();
   });
@@ -194,7 +230,17 @@ describe("the sheet, reused with a Space picker", () => {
     const demo = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
     render(
       <BridgeProvider adapter={demo} core={await testCore()}>
-        <AddAgentSheet open onOpenChange={() => {}} space={{ id: "a", name: "ubuntu-build" }} spaces={[{ id: "a", name: "ubuntu-build" }, { id: "b", name: "design-review" }]} onSpaceChange={() => {}} role="owner" />
+        <AddAgentSheet
+          open
+          onOpenChange={() => {}}
+          space={{ id: "a", name: "ubuntu-build" }}
+          spaces={[
+            { id: "a", name: "ubuntu-build" },
+            { id: "b", name: "design-review" },
+          ]}
+          onSpaceChange={() => {}}
+          role="owner"
+        />
       </BridgeProvider>,
     );
     await found("[data-add-agent='pick']");

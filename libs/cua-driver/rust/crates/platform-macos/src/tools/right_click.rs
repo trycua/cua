@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -138,6 +141,11 @@ impl Tool for RightClickTool {
                 Ok(lease) => lease,
                 Err(refusal_result) => return refusal_result,
             };
+            if let Some(refusal) =
+                super::refuse_if_disabled(pid, wid, &element_guard, "AXShowMenu", false).await
+            {
+                return refusal;
+            }
 
             // The context menu steals key focus from the user's app when the
             // target is in the background; the guard hands it back.

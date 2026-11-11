@@ -4,7 +4,18 @@
 import { CheckIcon, ChevronRightIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import {
+  useBridge,
+  useConnectCloud,
+  useNewSpaceWizard,
+  useSpaces,
+  type CreateSpaceArgs,
+  type RuntimeSwitch,
+  type WizardAction,
+  type WizardField,
+  type WizardTile,
+  type WizardView,
+} from "@/bridge";
 import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
 import { GroupedSection } from "@/components/ui/grouped";
@@ -21,6 +32,9 @@ import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
 import { RuntimeFixRow } from "./runtime-fix";
+import { PRESETS, presetInfo } from "@/components/network/presets";
+import { useNetworkPreview } from "@/components/network/use-network";
+import type { NetworkPreset } from "@/bridge/contracts/network";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -31,9 +45,9 @@ export function NewSpaceDialog() {
   const wizard = useNewSpaceWizard();
   const connect = useConnectCloud();
   const { view, send } = wizard;
-  const { defaultLocation, clouds = [], experiments } = wizard.env;
+  const { defaultLocation, clouds = [] } = wizard.env;
   // The default only counts once the clouds it may name have loaded.
-  const defaultKey = [defaultLocation, experiments?.yourCloud, ...clouds.map((c) => c.name)].join(" ");
+  const defaultKey = [defaultLocation, ...clouds.map((c) => c.name)].join(" ");
 
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens, or change when a cloud is connected as default).
@@ -168,15 +182,30 @@ function Steps({ steps }: { steps: WizardView["steps"] }) {
 /* ---- Layout ---------------------------------------------------------------- */
 
 function Group({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string>) {
+  // Not clipped: the image field's suggestions float over the rows below the card's edge.
   return (
-    <GroupedSection className={className} {...rest}>
+    <GroupedSection className={className} contentClassName="overflow-visible" {...rest}>
       {children}
     </GroupedSection>
   );
 }
 
 /** A label on the left and its control on the right; `stacked` puts the control under it. */
-function Row({ id, label, htmlFor, children, below, stacked }: { id: string; label: string; htmlFor?: string; children: ReactNode; below?: ReactNode; stacked?: boolean }) {
+function Row({
+  id,
+  label,
+  htmlFor,
+  children,
+  below,
+  stacked,
+}: {
+  id: string;
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+  below?: ReactNode;
+  stacked?: boolean;
+}) {
   return (
     <div data-field={id} className="px-4 py-2.5">
       <div className={cn(stacked ? "space-y-2" : "flex min-h-8 items-center justify-between gap-6")}>
@@ -260,7 +289,8 @@ const labelOf = (v: WizardView, id: string) => fieldOf(v, id)?.label ?? "";
 
 /* ---- System ---------------------------------------------------------------- */
 
-const LINKS = new Set(["connect-cloud", "connect-by-address"]);
+// "Add your cloud account" is the last entry of Run on, not a row of its own.
+const LINKS = new Set(["connect-cloud"]);
 
 function SystemStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
@@ -269,7 +299,6 @@ function SystemStep({ v }: { v: WizardView }) {
   const advanced = v.fields.filter((f) => f.advanced);
   const rest = firstAdvanced < 0 ? [] : v.fields.slice(firstAdvanced).filter((f) => !f.advanced);
   const rows = (fields: WizardField[]) => fields.filter((f) => !LINKS.has(f.id));
-  const links = [...main, ...rest].filter((f) => LINKS.has(f.id));
 
   return (
     <div className="space-y-4">
@@ -295,6 +324,7 @@ function SystemStep({ v }: { v: WizardView }) {
               {advanced.map((f) => (
                 <SystemRow key={f.id} field={f} v={v} />
               ))}
+              <NetworkRow />
             </Group>
           ) : null}
         </div>
@@ -306,34 +336,15 @@ function SystemStep({ v }: { v: WizardView }) {
           ))}
         </Group>
       ) : null}
-      {links.length ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 px-1">
-          {links.map((f) => (
-            <LinkField key={f.id} field={f} />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function LinkField({ field }: { field: WizardField }) {
-  const { send } = useNewSpaceWizard();
-  const connect = useConnectCloud();
-  return (
-    <button
-      type="button"
-      data-field={field.id}
-      onClick={() => (field.id === "connect-cloud" ? connect.show() : send({ type: "show-address" }))}
-      className="text-[13px] text-brand-strong outline-none hover:underline focus-visible:underline"
-    >
-      {field.label}
-    </button>
-  );
-}
+const ADD_CLOUD = "add:cloud";
 
 function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
   const { send } = useNewSpaceWizard();
+  const connect = useConnectCloud();
   const error = f.error ? <FieldError id={f.id}>{f.error}</FieldError> : null;
   switch (f.id) {
     case "os":
@@ -373,27 +384,20 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
             aria-label={f.label}
             dataName="run-on"
             value={v.placementId}
-            items={v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group }))}
-            onValueChange={(on) => send({ type: "choose-placement", on })}
+            items={[
+              ...v.placements.map((o) => ({ value: o.id, label: o.label, detail: o.detail, disabled: !o.enabled, group: o.group })),
+              // Only with the Your cloud experiment (the core offers the field); it opens the connect sheet.
+              ...(v.fields.some((x) => x.id === "connect-cloud")
+                ? [{ value: ADD_CLOUD, label: "Add your cloud account\u2026", detail: "AWS, Google Cloud, Hetzner and others", group: ADD_CLOUD }]
+                : []),
+            ]}
+            onValueChange={(on) => (on === ADD_CLOUD ? connect.show() : send({ type: "choose-placement", on }))}
           />
         </Row>
       );
     case "kind":
       return (
-        <Row
-          id="kind"
-          label={f.label}
-          below={
-            <>
-              {error}
-              {v.kindHelp ? (
-                <p data-kind-help="" className="mt-1 text-xs text-muted-foreground">
-                  {v.kindHelp}
-                </p>
-              ) : null}
-            </>
-          }
-        >
+        <Row id="kind" label={f.label} below={error}>
           <Tiles id="kind" label={f.label} tiles={v.kindTiles} onPick={(kind) => send({ type: "choose-kind", kind })} />
         </Row>
       );
@@ -413,6 +417,25 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
     default:
       return null;
   }
+}
+
+/** What the new Space may reach; Internet only by default (the host's
+ * create takes it as `config.network`). */
+function NetworkRow() {
+  const store = useNetworkPreview();
+  if (!store) return null;
+  return (
+    <Row id="network" label="Network">
+      <MenuSelect
+        aria-label="Network"
+        dataName="network"
+        side="top"
+        value={store.wizardPreset}
+        items={PRESETS.map((p) => ({ value: p.id, label: p.title, detail: p.description, group: p.id === "custom" ? "custom" : "preset" }))}
+        onValueChange={(p) => store.setWizardPreset(p as NetworkPreset)}
+      />
+    </Row>
+  );
 }
 
 /* ---- Resources ------------------------------------------------------------- */
@@ -710,7 +733,11 @@ function SummaryRow({ fact }: { fact: { label: string; value: string } }) {
 function SummaryStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
   const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
-  const technical = v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label));
+  const network = useNetworkPreview();
+  const technical = [
+    ...v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label)),
+    ...(network ? [{ label: "Network", value: presetInfo(network.wizardPreset).short }] : []),
+  ];
   return (
     <>
       <Group data-summary="">

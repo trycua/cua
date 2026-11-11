@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Evidence-bearing native GTK3 harness catalog for Linux.
 //!
 //! GTK exposes accessibility through ATK -> AT-SPI. The Linux snapshot has no
@@ -20,7 +23,7 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
-use cua_driver_testkit::{ax, harness_app, Driver, McpDriver, ToolResponse};
+use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 fn harness_exe() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("HARNESS_GTK3_EXE") {
@@ -579,6 +582,137 @@ fn harness_gtk3_invoke_menu_live_path() {
     );
 }
 
+/// Send `tool` while another client's drag holds the slider and the desktop
+/// lane, and require that its effect lands only after the drag releases
+/// (#6638). The fixture records an effect that arrives while its slider
+/// button is still held.
+fn assert_waits_for_desktop_lane(
+    pid: u32,
+    window_id: u64,
+    driver: &mut McpDriver,
+    tool: &str,
+    args: impl FnOnce(&ToolResponse) -> serde_json::Value,
+    expected: &str,
+) -> Observation {
+    let mut peer = driver
+        .spawn_peer_unrecorded()
+        .expect("start a second client on the same daemon");
+    // Screenshot pixels are bound to the client that captured them.
+    let peer_state = snapshot(&mut peer, pid, window_id);
+    let (x, y, width, height) = element_rect(&mut peer, pid, window_id, &peer_state, "sld-value");
+    let (drag, response) = std::thread::scope(|scope| {
+        let drag = scope.spawn(move || {
+            peer.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": window_id,
+                    "from_x": x + width * 0.05, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.90, "to_y": y + height / 2.0,
+                    "duration_ms": 3000, "steps": 60, "delivery_mode": "foreground"
+                }),
+            )
+        });
+        // A read-only snapshot never waits for the lane, so the slider moving
+        // proves the drag holds it now.
+        let (state, slider) = loop {
+            let state = snapshot(driver, pid, window_id);
+            if let Some(slider) =
+                state_number(state.tree_text(), "slider_value=").filter(|value| *value > 0)
+            {
+                break (state, slider);
+            }
+            assert!(
+                !drag.is_finished(),
+                "the peer's drag never moved the slider"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        // Over half of the drag (1.5 s) is left, so the call reaches the
+        // daemon while the drag holds the lane unless this thread stalls.
+        assert!(
+            slider < 45 && !drag.is_finished(),
+            "too little of the drag was left to send {tool} under it (slider_value={slider})"
+        );
+        let response = driver.call(tool, args(&state));
+        (drag.join().expect("drag thread"), response)
+    });
+    assert!(!drag.is_error(), "peer drag failed: {}", drag.text());
+    assert!(!response.is_error(), "{tool} failed: {}", response.text());
+    let state = wait_for_state(driver, pid, window_id, expected);
+    // Without exactly one observed press and release the marker below could
+    // not see an overlap.
+    assert!(
+        state.contains("slider_presses=1 slider_releases=1 "),
+        "the fixture did not observe the drag's press and release: {state}"
+    );
+    assert!(
+        state.contains("effect_during_drag=none"),
+        "{tool} took effect while the drag held the slider: it ran beside the drag instead of waiting for the desktop lane"
+    );
+    assert!(
+        state_number(&state, "slider_value=").is_some_and(|value| value >= 80),
+        "the drag did not reach its end: {state}"
+    );
+    Observation::delivered_with_fixture_state(Vec::new())
+}
+
+#[test]
+#[ignore]
+fn harness_gtk3_invoke_menu_waits_for_desktop_lane() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "invoke_menu_desktop_lane",
+            Targeting::Ax,
+            DriverRoute::LinuxAtSpiAction,
+        ),
+        |pid, window_id, driver| {
+            assert_waits_for_desktop_lane(
+                pid,
+                window_id,
+                driver,
+                "invoke_menu",
+                |_| {
+                    serde_json::json!({
+                        "pid": pid, "window_id": window_id,
+                        "path": ["Window", "Arrange", "Left"]
+                    })
+                },
+                "menu_action=window_arrange_left",
+            )
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_gtk3_type_text_chars_waits_for_desktop_lane() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "type_text_chars_desktop_lane",
+            Targeting::Ax,
+            DriverRoute::LinuxAtSpiValue,
+        ),
+        |pid, window_id, driver| {
+            assert_waits_for_desktop_lane(
+                pid,
+                window_id,
+                driver,
+                "type_text_chars",
+                |state| {
+                    serde_json::json!({
+                        "pid": pid, "window_id": window_id,
+                        "element_token": element_token(state, "txt-input"),
+                        "text": "lane-chars", "delivery_mode": "foreground"
+                    })
+                },
+                "mirror=lane-chars",
+            )
+        },
+    );
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Operation {
     AxClick {
@@ -961,7 +1095,7 @@ fn invoke_operation(
             );
             if !pixel
                 && mode == "foreground"
-                && platform_linux::wayland::wayland_input_enabled()
+                && platform_linux::wayland::is_wayland()
                 && platform_linux::wayland::hyprland::is_session()
             {
                 assert_eq!(
@@ -1018,7 +1152,7 @@ fn invoke_operation(
                 response.text()
             );
             if mode == "foreground"
-                && platform_linux::wayland::wayland_input_enabled()
+                && platform_linux::wayland::is_wayland()
                 && platform_linux::wayland::hyprland::is_session()
             {
                 assert_eq!(
@@ -1068,8 +1202,16 @@ fn invoke_operation(
     false
 }
 
+/// Hyprland's agent seats (the Cua plugin's isolated input) take background
+/// pointer and key input for any native Wayland client that binds them, the
+/// GTK3 fixture included.
+fn hyprland_agent_seats() -> bool {
+    DisplayServer::current() == DisplayServer::Wayland
+        && platform_linux::wayland::hyprland_input::enabled()
+}
+
 fn row_expects_refusal(row: CatalogRow) -> bool {
-    if row.delivery != Delivery::Background {
+    if row.delivery != Delivery::Background || hyprland_agent_seats() {
         return false;
     }
     // X11 promotes a plain left click on an accessible GTK control to the
@@ -1129,6 +1271,8 @@ fn run_catalog_row(row: CatalogRow) {
         ) && row.delivery == Delivery::Background
         {
             DriverRoute::LinuxAtSpiAction
+        } else if row.delivery == Delivery::Background && hyprland_agent_seats() {
+            DriverRoute::LinuxHyprlandIsolatedInput
         } else if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             DriverRoute::LinuxCuaCompositorInject
         } else {
@@ -1180,6 +1324,81 @@ fn run_catalog_row(row: CatalogRow) {
         }
         Delivery::NotApplicable => unreachable!(),
     });
+}
+
+/// A pid-only read picks the window `list_windows` reports for that pid, on
+/// every session type.
+#[test]
+#[ignore]
+fn harness_gtk3_ax_tree_by_pid() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "ax_tree_by_pid",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, _window_id, driver| {
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid as i64, "include_screenshot": false}),
+            );
+            assert!(!state.is_error(), "pid-only read failed: {}", state.text());
+            assert!(
+                state.tree_text().contains("btn-increment"),
+                "pid-only read missed the window: {}",
+                state.tree_text()
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+/// The advice for a pid with no window stays, and `NO_AT_BRIDGE=1` is named only
+/// on Wayland, the one place it can keep a real window out of the lists.
+#[test]
+#[ignore]
+fn harness_gtk3_no_windows_names_the_bridge_only_on_wayland() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "no_windows_error",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |_pid, _window_id, driver| {
+            let windowless = spawn_in_job(Command::new("sleep").arg("30").env("NO_AT_BRIDGE", "1"))
+                .expect("spawn a windowless process");
+            let pid = windowless.id();
+            driver.reaper().push(windowless);
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid as i64, "include_screenshot": false}),
+            );
+            let advice = format!("No windows found for pid {pid}. Provide window_id.");
+            assert!(state.is_error(), "expected an error: {}", state.text());
+            assert!(state.text().starts_with(&advice), "{}", state.text());
+
+            let listed = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+            let refused = driver.call(
+                "press_key",
+                serde_json::json!({"pid": pid as i64, "key": "a"}),
+            );
+            let refusal = format!("No eligible top-level windows found for pid {pid}.");
+            assert!(refused.text().starts_with(&refusal), "{}", refused.text());
+            for response in [&state, &listed, &refused] {
+                assert_eq!(
+                    response.text().contains("atspi_bridge_disabled"),
+                    DisplayServer::current() == DisplayServer::Wayland,
+                    "{}",
+                    response.text()
+                );
+            }
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
 }
 
 #[test]
@@ -1447,8 +1666,10 @@ catalog_test!(
         route: DriverRoute::LinuxAtSpiValue,
         operation: Operation::AxTypeText {
             target: "txt-input",
-            text: "ax-typed",
-            expected: "mirror=ax-typed"
+            // GTK3 reads InsertText's length as bytes: send any shorter unit
+            // and this arrives cut short, which ASCII alone can't show.
+            text: "ax-ñ🙂-typed",
+            expected: "mirror=ax-ñ🙂-typed"
         },
     }
 );

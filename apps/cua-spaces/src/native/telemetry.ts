@@ -59,8 +59,7 @@ export interface StreamReport {
 
 export function createTauriTelemetryBridge(): TelemetryBridge {
   const core = import("@tauri-apps/api/core");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     status: () => invoke<TelemetryView>("telemetry_status"),

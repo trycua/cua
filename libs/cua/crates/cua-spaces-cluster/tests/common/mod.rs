@@ -61,7 +61,7 @@ impl DriverRun {
 ///
 /// A session driver is `["driver", "<script>"]`; the script says what the
 /// driver does at each epoch: `1=exit:1;2=hang;3=exit:0` (`exit:N`, `hang`
-/// until canceled, `sleep:<ms>` then exit 0; an epoch not listed hangs).
+/// until canceled, `sleep:<ms>` then exit 0, `crashafter:<ms>` then exit 1; an epoch not listed hangs).
 ///
 /// argv: `["sleep", "<ms>"]`, `["exit", "<code>"]`, `["nospace"]` (the
 /// Space does not start), `["echo", "<text>"]`.
@@ -178,6 +178,13 @@ impl JobExecutor for FakeExec {
                         tokio::select! {
                             _ = cancel.cancelled() => ExecEnd::Canceled,
                             _ = tokio::time::sleep(Duration::from_millis(ms)) => ExecEnd::Exited(0),
+                        }
+                    }
+                    Some(("crashafter", ms)) => {
+                        let ms: u64 = ms.parse().unwrap_or(10);
+                        tokio::select! {
+                            _ = cancel.cancelled() => ExecEnd::Canceled,
+                            _ = tokio::time::sleep(Duration::from_millis(ms)) => ExecEnd::Exited(1),
                         }
                     }
                     _ => {

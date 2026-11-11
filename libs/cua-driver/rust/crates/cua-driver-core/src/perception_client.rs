@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded, single-use IPC client for the optional perception worker.
 
 pub mod containment;
@@ -137,7 +140,7 @@ impl PerceptionWorkerConfig {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn with_test_containment(
         mut self,
         containment: containment::ContainmentLimits,
@@ -464,9 +467,16 @@ pub trait PerceptionClientResolver: Send + Sync + 'static {
     fn fingerprint(&self) -> String;
 
     /// Fully verify the installed extension and build its client. A missing or
-    /// unusable installation yields [`PerceptionClient::unavailable`].
-    fn resolve(&self) -> PerceptionClient;
+    /// unusable installation yields [`PerceptionClient::unavailable`], which is
+    /// kept until the fingerprint changes. [`ResolutionDeferred`] means the
+    /// state could not be read right now and the next request resolves again.
+    fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred>;
 }
+
+/// The installation could not be inspected now, for example because another
+/// command holds the extension lock without changing the fingerprint.
+#[derive(Debug)]
+pub struct ResolutionDeferred;
 
 /// The perception client a registered `parse_visual_regions` tool uses.
 ///
@@ -603,7 +613,9 @@ impl LivePerceptionClient {
         }
         // The fingerprint is sampled before verification, so a change racing
         // with resolution is observed again by the next request.
-        let client = self.resolver.resolve();
+        let Ok(client) = self.resolver.resolve() else {
+            return PerceptionClient::unavailable();
+        };
         let mut state = self.lock_state();
         if let Some((_, replaced)) = state.current.replace((fingerprint, client.clone())) {
             replaced.state.drop_idle_worker();
@@ -2064,8 +2076,8 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             self.0.lock().unwrap().0.clone()
         }
 
-        fn resolve(&self) -> PerceptionClient {
-            self.0.lock().unwrap().1.clone()
+        fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred> {
+            Ok(self.0.lock().unwrap().1.clone())
         }
     }
 

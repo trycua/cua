@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // Bake Swift runtime rpaths into the cua-driver binary on macOS.
 //
 // The `screencapturekit` dep ships a small Swift-bridge shim that links

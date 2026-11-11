@@ -62,9 +62,30 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // The linked Windows driver expects physical pixels. Declare the
         // process context before any async, native, or overlay thread starts.
+        // The DPI manifest (cua-spacesd.rc) and the version resource, in one
+        // resource script written to OUT_DIR (the manifest beside it).
         println!("cargo:rerun-if-changed=cua-spacesd.rc");
         println!("cargo:rerun-if-changed=cua-spacesd.manifest");
-        embed_resource::compile_for("cua-spacesd.rc", ["cua-spacesd"], embed_resource::NONE);
+        let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+        let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+        let manifest = std::fs::read_to_string("cua-spacesd.rc").expect("cua-spacesd.rc");
+        std::fs::copy("cua-spacesd.manifest", out.join("cua-spacesd.manifest"))
+            .expect("copy cua-spacesd.manifest");
+        let rc = out.join("cua-spacesd-resources.rc");
+        std::fs::write(
+            &rc,
+            format!(
+                "{manifest}\n{}",
+                version_resource(
+                    "Cua Spaces background service",
+                    "cua-spacesd",
+                    "Cua Spaces",
+                    version.trim()
+                )
+            ),
+        )
+        .expect("write the resource script");
+        embed_resource::compile_for(&rc, ["cua-spacesd"], embed_resource::NONE);
     }
 
     println!("cargo:rerun-if-env-changed=CUA_SPACESD_GIT_SHA");
@@ -98,4 +119,53 @@ fn main() {
         }
     }
     println!("cargo:rustc-env=CUA_SPACESD_GIT_SHA={sha}");
+}
+
+/// The Windows version resource (`VS_VERSION_INFO`): what Explorer's
+/// Details tab and the Windows Firewall prompt show. The prompt reads the
+/// name from `FileDescription` and the publisher from `CompanyName`, not
+/// from the Authenticode signature, so without it a signed binary showed
+/// Publisher "Unknown" (CUA-3515). Numeric constants only, so no Windows
+/// SDK header is needed: 1 = VS_VERSION_INFO, 0x40004 = VOS_NT_WINDOWS32,
+/// 1 = VFT_APP.
+fn version_resource(description: &str, internal: &str, product: &str, version: &str) -> String {
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|p| p.parse::<u16>().unwrap_or(0))
+        .chain(std::iter::repeat(0));
+    let numeric: Vec<String> = (0..4)
+        .map(|_| parts.next().unwrap_or(0).to_string())
+        .collect();
+    let numeric = numeric.join(",");
+    format!(
+        r#"1 VERSIONINFO
+FILEVERSION {numeric}
+PRODUCTVERSION {numeric}
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 0x1
+FILESUBTYPE 0x0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Cua AI, Inc."
+      VALUE "FileDescription", "{description}"
+      VALUE "FileVersion", "{version}"
+      VALUE "InternalName", "{internal}"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Cua AI, Inc."
+      VALUE "OriginalFilename", "{internal}.exe"
+      VALUE "ProductName", "{product}"
+      VALUE "ProductVersion", "{version}"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+"#
+    )
 }

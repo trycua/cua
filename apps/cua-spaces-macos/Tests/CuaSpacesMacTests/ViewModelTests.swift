@@ -88,6 +88,21 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         return inventoryResult
     }
 
+    /// What the Keyvault says about a teleport of an app (the setup sheet).
+    var readinessResult = KvReadiness(
+        providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: true,
+        profile: "Profile 1", defaultProfile: "Default",
+        profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                   KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+        files: KvReadinessCheck(state: "denied", say: "macOS is not letting Cua read this browser's files."),
+        tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
+    var readinessAsks: [(app: String, profile: String?)] = []
+
+    func readiness(app: String, profile: String?) async throws -> KvReadiness {
+        readinessAsks.append((app, profile))
+        return readinessResult
+    }
+
     /// Passphrases the page sent (test fixtures, never real secrets).
     var passphrases: [String] = []
 
@@ -280,7 +295,7 @@ struct ViewModelTests {
         let model = makeModel(host: host)
         await model.refresh()
         #expect(model.spaces.contains { $0.id == "this-mac" })
-        #expect(model.sidebar.thisMachine?.name == "This computer")
+        #expect(model.sidebar.thisMachine?.name == "This Mac")
         #expect(model.sidebar.thisMachine?.detail == "Set up for access")
         #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.id == "this-mac" })
         model.select("this-mac")
@@ -410,19 +425,14 @@ struct ViewModelTests {
         #expect(model.telemetryInput?.enabled == true)
     }
 
-    /// Settings, Experiments: every switch off except Sharing and Your cloud
-    /// (on by default); Cua Volume on shows Storage after General, is saved,
+    /// Settings, Experiments: every switch off; Cua Volume on shows Storage after General, is saved,
     /// recorded, and reaches the first run.
     @Test func experimentsAreOffAndCuaVolumeShowsStorage() async {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"])
-        // Sharing and Your cloud are on unless turned off; no New UI row.
-        let onByDefault: Set<String> = ["experiment:sharing", "experiment:your_cloud"]
-        #expect(toggles.allSatisfy { r in
-            r.options.first { $0.id == (onByDefault.contains(r.id) ? "on" : "off") }?.active == true
-        })
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"])
+        #expect(toggles.allSatisfy { r in r.options.first { $0.id == "off" }?.active == true })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
         #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(4) == ["account", "teams", "general", "storage"])
@@ -602,23 +612,18 @@ struct ViewModelTests {
         await model.loadSettings()
         let page = model.settingsPage
         #expect(page.sections.map(\.id) == ["account", "teams", "general", "runtimes", "privacy", "agents"])
-        // Settings, Runtimes: macOS VMs picks runtime.lume.
-        let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
-        #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
-        #expect(runtime.options.first(where: \.active)?.id == "auto")
-        await model.choose(row: "macos-runtime", option: "builtin")
-        #expect(model.lumeSource == "builtin")
-        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows[0]
-            .options.first(where: \.active)?.id == "builtin")
-        // Linux picks runtime.linux (the built-in Linux runtime).
-        let linux = model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
-            .first { $0.id == "linux-runtime" }!
-        #expect(linux.label == "Linux")
-        #expect(linux.options.first(where: \.active)?.id == "auto")
-        await model.choose(row: "linux-runtime", option: "system")
-        #expect(model.linuxSource == "system")
-        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
-            .first { $0.id == "linux-runtime" }!.options.first(where: \.active)?.id == "system")
+        // Settings, Runtimes: one row per kind; Virtual machines picks runtime.vm.
+        let runtimes = { model.settingsPage.sections.first { $0.id == "runtimes" }!.rows }
+        #expect(runtimes().map(\.id) == ["runtime:container", "runtime:vm", "runtime:microvm"])
+        let vm = runtimes()[1]
+        #expect(vm.label == "Virtual machines")
+        #expect(vm.options.map(\.id) == ["auto", "builtin", "system"])
+        #expect(vm.options.first(where: \.active)?.id == "auto")
+        await model.choose(row: "runtime:vm", option: "builtin")
+        #expect(runtimes()[1].options.first(where: \.active)?.id == "builtin")
+        await model.choose(row: "runtime:container", option: "system")
+        #expect(runtimes().first { $0.id == "runtime:container" }!.options.first(where: \.active)?.id == "system")
+        #expect(runtimes().contains { $0.id == "runtime-path:container" })
         #expect(model.chrome.signInLabel == "Sign in")
         await model.press(row: "sign-in")
         #expect(model.identity == "you@example.com")
@@ -667,7 +672,6 @@ struct ViewModelTests {
         let v = model.wizard.view
         #expect(v.kindTiles.map(\.id) == ["container", "vm", "microvm"])
         #expect(v.runtimes.map(\.value) == ["auto", "vz", "containerization"])
-        #expect(v.kindHelp == "The container image with its own kernel, on Virtualization.framework.")
         model.wizard.send(.setRuntime(runtime: .containerization))
         model.create(model.wizard.view.plan)
         for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
@@ -683,7 +687,12 @@ struct ViewModelTests {
         await mac.openNewSpace()
         mac.wizard.send(.chooseKind(kind: .microvm))
         #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.enabled == false)
-        #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.detail == "Needs macOS 26.")
+        // No words in New Space; Settings, Advanced, Runtimes says why.
+        #expect(mac.wizard.view.kindTiles.first { $0.id == "microvm" }?.detail == "")
+        await mac.readRuntimes()
+        let microvm = mac.settingsPage.sections.first { $0.id == "runtimes" }?.rows.first { $0.id == "runtime:microvm" }
+        #expect(microvm?.value == "Not available")
+        #expect(microvm?.help == "MicroVMs need macOS 26")
         #expect(appWizardCreateArgs(plan: mac.wizard.view.plan).kind == .container)
     }
 
@@ -777,9 +786,9 @@ struct ViewModelTests {
         let name = "e2e-1005-gamma-macos"
         let record = AppSpaceRow(id: "relay:96fe/space-46e0", name: name, displayName: nil, provider: "relay", spacesdVersion: "",
                                  features: [], addedAt: nil, os: nil, osName: nil, osPrettyName: nil, image: nil,
-                                 imageDigest: nil, kind: nil, arch: nil, reachable: false, error: nil,
+                                 imageDigest: nil, kind: nil, arch: nil, hidden: false, reachable: false, error: nil,
                                  host: "96fe", hostName: "gamma-4 Mac Studio", power: nil, powerState: nil,
-                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
+                                 cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil)
         let backend = FixtureSpacesBackend(rows: [record])
         backend.holdCreates = true
         let model = makeModel(backend)
@@ -807,10 +816,9 @@ struct ViewModelTests {
         #expect(model.spaces.filter { $0.name == name }.map(\.id) == [record.id])
     }
 
-    /// Run on lists this Mac only while no cloud is connected (and with Your
-    /// cloud turned off, no cloud at all), and New Space creates on this Mac.
-    /// Your cloud is on by default, so "Connect a cloud" is there until it is
-    /// turned off.
+    /// Run on lists this Mac only while no cloud is connected, and New Space
+    /// creates on this Mac.
+    /// "Connect a cloud" is always there.
     @Test func runOnIsThisMacUntilACloudIsConnected() async {
         let backend = FixtureSpacesBackend()
         let model = makeModel(backend)
@@ -818,7 +826,7 @@ struct ViewModelTests {
         let w = model.wizard
         #expect(w.view.placements.map(\.id) == ["local"])
         #expect(w.view.placementId == "local")
-        #expect(w.view.fields.contains { $0.id == "connect-cloud" }, "Your cloud is on by default")
+        #expect(w.view.fields.contains { $0.id == "connect-cloud" }, "Connect a cloud is always offered")
         w.send(.setPlacement(placement: .yours))
         #expect(w.view.plan.placement == .local)
         w.send(.next)
@@ -832,10 +840,6 @@ struct ViewModelTests {
         w.send(.setPlacement(placement: .local))
         w.send(.next)
         #expect(w.view.price == nil, "no price on your own hardware")
-
-        model.chooseExperiment(row: "experiment:your_cloud", option: "off")
-        await model.openNewSpace()
-        #expect(!model.wizard.view.fields.contains { $0.id == "connect-cloud" }, "Connect a cloud needs Your cloud")
     }
 
     /// Hetzner takes one masked API token: it is sent on Test and Connect
@@ -884,7 +888,6 @@ struct ViewModelTests {
     @Test func connectACloudThenCreateThere() async {
         let backend = FixtureSpacesBackend()
         let model = makeModel(backend)
-        model.chooseExperiment(row: "experiment:your_cloud", option: "on")
         await model.openNewSpace()
         let w = model.wizard
         #expect(w.view.fields.contains { $0.id == "connect-cloud" })
@@ -1212,8 +1215,8 @@ struct ViewModelTests {
         func cloudRow(_ id: String, _ name: String, _ cloud: String, _ place: String, _ delete: String) -> AppSpaceRow {
             AppSpaceRow(id: id, name: name, displayName: nil, provider: "relay", spacesdVersion: "0.4.0", features: [], addedAt: nil,
                         os: .linux, osName: nil, osPrettyName: nil, image: nil, imageDigest: nil, kind: nil, arch: nil,
-                        reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
-                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil)
+                        hidden: false, reachable: true, error: nil, host: nil, hostName: nil, power: nil, powerState: nil,
+                        cloud: cloud, cloudPlace: place, cloudDelete: delete, stopReason: nil, sharing: nil, parent: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             cloudRow("relay:cloud-0000000000000a01", "research-box", "aws", "AWS \u{b7} us-west-2", "here"),
@@ -1233,7 +1236,7 @@ struct ViewModelTests {
         #expect(detail.confirm.removeLabel == "Remove from List")
         let other = model.detail(theirs).confirm
         #expect(!other.confirmEnabled)
-        #expect(other.disabledReason == "Created on another device: delete it there, or remove it from this list.")
+        #expect(other.disabledReason == "Created on another machine: delete it there, or remove it from this list.")
 
         model.delete(mine)
         model.delete(theirs, removeOnly: true)
@@ -1273,11 +1276,8 @@ struct ViewModelTests {
         #expect(row("direct:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help.code == "spaces.power.suspend")
-        // Share before power (Sharing is on by default); none with Sharing turned off.
+        // Share before power.
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
-        model.chooseExperiment(row: "experiment:sharing", option: "off")
-        #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .power, .delete, .open])
-        model.chooseExperiment(row: "experiment:sharing", option: "on")
 
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.
@@ -1389,7 +1389,7 @@ struct ViewModelTests {
         await w.submitAddress { _, _, _ in throw TimeoutError.timedOut }
         #expect(w.view.address.error != nil)
         w.send(.addressFailed(error: "status: Unauthenticated"))
-        #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
+        #expect(w.view.address.error?.hasPrefix("This Space didn\u{2019}t accept the access token") == true)
     }
 
     func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }

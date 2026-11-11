@@ -35,6 +35,12 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String
     /// Disconnect: both undone. JSON `{outcomes, removed_sign_ins}`.
     func disconnectJson(agents: [String], signIn: Bool) async throws -> String
+    /// Disconnect of some parts only (an app's page's switches).
+    func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String
+    /// An agent's device-code sign-in made for Cua (Codex): JSON `{id, url, code}`.
+    func deviceSignInStartJson(agent: String) async throws -> String
+    /// Waits for it to be approved and saves it in Keyvault: JSON as Connect's `sign_in`.
+    func deviceSignInWaitJson(id: String) async throws -> String
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
@@ -61,8 +67,18 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return out.map { appAgentSetupOutcome(outcome: $0) }
     }
 
+    /// With the Cua Driver this app carries ([`EmbeddedDriver`]), the
+    /// agents' `cua-driver` entry runs its embedded proxy, so the driver
+    /// uses Cua Spaces' permissions and no separate Cua Driver app is
+    /// installed. A bare build sets up the installed Cua Driver instead.
     public func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
-        try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
+        if let driver = EmbeddedDriver.current() {
+            var out = try await inner.installSkills(agents: agents, skills: ["cua-driver"], force: false)
+            let server = AgentMcpServer(name: driver.serverName, command: driver.binary, args: driver.mcpArguments, env: [:])
+            out += try await inner.configureMcp(agents: agents, server: server)
+            return out.map { appAgentSetupOutcome(outcome: $0) }
+        }
+        return try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
             .map { appAgentSetupOutcome(outcome: $0) }
     }
 
@@ -83,6 +99,18 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
 
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await inner.disconnectJson(agents: agents, signIn: signIn)
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        try await inner.disconnectPartsJson(agents: agents, skills: skills, mcp: mcp, signIn: signIn)
+    }
+
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        try await inner.deviceSignInStartJson(agent: agent)
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        try await inner.deviceSignInWaitJson(id: id)
     }
 }
 
@@ -186,6 +214,22 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         _ = try await remove(agents: agents)
         return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    public func disconnectPartsJson(agents: [String], skills: Bool, mcp: Bool, signIn: Bool) async throws -> String {
+        calls.append("disconnect-parts:\(agents.joined(separator: ",")):\(skills):\(mcp)")
+        return #"{"outcomes":[],"removed_sign_ins":[]}"#
+    }
+
+    /// Codex's device code, approved at once (no browser in fixtures).
+    public func deviceSignInStartJson(agent: String) async throws -> String {
+        calls.append("device-start:\(agent)")
+        return #"{"id":"\#(agent)-1","url":"https://auth.openai.com/codex/device","code":"ABCD-12345"}"#
+    }
+
+    public func deviceSignInWaitJson(id: String) async throws -> String {
+        calls.append("device-wait:\(id)")
+        return #"{"imported":{"source":"codex","env":"CODEX_AUTH_JSON","label":"ChatGPT sign-in for Codex","expires_ms":null,"added_ms":1},"refused":null,"line":null}"#
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
@@ -400,8 +444,9 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     public func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
 
     public func beginSignIn(code: Bool) async throws -> SignInAttempt {
-        // The browser's sign-in page says where to go back to (the SDK reads it).
-        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
+        // The browser's sign-in page says where to go back to: the SDK reads
+        // CUA_AUTH_RETURN_TO, which `TargetEnvironment.pin()` sets once at launch
+        // (changing the environment from here races other threads reading it).
         var attempt = try await auth.beginLogin(flow: code ? "device" : nil)
         var opened = await Self.open(attempt.url())
         // No browser opened: the loopback redirect would never come back,

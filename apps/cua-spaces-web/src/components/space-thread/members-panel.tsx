@@ -4,18 +4,23 @@
 import { ChevronRightIcon, PanelRightCloseIcon, PanelRightOpenIcon, PictureInPicture2Icon, PlusIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import type { AgentRights, SpaceFact, StreamRow } from "@/bridge";
+import type { AgentRight, AgentRights, SpaceFact, StreamRow } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useSpaceLayoutStore } from "@/stores/space-layout";
+
+import { SectionHeading } from "./section-heading";
 
 import { MemberAvatar } from "./avatar";
+import { FailureDetails } from "./failure-note";
 import { AiTag, OwnerSuffix } from "./identity";
+import { ProfileTrigger } from "./profile-card";
 import { RAIL_WINDOWS, railStreams } from "./rail";
 import { holderChoice, holdersLabel, RIGHT_ROWS, type HolderChoice } from "./rights";
-import type { Roster, RosterAgent } from "./roster";
+import type { Roster, RosterAgent, RosterPerson } from "./roster";
 
 /** Who is here right now (P2: relay presence and session states). Without
  * it no dot is drawn: P1 never guesses. */
@@ -30,28 +35,30 @@ export function MembersPanel({
   roster,
   presence,
   facts,
+  extra,
   onMore,
   windows,
   desktop,
   selected,
   onSelect,
+  streamHidden = false,
+  onToggleStream,
   onStream,
   folded,
   onFold,
-  onSetRights,
-  onRemoveAgent,
   onAddAgent,
+  childSpaces,
 }: {
   roster: Roster;
+  /** The Space's child Spaces section (absent when it has none). */
+  childSpaces?: ReactNode;
   /** Opens Add an agent (absent for guests). */
   onAddAgent?: () => void;
-  /** Removes an agent member (absent: the host can't); shown only to who may. */
-  onRemoveAgent?: (name: string) => Promise<void>;
-  /** Changes an agent's rights; absent when you can't (only the owner and admins can). */
-  onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
   presence?: MemberPresence;
   /** The first few of the core's facts; More opens the rest. */
   facts: SpaceFact[];
+  /** Rows after the facts, before More. */
+  extra?: ReactNode;
   onMore: () => void;
   /** The Space's windows (the core's Stream rows without the desktop); the first few show here. */
   windows: StreamRow[];
@@ -61,12 +68,16 @@ export function MembersPanel({
   selected?: string | null;
   /** Shows that row in the main view. */
   onSelect?: (row: StreamRow) => void;
+  /** The stream view is hidden (only the thread shows): the selected row looks unselected. */
+  streamHidden?: boolean;
+  /** Hides the stream view, or shows it again: the selected row is the toggle. */
+  onToggleStream?: () => void;
   /** Opens that row in its own window (picture in picture where the host has it). */
   onStream: (row: StreamRow) => void;
   folded: boolean;
   onFold: (folded: boolean) => void;
 }) {
-  const [opened, setOpened] = useState<string | null>(null);
+  const shut = useSpaceLayoutStore((st) => st.folded);
   if (folded) {
     return (
       <aside data-members-panel="folded" className="flex w-12 shrink-0 flex-col items-center gap-2.5 bg-chrome py-3">
@@ -81,7 +92,16 @@ export function MembersPanel({
         {roster.agents.map((a) => (
           <Tooltip key={a.id} content={a.caption ? `${a.label}: ${a.caption}` : a.label} side="left">
             <span>
-              <MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />
+              <MemberAvatar
+                kind="agent"
+                name={a.name}
+                harness={a.harness}
+                identity={a.identity}
+                surface="chrome"
+                size={24}
+                dim={a.dim}
+                presence={presence?.[a.id] ?? null}
+              />
             </span>
           </Tooltip>
         ))}
@@ -90,8 +110,10 @@ export function MembersPanel({
   }
   return (
     <aside data-members-panel="" className="flex w-72 shrink-0 flex-col bg-chrome">
-      <div className="flex h-10 items-center justify-between pr-2 pl-5">
-        <h2 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">In this Space</h2>
+      <div className="flex h-8 items-center justify-between pr-2 hover:bg-accent">
+        <SectionHeading id="people" folded={shut.people} bodyId="section-people" inRow>
+          In this Space
+        </SectionHeading>
         <span className="flex items-center">
           {onAddAgent ? (
             <Tooltip content="Add an agent" side="left">
@@ -100,7 +122,7 @@ export function MembersPanel({
                 aria-label="Add an agent"
                 data-add-agent-open=""
                 onClick={onAddAgent}
-                className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
               >
                 <PlusIcon className="size-4" />
               </button>
@@ -109,112 +131,154 @@ export function MembersPanel({
           <FoldButton folded={false} onFold={onFold} />
         </span>
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
-        {roster.people.map((p) => (
-          <Row key={p.id} member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
-        ))}
-        {roster.agents.map((a) => (
-          <Row
-            key={a.id}
-            member={a.id}
-            mark={<MemberAvatar kind="agent" name={a.name} harness={a.harness} identity={a.identity} surface="chrome" size={24} dim={a.dim} presence={presence?.[a.id] ?? null} />}
-            label={
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate">{a.label}</span>
-                <AiTag />
-                {a.collides && a.identity ? <OwnerSuffix identity={a.identity} /> : null}
-              </span>
-            }
-            caption={a.caption}
-            dim={a.dim}
-            status={a.status}
-            open={opened === a.id}
-            onToggle={() => setOpened(opened === a.id ? null : a.id)}
-          >
-            {opened === a.id ? <AgentRightsRows agent={a} onSetRights={onSetRights} onRemove={onRemoveAgent && roster.canRemove(a) ? () => onRemoveAgent(a.name) : undefined} /> : null}
-          </Row>
-        ))}
-      </ul>
+      {shut.people ? null : (
+        <ul id="section-people" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
+          {roster.people.map((p) => (
+            <ProfileRow key={p.id} person={p}>
+              <Row
+                member={p.id}
+                mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />}
+                label={p.label}
+                caption={p.me ? "You" : null}
+              />
+            </ProfileRow>
+          ))}
+          {roster.agents.map((a) => (
+            <ProfileRow key={a.id} agent={a} below={a.failure ? <FailureDetails message={a.failure.message} /> : undefined}>
+              <Row
+                member={a.id}
+                mark={
+                  <MemberAvatar
+                    kind="agent"
+                    name={a.name}
+                    harness={a.harness}
+                    identity={a.identity}
+                    surface="chrome"
+                    size={24}
+                    dim={a.dim}
+                    presence={presence?.[a.id] ?? null}
+                  />
+                }
+                label={
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{a.label}</span>
+                    <AiTag />
+                    {a.collides && a.identity ? <OwnerSuffix identity={a.identity} /> : null}
+                  </span>
+                }
+                caption={a.caption}
+                dim={a.dim}
+                status={a.status}
+                chevron
+              />
+            </ProfileRow>
+          ))}
+        </ul>
+      )}
+      {childSpaces}
       {windows.length || desktop ? (
-        <section className="px-3 pt-2 pb-2" data-call-stream="">
-          <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Stream</h2>
-          <ul>
-            {[...(desktop ? [desktop] : []), ...railStreams(windows, selected ?? null)].map((w) => {
-              const pip = w.actions.find((a) => a.id === "pip");
-              const isDesktop = w.kind === "desktop";
-              const current = isDesktop ? !selected || selected === w.id : selected === w.id;
-              const name = isDesktop ? "Desktop" : (appOf(w) ?? w.label);
-              return (
-                <li key={w.id} className="group/stream relative">
-                  <button
-                    type="button"
-                    {...(isDesktop ? { "data-stream-desktop": "" } : { "data-stream-window": w.id })}
-                    aria-current={current ? "true" : undefined}
-                    title={w.help}
-                    onClick={() => (onSelect ? onSelect(w) : onStream(w))}
-                    className={cn(
-                      "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
-                      current && "bg-accent font-medium",
-                    )}
-                  >
-                    <WindowMark row={w} />
-                    <span className="min-w-0 flex-1 truncate">
-                      <span>{name}</span>
-                      {!isDesktop && appOf(w) && w.label && w.label !== appOf(w) ? <span className="ml-1.5 font-normal text-muted-foreground">{w.label}</span> : null}
-                    </span>
-                  </button>
-                  {pip ? (
-                    <Tooltip content={pip.active ? pip.help : "Open in its own window"}>
+        <section className={cn("px-3", !shut.stream && "pb-2")} data-call-stream="">
+          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className={cn("-mx-3", !shut.stream && "mb-1")}>
+            Stream
+          </SectionHeading>
+          {shut.stream ? null : (
+            <>
+              <ul id="section-stream">
+                {[...(desktop ? [desktop] : []), ...railStreams(windows, selected ?? null)].map((w) => {
+                  const pip = w.actions.find((a) => a.id === "pip");
+                  const isDesktop = w.kind === "desktop";
+                  // The row the stream shows; while the stream is hidden it looks unselected, so the next click obviously shows it.
+                  const atRow = isDesktop ? !selected || selected === w.id : selected === w.id;
+                  const current = atRow && !streamHidden;
+                  const toggles = atRow && Boolean(onToggleStream);
+                  const name = isDesktop ? "Desktop" : (appOf(w) ?? w.label);
+                  return (
+                    <li key={w.id} className="group/stream relative">
                       <button
                         type="button"
-                        data-stream-popout={w.id}
-                        aria-pressed={pip.active}
-                        aria-label={pip.active ? pip.help : `Open ${name} in its own window`}
-                        onClick={() => onStream(w)}
+                        {...(isDesktop ? { "data-stream-desktop": "" } : { "data-stream-window": w.id })}
+                        aria-current={current ? "true" : undefined}
+                        title={toggles ? (streamHidden ? "Show stream" : "Hide stream") : w.help}
+                        onClick={() => (toggles ? onToggleStream!() : onSelect ? onSelect(w) : onStream(w))}
                         className={cn(
-                          "absolute top-1 right-1 inline-flex size-6 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60",
-                          pip.active ? "text-brand-strong opacity-100" : "opacity-0 group-hover/stream:opacity-100",
+                          "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
+                          current && "bg-accent font-medium",
                         )}
                       >
-                        <PictureInPicture2Icon className="size-3.5" />
+                        <WindowMark row={w} />
+                        <span className="min-w-0 flex-1 truncate">
+                          <span>{name}</span>
+                          {/* A window another Space shows here says which Space it lives in; its own title is in the tooltip. */}
+                          {w.origin ? (
+                            <span data-stream-origin={w.origin.spaceId} className="ml-1.5 font-normal text-muted-foreground">
+                              {w.origin.name}
+                            </span>
+                          ) : !isDesktop && appOf(w) && w.label && w.label !== appOf(w) ? (
+                            <span className="ml-1.5 font-normal text-muted-foreground">{w.label}</span>
+                          ) : null}
+                        </span>
                       </button>
-                    </Tooltip>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-          {windows.length > RAIL_WINDOWS ? (
-            <button
-              type="button"
-              data-stream-show-all=""
-              onClick={onMore}
-              className="mt-0.5 ml-2 cursor-default text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
-            >
-              Show all {windows.length}
-            </button>
-          ) : null}
+                      {pip ? (
+                        <Tooltip content={pip.active ? pip.help : "Open in its own window"}>
+                          <button
+                            type="button"
+                            data-stream-popout={w.id}
+                            aria-pressed={pip.active}
+                            aria-label={pip.active ? pip.help : `Open ${name} in its own window`}
+                            onClick={() => onStream(w)}
+                            className={cn(
+                              "absolute top-1 right-1 inline-flex size-6 cursor-default items-center justify-center rounded-lg bg-accent text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60",
+                              pip.active ? "bg-chrome text-brand-strong opacity-100 group-hover/stream:bg-accent" : "opacity-0 group-hover/stream:opacity-100",
+                            )}
+                          >
+                            <PictureInPicture2Icon className="size-3.5" />
+                          </button>
+                        </Tooltip>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+              {windows.length > RAIL_WINDOWS ? (
+                <button
+                  type="button"
+                  data-stream-show-all=""
+                  onClick={onMore}
+                  className="mt-0.5 ml-2 cursor-default text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
+                >
+                  Show all {windows.length}
+                </button>
+              ) : null}
+            </>
+          )}
         </section>
       ) : null}
-      <section className="px-3 pt-2 pb-3" data-call-details="">
-        <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Details</h2>
-        {facts.map((f) => (
-          <div key={f.label} data-rail-fact={f.label} className="flex h-8 items-center justify-between gap-4 px-2 text-[13px]">
-            <span className="shrink-0 text-muted-foreground">{f.label}</span>
-            <span data-rail-fact-value="" className="min-w-0 truncate text-right" title={f.help ?? f.value}>
-              {f.value}
-            </span>
+      <section className={cn("px-3", !shut.details && "pb-3")} data-call-details="">
+        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className={cn("-mx-3", !shut.details && "mb-1")}>
+          Details
+        </SectionHeading>
+        {shut.details ? null : (
+          <div id="section-details">
+            {facts.map((f) => (
+              <div key={f.label} data-rail-fact={f.label} className="flex h-8 items-center justify-between gap-4 px-2 text-[13px]">
+                <span className="shrink-0 text-muted-foreground">{f.label}</span>
+                <span data-rail-fact-value="" className="min-w-0 truncate text-right" title={f.help ?? f.value}>
+                  {f.value}
+                </span>
+              </div>
+            ))}
+            {extra}
+            <button
+              type="button"
+              data-call-more=""
+              onClick={onMore}
+              className="flex h-8 w-full cursor-default items-center justify-between rounded-lg px-2 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+            >
+              More
+              <ChevronRightIcon className="size-3.5" />
+            </button>
           </div>
-        ))}
-        <button
-          type="button"
-          data-call-more=""
-          onClick={onMore}
-          className="flex h-8 w-full cursor-default items-center justify-between rounded-lg px-2 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-        >
-          More
-          <ChevronRightIcon className="size-3.5" />
-        </button>
+        )}
       </section>
     </aside>
   );
@@ -230,7 +294,13 @@ export const osOfIcon = (id: string): "macos" | "windows" | "linux" => (/mac/i.t
 function WindowMark({ row }: { row: StreamRow }) {
   return (
     <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-[5px] bg-muted text-[10px] font-semibold text-muted-foreground">
-      {row.icon.kind === "app" ? (row.icon.appName || row.icon.appId).trim().charAt(0).toUpperCase() || "?" : <OsIcon os={osOfIcon(row.icon.id)} className="size-3" />}
+      {row.origin ? (
+        <OsIcon os={osOfIcon(row.origin.osIcon)} className="size-3" />
+      ) : row.icon.kind === "app" ? (
+        (row.icon.appName || row.icon.appId).trim().charAt(0).toUpperCase() || "?"
+      ) : (
+        <OsIcon os={osOfIcon(row.icon.id)} className="size-3" />
+      )}
     </span>
   );
 }
@@ -245,6 +315,7 @@ function Row({
   open,
   onToggle,
   children,
+  chevron,
 }: {
   member: string;
   mark: ReactNode;
@@ -256,21 +327,29 @@ function Row({
   open?: boolean;
   onToggle?: () => void;
   children?: ReactNode;
+  /** Opens a card (the row is inside its trigger). */
+  chevron?: boolean;
 }) {
   const body = (
     <>
       {mark}
       <span className="min-w-0 flex-1">
         <span className={dim ? "block truncate text-[13px] text-muted-foreground" : "block truncate text-[13px]"}>{label}</span>
-        {caption ? <span className="block truncate text-[11px] text-muted-foreground">{caption}</span> : null}
+        {/* A failed agent says one word here ("Stopped", "Not connected"); its error is under Show details. */}
+        {caption ? (
+          <span data-member-caption="" className="block truncate text-[11px] text-muted-foreground">
+            {caption}
+          </span>
+        ) : null}
       </span>
     </>
   );
   if (!onToggle) {
     return (
-      <li data-member={member} data-member-status={status} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 py-1.5">
+      <span data-member={member} data-member-status={status} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-accent">
         {body}
-      </li>
+        {chevron ? <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+      </span>
     );
   }
   return (
@@ -290,6 +369,48 @@ function Row({
   );
 }
 
+/** A row in "In this space" that opens its person's or agent's card. */
+function ProfileRow({
+  person,
+  agent,
+  children,
+  below,
+}: {
+  person?: RosterPerson;
+  agent?: RosterAgent;
+  children: ReactNode;
+  /** Under the row, outside its card trigger (a failed agent's Show details). */ below?: ReactNode;
+}) {
+  return (
+    <li>
+      <ProfileTrigger person={person} agent={agent} side="left" className="block w-full rounded-lg data-[selected]:bg-accent" rowKey={person?.id}>
+        {children}
+      </ProfileTrigger>
+      {below ? (
+        <div data-member-details="" className="flex flex-wrap items-center gap-1 pb-1 pl-[44px]">
+          {below}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/** Who can task, stop and approve: the selects alone, for the agent card's Details. */
+export function RightsEditor({
+  agent,
+  onSetRights,
+  people,
+  labels,
+}: {
+  agent: RosterAgent;
+  onSetRights: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  people?: readonly RosterPerson[];
+  /** The rows' words, when the page has its own ("Can give it tasks"). */
+  labels?: Partial<Record<AgentRight, string>>;
+}) {
+  return <AgentRightsRows agent={agent} onSetRights={onSetRights} people={people} labels={labels} bare />;
+}
+
 const CHOICES: readonly { value: HolderChoice; label: string }[] = [
   { value: "owner", label: "Owner" },
   { value: "admins", label: "Admins" },
@@ -298,7 +419,22 @@ const CHOICES: readonly { value: HolderChoice; label: string }[] = [
 
 /** Who can task, stop and approve an agent: three plain rows under its name.
  * The owner and admins change them; everyone else reads them. */
-function AgentRightsRows({ agent, onSetRights, onRemove }: { agent: RosterAgent; onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>; onRemove?: () => Promise<void> }) {
+function AgentRightsRows({
+  agent,
+  onSetRights,
+  onRemove,
+  people = [],
+  labels,
+  bare,
+}: {
+  agent: RosterAgent;
+  onSetRights?: (name: string, rights: Partial<AgentRights>) => Promise<void>;
+  onRemove?: () => Promise<void>;
+  /** Specific people a right can go to (each its own choice). */
+  people?: readonly RosterPerson[];
+  labels?: Partial<Record<AgentRight, string>>;
+  bare?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const remove = () => {
     if (!onRemove) return;
@@ -312,27 +448,41 @@ function AgentRightsRows({ agent, onSetRights, onRemove }: { agent: RosterAgent;
     );
   };
   return (
-    <div data-agent-rights={agent.name} className="mb-1 ml-9 divide-y divide-border/60 border-y border-border/60">
-      {RIGHT_ROWS.map(({ right, label }) => {
+    <div data-agent-rights={agent.name} className={bare ? "" : "mb-1 ml-9 divide-y divide-border/60 border-y border-border/60"}>
+      {RIGHT_ROWS.map(({ right, label: short }) => {
+        const label = labels?.[right] ?? short;
         const value = agent.rights[right];
         const choice = holderChoice(value);
+        // One person alone, as their name; several, as a count.
+        const named = Array.isArray(value) ? (value.length === 1 ? (people.find((p) => p.id === value[0])?.label ?? null) : null) : null;
+        const solo = Array.isArray(value) && value.length === 1 && named ? `person:${value[0]}` : null;
+        const options: { value: string; label: string }[] = [
+          ...CHOICES,
+          ...people.map((p) => ({ value: `person:${p.id}`, label: p.me ? "Only you" : `Only ${p.label}` })),
+          ...(choice === "named" && !solo ? [{ value: "named", label: holdersLabel(value) }] : []),
+        ];
+        const current = solo ?? choice;
         return (
           <div key={right} data-agent-right={right} className="flex h-8 items-center justify-between gap-3 pr-1 pl-1 text-[12.5px]">
             <span className="text-muted-foreground">{label}</span>
             {onSetRights ? (
-              <Select<HolderChoice>
+              <Select<string>
                 aria-label={`${label}: ${agent.label}`}
-                value={choice}
+                value={current}
                 disabled={busy}
-                options={choice === "named" ? [...CHOICES, { value: "named", label: holdersLabel(value) }] : CHOICES}
+                options={options}
                 onValueChange={(v) => {
-                  if (v === "named" || v === choice) return;
+                  if (v === "named" || v === current) return;
+                  const next = v.startsWith("person:") ? [v.slice("person:".length)] : v;
                   setBusy(true);
-                  onSetRights(agent.name, { [right]: v }).then(
+                  onSetRights(agent.name, { [right]: next }).then(
                     () => setBusy(false),
                     (e: unknown) => {
                       setBusy(false);
-                      toast(`Couldn't change who ${label.toLowerCase()} ${agent.label}`, { description: e instanceof Error ? e.message : String(e), type: "error" });
+                      toast(`Couldn't change who ${label.toLowerCase()} ${agent.label}`, {
+                        description: e instanceof Error ? e.message : String(e),
+                        type: "error",
+                      });
                     },
                   );
                 }}
@@ -372,7 +522,7 @@ function FoldButton({ folded, onFold }: { folded: boolean; onFold: (folded: bool
         aria-label={label}
         data-members-fold=""
         onClick={() => onFold(!folded)}
-        className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         {folded ? <PanelRightOpenIcon className="size-4" /> : <PanelRightCloseIcon className="size-4" />}
       </button>

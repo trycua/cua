@@ -26,7 +26,7 @@ const host: TestHost = {
 };
 
 describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real routes, wasm core)", () => {
-  it("says what the time away from this computer is, in plain words", async () => {
+  it("says what the time away from this machine is, in plain words", async () => {
     const { router } = await mountApp("/settings", host);
     await router.load();
     const usage = await waitFor(() => {
@@ -48,7 +48,7 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       return el as HTMLElement;
     });
     expect(row.textContent).toContain("Use your own connection server");
-    expect(row.textContent).toContain("For teams that run their own.");
+    expect(row.textContent).not.toContain("For teams that run their own.");
     expect(document.body.textContent).not.toMatch(/relay/i);
     fireEvent.click(row.querySelector("button")!);
     const form = await waitFor(() => {
@@ -60,5 +60,53 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
     expect(form.querySelector("[data-host-lede]")?.textContent).toMatch(/^For self-hosting teams/);
     expect(form.querySelector('[data-host-field="relay"]')).toBeTruthy();
     expect(form.querySelector('[data-host-field="direct"]')).toBeTruthy();
+  });
+
+  const LABS_ROWS = [
+    ["experiment:ci_runners", /CI runners/],
+    ["experiment:tcp_shares", /Public TCP shares/],
+    ["experiment:mobile", /Phone app/],
+  ] as const;
+
+  it("shows a switch in Labs for every experiment, off, with its line, before any is on", async () => {
+    const { router } = await mountApp("/settings/advanced", host);
+    await router.load();
+    await waitFor(() => expect(document.querySelector("[data-self-hosting]")).toBeTruthy());
+    for (const [id, title] of LABS_ROWS) {
+      const row = await waitFor(() => {
+        const el = document.querySelector(`[data-setting-row="${id}"]`);
+        expect(el, id).toBeTruthy();
+        return el as HTMLElement;
+      });
+      expect(row.textContent).toMatch(title);
+      expect(row.querySelector("[role=switch]")?.getAttribute("aria-checked"), id).toBe("false");
+      expect(row.textContent!.length, id).toBeGreaterThan(title.source.length + 20);
+      expect(row.textContent, id).not.toContain("\u00b7");
+    }
+  });
+
+  it("has no Labs rows for Secure Spaces, Ask first, Child Spaces and Warm start, which are always on", async () => {
+    const { router } = await mountApp("/settings/advanced", host);
+    await router.load();
+    await waitFor(() => expect(document.querySelector("[data-self-hosting]")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector('[data-setting-row="experiment:cua_volume"]')).toBeTruthy());
+    for (const id of ["experiment:secure_spaces", "experiment:ask_first", "experiment:child_spaces", "experiment:warm_pools"]) {
+      expect(document.querySelector(`[data-setting-row="${id}"]`), id).toBeNull();
+    }
+    const labs = document.body.textContent ?? "";
+    for (const title of ["Secure Spaces", "Ask first", "Child Spaces", "Warm start"]) expect(labs, title).not.toContain(title);
+  });
+
+  it("turns an experiment on and back off from its Labs switch", async () => {
+    const { router } = await mountApp("/settings/advanced", host);
+    await router.load();
+    const sw = () => document.querySelector('[data-setting-row="experiment:tcp_shares"] [role=switch]') as HTMLElement;
+    await waitFor(() => expect(sw()).toBeTruthy());
+    fireEvent.click(sw());
+    await waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
+    fireEvent.click(sw());
+    await waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("false"));
+    // The row stays while it is off.
+    expect(document.querySelector('[data-setting-row="experiment:tcp_shares"]')).toBeTruthy();
   });
 });

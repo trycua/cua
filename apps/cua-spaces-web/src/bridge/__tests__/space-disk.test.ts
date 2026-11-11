@@ -9,12 +9,12 @@ import { spaceDiskBytes, type ResourcesSnapshot } from "@/bridge";
 import { demoResources } from "@/bridge/adapters/demo/resources";
 import { demoSpaceRows } from "@/bridge/adapters/demo-data";
 
-const GB = 1_000_000_000;
+const GB = 1024 ** 3;
 
 describe("spaceDiskBytes", () => {
   const snap = demoResources(demoSpaceRows(0), 0);
 
-  it("answers this Mac's Spaces and yours on other computers by this app's id, stopped ones too", () => {
+  it("answers this Mac's Spaces and yours on other machines by this app's id, stopped ones too", () => {
     expect(spaceDiskBytes(snap, "local:design-review")).toBe(19 * GB);
     expect(spaceDiskBytes(snap, "local:agent-sandbox")).toBe(6 * GB);
     expect(spaceDiskBytes(snap, "relay:mac-mini/release-checks")).toBe(21 * GB);

@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua Spaces gives your agents full desktops on your Mac and on machines you own. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>
+  <p align="center"><strong>Combine your existing computers into one supercomputer.</strong><br>Cua Spaces: your computers, shared by your team and its agents. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>
 
   <p align="center"><strong><a href="https://spaces.cua.ai">Get Cua Spaces</a></strong></p>
 
@@ -29,7 +29,7 @@
     <tr>
       <td colspan="3" align="center" valign="top">
         <a href="#cua-spaces">
-          <img src="img/card-cua-spaces-wide.webp" alt="Cua Spaces: full desktops for your agents. macOS and Linux Spaces on machines you own." width="100%">
+          <img src="img/card-cua-spaces-wide.webp" alt="Cua Spaces: full desktops for your agents. macOS and Linux Spaces on computers you own." width="100%">
         </a>
       </td>
     </tr>
@@ -66,7 +66,9 @@ Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua
 
 ## Cua Spaces
 
-Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
+**Combine your existing computers into one supercomputer.** Your computers, shared by your team and its agents.
+
+Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other computers you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
 
 - **Teleport.** Move a signed-in app, such as Chrome or Slack, into a Space and it opens there still signed in. Your sessions stay in the Cua Keyvault, encrypted on your Mac, and reach a Space only after you approve.
 - **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.
@@ -134,7 +136,7 @@ Create and manage local macOS and Linux VMs on Apple Silicon using Apple's Virtu
 
 ## Cua SDK and CLI
 
-One SDK and one `cua` command for local VMs and containers, and for any machine that runs [cua-spacesd](libs/cua-spacesd/README.md).
+One SDK and one `cua` command for local VMs and containers, and for any computer that runs [cua-spacesd](libs/cua-spacesd/README.md).
 
 **macOS / Linux**
 
@@ -168,7 +170,7 @@ async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
 
 - **SDK:** the same API in Python (`pip install cua`), TypeScript (`@trycua/cua`) and Rust (`cua-sdk`), running embedded in your process or through a shared `cua daemon`. Swift and Kotlin bindings are not yet released.
 - **Sandboxes need no agent inside.** Readiness comes from the runtime and optional port probes. Images that ship cua-spacesd (port 3211) add processes, files, screenshots, input through cua-driver, and low-latency video and audio streaming. There is no agent layer in the SDK either: drive sandboxes from your own harness ([guide](https://cua.ai/docs/cua-sdk/guides/own-harness)).
-- **Your own machines.** `cua host setup` makes this machine reachable through the cua.ai relay with no port forwarding.
+- **Your own computers.** `cua host setup` makes this computer reachable through the cua.ai relay with no port forwarding.
 
 **[SDK README](libs/cua/README.md)** | **[Quickstart](https://cua.ai/docs/cua-sdk/quickstart)** | **[CLI reference](https://cua.ai/docs/cua-cli/reference/cli)** | **[Sandbox SDK reference](https://cua.ai/docs/cua-sdk/reference/sandbox)**
 
@@ -220,19 +222,24 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 | [Cua Spaces core](apps/cua-spaces/README.md)            | The shared Spaces app core, and the Tauri app for Linux and Windows                  |
 | [cua-bench](libs/cua-bench/README.md)                   | Benchmarks and RL environments for computer-use                                      |
 | [lume](https://cua.ai/docs/lume/reference/cli) | macOS/Linux VM management on Apple Silicon                                          |
-| [lumier](libs/lumier/README.md)                         | Docker-compatible interface for Lume VMs                                             |
 
 ### Deprecated packages
 
-Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
+Cua no longer maintains these. They will not receive updates or fixes, their CI/CD is switched off, and existing releases and image tags stay on npm, PyPI and Docker Hub. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
 
 | Package                                                  | Registry | Use instead                                                                                                                                      |
 | -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [cuabot](libs/cuabot/README.md)                          | npm      | **Do not run it:** it has known security issues. Stop it and uninstall it ([how](libs/cuabot/README.md)), then use Cua Driver or the `cua` CLI. |
-| `cua-computer`                                           | PyPI     | The [`cua` SDK](#cua-sdk-and-cli) for sandboxes, [Cua Driver](#cua-driver) for the machine you are on                                           |
+| `cua-computer`                                           | PyPI     | The [`cua` SDK](#cua-sdk-and-cli) for sandboxes, [Cua Driver](#cua-driver) for the computer you are on                                           |
 | `cua-computer-server`                                    | PyPI     | Images that ship [cua-spacesd](libs/cua-spacesd/README.md), or [Cua Driver](#cua-driver)                                                         |
 | [cua-agent](libs/python/agent/README.md)                 | PyPI     | A coding agent with the [Cua Driver MCP](https://cua.ai/docs/cua-driver/guides/connect-your-agent), or `sandbox.agents()` in the `cua` SDK       |
 | [cua-som](libs/python/som/README.md)                     | PyPI     | [Cua Driver](#cua-driver)                                                                                                                        |
+| [cua-core](libs/python/core/README.md) | PyPI | [Cua Driver](#cua-driver) or the [`cua` SDK](#cua-sdk-and-cli); [cua-bench](libs/cua-bench/README.md) still uses the last release |
+| [cua-bench-ui](libs/python/bench-ui/README.md) | PyPI | Nothing: only [cua-bench](libs/cua-bench/README.md) uses it, at its last release |
+| [cua-sandbox-apps](libs/python/cua-sandbox-apps/README.md) | PyPI | The [`cua` SDK](#cua-sdk-and-cli) |
+| [@trycua/core](libs/typescript/core/README.md), `@trycua/playground` | npm | [`@trycua/cua`](libs/cua/typescript/README.md) |
+| [lumier](libs/lumier/README.md) | Docker Hub | [Lume](https://cua.ai/docs/lume/reference/cli), or a sandbox from the [`cua` SDK](#cua-sdk-and-cli) |
+| [xfce](libs/xfce/README.md), [xfce-cua](libs/xfce-cua/README.md), [kasm](libs/kasm/README.md), [qemu-docker](libs/qemu-docker/README.md) images | Docker Hub | The images in [libs/images](libs/images/README.md) (`ghcr.io/trycua/linux`, `windows`, `macos`) through the [`cua` SDK](#cua-sdk-and-cli) |
 
 ---
 
@@ -305,8 +312,8 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua).
 
-|                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |                                                         [Zephyr Cloud IO](https://github.com/ZephyrCloudIO)                                                         |
-| :-----------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> | <a href="https://github.com/ZephyrCloudIO"><img src="https://avatars.githubusercontent.com/u/144168943?s=128&v=4" alt="Zephyr Cloud IO" width="64" height="64"></a> |
+|                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> |
 
 </div>

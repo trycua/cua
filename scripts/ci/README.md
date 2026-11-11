@@ -122,7 +122,7 @@ never certify.
 | `libs/cua-driver/tests/runners/macos-lume/run-all.sh` | Logged-in, TCC-authorized Lume worker; every complete run includes the standalone-browser matrix | Canonical: macOS |
 | `scripts/ci/macos/run-rust-e2e.sh` | Called by the Lume wrapper and the hosted macOS script | Matrix implementation behind the macOS rows; refuses to run without the wrapper's unrestricted daemon |
 | `scripts/ci/run-rust-standalone-browser-e2e.sh`, `scripts/ci/windows/run-rust-standalone-browser-e2e.ps1` | `e2e-rust-standalone-browsers.yml`; the macOS Lume wrapper runs it as well | Scoped gate: installed Chrome and Edge, required for browser-facing changes |
-| `scripts/ci/linux/run-rust-e2e-wayland.sh`, `run-rust-e2e-inject.sh` | `e2e-rust-linux-wayland.yml` (`sway`, `sway-xwayland`, `cua-compositor`) | Scoped gate: native Wayland compositor lanes, kept separate from X11 |
+| `scripts/ci/linux/run-rust-e2e-wayland.sh`, `run-rust-e2e-inject.sh` | `e2e-rust-linux-wayland.yml` (`sway`, `sway-xwayland`, `cua-compositor`, `niri`) | Scoped gate: native Wayland compositor lanes, kept separate from X11 |
 | `run-rust-e2e.sh` in a native Hyprland desktop, plus the allowlisted `hyprland_*` rows | Maintainer's prepared native Hyprland desktop | Scoped gate: native Hyprland; no automated lane |
 | `scripts/ci/macos/run-hosted-rust-e2e.sh` | `e2e-rust-macos.yml` with `mode=hosted` | Supporting: supplemental hosted macOS matrix; does not replace Lume |
 | `scripts/ci/linux/run-rust-e2e-desktop.sh` | Representative GNOME or KDE maintainer desktop | Supporting: environment coverage |
@@ -258,7 +258,7 @@ with each measurement.
 | Runner                          | Session                                                            | Canonical command |
 | ------------------------------- | ------------------------------------------------------------------ | ----------------- |
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |
-| `linux/run-rust-e2e-wayland.sh` | Headless native Sway session                                       | no selector       |
+| `linux/run-rust-e2e-wayland.sh` | Headless native Sway, or nested niri with `CUA_E2E_WAYLAND_SESSION=niri` | no selector |
 | `linux/run-rust-e2e-inject.sh`  | Nested `cua-compositor` session                                    | no selector       |
 | `linux/run-rust-e2e-desktop.sh` | Existing representative Linux desktop                              | no selector       |
 | `windows/run-rust-e2e.ps1`      | Windows console/RDP user session                                   | `-RequireGui`     |
@@ -339,6 +339,32 @@ active output, and requires `get_window_state` to return
 the fixture accessibility state are external focus, workspace, and mutation
 oracles for that targeted regression.
 
+Run the niri lane with `CUA_E2E_WAYLAND_SESSION=niri` through
+`nix develop .#cua-driver-niri-e2e`. niri has no headless backend, so the
+wrapper starts a headless `cage` in a private runtime directory, sizes its
+output to 1920x1080 with `wlr-randr`, and runs niri's winit backend inside it.
+Before delegating to `run-rust-e2e.sh` it requires that niri drives only its
+`winit` output and that one niri process serves both the exported
+`WAYLAND_DISPLAY` and `NIRI_SOCKET`, and it writes `niri-preflight.json` with
+the niri and cage versions. Harness windows float, the sentinel opens
+fullscreen, animations are off, and `prefer-no-csd` keeps GTK 3 and Chromium
+frames the size niri reports, as Sway's server-side decorations do. `CUA_E2E_NIRI_SCALE` changes the output
+scale for focused fractional-scale checks; harness windows keep 940x780
+physical pixels, so at 1.5 they are 626x520 logical inside a 1280x720 output. The shell patches `wf-recorder`
+0.6.0, which otherwise binds `linux-dmabuf` version 4 that a GPU-less niri does
+not offer.
+
+Every Wayland mode unsets inherited `WAYLAND_SOCKET`, `NIRI_SOCKET`,
+`SWAYSOCK`, `I3SOCK`, `HYPRLAND_INSTANCE_SIGNATURE`,
+`DBUS_SESSION_BUS_ADDRESS`, and `AT_SPI_BUS_ADDRESS` before it starts its
+compositor, then starts its own session bus, AT-SPI bus, and Secret Service
+with keyrings under its runtime directory. It asks the AT-SPI launcher for
+dbus-daemon through `ATSPI_DBUS_IMPLEMENTATION`, because inside a systemd user
+unit a launcher built to prefer dbus-broker would activate services through
+the host's systemd user manager. at-spi2-core 2.60.1 in the Nix shells honours
+it. A launcher from another source that ignores the variable can still reach
+the host's activation, so run the wrapper from the Nix shells.
+
 Run the nested compositor wrapper through
 `nix develop .#cua-driver-inject-e2e`. This environment is experimental and
 proves only the private compositor-owned route. Use `run-rust-e2e-desktop.sh`
@@ -414,16 +440,23 @@ Use this runbook when the canary issue opens, or when users report that default 
 4. **Merge it.** The branded endpoints serve `main`. The canary runs on the push, so compare its installed version with the rollback version. To recheck the public one-liners after the endpoints refresh, dispatch `Monitor branded installer endpoints`.
 5. **Ship the fix as a new Release Please release.** Its tag run bakes the installers forward automatically once the published assets pass verification. Leave the withdrawn release and its assets in place for audit.
 
-## Cua Driver release gate before merge and nightly
+## Cua Driver desktop E2E: quick lane on PRs, full suite after merge and at release
 
-The stable tag run certifies the exact tag commit with the desktop E2E lanes. `E2E: Cua Driver release gate` (`.github/workflows/e2e-cua-driver-release-gate.yml`) runs the same lanes earlier, without publishing:
+The stable tag run certifies the exact tag commit with every desktop E2E lane (Linux, Windows, macOS hosted, standalone browsers). `E2E: Cua Driver release gate` (`.github/workflows/e2e-cua-driver-release-gate.yml`) runs the same lanes earlier, without publishing. It has two sizes:
 
-| Trigger | When | Result |
-| --- | --- | --- |
-| Nightly, 06:00 UTC | main's HEAD | A failure opens or updates one issue, "Cua Driver release gate failing on main (nightly)". The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. The first fully clean nightly closes the issue. |
-| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths (globs in `.github/scripts/cua_driver_e2e_gate_paths.py`). release-please PRs skip the lanes (the tag gate runs them on the release commit) unless labelled | The four lanes run on the PR merge commit. |
-| Other pull requests | Everything else | The lanes are skipped and `E2E gate / result` passes at once. |
+- **Quick lane (pull requests).** The core paths on each OS, on the Electron harness: the `shared` lane on Windows, Linux and hosted macOS (click, type, scroll, drag, focus, background input), plus the Linux verification-skill proof that `E2E: Rust Linux interactive` already runs on PRs. The Tauri, WebView2, WPF, WinUI3 and GTK harnesses, the capture and installer lanes and the standalone browser lanes are left to the full run. The quick lane passes `lane: shared` and `harness_filter: electron` to the Windows and Linux workflows, and `quick=true` to the hosted macOS dispatch (not a certification: its result artifact is named `rust-macos-hosted-quick-result-*`).
+- **Full suite.** Every lane, 26 to 47 minutes each. It runs after merge and at release.
+
+| Trigger | When | Size | Result |
+| --- | --- | --- | --- |
+| Push to `main` | The pushed commits touch a gated path (`.github/scripts/cua_driver_e2e_gate_paths.py`). Runs queue; a burst of merges leaves one pending run for the newest commit | full | A failure alerts (`workflow-failure-alerts.yml`, Alertmanager) and opens or updates the issue below |
+| Nightly, 06:00 UTC | main's HEAD | full | Same. The first fully clean full run closes the issue |
+| Stable tag run | The exact release commit (`cd-rust-cua-driver.yml`) | full | Blocks publishing until every lane is green |
+| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths. release-please PRs skip the lanes (the tag gate runs them on the release commit) unless labelled | quick | The quick lanes run on the PR merge commit. |
+| Other pull requests | Everything else | none | The lanes are skipped and `E2E gate / result` passes at once. |
+
+A failed full run opens or updates one issue, "Cua Driver release gate failing on main (nightly)" (the title predates the post-merge run). The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. A break the quick lane could not see, a Windows break included, is already on `main` when the full run finds it, so it is **fixed forward** with a new PR; the stable tag gate blocks a release until `main` is green again.
 
 **Retry once.** Inside each lane a failed case is rerun once (`lib/e2e-retry-once.sh`, and `Invoke-CargoTest` in the Windows runner). A pass on the retry is flaky: it is listed under "Flaky cases" in the job summary and in the tracking issue, and does not fail the gate. Two failures are a real failure. The first attempt's rows, videos and log are kept under `retried-attempts/` in the lane artifact.
 
-**Required check.** Branch protection cannot require a check by path, so the workflow always runs and `E2E gate / result` is the one check to require on `main`. It is green when the lanes are not needed. A repository admin has to add it under Settings, Branches. Until then the gate is advisory on pull requests; the label, path and release-PR triggers still run the lanes.
+**Required check.** Branch protection cannot require a check by path, so the workflow always runs and `E2E gate / result` is the one check to require on `main`. It is green when the lanes are not needed. A repository admin has to add it under Settings, Branches. Until then the gate is advisory on pull requests; the label, path and release-PR triggers still run the quick lanes.

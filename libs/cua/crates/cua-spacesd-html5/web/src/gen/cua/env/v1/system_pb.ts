@@ -797,7 +797,9 @@ export type MetricsResponse = Message<"cua.env.v1.MetricsResponse"> & {
   memoryUsedBytes: bigint;
 
   /**
-   * Total bytes of the filesystem named by `disk_path`.
+   * Total bytes of the filesystem named by `disk_path`; 0 when it has no
+   * size of its own (gVisor's root overlay reports "unlimited"), never a
+   * sentinel such as 2^63.
    *
    * @generated from field: uint64 disk_total_bytes = 7;
    */
@@ -931,7 +933,8 @@ export type CreateViewerTicketRequest = Message<"cua.env.v1.CreateViewerTicketRe
 
   /**
    * Highest session policy the viewer may open media with. Unset means
-   * `SESSION_POLICY_ALLOW_ACTIVATION` (a full interactive viewer).
+   * `SESSION_POLICY_VIEW_ONLY`: a viewer that can look and cannot touch.
+   * Input is asked for by name.
    *
    * @generated from field: cua.env.v1.SessionPolicy policy = 2;
    */

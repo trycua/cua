@@ -15,7 +15,7 @@ import { HostError, isUnsupported, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { ComputerResources, ResourcesSnapshot, SpaceResources } from "./ops/resources";
 
-export type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "./ops/resources";
+export type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "./ops/resources";
 
 export const RESOURCES_VISIBLE_MS = 10_000;
 export const RESOURCES_HIDDEN_MS = 5 * 60_000;

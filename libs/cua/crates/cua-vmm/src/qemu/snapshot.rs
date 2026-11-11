@@ -358,6 +358,7 @@ impl QemuRuntime {
             (spec.gpu.is_some(), "a GPU"),
             (!spec.extra_args.is_empty(), "extra QEMU arguments"),
             (st.install_iso.is_some(), "an installer ISO"),
+            (st.tpm, "a TPM"),
             (st.arch != Arch::host(), "an emulated architecture"),
             (accel == "tcg", "no hardware acceleration"),
         ];
@@ -502,6 +503,8 @@ impl QemuRuntime {
             ports: Default::default(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             snapshots: vec![],
             paused: false,
@@ -512,6 +515,7 @@ impl QemuRuntime {
             // identity, no workload): the Space's own run is the one its
             // policy applies to, from its restore on.
             egress: None,
+            network: None,
             netns: false,
             pasta_pid: None,
             shared_memory: false,
@@ -554,6 +558,7 @@ impl QemuRuntime {
                 // do the VMs restoring it.
                 free_page_reporting: Some(false),
                 headless: Some(super::no_desktop(&tspec)),
+                owner: None,
             };
             self.launch(&mut tpl, &tspec, boot, false).await?;
             let ep = self.endpoints_of(&tpl);
@@ -656,12 +661,7 @@ impl QemuRuntime {
                 .filter(|pid| host::pid_alive(*pid))
                 // Only the template VM itself (a pid may have been reused).
                 .filter(|pid| {
-                    std::process::Command::new("ps")
-                        .args(["-o", "command=", "-p", &pid.to_string()])
-                        .output()
-                        .is_ok_and(|o| {
-                            String::from_utf8_lossy(&o.stdout).contains(&p.display().to_string())
-                        })
+                    host::pid_command(*pid).is_some_and(|c| c.contains(&p.display().to_string()))
                 })
             {
                 host::signal(pid, "KILL");
@@ -673,10 +673,7 @@ impl QemuRuntime {
 
     /// A QMP session to `st` (which need not be a saved entry).
     pub(crate) async fn qmp_at(&self, st: &QemuState) -> Result<QmpClient> {
-        let port = st
-            .qmp_port
-            .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        QmpClient::connect(&format!("127.0.0.1:{port}")).await
+        QmpClient::connect(&super::qmp_addr(st)?).await
     }
 
     /// Makes new instance `st` a restore of golden `snap`: its disk becomes
@@ -769,6 +766,7 @@ impl QemuRuntime {
             keep_ports: false,
             free_page_reporting: Some(snap.free_page_reporting),
             headless: Some(snap.headless),
+            owner: None,
         };
         self.launch(st, spec, boot, true).await?;
         let t_launch = started.elapsed();
@@ -1001,6 +999,7 @@ impl QemuRuntime {
             // The same VM: the device set it runs with.
             free_page_reporting: Some(st.free_page_reporting),
             headless: Some(st.headless),
+            owner: None,
         };
         let moved: Result<()> = async {
             self.launch(st, &spec, boot, true).await?;
@@ -1079,6 +1078,8 @@ impl QemuRuntime {
             ports: Default::default(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             snapshots: vec![],
             paused: false,
@@ -1115,6 +1116,7 @@ impl QemuRuntime {
                 free_page_reporting: Some(snap.free_page_reporting),
                 headless: Some(snap.headless),
                 keep_ports: false,
+                owner: None,
             };
             self.launch(&mut helper, &spec, boot, false).await?;
             let mut q = self.qmp_at(&helper).await?;
@@ -1311,6 +1313,8 @@ mod tests {
             ports: Default::default(),
             vnc_display: None,
             qmp_port: None,
+            qmp_socket: None,
+            vnc_password: None,
             pid: None,
             accel: String::new(),
             ssh: None,
@@ -1330,9 +1334,12 @@ mod tests {
             ram_file: None,
             headless: false,
             bulk: false,
+            tpm: false,
             egress: None,
+            network: None,
             netns: false,
             pasta_pid: None,
+            gateway_control: None,
         }
     }
 

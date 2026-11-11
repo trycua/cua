@@ -277,6 +277,17 @@ pub struct Space {
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<SpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// Whose a Space is, as the Spaces page groups it.
@@ -553,6 +564,10 @@ pub struct SpaceRow {
     /// `aarch64`, `amd64`, `x86_64`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    #[serde(default)]
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.
@@ -590,6 +605,9 @@ pub struct SpaceRow {
     /// A relay Space: who owns it and who else has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sharing: Option<SpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// `arm64` or `amd64` for any spelling of a CPU architecture (`aarch64`,
@@ -712,7 +730,7 @@ impl Location {
         match self {
             Location::Local => os.this_machine(),
             Location::Yours => "Your cloud",
-            Location::Host => "Your computer",
+            Location::Host => "Your machine",
             Location::Auto => "Auto",
         }
     }

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig, type UserConfig } from "tsdown";
 
 // The crash-reporting DSN (a public ingest key) comes from
@@ -24,6 +25,11 @@ const shared: UserConfig = {
   target: "node24",
   sourcemap: true,
   dts: false,
+  tsconfig: "tsconfig.build.json",
+  // The web sources this shell bundles (../cua-spaces-web/src) import packages
+  // the release build installs only here: look in this project's node_modules
+  // when the importing file's own directories have none.
+  inputOptions: { resolve: { modules: ["node_modules", fileURLToPath(new URL("./node_modules", import.meta.url))] } },
   fixedExtension: true,
   // @sentry/electron stays a runtime dependency, packaged beside electron-updater.
   deps: { neverBundle: ["electron", "electron-updater", /^@sentry\//, "./main.cjs"] },

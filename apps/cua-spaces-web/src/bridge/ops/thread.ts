@@ -14,7 +14,7 @@
  * | `thread.post {spaceId, text, replyTo?, answer?, toSession?, view?}` | `thread_post` | the tool's JSON as-is | unsupported |
  * | `thread.members {spaceId}` | `agent_members` | the tool's JSON as-is | unsupported |
  * | `thread.setRights {spaceId, name, task?, control?, approve?}` | `agent_set_rights` | the tool's JSON as-is | unsupported |
- * | `thread.agentAdd {spaceId, name, harness}` | `agent_add` | the tool's JSON as-is | unsupported |
+ * | `thread.agentAdd {spaceId, name, harness, model?, standby?, brief?}` | `agent_add` | the tool's JSON as-is | unsupported |
  * | `thread.agentRemove {spaceId, name}` | `agent_remove` | the tool's JSON as-is | unsupported |
  * | `thread.joinCodeCreate {spaceId, ttlS?, canTask?, askBeforeJoin?}` | `thread_join_code_create` | the tool's JSON as-is | unsupported |
  * | `thread.joinCodeList {spaceId}` | `thread_join_code_list` | the tool's JSON as-is | unsupported |
@@ -92,6 +92,53 @@ export interface MemberEvent {
   by: MemberRef | null;
 }
 
+/** A subagent the agent started, or a child Space it made, on a system note. */
+export type ChildNote =
+  | {
+      kind: "subagent";
+      /** The subagent's id: the notes of one subagent fold into one row. */
+      id: string;
+      agent: string;
+      title: string;
+      state: "running" | "done" | "failed";
+      steps: number;
+      result: string | null;
+      startedMs: number | null;
+      endedMs: number | null;
+    }
+  | {
+      kind: "child_space";
+      /** The child Space's id (the page opens it, also while it is being made). */
+      space: string;
+      /** One create: the notes of a Space being made fold into one row. Absent on a note from before. */
+      key?: string;
+      name: string;
+      os: string;
+      /** The agent member that made it (a handle). */
+      agent: string;
+      /** The person that made it, when a person did (the row then sits under their header). */
+      by?: { id: string; name: string } | null;
+      /** Where the create is. Absent on a note from before: it is made. */
+      state?: "creating" | "ready" | "failed";
+      /** The step in plain words ("Cloning the disk for the macOS Space"). */
+      phase?: string;
+      percent?: number | null;
+      /** Why it failed, in plain words. */
+      error?: string;
+      startedMs?: number | null;
+      endedMs?: number | null;
+    };
+
+/** A subagent that runs now, on the agent's live row. */
+export interface LiveChild {
+  id: string;
+  title: string;
+  steps: number;
+  /** Its latest step as a short row. */
+  step: string | null;
+  sinceMs?: number;
+}
+
 export type ThreadEntryKind = "message" | "task_update" | "approval" | "answer" | "system" | "join_request";
 
 /** An agent asks to join (CUA-2263): the owner or an admin answers it like an approval. */
@@ -117,6 +164,18 @@ export interface ThreadAttachment {
   mime: string | null;
 }
 
+/** What failed in an agent's turn or start, typed (`cua_agents::failure::Failure`). */
+export interface ThreadFailure {
+  /** `needs_connect`: no working credential, connect (or reconnect) one; `error`: anything else. */
+  class: "needs_connect" | "error";
+  /** For `needs_connect`: the Connectors row that fixes it (`anthropic`, `openai`). */
+  provider: string | null;
+  /** The complete error as the harness or provider said it (for Show details; never the summary). */
+  message: string;
+  /** Sending the same message again can work. */
+  retryable: boolean;
+}
+
 export interface ThreadEntry {
   seq: number;
   id: string;
@@ -131,7 +190,7 @@ export interface ThreadEntry {
   task: { to: string; session: number | null } | null;
   attachments: ThreadAttachment[];
   /** An agent asks before it acts. */
-  approval: { action: string; details: string; state: string } | null;
+  approval: { action: string; details: string; state: string; card?: Record<string, unknown> | null } | null;
   /** Someone answered an approval (`kind: "answer"`). */
   answer: { approval: number; approve: boolean; note: string | null } | null;
   /** A system note about a task (`task_seq` on a `system` entry): it shows inside that task. */
@@ -142,10 +201,16 @@ export interface ThreadEntry {
   runsOnKeysOf: { id: string; name: string } | null;
   /** A system note about a member joining, leaving or a refused name (CUA-2262). */
   event: MemberEvent | null;
+  /** A subagent or a child Space the agent started (a system note). */
+  child?: ChildNote | null;
   /** On a `join_request` entry (CUA-2263). */
   joinRequest?: JoinRequest | null;
   /** What the person was looking at in the Space as they posted (`view`): its desktop or a window. */
   view?: ThreadView | null;
+  /** On an agent's reply to a task that failed: what failed, with the complete text. `text` says it in plain words. */
+  failure?: ThreadFailure | null;
+  /** On the copy of a message that tasks one more agent when it names several (`@a @b`, `@everyone`): the entry it copies. The page draws the original only. */
+  fanoutOf?: number | null;
 }
 
 /** `thread_post`'s `view` and every entry's: the Space's desktop, or one of its windows (`cua.env.v1.ThreadView`). */
@@ -159,8 +224,30 @@ export interface ThreadView {
 /** Your role in the Space, as the owner daemon sees you: a guest reads only. */
 export type ThreadRole = "owner" | "admin" | "member" | "guest" | "agent";
 
+/** What one agent is doing now, for the thread's live row (`thread_read`'s `live`). */
+export interface LiveAgent {
+  /** The agent's handle (`@hermes-test`). */
+  agent: string;
+  /** In a few plain words: `starting`, `installing`, `thinking`, `replying` or `using Bash`. */
+  stage: string;
+  /** When its oldest open task was given (Unix ms): the working row's clock. */
+  sinceMs?: number;
+  /** What it has said so far this turn, the whole text each time, while it streams; the reply replaces it. */
+  text?: string;
+  /** The subagents it has running now. */
+  children?: LiveChild[];
+}
+
+/** Every agent with a turn on its way, and a key that changes when any stage does. */
+export interface ThreadLive {
+  key: string;
+  agents: LiveAgent[];
+}
+
 export interface ThreadPage {
   entries: ThreadEntry[];
+  /** Who is at work now. Absent from a daemon that does not say: nobody. */
+  live: ThreadLive;
   /** The last seq this page covers: the next read's `after`. */
   cursor: number;
   caughtUp: boolean;
@@ -189,11 +276,15 @@ export type AgentMemberStatus = string;
 
 export interface AgentMember {
   name: string;
+  /** What the Space calls it (`@claude`) when that is not `name` (a second Space's `claude` is stored as `claude-2`). */
+  handle?: string;
   /** Harness id (`claude-code`, `hermes`, ...). */
   harness: string;
   status: AgentMemberStatus;
   /** What it is doing, in a few words ("running e2e suite"), when it says. */
   activity: string | null;
+  /** For a failed member: what failed, typed, with the complete text. */
+  failure?: ThreadFailure | null;
   /** Sessions it runs (P2 shows each). */
   sessions: number;
   /** Its rights (null from a daemon without them: the defaults apply). */
@@ -241,6 +332,8 @@ export interface ThreadReadArgs {
   markRead?: boolean;
   /** Long-poll up to this long (0..25000 ms) for entries after `after`. */
   followMs?: number;
+  /** With `followMs`: the `live.key` last seen; the wait also ends when it changes. */
+  liveAfter?: string | null;
   /** Only your DM with this agent member (its handle, CUA-2266): paging, `unread` and `markRead` apply to the DM. */
   with?: string | null;
 }
@@ -278,6 +371,14 @@ export interface ThreadAgentAddArgs {
   name: string;
   /** The harness id (`hermes`, `claude-code`, `openai-codex`, ...). */
   harness: string;
+  /** The model its next message uses (an open session switches to it before the turn). On a member that exists, it is updated. */
+  model?: string;
+  /** The reasoning level its runs take (Claude Code and Codex). */
+  effort?: string;
+  /** Keep its run open with the session ready, so a message starts its turn at once. */
+  standby?: boolean;
+  /** Standing instructions: the first message each run takes carries them in front of its text. */
+  brief?: string;
 }
 
 export interface ThreadJoinCodeCreateArgs {
@@ -409,6 +510,7 @@ export function threadReadArgs(a: ThreadReadArgs): Json {
   if (a.markRead) out.mark_read = true;
   if (a.followMs) out.follow_ms = Math.max(0, Math.min(THREAD_FOLLOW_MAX_MS, Math.round(a.followMs)));
   if (a.with) out.with = a.with;
+  if (a.liveAfter != null && a.followMs) out.live_after = a.liveAfter;
   return out;
 }
 
@@ -453,7 +555,15 @@ export function threadSetRightsArgs(a: ThreadSetRightsArgs): Json {
 export const threadAgentRemoveArgs = (a: ThreadAgentRemoveArgs): Json => ({ name: a.name });
 
 /** `agent_add`: a started member of the Space (`agent` is the harness id). */
-export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({ space: a.spaceId, name: a.name, agent: a.harness });
+export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({
+  space: a.spaceId,
+  name: a.name,
+  agent: a.harness,
+  ...(a.model ? { model: a.model } : {}),
+  ...(a.effort ? { effort: a.effort } : {}),
+  ...(a.standby !== undefined ? { standby: a.standby } : {}),
+  ...(a.brief ? { brief: a.brief } : {}),
+});
 
 export function threadJoinCodeCreateArgs(a: ThreadJoinCodeCreateArgs): Json {
   const out: Json = { space: a.spaceId };
@@ -553,6 +663,39 @@ export function memberIdentity(v: unknown): MemberIdentity | null {
 
 const EVENT_KINDS: readonly MemberEvent["kind"][] = ["member_joined", "member_removed", "name_refused", "rate_limited"];
 
+function childNote(v: unknown): ChildNote | null {
+  const e = obj(v);
+  if (!e) return null;
+  if (e.kind === "subagent" && str(e.id)) {
+    const state = e.state === "done" || e.state === "failed" ? e.state : "running";
+    return {
+      kind: "subagent",
+      id: str(e.id),
+      agent: str(e.agent),
+      title: str(e.title) || "Subagent",
+      state,
+      steps: num(e.steps) ?? 0,
+      result: str(e.result) || null,
+      startedMs: num(e.started_ms),
+      endedMs: num(e.ended_ms),
+    };
+  }
+  if (e.kind === "child_space" && str(e.space)) {
+    const state = e.state === "creating" || e.state === "ready" || e.state === "failed" ? e.state : undefined;
+    return {
+      kind: "child_space",
+      space: str(e.space),
+      name: str(e.name) || str(e.space),
+      os: str(e.os),
+      agent: str(e.agent),
+      ...(obj(e.by) && str(obj(e.by)!.id) ? { by: { id: str(obj(e.by)!.id), name: str(obj(e.by)!.name) || str(obj(e.by)!.id) } } : {}),
+      ...(str(e.key) ? { key: str(e.key) } : {}),
+      ...(state ? { state, phase: str(e.phase), percent: num(e.percent), error: str(e.error), startedMs: num(e.started_ms), endedMs: num(e.ended_ms) } : {}),
+    };
+  }
+  return null;
+}
+
 function memberEvent(v: unknown): MemberEvent | null {
   const e = obj(v);
   if (!e || !EVENT_KINDS.includes(e.kind as MemberEvent["kind"])) return null;
@@ -591,16 +734,40 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
     task: task && str(task.to) ? { to: str(task.to), session: num(task.session) } : null,
     noteFor: kind === "system" ? num(e.task_seq) : null,
     attachments: (Array.isArray(e.attachments) ? e.attachments : []).map(attachment).filter((a): a is ThreadAttachment => a !== null),
-    approval: approval ? { action: str(approval.action), details: str(approval.details), state: str(approval.state, "open") } : null,
-    answer: answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null } : null,
+    approval: approval
+      ? {
+          action: str(approval.action),
+          details: str(approval.details),
+          state: str(approval.state, "open"),
+          // A card is data only Cua's own host writes: an agent's approval stays text.
+          card: author(e.author).kind === "system" ? obj(approval.card) : null,
+        }
+      : null,
+    answer:
+      answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null } : null,
     update:
       update && num(update.task) !== null && updateState
         ? { task: num(update.task)!, state: updateState, session: num(update.session), note: str(update.note) || null }
         : null,
     runsOnKeysOf: keyOwner(e.runs_on_keys_of),
     event: kind === "system" ? memberEvent(e.event) : null,
+    ...(kind === "system" && childNote(e.event) ? { child: childNote(e.event) } : {}),
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),
     ...(e.view != null ? { view: threadViewFromTool(e.view) } : {}),
+    ...(e.failure != null ? { failure: threadFailure(e.failure) } : {}),
+    ...(num(e.fanout_of) !== null ? { fanoutOf: num(e.fanout_of) } : {}),
+  };
+}
+
+/** A typed failure (`failure` of an entry, or of a failed member's status). */
+export function threadFailure(v: unknown): ThreadFailure | null {
+  const f = obj(v);
+  if (!f) return null;
+  return {
+    class: f.class === "needs_connect" ? "needs_connect" : "error",
+    provider: str(f.provider) || null,
+    message: str(f.message),
+    retryable: f.retryable !== false,
   };
 }
 
@@ -693,7 +860,12 @@ function agentOverview(m: Json): { dm?: AgentDm | null; needsYou?: NeedsYou[] } 
   const last = obj(d?.last);
   const needs = Array.isArray(m.needs_you) ? m.needs_you : [];
   return {
-    dm: d ? { unread: num(d.unread) ?? 0, last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null } : null,
+    dm: d
+      ? {
+          unread: num(d.unread) ?? 0,
+          last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null,
+        }
+      : null,
     needsYou: needs.flatMap((n) => {
       const x = obj(n);
       const seq = num(x?.seq);
@@ -718,7 +890,37 @@ export function threadPageFromTool(v: unknown): ThreadPage {
     me: (me ? str(me.id) : str(p.me)) || null,
     hasMoreBefore: p.has_more_before === true,
     role: ROLES.includes(p.role as ThreadRole) ? (p.role as ThreadRole) : null,
+    live: threadLiveFromTool(p.live),
   };
+}
+
+/** `live` of a `thread_read` answer: who is at work and at what stage. */
+export function threadLiveFromTool(v: unknown): ThreadLive {
+  const o = obj(v) ?? {};
+  const agents = (Array.isArray(o.agents) ? o.agents : []).flatMap((a): LiveAgent[] => {
+    const r = obj(a);
+    const agent = str(r?.agent);
+    const stage = str(r?.stage);
+    const sinceMs = typeof r?.since_ms === "number" ? r.since_ms : undefined;
+    const text = str(r?.text);
+    const children = (Array.isArray(r?.children) ? r.children : []).flatMap((c): LiveChild[] => {
+      const o = obj(c);
+      const id = str(o?.id);
+      return o && id
+        ? [
+            {
+              id,
+              title: str(o.title) || "Subagent",
+              steps: num(o.steps) ?? 0,
+              step: str(o.step) || null,
+              ...(typeof o.since_ms === "number" ? { sinceMs: o.since_ms } : {}),
+            },
+          ]
+        : [];
+    });
+    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}), ...(children.length ? { children } : {}) }] : [];
+  });
+  return { key: str(o.key), agents };
 }
 
 /** `thread_post`'s answer: the entry it wrote (bare, or under `entry`). */
@@ -746,10 +948,12 @@ function agentMember(r: unknown): AgentMember[] {
   return [
     {
       name,
+      ...(str(m.handle) && str(m.handle) !== name ? { handle: str(m.handle) } : {}),
       harness: str(m.harness),
       // `status` is a word, or `{state, activity}`.
       status: (status ? str(status.state) : str(m.status)) || "idle",
       activity: (status ? str(status.activity) : str(m.activity)) || null,
+      ...(status && status.failure != null ? { failure: threadFailure(status.failure) } : {}),
       sessions: num(m.sessions) ?? 1,
       rights: rights(m.rights),
       youCan: youCan(m.you_can),

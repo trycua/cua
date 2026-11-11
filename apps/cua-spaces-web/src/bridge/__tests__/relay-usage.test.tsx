@@ -55,12 +55,17 @@ describe("relay.usage", () => {
   it.skipIf(!wasmBuilt)("the row and the notice are the core's words", async () => {
     const core = await testCore();
     const free = relayUsageView(core, demoRelayUsage())!;
-    expect(free).toMatchObject({ label: "Remote use", line: "Live sessions 1 of 2 · Remote hours 6.5 of 20 this month", plan: "Free plan", notice: null });
-    expect(free.planCard).toMatchObject({ plan: "free", label: "Free plan", primary: { label: "Get Pro", url: "https://app.cua.ai/buy/pro?from=app_plan_card" }, secondary: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_plan_card" } });
+    expect(free).toMatchObject({ label: "Remote use", line: "Computers in use 1 of 2 · Remote hours 6.5 of 20 this month", plan: "Free plan", notice: null });
+    expect(free.planCard).toMatchObject({
+      plan: "free",
+      label: "Free plan",
+      primary: { label: "Get Pro", url: "https://app.cua.ai/buy/pro?from=app_plan_card" },
+      secondary: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_plan_card" },
+    });
     const past = relayUsageView(core, { ...demoRelayUsage(), hoursUsed: 20.24, softLimitReached: true, reasons: ["hours"], team: { id: "acme", seats: 3 } })!;
-    expect(past.line).toBe("Live sessions 1 of 2 · Remote hours 20.2 of 20 this month · Team pool, 3 seats");
+    expect(past.line).toBe("Computers in use 1 of 2 · Remote hours 20.2 of 20 this month · Team pool, 3 seats");
     expect(past.notice).toEqual({
-      text: "You're using 20.2 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 live sessions and 200 remote hours.",
+      text: "You're using 20.2 of 20 remote hours on the free plan. Your Spaces keep working. Pro gives you 5 computers in use at once and 200 remote hours.",
       upgrade: "Upgrade",
       upgradeUrl: "https://app.cua.ai/buy/pro?from=app_meter",
       dismiss: "Dismiss",

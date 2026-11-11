@@ -43,7 +43,8 @@ name: "CD: Image linux"
 # Tiers: every step above runs once per tier, each tier gated on its own
 # (`cua images build --target <tier>` of the one Dockerfile; full is FROM slim,
 # so the registry shares slim's layers):
-#   slim   series 24.04-slim   ghcr.io/trycua/linux:24.04-slim[-disk]   CI and bench use it
+#   slim   series 24.04-slim   ghcr.io/trycua/linux:24.04-slim[-disk]   CI and bench use it; the
+#          home of an agent that makes child Spaces (it carries the cua CLI)
 #   full   series 24.04        ghcr.io/trycua/linux:24.04[-disk]        the default
 #   docker series 24.04-docker ghcr.io/trycua/linux:24.04-docker-disk   slim + the Docker
 #          engine, a VM tier; its own gate (docker/<arch>/qemu: dockerd up at
@@ -90,7 +91,6 @@ on:
       - "libs/cua/crates/cua-vmm/src/density.rs"
       - "libs/cua/crates/cua-vmm/src/qemu/**"
       - ".github/workflows/cd-image-linux.yml"
-      - ".github/workflows/image-doctor.yml"
   workflow_dispatch:
     inputs:
       publish:
@@ -282,7 +282,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            protobuf-compiler libprotobuf-dev
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
         with:
@@ -323,20 +326,26 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Fetch cua-spacesd
         if: env.SPACESD_SOURCE == 'local'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-spacesd-linux-${{ matrix.arch }}
           path: libs/images/linux/dist/${{ matrix.arch }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, gVisor, crane)
         run: |
           set -euo pipefail
           chmod +x "$RUNNER_TEMP/bin/cua"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
           scripts/images/install-release-tools.sh --free-disk
+      # The slim tier bakes this commit's cua CLI (built by the cli job above) into the image,
+      # so an agent in a Space can run `cua spaces create`; every tier is FROM slim.
+      - name: Stage the cua CLI for the image
+        run: CUA_CLI_BIN="$RUNNER_TEMP/bin/cua" libs/images/linux/build-cua-cli-linux.sh "$ARCH"
       - name: cua images release (build, gates, stage)
         run: |
           # prepare only builds cua-spacesd from source: skip it unless the
@@ -382,15 +391,17 @@ jobs:
       EVIDENCE: ${{ github.workspace }}/.bake-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: artifacts-linux-docker-amd64
           path: ${{ runner.temp }}/docker-tier
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, KVM)
         run: |
           set -euo pipefail
@@ -398,7 +409,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage netcat-openbsd
-          sudo chmod 666 /dev/kvm
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh" --require
       - name: Free runner disk (golden snapshots and the checkpoint need room)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - name: Bake, fork and check (tests/bake-world.sh)
@@ -440,10 +451,12 @@ jobs:
       SMOKE_EVIDENCE: ${{ github.workspace }}/.images-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Install QEMU, firmware and gVisor
         run: |
           set -euo pipefail
@@ -452,7 +465,7 @@ jobs:
           sudo apt-get update -qq
           fw=ovmf; [ "$ARCH" = arm64 ] && fw=qemu-efi-aarch64
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 qemu-system-arm "$fw" genisoimage
-          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+          "$GITHUB_WORKSPACE/scripts/images/enable-kvm.sh"
           scripts/images/install-gvisor.sh
       - name: Build rootfs + disk (cua images build)
         run: cua images build "libs/images/$IMAGE" --platform "linux/$ARCH" --tag ci --outputs rootfs,disk
@@ -501,7 +514,7 @@ jobs:
       tiers: ${{ steps.changes.outputs.tiers }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "evidence-linux-*"
           path: evidence
@@ -557,17 +570,17 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
       # Both arches' gate results: push refuses unless every required gate passed.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "evidence-linux-${{ matrix.tier }}-*"
           path: release/evidence
           merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: artifacts-linux-${{ matrix.tier }}-${{ matrix.arch }}
           path: release/artifacts/${{ matrix.arch }}
@@ -617,11 +630,11 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "{evidence,pushed}-linux-${{ matrix.tier }}-*"
           path: release/evidence
@@ -765,6 +778,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools
         run: scripts/images/install-release-tools.sh --free-disk
       - name: The published disk
@@ -815,6 +830,14 @@ jobs:
         run: |
           python3 -m unittest discover -s libs/images/common/tools/tests
           python3 -m unittest discover -s scripts/images/tests
+      # oras needs a newer Go than the runner image ships. Left to the go
+      # command, that downloads a toolchain through proxy.golang.org, which
+      # 404s for a few hours after each new patch release (go1.26.11, 10 Nov).
+      # setup-go gets the toolchain from go.dev directly.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: stable
+          cache: false
       - name: Report publishing against a throwaway registry
         run: |
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.6

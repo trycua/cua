@@ -335,6 +335,44 @@ class InputLaneTest(unittest.TestCase):
         self.assertEqual(sent, ["TARGET 42 55aa 2", f"KEY 1 {'f' * 32} 1 46 0", f"KEY 2 {'f' * 32} 2 28 0"])
 
 
+class PacmanSetupTest(unittest.TestCase):
+    def test_file_conflict_owner_is_removed_and_the_install_retried(self):
+        conflict = ("error: failed to commit transaction (conflicting files)\n"
+                    "openssl: /usr/lib/libcrypto.so.3 exists in filesystem (owned by openssl-3)\n"
+                    "openssl: /usr/lib/libssl.so.3 exists in filesystem (owned by openssl-3)\n")
+        calls = []
+
+        def fake_run(command, log=None, check=True, **kwargs):
+            calls.append(command)
+            installs = [c for c in calls if c[:2] == ["pacman", "-Syyuu"]]
+            return (1, conflict) if command[:2] == ["pacman", "-Syyuu"] and len(installs) == 1 else (0, "")
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(qualify, "run", fake_run), \
+                mock.patch.object(qualify, "time"), mock.patch.object(qualify, "Path") as path:
+            path.return_value.glob.return_value = []
+            qualify.setup_pacman({"channel": "omarchy-stable"}, Path(directory) / "pacman.log")
+        self.assertIn(["pacman", "-Rdd", "--noconfirm", "openssl-3"], calls)
+        self.assertEqual(len([c for c in calls if c[:2] == ["pacman", "-Syyuu"]]), 2)
+
+
+class DriverSmokeTest(unittest.TestCase):
+    def test_find_window_picks_the_innermost_entry_with_a_pid(self):
+        reply = {"windows": [{"pid": 1, "title": "other"},
+                             {"pid": 7, "window_id": 9, "title": "foot", "bounds": {"x": 0}}]}
+        self.assertEqual(headless.find_window(reply, 7)["window_id"], 9)
+        self.assertIsNone(headless.find_window(reply, 8))
+        self.assertIsNone(headless.find_window({"raw": "x"}, 7))
+
+    def test_png_size_reads_the_header(self):
+        header = b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR" + (640).to_bytes(4, "big") + (480).to_bytes(4, "big")
+        with tempfile.TemporaryDirectory() as directory:
+            good, bad = Path(directory, "a.png"), Path(directory, "b.png")
+            good.write_bytes(header + b"\0" * 100)
+            bad.write_bytes(b"not a png" * 10)
+            self.assertEqual(headless.png_size(good), (640, 480, len(header) + 100))
+            self.assertIsNone(headless.png_size(bad))
+
+
 def record(job, status, **checks):
     base = {"build": {"status": "pass", "module_sha256": "m" * 64, "options": qualify.BUILD_OPTIONS},
             "ctest": {"status": "pass", "total": 20, "failed": 0}, "load": {"status": "pass"},
@@ -421,8 +459,9 @@ class WorkflowContractTest(unittest.TestCase):
         self.code = "".join(line for line in self.workflow.splitlines(keepends=True)
                             if not line.lstrip().startswith("#"))
 
-    def test_daily_and_manual(self):
-        self.assertIn("  schedule:\n    # Daily", self.workflow)
+    def test_scheduled_and_manual(self):
+        self.assertIn("  schedule:\n    # Every four hours", self.workflow)
+        self.assertIn("  repository_dispatch:", self.workflow)
         self.assertIn("  workflow_dispatch:", self.workflow)
 
     def test_never_publishes_packages_or_touches_omarchy(self):

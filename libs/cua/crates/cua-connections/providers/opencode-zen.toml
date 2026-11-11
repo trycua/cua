@@ -1,0 +1,21 @@
+id = "opencode-zen"
+name = "OpenCode Zen"
+icon = "opencode-zen"
+tier = "more"
+rank = 220
+kind = "aggregator"
+aliases = ["zen"]
+wire = "openai-chat"
+base_url = "https://opencode.ai/zen/v1"
+base_url_env = "OPENCODE_ZEN_BASE_URL"
+default_model = "x-preview-f-free"
+hermes_id = "opencode-zen"
+key_help = "Create a key at opencode.ai/zen."
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "OPENCODE_ZEN_API_KEY"
+
+[delivery]
+hermes = ["OPENCODE_ZEN_API_KEY"]

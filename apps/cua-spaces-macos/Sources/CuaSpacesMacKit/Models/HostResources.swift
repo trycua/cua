@@ -38,7 +38,9 @@ func resourcesJSON(_ s: CuaSDK.ResourcesSnapshot) -> [String: Any] {
             usage = [
                 "cpuCount": u.cpuCount, "cpuPercent": u.cpuPercent, "loadAverage1m": u.loadAverage1m,
                 "memoryUsed": u.memoryUsed, "memoryTotal": u.memoryTotal, "memoryLimited": u.memoryLimited,
-                "diskUsed": u.diskUsed, "diskTotal": u.diskTotal, "diskLimited": u.diskLimited,
+                // No size of its own is null, never a sentinel.
+                "diskUsed": u.diskUsed, "diskTotal": u.diskTotal.map { $0 as Any } ?? NSNull(),
+                "diskLimited": u.diskLimited,
             ] as [String: Any]
         }
         var disk: Any = NSNull()
@@ -46,10 +48,15 @@ func resourcesJSON(_ s: CuaSDK.ResourcesSnapshot) -> [String: Any] {
             disk = ["bytes": d.bytes.map { $0 as Any } ?? NSNull(), "allocated": d.allocated,
                     "sharesSpace": d.sharesSpace] as [String: Any]
         }
+        var base: Any = NSNull()
+        if let b = r.base {
+            base = ["key": b.key, "image": b.image, "bytes": b.bytes.map { $0 as Any } ?? NSNull(),
+                    "sharedWith": b.sharedWith] as [String: Any]
+        }
         return [
             "id": r.id, "powerState": r.powerState, "cpuAllocated": r.cpuAllocated,
             "memoryAllocated": r.memoryAllocated, "diskAllocated": r.diskAllocated,
-            "usage": usage, "diskOnHost": disk,
+            "usage": usage, "diskOnHost": disk, "base": base,
         ]
     }
     return [

@@ -63,7 +63,7 @@ from ._native import Cua, CuaConfig
 from ._native import Sandbox as SandboxHandle
 from ._native import cua_sdk_version
 
-__version__ = "0.9.0"  # x-release-please-version
+__version__ = "0.24.1"  # x-release-please-version
 
 # Usage telemetry (anonymous, content-free; https://cua.ai/docs/cua-sdk/concepts/telemetry)
 # attributes events to this binding; `cua.telemetry` has the switches. It
@@ -102,9 +102,9 @@ from ._plan_limit import parse_plan_limit as _parse_plan_limit  # noqa: E402
 
 
 class PlanLimitError(_CuaError.Http):  # type: ignore[name-defined,misc]
-    """The relay refused a new live session because the plan is at its cap.
+    """The relay refused a new computer in use because the plan is at its cap.
 
-    ``str(error)`` is the plain sentence. Live sessions are never cut, and
+    ``str(error)`` is the plain sentence. Computers already in use are never cut, and
     retrying gets the same answer: close one, or send the person to
     ``upgrade_url``.
     """
@@ -202,6 +202,13 @@ async def _agent_run_stream(
 
 
 _AgentRun.stream = _agent_run_stream  # type: ignore[attr-defined]
+
+
+def auto(*, state_dir: Optional[str] = None, spaces_home: Optional[str] = None) -> Cua:
+    """The default runtime: inside a Space with children on, its spawn
+    channel (every Space made through it is a child of that Space); else the
+    `cua daemon` this machine runs, else a runtime in this process."""
+    return Cua.auto(CuaConfig(state_dir=state_dir, spaces_home=spaces_home))
 
 
 def connect(address: Optional[str] = None, token: Optional[str] = None) -> Cua:

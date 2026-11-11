@@ -2,6 +2,7 @@
   "name": "@trycua/spacesd-html5",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@9.0.4",
   "description": "The cua-spacesd HTML5 viewer: a browser client for a sandbox desktop over rcdp wire v2 (WebCodecs video, Opus audio, input through cua-driver, clipboard, file drop and two-way folder sharing)",
   "license": "FSL-1.1-MIT",
   "type": "module",

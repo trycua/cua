@@ -82,10 +82,10 @@ for platform in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
     # Apple silicon: the microVM monitor and guest init, and the static
     # cua-spacesd injected into OCI images, travel with `cua`.
     if [ "$platform" = darwin-arm64 ]; then
-        for f in cua-vz cua-microvm-init cua-spacesd-linux-aarch64; do
+        for f in cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64; do
             printf '#!/bin/sh\necho %s\n' "$f" >"$work/stage/$platform/$f"
         done
-        extra="cua-vz cua-microvm-init cua-spacesd-linux-aarch64"
+        extra="cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64"
     fi
     # shellcheck disable=SC2086
     tar -czf "$tag_dir/cua-cli-$version-$platform.tar.gz" -C "$work/stage/$platform" cua $extra
@@ -387,7 +387,7 @@ inst CUA_INSTALL_OS=MINGW64_NT-10.0 -- --yes
 check "Windows shells point at install.ps1" sh -c "[ $status != 0 ] && grep -q install.ps1 '$work/out'"
 
 inst CUA_INSTALL_OS=Darwin CUA_INSTALL_ARCH=arm64 -- --yes --no-onboarding --cli-only --prefix "$work/mvz"
-check "darwin arm64: cua-vz, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
+check "darwin arm64: cua-vz, its network gateway, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-netgw' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
 inst -- --yes --no-onboarding --cli-only --prefix "$work/nvz"
 check "linux: no microVM monitor in the archive, none installed" sh -c "[ $status = 0 ] && [ -e '$work/nvz/bin/cua' ] && [ ! -e '$work/nvz/bin/cua-vz' ]"
 
@@ -578,6 +578,60 @@ inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-
 check "unverifiable signatures, default output: plain checksum line only" sh -c "[ $status = 0 ] && grep -q '(downloads checked)' '$work/out' && ! grep -qi 'cosign\|minisign\|signatures were not\|checksum' '$work/out'"
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
 check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
+
+# cosign, app: a release rebuilt by a dispatch from main is signed by
+# cd-cua-spaces.yml at refs/heads/main, which names no tag. The installer
+# accepts that identity only with the dispatch trigger, the main ref and a
+# signed rebuild-claim.txt naming this tag and the artifact's sha256.
+sig3="$release/sig3"
+mkdir -p "$sig3" "$work/fakebin-cosign3"
+cp "$tag_dir"/cua-cli-* "$tag_dir"/cua-spaces-"$version"-linux-x64.AppImage "$sig3/"
+for f in "$sig3"/cua-cli-*.tar.gz "$sig3"/*.AppImage; do printf '{}\n' >"$f.sigstore.json"; done
+python3 "$manifest_tool" --component cli --version "$version" --dir "$sig3" --out "$sig3/cli.json"
+python3 "$manifest_tool" --component app --version "$version" --dir "$sig3" --merge "$sig3/cli.json" --out "$sig3/release-artifacts.json"
+cli_identity="https://github.com/trycua/cua/.github/workflows/cd-cua-sdk.yml@refs/tags/cua-sdk-v$version"
+main_identity="https://github.com/trycua/cua/.github/workflows/cd-cua-spaces.yml@refs/heads/main"
+appimage="$(basename "$sig3"/*.AppImage)"
+appsum="$(sha256sum "$sig3/$appimage" | cut -d' ' -f1)"
+# The fake cosign knows only the CLI tag identity, and the app's main identity
+# when the call also pins the repository, the main ref and workflow_dispatch.
+cat >"$work/fakebin-cosign3/cosign" <<COSIGN
+#!/bin/sh
+printf '%s\n' "\$*" >>"$work/cosign3.log"
+id=""; repo=""; ref=""; trig=""; prev=""
+for a in "\$@"; do
+    case "\$prev" in
+    --certificate-identity) id="\$a" ;;
+    --certificate-github-workflow-repository) repo="\$a" ;;
+    --certificate-github-workflow-ref) ref="\$a" ;;
+    --certificate-github-workflow-trigger) trig="\$a" ;;
+    esac
+    prev="\$a"
+done
+[ "\$id" = "$cli_identity" ] && exit 0
+[ "\$id" = "$main_identity" ] && [ "\$repo" = trycua/cua ] && [ "\$ref" = refs/heads/main ] && [ "\$trig" = workflow_dispatch ] && exit 0
+exit 1
+COSIGN
+chmod +x "$work/fakebin-cosign3/cosign"
+# No claim: the main-branch signature alone is refused.
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg3"
+check "cosign: a main-branch app signature without a rebuild claim aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
+# A claim for this tag and this file, signed by the same identity.
+printf 'tag cua-spaces-v%s\nsha 0000000000000000000000000000000000000000\n%s  %s\n' "$version" "$appsum" "$appimage" >"$sig3/rebuild-claim.txt"
+printf '{}\n' >"$sig3/rebuild-claim.txt.sigstore.json"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg4"
+check "cosign accepts a rebuilt app: main identity, dispatch trigger and a claim for this tag" sh -c "[ $status = 0 ] && [ -x '$work/sg4/bin/cua-spaces' ] && grep -q -- '--certificate-github-workflow-trigger workflow_dispatch' '$work/cosign3.log'"
+# A claim for a different tag (a build of another release) is refused.
+printf 'tag cua-spaces-v0.0.1\n%s  %s\n' "$appsum" "$appimage" >"$sig3/rebuild-claim.txt"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg6"
+check "cosign: a rebuild claim for another tag aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
+# A claim that does not list this file's sha256 is refused.
+printf 'tag cua-spaces-v%s\n%s  %s\n' "$version" "0000000000000000000000000000000000000000000000000000000000000000" "$appimage" >"$sig3/rebuild-claim.txt"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg7"
+check "cosign: a rebuild claim without this artifact's sha256 aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
+printf '#!/bin/sh\nexit 1\n' >"$work/fakebin-cosign3/cosign"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg5"
+check "cosign: an app bundle from any other identity aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
 # Upgrade over a running older daemon: the new cua stops it (never a broad
 # kill) and starts the new one. A fake old cua reports a running 0.0.9 daemon.
 mkdir -p "$work/up/bin"

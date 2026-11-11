@@ -316,17 +316,44 @@ impl AgentSetup {
         skills: bool,
         mcp: bool,
     ) -> Result<Vec<AgentSetupOutcome>> {
-        let server = match command {
-            Some(c) if !c.trim().is_empty() => cua_agent_setup::McpServer::driver(c),
-            _ => cua_agent_setup::McpServer::driver_for(self.inner.env()),
-        };
+        // Without `command`, a missing or broken cua-driver is first
+        // installed from its signed release (`cua.ai/driver/install.sh`, as
+        // the installers' `cua-driver` item does). The server is written
+        // only by absolute path and only after `cua-driver mcp` answers an
+        // MCP `initialize`; otherwise each agent's `cua-driver` row fails
+        // with the reason and how to fix it, and its config is left alone.
+        let command = command.filter(|c| !c.trim().is_empty());
         self.blocking(move |s| {
-            Ok(outcomes(s.setup_cua_driver(
-                &agents,
-                &server,
-                cua_agent_setup::Parts { skills, mcp },
-                false,
-            )?))
+            let server = match command {
+                Some(c) => Ok(cua_agent_setup::McpServer::driver(c)),
+                None if mcp => cua_agent_setup::driver::ensure(s.env(), true)
+                    .map(|p| cua_agent_setup::McpServer::driver(p.display().to_string())),
+                None => Ok(cua_agent_setup::McpServer::driver_for(s.env())),
+            };
+            let parts = cua_agent_setup::Parts { skills, mcp };
+            let mut out = match &server {
+                Ok(server) => s.setup_cua_driver(&agents, server, parts, false)?,
+                Err(_) => {
+                    let skills_only = cua_agent_setup::Parts { skills, mcp: false };
+                    let any = cua_agent_setup::McpServer::driver("cua-driver");
+                    s.setup_cua_driver(&agents, &any, skills_only, false)?
+                }
+            };
+            if let Err(why) = &server {
+                out.extend(s.driver_unavailable(&agents, why)?);
+            }
+            // A failed row says how to fix it.
+            let fix = format!(
+                "Set up again to retry, or install it with: {}",
+                cua_agent_setup::driver::install_command(s.env().os)
+            );
+            for o in out
+                .iter_mut()
+                .filter(|o| o.failed() && o.item == cua_agent_setup::DRIVER_MCP_SERVER_NAME)
+            {
+                o.detail = format!("{}. {fix}", o.detail.trim_end_matches('.'));
+            }
+            Ok(outcomes(out))
         })
         .await
     }
@@ -408,9 +435,19 @@ impl cua_agent_setup::SignInVault for KeyvaultSignIns {
     ) -> std::result::Result<cua_agent_setup::ImportedSignIn, String> {
         let k = self
             .0
-            .import(&c.source, &c.env, &c.label, &c.value, c.expires_ms)
+            .import(
+                &c.source,
+                &c.env,
+                &c.label,
+                &c.value,
+                c.expires_ms,
+                c.origin.as_deref(),
+            )
             .map_err(|e| e.to_string())?;
-        cua_telemetry::global().capture(cua_telemetry::events::agent_signin_imported(&c.source));
+        cua_telemetry::global().capture(cua_telemetry::events::agent_signin_imported(
+            &c.source,
+            c.origin.as_deref(),
+        ));
         Ok(cua_agent_setup::ImportedSignIn {
             source: c.source.clone(),
             env: k.env,
@@ -425,6 +462,20 @@ impl cua_agent_setup::SignInVault for KeyvaultSignIns {
     }
 }
 
+/// Counts the sign-ins Connect could not copy (fixed words only: the agent and
+/// the kind, never the line or the account).
+fn note_refusals(results: &[cua_agent_setup::connection::ConnectResult]) {
+    #[cfg(feature = "spaces")]
+    for r in results {
+        if let Some(kind) = r.sign_in.as_ref().and_then(|s| s.refused.as_deref()) {
+            cua_telemetry::global()
+                .capture(cua_telemetry::events::agent_signin_refused(&r.agent, kind));
+        }
+    }
+    #[cfg(not(feature = "spaces"))]
+    let _ = results;
+}
+
 /// The vault this build uses, when it has one.
 pub fn sign_in_vault() -> Option<Box<dyn cua_agent_setup::SignInVault>> {
     #[cfg(feature = "spaces")]
@@ -435,6 +486,16 @@ pub fn sign_in_vault() -> Option<Box<dyn cua_agent_setup::SignInVault>> {
     {
         None
     }
+}
+
+/// Device sign-ins waiting to be approved, by id (started and waited in two calls).
+fn device_logins() -> &'static std::sync::Mutex<
+    std::collections::HashMap<String, cua_agent_setup::signin::DeviceSignIn>,
+> {
+    static L: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, cua_agent_setup::signin::DeviceSignIn>>,
+    > = std::sync::OnceLock::new();
+    L.get_or_init(Default::default)
 }
 
 fn to_json<T: serde::Serialize>(v: &T) -> Result<String> {
@@ -465,8 +526,9 @@ impl AgentSetup {
 
     /// Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
     /// (`server`, default this channel's cua), and with `sign_in` the
-    /// agent's sign-in copied into Keyvault on This Mac (Claude Code waits
-    /// for its one browser approval). JSON: one result per agent.
+    /// agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
+    /// sign-in it already has, read from where Claude Code keeps it). JSON:
+    /// one result per agent.
     pub async fn connect_json(
         &self,
         agents: Vec<String>,
@@ -487,8 +549,98 @@ impl AgentSetup {
                     sign_in,
                 },
                 vault.as_deref(),
-                cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+                cua_agent_setup::signin::CLAUDE_IMPORT_WAIT,
             )?;
+            note_refusals(&r);
+            to_json(&r)
+        })
+        .await
+    }
+
+    /// Disconnect of some parts only (an app's page's switches): Cua's skills
+    /// and/or its MCP entry, and with `sign_in` the copy in Keyvault. JSON
+    /// `{outcomes, removed_sign_ins}`.
+    pub async fn disconnect_parts_json(
+        &self,
+        agents: Vec<String>,
+        skills: bool,
+        mcp: bool,
+        sign_in: bool,
+    ) -> Result<String> {
+        self.blocking(move |s| {
+            let vault = sign_in_vault();
+            let (outcomes, removed) = s.disconnect(
+                &agents,
+                cua_agent_setup::Parts { skills, mcp },
+                cua_agent_setup::RemoveOptions::default(),
+                sign_in,
+                vault.as_deref(),
+            )?;
+            to_json(&serde_json::json!({"outcomes": outcomes, "removed_sign_ins": removed}))
+        })
+        .await
+    }
+
+    /// Starts `agent`'s device-code sign-in made for Cua (Codex: `codex login
+    /// --device-auth` in a folder Cua owns). JSON `{id, url, code}`: show the
+    /// link and the code, then wait with [`Self::device_sign_in_wait_json`].
+    pub async fn device_sign_in_start_json(&self, agent: String) -> Result<String> {
+        self.blocking(move |s| {
+            let login = s
+                .start_device_sign_in(&agent)
+                .map_err(|r| CuaError::Internal(r.line().to_string()))?;
+            let id = format!(
+                "{agent}-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let out = serde_json::json!({"id": id, "url": login.url, "code": login.code});
+            device_logins()
+                .lock()
+                .map_err(|e| CuaError::Internal(e.to_string()))?
+                .insert(id, login);
+            to_json(&out)
+        })
+        .await
+    }
+
+    /// Waits for a device sign-in to be approved and saves it into Keyvault on
+    /// This Mac. JSON: `{imported, refused, line}` (as Connect's `sign_in`).
+    pub async fn device_sign_in_wait_json(&self, id: String) -> Result<String> {
+        self.blocking(move |s| {
+            let login = device_logins()
+                .lock()
+                .map_err(|e| CuaError::Internal(e.to_string()))?
+                .remove(&id)
+                .ok_or_else(|| {
+                    CuaError::InvalidArgument(format!("no sign-in {id:?} is waiting"))
+                })?;
+            let vault = sign_in_vault();
+            let r = match vault.as_deref() {
+                None => cua_agent_setup::connection::SignInResult {
+                    imported: None,
+                    refused: Some("failed".into()),
+                    line: Some("Keyvault isn't available here.".into()),
+                },
+                Some(v) => match s.finish_device_sign_in(
+                    login,
+                    v,
+                    cua_agent_setup::signin::DEVICE_SIGN_IN_WAIT,
+                ) {
+                    Ok(i) => cua_agent_setup::connection::SignInResult {
+                        imported: Some(i),
+                        refused: None,
+                        line: None,
+                    },
+                    Err(r) => cua_agent_setup::connection::SignInResult {
+                        imported: None,
+                        refused: Some(r.kind().into()),
+                        line: Some(r.line().into()),
+                    },
+                },
+            };
             to_json(&r)
         })
         .await
@@ -633,18 +785,28 @@ mod tests {
         assert!(!d.path().join(".agents/skills/cua-spaces").exists());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn sdk_cua_driver_setup_in_a_temp_home() {
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join(".codex")).unwrap();
+        // Set up writes the MCP server only for a driver that answers
+        // `initialize`, so use a stand-in that does.
+        let drv = d.path().join("opt/drv/cua-driver");
+        std::fs::create_dir_all(drv.parent().unwrap()).unwrap();
+        std::fs::write(
+            &drv,
+            "#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&drv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let drv_path = drv.display().to_string();
         let s = AgentSetup::with_env(cua_agent_setup::HostEnv::isolated(d.path()));
         let out = s
-            .setup_cua_driver(
-                vec!["codex".into()],
-                Some("/opt/drv/cua-driver".into()),
-                true,
-                true,
-            )
+            .setup_cua_driver(vec!["codex".into()], Some(drv_path.clone()), true, true)
             .await
             .unwrap();
         assert!(
@@ -661,6 +823,6 @@ mod tests {
         let codex = s.status().into_iter().find(|a| a.id == "codex").unwrap();
         assert!(codex.cua_driver_configured && !codex.cua_configured);
         let toml = std::fs::read_to_string(d.path().join(".codex/config.toml")).unwrap();
-        assert!(toml.contains("/opt/drv/cua-driver"), "{toml}");
+        assert!(toml.contains(&drv_path), "{toml}");
     }
 }

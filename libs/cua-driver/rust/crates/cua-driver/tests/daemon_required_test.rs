@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Public tool transports must fail closed when no daemon is reachable.
 
 use std::io::Write as _;

@@ -28,7 +28,7 @@
         "channel": {
           "enum": [
             "stable",
-            "beta"
+            "nightly"
           ]
         },
         "lastCheck": {
@@ -181,13 +181,12 @@
             "type": "object",
             "properties": {
               "provider": {
-                "enum": [
-                  "anthropic",
-                  "openai",
-                  "other"
-                ]
+                "type": "string"
               },
               "env": {
+                "type": "string"
+              },
+              "slot": {
                 "type": "string"
               },
               "last4": {
@@ -195,6 +194,21 @@
               },
               "addedMs": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -205,17 +219,34 @@
             ]
           }
         },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
         "providers": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
               "id": {
-                "enum": [
-                  "anthropic",
-                  "openai",
-                  "other"
-                ]
+                "type": "string"
               },
               "label": {
                 "type": "string"
@@ -239,6 +270,15 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copySignIn": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -254,6 +294,9 @@
         "name": {
           "type": "string"
         },
+        "handle": {
+          "type": "string"
+        },
         "harness": {
           "type": "string"
         },
@@ -264,6 +307,38 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "needs_connect",
+                "error"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "class",
+            "provider",
+            "message",
+            "retryable"
           ]
         },
         "sessions": {
@@ -735,6 +810,369 @@
         "launchBin",
         "lastUsedMs",
         "json"
+      ]
+    },
+    "CiConnectAnswer": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "waiting",
+            "connected",
+            "sign_in",
+            "failed"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "login": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "CiGithub": {
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "login": {
+          "type": "string"
+        },
+        "choose_url": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "connected",
+        "mode",
+        "login",
+        "choose_url"
+      ]
+    },
+    "CiJob": {
+      "type": "object",
+      "properties": {
+        "job_key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "queued_ms": {
+          "type": "number"
+        },
+        "wait_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "run_ms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cost_micros": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "all_in_micros": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "start_mode": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        },
+        "machine_type": {
+          "type": "string"
+        },
+        "cloud": {
+          "type": "string"
+        },
+        "spot": {
+          "type": "boolean"
+        },
+        "log_pool": {
+          "type": "string"
+        },
+        "log_slot": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_key",
+        "name",
+        "repo",
+        "state",
+        "queued_ms",
+        "start_mode",
+        "machine",
+        "machine_type",
+        "cloud",
+        "spot",
+        "log_pool",
+        "log_slot"
+      ]
+    },
+    "CiOverview": {
+      "type": "object",
+      "properties": {
+        "generated_ms": {
+          "type": "number"
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CiSetupStep"
+          }
+        },
+        "github": {
+          "$ref": "#/$defs/CiGithub"
+        },
+        "repositories": {
+          "type": "object",
+          "properties": {
+            "used": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "jobs_7d": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "jobs_7d"
+                ]
+              }
+            },
+            "all": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "allowed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "allowed"
+                ]
+              }
+            }
+          },
+          "required": [
+            "used",
+            "all"
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "starts_24h": {
+              "type": "number"
+            },
+            "jobs_7d": {
+              "type": "number"
+            },
+            "pass_rate_7d": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "spend_7d_micros": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "starts_24h",
+            "jobs_7d",
+            "pass_rate_7d",
+            "spend_7d_micros"
+          ]
+        },
+        "jobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CiJob"
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CiTarget"
+          }
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "month_committed_micros": {
+              "type": "number"
+            },
+            "monthly_micros": {
+              "type": "number"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "month_committed_micros",
+            "monthly_micros",
+            "state"
+          ]
+        }
+      },
+      "required": [
+        "generated_ms",
+        "setup",
+        "github",
+        "repositories",
+        "usage",
+        "jobs",
+        "targets",
+        "budget"
+      ]
+    },
+    "CiPilotClass": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "jobs_seen": {
+          "type": "number"
+        },
+        "warm_now": {
+          "type": "number"
+        },
+        "idle_ttl_secs": {
+          "type": "number"
+        },
+        "spot": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "class",
+        "phase",
+        "jobs_seen",
+        "warm_now",
+        "idle_ttl_secs",
+        "spot",
+        "reasons"
+      ]
+    },
+    "CiSetupStep": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "detail"
+      ]
+    },
+    "CiTarget": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "warm": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "autopilot": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "classes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CiPilotClass"
+              }
+            }
+          },
+          "required": [
+            "classes"
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "goal"
       ]
     },
     "CliInstallPlan": {
@@ -1335,6 +1773,65 @@
         "percent"
       ]
     },
+    "DefaultSpace": {
+      "type": "object",
+      "properties": {
+        "space": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "defaultSpace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultOnline": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "space",
+              "name",
+              "online",
+              "role"
+            ]
+          }
+        }
+      },
+      "required": [
+        "space",
+        "reason",
+        "defaultSpace",
+        "defaultOnline",
+        "order"
+      ]
+    },
     "DevicesInput": {
       "type": "object",
       "properties": {
@@ -1572,6 +2069,215 @@
         "method"
       ]
     },
+    "DriverLiveTest": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "atMs": {
+          "type": "number"
+        },
+        "failure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tookMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "passed",
+        "atMs",
+        "failure"
+      ]
+    },
+    "DriverPermission": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "enum": [
+            "screen",
+            "accessibility"
+          ]
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "on",
+            "off",
+            "absent",
+            "unknown",
+            null
+          ]
+        },
+        "settingsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "granted",
+        "settingsUrl"
+      ]
+    },
+    "DriverStatus": {
+      "type": "object",
+      "properties": {
+        "machineId": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        },
+        "thisMachine": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "ready",
+            "starting",
+            "stopped",
+            "paused",
+            "needs-permission",
+            "failed"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "version",
+            "note"
+          ]
+        },
+        "lastTest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriverLiveTest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "apps": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "on": {
+                "type": "boolean"
+              },
+              "own": {
+                "type": "boolean"
+              },
+              "bringsOwn": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "on",
+              "own",
+              "bringsOwn"
+            ]
+          }
+        },
+        "activity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app",
+              "target"
+            ]
+          }
+        },
+        "canPause": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "machineId",
+        "machineName",
+        "thisMachine",
+        "state",
+        "version",
+        "update",
+        "lastTest",
+        "lastError",
+        "permissions",
+        "apps",
+        "activity",
+        "canPause"
+      ]
+    },
     "DriveStorageInput": {
       "type": "object",
       "properties": {
@@ -1605,16 +2311,153 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "yourCloud": {
+        "ciRunners": {
           "type": "boolean"
         },
-        "sharing": {
+        "tcpShares": {
           "type": "boolean"
         },
-        "webUi": {
+        "mobile": {
           "type": "boolean"
         }
       }
+    },
+    "GithubReport": {
+      "type": "object",
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git"
+                ]
+              },
+              "login": {
+                "type": "string"
+              },
+              "envName": {
+                "type": "string"
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": "string"
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "ghFound": {
+          "type": "boolean"
+        },
+        "ghOld": {
+          "type": "boolean"
+        },
+        "canSave": {
+          "type": "boolean"
+        },
+        "scannedMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "hosts",
+        "ghFound",
+        "ghOld",
+        "canSave",
+        "scannedMs"
+      ]
     },
     "GpuChoice": {
       "type": "object",
@@ -1792,6 +2635,27 @@
           "type": "number"
         },
         "maxMacosVms": {
+          "type": "number"
+        },
+        "maxMemoryGb": {
+          "type": "number"
+        },
+        "maxDiskGb": {
+          "type": "number"
+        },
+        "maxRunMinutes": {
+          "type": "number"
+        },
+        "usedMemoryGb": {
+          "type": "number"
+        },
+        "usedDiskGb": {
+          "type": "number"
+        },
+        "totalMemoryGb": {
+          "type": "number"
+        },
+        "totalDiskGb": {
           "type": "number"
         },
         "recentAccess": {
@@ -3575,6 +4439,37 @@
         "lastSeenMs"
       ]
     },
+    "NetworkEvent": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "dst": {
+          "type": "string"
+        },
+        "proto": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "count": {
+          "type": "number"
+        },
+        "lastUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "dst",
+        "count"
+      ]
+    },
     "NewSpaceOptions": {
       "type": "object",
       "properties": {
@@ -3825,6 +4720,47 @@
         "kind"
       ]
     },
+    "RecentThread": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "enum": [
+            "claude-code",
+            "openai-codex",
+            "hermes"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastActiveMs": {
+          "type": "number"
+        },
+        "resume": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "agent",
+        "id",
+        "title",
+        "cwd",
+        "lastActiveMs",
+        "resume"
+      ]
+    },
     "RemoteWindow": {
       "type": "object",
       "properties": {
@@ -3874,6 +4810,53 @@
         "targetEpoch"
       ]
     },
+    "RepoCacheView": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "repos": {
+          "type": "number"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "capBytes": {
+          "type": "number"
+        },
+        "sizeSetting": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "week": {
+          "type": "string"
+        },
+        "hits": {
+          "type": "number"
+        },
+        "misses": {
+          "type": "number"
+        },
+        "secondsSaved": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "repos",
+        "bytes",
+        "capBytes",
+        "sizeSetting",
+        "summary",
+        "week",
+        "hits",
+        "misses",
+        "secondsSaved"
+      ]
+    },
     "RuntimeFix": {
       "type": "object",
       "properties": {
@@ -3910,6 +4893,181 @@
         "busy",
         "termsUrl"
       ]
+    },
+    "RuntimePathCheck": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "guests": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "exists",
+        "executable",
+        "expected"
+      ]
+    },
+    "RuntimesInput": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "enum": [
+            "macos",
+            "windows",
+            "linux",
+            "unknown",
+            null
+          ]
+        },
+        "hostArch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "localBackends": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "localDetails": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kinds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "detected": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "guests": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tool",
+                    "name",
+                    "path"
+                  ]
+                }
+              },
+              "check": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RuntimePathCheck"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      }
     },
     "SessionSnapshot": {
       "type": "object",
@@ -4084,7 +5242,7 @@
             "updateChannel": {
               "enum": [
                 "stable",
-                "beta",
+                "nightly",
                 null
               ]
             },
@@ -4107,6 +5265,40 @@
               "required": [
                 "off",
                 "done"
+              ]
+            },
+            "notchPinned": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "agentMenu": {
+              "type": "object",
+              "properties": {
+                "shown": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "hidden": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "seen": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "shown",
+                "hidden",
+                "seen"
               ]
             }
           },
@@ -4186,19 +5378,35 @@
         "hostSettings": {
           "type": "object",
           "properties": {
-            "lumeSource": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "linuxSource": {
-              "type": [
-                "string",
-                "null"
+            "runtimes": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimesInput"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "autoConnect": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "overflow": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "closeWindowKeepsRunning": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "closeNotice": {
               "type": [
                 "boolean",
                 "null"
@@ -4285,6 +5493,28 @@
           "required": [
             "name",
             "installed"
+          ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
           ]
         }
       },
@@ -4427,6 +5657,110 @@
         "canLeave"
       ]
     },
+    "SpaceNetwork": {
+      "type": "object",
+      "properties": {
+        "preset": {
+          "type": "string"
+        },
+        "localhostPorts": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "allLocalhostPorts": {
+          "type": "boolean"
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deny": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "customBase": {
+          "type": "string"
+        },
+        "via": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topologyJson": {
+          "type": "string"
+        },
+        "widenedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "widenings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enforcement": {
+          "type": "string"
+        },
+        "point": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alwaysBlocked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "noticePending": {
+          "type": "boolean"
+        },
+        "clipboard": {
+          "type": "string"
+        },
+        "volume": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "preset",
+        "summary",
+        "enforcement",
+        "point",
+        "noticePending",
+        "clipboard",
+        "volume"
+      ]
+    },
     "SpaceProgress": {
       "type": "object",
       "properties": {
@@ -4515,7 +5849,10 @@
               "type": "number"
             },
             "diskTotal": {
-              "type": "number"
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "diskLimited": {
               "type": "boolean"
@@ -4556,6 +5893,35 @@
             "bytes",
             "allocated",
             "sharesSpace"
+          ]
+        },
+        "base": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "image": {
+              "type": "string"
+            },
+            "bytes": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "sharedWith": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "key",
+            "image",
+            "bytes",
+            "sharedWith"
           ]
         }
       },
@@ -4629,6 +5995,9 @@
         "arch": {
           "type": "string"
         },
+        "hidden": {
+          "type": "boolean"
+        },
         "reachable": {
           "type": "boolean"
         },
@@ -4639,6 +6008,9 @@
           "type": "string"
         },
         "hostName": {
+          "type": "string"
+        },
+        "parent": {
           "type": "string"
         },
         "power": {
@@ -4670,6 +6042,37 @@
         "spacesdVersion",
         "features",
         "reachable"
+      ]
+    },
+    "SpaceService": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "restarts": {
+          "type": "number"
+        },
+        "lastEnd": {
+          "type": "string"
+        },
+        "probeError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "command",
+        "state",
+        "restarts",
+        "lastEnd",
+        "probeError"
       ]
     },
     "SpaceSharingFacts": {
@@ -4743,6 +6146,35 @@
       "required": [
         "ownerId",
         "role"
+      ]
+    },
+    "SpacesSettings": {
+      "type": "object",
+      "properties": {
+        "defaultSpace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fallbackOn": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "defaultSpace",
+        "fallback",
+        "fallbackOn",
+        "updatedAt"
       ]
     },
     "StartupState": {
@@ -5067,6 +6499,13 @@
             },
             "state": {
               "type": "string"
+            },
+            "card": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": {}
             }
           },
           "required": [
@@ -5211,6 +6650,156 @@
             "by"
           ]
         },
+        "child": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "subagent"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "running",
+                        "done",
+                        "failed"
+                      ]
+                    },
+                    "steps": {
+                      "type": "number"
+                    },
+                    "result": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "agent",
+                    "title",
+                    "state",
+                    "steps",
+                    "result",
+                    "startedMs",
+                    "endedMs"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "child_space"
+                      ]
+                    },
+                    "space": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "os": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "by": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "creating",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "percent": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "space",
+                    "name",
+                    "os",
+                    "agent"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "joinRequest": {
           "type": [
             "object",
@@ -5288,6 +6877,44 @@
             "title",
             "windowId"
           ]
+        },
+        "failure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "class": {
+              "enum": [
+                "needs_connect",
+                "error"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "class",
+            "provider",
+            "message",
+            "retryable"
+          ]
+        },
+        "fanoutOf": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -5307,6 +6934,129 @@
         "update",
         "runsOnKeysOf",
         "event"
+      ]
+    },
+    "TreeBudget": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "set": {
+          "$ref": "#/$defs/TreeBudgetLimits"
+        },
+        "maxSpaces": {
+          "type": "number"
+        },
+        "maxVcpus": {
+          "type": "number"
+        },
+        "maxMemoryMb": {
+          "type": "number"
+        },
+        "usdPerHour": {
+          "type": "number"
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "spaces": {
+          "type": "number"
+        },
+        "vcpus": {
+          "type": "number"
+        },
+        "memoryMb": {
+          "type": "number"
+        },
+        "usdPerHourUsed": {
+          "type": "number"
+        },
+        "usdSpent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "root",
+        "set",
+        "maxSpaces",
+        "maxVcpus",
+        "maxMemoryMb",
+        "usdPerHour",
+        "spaces",
+        "vcpus",
+        "memoryMb",
+        "usdPerHourUsed",
+        "usdSpent"
+      ]
+    },
+    "TreeBudgetLimits": {
+      "type": "object",
+      "properties": {
+        "maxSpaces": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxVcpus": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxMemoryMb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdPerHour": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "TreeNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "type": "number"
+        },
+        "children": {
+          "type": "boolean"
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "depth",
+        "children"
       ]
     },
     "UpdateState": {
@@ -5502,6 +7252,15 @@
             "null"
           ],
           "items": {
+            "type": "string"
+          }
+        },
+        "localDetails": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
             "type": "string"
           }
         },
@@ -5959,6 +7718,48 @@
           "type": "number"
         },
         "maxMacosVms": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxRunMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usedDiskGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "totalDiskGb": {
           "type": [
             "number",
             "null"
@@ -6478,7 +8279,7 @@
         "updateChannel": {
           "enum": [
             "stable",
-            "beta",
+            "nightly",
             null
           ]
         },
@@ -6524,6 +8325,28 @@
             "installed"
           ]
         },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
+          ]
+        },
         "tips": {
           "type": "object",
           "properties": {
@@ -6540,6 +8363,50 @@
           "required": [
             "off",
             "done"
+          ]
+        },
+        "notchPinned": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "agentMenu": {
+          "type": "object",
+          "properties": {
+            "shown": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hidden": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "seen": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "shown",
+            "hidden",
+            "seen"
+          ]
+        },
+        "runtimes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimesInput"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -6669,6 +8536,12 @@
           ]
         },
         "hostName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
           "type": [
             "string",
             "null"
@@ -6833,13 +8706,42 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
+    "agentKeys.check": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.copySignIn": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.fromShell": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.list": {
       "$ref": "#/$defs/AgentKeysReport"
     },
     "agentKeys.remove": {
       "$ref": "#/$defs/AgentKeysReport"
     },
+    "agentKeys.rename": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
     "agentKeys.set": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.shell": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "names"
+      ]
+    },
+    "agentKeys.use": {
       "$ref": "#/$defs/AgentKeysReport"
     },
     "agents.addRoutine": {
@@ -6847,6 +8749,48 @@
     },
     "agents.allowComputer": {
       "type": "null"
+    },
+    "agents.computerSignIn": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "not_signed_in",
+            "signing_in",
+            "signed_in",
+            "failed",
+            "expired"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pasteCode": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "url",
+        "code",
+        "pasteCode",
+        "reason"
+      ]
     },
     "agents.configure": {
       "type": "array",
@@ -7027,6 +8971,12 @@
     "agents.readFile": {
       "$ref": "#/$defs/AgentOpenFile"
     },
+    "agents.recentThreads": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RecentThread"
+      }
+    },
     "agents.removeRoutine": {
       "type": "null"
     },
@@ -7156,6 +9106,38 @@
         "$ref": "#/$defs/AgentSetupRow"
       }
     },
+    "agents.signInStart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "code"
+      ]
+    },
+    "agents.signInWait": {
+      "type": "object",
+      "properties": {
+        "imported": {},
+        "refused": {},
+        "line": {}
+      },
+      "required": [
+        "imported",
+        "refused",
+        "line"
+      ]
+    },
     "agents.start": {
       "type": "object",
       "properties": {
@@ -7173,6 +9155,64 @@
     },
     "agents.status": {
       "$ref": "#/$defs/ConnectionReport"
+    },
+    "agents.threadHistory": {
+      "type": "object",
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/RecentThread"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "person",
+                  "agent"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "tsMs": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "cut": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "role",
+              "text",
+              "tsMs",
+              "cut"
+            ]
+          }
+        },
+        "earlierOmitted": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "thread",
+        "messages",
+        "earlierOmitted"
+      ]
+    },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
     },
     "checklist.get": {
       "type": "object",
@@ -7247,6 +9287,73 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "null"
+    },
+    "ci.connect": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.connectCancel": {
+      "type": "null"
+    },
+    "ci.connectToken": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.goal": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "goal",
+        "applied"
+      ]
+    },
+    "ci.log": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at_ms": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "at_ms",
+              "text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "ci.overview": {
+      "$ref": "#/$defs/CiOverview"
+    },
+    "ci.repositories": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     },
     "cli.install": {
       "$ref": "#/$defs/CliInstallPlan"
@@ -7427,16 +9534,147 @@
     "devices.revokePairingCode": {
       "type": "null"
     },
+    "driver.config": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "driver.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "machineId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "os": {
+            "enum": [
+              "macos",
+              "windows",
+              "linux"
+            ]
+          },
+          "thisMachine": {
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "starting",
+              "stopped",
+              "paused",
+              "needs-permission",
+              "failed"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "machineId",
+          "name",
+          "os",
+          "thisMachine",
+          "state",
+          "version",
+          "update"
+        ]
+      }
+    },
+    "driver.pause": {
+      "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
+    },
+    "driver.setApp": {
+      "type": "null"
+    },
+    "driver.setConfig": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "driver.setup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.test": {
+      "$ref": "#/$defs/DriverLiveTest"
+    },
+    "driver.update": {
+      "type": "null"
+    },
     "experiments.get": {
       "$ref": "#/$defs/Experiments"
     },
     "experiments.set": {
       "$ref": "#/$defs/Experiments"
     },
+    "github.enable": {
+      "$ref": "#/$defs/GithubReport"
+    },
+    "github.rescan": {
+      "$ref": "#/$defs/GithubReport"
+    },
+    "github.status": {
+      "$ref": "#/$defs/GithubReport"
+    },
+    "github.use": {
+      "$ref": "#/$defs/GithubReport"
+    },
     "host.action": {
       "$ref": "#/$defs/HostStatus"
     },
     "host.joinWithCode": {
+      "$ref": "#/$defs/HostStatus"
+    },
+    "host.limits": {
       "$ref": "#/$defs/HostStatus"
     },
     "host.openSettings": {
@@ -7503,6 +9741,105 @@
     "keyvault.unlock": {
       "type": "null"
     },
+    "links.approve": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
     "links.create": {
       "type": "object",
       "properties": {
@@ -7545,6 +9882,49 @@
             "number",
             "null"
           ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -7557,6 +9937,17 @@
         "owner",
         "createdAtUnix",
         "expiresAtUnix"
+      ]
+    },
+    "links.deny": {
+      "type": "object",
+      "properties": {
+        "denied": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "denied"
       ]
     },
     "links.list": {
@@ -7604,6 +9995,49 @@
               "expiresAtUnix": {
                 "type": [
                   "number",
+                  "null"
+                ]
+              },
+              "tcpConnectWith": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tcpAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "route": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "routeLine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "allow": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "waiting": {
+                "enum": [
+                  "approval",
+                  "consent",
+                  null
+                ]
+              },
+              "waitingText": {
+                "type": [
+                  "string",
                   "null"
                 ]
               }
@@ -7663,6 +10097,32 @@
     },
     "machines.rename": {
       "type": "null"
+    },
+    "network.ackNotice": {
+      "type": "null"
+    },
+    "network.get": {
+      "$ref": "#/$defs/SpaceNetwork"
+    },
+    "network.log": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NetworkEvent"
+      }
+    },
+    "network.set": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "enum": [
+            "now",
+            "next_start"
+          ]
+        }
+      },
+      "required": [
+        "applied"
+      ]
     },
     "notifications.list": {
       "type": "array",
@@ -7841,6 +10301,15 @@
         "upgradeUrl"
       ]
     },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
     "resources.get": {
       "type": [
         "object",
@@ -7881,6 +10350,32 @@
         "warning"
       ]
     },
+    "runtimes.browse": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "runtimes.check": {
+      "$ref": "#/$defs/RuntimePathCheck"
+    },
+    "services.control": {
+      "type": "null"
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.completeOnboarding": {
       "type": "null"
     },
@@ -7888,6 +10383,9 @@
       "$ref": "#/$defs/SessionSnapshot"
     },
     "session.openExternal": {
+      "type": "null"
+    },
+    "session.resetOnboarding": {
       "type": "null"
     },
     "session.signIn": {
@@ -7921,6 +10419,166 @@
     },
     "settings.set": {
       "$ref": "#/$defs/SettingsSnapshot"
+    },
+    "shares.edge.remove": {
+      "type": "object",
+      "properties": {
+        "ended": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "ended"
+      ]
+    },
+    "shares.settings.get": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
+    },
+    "shares.settings.set": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
     },
     "sharing.ackRemovals": {
       "type": "null"
@@ -8032,8 +10690,40 @@
         "expiresAt"
       ]
     },
+    "spaces.reach": {
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "listedOffline": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reachable",
+        "listedOffline",
+        "reason"
+      ]
+    },
     "spaces.rename": {
       "type": "null"
+    },
+    "spaces.resolveDefault": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DefaultSpace"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "spaces.sendFiles": {
       "type": "array",
@@ -8056,6 +10746,9 @@
           "bytes"
         ]
       }
+    },
+    "spaces.setAccess": {
+      "type": "null"
     },
     "spaces.setPower": {
       "type": "object",
@@ -8080,6 +10773,26 @@
         "message"
       ]
     },
+    "spaces.setSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spaces.settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.thumbnail": {
       "type": [
         "object",
@@ -8097,6 +10810,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [
@@ -8333,6 +11052,114 @@
         "totalBytes",
         "warnings",
         "json"
+      ]
+    },
+    "teleport.readiness": {
+      "type": "object",
+      "properties": {
+        "provider_id": {
+          "type": "string"
+        },
+        "app_display": {
+          "type": "string"
+        },
+        "keyvault_initialized": {
+          "type": "boolean"
+        },
+        "keyvault_unlocked": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "account": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "last_used": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "dir",
+              "name",
+              "last_used"
+            ]
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "tabs": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "profile_empty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider_id",
+        "app_display",
+        "keyvault_initialized",
+        "keyvault_unlocked",
+        "profiles",
+        "files",
+        "tabs",
+        "profile_empty"
       ]
     },
     "teleport.remembered": {
@@ -8652,6 +11479,74 @@
             "$ref": "#/$defs/ThreadEntry"
           }
         },
+        "live": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "type": "string"
+                  },
+                  "sinceMs": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "type": "number"
+                        },
+                        "step": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sinceMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "steps",
+                        "step"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "agent",
+                  "stage"
+                ]
+              }
+            }
+          },
+          "required": [
+            "key",
+            "agents"
+          ]
+        },
         "cursor": {
           "type": "number"
         },
@@ -8689,6 +11584,7 @@
       },
       "required": [
         "entries",
+        "live",
         "cursor",
         "caughtUp",
         "unread",
@@ -8773,7 +11669,7 @@
     "about.set": {
       "$ref": "#/$defs/AboutInput"
     },
-    "agentKeys.list": {
+    "agentKeys.check": {
       "type": "object",
       "properties": {
         "keys": {
@@ -8787,11 +11683,29 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -8799,6 +11713,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -8831,6 +11766,357 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.copySignIn": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.fromShell": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.list": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -8853,11 +12139,29 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -8865,6 +12169,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -8897,6 +12222,129 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.rename": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -8919,11 +12367,29 @@
               "env": {
                 "type": "string"
               },
+              "slot": {
+                "type": "string"
+              },
               "last4": {
                 "type": "string"
               },
               "added_ms": {
                 "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -8931,6 +12397,27 @@
               "env",
               "last4",
               "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
             ]
           }
         },
@@ -8963,6 +12450,143 @@
             "string",
             "null"
           ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
+    "agentKeys.shell": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "names"
+      ]
+    },
+    "agentKeys.use": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_sign_in": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -9281,6 +12905,38 @@
         "$ref": "#/$defs/AgentSetupRow"
       }
     },
+    "agents.signInStart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "code"
+      ]
+    },
+    "agents.signInWait": {
+      "type": "object",
+      "properties": {
+        "imported": {},
+        "refused": {},
+        "line": {}
+      },
+      "required": [
+        "imported",
+        "refused",
+        "line"
+      ]
+    },
     "agents.start": {
       "type": "object",
       "properties": {
@@ -9328,6 +12984,12 @@
         "experiments",
         "methods"
       ]
+    },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
     },
     "checklist.get": {
       "type": "object",
@@ -9402,6 +13064,82 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "object",
+      "properties": {}
+    },
+    "ci.connect": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.connectCancel": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ]
+    },
+    "ci.connectToken": {
+      "$ref": "#/$defs/CiConnectAnswer"
+    },
+    "ci.goal": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "goal",
+        "applied"
+      ]
+    },
+    "ci.log": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at_ms": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "at_ms",
+              "text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ]
+    },
+    "ci.overview": {
+      "$ref": "#/$defs/CiOverview"
+    },
+    "ci.repositories": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     },
     "cli.install": {
       "$ref": "#/$defs/CliInstallPlan"
@@ -9585,6 +13323,755 @@
     "devices.revokePairingCode": {
       "type": "null"
     },
+    "driver.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "machineId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "os": {
+            "enum": [
+              "macos",
+              "windows",
+              "linux"
+            ]
+          },
+          "thisMachine": {
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "starting",
+              "stopped",
+              "paused",
+              "needs-permission",
+              "failed"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "machineId",
+          "name",
+          "os",
+          "thisMachine",
+          "state",
+          "version",
+          "update"
+        ]
+      }
+    },
+    "driver.pause": {
+      "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
+    },
+    "driver.setApp": {
+      "type": "null"
+    },
+    "driver.setup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.test": {
+      "$ref": "#/$defs/DriverLiveTest"
+    },
+    "github.enable": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
+    "github.rescan": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
+    "github.status": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
+    "github.use": {
+      "type": "object",
+      "properties": {
+        "gh": {
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "boolean"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "found",
+            "old"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "enum": [
+                  "saved",
+                  "env",
+                  "gh",
+                  "git",
+                  null
+                ]
+              },
+              "login": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "env_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": "string"
+              },
+              "problem": {
+                "type": "boolean"
+              },
+              "warning": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "login": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "boolean"
+                    },
+                    "selected": {
+                      "type": "boolean"
+                    },
+                    "chosen": {
+                      "type": "boolean"
+                    },
+                    "valid": {
+                      "type": "boolean"
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "login",
+                    "active",
+                    "selected",
+                    "chosen",
+                    "valid",
+                    "scopes"
+                  ]
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "enum": [
+                        "saved",
+                        "env",
+                        "gh",
+                        "git"
+                      ]
+                    },
+                    "used": {
+                      "type": "boolean"
+                    },
+                    "present": {
+                      "type": "boolean"
+                    },
+                    "line": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "used",
+                    "present",
+                    "line"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "host",
+              "enabled",
+              "line",
+              "problem",
+              "accounts",
+              "sources"
+            ]
+          }
+        },
+        "can_save": {
+          "type": "boolean"
+        },
+        "scanned_ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "gh",
+        "hosts",
+        "can_save",
+        "scanned_ms"
+      ]
+    },
     "host.action": {
       "anyOf": [
         {
@@ -9596,6 +14083,16 @@
       ]
     },
     "host.joinWithCode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WkHostState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "host.limits": {
       "anyOf": [
         {
           "$ref": "#/$defs/WkHostState"
@@ -9688,6 +14185,105 @@
       "$ref": "#/$defs/WkKeyvault"
     },
     "keyvault.unlockVault": {},
+    "links.approve": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
     "links.create": {
       "type": "object",
       "properties": {
@@ -9730,6 +14326,49 @@
             "number",
             "null"
           ]
+        },
+        "tcpConnectWith": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcpAddress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routeLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiting": {
+          "enum": [
+            "approval",
+            "consent",
+            null
+          ]
+        },
+        "waitingText": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -9742,6 +14381,17 @@
         "owner",
         "createdAtUnix",
         "expiresAtUnix"
+      ]
+    },
+    "links.deny": {
+      "type": "object",
+      "properties": {
+        "denied": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "denied"
       ]
     },
     "links.list": {
@@ -9789,6 +14439,49 @@
               "expiresAtUnix": {
                 "type": [
                   "number",
+                  "null"
+                ]
+              },
+              "tcpConnectWith": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tcpAddress": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "route": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "routeLine": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "allow": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "waiting": {
+                "enum": [
+                  "approval",
+                  "consent",
+                  null
+                ]
+              },
+              "waitingText": {
+                "type": [
+                  "string",
                   "null"
                 ]
               }
@@ -9846,6 +14539,33 @@
     "machines.rename": {
       "type": "null"
     },
+    "network.ackNotice": {
+      "type": "object",
+      "properties": {}
+    },
+    "network.get": {
+      "$ref": "#/$defs/SpaceNetwork"
+    },
+    "network.log": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/NetworkEvent"
+      }
+    },
+    "network.set": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "enum": [
+            "now",
+            "next_start"
+          ]
+        }
+      },
+      "required": [
+        "applied"
+      ]
+    },
     "notifications.list": {
       "type": "array",
       "items": {
@@ -9895,6 +14615,9 @@
       "$ref": "#/$defs/WkOnboarding"
     },
     "onboarding.get": {
+      "$ref": "#/$defs/WkOnboarding"
+    },
+    "onboarding.reset": {
       "$ref": "#/$defs/WkOnboarding"
     },
     "relay.usage": {
@@ -9982,6 +14705,15 @@
         "upgradeUrl"
       ]
     },
+    "repoCache.clear": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.get": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
+    "repoCache.set": {
+      "$ref": "#/$defs/RepoCacheView"
+    },
     "resources.get": {
       "type": [
         "object",
@@ -10022,6 +14754,33 @@
         "warning"
       ]
     },
+    "runtimes.browse": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "runtimes.check": {
+      "$ref": "#/$defs/RuntimePathCheck"
+    },
+    "services.control": {
+      "type": "object",
+      "properties": {}
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.get": {
       "$ref": "#/$defs/WkSession"
     },
@@ -10039,6 +14798,166 @@
     },
     "settings.update": {
       "$ref": "#/$defs/WkSettings"
+    },
+    "shares.edge.remove": {
+      "type": "object",
+      "properties": {
+        "ended": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "ended"
+      ]
+    },
+    "shares.settings.get": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
+    },
+    "shares.settings.set": {
+      "type": "object",
+      "properties": {
+        "landing": {
+          "enum": [
+            "auto",
+            "only_my_cloud",
+            "allow_relay"
+          ]
+        },
+        "relayFallback": {
+          "type": "boolean"
+        },
+        "dailyCapMib": {
+          "type": "number"
+        },
+        "defaultAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "approveAgentShares": {
+          "type": "boolean"
+        },
+        "alwaysAllowSpaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edgeConsent": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "usedToday": {
+          "type": "number"
+        },
+        "edgeCloud": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "edgeMonthlyUsd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "landing",
+        "relayFallback",
+        "dailyCapMib",
+        "defaultAllow",
+        "approveAgentShares",
+        "alwaysAllowSpaces",
+        "edgeConsent",
+        "usedToday",
+        "edgeCloud",
+        "edgeHost",
+        "edgeMonthlyUsd"
+      ]
     },
     "sharing.ackRemovals": {
       "type": "null"
@@ -10126,9 +15045,41 @@
     "spaces.open": {
       "type": "null"
     },
+    "spaces.reach": {
+      "type": "object",
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "listedOffline": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reachable",
+        "listedOffline",
+        "reason"
+      ]
+    },
     "spaces.rename": {
       "type": "object",
       "properties": {}
+    },
+    "spaces.resolveDefault": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DefaultSpace"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "spaces.sendFiles": {
       "type": "array",
@@ -10152,8 +15103,32 @@
         ]
       }
     },
+    "spaces.setAccess": {
+      "type": "object",
+      "properties": {}
+    },
     "spaces.setPower": {
       "$ref": "#/$defs/WkSpaces"
+    },
+    "spaces.setSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spaces.settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "spaces.thumbnail": {
       "type": [
@@ -10172,6 +15147,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [
@@ -10411,6 +15392,114 @@
         "json"
       ]
     },
+    "teleport.readiness": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "appDisplay": {
+          "type": "string"
+        },
+        "keyvaultInitialized": {
+          "type": "boolean"
+        },
+        "keyvaultUnlocked": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dir": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "account": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastUsed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "dir",
+              "name",
+              "lastUsed"
+            ]
+          }
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "tabs": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "granted",
+                "denied",
+                "unknown"
+              ]
+            },
+            "say": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "say"
+          ]
+        },
+        "profileEmpty": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "providerId",
+        "appDisplay",
+        "keyvaultInitialized",
+        "keyvaultUnlocked",
+        "profiles",
+        "files",
+        "tabs",
+        "profileEmpty"
+      ]
+    },
     "teleport.remembered": {
       "type": [
         "array",
@@ -10637,6 +15726,11 @@
     }
   },
   "webkitUnshaped": {
+    "agents.computerSignIn": "the daemon tool's JSON as-is (agent_sign_in); ops/agent-sign-in.ts maps it for every host",
+    "agents.recentThreads": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
+    "agents.threadHistory": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
+    "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",
+    "driver.setConfig": "the driver's get_config JSON as-is, after the change",
     "thread.agentAdd": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",
     "thread.agentRemove": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",
     "thread.joinCodeCancel": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! End-to-end session lifecycle / disposal test (cross-platform; runs on the Mac
 //! via `cargo test -p cua-driver-core`).
 //!
@@ -27,14 +30,14 @@
 //! both paths, which is the cross-platform half of the contract.
 
 use cua_driver_core::session::{
-    active_session_count, end_session, evict_idle, is_session_ended, register_session_end_hook,
-    revive_session, touch_session,
+    active_session_count, begin_session_dispatch, end_session, evict_idle, is_session_ended,
+    register_session_end_hook, revive_session, SessionClientKind, SessionTransport,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
-/// `evict_idle` operates on the PROCESS-GLOBAL activity map, and the test binary
+/// `evict_idle` operates on the PROCESS-GLOBAL lifecycle records, and the test binary
 /// runs tests in parallel. A concurrent `evict_idle(ZERO)` from another test
 /// would otherwise steal (reap) this test's idle session before its own sweep
 /// observes it — making "my sweep returned my id" flaky. Serialize every test
@@ -45,6 +48,22 @@ fn eviction_lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// One completed session-requiring call, the only production path that
+/// refreshes a session's idle clock.
+fn use_session(session_id: &str) {
+    drop(
+        begin_session_dispatch(
+            session_id,
+            None,
+            session_id,
+            false,
+            SessionTransport::Daemon,
+            SessionClientKind::Direct,
+        )
+        .unwrap(),
+    );
 }
 
 /// Process-global session state is shared across every test in this binary, so
@@ -59,7 +78,7 @@ fn unique_id(tag: &str) -> String {
 /// production `register_session_end_hook` registration:
 /// - `cursor_removed`   → `platform-macos`: `CursorRegistry::remove` + overlay.
 /// - `config_cleared`   → `platform-macos`: `SessionConfigRegistry::clear`.
-/// - `recording_stopped`→ `serve.rs`: `RecordingSession::stop_owner(Some(sid))`.
+/// - `recording_stopped`→ `serve.rs`: `RecordingSession::stop(StopBy::Owner(sid))`.
 ///
 /// Each counts fires for ONE specific session id (hooks are process-global, so we
 /// filter). A correctly-disposed session shows all three == 1.
@@ -133,7 +152,7 @@ fn end_session_disposes_then_id_reuse_starts_fresh() {
     //    the trackable, not-ended, counted state is the proxy for "registered /
     //    cursor present" (the CursorRegistry is platform-macos, daemon-level only).
     revive_session(&sid);
-    touch_session(&sid);
+    use_session(&sid);
     assert!(
         !is_session_ended(&sid),
         "freshly started session must be live"
@@ -145,7 +164,7 @@ fn end_session_disposes_then_id_reuse_starts_fresh() {
     disposal.assert_not_disposed("just started");
 
     // 2. After activity, the session is alive and NOT evicted under a long TTL.
-    touch_session(&sid);
+    use_session(&sid);
     let evicted = evict_idle(Duration::from_secs(3600));
     assert!(
         !evicted.contains(&sid),
@@ -172,7 +191,7 @@ fn end_session_disposes_then_id_reuse_starts_fresh() {
         revive_session(&sid),
         "re-declaring a recycled id revives it"
     );
-    touch_session(&sid);
+    use_session(&sid);
     assert!(
         !is_session_ended(&sid),
         "revived id is live again, actions no longer rejected"
@@ -187,7 +206,7 @@ fn end_session_disposes_then_id_reuse_starts_fresh() {
 }
 
 /// Idle-TTL auto-eviction disposes a session the SAME way `end_session` does:
-/// every cleanup hook fires — not merely that the id left the activity map.
+/// every cleanup hook fires — not merely that the id left the live records.
 #[test]
 fn idle_ttl_eviction_disposes_like_end_session() {
     let _guard = eviction_lock();
@@ -195,14 +214,14 @@ fn idle_ttl_eviction_disposes_like_end_session() {
     let disposal = Disposal::wire(&sid);
 
     // Start, then leave the session UNTOUCHED past a short TTL.
-    touch_session(&sid);
+    use_session(&sid);
     disposal.assert_not_disposed("before idle window");
 
     // Age the session well beyond the short TTL we'll sweep with.
     std::thread::sleep(Duration::from_millis(25));
     let evicted = evict_idle(Duration::from_millis(5));
 
-    // (a) the id left the activity map (the shallow signal)...
+    // (a) the id left the live records (the shallow signal)...
     assert!(
         evicted.contains(&sid),
         "idle session past the short TTL is evicted"
@@ -228,11 +247,11 @@ fn fresh_session_survives_short_ttl_that_evicts_idle_sibling() {
     let idle_disposal = Disposal::wire(&idle);
     let fresh_disposal = Disposal::wire(&fresh);
 
-    touch_session(&idle);
+    use_session(&idle);
     std::thread::sleep(Duration::from_millis(40));
     // Touch `fresh` immediately before the sweep so its age (~0) is far under the
     // 10ms TTL, while `idle` (~40ms) is far over it.
-    touch_session(&fresh);
+    use_session(&fresh);
     let evicted = evict_idle(Duration::from_millis(10));
 
     assert!(evicted.contains(&idle), "idle sibling evicted");

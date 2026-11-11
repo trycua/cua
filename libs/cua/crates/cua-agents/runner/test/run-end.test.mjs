@@ -108,7 +108,7 @@ test("prompt errors retain the provider reason without launch diagnostics", {tim
   assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
 });
 
-test("prompt authentication errors include the guest sign-in command and remain recoverable", {timeout: 6000}, async (t) => {
+test("prompt authentication errors include the guest sign-in command and end the run as failed, so the next message starts a fresh one", {timeout: 6000}, async (t) => {
   const authHint = "Run ~/.cua/bin/claude inside the Space to sign in";
   const {events, state} = await failureRun(t, {
     config: {prompt: "hello", idleExitSecs: 0.01, authHint},
@@ -121,6 +121,20 @@ test("prompt authentication errors include the guest sign-in command and remain 
   assert.equal(errors[0].message, `Authentication required\n${authHint}`);
   assert.equal(errors[0].code, -32000);
   assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
+  // Not idle for half an hour with a credential that does not work: failed,
+  // with the error kept, so the owner's next message starts a new run.
+  assert.equal(events.filter(e => e.type === "run_exited").length, 1);
+  assert.equal(state.status, "failed");
+  assert.match(state.error, /Authentication required/);
+});
+
+test("other prompt errors still leave the run waiting for the next message", {timeout: 6000}, async (t) => {
+  const {state} = await failureRun(t, {
+    config: {prompt: "hello", idleExitSecs: 0.01},
+    request: `if (method === 'initialize') return {};
+      if (method === 'new') return {sessionId: 's'};
+      throw Object.assign(new Error('Provider quota exceeded'), {code: -32001});`,
+  });
   assert.equal(state.status, "exited");
 });
 

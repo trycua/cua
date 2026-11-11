@@ -17,6 +17,8 @@ struct VMVirtualizationServiceContext {
     let usbMassStoragePaths: [Path]?
     let additionalDiskPaths: [Path]?
     let networkMode: NetworkMode
+    /// Adds a virtio socket device (for host port forwards over vsock).
+    var socketDevice: Bool = false
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -37,6 +39,13 @@ protocol VMVirtualizationService {
     /// Loads a state written by `saveMachineState(to:)` into this stopped VM,
     /// which is left paused. The configuration must match the saved one.
     func restoreMachineState(from url: URL) async throws
+    /// Opens vsock streams to the guest, when the VM has a virtio socket
+    /// device.
+    func vsockConnector() -> VsockForwarder.Connect?
+}
+
+extension VMVirtualizationService {
+    func vsockConnector() -> VsockForwarder.Connect? { nil }
 }
 
 /// Base implementation of VMVirtualizationService using VZVirtualMachine
@@ -194,6 +203,35 @@ class BaseVirtualizationService: VMVirtualizationService {
         try await lifecycleMonitor.waitForStop()
     }
 
+    func vsockConnector() -> VsockForwarder.Connect? {
+        let handle = virtualMachineHandle
+        let hasDevice = handle.queue.sync { !handle.machine.socketDevices.isEmpty }
+        guard hasDevice else { return nil }
+        return { port in
+            let result = VsockConnectResult()
+            handle.queue.async {
+                guard let device = handle.machine.socketDevices.first as? VZVirtioSocketDevice
+                else {
+                    result.finish(nil)
+                    return
+                }
+                device.connect(toPort: port) { outcome in
+                    switch outcome {
+                    case .success(let connection):
+                        let box = VsockConnectionBox(connection)
+                        result.finish(
+                            VsockForwarder.Stream(
+                                fd: connection.fileDescriptor,
+                                close: { box.connection.close() }))
+                    case .failure:
+                        result.finish(nil)
+                    }
+                }
+            }
+            return result.wait(seconds: 5)
+        }
+    }
+
     func saveMachineState(to url: URL) async throws {
         let handle = virtualMachineHandle
         try await withCheckedThrowingContinuation {
@@ -308,6 +346,9 @@ class BaseVirtualizationService: VMVirtualizationService {
                     "localizedName": bridgeInterface.localizedDisplayName ?? "unknown",
                 ])
             network.attachment = VZBridgedNetworkDeviceAttachment(interface: bridgeInterface)
+        case .gateway(let socket):
+            Logger.info("Using gateway networking", metadata: ["socket": socket])
+            network.attachment = try GatewayNetwork.attachment(socket: socket)
         }
 
         network.macAddress = vzMacAddress
@@ -446,6 +487,9 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        if config.socketDevice {
+            vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+        }
         
         // Audio configuration
         let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
@@ -668,6 +712,9 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        if config.socketDevice {
+            vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+        }
 
         // Audio configuration
         let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
@@ -744,4 +791,45 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
             queue: queue
         )
     }
+}
+
+/// One vsock connect's answer, handed from the VM's queue to the waiting
+/// thread.
+final class VsockConnectResult: @unchecked Sendable {
+    private let done = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var stream: VsockForwarder.Stream?
+    private var finished = false
+    private var abandoned = false
+
+    func finish(_ stream: VsockForwarder.Stream?) {
+        lock.lock()
+        let late = abandoned
+        if !late {
+            self.stream = stream
+            finished = true
+        }
+        lock.unlock()
+        // An answer after the waiter gave up: nobody will use the stream.
+        if late { stream?.close() }
+        done.signal()
+    }
+
+    func wait(seconds: Double) -> VsockForwarder.Stream? {
+        let timedOut = done.wait(timeout: .now() + seconds) == .timedOut
+        lock.lock()
+        defer { lock.unlock() }
+        if timedOut && !finished {
+            abandoned = true
+            return nil
+        }
+        return stream
+    }
+}
+
+/// Keeps a vsock connection open until its stream is closed (closing it is
+/// thread-safe).
+final class VsockConnectionBox: @unchecked Sendable {
+    let connection: VZVirtioSocketConnection
+    init(_ connection: VZVirtioSocketConnection) { self.connection = connection }
 }

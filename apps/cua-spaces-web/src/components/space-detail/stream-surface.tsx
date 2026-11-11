@@ -4,7 +4,16 @@
 import { AppWindowIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { useDesktopCover, useSettings, useSpaces, useSpaceThumbnail, type DesktopCover, type MachineAccessNotice, type SpaceOs, type StreamPhase } from "@/bridge";
+import {
+  useDesktopCover,
+  useSettings,
+  useSpaces,
+  useSpaceThumbnail,
+  type DesktopCover,
+  type MachineAccessNotice,
+  type SpaceOs,
+  type StreamPhase,
+} from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -34,9 +43,12 @@ import { cn, isMacPlatform } from "@/lib/utils";
  * registers the `cuaVideo` handler (the SwiftUI shell, unless its
  * `WebUINativeVideo` default is NO) and the Space can stream, the host draws
  * the Space's desktop over the block and sends it pointer, scroll and keys.
- * A line under the block says where keys go and how to take them back
- * (Control+Option pressed and released alone, or a click outside). Anywhere else it is the placeholder, and the
- * desktop opens in its own native window.
+ * Nothing sits under the block (the header's picture-in-picture button is
+ * the way out to a window of its own): while the desktop has the keyboard,
+ * a small bar over its bottom edge says how to take keys back (Control+Option
+ * pressed and released alone, a click outside, or Stop controlling), and
+ * the host cuts the video out under that bar (`data-video-hole`). Anywhere
+ * else it is the placeholder, and the desktop opens in its own native window.
  */
 export interface StreamSurfaceProps {
   spaceId: string;
@@ -63,12 +75,20 @@ export interface StreamSurfaceProps {
   windowName?: string | null;
   /** Pointer and keys go to the Space (default). False only shows it (Watch). */
   interactive?: boolean;
+  /** The person may only watch this Space (shared as Can view): it says so instead of offering control. */
+  viewOnly?: boolean;
 }
 
 /** How long the desktop may take to send its first picture. After that the
  * cover says it didn't, why, and offers Try again: the viewer never waits
  * silently. */
 export const CONNECT_TIMEOUT_MS = 20_000;
+/** How long "Connecting…" may go on before the cover says it is taking longer
+ * than usual (a Space that was just turned on, a machine far away). */
+export const SLOW_CONNECT_MS = 4_000;
+/** The cover's second line once a connect is slow: plain words, and it goes
+ * with the picture. */
+export const SLOW_CONNECT_HINT = "Still connecting. This is taking longer than usual.";
 /** Why, when it timed out. */
 export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop within 20 seconds.";
 
@@ -77,7 +97,12 @@ export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop withi
 function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
   const [over, setOver] = useState<string | null>(null);
   useEffect(() => {
-    if (!waiting) return;
+    // A wait that ended (a picture came, or the slot went away) is forgotten:
+    // the next wait under the same key starts from zero, never already over.
+    if (!waiting) {
+      setOver(null);
+      return;
+    }
     const t = setTimeout(() => setOver(key), ms);
     return () => clearTimeout(t);
   }, [waiting, ms, key]);
@@ -88,7 +113,21 @@ function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
 const SURFACE_RADIUS = 8;
 const SURFACE_BORDER = 0;
 
-export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, previewText, access, onAccessAction, children, className, windowId, windowName, interactive = true }: StreamSurfaceProps) {
+export function StreamSurface({
+  spaceId,
+  os,
+  aspectRatio = 16 / 10,
+  canStream,
+  previewText,
+  access,
+  onAccessAction,
+  children,
+  className,
+  windowId,
+  windowName,
+  interactive = true,
+  viewOnly = false,
+}: StreamSurfaceProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const settings = useSettings();
   const autoConnect = settings.data?.values.autoConnect ?? true;
@@ -109,7 +148,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     attempt,
     spaceId,
     tier: "full",
-    interactive,
+    interactive: interactive && !viewOnly,
     radius: SURFACE_RADIUS,
     inset: SURFACE_BORDER,
     os,
@@ -118,6 +157,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   // Still no picture after CONNECT_TIMEOUT_MS: failed, with the reason and
   // Try again (a picture that arrives later still shows).
   const timedOut = useTimedOut(slot?.phase === "connecting", CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
+  const slow = useTimedOut(slot?.phase === "connecting", SLOW_CONNECT_MS, `${spaceId}:${attempt}`);
   const phase: StreamPhase = !slot ? "nosession" : slot.phase === "live" ? "streaming" : slot.phase === "failed" || timedOut ? "failed" : "connecting";
   const cover = useDesktopCover({ canStream, previewText, autoConnect, connectRequested: requested, stream: phase, access });
   const thumbnail = useSpaceThumbnail(spaceId, videoHere && canStream && !replaced && !access);
@@ -150,82 +190,83 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   const reason = timedOut ? CONNECT_TIMEOUT_REASON : slot?.phase === "failed" ? (slot.reason ?? null) : null;
   const dark = covered && (Boolean(thumbnail) || cover.kind !== "status");
   return (
-    <>
-      <div
-        ref={ref}
-        data-stream-surface={spaceId}
-        data-stream-state={state}
-        data-aspect={aspectRatio.toFixed(4)}
-        className={cn("relative w-full overflow-hidden rounded-lg", dark ? "bg-black" : "bg-muted/40", className)}
-      >
-        {covered ? (
-          cover.kind === "stream" ? null : (
-            <DesktopCoverView
-              os={os}
-              cover={cover}
-              thumbnail={access ? null : thumbnail}
-              reason={cover.kind === "status" ? reason : null}
-              onButton={press}
-              onAction={onAccessAction}
-              onOpen={slot?.phase === "failed" ? () => void open() : undefined}
-            />
-          )
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-            {children ?? (
-              <>
-                <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
-                {canStream ? (
-                  <>
-                    <p className="text-[13px] text-muted-foreground">{windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}</p>
-                    <Button className="mt-4" onClick={() => void open()}>
-                      <AppWindowIcon /> Open window
-                    </Button>
-                  </>
-                ) : (
-                  <p data-preview-text className="text-[13px] text-muted-foreground">
-                    {previewText}
+    <div
+      ref={ref}
+      data-stream-surface={spaceId}
+      data-stream-state={state}
+      data-aspect={aspectRatio.toFixed(4)}
+      className={cn("relative w-full overflow-hidden rounded-lg", dark ? "bg-black" : "bg-muted/40", className)}
+    >
+      {covered ? (
+        cover.kind === "stream" ? null : (
+          <DesktopCoverView
+            os={os}
+            cover={cover}
+            thumbnail={access ? null : thumbnail}
+            reason={cover.kind === "status" ? reason : null}
+            hint={cover.kind === "connecting" && slow ? SLOW_CONNECT_HINT : null}
+            onButton={press}
+            onAction={onAccessAction}
+            onOpen={slot?.phase === "failed" ? () => void open() : undefined}
+          />
+        )
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+          {children ?? (
+            <>
+              <OsIcon os={os} className="mb-4 size-8 text-muted-foreground/30" />
+              {canStream ? (
+                <>
+                  <p className="text-[13px] text-muted-foreground">
+                    {windowId && windowName ? `${windowName} opens in its own window.` : "The desktop opens in its own window."}
                   </p>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      {slot ? (
-        <div data-video-focus={slot.focused ? "space" : "page"} className="mt-2 flex h-7 items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+                  <Button className="mt-4" onClick={() => void open()}>
+                    <AppWindowIcon /> Open window
+                  </Button>
+                </>
+              ) : (
+                <p data-preview-text className="text-[13px] text-muted-foreground">
+                  {previewText}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {slot?.phase === "live" && viewOnly ? (
+        <p
+          data-view-only=""
+          data-video-hole=""
+          className="glass absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-lg px-3 py-1 text-xs text-muted-foreground shadow-float"
+        >
+          View only
+        </p>
+      ) : slot?.phase === "live" && slot.focused ? (
+        // While the desktop has the keyboard: how to give it back, over the
+        // video's bottom edge. The host cuts the video out under it
+        // (`data-video-hole`), so no strip under the stream is needed.
+        <div
+          data-video-focus="space"
+          data-video-hole=""
+          className="glass absolute bottom-2 left-1/2 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-2 rounded-lg py-1 pr-1 pl-3 text-xs text-muted-foreground shadow-float"
+        >
           <p className="min-w-0 truncate">
-            {slot.phase !== "live" ? null : slot.focused ? (
+            {isMacPlatform() ? (
               <>
-                {isMacPlatform() ? (
-                  <>
-                    Keys go to this Space. Press and release <Kbd>⌃⌥</Kbd> to stop.
-                  </>
-                ) : (
-                  <>
-                    Keys go to this Space. Press <Kbd>Ctrl+Shift+F12</Kbd> to stop.
-                  </>
-                )}
+                Keys go to this Space. Press and release <Kbd>⌃⌥</Kbd> to stop.
               </>
             ) : (
-              "Click the desktop to control it."
+              <>
+                Keys go to this Space. Press <Kbd>Ctrl+Shift+F12</Kbd> to stop.
+              </>
             )}
           </p>
-          <div className="flex shrink-0 items-center gap-1">
-            {slot.phase === "live" && slot.focused ? (
-              <Button variant="ghost" size="sm" onClick={() => slot.setFocus(false)}>
-                Stop controlling
-              </Button>
-            ) : null}
-            {slot.phase !== "failed" ? (
-              <Button variant="ghost" size="sm" onClick={() => void open()}>
-                <AppWindowIcon /> Open in window
-              </Button>
-            ) : null}
-          </div>
+          <Button variant="ghost" size="sm" onClick={() => slot.setFocus(false)}>
+            Stop controlling
+          </Button>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -243,6 +284,7 @@ function DesktopCoverView({
   cover,
   thumbnail,
   reason,
+  hint,
   onButton,
   onAction,
   onOpen,
@@ -252,6 +294,8 @@ function DesktopCoverView({
   thumbnail: string | null;
   /** Why it could not connect, under the line. */
   reason?: string | null;
+  /** While it connects slowly: that it is still going. */
+  hint?: string | null;
   onButton: () => void;
   onAction?: () => void;
   /** The stream failed here: its own window instead. */
@@ -259,7 +303,10 @@ function DesktopCoverView({
 }) {
   const dark = Boolean(thumbnail) || cover.kind !== "status";
   return (
-    <div data-desktop-cover={cover.kind} className={cn("absolute inset-0 flex flex-col items-center justify-center px-6 text-center", dark && "dark text-white")}>
+    <div
+      data-desktop-cover={cover.kind}
+      className={cn("absolute inset-0 flex flex-col items-center justify-center px-6 text-center", dark && "dark text-white")}
+    >
       {thumbnail ? (
         <>
           <img data-cover-thumbnail="" src={thumbnail} alt="" aria-hidden className="absolute inset-0 size-full scale-110 object-cover blur-2xl" />
@@ -280,6 +327,11 @@ function DesktopCoverView({
         {reason ? (
           <p data-cover-reason="" className={cn("mt-1 max-w-md text-xs", dark ? "text-white/60" : "text-muted-foreground")}>
             {reason}
+          </p>
+        ) : null}
+        {hint ? (
+          <p data-cover-hint="" className="mt-1 max-w-md text-xs text-white/60">
+            {hint}
           </p>
         ) : null}
         {cover.action ? (

@@ -15,11 +15,15 @@ default = [
     "spaces-presence",
     "spaces-hotspot",
     "spaces-volume",
+    "spaces-spawn",
     "spaces-agents",
     "mcp",
     "mcp-http",
     "mcp-client",
 ]
+# The S3 fallback for checkpoint copies (the AWS SDK). A build without it
+# refuses an S3 fallback with a clear error.
+s3 = ["cua-snapshot-sync/s3"]
 # send_file (TeleportService.ReceiveFiles) with gitignore-aware folder walks.
 spaces-files = []
 # Stream targets, media tickets, and `StreamSession` (rcdp wire v2 through
@@ -32,6 +36,8 @@ spaces-presence = []
 spaces-hotspot = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Cua Volume mounted in a Space's guest, served from this host.
 spaces-volume = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
+# The host's end of a Space's spawn channel (child Spaces made from inside).
+spaces-spawn = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
 # Agent CLIs in a Space as detached, tagged spacesd processes.
 spaces-agents = ["dep:cua-agents", "dep:cua-auth", "dep:reqwest"]
 # The Spaces MCP server (stdio). Hosted by `cua daemon mcp`.

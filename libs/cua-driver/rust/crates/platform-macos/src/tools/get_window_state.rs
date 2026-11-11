@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::{Content, ToolResult},
@@ -55,7 +58,18 @@ fn def() -> &'static ToolDef {
                 },
                 "screenshot_out_file": {
                     "type": "string",
-                    "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
+                    "description": "When set, write the screenshot (PNG, or JPEG with screenshot_format:\"jpeg\") to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead."
+                },
+                "screenshot_format": {
+                    "type": "string",
+                    "enum": ["png", "jpeg"],
+                    "description": "Encoding of the returned screenshot. Default \"png\". \"jpeg\" is smaller, drops alpha, and mints no capture_id (capture_id-bound tools need a PNG read); pixel coordinates are unchanged."
+                },
+                "screenshot_quality": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 95,
+                    "description": "JPEG quality, 1-95, with screenshot_format:\"jpeg\" only. Default 85."
                 },
                 "max_elements": {
                     "type": "integer",
@@ -101,15 +115,15 @@ fn prefetch_capture<T: Send + 'static>(
 
 fn verified_capture(
     window_id: u32,
-    prefetched: Option<anyhow::Result<Vec<u8>>>,
+    prefetched: Option<anyhow::Result<crate::capture::CapturedImage>>,
     bounds: &crate::windows::WindowBounds,
-    capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
-) -> Result<(Vec<u8>, u32, u32, f64), super::px_frame::PxFrameError> {
+    capture: impl FnOnce() -> anyhow::Result<crate::capture::CapturedImage>,
+) -> Result<(crate::capture::CapturedImage, u32, u32, f64), super::px_frame::PxFrameError> {
     use super::px_frame::{validate_capture_frame, PxFrameError};
-    let validate = |raw: anyhow::Result<Vec<u8>>| {
+    let validate = |raw: anyhow::Result<crate::capture::CapturedImage>| {
         let (raw, w, h) = (|| -> anyhow::Result<_> {
             let raw = raw?;
-            let (w, h) = crate::capture::png_dimensions(&raw)?;
+            let (w, h) = raw.dimensions()?;
             Ok((raw, w, h))
         })()
         .map_err(|e| PxFrameError::CaptureUnavailable {
@@ -257,6 +271,13 @@ impl Tool for GetWindowStateTool {
         // still forces a capture (an explicit "write the frame to disk").
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        // Fast path `on`: re-reads skip the screenshot unless asked for one.
+        let should_capture = should_capture
+            && !cua_driver_core::fast_path::wire::skip_reread_screenshot(
+                &args,
+                pid,
+                u64::from(window_id),
+            );
         // `include_accessibility_tree` (default true) is the mirror image of
         // `include_screenshot`: set false to SKIP the AX walk (the expensive
         // part) and return just the screenshot + window metadata — the
@@ -284,6 +305,24 @@ impl Tool for GetWindowStateTool {
             .get("max_image_dimension")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
+        let encoding = match cua_driver_core::image_utils::ScreenshotEncoding::from_args(
+            "screenshot_format",
+            args.get("screenshot_format"),
+            "screenshot_quality",
+            args.get("screenshot_quality"),
+        ) {
+            Ok(encoding) => encoding,
+            Err(detail) => {
+                return ToolResult::error(format!("get_window_state: {detail}")).with_structured(
+                    serde_json::json!({
+                        "code": "invalid_arguments",
+                        "tool": "get_window_state",
+                        "detail": detail,
+                    }),
+                );
+            }
+        };
+        let jpeg = encoding != cua_driver_core::image_utils::ScreenshotEncoding::Png;
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
@@ -295,7 +334,7 @@ impl Tool for GetWindowStateTool {
                 .and_then(|value| value.as_bool())
                 == Some(true);
         // Optional caps — when omitted, fall back to the defaults baked into
-        // the AX walker (#22865). minimum:1 keyed in the schema, but defend
+        // the AX walker. minimum:1 is keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
         // walk entirely.
         let max_elements = view.max_elements(
@@ -319,7 +358,7 @@ impl Tool for GetWindowStateTool {
         // ScreenCaptureKit and the accessibility walk use independent system
         // services, and the read otherwise pays for them one after the other.
         let prefetched_capture = prefetch_capture(should_capture, want_tree, move || {
-            crate::capture::screenshot_window_bytes(window_id)
+            crate::capture::screenshot_window_image(window_id)
         });
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
@@ -423,15 +462,12 @@ impl Tool for GetWindowStateTool {
                     window_id,
                     prefetched_raw,
                     &bounds,
-                    || crate::capture::screenshot_window_bytes(window_id),
+                    || crate::capture::screenshot_window_image(window_id),
                 )?;
-                let png = crate::capture::resize_png_if_needed(&raw, max_dim).map_err(|e| {
-                    super::px_frame::PxFrameError::CaptureUnavailable {
-                        window_id,
-                        reason: e.to_string(),
-                    }
-                })?;
-                let (w, h) = crate::capture::png_dimensions(&png).map_err(|e| {
+                crate::fast_path_guard::record_read_image(pid, window_id, &raw, &bounds);
+                // Resize and encode once from the raw pixels; the PNG bytes
+                // are identical to the former encode-decode-resize round trip.
+                let (png, w, h) = raw.encode(max_dim, encoding).map_err(|e| {
                     super::px_frame::PxFrameError::CaptureUnavailable {
                         window_id,
                         reason: e.to_string(),
@@ -505,7 +541,11 @@ impl Tool for GetWindowStateTool {
         if let Some((png, ref file_path, w, h, _, _, _, _)) = screenshot.as_ref() {
             if file_path.is_none() {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-                content.push(Content::image_png(BASE64.encode(png)));
+                content.push(if jpeg {
+                    Content::image_jpeg(BASE64.encode(png))
+                } else {
+                    Content::image_png(BASE64.encode(png))
+                });
             }
 
             // Summary text line (matching Swift reference format).
@@ -591,7 +631,21 @@ impl Tool for GetWindowStateTool {
                 })
                 .unzip(),
         };
-        let capture_id = match (snapshot_id, screenshot.as_ref()) {
+        if let (Some(sid), Some(tree)) = (snapshot_id, tree_result.as_ref()) {
+            if !observation_only {
+                crate::fast_path_guard::record_snapshot(
+                    pid,
+                    u64::from(window_id),
+                    sid,
+                    &tree.nodes,
+                );
+                if screenshot.is_none() {
+                    crate::fast_path_guard::record_window(pid, window_id);
+                }
+            }
+        }
+        // The capture registry holds PNG captures only; a JPEG read mints none.
+        let capture_id = match (snapshot_id, screenshot.as_ref().filter(|_| !jpeg)) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
                 match self.state.capture_bindings.publish_window(
                     &args,
@@ -657,7 +711,7 @@ impl Tool for GetWindowStateTool {
             "elements": elements_json,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
-                Issue #22865: use `max_elements` / `max_depth` to bound the \
+                Use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
         if query.is_some() {
@@ -767,16 +821,16 @@ impl Tool for GetWindowStateTool {
                                you cannot wait."
                 });
             }
-            Degradation::AxWindowUnresolved { ax_window_count } => {
+            Degradation::AxWindowUnresolved {
+                ax_window_count,
+                ax_windows_error,
+            } => {
                 structured["degraded"] = serde_json::json!(true);
-                structured["degraded_reason"] = serde_json::json!(format!(
-                    "ax_window_unresolved: window_id {window_id} exists and is owned by \
-                     pid {pid}, but none of the {ax_window_count} AXWindow element(s) \
-                     under that pid reports this CGWindowID. The tree is returned EMPTY \
-                     on purpose: the accessibility elements reachable under this pid \
-                     belong to other surfaces (the menu bar, other windows), not to the \
-                     requested window, so presenting them would misground the next \
-                     action."
+                structured["degraded_reason"] = serde_json::json!(ax_window_unresolved_reason(
+                    window_id,
+                    pid,
+                    ax_window_count,
+                    ax_windows_error,
                 ));
                 structured["escalation"] = serde_json::json!({
                     "recommended": "foreground",
@@ -819,7 +873,7 @@ impl Tool for GetWindowStateTool {
             // know what they're holding. `Content::image_png` already carries
             // `mimeType` on the protocol image part — this mirrors it onto
             // the structured side. Additive: keeps every existing field.
-            structured["screenshot_mime_type"] = serde_json::json!("image/png");
+            structured["screenshot_mime_type"] = serde_json::json!(encoding.mime_type());
         }
         if let Some((bounds, scale)) = screenshot_frame {
             structured["window_bounds"] = serde_json::json!({
@@ -843,7 +897,7 @@ impl Tool for GetWindowStateTool {
         // names the surface even on the capture-only path, where no AX tree is
         // present to identify it. Omitted per-field when WindowServer reports an
         // empty string.
-        if let Some(info) = crate::windows::window_info_by_id(window_id) {
+        if let Some(info) = crate::windows::describe_window(window_id) {
             if !info.app_name.is_empty() {
                 structured["app_name"] = serde_json::json!(info.app_name);
             }
@@ -855,14 +909,14 @@ impl Tool for GetWindowStateTool {
         if on_current_space == Some(false) {
             structured["on_current_space"] = serde_json::json!(false);
         }
-        if let Some(note) = off_space_staleness_note(on_current_space, chromium_browser_window(pid))
-        {
+        let chromium = chromium_browser_window(pid);
+        if let Some(note) = off_space_staleness_note(on_current_space, chromium) {
             structured["off_space_staleness"] = serde_json::json!(note);
             content.push(Content::text(note));
         }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
-            chromium_browser_window(pid).then_some(
+            chromium.then_some(
                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
             ),
         );
@@ -1015,7 +1069,10 @@ enum Degradation {
     AxTreeEmpty,
     /// The requested window is live and owned by this pid, but no AXWindow
     /// claims its CGWindowID, so the walk deliberately covered nothing.
-    AxWindowUnresolved { ax_window_count: usize },
+    AxWindowUnresolved {
+        ax_window_count: usize,
+        ax_windows_error: Option<crate::ax::bindings::AXError>,
+    },
     /// The window scope is unresolved because the app is still launching and
     /// did not answer accessibility within the caller's budget.
     AxAppLaunching,
@@ -1048,18 +1105,47 @@ fn degradation_for(
     if !walk_attempted {
         return Degradation::None;
     }
-    if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+    if let Some(crate::ax::WindowScope::AxUnresolved {
+        ax_window_count,
+        ax_windows_error,
+    }) = scope
+    {
         if app_lookup_timed_out {
             return Degradation::AxAppLaunching;
         }
         return Degradation::AxWindowUnresolved {
             ax_window_count: *ax_window_count,
+            ax_windows_error: *ax_windows_error,
         };
     }
     if element_count == 0 {
         return Degradation::AxTreeEmpty;
     }
     Degradation::None
+}
+
+fn ax_window_unresolved_reason(
+    window_id: u32,
+    pid: i32,
+    ax_window_count: usize,
+    ax_windows_error: Option<crate::ax::bindings::AXError>,
+) -> String {
+    let evidence = match ax_windows_error {
+        Some(error) => format!(
+            "reading that pid's AXWindows failed with AXError {error} ({})",
+            crate::ax::bindings::ax_error_name(error)
+        ),
+        None => format!(
+            "none of the {ax_window_count} AXWindow element(s) under that pid reports this \
+             CGWindowID"
+        ),
+    };
+    format!(
+        "ax_window_unresolved: window_id {window_id} exists and is owned by pid {pid}, but \
+         {evidence}. The tree is returned EMPTY on purpose: the accessibility elements \
+         reachable under this pid belong to other surfaces (the menu bar, other windows), \
+         not to the requested window, so presenting them would misground the next action."
+    )
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -1131,6 +1217,16 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     }
     if let Some(label) = label {
         entry["label"] = serde_json::Value::String(label);
+    }
+    for (key, value) in [
+        ("title", node.title.as_deref()),
+        ("description", node.description.as_deref()),
+        ("placeholder", node.placeholder.as_deref()),
+        ("subrole", node.subrole.as_deref()),
+    ] {
+        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+            entry[key] = serde_json::Value::String(value.to_owned());
+        }
     }
     // Surface the element's AXValue separately from `label`. `label`
     // collapses title→description→value→identifier into one display
@@ -1263,8 +1359,15 @@ mod window_scope_contract_tests {
     fn resolvable_scopes_are_not_refused() {
         assert!(window_scope_refusal(800, 11, &WindowScope::Matched).is_none());
         assert!(
-            window_scope_refusal(800, 11, &WindowScope::AxUnresolved { ax_window_count: 2 })
-                .is_none(),
+            window_scope_refusal(
+                800,
+                11,
+                &WindowScope::AxUnresolved {
+                    ax_window_count: 2,
+                    ax_windows_error: None
+                }
+            )
+            .is_none(),
             "a live same-pid window degrades; it does not error"
         );
     }
@@ -1278,11 +1381,42 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 3 }),
+                Some(&WindowScope::AxUnresolved {
+                    ax_window_count: 3,
+                    ax_windows_error: None
+                }),
                 false
             ),
-            Degradation::AxWindowUnresolved { ax_window_count: 3 }
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 3,
+                ax_windows_error: None
+            }
         );
+    }
+
+    #[test]
+    fn an_ax_windows_read_error_is_named_instead_of_a_zero_window_count() {
+        let error = Some(crate::ax::bindings::kAXErrorCannotComplete);
+        let degradation = degradation_for(
+            true,
+            0,
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error,
+            }),
+            false,
+        );
+        assert_eq!(
+            degradation,
+            Degradation::AxWindowUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: error
+            }
+        );
+        let reason = ax_window_unresolved_reason(800, 11, 0, error);
+        assert!(reason.contains("AXError -25204 (kAXErrorCannotComplete)"));
+        assert!(!reason.contains("none of the 0 AXWindow"));
+        assert!(ax_window_unresolved_reason(800, 11, 2, None).contains("none of the 2 AXWindow"));
     }
 
     /// A window that exists before its app answers accessibility is not an
@@ -1293,7 +1427,10 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+                Some(&WindowScope::AxUnresolved {
+                    ax_window_count: 0,
+                    ax_windows_error: None
+                }),
                 true
             ),
             Degradation::AxAppLaunching
@@ -1313,7 +1450,10 @@ mod window_scope_contract_tests {
         let unresolved = degradation_for(
             true,
             0,
-            Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+            Some(&WindowScope::AxUnresolved {
+                ax_window_count: 0,
+                ax_windows_error: None,
+            }),
             false,
         );
         assert_eq!(
@@ -1448,12 +1588,13 @@ mod tests {
             width: 4.0,
             height: 4.0,
         };
-        let valid = png(4, 4);
+        use crate::capture::CapturedImage;
+        let valid = CapturedImage::Png(png(4, 4));
         for (prefetched, expected_calls) in [
             (Some(Ok(valid.clone())), 0),
             (Some(Err(anyhow::anyhow!("prefetch failed"))), 1),
-            (Some(Ok(png(3, 4))), 1),
-            (Some(Ok(vec![0])), 1),
+            (Some(Ok(CapturedImage::Png(png(3, 4)))), 1),
+            (Some(Ok(CapturedImage::Png(vec![0]))), 1),
             (None, 1),
         ] {
             let calls = Cell::new(0);
@@ -1465,6 +1606,48 @@ mod tests {
             assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
             assert_eq!(calls.get(), expected_calls);
         }
+        let raw = |w: u32, h: u32| {
+            CapturedImage::Rgba(cua_driver_core::image_utils::RgbaFrame {
+                width: w,
+                height: h,
+                rgba: vec![0; (w * h * 4) as usize],
+            })
+        };
+        let calls = Cell::new(0);
+        let frame = verified_capture(7, Some(Ok(raw(4, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(valid.clone())
+        })
+        .unwrap();
+        assert_eq!(frame, (raw(4, 4), 4, 4, 1.0));
+        assert_eq!(calls.get(), 0);
+        let calls = Cell::new(0);
+        let frame = verified_capture(7, Some(Ok(raw(3, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(valid.clone())
+        })
+        .unwrap();
+        assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
+        assert_eq!(calls.get(), 1);
+        let calls = Cell::new(0);
+        let error = verified_capture(7, Some(Ok(raw(3, 4))), &bounds, || {
+            calls.set(calls.get() + 1);
+            Ok(raw(3, 4))
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            PxFrameError::FrameMismatch {
+                window_id: 7,
+                bounds_width: 4.0,
+                bounds_height: 4.0,
+                capture_width: 3,
+                capture_height: 4,
+                scale_x: 0.75,
+                scale_y: 1.0,
+            }
+        );
+        assert_eq!(calls.get(), 1);
         for prefetched in [Some(Err(anyhow::anyhow!("old error"))), None] {
             let calls = Cell::new(0);
             let error = verified_capture(7, prefetched, &bounds, || {
@@ -1584,6 +1767,8 @@ mod tests {
             title: title.map(|s| s.to_string()),
             value: None,
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions,
@@ -1761,6 +1946,26 @@ mod tests {
     }
 
     #[test]
+    fn elements_publish_a_disabled_control() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXCheckBox",
+            Some("Reset"),
+            1,
+            None,
+            Some([10.0, 20.0, 16.0, 16.0]),
+            vec!["AXPress".into()],
+        )];
+        nodes[0].enabled = Some(false);
+        let elements = build_elements_array_with_token(&nodes, Some(3));
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0]["label"], "Reset");
+        assert_eq!(elements[0]["enabled"], false);
+        assert_eq!(elements[0]["element_token"], "s00000003:0");
+        assert!(elements[0]["frame"].is_object());
+    }
+
+    #[test]
     fn elements_surface_inherited_web_content_trust_marker() {
         let mut nodes = vec![node(
             Some(0),
@@ -1799,6 +2004,120 @@ mod tests {
         let entry = &build_elements_array_with_token(&nodes, None)[0];
         for key in ["value_description", "min", "max", "enabled", "selected"] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
+        }
+    }
+
+    #[test]
+    fn search_field_identities_survive_protocol_conformance() {
+        let mut search = node(Some(0), "AXTextField", None, 1, None, None, vec![]);
+        search.title = Some("  Search title  ".into());
+        search.description = Some("\nSearch description\t".into());
+        search.placeholder = Some("  Search chatrooms, participants\n".into());
+        search.subrole = Some("\tAXSearchField  ".into());
+        search.value = Some("Search-like AXValue".into());
+        search.value_state = search.value.clone();
+
+        let entry = element_entry(&search, None);
+        let wire = cua_driver_core::mcp_result::conforming_tool_result(
+            "get_window_state",
+            serde_json::json!({
+                "content": [],
+                "isError": false,
+                "structuredContent": {
+                    "pid": 7,
+                    "window_id": 9,
+                    "elements": [entry],
+                }
+            }),
+        );
+        assert_eq!(wire["isError"], false, "{wire}");
+        let element = &wire["structuredContent"]["elements"][0];
+        assert_eq!(element["title"], "Search title");
+        assert_eq!(element["description"], "Search description");
+        assert_eq!(element["placeholder"], "Search chatrooms, participants");
+        assert_eq!(element["subrole"], "AXSearchField");
+        assert_eq!(element["value"], "Search-like AXValue");
+    }
+
+    #[test]
+    fn search_field_names_and_send_guard_negatives_keep_distinct_identities() {
+        let placeholder_only = {
+            let mut field = node(Some(0), "AXTextField", None, 1, None, None, vec![]);
+            field.placeholder = Some(" Search chatrooms, participants ".into());
+            element_entry(&field, None)
+        };
+        assert_eq!(
+            placeholder_only["placeholder"],
+            "Search chatrooms, participants"
+        );
+        assert!(placeholder_only.get("title").is_none());
+        assert!(placeholder_only.get("description").is_none());
+        assert!(placeholder_only.get("subrole").is_none());
+
+        let subrole_only = {
+            let mut field = node(Some(1), "AXTextField", None, 1, None, None, vec![]);
+            field.subrole = Some(" AXSearchField ".into());
+            element_entry(&field, None)
+        };
+        assert_eq!(subrole_only["subrole"], "AXSearchField");
+        assert!(subrole_only.get("placeholder").is_none());
+
+        let composer = {
+            let mut field = node(
+                Some(2),
+                "AXTextArea",
+                Some("Enter public message"),
+                1,
+                None,
+                None,
+                vec![],
+            );
+            field.placeholder = Some(" Message ".into());
+            field.value = Some("Search chatrooms, participants".into());
+            field.value_state = field.value.clone();
+            element_entry(&field, None)
+        };
+        assert_eq!(composer["label"], "Enter public message");
+        assert_eq!(composer["title"], "Enter public message");
+        assert_eq!(composer["placeholder"], "Message");
+        assert_eq!(composer["value"], "Search chatrooms, participants");
+        assert!(composer.get("subrole").is_none());
+
+        let unnamed = {
+            let mut field = node(Some(3), "AXTextField", None, 1, None, None, vec![]);
+            field.value = Some("Search chatrooms, participants".into());
+            field.value_state = field.value.clone();
+            element_entry(&field, None)
+        };
+        assert_eq!(unnamed["label"], "Search chatrooms, participants");
+        assert_eq!(unnamed["value"], "Search chatrooms, participants");
+        for key in ["title", "description", "placeholder", "subrole"] {
+            assert!(
+                unnamed.get(key).is_none(),
+                "{key} must not come from AXValue"
+            );
+        }
+
+        let send_button = element_entry(
+            &node(
+                Some(4),
+                "AXButton",
+                Some("Send"),
+                1,
+                None,
+                Some([600.0, 800.0, 44.0, 32.0]),
+                vec!["AXPress".into()],
+            ),
+            None,
+        );
+        assert_eq!(send_button["role"], "AXButton");
+        assert_eq!(send_button["title"], "Send");
+        assert_eq!(
+            send_button["frame"],
+            serde_json::json!({"x":600.0,"y":800.0,"w":44.0,"h":32.0})
+        );
+        for key in ["description", "placeholder", "subrole"] {
+            assert!(send_button.get(key).is_none());
         }
     }
 

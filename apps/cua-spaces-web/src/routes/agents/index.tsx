@@ -4,25 +4,23 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { useAgentChats, useFeatureRecorded, useSession } from "@/bridge";
-import { AgentDmView, AgentList, AgentPage, AgentsEmpty, NewAgentSheet } from "@/components/agents/agent-chat";
-import type { AddAgentStage } from "@/components/add-agent/add-agent-sheet";
-import { useFlag } from "@/bridge/flags";
-import { LegacyAgentsPage } from "@/legacy/routes/agents/index";
+import { chatKey, useAgentChats, useFeatureRecorded, type AgentChat, useKeysRecheck, useSession } from "@/bridge";
+import { AgentDmView, AgentList, AgentPage, AgentsUnset } from "@/components/agents/agent-chat";
+import { useAgentAttempts, useAttemptAction, useAttemptRemoval } from "@/hooks/use-agent-attempts";
 
-/** Which agent's DM is open, and in which of its Spaces (none: all of them). */
+/** Which agent's DM is open (each agent in each Space is its own entry), or `new`: none, the box to start one. */
 interface ChatSearch {
   agent?: string;
-  space?: string;
+  new?: boolean;
   run?: string;
 }
 
 export const Route = createFileRoute("/agents/")({
-  component: AgentsChatPageSwitch,
+  component: AgentsChatPage,
   validateSearch: (s: Record<string, unknown>): ChatSearch => ({
     agent: typeof s.agent === "string" ? s.agent : undefined,
-    space: typeof s.space === "string" ? s.space : undefined,
-    // The page before the redesign opens a run with `?run=`.
+    new: s.new === true || s.new === "1" || s.new === "true" ? true : undefined,
+    // The older Agents page opened a run with `?run=`.
     run: typeof s.run === "string" ? s.run : undefined,
   }),
 });
@@ -44,50 +42,53 @@ function useNow(ms = 30_000): number {
  */
 function AgentsChatPage() {
   useFeatureRecorded("agents_page_open");
+  // Opening the Agents page asks the providers whether the saved sign-ins and keys still work.
+  useKeysRecheck();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: "/agents/" });
   const { data: session } = useSession();
   const identity = session?.signedIn ? (session.account.identity ?? null) : null;
-  const { chats, spaces, me, refresh } = useAgentChats();
+  // The one list (agents in your Spaces and this device's runs that haven't started): Home shows it too.
+  const attempts = useAgentAttempts();
+  const act = useAttemptAction();
+  const removal = useAttemptRemoval();
+  const { chats, me, loading } = useAgentChats(attempts);
   const now = useNow();
-  const [sheet, setSheet] = useState<AddAgentStage | null>(null);
   const [info, setInfo] = useState(false);
-  const chat = chats?.find((c) => c.key === search.agent) ?? (search.agent ? null : (chats?.[0] ?? null));
-  const space = chat && search.space && chat.spaces.some((s) => s.spaceId === search.space) ? search.space : null;
-  const select = (agent: string, sp?: string) => void navigate({ search: { agent, space: sp }, replace: true });
-  const taken = (spaceId: string) => (chats ?? []).flatMap((c) => c.spaces).filter((s) => s.spaceId === spaceId).map((s) => s.handle);
+  // A run that hasn't started opens its Space's thread; only agents have a DM here.
+  // New agent clears the selection: nothing is open and the box to start one shows.
+  // `agent` is an entry's key; a link by who the agent is (owner, kind and name) opens its first entry.
+  const byKey = (c: AgentChat) =>
+    c.kind === "agent" && (c.key === search.agent || (c.spaces[0] && chatKey(c.spaces[0].spaceId, c.spaces[0].member) === search.agent));
+  const chat = search.new ? null : (chats?.find(byKey) ?? (search.agent ? null : (chats?.find((c) => c.kind === "agent") ?? null)));
+  const select = (agent: string) => void navigate({ search: { agent }, replace: true });
   return (
     <div data-agents-chat="" className="flex h-full min-h-0">
-      <AgentList chats={chats ?? []} me={me} selected={chat?.key ?? null} onSelect={select} onNew={() => setSheet("pick")} now={now} />
-      {chats === null ? (
+      <AgentList
+        chats={chats}
+        me={me}
+        selected={chat?.key ?? null}
+        onSelect={select}
+        onOpenRun={(c) => c.places[0] && void navigate({ to: "/spaces/$spaceId", params: { spaceId: c.places[0].spaceId } })}
+        onAction={act}
+        onNew={() => void navigate({ search: { new: true }, replace: true })}
+        onRemove={removal.remove}
+        onClearRuns={() => removal.clear((chats ?? []).filter((c) => c.kind === "attempt"))}
+        now={now}
+        loading={loading}
+      />
+      {chats === null || (!search.new && loading > 0 && chats.every((c) => c.kind !== "agent")) ? (
         <div className="flex-1" />
       ) : chat ? (
         <>
-          <AgentDmView key={chat.key} chat={chat} space={space} onSpace={(sp) => select(chat.key, sp ?? undefined)} identity={identity} onInfo={() => setInfo(true)} me={me} />
+          <AgentDmView key={chat.key} chat={chat} identity={identity} onInfo={() => setInfo(true)} me={me} />
           <AgentPage chat={chat} open={info} onOpenChange={setInfo} me={me} identity={identity} />
         </>
-      ) : chats.length === 0 ? (
-        <AgentsEmpty onStart={() => setSheet("start")} onConnect={() => setSheet("connect")} />
+      ) : search.new || chats.every((c) => c.kind !== "agent") ? (
+        <AgentsUnset />
       ) : (
         <div className="flex flex-1 items-center justify-center text-[13px] text-muted-foreground">That agent isn't in any of your Spaces now.</div>
       )}
-      <NewAgentSheet
-        open={sheet !== null}
-        stage={sheet ?? undefined}
-        onOpenChange={(o) => {
-          if (!o) {
-            setSheet(null);
-            refresh();
-          }
-        }}
-        spaces={spaces.map((s) => ({ id: s.id, name: s.name }))}
-        taken={taken}
-      />
     </div>
   );
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function AgentsChatPageSwitch() {
-  return useFlag("spaces_redesign") ? <AgentsChatPage /> : <LegacyAgentsPage />;
 }

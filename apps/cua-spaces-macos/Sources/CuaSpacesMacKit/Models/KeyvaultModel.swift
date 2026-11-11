@@ -95,7 +95,7 @@ public final class KeyvaultModel {
         self.client = client
         self.clock = clock
         self.overview = overview ?? KeyvaultOverview(
-            availability: "not_running", message: "The Cua daemon is not running, so the Keyvault is unavailable.",
+            availability: "not_running", message: serviceDownMessage,
             status: nil, serverVerified: false, items: [], namesVisible: false, itemsTotal: 0,
             pending: [], grants: [], rules: [],
             deliveries: [], audit: [], auditVerification: nil, partialErrors: [])

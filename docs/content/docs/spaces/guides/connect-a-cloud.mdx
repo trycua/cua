@@ -1,15 +1,15 @@
 ---
 title: Connect a cloud
-description: Steps an agent follows to link the user's AWS, Google Cloud or Azure account to Cua Spaces with no stored key, or Hetzner and Modal with an API token sealed to their devices, set a budget and a largest machine, and verify it.
+description: Steps an agent follows to link the user's AWS, Google Cloud or Azure account to Cua Spaces with no stored key, or Hetzner and Modal with an API token sealed to their computers, set a budget and a largest computer, and verify it.
 ---
 
 Link your AWS, Google Cloud or Azure account once, with no stored key, and
-Spaces can run there from every device and agent on your Cua account. This page is written for
+Spaces can run there from every computer and agent on your Cua account. This page is written for
 the coding agent that does it for you. The Cua Spaces app gives you a prompt
 like this one to paste into your agent:
 
 > Connect my AWS account to Cua Spaces: region us-west-2, $200 monthly
-> budget, machines up to 4 vCPU and 16 GB. Follow `cua cloud connect aws --help`
+> budget, computers up to 4 vCPU and 16 GB. Follow `cua cloud connect aws --help`
 > and https://cua.ai/docs/spaces/guides/connect-a-cloud until `cua cloud status aws`
 > says connected.
 
@@ -41,7 +41,7 @@ The exit code says whose turn it is:
 AWS is linked without any key. Cua signs 15-minute tokens for the person's
 Cua account, and their AWS account trusts those tokens through one
 CloudFormation stack, `cua-spaces`. The stack holds an OIDC provider and a
-role that can create, stop and delete only machines tagged
+role that can create, stop and delete only computers tagged
 `cua-managed=true`. It holds no keys, and Cua never stores AWS credentials.
 
 ### 1. Ask the person for the limits
@@ -49,9 +49,9 @@ role that can create, stop and delete only machines tagged
 Ask for three things, unless the prompt already gave them:
 
 - the region (for example `us-west-2`);
-- a monthly budget in US dollars (required: Cua refuses new machines once it
+- a monthly budget in US dollars (required: Cua refuses new computers once it
   is reached, and stopping and deleting always works);
-- the largest machine, as vCPUs and GB (for example 4 vCPU and 16 GB).
+- the largest computer, as vCPUs and GB (for example 4 vCPU and 16 GB).
 
 Then run:
 
@@ -84,14 +84,14 @@ cua cloud connect aws --oidc --region us-west-2 --budget 200 --max-size 4x16 --a
 ```
 
 The check gets a check token from Cua, exchanges it with AWS STS and dry-runs
-a machine. Nothing is created, and nothing is billed.
+a computer. Nothing is created, and nothing is billed.
 
 - `connected` (exit code 0): done. Go to step 4.
 - `needs-trust` again: the stack is missing, still being created, or was made
   in another AWS account. Show the person `next.open` again, and confirm the
   account id.
 - `waiting-for-approval` (exit code 11): because an agent made the link, a
-  person approves it in the Cua Spaces app before machines can be created.
+  person approves it in the Cua Spaces app before computers can be created.
   Ask them to approve it.
 - `failed`: read `checks` and `next.why`, fix what they say, and run the
   check again.
@@ -103,7 +103,7 @@ cua cloud status aws
 ```
 
 The AWS line says `connected`. The line under it shows the budget, what was
-spent this month, the largest machine, and "Signs in through Cua". Spaces can
+spent this month, the largest computer, and "Signs in through Cua". Spaces can
 now go there:
 
 ```bash test="cli-shape" id="agents-connect-aws-use"
@@ -133,7 +133,7 @@ shell, and no MCP server offers it.
 
 ## What it costs
 
-Cua estimates what its machines cost from each one's list price and how long
+Cua estimates what its computers cost from each one's list price and how long
 it ran. The cloud's own bill is the final word. To see the month so far by
 Space, by agent, by day or by cloud:
 
@@ -146,14 +146,14 @@ cua cloud cost --cloud aws --by day --since 2026-10-01 --format csv
 The CSV starts with the header `key,usd,hours,machines`. When a cloud has a
 budget, Cua tells the person once each month when its spend passes half the
 budget, then 80%, then all of it. The note shows in the Cua Spaces app and in
-`cua cloud audit`. At the full budget, new machines are refused until the
+`cua cloud audit`. At the full budget, new computers are refused until the
 next month; stopping and deleting still work.
 
 ## Already connected?
 
 A cloud linked before this, through the AWS CLI, gcloud, a Hetzner token or a
 Modal profile, keeps working as it is. There is nothing to do after an
-update: the link, its region, its budget, the machines Cua made there and
+update: the link, its region, its budget, the computers Cua made there and
 the cleanup of them all carry over. `cua cloud status aws` shows one line
 offering the switch:
 
@@ -161,9 +161,9 @@ offering the switch:
 cua cloud connect aws --oidc
 ```
 
-The switch keeps the region, budget, largest machine and lifetime the link
+The switch keeps the region, budget, largest computer and lifetime the link
 had. The AWS CLI sign-in stays in force until the check passes. Switching to
-a different AWS account is refused while Cua still has machines in the old
+a different AWS account is refused while Cua still has computers in the old
 one, so none are left out of reach. Running `cua cloud connect aws` again
 without `--oidc`, for example to change the budget, keeps an OIDC link as it
 is.
@@ -171,16 +171,16 @@ is.
 ## Hetzner and Modal
 
 Hetzner and Modal have no OIDC, so they use an API token. Cua seals the
-token to the person's devices: the device you run on encrypts it with the
-account's pool key, and only devices of the person's Cua account can open
-it. Cua's servers keep only the ciphertext. Any of the person's devices then
+token to the person's computers: the computer you run on encrypts it with the
+account's pool key, and only computers of the person's Cua account can open
+it. Cua's servers keep only the ciphertext. Any of the person's computers then
 opens it in memory when it calls the cloud. No tool returns it, not to you
 and not to any other agent.
 
 ### 1. Ask the person for the limits and the token
 
 Ask for the location (Hetzner: for example `fsn1`), a monthly budget in US
-dollars and the largest machine. Then ask for the token:
+dollars and the largest computer. Then ask for the token:
 
 - Hetzner: a Read & Write API token. In the Hetzner Cloud console, open the
   project, then **Security**, **API tokens**, **Generate API token**.
@@ -204,7 +204,7 @@ sealed.
 
 - `connected` (exit code 0): done.
 - `waiting-for-approval` (exit code 11): because an agent gave the token, a
-  person approves it in the Cua Spaces app first. Machines are refused until
+  person approves it in the Cua Spaces app first. Computers are refused until
   then.
 - `failed`: read `checks` and `next.why`. A read-only Hetzner token fails the
   `permissions` check; ask for a Read & Write one.
@@ -215,45 +215,45 @@ sealed.
 cua cloud status hetzner
 ```
 
-The line under Hetzner names the devices that can open the token ("can open
-it: ..."). At least one of them must be online for Cua to make machines
+The line under Hetzner names the computers that can open the token ("can open
+it: ..."). At least one of them must be online for Cua to make computers
 there while the person is away.
 
-### On the person's other devices
+### On the person's other computers
 
-They do not paste the token again. On another device of the same Cua
+They do not paste the token again. On another computer of the same Cua
 account, link the account's sealed token:
 
 ```bash test="cli-shape" id="agents-connect-hetzner-other-device"
 cua cloud connect hetzner --sealed --region fsn1 --budget 50
 ```
 
-### Sealed or kept on this device
+### Sealed or kept on this computer
 
-Without `--sealed` or `--no-sealed`, the token is sealed when this device has
+Without `--sealed` or `--no-sealed`, the token is sealed when this computer has
 the account's pool keys (the `cua` of the Cua Spaces app, signed in) and a
 budget is given, or when the link is sealed already. Otherwise the Hetzner
-token is kept in this device's Cua credential store, as in earlier
+token is kept in this computer's Cua credential store, as in earlier
 versions.
 
 - `--sealed` insists on sealing. Without a token on standard input, it seals
-  the token this device already has (the saved one, `HCLOUD_TOKEN`, the
+  the token this computer already has (the saved one, `HCLOUD_TOKEN`, the
   hcloud CLI's, or for Modal `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` or the
   `~/.modal.toml` profile). This is how a link from an earlier version moves
   to a sealed token.
-- `--no-sealed` keeps the Hetzner token on this device only.
+- `--no-sealed` keeps the Hetzner token on this computer only.
 
 ### Replace or revoke the token
 
 - Replace it: run the connect command again with the new token on standard
-  input. It is sealed and swapped in for every device.
+  input. It is sealed and swapped in for every computer.
 - Revoke it: delete the token in the Hetzner Cloud console (or with
   `modal token`), or run `cua cloud disconnect hetzner`, which deletes the
   sealed token on Cua's servers.
 
-When the person removes a device from their Cua account, the account's pool
-key moves to a new generation. The next device that uses the token seals it
-again under the new key, so the removed device cannot open it any more. To be
+When the person removes a computer from their Cua account, the account's pool
+key moves to a new generation. The next computer that uses the token seals it
+again under the new key, so the removed computer cannot open it any more. To be
 sure, replace the token as well.
 
 ## Google Cloud
@@ -267,7 +267,7 @@ and no key.
 ### 1. Ask for the limits and the project
 
 Ask for the project id (for example `my-project`), the region, the monthly
-budget and the largest machine. Then run:
+budget and the largest computer. Then run:
 
 ```bash test="cli-shape" id="agents-connect-gcp-start"
 cua cloud connect gcp --oidc --project my-project --region us-central1 --budget 200 --max-size 4x16
@@ -286,7 +286,7 @@ The status is `needs-trust`. Send the person `next.open` and `next.paste`:
 - They reply with the project number the script prints (it is also on the
   project's dashboard).
 
-When you run on a machine that is signed in to `gcloud` with rights to manage
+When you run on a computer that is signed in to `gcloud` with rights to manage
 IAM in the project, `next.run` is the same script instead
 (`cua cloud trust gcp | bash -s -- …`), and the exit code is 10. Run it only
 when the person asked you to set up the trust.
@@ -322,7 +322,7 @@ you say otherwise). Everything Cua creates stays in that group.
 ### 1. Ask for the limits
 
 Ask for the region (for example `westus2`), the monthly budget and the
-largest machine. Then run:
+largest computer. Then run:
 
 ```bash test="cli-shape" id="agents-connect-azure-start"
 cua cloud connect azure --region westus2 --budget 200 --max-size 4x16
@@ -341,7 +341,7 @@ link, and tell them:
 - reply with the deployment's outputs `subscriptionId`, `tenantId` and
   `clientId` (**Deployments**, **cua-spaces**, **Outputs**).
 
-When you run on a machine signed in to the `az` CLI, `next.run` deploys the
+When you run on a computer signed in to the `az` CLI, `next.run` deploys the
 same template with `az deployment group create` and prints those outputs.
 Run it only when the person asked you to set up the trust.
 
@@ -354,7 +354,7 @@ cua cloud connect azure --region westus2 --budget 200 --max-size 4x16 --subscrip
 ```
 
 The check gets a check token from Cua, exchanges it with Microsoft Entra,
-reads the resource group and its permissions, and validates a machine
+reads the resource group and its permissions, and validates a computer
 deployment. Nothing is created.
 
 ### 4. Verify
@@ -365,22 +365,22 @@ cua cloud status azure
 
 ## Other clouds
 
-Hetzner and Modal link with a token sealed to the person's devices (see
+Hetzner and Modal link with a token sealed to the person's computers (see
 [Hetzner and Modal](#hetzner-and-modal)), or with their own sign-in on this
-device, and Google Cloud too if the person prefers `gcloud` on this device to
-a link without a key. The budget and largest machine work the same way:
+computer, and Google Cloud too if the person prefers `gcloud` on this computer to
+a link without a key. The budget and largest computer work the same way:
 
 ```bash test="cli-shape" id="agents-connect-other"
 cua cloud connect gcp --project my-project --region us-central1 --budget 100 --max-size 4x16
 cua cloud connect modal --environment spaces --budget 50
 ```
 
-The second command links Modal with the Modal CLI's sign-in on this device
+The second command links Modal with the Modal CLI's sign-in on this computer
 (`~/.modal.toml`) instead of a sealed token.
 
 ## What to ask the person, and what not to
 
-- Ask for: the region, the monthly budget, the largest machine, the AWS
+- Ask for: the region, the monthly budget, the largest computer, the AWS
   account id, the Google Cloud project id and number, the Azure ids the
   template prints, the Hetzner or Modal API token, and an approval in the Cua
   Spaces app when the status says so.

@@ -22,7 +22,7 @@ public protocol HostRunning: AnyObject, Sendable {
     func resumeSignedIn(account: String) async throws -> HostStatus
     func remove() async throws
     /// Changes what this machine shares: its desktop, and Spaces for your
-    /// other devices.
+    /// other machines.
     func configure(change: HostSettingsChange) async throws -> HostStatus
     /// Moves the host service from the old LaunchAgent into this app, as
     /// its own login item ("Cua Spaces"), keeping this machine's id,
@@ -106,6 +106,10 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         }
         if let d = change.shareDesktop { current.shareDesktop = d }
         if let p = change.provideSpaces { current.provideSpaces = p }
+        if let n = change.maxSpaces { current.maxSpaces = n }
+        if let n = change.maxMemoryGb { current.maxMemoryGb = n }
+        if let n = change.maxDiskGb { current.maxDiskGb = n }
+        if let n = change.maxRunMinutes { current.maxRunMinutes = n }
         // Both off: nothing to share, so sharing stops (as the host does).
         if !current.shareDesktop && !current.provideSpaces {
             current.sharing = false
@@ -219,7 +223,7 @@ public final class HostModel {
     /// What the system calls this computer (Sharing's Computer Name), which
     /// the setup form's Name starts with: `cua host setup` uses the same
     /// name when none is given. Tests pin it.
-    public var computerName: () -> String? = { Foundation.Host.current().localizedName }
+    public var computerName: () -> String? = { ComputerName.current }
     public private(set) var busy = false
     public private(set) var error: String?
     /// The last page button that failed (a setting, Stop sharing, ...), in
@@ -263,11 +267,10 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
-    /// Called when a setup, the Provide Spaces switch or joining with a code
-    /// turned providing Spaces on here (never for a Mac that already
-    /// provided them): the app asks for Local Network access then, on this
-    /// Mac, so macOS Spaces your other devices create here can connect.
-    public var onStartedProvidingSpaces: (() -> Void)?
+    /// Called when the setup form, the Provide Spaces switch or joining with
+    /// a code turned providing Spaces on here (never the sign-in's own setup,
+    /// never for a Mac that already provided them); `bySetup` for a setup.
+    public var onStartedProvidingSpaces: ((_ bySetup: Bool) -> Void)?
     /// This Mac provides Spaces now (as of the last status).
     public var providesSpaces: Bool { status.map { $0.configured && $0.provideSpaces } ?? false }
     /// The host's last status, as the SDK reported it.
@@ -298,8 +301,8 @@ public final class HostModel {
 
     /// Calls `onStartedProvidingSpaces` when providing Spaces went from off
     /// (`was`) to on with the last status.
-    func followProviding(from was: Bool) {
-        if !was && providesSpaces { onStartedProvidingSpaces?() }
+    func followProviding(from was: Bool, bySetup: Bool = false) {
+        if !was && providesSpaces { onStartedProvidingSpaces?(bySetup) }
     }
 
     func apply(_ status: HostStatus) {
@@ -450,7 +453,7 @@ public final class HostModel {
             }
             guard let request = appHostFormView(state: f, identity: self.identity).request else { return }
             do {
-                try await self.setUp(request, on: host)
+                try await self.setUp(request, on: host, signingIn: true)
             } catch {
                 self.setupFailure = Self.isUnauthenticated(error)
                     ? HostSetupFailure.presenting(LiveSpacesBackend.words(error), as: .signedOut)
@@ -464,7 +467,8 @@ public final class HostModel {
 
     /// Host setup with a request the core's form built and validated (the
     /// form's submit, and the web UI's): relay setup with the account token.
-    func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
+    /// `signingIn`: the sign-in's own setup, which asks nothing.
+    func setUp(_ request: AppHostSetupRequest, on host: HostRunning, signingIn: Bool = false) async throws {
         defer { progress = nil }
         let was = providesSpaces
         let status = request.mode == "relay"
@@ -472,7 +476,7 @@ public final class HostModel {
             : try await host.setupRequest(request: request, accountToken: nil)
         setupFailure = nil
         apply(status)
-        followProviding(from: was)
+        if !signingIn { followProviding(from: was, bySetup: true) }
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a
@@ -633,6 +637,24 @@ public final class HostModel {
             failedAction = id
             // The page shows what the failure left behind (a stopped
             // service is offline), not the state before the button.
+            await refresh()
+        }
+    }
+
+    /// Changes the limits on the Spaces other machines create here (0 is no
+    /// limit; nil keeps a value). A failure stays in `actionFailure`.
+    public func setLimits(maxSpaces: UInt32?, maxMemoryGb: UInt32?, maxDiskGb: UInt32?, maxRunMinutes: UInt32?) async {
+        guard let host, !busy else { return }
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            apply(try await host.configure(change: HostSettingsChange(
+                shareDesktop: nil, provideSpaces: nil, maxSpaces: maxSpaces, maxMacosVms: nil,
+                maxMemoryGb: maxMemoryGb, maxDiskGb: maxDiskGb, maxRunMinutes: maxRunMinutes)))
+            actionFailure = nil
+        } catch {
+            actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
             await refresh()
         }
     }

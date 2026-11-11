@@ -1,7 +1,7 @@
 | Package | Install | Import |
 | --- | --- | --- |
-| `cua-sandbox` {{sandboxVersion}} (Python 3.11 to 3.13) | `pip install cua-sandbox` | `from cua_sandbox import Sandbox, Image` |
-| `cua` {{version}} with the extra | `pip install "cua[sandbox]"` | `from cua import Sandbox, Image` (the same classes) |
+| `cua-sandbox` (Python 3.11 to 3.13) | `pip install cua-sandbox` | `from cua_sandbox import Sandbox, Image` |
+| `cua` with the extra | `pip install "cua[sandbox]"` | `from cua import Sandbox, Image` (the same classes) |
 | MCP client support | `pip install "cua-sandbox[mcp]"` | `sb.mcp()` |
 | Typed Cua Driver access | `pip install "cua-sandbox[driver]"` | `sb.driver` |
 

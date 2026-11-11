@@ -112,6 +112,9 @@ fn mk(access: Access, target: Target, expires_ms: Option<u64>) -> Share {
         created_ms: now_ms(),
         expires_ms,
         url: String::new(),
+        tcp: None,
+        origin: None,
+        waiting: None,
     }
 }
 

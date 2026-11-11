@@ -15,6 +15,7 @@ on:
       - "apps/cua-spaces/src-tauri/installer/**"
       - "apps/cua-spaces/tests/installer/**"
       - ".github/workflows/ci-installers.yml"
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -30,8 +31,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   lint:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: shellcheck + shfmt + manifest unit tests
     runs-on: ubuntu-24.04
     steps:
@@ -52,7 +59,8 @@ jobs:
         run: python3 -m unittest discover -s scripts/install/tests -v
 
   installer-smoke-linux:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: installer smoke (Linux containers)
     runs-on: ubuntu-24.04
     strategy:
@@ -97,9 +105,10 @@ jobs:
           '
 
   installer-smoke-macos:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: installer smoke (macOS, temp prefix + dmg mount + pkg)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: install.sh test suite (includes the .dmg mount into --prefix)
@@ -110,7 +119,8 @@ jobs:
         run: sh apps/cua-spaces/tests/installer/pkg.test.sh
 
   installer-smoke-windows:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: installer smoke (Windows, install.ps1)
     runs-on: windows-latest
     steps:

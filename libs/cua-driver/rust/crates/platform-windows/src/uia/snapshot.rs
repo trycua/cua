@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::UiaNode;
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 use windows::core::Interface;
@@ -13,6 +16,24 @@ pub struct RetainedElement {
     pub rect: Option<(i32, i32, i32, i32)>,
     pub msaa_role: Option<i32>,
     pub read_while_minimized: bool,
+}
+
+#[cfg(test)]
+impl RetainedElement {
+    pub(crate) fn detached(
+        kind: SnapshotKind,
+        center: (i32, i32),
+        read_while_minimized: bool,
+    ) -> Self {
+        Self {
+            ptr: 0,
+            kind,
+            center,
+            rect: None,
+            msaa_role: None,
+            read_while_minimized,
+        }
+    }
 }
 
 impl RetainedElement {

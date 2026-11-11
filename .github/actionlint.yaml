@@ -1,22 +1,6 @@
 # Labels of the self-hosted runners this repository dispatches to. Without
 # these, actionlint flags `runs-on: [self-hosted, macOS, ARM64, lume]` as an
 # unknown label and the real errors get lost in the noise.
-#
-# The three `cua-*` and `macos-*-xlarge` entries are GitHub-hosted larger
-# runners (org Settings > Actions > Runners; billed per minute, unlike the
-# standard runners). `cua-linux-16core` and `cua-windows-8core` are created
-# by hand in the org; the macOS xlarge label needs no setup.
-#
-# Temporary: these are a stopgap until the long-pole jobs run on self-hosted
-# runners inside Cua Spaces. Each label is a plain string in `runs-on` (or in
-# the one matrix mapping in ci-cua-sdk.yml and the bundle matrix in
-# ci-cua-spaces.yml), so swapping them is
-# `grep -rlE 'cua-linux-16core|cua-windows-8core|macos-26-xlarge' .github`
-# plus a label replace, and removing the three entries here. Standard runner
-# labels stay in every job that is not the long pole of its workflow.
 self-hosted-runner:
   labels:
     - lume
-    - cua-linux-16core
-    - cua-windows-8core
-    - macos-26-xlarge

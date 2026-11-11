@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Generic staging `ext-foreign-toplevel-list-v1` window enumeration.
 
 use std::collections::HashMap;

@@ -9,6 +9,7 @@ import { SfIcon } from "../SfIcon";
  */
 const PATHS: Record<string, string> = {
   plus: "M12 5v14M5 12h14",
+  "chevron.down": "m6 9.5 6 6 6-6",
   terminal: "M3.5 5h17v14h-17zM7.5 10l3 2.5-3 2.5M12.5 15.5h4",
   magnifyingglass: "M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Zm4.7-1.8L20 20",
   cloud: "M7 18h10a4 4 0 0 0 .5-7.97A5.5 5.5 0 0 0 6.6 9.1 4.5 4.5 0 0 0 7 18Z",
@@ -26,6 +27,7 @@ const PATHS: Record<string, string> = {
   cpu: "M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4",
   memorychip: "M3 8h18v8H3zM7 16v3M11 16v3M15 16v3M7 11h2M11 11h2M15 11h2",
   checkmark: "m5 12.5 4.5 4.5L19 7.5",
+  "info.circle": "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5.5M12 7.5v.01",
   "exclamationmark.triangle": "M12 4.5 21 19.5H3zM12 10v4.5M12 17v.01",
   "doc.on.doc": "M8 8h11v12H8zM5 16V4h11",
   xmark: "M6 6l12 12M18 6 6 18",
@@ -35,7 +37,8 @@ const PATHS: Record<string, string> = {
   "square.grid.2x2": "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   shippingbox: "M12 3 20 7.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9",
   sparkles: "M12 3v6M9 6h6M18 12v5M15.5 14.5h5M7 14v6M4 17h6",
-  "lock.shield": "M12 3 19.5 6v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6zM9.5 11.5v-1a2.5 2.5 0 0 1 5 0v1M8.75 11.5h6.5v4.5h-6.5z",
+  "lock.shield":
+    "M12 3 19.5 6v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6zM9.5 11.5v-1a2.5 2.5 0 0 1 5 0v1M8.75 11.5h6.5v4.5h-6.5z",
 };
 
 export function Sym({ name, className, size = 16 }: { name: string; className?: string; size?: number }) {

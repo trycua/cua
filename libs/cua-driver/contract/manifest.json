@@ -233,6 +233,9 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
           "hint": {
             "type": [
               "string",
@@ -673,6 +676,9 @@
               "array",
               "null"
             ]
+          },
+          "fast_path": {
+            "type": "object"
           },
           "hint": {
             "type": [
@@ -2226,6 +2232,9 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
           "hint": {
             "type": [
               "string",
@@ -2456,6 +2465,9 @@
               "array",
               "null"
             ]
+          },
+          "fast_path": {
+            "type": "object"
           },
           "hint": {
             "type": [
@@ -3086,6 +3098,9 @@
               "array",
               "null"
             ]
+          },
+          "fast_path": {
+            "type": "object"
           },
           "hint": {
             "type": [
@@ -3830,6 +3845,9 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
           "hint": {
             "type": [
               "string",
@@ -4104,6 +4122,9 @@
               "array",
               "null"
             ]
+          },
+          "fast_path": {
+            "type": "object"
           },
           "hint": {
             "type": [
@@ -4753,6 +4774,9 @@
               "null"
             ]
           },
+          "fast_path": {
+            "type": "object"
+          },
           "hint": {
             "type": [
               "string",
@@ -5398,6 +5422,9 @@
               "array",
               "null"
             ]
+          },
+          "fast_path": {
+            "type": "object"
           },
           "hint": {
             "type": [

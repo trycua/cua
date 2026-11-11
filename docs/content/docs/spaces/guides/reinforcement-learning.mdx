@@ -1,0 +1,88 @@
+---
+title: Reinforcement learning and evals
+description: 'What Cua offers for RL and evals on computers you own: Cua Bench environments with rewards, jobs on your pool, distributed training, and the limits to plan around.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cua gives you two things for reinforcement learning and evals on hardware you
+already have: **environments** that score an agent, and **jobs** that run work
+on your computers. They are separate pieces that work together.
+
+## Environments: Cua Bench
+
+[Cua Bench](/cua-bench) runs verifiable computer-use tasks on desktop VMs: macOS,
+Windows and Linux. A task is a small module with four parts.
+
+| Part | What it does |
+| --- | --- |
+| Variants | The same goal with a different prompt, data, theme or OS. |
+| Setup | Prepares the environment and opens the apps. |
+| Oracle (optional) | One known way to succeed. A failing oracle means a broken task. |
+| Evaluator | Inspects the final state and returns rewards. It scores a person, an oracle or an agent the same way. |
+
+```text output
+dataset -> task -> variant -> session -> trajectory -> evaluator -> reward
+```
+
+The registry tasksets are listed at [cua.ai/cuabench/registry](https://cua.ai/cuabench/registry).
+To write your own, see [Write a task](/cua-bench/guides/write-a-task).
+
+For training, the `cua-bench-rl` package in the repository adds parallel
+environment workers (one server per environment), a multi-turn dataloader and
+replay buffer, and a Tinker GRPO trainer.
+
+## Jobs on your pool
+
+Computers you add to your pool with `cua host setup --share spaces` can run
+Python functions, each member in its own Space.
+
+```bash test="cli-shape" id="rl-run-jobs"
+cua run train.py::finetune
+cua run train.py::finetune --nodes 1:2 --accelerator gpu
+cua jobs
+cua jobs logs -f p-finetune-1a2b3c4d
+```
+
+A run keeps going when you disconnect or restart the daemon, keeps a log you can
+read from any offset, and can be cancelled or have its result saved. See
+[Your pool](/cua-cli/reference/cli/pool) for every option and
+[Long-running jobs](/spaces/guides/long-running-jobs) for jobs inside one Space.
+
+## Distributed training
+
+A run with `--nodes N` is a gang: each member is a rank, and the ranks exchange
+gradients. The repository has two examples in `examples/training`: an MLX LoRA
+fine-tune that runs on Apple silicon and on NVIDIA GPUs, and a PyTorch DDP
+example. If a computer is lost the pool restarts the gang, and the LoRA example
+resumes from its newest saved adapter.
+
+## Limits to plan around
+
+- **Distributed training depends on the link between computers.** Ranks wait for
+  each other on every gradient exchange. We measured the LoRA example on two
+  Macs over Wi-Fi: one Mac ran at 550 to 660 tokens per second, two together at
+  880 (about 1.35 times). Exchanging gradients more often left two Macs only
+  slightly ahead of one. For small models, one computer can be as fast as
+  several. A faster link between the computers, such as Thunderbolt, should
+  help, but we have not measured it.
+- **Rollouts scale better than training.** Running many independent
+  environments, each in its own Space, does not need the computers to talk to
+  each other, so it is the better use of several machines today.
+- **Shared GPUs can abort a long step.** On Apple silicon, macOS can abort a
+  long Metal command buffer when the GPU is busy with other heavy work. The
+  attempt fails, the pool retries it, and the job resumes from its last saved
+  state.
+- **Linux and macOS Spaces only for `space_job`.** Windows environments run in
+  Cua Bench, but jobs inside a Windows Space are not supported yet.
+- **The environments, jobs and trainer are separate pieces.** There is no single
+  command that takes a Cua Bench task through to a trained model. You connect
+  them with the packages above.
+- **Scale numbers are not published yet.** We have not published results for
+  large numbers of parallel environments, so measure on your hardware first.
+
+<Callout type="info">
+  Cua does not rent computers. Everything here runs on computers you add: your
+  own Macs, Linux machines, or VMs in your cloud account. See
+  [Bring your own compute](/spaces/guides/bring-your-own-compute).
+</Callout>

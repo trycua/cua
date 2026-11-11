@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-compat/**"
+      - "libs/cua/crates/cua-compat-cmd/**"
       - "libs/cua/crates/cua-spacesd-client/**"
       - "tests/compat/daytona/**"
       - ".github/workflows/ci-cua-compat-daytona.yml"
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - "libs/cua/crates/cua-compat/**"
+      - "libs/cua/crates/cua-compat-cmd/**"
       - "tests/compat/daytona/**"
   schedule:
     - cron: "43 4 * * 1"
@@ -70,7 +72,7 @@ jobs:
         env:
           PROPTEST_CASES: "64"
         run: |
-          cargo fmt -p cua-compat -p cua-spacesd-client -- --check
+          cargo fmt -p cua-compat -p cua-compat-cmd -p cua-spacesd-client -- --check
           cargo clippy --locked -p cua-compat -p cua-spacesd-client --features cua-compat/testing --all-targets -- -D warnings
           cargo test --locked -p cua-compat -p cua-spacesd-client --features cua-compat/testing
       - name: Python sync, Python async and TypeScript over mock Spaces, with hypothesis

@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.38.0"
+version = "0.47.8"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"
@@ -57,3 +57,16 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 getrandom = "0.4"
 fs2 = "0.4"
 hmac = "0.12"
+
+# Release binaries ship inside the PyPI wheels (cua-driver: the CLI plus the
+# UniFFI library, one pair per platform per version). PyPI caps a project at
+# 10 GB in total and unstripped binaries made each version about 188 MB (74
+# versions = 10.7 GB, upload rejected 10 Nov 2026). Strip symbols and link
+# with fat LTO in one codegen unit: the dynamic symbol table (what the
+# library exports for Python, Node and Swift to load) is kept, and the code
+# is the same, only smaller (macOS arm64: CLI 40.7 -> 24.8 MB, library
+# 31.0 -> 20.1 MB). Release builds take about twice as long to link.
+[profile.release]
+strip = "symbols"
+lto = "fat"
+codegen-units = 1

@@ -1,0 +1,39 @@
+[package]
+# The Cua Spaces app core (libs/cua/crates/cua-spaces-app-core) for the
+# mobile app: one C function, `cua_core_call(method, argsJson)`, over the
+# same JSON dispatcher the web app loads as wasm and the SwiftUI app reaches
+# through UniFFI. The React Native module (modules/cua-core) links this as a
+# static library; Hermes has no WebAssembly, so wasm is not an option here.
+# Its own workspace, like apps/cua-spaces/core-wasm, so libs/cua's lockfile
+# is untouched.
+name = "cua-spaces-mobile-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "FSL-1.1-MIT"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+cua-spaces-app-core = { path = "../../../libs/cua/crates/cua-spaces-app-core", default-features = false }
+serde_json = "1"
+# This phone's device key (P-256, as cua-host::device): signing stays in Rust, the key bytes stay in the Keychain
+# on the native side and never reach JavaScript.
+ring = "0.17"
+base64 = "0.22"
+
+[dev-dependencies]
+# Known-answer tests: this crate's device messages, ids and signatures against the Rust implementation the relay
+# and the CLI use.
+cua-host = { path = "../../../libs/cua/crates/cua-host" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+# A panic across the C boundary is undefined behaviour: `call` catches
+# unwinds, so the library keeps the default (unwind) strategy.
+
+[workspace]

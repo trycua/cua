@@ -48,7 +48,7 @@ import {
   finish,
   isCheckMode,
   metaJson,
-  stableJson,
+  cliSpecJson,
   syncFiles,
 } from './lib/mdx';
 
@@ -95,10 +95,21 @@ export interface CuaDumpDocs {
 export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'spaces-and-computers',
-    title: 'Spaces, computers and teams',
-    summary:
-      'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
+    title: 'Spaces',
+    summary: 'Your Spaces, and a cua-spacesd by URL',
+    commands: ['spaces', 'spacesd'],
+  },
+  {
+    slug: 'computers-and-teams',
+    title: 'Computers and teams',
+    summary: 'Your computers, unattended access on this computer, teams and your remote use this month',
+    commands: ['host', 'devices', 'team', 'usage'],
+  },
+  {
+    slug: 'sharing-and-networks',
+    title: 'Sharing and Space networks',
+    summary: 'Share a port, file or folder as a link or a public TCP address, set what a Space can reach and where its traffic leaves, the exit through this computer, and the paths between your computers',
+    commands: ['share', 'network', 'hotspot', 'mesh'],
   },
   {
     slug: 'files-teleport-and-keys',
@@ -111,6 +122,12 @@ export const CLI_GROUPS: CliGroup[] = [
     title: 'Sandboxes',
     summary: 'Create, reach and delete sandboxes; local runtimes, disk cleanup and the sandbox viewer',
     commands: ['sandbox', 'runtime', 'cache', 'viewer'],
+  },
+  {
+    slug: 'ci-runners',
+    title: 'CI runners',
+    summary: 'Run GitHub Actions jobs in a fresh Space each on your own computers (an experiment: `cua experiments enable ci-runners`)',
+    commands: ['ci'],
   },
   {
     slug: 'images-and-clouds',
@@ -127,20 +144,20 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'agents',
     title: 'Agents, MCP and skills',
-    summary: 'Agents in a Space, connecting your AI agents, the stdio MCP server, and recorded skills',
-    commands: ['agent', 'thread', 'join', 'connect', 'agents', 'mcp', 'skills'],
+    summary: 'Agents in a Space, connecting your AI agents and the AI providers they use, the stdio MCP server, and recorded skills',
+    commands: ['agent', 'thread', 'join', 'connect', 'connections', 'agents', 'mcp', 'skills'],
   },
   {
     slug: 'account-and-setup',
     title: 'Account and setup',
     summary: 'Sign in and out, user defaults, the cua daemon, health checks and usage telemetry',
-    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry'],
+    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry', 'experiments'],
   },
   {
     slug: 'pool',
     title: 'Your pool',
     summary:
-      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --no-desktop --provide-spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
+      'Run Python functions on your pool, each member in a Space (`cua run`, `cua jobs`). Computers join with `cua host setup --share spaces` (or `--pair CODE` from `cua host pair`) and `cua cloud add aws`; `cua computers` lists them',
     commands: ['computers', 'run', 'jobs', 'compat'],
   },
   {
@@ -290,7 +307,6 @@ export function mcpReference(mcp: McpDocumentation, spaces: SpacesLinks): McpRef
     server: 'cua mcp',
     generator: REGENERATE,
     source: 'cua dump-docs --type mcp',
-    version: mcp.version,
     description: 'Every tool the cua MCP server exposes, with its permission and parameters.',
     categories: mcpCategories(spaces),
     tools,
@@ -316,7 +332,6 @@ export function renderAll(
       description: 'Every cua command and every cua MCP tool, generated from the CLI definition.',
       generator: REGENERATE,
       source: 'cua dump-docs --type all',
-      version: docs.cli.version,
       sections: [
         { title: 'Commands', column: 'Command group', rows: cliIndexRows(cli) },
         { title: 'MCP tools', column: 'Tools', rows: mcpIndexRows(mcp) },
@@ -326,7 +341,7 @@ export function renderAll(
   rel.set('meta.json', metaJson('Reference', ['index', 'cli', 'mcp-tools']));
   const files = new Map<string, string>();
   for (const [p, content] of rel) files.set(path.join(OUT_DIR, p), content);
-  files.set(CLI_SPEC, stableJson(docs.cli));
+  files.set(CLI_SPEC, cliSpecJson(docs.cli));
   return files;
 }
 

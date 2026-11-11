@@ -4,7 +4,8 @@
 //! Virtualization.framework), the guest init (`cua-microvm-init`, shipped
 //! next to `cua`), `pasta` (passt) for unprivileged networking, and
 //! `mkfs.ext4`/`debugfs` (and `sqfstar` for squashfs bases) for disk images.
-//! A Mac needs `cua-vz` and gvproxy instead ([`super::vz`]).
+//! A Mac needs `cua-vz` and the network gateway instead ([`super::vz`],
+//! [`crate::netgw`]).
 
 use std::path::{Path, PathBuf};
 
@@ -50,13 +51,20 @@ fn firecracker_url(arch: Arch) -> String {
     )
 }
 
-/// The `firecracker` binary: `$CUA_FIRECRACKER`, then `~/.cua/bin`, then
+/// The `firecracker` binary: `$CUA_FIRECRACKER`, then (with
+/// `runtime.microvm = system`) the installed one, else `~/.cua/bin`, then
 /// `PATH`.
 pub fn firecracker_bin() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("CUA_FIRECRACKER").map(PathBuf::from)
         && p.is_file()
     {
         return Some(p);
+    }
+    // `runtime.microvm = system`: the one already installed (its custom
+    // path, else the one on PATH), never cua's own.
+    if crate::kinds::source(crate::kinds::RuntimeKind::Microvm) == crate::kinds::KindSource::System
+    {
+        return crate::kinds::system_bin(crate::kinds::RuntimeKind::Microvm);
     }
     let own = host::cua_home().join("bin").join("firecracker");
     if own.is_file() {

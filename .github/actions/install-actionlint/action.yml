@@ -1,0 +1,48 @@
+name: Install actionlint
+description: >
+  Puts a pinned actionlint release on PATH. The binary is cached per version
+  with actions/cache, so a cache hit makes no network call (setup-protoc does
+  the same). A miss downloads with curl retries and then falls back to
+  `gh release download` with the workflow token. On 8 and 9 Nov 2026 GitHub
+  timed out unauthenticated release downloads for hours, and this step failed
+  the `quick` job of 19 pull request runs, each of which then needed a rerun.
+inputs:
+  version:
+    description: actionlint version, without the leading v
+    default: "1.7.12"
+  token:
+    description: Token for the gh fallback download.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Restore actionlint
+      id: cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/actionlint-bin
+        key: actionlint-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+    - name: Download actionlint (retrying)
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/actionlint-bin"
+        mkdir -p "$dir"
+        if [ -x "$dir/actionlint" ]; then
+          echo "actionlint ${VERSION} is restored from the cache"
+        else
+          asset="actionlint_${VERSION}_linux_amd64.tar.gz"
+          if ! curl --fail --silent --show-error --location \
+                --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+                -o "$RUNNER_TEMP/$asset" \
+                "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${asset}"; then
+            echo "::warning::curl failed for actionlint ${VERSION}; falling back to gh release download"
+            gh release download "v${VERSION}" --repo rhysd/actionlint --pattern "$asset" --dir "$RUNNER_TEMP" --clobber
+          fi
+          tar xzf "$RUNNER_TEMP/$asset" -C "$dir" actionlint
+        fi
+        "$dir/actionlint" -version
+        echo "$dir" >> "$GITHUB_PATH"

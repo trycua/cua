@@ -14,6 +14,10 @@
 //! spaces/<space>/     per-Space scratch and outputs
 //! ```
 //!
+//! Under Secure Spaces a Space reads `public/` only through a grant, and its
+//! folder is named after its id too, `spaces/<name>--<id>/` (see
+//! [`acl::Context::isolated`]).
+//!
 //! | Module | What it owns |
 //! |---|---|
 //! | [`path`] | key normalization and the layout |
@@ -60,6 +64,7 @@ pub mod lease;
 pub mod nfs;
 pub mod path;
 pub mod remote;
+pub mod replica;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod scan;

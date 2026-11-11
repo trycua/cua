@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration tests against the CuaTestHarness.WebView (WPF + WebView2)
 //! and CuaTestHarness.Electron hosts. Both load the same
 //! `tests/fixtures/shared/web/index.html`, so the same `page` tool flows

@@ -1,0 +1,758 @@
+{
+  "calls": [
+    {
+      "method": "startTask.view",
+      "name": "start-task-view",
+      "result": {
+        "agent": "claude-code",
+        "agentTitle": "Agent",
+        "agents": [
+          {
+            "detail": null,
+            "enabled": true,
+            "harness": "claude-code",
+            "label": "Claude Code",
+            "selected": true
+          },
+          {
+            "detail": "Sign in to Codex in Settings",
+            "enabled": false,
+            "harness": "openai-codex",
+            "label": "Codex",
+            "selected": false
+          }
+        ],
+        "blocker": null,
+        "cancelLabel": "Cancel",
+        "placeholder": "Describe the job",
+        "repo": {
+          "clearLabel": "Remove repo",
+          "hint": "The agent clones it into the Space.",
+          "label": "acme/checkout-api",
+          "placeholder": "owner/name or a GitHub link",
+          "problem": null,
+          "set": true
+        },
+        "startLabel": "Start",
+        "starting": {
+          "detail": "A computer is making a Space and handing it the job. You can leave: it keeps going.",
+          "failedTitle": "The task did not start",
+          "leave": "Close",
+          "retry": "Try again",
+          "title": "Starting your task"
+        },
+        "title": "What do you want to do?",
+        "where": {
+          "kind": "auto"
+        },
+        "whereTitle": "Where",
+        "wheres": [
+          {
+            "detail": "Picks the computer with the most room",
+            "enabled": true,
+            "id": "auto",
+            "kind": "auto",
+            "label": "Let Cua decide",
+            "selected": true
+          },
+          {
+            "detail": "New Space",
+            "enabled": true,
+            "id": "machine:m1",
+            "kind": "machine",
+            "label": "Studio Mac",
+            "selected": false
+          },
+          {
+            "detail": "Offline",
+            "enabled": false,
+            "id": "machine:m2",
+            "kind": "machine",
+            "label": "Desk PC",
+            "selected": false
+          },
+          {
+            "detail": "Message the agent there",
+            "enabled": true,
+            "id": "space:relay:checkout",
+            "kind": "space",
+            "label": "In checkout-api",
+            "selected": false
+          }
+        ]
+      }
+    },
+    {
+      "method": "startTask.plan",
+      "name": "start-task-plan-new",
+      "result": {
+        "error": null,
+        "ok": true,
+        "queuedNote": "Sends when the Space is ready",
+        "request": {
+          "agent": "claude-code",
+          "client_id": "task-0001",
+          "message": "@claude Fix the flaky websocket test",
+          "os": "linux",
+          "prompt": "Fix the flaky websocket test",
+          "repo": {
+            "url": "https://github.com/acme/checkout-api"
+          },
+          "where": {
+            "kind": "auto"
+          }
+        },
+        "title": "Fix the flaky websocket test"
+      }
+    },
+    {
+      "method": "startTask.plan",
+      "name": "start-task-plan-in-space",
+      "result": {
+        "error": null,
+        "ok": true,
+        "queuedNote": "Sends when the Space is ready",
+        "request": {
+          "agent": "claude-code",
+          "client_id": "task-0002",
+          "message": "@claude Status?",
+          "os": "linux",
+          "prompt": "Status?",
+          "where": {
+            "kind": "space",
+            "space": "relay:checkout"
+          }
+        },
+        "title": "Status?"
+      }
+    },
+    {
+      "method": "toolRows.group",
+      "name": "tool-rows-group",
+      "result": {
+        "closedLabel": "Ran 1 command, read 1 file, edited 1 file. Show details",
+        "failed": false,
+        "hideLabel": "Hide details",
+        "phrase": "Ran 1 command, read 1 file, edited 1 file",
+        "rows": [
+          {
+            "detail": "pytest tests/test_cart.py -x",
+            "line": "Ran pytest test_cart.py",
+            "state": "done",
+            "stateLabel": null
+          },
+          {
+            "detail": "",
+            "line": "Read cart.py",
+            "state": "done",
+            "stateLabel": null
+          },
+          {
+            "detail": "",
+            "line": "Edited cart.py",
+            "state": "running",
+            "stateLabel": "Running"
+          }
+        ],
+        "running": true,
+        "showLabel": "Show details"
+      }
+    },
+    {
+      "method": "approvals.view",
+      "name": "approvals-three-waiting",
+      "result": {
+        "buttons": [
+          {
+            "approve": false,
+            "hint": null,
+            "id": "decline",
+            "label": "Decline",
+            "role": "quiet",
+            "scope": null
+          },
+          {
+            "approve": true,
+            "hint": null,
+            "id": "allow-once",
+            "label": "Allow once",
+            "role": "primary",
+            "scope": "once"
+          },
+          {
+            "approve": true,
+            "hint": "Allow for this Space: Cua won't ask again for requests like this here.",
+            "id": "allow-space",
+            "label": "Allow for this Space",
+            "role": "secondary",
+            "scope": "space"
+          }
+        ],
+        "counter": "2 of 3",
+        "current": 15,
+        "index": 1,
+        "next": 19,
+        "nextLabel": "Next approval",
+        "previous": 12,
+        "previousLabel": "Previous approval",
+        "scopeNote": "Allow for this Space: Cua won't ask again for requests like this here.",
+        "total": 3
+      }
+    },
+    {
+      "method": "sendMode.view",
+      "name": "send-mode-running",
+      "result": {
+        "accessibilityLabel": "Queue",
+        "alternate": {
+          "hint": "Interrupts the current step and sends this now.",
+          "label": "Steer",
+          "mode": "steer"
+        },
+        "primary": {
+          "hint": "Sends after the current step finishes.",
+          "label": "Queue",
+          "mode": "queue"
+        },
+        "queuedLine": "2 messages queued",
+        "stop": false,
+        "stopLabel": "Stop"
+      }
+    },
+    {
+      "method": "voice.view",
+      "name": "voice-denied",
+      "result": {
+        "available": true,
+        "buttonHint": "Listens and types what you say.",
+        "buttonLabel": "Dictate",
+        "canStart": false,
+        "notice": {
+          "action": "open-settings",
+          "actionLabel": "Open Settings",
+          "text": "Microphone access is off. Turn it on in Settings to dictate."
+        },
+        "privacyNote": null,
+        "status": null,
+        "willAsk": false
+      }
+    },
+    {
+      "method": "voice.insert",
+      "name": "voice-insert",
+      "result": {
+        "cursor": 25,
+        "text": "Please fix the login test"
+      }
+    },
+    {
+      "method": "diff.changes",
+      "name": "diff-changes",
+      "result": {
+        "additions": "+52",
+        "branchLine": "fix/retry-backoff into main",
+        "deletions": "-3",
+        "empty": null,
+        "files": [
+          {
+            "additions": "+12",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "del"
+            ],
+            "binary": false,
+            "deletions": "-3",
+            "dir": "src/ws/",
+            "name": "client.ts",
+            "note": "",
+            "path": "src/ws/client.ts",
+            "preview": "text",
+            "status": "modified",
+            "statusLabel": "Modified"
+          },
+          {
+            "additions": "+40",
+            "bar": [
+              "add",
+              "add",
+              "add",
+              "add",
+              "add"
+            ],
+            "binary": false,
+            "deletions": "",
+            "dir": "tests/",
+            "name": "test_ws_reconnect.py",
+            "note": "",
+            "path": "tests/test_ws_reconnect.py",
+            "preview": "text",
+            "status": "added",
+            "statusLabel": "Added"
+          },
+          {
+            "additions": "",
+            "bar": [
+              "none",
+              "none",
+              "none",
+              "none",
+              "none"
+            ],
+            "binary": true,
+            "deletions": "",
+            "dir": "docs/",
+            "name": "diagram.png",
+            "note": "binary file",
+            "path": "docs/diagram.png",
+            "preview": "image",
+            "status": "modified",
+            "statusLabel": "Modified"
+          }
+        ],
+        "filesTotal": "3 files",
+        "repo": "acme/checkout-api",
+        "title": "Changes",
+        "truncatedNote": null,
+        "verifiedNote": null
+      }
+    },
+    {
+      "method": "diff.file",
+      "name": "diff-file",
+      "result": {
+        "additions": "+2",
+        "deletions": "-1",
+        "dir": "src/ws/",
+        "hasWords": true,
+        "hunks": [
+          {
+            "header": "@@ -10,4 +10,5 @@ export class Client {",
+            "lines": [
+              {
+                "kind": "context",
+                "newNo": 10,
+                "noNewline": false,
+                "oldNo": 10,
+                "segments": [],
+                "text": "  private retries = 0;"
+              },
+              {
+                "kind": "del",
+                "newNo": null,
+                "noNewline": false,
+                "oldNo": 11,
+                "segments": [
+                  {
+                    "changed": false,
+                    "text": "  const delay = base * attempt;"
+                  }
+                ],
+                "text": "  const delay = base * attempt;"
+              },
+              {
+                "kind": "add",
+                "newNo": 11,
+                "noNewline": false,
+                "oldNo": null,
+                "segments": [
+                  {
+                    "changed": false,
+                    "text": "  const delay = "
+                  },
+                  {
+                    "changed": true,
+                    "text": "Math.min("
+                  },
+                  {
+                    "changed": false,
+                    "text": "base * "
+                  },
+                  {
+                    "changed": true,
+                    "text": "2 ** "
+                  },
+                  {
+                    "changed": false,
+                    "text": "attempt"
+                  },
+                  {
+                    "changed": true,
+                    "text": ", cap)"
+                  },
+                  {
+                    "changed": false,
+                    "text": ";"
+                  }
+                ],
+                "text": "  const delay = Math.min(base * 2 ** attempt, cap);"
+              },
+              {
+                "kind": "add",
+                "newNo": 12,
+                "noNewline": false,
+                "oldNo": null,
+                "segments": [],
+                "text": "  log(delay);"
+              },
+              {
+                "kind": "context",
+                "newNo": 13,
+                "noNewline": false,
+                "oldNo": 12,
+                "segments": [],
+                "text": "  return this;"
+              }
+            ]
+          }
+        ],
+        "name": "client.ts",
+        "notes": [],
+        "path": "src/ws/client.ts",
+        "unifiedLabel": "Unified",
+        "wordsLabel": "Words"
+      }
+    },
+    {
+      "method": "push.route",
+      "name": "push-route-approval",
+      "result": {
+        "approval": 12,
+        "entry": 12,
+        "link": "/space/relay%3Acheckout?entry=12",
+        "spaceId": "relay:checkout",
+        "target": "approval"
+      }
+    },
+    {
+      "method": "push.settings",
+      "name": "push-settings-closed",
+      "result": {
+        "footer": "Allow and Decline on an alert ask you to unlock your phone first.",
+        "rows": [
+          {
+            "accessibilityLabel": "Notify when an agent needs you",
+            "detail": "When an agent asks for an approval or an answer.",
+            "id": "needsYou",
+            "label": "Needs you",
+            "on": true
+          },
+          {
+            "accessibilityLabel": "Notify when an agent is done",
+            "detail": "When an agent finishes.",
+            "id": "done",
+            "label": "Done",
+            "on": false
+          }
+        ],
+        "status": {
+          "action": null,
+          "actionLabel": null,
+          "text": "Alerts appear while Cua Spaces is open or was just open. Push to a closed app is not set up for this account yet.",
+          "tone": "muted"
+        },
+        "title": "Notifications"
+      }
+    }
+  ],
+  "flows": [
+    {
+      "flow": "outbox-offline-then-back",
+      "frames": [
+        {
+          "banner": "You're offline. What you see may be behind.",
+          "effects": [],
+          "rows": [],
+          "step": "offline"
+        },
+        {
+          "banner": "You're offline. 1 message will send when you're back.",
+          "effects": [],
+          "rows": [
+            "m1: Waiting for a connection (waiting)"
+          ],
+          "step": "two messages typed"
+        },
+        {
+          "banner": "You're offline. 2 messages will send when you're back.",
+          "effects": [],
+          "rows": [
+            "m1: Waiting for a connection (waiting)",
+            "m2: Waiting for a connection (waiting)"
+          ],
+          "step": "second message"
+        },
+        {
+          "banner": "You're offline. 2 messages will send when you're back.",
+          "effects": [],
+          "rows": [
+            "m1: Waiting for a connection (waiting)",
+            "m2: Waiting for a connection (waiting)"
+          ],
+          "step": "same id twice"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "m1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "m1: Sending… (sending)",
+            "m2: Waiting for the message above (waiting)"
+          ],
+          "step": "back online"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "m2",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "m2: Sending… (sending)"
+          ],
+          "step": "first delivered"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "atMs": 6300,
+              "type": "wakeAt"
+            }
+          ],
+          "rows": [
+            "m2: Trying again soon (waiting)"
+          ],
+          "step": "second lost the connection"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "m2",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "m2: Sending… (sending)"
+          ],
+          "step": "retry time"
+        },
+        {
+          "banner": null,
+          "effects": [],
+          "rows": [],
+          "step": "second delivered"
+        }
+      ]
+    },
+    {
+      "flow": "outbox-quit-while-posting",
+      "frames": [
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "a1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "a1: Sending… (sending)"
+          ],
+          "step": "sent"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "a1",
+              "space": "relay:checkout",
+              "type": "verifyDelivery"
+            }
+          ],
+          "rows": [
+            "a1: Sending… (sending)"
+          ],
+          "step": "the app started again"
+        },
+        {
+          "banner": null,
+          "effects": [],
+          "rows": [],
+          "step": "the thread has it"
+        }
+      ]
+    },
+    {
+      "flow": "outbox-gives-up-loudly",
+      "frames": [
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "f1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "f1: Sending… (sending)"
+          ],
+          "step": "sent"
+        },
+        {
+          "banner": null,
+          "effects": [],
+          "rows": [
+            "f1: Sending… (sending)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "queued behind it"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "atMs": 4000,
+              "type": "wakeAt"
+            }
+          ],
+          "rows": [
+            "f1: Trying again soon (waiting)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "refused 1"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "f1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "f1: Sending… (sending)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "again 1"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "atMs": 8100,
+              "type": "wakeAt"
+            }
+          ],
+          "rows": [
+            "f1: Trying again soon (waiting)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "refused 2"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "f1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "f1: Sending… (sending)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "again 2"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "atMs": 16200,
+              "type": "wakeAt"
+            }
+          ],
+          "rows": [
+            "f1: Trying again soon (waiting)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "refused 3"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "f1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "f1: Sending… (sending)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "again 3"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "atMs": 32300,
+              "type": "wakeAt"
+            }
+          ],
+          "rows": [
+            "f1: Trying again soon (waiting)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "refused 4"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "f1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "f1: Sending… (sending)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "again 4"
+        },
+        {
+          "banner": "1 message did not send.",
+          "effects": [],
+          "rows": [
+            "f1: Not sent (failed)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "refused 5"
+        },
+        {
+          "banner": null,
+          "effects": [
+            {
+              "id": "f1",
+              "type": "deliver"
+            }
+          ],
+          "rows": [
+            "f1: Sending… (sending)",
+            "f2: Waiting for the message above (waiting)"
+          ],
+          "step": "person retries"
+        }
+      ]
+    }
+  ]
+}

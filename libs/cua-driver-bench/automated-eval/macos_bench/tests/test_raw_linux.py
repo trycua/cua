@@ -98,6 +98,12 @@ class RawLintTest(unittest.TestCase):
             "import ctypes\nctypes.pythonapi",
             "from ctypes import pythonapi",
             'setattr(raw, "x", 1)',
+            # aliasing getattr hides later lookups (verifier round 2)
+            'g = getattr\ng(ctypes, "cd" + "ll")',
+            "f = [getattr][0]",
+            "import ctypes\nctypes.CFUNCTYPE",
+            "import ctypes\nctypes.memmove",
+            "import ctypes\nctypes.util",
         ):
             with self.subTest(src=src):
                 self.assertFalse(rawlint.lint(src).ok, src)

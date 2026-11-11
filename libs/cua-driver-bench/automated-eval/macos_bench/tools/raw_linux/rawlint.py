@@ -247,7 +247,24 @@ IMPORT_OK = {
 }
 # Names that reach past the runtime: other GObject modules (GLib/Gio spawn processes, Gdk warps the pointer), the
 # CPython C API through ctypes, and the gi loader itself. Scripts get Atspi as a global and need none of these.
-ESCAPES = {"gi", "repository", "GLib", "Gio", "Gdk", "GObject", "Gtk", "pythonapi", "PYFUNCTYPE", "cast"}
+ESCAPES = {
+    "gi",
+    "repository",
+    "GLib",
+    "Gio",
+    "Gdk",
+    "GObject",
+    "Gtk",
+    "pythonapi",
+    "PYFUNCTYPE",
+    "CFUNCTYPE",
+    "cast",
+    "memmove",
+    "memset",
+    "addressof",
+    "LibraryLoader",
+    "util",
+}
 DYNAMIC = {
     "eval",
     "exec",
@@ -431,6 +448,9 @@ class _Walker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
+        if node.id in {"getattr", "setattr", "delattr", "hasattr"} and not getattr(node, "_called", False):
+            # an alias (g = getattr) would hide every later lookup from this check
+            self.add("GUI2", node, f"{node.id} used as a value")
         if node.id in DYNAMIC:
             self.add("GUI2", node, node.id)
         elif node.id in ESCAPES:
@@ -460,6 +480,8 @@ class _Walker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        if isinstance(node.func, ast.Name):
+            node.func._called = True  # type: ignore[attr-defined]
         func = _dotted(node.func)
         last = func.rsplit(".", 1)[-1]
         if last in {"getattr", "setattr", "delattr", "hasattr"} and len(node.args) >= 2 and last != "getattr":

@@ -1,7 +1,7 @@
 {
   "name": "@cua/cua-spaces",
   "private": true,
-  "version": "0.33.6",
+  "version": "0.33.7",
   "packageManager": "pnpm@9.0.4",
   "license": "FSL-1.1-MIT",
   "description": "Cua Spaces notch portal - Tauri 2 prototype with synthetic data",

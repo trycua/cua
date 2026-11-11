@@ -1,6 +1,6 @@
 ---
 name: formally-verify-cua-driver
-description: Model-check the Cua Driver's state machines with TLA+ (element tokens, session lifecycle, permission admission, macOS foreground restore, recording, Windows typing and serve drain, invoke_menu cancel) after a change to the code they cover. Use when a diff touches a file in the coverage table, when a race or ordering bug is suspected there, or to add a new machine.
+description: Model-check the Cua Driver's state machines with TLA+ (element tokens, session lifecycle, permission admission, macOS foreground restore, recording, Windows typing and serve drain, invoke_menu cancel, session labels, consent grants, the Linux virtual keyboard) after a change to the code they cover. Use when a diff touches a file in the coverage table, when a race or ordering bug is suspected there, or to add a new machine.
 ---
 
 # Formally verify Cua Driver
@@ -23,6 +23,9 @@ Every spec and config lives in this skill's [`models/`](models/) directory. Code
 | Recording | `models/recording.tla` | `cua-driver-core/src/recording.rs` `Recorder`, `start_with_redactions`, `stop`, `finalize`, `begin_turn`, `finish_turn`; the idle TTL stop in `cua-driver-sdk/src/runtime.rs` | RC1 a turn is written into the recording it was reserved under. RC2 no live recording belongs to an ended session. RC3 a finished directory has a final `session.json`. RC4 a failed start leaves no half-torn recording. RC5 an idle stop never stops a later recording | evidence is written to the wrong recording, or a recording directory is left without its final metadata |
 | Windows typing | `models/windows_typing.tla` | `platform-windows/src/input/keyboard.rs` `with_confirmed_foreground`, `send_text_synthesized_paced_after_focus`; `platform-windows/src/typing_turn.rs` `restores_previous` | NoLateKeystroke no keystroke meant for the target lands in your window. NoSteal no taking the front back from a window that took it. GivesWindowBack a drained turn gives your window back | typed text lands in the window you were using |
 | Serve drain | `models/serve_drain.tla` | `cua-driver/src/serve.rs` both `run_serve` functions (Unix and Windows), `release_active_proxy_sessions`, `claim_standalone_socket`, `claim_daemon_lock` | SD1 a successor daemon never serves while the old one still runs a call. SD2 shutdown clears the proxy-session registry before the SDK goes down | two daemons drive the desktop at once, or a stale proxy entry outlives the runtime it named |
+| Session labels | `models/label_release.tla` | `cua-driver-core/src/session.rs` `end_sessions_for_owner`, `begin_session_dispatch_inner`, `activate_or_revive_session_for_owner`, `released_to`, `CLOSED_TRANSPORTS`; `cua-driver/src/mcp_envelope.rs` connection cleanup | LR1 no episode binds to a transport after it has closed. LR2 a label only a closed transport names, never ended with `end_session`, can be claimed by another transport | a label stays unusable for every other agent until the daemon restarts |
+| Consent grants | `models/consent_grant.tla` | `cua-driver-core/src/consent.rs` `ProtectedResourceGrants::authorize`, `revoke_session`, `revoke_all`, `resource_grant_key`; `cua-driver-core/src/tool.rs` the session-end hook and the ended check before consent | CG1 no grant outlives the episode it was approved in. CG2 no call runs on an earlier episode's grant | a later session on the same label reads history or drives a browser profile without a prompt, after its approval was revoked |
+| Linux virtual keyboard | `models/virtual_keyboard.tla` (chart: `models/virtual_keyboard.md`) | `platform-linux/src/input/mpx_keyboard.rs` `Keyboard`, `Delivery`, `plugged_keyboard`, `unplug_keyboard`; `platform-linux/src/input/mod.rs` `BorrowedKeycodes` | ReadyIsClean, NoRepeat, NoKeyAfterRestore, CountsOnlyItsOwnKeys | a key repeats, or lands after its keycode was restored |
 
 Each action in a spec carries a comment naming the function and `file:line` it mirrors. The line numbers were right at the sync commit below. After that, find the code by function name.
 
@@ -48,12 +51,13 @@ Read every counterexample, and draw every model you change, with the `/statechar
 
 ## Where the specs used to live
 
-The two models that were loose in crate directories moved here unchanged in what they check. Every invariant and every config still runs:
+The three models that were loose in crate directories moved here unchanged in what they check. Every invariant and every config still runs:
 
 | Old path (relative to `libs/cua-driver/rust/crates/`) | New path (relative to this skill) | Rows |
 | --- | --- | --- |
 | `cua-driver-core/models/recording.tla` and `recording{,_restart,_dirfail,_idle}.cfg` | `models/recording.tla` and the same four configs | RC1-RC5 pass on main; RC3, RC4, RC5 each fail on their old-behaviour config |
 | `platform-windows/models/windows_typing.tla` and `windows_typing{,_always}.cfg` | `models/windows_typing.tla` and the same two configs | TypeOK, NoLateKeystroke, NoSteal, GivesWindowBack pass; NoLateKeystroke fails on the old restore rule |
+| `platform-linux/models/virtual_keyboard.{tla,md}` and `virtual_keyboard{,_before}.cfg` | `models/virtual_keyboard.{tla,md}` and the same two configs | every invariant passes; ReadyIsClean fails on the old rules |
 
 ## What each row means
 
@@ -67,10 +71,12 @@ Open findings on main at the sync commit:
 
 | Row | Rule that breaks | Shortest path in the code's terms |
 | --- | --- | --- |
-| `session.cfg` | SE5 | 1. a call is admitted, runs and ends. 2. `end_session` sees `in_flight == 0` and releases the records lock (`end_session_with_reason`). 3. a new call is admitted (`begin_session_dispatch_inner`). 4. the end runs `mark_session_ended`, which removes the record without reading `in_flight`, and the cleanup hooks run while that call is still in flight. Its guard drop then finds no record. |
 | `foreground_restore.cfg` | FR1 | 1. a foreground turn fronts the target. 2. you Cmd-Tab to another app. 3. `if prev_ok { set_front(prev_psn) }` pulls the old app back over the one you chose. `foreground_restore_fixed.cfg` restores only while the target is still the front process. |
-| `invoke_menu_cancel.cfg` | MC2 | 1. the worker passes `PressAdmission::admit`. 2. the caller's future is dropped, so `CancelOnDrop` fires and the call's `DesktopCall` and per-pid lease drop with it. 3. the worker is in `AXPerformAction`. 4. the next desktop action takes the lane and the pid lease and runs during the press. The worker holds neither a `DesktopLease` clone nor the pid lease, unlike `bring_to_front`'s worker. |
-| `serve_drain_windows.cfg` | SD1 (SD2 too) | 1. shutdown starts while a call is in flight. 2. the Windows loop drops the pipe lock before `sdk.shutdown` and never joins its detached connection tasks. 3. a new daemon takes the name and serves while the old call still runs. SD2: the proxy-session registry is never cleared (the sessions themselves are revoked by `sdk.shutdown`). |
+| `lane_worker_nolease.cfg` | MC2 | 1. a desktop action holds the lane and hands its input to `spawn_blocking` without a `DesktopLease` clone (macOS `set_value`, `type_text`, `click`, `scroll`, `drag`, `hotkey`, `press_key`, and the Windows input tools). 2. the dispatching future is dropped (transport close, remote cancel or deadline, ABI cancel, daemon shutdown), so the `DesktopCall` drops with no clone left and the lane frees. 3. another action takes the lane and posts input while the worker still types. `invoke_menu`, `bring_to_front` and Linux `input::action::Action` hold a lease and are not affected. |
+| `serve_drain_windows.cfg` | SD1 (SD2 too) | 1. shutdown starts while a call is in flight. 2. the Windows loop drops the pipe lock before `sdk.shutdown` and never joins its detached connection tasks. 3. a new daemon takes the name and serves while the old call still runs. SD2: the proxy-session registry is never cleared (the sessions themselves are revoked by `sdk.shutdown`). No fix is in flight. |
+| `serve_drain_unix_worker.cfg` | SD1 | 1. shutdown starts while a call's blocking input worker runs. 2. `connection_tasks.shutdown()` aborts the future, not the thread. 3. `sdk.shutdown` waits only for calls that still hold the lifecycle guard, and `run_serve` returns and drops the socket lock. 4. a successor claims the socket and acts while the old worker still posts. |
+| `label_release.cfg` | LR1 | 1. transport A sends a call on label L and holds no label yet. 2. A's control connection closes. `end_sessions_for_owner` ends nothing and marks A closed only when a label still names it, so A is not marked. 3. A's call is admitted: `begin_session_dispatch_inner` never reads `CLOSED_TRANSPORTS` for a label with no tombstone, so L binds to closed A. 4. every other transport is refused on L, and after the idle sweep the tombstone names an owner that was never marked, so it stays refused. `label_release_fixed.cfg` records every closed owner first and refuses it on every label. |
+| `consent_grant.cfg` | CG1 | 1. a call needs a standard-mode grant, `authorize` misses and opens the prompt. 2. the session ends; the end hook's `revoke_session` takes only the grants lock and finds nothing. 3. you accept and the grant is inserted. 4. `start_session` on the same label from the same transport reuses the grant without a prompt (the grant key holds no episode). `consent_grant_prompt.cfg` (a check since the prompt opened) and `consent_grant_counter.cfg` (a revocation count since `authorize` started, no ended read) still fail. `consent_grant_fixed.cfg` passes. |
 
 ## Real bug or modelling error?
 
@@ -96,20 +102,23 @@ These are models. A pass covers the model at its bounds, not the code. They leav
 
 ## Keeping it in sync
 
-**Sync commit: `cc67e715d11b7450a82663bf7e308e6680422beb`.** At that commit every action's comment matched the code it cites, and `check-models.sh` gave the results in `models.tsv`.
+**Sync commit: `87558bfd064787c7839351c55d667dc8244044a4`.** At that commit every action's comment matched the code it cites, and `check-models.sh` gave the results in `models.tsv`.
 
 Rerun the affected rows on every change to a file in the coverage table. Rerun everything before a release and after any change to locking in `session.rs`, `runtime.rs`, `tool.rs`, `serve.rs` or `skylight.rs`. To see what moved since the sync commit:
 
 ```sh
 cd libs/cua-driver/rust/crates
-git log --oneline cc67e715d1..HEAD -- \
+git log --oneline 87558bfd06..HEAD -- \
   cua-driver-core/src/snapshot_store.rs cua-driver-core/src/element_token.rs \
   cua-driver-core/src/session.rs cua-driver-core/src/recording.rs cua-driver-core/src/tool.rs \
+  cua-driver-core/src/consent.rs \
   cua-driver-sdk/src/runtime.rs cua-driver/src/serve.rs cua-driver/src/main.rs \
+  cua-driver/src/mcp_envelope.rs \
   platform-macos/src/input/skylight.rs platform-macos/src/focus_arbiter.rs \
   platform-macos/src/tools/invoke_menu.rs platform-macos/src/tools/type_text.rs \
   platform-macos/src/background_mutation.rs \
-  platform-windows/src/input/keyboard.rs platform-windows/src/typing_turn.rs
+  platform-windows/src/input/keyboard.rs platform-windows/src/typing_turn.rs \
+  platform-linux/src/input/mpx_keyboard.rs platform-linux/src/input/mod.rs
 ```
 
 When you have reread each changed function against its model actions and the rows give their expected results, move the sync commit forward to the commit you checked. Do not move it on a green run alone.

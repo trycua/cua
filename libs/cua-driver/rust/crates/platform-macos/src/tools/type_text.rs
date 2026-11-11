@@ -42,6 +42,7 @@ use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 use cua_driver_core::background_input::BackgroundRefusal;
+use cua_driver_core::security_prompt::PromptInput;
 
 use super::ToolState;
 
@@ -152,8 +153,9 @@ impl Tool for TypeTextTool {
             ) {
                 return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
+            let prompt = PromptInput::from_args(&args);
             let result = tokio::task::spawn_blocking(move || {
-                crate::input::keyboard::type_text_global(&text, delay_ms)
+                crate::input::keyboard::type_text_global(prompt, &text, delay_ms)
             })
             .await;
             return match result {
@@ -165,7 +167,11 @@ impl Tool for TypeTextTool {
                             "effect": "unverifiable"
                         }))
                 }
-                Ok(Err(error)) => ToolResult::error(format!("desktop type_text failed: {error}")),
+                Ok(Err(error)) => {
+                    crate::security_prompt::tool_result(&error).unwrap_or_else(|| {
+                        ToolResult::error(format!("desktop type_text failed: {error}"))
+                    })
+                }
                 Err(error) => ToolResult::error(format!("desktop type_text task failed: {error}")),
             };
         }
@@ -375,6 +381,7 @@ impl Tool for TypeTextTool {
         let is_terminal_target = crate::terminal::is_terminal_pid(pid);
 
         let blocking_policy = keyboard_policy.clone();
+        let prompt = PromptInput::from_args(&args);
         let native_guard = element_guard.clone();
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -395,6 +402,7 @@ impl Tool for TypeTextTool {
                             keyboard_policy: blocking_policy,
                             explicit_target: element_ptr.is_some() || used_pixel_focus,
                             key_window_confirmed: false,
+                            prompt,
                         },
                     )
                 })
@@ -573,9 +581,11 @@ impl Tool for TypeTextTool {
                     s
                 })
             }
-            Ok(Err(e)) => window_id
-                .and_then(|wid| {
-                    super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+            Ok(Err(e)) => crate::security_prompt::tool_result(&e)
+                .or_else(|| {
+                    window_id.and_then(|wid| {
+                        super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+                    })
                 })
                 .unwrap_or_else(|| ToolResult::error(format!("type_text failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -1374,6 +1384,8 @@ struct KeyboardRoute {
     /// call. An app that is not active reports no focused element even then
     /// (LibreOffice), so a missing focus is not a reason to refuse.
     key_window_confirmed: bool,
+    /// Whether keys may reach an OS security or consent prompt.
+    prompt: PromptInput,
 }
 
 /// Best-effort-background ladder for `type_text`.
@@ -1442,6 +1454,7 @@ fn type_text_in_key_window(
         keyboard_policy,
         explicit_target,
         key_window_confirmed,
+        prompt,
     } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
@@ -1539,7 +1552,7 @@ fn type_text_in_key_window(
                                 foreground_settle_ms,
                             ));
                         }
-                        crate::input::keyboard::type_text_physical_global(text, delay_ms)
+                        crate::input::keyboard::type_text_physical_global(prompt, text, delay_ms)
                     },
                 )?;
                 ((false, None), true)
@@ -1993,6 +2006,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
                 key_window_confirmed: false,
+                prompt: PromptInput::Refuse,
             },
         );
         match r {
@@ -2017,6 +2031,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
                 key_window_confirmed: false,
+                prompt: PromptInput::Refuse,
             },
         )
         .expect("the refusal is a delivery outcome");
@@ -2061,6 +2076,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
                 key_window_confirmed: false,
+                prompt: PromptInput::Refuse,
             },
         )
         .expect("preflight refusal must not attempt the invalid pid");

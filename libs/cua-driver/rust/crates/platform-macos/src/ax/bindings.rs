@@ -893,6 +893,8 @@ pub enum AccessibilityOptIn {
     /// `AXManualAccessibility` is unsupported and the app is neither Chromium
     /// nor Electron: nothing was written, and nothing needs enabling.
     NotNeeded,
+    /// The app rejected the `AXEnhancedUserInterface` write, yet reads it back as set.
+    Deferred,
     /// The app rejected both attributes.
     Refused,
     NotAccepted,
@@ -919,12 +921,14 @@ pub unsafe fn enable_chromium_accessibility(
     choose_accessibility_opt_in(
         |attr| set_bool_attr_true(app_element, attr),
         is_chromium_family,
+        |attr| copy_bool_attr(app_element, attr) == Some(true),
     )
 }
 
 fn choose_accessibility_opt_in(
     mut set_true: impl FnMut(&str) -> AXError,
     is_chromium_family: impl FnOnce() -> bool,
+    reads_true: impl FnOnce(&str) -> bool,
 ) -> AccessibilityOptIn {
     let manual = set_true("AXManualAccessibility");
     if manual == kAXErrorSuccess {
@@ -941,6 +945,8 @@ fn choose_accessibility_opt_in(
     }
     if set_true("AXEnhancedUserInterface") == kAXErrorSuccess {
         AccessibilityOptIn::EnhancedUserInterface
+    } else if reads_true("AXEnhancedUserInterface") {
+        AccessibilityOptIn::Deferred
     } else {
         AccessibilityOptIn::Refused
     }
@@ -1262,6 +1268,7 @@ mod tests {
                     }
                 },
                 || chromium,
+                |_| false,
             );
             (opt_in, written)
         };

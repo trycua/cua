@@ -543,12 +543,18 @@ fn select_option(object_ref: &native::ObjectRef, value: &str) -> Option<Result<(
     match native::select_option_ref(object_ref, value) {
         Ok(native::OptionPick::Picked { .. }) => Some(Ok(())),
         Ok(native::OptionPick::NoMatch { options }) => Some(Err(no_such_option(value, &options))),
-        Ok(native::OptionPick::Unavailable) => None,
+        Ok(native::OptionPick::NoOptions | native::OptionPick::Unavailable) => None,
         Err(error) => Some(Err(error)),
     }
 }
 
-fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+pub(crate) fn no_such_option(value: &str, options: &[String]) -> anyhow::Error {
+    if options.is_empty() {
+        return anyhow::anyhow!(
+            "{}: no option {value:?}; it lists no options",
+            native::NO_SUCH_OPTION
+        );
+    }
     anyhow::anyhow!(
         "{}: no option {value:?}; options: {options:?}",
         native::NO_SUCH_OPTION
@@ -721,13 +727,9 @@ pub fn set_value_token(pid: u32, token: &TokenElement, value: &str) -> Result<()
 }
 
 /// The open popup of the token's combo box: activate the option `value`
-/// names. `Ok(None)` when the popup lists no options yet.
-pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<Option<String>> {
-    match native::activate_option_ref(token.object()?, value)? {
-        native::OptionPick::Picked { name } => Ok(Some(name)),
-        native::OptionPick::NoMatch { options } => Err(no_such_option(value, &options)),
-        native::OptionPick::Unavailable => Ok(None),
-    }
+/// names.
+pub fn activate_option_token(token: &TokenElement, value: &str) -> Result<native::OptionPick> {
+    native::activate_option_ref(token.object()?, value)
 }
 
 /// Whether the popup of the token's combo box is open.

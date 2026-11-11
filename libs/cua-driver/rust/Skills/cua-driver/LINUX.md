@@ -369,8 +369,8 @@ raw background PX possible on a standard compositor.
   time, the result is `background_unavailable` and the text may already be in
   the field. A background pixel `click` fires the AT-SPI action under the
   point; an error or timeout there also ends as `background_unavailable`. A
-  foreground action that reports "GNOME Shell did not restore the previously
-  focused window" sent its input first, and focus may still be on the target.
+  foreground action that reports "the input was sent, but the prior focus
+  could not be restored" sent its input, and focus may still be on the target.
   Read fresh state before any retry ([No blind retry](WORKFLOW.md#no-blind-retry)).
 - **Shell prompts.** Polkit authentication and keyring prompts are drawn by
   the Shell, not by an application window, so the helper's window list does

@@ -113,6 +113,18 @@ class RawLintTest(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertFalse(rawlint.lint(src).ok, src)
 
+    def test_xdotool_runs_one_command_per_call(self):
+        # a chain would let a later key command go to the focused window (verifier round 5)
+        src = 'raw.xdotool("key", "--window", "123", "a", "key", "b")\nreturn raw.pointer()'
+        self.assertBlocked(src, "GUI2")
+        self.assertTrue(rawlint.lint('raw.xdotool("search", "--name", "BenchLab")').ok)
+        self.assertTrue(
+            rawlint.lint(
+                'raw.xdotool("type", "--window", "5", "key words")\nreturn raw.pointer()'
+            ).ok
+        )
+        self.assertLessEqual(set(rawlint.XDOTOOL), rawlint.XDOTOOL_COMMANDS)
+
     def test_warnings_run(self):
         src = 'raw.xdotool("type", "--window", "5", "hi")\nreturn raw.describe(x)'
         report = rawlint.lint(src)

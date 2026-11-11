@@ -225,6 +225,16 @@ STRINGS: dict[str, str] = {
     "wtype": "BG5",
     "libei": "BG5",
 }
+# Every xdotool subcommand. raw.xdotool runs one command per call: a second subcommand in the arguments (xdotool's
+# command chaining) is refused, so each command's own --window decides its delivery.
+XDOTOOL_COMMANDS = set(
+    "click getactivewindow getmouselocation getwindowfocus getwindowname getwindowpid getwindowgeometry key keydown "
+    "keyup mousedown mousemove mousemove_relative mouseup search selectwindow set_desktop set_desktop_for_window "
+    "set_num_desktops set_window type windowactivate windowclose windowfocus windowkill windowlower windowmap "
+    "windowminimize windowmove windowquit windowraise windowreparent windowsize windowstate windowunmap "
+    "behave behave_screen_edge exec sleep get_desktop get_desktop_for_window get_desktop_viewport "
+    "set_desktop_viewport get_num_desktops getwindowclassname".split()
+)
 # xdotool subcommands (first argument of raw.xdotool) and their rule; anything not listed is allowed.
 XDOTOOL: dict[str, str] = {
     **dict.fromkeys(
@@ -531,6 +541,13 @@ class _Walker(ast.NodeVisitor):
             )
             return
         sub = args[0]
+        chained = [a for a in args[1:] if a in XDOTOOL_COMMANDS]
+        if chained:
+            self.add(
+                "GUI2",
+                node,
+                f"xdotool command chain ({sub} ... {chained[0]}): one command per call",
+            )
         rule = XDOTOOL.get(sub)
         has_window = "--window" in [a for a in args if a]
         if rule == "BG3" and has_window:

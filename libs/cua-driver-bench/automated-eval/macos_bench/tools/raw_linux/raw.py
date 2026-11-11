@@ -664,8 +664,15 @@ class Raw:
     def xdotool(self, *args: Any) -> str:
         """Run xdotool with these arguments; subcommands that move the pointer, focus or type are checked."""
         argv = [str(a) for a in args]
+        if not argv:
+            raise RuntimeError("xdotool needs a command")
+        chained = [a for a in argv[1:] if a in rawlint.XDOTOOL_COMMANDS]
+        if chained:
+            STATE.refuse(
+                "GUI2", f"xdotool command chain ({argv[0]} ... {chained[0]}); one command per call"
+            )
         windowed = "--window" in argv
-        for token in argv:
+        for token in argv[:1]:
             if token in {"exec", "behave", "behave_screen_edge", "script"}:
                 STATE.refuse("GUI1", f"xdotool {token}")
             rule = rawlint.XDOTOOL.get(token)

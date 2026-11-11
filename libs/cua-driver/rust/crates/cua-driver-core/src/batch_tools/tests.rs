@@ -248,6 +248,29 @@ async fn runs_steps_in_order_and_reports_each() {
 }
 
 #[tokio::test]
+async fn every_step_reports_how_long_it_took() {
+    let harness = Harness::new();
+    let started = std::time::Instant::now();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 46, "window_id": 7}},
+            {"tool": "press_key", "args": {"pid": 46}},
+            {"tool": "click", "args": {"pid": 46, "window_id": 7, "fail": true}},
+        ]}))
+        .await;
+    let batch_ms = started.elapsed().as_millis() as u64;
+    let steps = result.structured_content.unwrap()["steps"].clone();
+    let ms: Vec<u64> = steps
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|step| step["ms"].as_u64().expect("every step, a failed one too, has ms"))
+        .collect();
+    assert_eq!(ms.len(), 3);
+    assert!(ms.iter().sum::<u64>() <= batch_ms, "{ms:?} > {batch_ms}");
+}
+
+#[tokio::test]
 async fn stops_at_the_first_failure_and_still_observes() {
     let harness = Harness::new();
     let result = harness

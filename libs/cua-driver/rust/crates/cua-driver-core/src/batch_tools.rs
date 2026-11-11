@@ -661,7 +661,8 @@ impl Plan {
             if index > 0 && !self.delay.is_zero() {
                 tokio::time::sleep(self.delay).await;
             }
-            let outcome = if started.elapsed() >= Duration::from_millis(MAX_BATCH_MS) {
+            let step_started = Instant::now();
+            let mut outcome = if started.elapsed() >= Duration::from_millis(MAX_BATCH_MS) {
                 failure(
                     index,
                     step.label(),
@@ -697,6 +698,7 @@ impl Plan {
                 )
                 .await
             };
+            outcome.report["ms"] = json!(step_started.elapsed().as_millis() as u64);
             if !outcome.ok {
                 recovery = Recovery::after(&outcome.report, last_window.as_ref());
                 if let Some(Recovery { window, .. }) = &recovery {

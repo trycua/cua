@@ -679,12 +679,38 @@ impl QemuRuntime {
         kvm: &std::io::Result<()>,
         sudo: impl Fn() -> bool,
     ) -> Result<String> {
+        self.accel_for_policy(arch, kvm, sudo, kvm_required())
+    }
+
+    /// `require_kvm`: a same-architecture guest on Linux must get KVM, so
+    /// software emulation (TCG) is an error rather than a slow fallback.
+    fn accel_for_policy(
+        &self,
+        arch: Arch,
+        kvm: &std::io::Result<()>,
+        sudo: impl Fn() -> bool,
+        require_kvm: bool,
+    ) -> Result<String> {
         if let Some(accel) = &self.cfg.accel {
             return Ok(accel.clone());
         }
         let accel = host::qemu_accel_with(host::HostOs::current(), arch, kvm, sudo, |message| {
             tracing::warn!("{message}")
         })?;
+        if require_kvm
+            && accel == "tcg"
+            && arch == Arch::host()
+            && host::HostOs::current() == host::HostOs::Linux
+        {
+            let why = match kvm {
+                Err(e) => host::kvm_hint(e),
+                Ok(()) => "KVM is not usable".to_string(),
+            };
+            return Err(VmmError::missing(
+                "KVM",
+                format!("{KVM_REQUIRED_ENV} is set, so TCG emulation is refused: {why}"),
+            ));
+        }
         if let Err(e) = kvm
             && accel == "tcg"
             && arch == Arch::host()
@@ -1143,7 +1169,12 @@ impl QemuRuntime {
                     tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
                     attempt += 1;
                 }
-                Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
+                Err(e)
+                    if st.accel == "kvm"
+                        && self.cfg.accel.is_none()
+                        && !kvm_required()
+                        && kvm_stalled(&e) =>
+                {
                     tracing::warn!(
                         sandbox = %st.name,
                         "KVM did not start a vCPU (QEMU stopped answering QMP; see `dmesg` for kvm errors), so retrying under slow TCG emulation"
@@ -2621,6 +2652,15 @@ fn is_port_conflict(stderr: &str) -> bool {
     stderr.contains("Address already in use")
         || stderr.contains("Failed to find an available port")
         || stderr.contains("Could not set up host forwarding rule")
+}
+
+/// Set (`1`/`true`) by CI lanes that must run under hardware acceleration:
+/// QEMU then fails instead of falling back to TCG, which boots a desktop
+/// image several times slower and turns a missing /dev/kvm into a timeout.
+const KVM_REQUIRED_ENV: &str = "CUA_REQUIRE_KVM";
+
+fn kvm_required() -> bool {
+    std::env::var(KVM_REQUIRED_ENV).is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
 }
 
 fn kvm_stalled(e: &VmmError) -> bool {
@@ -4988,6 +5028,30 @@ mod tests {
         );
         let missing = Err(std::io::ErrorKind::NotFound.into());
         assert_eq!(r.accel_for(Arch::host(), &missing).unwrap(), "tcg");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn required_kvm_refuses_tcg_instead_of_falling_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = rt(tmp.path());
+        let missing = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(
+            r.accel_for_policy(Arch::host(), &missing, || true, false)
+                .unwrap(),
+            "tcg"
+        );
+        let error = r
+            .accel_for_policy(Arch::host(), &missing, || true, true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(KVM_REQUIRED_ENV), "{error}");
+        assert!(error.contains("/dev/kvm is missing"), "{error}");
+        assert_eq!(
+            r.accel_for_policy(Arch::host(), &Ok(()), || true, true)
+                .unwrap(),
+            "kvm"
+        );
     }
 
     #[test]

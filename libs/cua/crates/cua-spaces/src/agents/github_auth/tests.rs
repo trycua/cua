@@ -421,50 +421,8 @@ fn status_plan_and_errors_never_carry_a_token() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Ask first on for one test (and off again). The experiment is a process-wide
-/// switch, so the tests that flip it take turns.
-struct AskFirstOn(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
-
-impl AskFirstOn {
-    fn new(on: bool) -> Self {
-        static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let g = TURN.lock().unwrap_or_else(|e| e.into_inner());
-        crate::experiments::set_enabled(crate::experiments::Gate::AskFirst, Some(on));
-        AskFirstOn(g)
-    }
-}
-
-impl Drop for AskFirstOn {
-    fn drop(&mut self) {
-        crate::experiments::set_enabled(crate::experiments::Gate::AskFirst, None);
-    }
-}
-
-#[test]
-fn while_ask_first_is_off_a_saved_key_is_forwarded_as_before_and_the_app_methods_refuse() {
-    let _off = AskFirstOn::new(false);
-    assert!(crate::agents::refuse_host_only("GITHUB_TOKEN").is_ok());
-    assert!(!enabled());
-    assert!(
-        off_error()
-            .to_string()
-            .contains("cua experiments enable ask-first")
-    );
-    let (keys, dir) = temp_keys();
-    let r = crate::agents::keys::app_call(
-        &keys,
-        "github.status",
-        serde_json::json!({}),
-        std::path::Path::new("/bin/sh"),
-    );
-    let _ = std::fs::remove_dir_all(dir);
-    let e = r.expect("a github method").unwrap_err();
-    assert!(e.to_string().contains("ask-first"), "{e}");
-}
-
 #[test]
 fn the_host_only_names_are_refused_for_a_space() {
-    let _on = AskFirstOn::new(true);
     for n in [
         "GITHUB_TOKEN",
         "GH_TOKEN",

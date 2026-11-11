@@ -40,6 +40,7 @@ import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_WEBKIT_METHODS } from "./ops/agent-sign-in";
 import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
@@ -171,6 +172,7 @@ export const WEBKIT_METHODS = [
   "telemetry.acknowledgeLinkNotice",
   "crashReporting.config",
   "spaces.usage",
+  "spaces.reach",
   "spaces.windows",
   "stream.pip",
   "spaces.thumbnail",
@@ -230,6 +232,7 @@ export const WEBKIT_METHODS = [
   ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
   ...AGENT_THREADS_WEBKIT_METHODS,
+  ...AGENT_SIGN_IN_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -278,7 +281,11 @@ export interface WebkitRequest {
 
 export type WebkitResponse =
   | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string } };
+  | {
+      id: string;
+      ok: false;
+      error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string };
+    };
 
 /** `CustomEvent("cua:event").detail`. */
 export interface WebkitEventDetail {
@@ -311,6 +318,8 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
+  /** The Space it is a child of (its id), from the daemon's tree. */
+  parent?: string | null;
   power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;

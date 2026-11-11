@@ -358,11 +358,11 @@ def test_workflow_wiring():
     # the merge job that needs the shards: skipping the builds skips the rest.
     builds = ["build-sdk", "build-cli", "build-fixtures", "build-rust-tests", "build-images"]
     for name in builds:
-        assert jobs[name]["needs"] == "changes", name
+        assert jobs[name]["needs"] == ["quick", "changes"], name
         # Only an explicit `false` skips the suite.
         assert "needs.changes.outputs.run != 'false'" in jobs[name]["if"], name
-    assert sorted(jobs["shard"]["needs"]) == sorted(builds)
-    assert jobs["matrix"]["needs"] == "shard"
+    assert sorted(jobs["shard"]["needs"]) == sorted(builds + ["quick"])
+    assert jobs["matrix"]["needs"] == ["quick", "shard"]
     # The shard is not behind the scope job: it depends only on the build results.
     assert "needs.changes" not in jobs["shard"].get("if", "")
     assert changes["outputs"] == {"run": "${{ steps.scope.outputs.run }}"}
@@ -372,7 +372,7 @@ def test_workflow_wiring():
     # The nightly lane is not behind the scope job.
     assert live["needs"] == "quick"  # the quick stage only; not behind the scope job
     assert "github.event_name == 'schedule'" in live["if"] and "needs.changes" not in live["if"]
-    assert set(WORKFLOW[True]) == {"pull_request", "schedule", "workflow_dispatch"}
+    assert set(WORKFLOW[True]) == {"pull_request", "merge_group", "schedule", "workflow_dispatch"}
 
 
 # --- git: the real change list --------------------------------------------------

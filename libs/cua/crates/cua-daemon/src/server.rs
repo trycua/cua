@@ -27,7 +27,7 @@ use tonic::Status;
 use tower::{Service, ServiceExt};
 
 /// Where and how to listen.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// Unix socket (unix only). Created with mode 0600; a stale socket file
     /// is replaced.
@@ -40,6 +40,18 @@ pub struct ServerConfig {
     pub discovery_path: Option<PathBuf>,
     /// Lifetime of media bridge tickets.
     pub bridge_ticket_ttl: Duration,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConfig")
+            .field("socket_path", &self.socket_path)
+            .field("loopback", &self.loopback)
+            .field("token", &"<redacted>")
+            .field("discovery_path", &self.discovery_path)
+            .field("bridge_ticket_ttl", &self.bridge_ticket_ttl)
+            .finish()
+    }
 }
 
 impl ServerConfig {
@@ -334,6 +346,8 @@ impl DaemonHandle {
                 break;
             }
         }
+        let began = std::time::Instant::now();
+        tracing::info!("the daemon is shutting down");
         // What an extension serves must not outlive the daemon (a mount,
         // writes not yet stored): each ends first, bounded.
         for a in self.shared.runtime.attached_extensions() {
@@ -350,15 +364,31 @@ impl DaemonHandle {
         if let Ok(vmm) = self.shared.runtime.vmm()
             && let Some(pool) = vmm.pool()
         {
+            tracing::info!(
+                after_ms = began.elapsed().as_millis() as u64,
+                "shutdown: draining the warm pool"
+            );
             let _ = tokio::time::timeout(std::time::Duration::from_secs(90), pool.drain()).await;
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: stopping tasks"
+        );
         for t in self.tasks.drain(..) {
             t.abort();
             let _ = t.await;
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: tasks stopped"
+        );
         // The built-in Linux runtime VM must not outlive the daemon that
         // started it (nothing else would stop it): stop it unless Linux
         // Spaces still run in it, and leave the answer for `cua daemon stop`.
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: stopping the Linux runtime"
+        );
         if let Ok(vmm) = self.shared.runtime.vmm().cloned() {
             let stop = tokio::time::timeout(
                 std::time::Duration::from_secs(200),
@@ -371,6 +401,10 @@ impl DaemonHandle {
             tracing::info!(?stop, "the Linux runtime at daemon shutdown");
             cua_vmm::managed::record_shutdown(&stop);
         }
+        tracing::info!(
+            after_ms = began.elapsed().as_millis() as u64,
+            "shutdown: finished"
+        );
         self.cleanup();
     }
 

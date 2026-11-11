@@ -191,7 +191,10 @@ function StorageRow({
                 variant="secondary"
                 size="sm"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(row.value ?? "").then(() => setCopied(true), () => {});
+                  void navigator.clipboard?.writeText(row.value ?? "").then(
+                    () => setCopied(true),
+                    () => {},
+                  );
                 }}
               >
                 {copied ? "Copied" : row.button}

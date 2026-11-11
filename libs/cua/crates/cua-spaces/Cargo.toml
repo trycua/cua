@@ -21,6 +21,9 @@ default = [
     "mcp-http",
     "mcp-client",
 ]
+# The S3 fallback for checkpoint copies (the AWS SDK). A build without it
+# refuses an S3 fallback with a clear error.
+s3 = ["cua-snapshot-sync/s3"]
 # send_file (TeleportService.ReceiveFiles) with gitignore-aware folder walks.
 spaces-files = []
 # Stream targets, media tickets, and `StreamSession` (rcdp wire v2 through

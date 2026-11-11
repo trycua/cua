@@ -67,16 +67,6 @@ pub fn is_app_method(name: &str) -> bool {
     APP_METHODS.contains(&name)
 }
 
-/// Whether Ask first, the experiment this module belongs to, is on.
-pub fn enabled() -> bool {
-    crate::experiments::enabled(crate::experiments::Gate::AskFirst)
-}
-
-/// The refusal for a call while Ask first is off.
-pub fn off_error() -> Error {
-    Error::InvalidArgument(crate::experiments::Gate::AskFirst.off_message())
-}
-
 /// A token. It never prints, serializes or compares as text: only
 /// [`Token::expose`] gives it out, for the one call that uses it.
 #[derive(Clone)]
@@ -304,22 +294,40 @@ impl Gh for SystemGh {
 
     fn run(&self, args: &[&str]) -> Option<GhOut> {
         let bin = self.binary()?;
-        let mut child = std::process::Command::new(bin)
-            .args(args)
-            // gh answers for its own login, not for a token in this environment.
-            .env_remove("GH_TOKEN")
-            .env_remove("GITHUB_TOKEN")
-            .env_remove("GH_ENTERPRISE_TOKEN")
-            .env_remove("GITHUB_ENTERPRISE_TOKEN")
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GH_NO_UPDATE_NOTIFIER", "1")
-            .env("GH_SPINNER_DISABLED", "1")
-            .env("NO_COLOR", "1")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .ok()?;
+        let spawn = || {
+            std::process::Command::new(&bin)
+                .args(args)
+                // gh answers for its own login, not for a token in this environment.
+                .env_remove("GH_TOKEN")
+                .env_remove("GITHUB_TOKEN")
+                .env_remove("GH_ENTERPRISE_TOKEN")
+                .env_remove("GITHUB_ENTERPRISE_TOKEN")
+                .env("GH_PROMPT_DISABLED", "1")
+                .env("GH_NO_UPDATE_NOTIFIER", "1")
+                .env("GH_SPINNER_DISABLED", "1")
+                .env("NO_COLOR", "1")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        };
+        // A binary another thread of this process has only just written is briefly "text file
+        // busy" (ETXTBSY, 26) while a concurrent fork still holds its write fd. Try again; it
+        // clears in microseconds. Any other error means gh cannot run.
+        let mut child = None;
+        for attempt in 0..20 {
+            match spawn() {
+                Ok(c) => {
+                    child = Some(c);
+                    break;
+                }
+                Err(e) if e.raw_os_error() == Some(26) && attempt < 19 => {
+                    std::thread::sleep(Duration::from_millis(25))
+                }
+                Err(_) => return None,
+            }
+        }
+        let mut child = child?;
         let mut out = child.stdout.take()?;
         let mut err = child.stderr.take()?;
         let o = std::thread::spawn(move || {

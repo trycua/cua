@@ -43,7 +43,13 @@ function on(channel: string, listener: (payload: unknown) => void): () => void {
   return () => ipcRenderer.removeListener(channel, f);
 }
 
-contextBridge.exposeInMainWorld("cuaDesktop", init.videoStats ? { invoke, on, platform: init.platform, videoStats: true } : { invoke, on, platform: init.platform });
+// `languages`: the system's preferred languages, for the page's language
+// (apps/cua-spaces-web/src/i18n/host-languages.ts).
+const languages = init.languages ?? [];
+contextBridge.exposeInMainWorld(
+  "cuaDesktop",
+  init.videoStats ? { invoke, on, platform: init.platform, languages, videoStats: true } : { invoke, on, platform: init.platform, languages },
+);
 
 // A Space's live desktop with the keyboard takes the menu shortcuts too
 // (keyboard.ts): tell the main process when its canvas gains or loses focus.

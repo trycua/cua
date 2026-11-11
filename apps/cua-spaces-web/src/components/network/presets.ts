@@ -26,7 +26,8 @@ export interface Extras {
 export const extrasOf = (p: NetworkPreset): Extras => ({ localhost: p === "localhost" || p === "localhost+lan", lan: p === "lan" || p === "localhost+lan" });
 
 /** The Internet-only preset with these extras: `internet`, `localhost`, `lan` or `localhost+lan`. */
-export const presetWith = ({ localhost, lan }: Extras): NetworkPreset => (localhost && lan ? "localhost+lan" : localhost ? "localhost" : lan ? "lan" : "internet");
+export const presetWith = ({ localhost, lan }: Extras): NetworkPreset =>
+  localhost && lan ? "localhost+lan" : localhost ? "localhost" : lan ? "lan" : "internet";
 
 /** Internet only with the extras ("Also allow"), or something else. */
 export const isInternetBase = (p: NetworkPreset) => p === "internet" || p === "localhost" || p === "lan" || p === "localhost+lan";

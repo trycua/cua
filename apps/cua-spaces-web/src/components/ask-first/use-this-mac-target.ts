@@ -7,6 +7,7 @@ import { useMachines, useSession } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import type { HostStatus } from "@/bridge/contracts/host";
 import { toastError } from "@/components/ui/toast";
+import { t } from "@/i18n";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { thisMacReadiness, thisMacSetupSteps, type ThisMacReadiness } from "@/lib/this-mac-target";
 
@@ -64,11 +65,12 @@ export function useThisMacTarget(): ThisMacTarget {
       try {
         for (const step of thisMacSetupSteps(await read())) {
           if (step === "add") {
-            if (!(await (store?.addThisComputer(identity) ?? Promise.resolve(false)))) throw new Error(store?.thisMachine.get().setupError?.message ?? `${thisComputerLabel()} couldn't be added to your account.`);
+            if (!(await (store?.addThisComputer(identity) ?? Promise.resolve(false))))
+              throw new Error(store?.thisMachine.get().setupError?.message ?? t("home.this_mac.add_failed", { computer: thisComputerLabel() }));
           } else await adapter.call("host.action", { action: step });
         }
       } catch (e) {
-        toastError(`Couldn't set up ${thisComputerLabel()}`)(e);
+        toastError(t("home.this_mac.setup_failed", { computer: thisComputerLabel() }))(e);
       } finally {
         await read();
         void machines.refresh().catch(() => {});

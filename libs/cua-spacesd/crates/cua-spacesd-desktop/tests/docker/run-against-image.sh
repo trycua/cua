@@ -13,6 +13,8 @@
 # Fixtures (cua-spacesd-x11-pad, the GTK button) are copied into the sandbox and
 # started through the driver's own ProcessService.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 RUNTIME="${1:-runc}"
 host_arch() { case "$(uname -m)" in arm64|aarch64) echo arm64 ;; *) echo amd64 ;; esac; }
 IMAGE="${2:-cua-e2e-local/linux:docker-local-$(host_arch)}"

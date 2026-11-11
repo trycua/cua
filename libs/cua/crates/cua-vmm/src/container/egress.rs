@@ -151,6 +151,30 @@ pub(crate) fn copy(from: &str, to: &str) -> Result<()> {
     }
 }
 
+/// After a warm-pool claim: `to` stays in the tree `from` was in (`from`'s own tree when it had none), since the
+/// container did not move networks when it was renamed.
+pub(crate) fn keep_tree_of_claimed(from: &str, to: &str) -> Result<()> {
+    let Some(mut k) = kept(to) else { return Ok(()) };
+    k.tree = Some(claimed_tree(kept(from).and_then(|f| f.tree), from));
+    keep(to, &k)
+}
+
+/// The tree a claimed container stays in: the one the member had, else the member's own.
+pub(crate) fn claimed_tree(member_tree: Option<String>, member: &str) -> String {
+    member_tree.unwrap_or_else(|| member.to_string())
+}
+
+#[cfg(test)]
+mod claimed_tree_tests {
+    use super::claimed_tree;
+
+    #[test]
+    fn a_claimed_member_keeps_the_network_of_its_own_tree() {
+        assert_eq!(claimed_tree(None, "cua-pool-1"), "cua-pool-1");
+        assert_eq!(claimed_tree(Some("root".into()), "cua-pool-1"), "root");
+    }
+}
+
 /// Whether the secure default applies ([`Mode::from_env`]).
 pub(crate) fn secure() -> bool {
     Mode::from_env() == Mode::Secure
@@ -172,15 +196,62 @@ pub(crate) fn settings(name: &str) -> Option<NetworkSettings> {
 
 /// The tree `name` belongs to.
 pub(crate) fn tree_of(name: &str) -> String {
-    kept(name)
+    let tree = kept(name)
         .and_then(|k| k.tree)
-        .unwrap_or_else(|| name.to_string())
+        .unwrap_or_else(|| name.to_string());
+    canonical_tree(&tree, |root| kept(root).and_then(|k| k.tree))
+}
+
+/// A tree named by its root Space (`local:<name>`, what a child is told) is the tree the root's container really sits
+/// in: a warm-claimed home keeps its pool member's tree, so its children must join THAT network, not a new one.
+pub(crate) fn canonical_tree(tree: &str, root_tree: impl Fn(&str) -> Option<String>) -> String {
+    match tree.strip_prefix("local:").and_then(root_tree) {
+        Some(real) => real,
+        None => tree.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod canonical_tree_tests {
+    use super::canonical_tree;
+
+    #[test]
+    fn the_children_of_a_claimed_home_join_the_homes_real_network() {
+        let kept = |root: &str| (root == "fancy-civet").then(|| "cua-pool-1".to_string());
+        assert_eq!(canonical_tree("local:fancy-civet", kept), "cua-pool-1");
+        // A home made cold has no kept tree: its tree is its id, as before.
+        assert_eq!(canonical_tree("local:cold", kept), "local:cold");
+        assert_eq!(canonical_tree("not-a-space-id", kept), "not-a-space-id");
+    }
 }
 
 /// The name container `name` of tree `tree` answers to on its tree's
 /// network: `<space>.<tree>`.
 pub fn tree_alias(name: &str, tree: &str) -> String {
     crate::tree::member_name(name, tree)
+}
+
+/// Tree networks this process made lately, by name: one in flight has no container yet and must not be pruned.
+fn made_lately() -> &'static std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>
+{
+    static M: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    > = std::sync::OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
+fn note_made(name: &str) {
+    if let Ok(mut m) = made_lately().lock() {
+        m.retain(|_, t| t.elapsed() < std::time::Duration::from_secs(300));
+        m.insert(name.to_string(), std::time::Instant::now());
+    }
+}
+
+fn recently_made(name: &str) -> bool {
+    made_lately().lock().is_ok_and(|m| {
+        m.get(name)
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(300))
+    })
 }
 
 /// The Docker network of tree `tree` for the cua home tagged `home_tag`:
@@ -503,6 +574,11 @@ impl ContainerRuntime {
         if self.docker.inspect_network(&net, None).await.is_ok() {
             return Ok(net);
         }
+        // A new tree takes an address pool: give back those of trees nobody is on first.
+        let freed = self.prune_empty_tree_networks().await;
+        if freed > 0 {
+            tracing::info!(freed, "removed tree networks no container was on");
+        }
         let req = bollard::models::NetworkCreateRequest {
             name: net.clone(),
             driver: Some("bridge".into()),
@@ -526,7 +602,10 @@ impl ContainerRuntime {
             ..Default::default()
         };
         match self.docker.create_network(req).await {
-            Ok(_) => Ok(net),
+            Ok(_) => {
+                note_made(&net);
+                Ok(net)
+            }
             // Another start made it first.
             Err(e) => match self.docker.inspect_network(&net, None).await {
                 Ok(_) => Ok(net),
@@ -535,6 +614,43 @@ impl ContainerRuntime {
                 ))),
             },
         }
+    }
+
+    /// Removes every tree network of this home that no container is on. A container can be removed on paths that never
+    /// reach [`Self::unpolice`] (a warm-pool member, a failed start, a delete after a crash), and each tree holds an address
+    /// pool of the engine's few: 26 leaked ones made the next "create two child Spaces" fail with "all predefined address
+    /// pools have been fully subnetted". Run before a new tree network is made.
+    pub(crate) async fn prune_empty_tree_networks(&self) -> usize {
+        let filters = [(
+            "label".to_string(),
+            vec![format!("ai.cua.home={}", super::home_tag())],
+        )]
+        .into_iter()
+        .collect();
+        let listed = self
+            .docker
+            .list_networks(Some(bollard::query_parameters::ListNetworksOptions {
+                filters: Some(filters),
+            }))
+            .await
+            .unwrap_or_default();
+        let mut removed = 0;
+        for name in listed.into_iter().filter_map(|n| n.name) {
+            if !name.starts_with(TREE_NETWORK_PREFIX) {
+                continue;
+            }
+            let Ok(n) = self.docker.inspect_network(&name, None).await else {
+                continue;
+            };
+            // A network this process just made for a start in flight has no container yet: leave it.
+            if recently_made(&name) || n.containers.as_ref().is_some_and(|c| !c.is_empty()) {
+                continue;
+            }
+            if self.docker.remove_network(&name).await.is_ok() {
+                removed += 1;
+            }
+        }
+        removed
     }
 
     /// Removes the Docker network of tree `tree` once no container is on

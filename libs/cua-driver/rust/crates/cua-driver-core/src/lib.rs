@@ -113,6 +113,7 @@ pub mod recording_zoom;
 pub mod recovery_hint;
 #[cfg(feature = "script")]
 pub mod script_tool;
+pub mod security_prompt;
 pub mod server;
 pub mod session;
 pub mod session_authorization;

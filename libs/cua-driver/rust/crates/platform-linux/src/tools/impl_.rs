@@ -845,7 +845,7 @@ pub(crate) fn resolve_element_local_coords(
 
     let xid = if let Some(x) = xid_hint {
         x
-    } else if crate::wayland::wayland_input_enabled() {
+    } else if crate::wayland::is_wayland() {
         crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .next()
@@ -859,7 +859,7 @@ pub(crate) fn resolve_element_local_coords(
             .ok_or_else(|| anyhow::anyhow!("No windows for pid {pid}"))?
     };
 
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
                 .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
@@ -917,7 +917,7 @@ pub(crate) fn checked_element_local_coords(
     xid_hint: Option<u64>,
 ) -> anyhow::Result<(u64, f64, f64)> {
     let (xid, lx, ly) = resolve_element_local_coords(pid, token, xid_hint)?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return Ok((xid, lx, ly));
     }
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -1605,6 +1605,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::SamePid,
             window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1617,6 +1618,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Target,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
         assert_eq!(v["effect"], "unverifiable");
@@ -1628,6 +1630,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Unknown,
             window_change: Some("closed: window 3 \"Format Cells\"".into()),
             window_change_owned: true,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", closed, serde_json::Map::new());
         assert_eq!(v["effect"], "confirmed");
@@ -1642,6 +1645,7 @@ mod pointer_argument_tests {
             focus_after,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured(
             "x11_xtest_fg",
@@ -1669,6 +1673,7 @@ mod pointer_argument_tests {
             focus_after: crate::input::FocusAfter::Elsewhere,
             window_change: None,
             window_change_owned: false,
+            menu_open: None,
         };
         let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
         assert_eq!(v["effect"], "suspected_noop");
@@ -2124,8 +2129,9 @@ pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) 
     match route {
         KeyRoute::Foreground(report) => ToolResult::text(format!(
             "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
-             not verified — confirm with a screenshot.",
-            report.focus_after.as_str()
+             not verified — confirm with a screenshot.{}",
+            report.focus_after.as_str(),
+            report.focus_note()
         ))
         .with_structured(foreground_structured(
             "key_events_fg",
@@ -2210,7 +2216,7 @@ pub(crate) fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
+    (crate::wayland::is_wayland()
         && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
         && !delivery.is_foreground())
     .then(|| {
@@ -2226,10 +2232,10 @@ pub(crate) enum CoordinateContext {
     Screenshot(f64),
 }
 
-/// Chromium's X11 renderer drops synthetic input sent to an occluded,
-/// unfocused toplevel. Returning success here would be a silent loss, so all
-/// input tools expose the same typed refusal and leave foreground activation
-/// as the explicit escalation.
+/// Chromium's X11 renderer drops synthetic input sent to an unfocused
+/// toplevel. Returning success here would be a silent loss, so all input
+/// tools expose the same typed refusal and leave foreground activation as the
+/// explicit escalation. A plain left click still reaches it through AT-SPI.
 pub(crate) fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
@@ -2290,8 +2296,9 @@ pub(crate) enum PointerRoute {
     Atspi(crate::atspi::AtPointHit),
     /// Target-addressed synthetic `XSendEvent` (core-only toolkits).
     Synthetic,
-    /// Activated the window first and used XTest (delivery_mode=foreground).
-    Foreground,
+    /// Activated the window first and used XTest (delivery_mode=foreground);
+    /// the pid whose open menu kept the target focused.
+    Foreground { menu_open: Option<u32> },
     /// Native Wayland pointer route.
     Wayland,
 }
@@ -2303,7 +2310,7 @@ impl PointerRoute {
             Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
             Self::Atspi(_) => Some("x11_atspi"),
             Self::Synthetic => Some("x11_xsendevent"),
-            Self::Foreground => Some("x11_xtest_fg"),
+            Self::Foreground { .. } => Some("x11_xtest_fg"),
             Self::Wayland => None,
         }
     }
@@ -2441,6 +2448,9 @@ impl PointerRoute {
     /// Human-readable tail for the result text.
     pub(crate) fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
+        if let Self::Foreground { menu_open } = self {
+            text.push_str(&crate::input::foreground::menu_open_note(*menu_open));
+        }
         if let Self::Mpx(effect) = self {
             if let Some(popup) = effect.popups.last() {
                 text.push_str(&format!(
@@ -2791,7 +2801,7 @@ pub(crate) fn isolated_hyprland_background(delivery: crate::input::delivery::Del
 
 pub(crate) fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
-        && crate::wayland::wayland_input_enabled()
+        && crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
 }
 
@@ -2872,9 +2882,7 @@ pub(crate) async fn wm_chord_background(
     modifiers: &[String],
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if delivery.is_foreground()
-        || crate::wayland::wayland_input_enabled()
-        || crate::wayland::is_inject_mode()
+    if delivery.is_foreground() || crate::wayland::is_wayland() || crate::wayland::is_inject_mode()
     {
         return None;
     }
@@ -3995,7 +4003,7 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
             crate::interaction::policy::Scope::DesktopInput,
             crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
         )?;
-        if !crate::wayland::wayland_input_enabled() {
+        if !crate::wayland::is_wayland() {
             return Ok(crate::wayland::DesktopInputSpace::default());
         }
         crate::wayland::DesktopInputSpace::current()
@@ -4109,7 +4117,7 @@ pub(crate) fn explicit_keyboard_cursor_target(
     }
 
     let (x, y) = pixel_target?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return crate::wayland::window_geometry(xid)
             .map(|(wx, wy, _, _)| (f64::from(wx) + x.round(), f64::from(wy) + y.round()));
     }

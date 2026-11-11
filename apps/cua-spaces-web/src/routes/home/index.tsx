@@ -3,9 +3,9 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 
-import { AskFirstHome } from "@/components/ask-first/home";
+import { PoolHome } from "@/components/home/pool-home";
 
-/** Home: asks what you want done and where. */
+/** Home: your computers as one supercomputer, and Run something. */
 export const Route = createFileRoute("/home/")({
-  component: AskFirstHome,
+  component: PoolHome,
 });

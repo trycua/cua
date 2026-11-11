@@ -16,10 +16,7 @@ export { createTauriAdapter, TAURI_EVENTS } from "./tauri";
 export { createWebkitAdapter } from "./webkit";
 
 /** The adapter for `mode` (default: detected from the window). */
-export function createAdapter(
-  mode: BridgeMode = detectMode(),
-  win: HostWindow | undefined = globalThis.window as HostWindow | undefined,
-): DataAdapter {
+export function createAdapter(mode: BridgeMode = detectMode(), win: HostWindow | undefined = globalThis.window as HostWindow | undefined): DataAdapter {
   switch (mode) {
     case "tauri":
       return createTauriAdapter(win);

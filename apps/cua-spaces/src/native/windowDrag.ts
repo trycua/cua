@@ -85,15 +85,13 @@ export function createFallbackWindowDragBridge(): WindowDragBridge {
 export function createTauriWindowDragBridge(): WindowDragBridge {
   const core = import("@tauri-apps/api/core");
   const event = import("@tauri-apps/api/event");
-  const invoke = async <T>(command: string, args?: Record<string, unknown>) =>
-    (await core).invoke<T>(command, args);
+  const invoke = async <T>(command: string, args?: Record<string, unknown>) => (await core).invoke<T>(command, args);
   return {
     isNative: true,
     axTrusted: () => invoke<boolean>("ax_trusted"),
     requestAxTrust: () => invoke<boolean>("request_ax_trust"),
     startWindowDrag: () => invoke<boolean>("start_window_drag"),
-    setForeignWindowHidden: (windowId, hidden) =>
-      invoke<boolean>("set_foreign_window_hidden", { windowId, hidden }),
+    setForeignWindowHidden: (windowId, hidden) => invoke<boolean>("set_foreign_window_hidden", { windowId, hidden }),
     dragDisplays: () => invoke<DragDisplay[]>("drag_trigger_displays"),
     onWindowDrag: async (handler) => {
       const { listen } = await event;

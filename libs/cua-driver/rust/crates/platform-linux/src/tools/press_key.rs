@@ -95,7 +95,7 @@ impl Tool for PressKeyTool {
             let modifiers = input.modifiers.unwrap_or_default();
             position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
                 .await;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result =
                 spawn_blocking_bounded("desktop press_key", foreground_budget(1), move || {
@@ -364,7 +364,7 @@ impl Tool for PressKeyTool {
         // `wayland::press_key` carries no modifier list, so a modified request has
         // to become a chord here — otherwise the modifiers are dropped and the
         // bare key is typed as a character (Ctrl+S inserts a literal "s").
-        if crate::wayland::wayland_input_enabled() {
+        if crate::wayland::is_wayland() {
             let key_w = key.clone();
             let chord = press_key_chord(&mods, &key);
             let element = token.clone();
@@ -372,7 +372,7 @@ impl Tool for PressKeyTool {
                 crate::interaction::with_target_foreground(
                     pid,
                     xid,
-                    crate::interaction::RestoreMode::RestorePrevious,
+                    crate::interaction::session_policy().key,
                     || {
                         if let Some(element) = &element {
                             if !crate::atspi::focus_token(pid, element)? {
@@ -404,8 +404,9 @@ impl Tool for PressKeyTool {
         let key_for_task = key.clone();
         let cursor_id = resolve_cursor_key(&args);
         // Foreground delivery is one atomic activate-and-XTest transaction.
-        // A preceding PX click establishes internal widget focus, but that
-        // click restores the prior top-level before returning.
+        // A preceding PX click establishes internal widget focus and gives the
+        // prior top-level back; this transaction activates the target again,
+        // and the toolkit keeps the widget focus it set.
         let deliver_fg = delivery.is_foreground();
         let result = spawn_blocking_bounded(
             "press_key",
@@ -429,7 +430,7 @@ impl Tool for PressKeyTool {
                 return crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::keyboard(),
-                    crate::interaction::RestoreMode::LeaveFocused,
+                    crate::interaction::session_policy().key,
                     || {
                         if let Some(element) = &token {
                             let element_index = element.index;

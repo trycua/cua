@@ -29,8 +29,7 @@ export const ELECTRON = process.env.PARITY_HOST === "electron";
 const DESKTOP = resolve(fileURLToPath(new URL("../../cua-spaces-desktop/", import.meta.url)));
 export const APP_ORIGIN = "cua-spaces://app";
 
-const pick = (...keys: string[]) =>
-  Object.fromEntries(keys.flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])));
+const pick = (...keys: string[]) => Object.fromEntries(keys.flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])));
 
 /**
  * The Electron binary's path. Electron has no install script: requiring it

@@ -16,18 +16,19 @@ afterEach(cleanup);
 
 const NOW = 1_800_000_000_000;
 
-const space = (name: string, extra: Partial<Space> = {}): Space => ({
-  id: `local:${name}`,
-  name,
-  os: "linux",
-  status: "running",
-  detail: "",
-  lastUsedAt: NOW,
-  scene: "terminal",
-  provider: "local",
-  power: { control: "stop", off: false },
-  ...extra,
-}) as Space;
+const space = (name: string, extra: Partial<Space> = {}): Space =>
+  ({
+    id: `local:${name}`,
+    name,
+    os: "linux",
+    status: "running",
+    detail: "",
+    lastUsedAt: NOW,
+    scene: "terminal",
+    provider: "local",
+    power: { control: "stop", off: false },
+    ...extra,
+  }) as Space;
 
 const withMe: SpaceAccess = {
   kind: "withMe",

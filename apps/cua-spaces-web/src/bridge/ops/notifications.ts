@@ -22,7 +22,11 @@ export interface NotificationsOperations {
 
 export type NotificationsOpName = keyof NotificationsOperations;
 
-export const NOTIFICATIONS_OPERATIONS = ["notifications.list", "notifications.markAllRead", "notifications.markRead"] as const satisfies readonly NotificationsOpName[];
+export const NOTIFICATIONS_OPERATIONS = [
+  "notifications.list",
+  "notifications.markAllRead",
+  "notifications.markRead",
+] as const satisfies readonly NotificationsOpName[];
 
 type Handlers = { [K in NotificationsOpName]: (args: NotificationsOperations[K]["args"]) => Promise<NotificationsOperations[K]["result"]> };
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;

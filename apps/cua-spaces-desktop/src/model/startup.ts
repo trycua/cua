@@ -12,11 +12,7 @@ import { KEYCHAIN_NONINTERACTIVE_ENV } from "./daemon";
 import { sleep } from "./time";
 
 /** What the keychain check found. */
-export type KeychainCheckResult =
-  | { kind: "ready" }
-  | { kind: "needsAccess"; locked: boolean }
-  | { kind: "denied" }
-  | { kind: "failed"; why: string };
+export type KeychainCheckResult = { kind: "ready" } | { kind: "needsAccess"; locked: boolean } | { kind: "denied" } | { kind: "failed"; why: string };
 
 export interface KeychainAccessChecking {
   /** Whether the Cua items can be read; with `prompt`, macOS asks where needed. */

@@ -177,9 +177,7 @@ fn desktop_input_route() -> DriverRoute {
 /// niri does not report where tiled windows are, so it takes desktop-scope
 /// points only as pixels of the latest `get_desktop_state` screenshot.
 fn desktop_screenshot_on_niri(driver: &mut McpDriver, session: &str) {
-    if !(platform_linux::wayland::wayland_input_enabled()
-        && platform_linux::wayland::niri::is_session())
-    {
+    if !(platform_linux::wayland::is_wayland() && platform_linux::wayland::niri::is_session()) {
         return;
     }
     let r = driver.call(
@@ -535,7 +533,7 @@ fn desktop_drag_route(native_wayland: bool) -> DriverRoute {
 #[ignore]
 fn desktop_scope_drag_holds_and_releases_modifier() {
     let cell_id = "linux-gtk3-desktop-drag-modifier-px-foreground";
-    let native_wayland = platform_linux::wayland::wayland_input_enabled();
+    let native_wayland = platform_linux::wayland::is_wayland();
     let case = CaseSpec::delivered(
         cell_id,
         "gtk3",

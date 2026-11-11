@@ -18,6 +18,7 @@ on:
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - ".github/workflows/ci-nix-linux.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -58,12 +59,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   rust-source:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: Nix / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -104,7 +105,7 @@ jobs:
       - name: Cache Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml') }}
+          primary-key: nix-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'libs/cua-driver/rust/Cargo.lock', 'libs/cua-driver/rust/**/Cargo.toml', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry/Cargo.toml', 'libs/cua/crates/cua-agent-setup/Cargo.toml', 'libs/cua/crates/cua-home/Cargo.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-${{ matrix.name }}-
       - name: Build ${{ matrix.name }}
         env:
@@ -118,8 +119,8 @@ jobs:
 
   report:
     name: open or update the issue
-    needs: rust-source
-    if: ${{ failure() && github.event_name != 'pull_request' }}
+    needs: [quick, rust-source]
+    if: ${{ failure() && github.event_name != 'pull_request' && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

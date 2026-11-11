@@ -108,14 +108,9 @@ describe("SpaceViewer Launch Agent dropdown", () => {
     fireEvent.click(screen.getByRole("menuitem", { name }));
 
     expect(bridge.launchAgentTerminal).toHaveBeenCalledTimes(1);
-    expect(bridge.launchAgentTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ id: SPACE.id }),
-      harness,
-    );
+    expect(bridge.launchAgentTerminal).toHaveBeenCalledWith(expect.objectContaining({ id: SPACE.id }), harness);
     expect(bridge.launchAgent).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(`${name} is open in a terminal in this Space; sign in there`),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(`${name} is open in a terminal in this Space; sign in there`)).toBeInTheDocument();
   });
 
   it("keeps an installing notice up until the terminal opens", async () => {
@@ -133,9 +128,7 @@ describe("SpaceViewer Launch Agent dropdown", () => {
     expect(await screen.findByText("Installing Goose in this Space…")).toBeInTheDocument();
 
     await act(async () => finish());
-    expect(
-      await screen.findByText("Goose is open in a terminal in this Space; sign in there"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Goose is open in a terminal in this Space; sign in there")).toBeInTheDocument();
   });
 
   it("says why when a terminal launch fails", async () => {
@@ -146,8 +139,6 @@ describe("SpaceViewer Launch Agent dropdown", () => {
     });
     await openMenu(bridge);
     fireEvent.click(screen.getByRole("menuitem", { name: "Hermes" }));
-    expect(
-      await screen.findByText("Couldn't open Hermes: this Space has no xterm to open it in"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't open Hermes: this Space has no xterm to open it in")).toBeInTheDocument();
   });
 });

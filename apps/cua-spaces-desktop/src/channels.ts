@@ -23,6 +23,9 @@ export const PRELOAD_INIT_CHANNEL = "cua-desktop:init";
 
 export interface PreloadInit {
   platform: NodeJS.Platform;
+  /** The system's preferred languages, most preferred first
+   * (`app.getPreferredSystemLanguages()`), for the page's language. */
+  languages?: string[];
   /** The video bench reads the pages' video counters (video-bench.ts). */
   videoStats?: boolean;
 }

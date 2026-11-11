@@ -95,8 +95,7 @@ export class PendingSpacesBackend implements SpacesBackend {
     const b = await this.b();
     return b.listRead ? b.listRead() : { rows: await b.rows(), incomplete: false, reaching: 0, stale: false, notice: "" };
   };
-  create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) =>
-    (await this.b()).create(args, createId, progress);
+  create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) => (await this.b()).create(args, createId, progress);
   cancelCreate = async (createId: string) => (await this.b()).cancelCreate(createId);
   gpuChoices = async () => (await this.b()).gpuChoices();
   hosts = async () => (await this.b()).hosts();

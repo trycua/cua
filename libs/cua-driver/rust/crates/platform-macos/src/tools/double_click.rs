@@ -239,7 +239,15 @@ fn ax_double_click(
     let element = element_ptr as AXUIElementRef;
     // The caller's early read skips a foreground call into a background app,
     // so this read, right before input, is the one that always runs.
-    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
+    if foreground {
+        // Activation has just run; the app may not have enabled it yet.
+        crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+            element_ptr,
+            "double_click",
+        )?;
+    } else {
+        crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
+    }
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {

@@ -3,11 +3,13 @@
 
 /** Who's on a Space or a computer, in words and avatars: the names line, an avatar's letter and its colour. */
 
+import { t } from "@/i18n";
+
 /** "Sam", "Sam and Priya", "Sam, Priya and 3 others". */
 export function namesText(list: readonly string[]): string {
-  if (list.length <= 2) return list.join(" and ");
-  const rest = list.length - 2;
-  return `${list.slice(0, 2).join(", ")} and ${rest} ${rest === 1 ? "other" : "others"}`;
+  if (list.length === 2) return t("computers.tile.names_two", { first: list[0], second: list[1] });
+  if (list.length < 2) return list.join("");
+  return t("computers.tile.names_many", { first: list[0], second: list[1], count: list.length - 2 });
 }
 
 /** An avatar's letter: the first letter of a name or address. */

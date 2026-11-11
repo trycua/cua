@@ -37,11 +37,12 @@ describe("the Windows installer and uninstaller", () => {
   it("stop the daemon after the app is closed and before any file is written or removed", () => {
     // CHECK_APP_RUNNING runs in the installer's section before the old
     // version's uninstaller and the new files, and in the uninstaller's init.
-    expect(macro("customCheckAppRunning").trim().split("\n").map((l) => l.trim())).toEqual([
-      "!insertmacro IS_POWERSHELL_AVAILABLE",
-      "!insertmacro _CHECK_APP_RUNNING",
-      "!insertmacro stopCuaDaemon",
-    ]);
+    expect(
+      macro("customCheckAppRunning")
+        .trim()
+        .split("\n")
+        .map((l) => l.trim()),
+    ).toEqual(["!insertmacro IS_POWERSHELL_AVAILABLE", "!insertmacro _CHECK_APP_RUNNING", "!insertmacro stopCuaDaemon"]);
     const stop = macro("stopCuaDaemon");
     expect(stop).toContain(`"$INSTDIR\\resources\\native\\cua.exe" daemon stop`);
     expect(stop).toContain("StartsWith('$INSTDIR\\'");
@@ -71,13 +72,22 @@ describe("the Windows installer and uninstaller", () => {
     expect(`HKCU\\${/!define CUA_SPACES_KEY "([^"]+)"/.exec(nsh)![1]}`).toBe(WINDOWS_APP_KEY);
     expect(macro("removeAppCli")).toContain('ReadRegStr $0 HKCU "${CUA_SPACES_KEY}" "CliInstalled"');
     // Of the user's files, only the host service's own folder goes.
-    const code = nsh.split("\n").filter((l) => !l.trim().startsWith(";")).join("\n");
-    const home = code.split("\n").filter((l) => /[\\/]\.cua\b|\$APPDATA|\$PROFILE|RMDir \/r/.test(l)).map((l) => l.trim());
+    const code = nsh
+      .split("\n")
+      .filter((l) => !l.trim().startsWith(";"))
+      .join("\n");
+    const home = code
+      .split("\n")
+      .filter((l) => /[\\/]\.cua\b|\$APPDATA|\$PROFILE|RMDir \/r/.test(l))
+      .map((l) => l.trim());
     expect(home).toEqual(['RMDir /r "$PROFILE\\.cua\\host"', '${IfNot} ${FileExists} "$PROFILE\\.cua\\host\\*.*"']);
   });
 
   it("turn off unattended access on uninstall, not on upgrade (CUA-1740)", () => {
-    const un = macro("customUnInstall").trim().split("\n").map((l) => l.trim());
+    const un = macro("customUnInstall")
+      .trim()
+      .split("\n")
+      .map((l) => l.trim());
     // Inside the ${ifNot} ${isUpdated} block: an upgrade keeps the host running.
     expect(un[0]).toBe("${ifNot} ${isUpdated}");
     expect(un.indexOf("!insertmacro removeHostService")).toBeGreaterThan(0);
@@ -119,7 +129,10 @@ describe("the Windows installer and uninstaller", () => {
     expect(host.indexOf(kill)).toBeLessThan(host.indexOf("!insertmacro removeHostFolder"));
 
     // The folder is removed again until it is gone, bounded (Windows frees a killed process's files late).
-    const folder = macro("removeHostFolder").trim().split("\n").map((l) => l.trim());
+    const folder = macro("removeHostFolder")
+      .trim()
+      .split("\n")
+      .map((l) => l.trim());
     expect(folder).toEqual([
       "StrCpy $1 0",
       "${Do}",

@@ -2261,6 +2261,38 @@ jobs:
           kinds="$(IFS=,; echo "${expect[*]}")"
           apps/cua-spaces-macos/scripts/verify-release.sh --dir release --version "$VERSION" \
             --repo "$GITHUB_REPOSITORY" --expect "$kinds"
+      # The upgrade test: the previous stable release downloads this build
+      # from a local appcast, "Restart to update" is pressed, and the new
+      # version must be the one running (CUA-3964). Not blocking yet: it
+      # drives the menu with System Events, so it is proven on a few releases
+      # before it can hold one back.
+      - name: Upgrade test (previous release to this build)
+        if: env.SWIFT == 'true' && env.SWIFT_SIGNED == 'true' && !contains(env.VERSION, '-')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prev="$(gh release list -R "$GITHUB_REPOSITORY" --limit 40 --json tagName,isDraft,isPrerelease \
+            -q '[.[] | select(.isDraft == false and .isPrerelease == false) | .tagName | select(test("^cua-spaces-v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0]')"
+          prev_version="${prev#cua-spaces-v}"
+          if [ -z "$prev" ] || [ "$prev_version" = "$VERSION" ]; then
+            echo "::notice::no earlier stable release to upgrade from"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/prev"
+          gh release download "$prev" -R "$GITHUB_REPOSITORY" -p '*-darwin-universal.dmg' -D "$RUNNER_TEMP/prev"
+          # 0.20.0 to 0.22.0 have a dead button; the test then checks that quitting installs.
+          legacy=()
+          if [ "$(printf '%s\n' 0.22.1 "$prev_version" | sort -V | head -1)" != 0.22.1 ]; then legacy=(--legacy); fi
+          status=0
+          apps/cua-spaces-macos/scripts/test-update-restart.sh ${legacy[@]+"${legacy[@]}"} \
+            --old-dmg "$RUNNER_TEMP"/prev/*.dmg --new-dmg release/cua-spaces-"$VERSION"-darwin-universal.dmg || status=$?
+          if [ "$status" = 77 ]; then
+            echo "::warning::upgrade test skipped: this runner may not drive menus (Accessibility)"
+            exit 0
+          fi
+          exit "$status"
 
   installer-manifest:
     name: release-artifacts.json, latest.json, publish
@@ -2426,6 +2458,13 @@ jobs:
             fi
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-spaces: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
       # Say which platforms a patch release contains (CUA-2068). A full release
       # keeps its notes as they are.
       - name: Name the platforms in the release notes
@@ -2608,3 +2647,33 @@ jobs:
           [ "$LINUX" = true ] && feeds+=(electron-linux)
           python3 .github/scripts/check_spaces_site_follows_release.py \
             --version "$VERSION" --timeout 2400 --feeds "$(IFS=,; echo "${feeds[*]}")"
+
+  # Mirror to the downloads CDN (CUA-3941). GitHub stays the source of truth:
+  # this job never blocks or fails the release (continue-on-error) but shows a
+  # red job and a loud step summary when the CDN copy is incomplete.
+  cdn-publish:
+    name: Copy to the downloads CDN
+    needs: [installer-manifest, electron-plan]
+    if: >-
+      !cancelled() && github.repository == 'trycua/cua' && needs.installer-manifest.result == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    # The publish role trusts main and this environment (OIDC).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+          persist-credentials: false
+      - uses: ./.github/actions/publish-downloads-cdn
+        with:
+          tags: |
+            cua-spaces-v${{ needs.electron-plan.outputs.version }}
+            cua-spaces-latest
+            cua-install-latest

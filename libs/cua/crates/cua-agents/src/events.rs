@@ -515,6 +515,43 @@ pub fn page(bytes: &[u8], from: u64, max: usize) -> EventPage {
     }
 }
 
+/// How far a page read may grow to hold one line: a line is never split, so a
+/// read window smaller than a line could never return it.
+pub const MAX_WINDOW: u64 = 256 * 1024 * 1024;
+
+/// One page of events from byte `cursor` that always makes progress: `read`
+/// (offset, length) fetches a window of `first` bytes, and when the window
+/// holds no complete line yet the file goes on (an event with an image in it
+/// is bigger than a window), the window grows (x4, up to [`MAX_WINDOW`]) and
+/// the read repeats. `caught_up` is false while a window ended inside a line.
+pub async fn read_page<E, F, Fut>(
+    mut read: F,
+    cursor: u64,
+    max: usize,
+    first: u64,
+) -> std::result::Result<EventPage, E>
+where
+    F: FnMut(u64, u64) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<Option<Vec<u8>>, E>>,
+{
+    let mut want = first.max(1);
+    loop {
+        let bytes = read(cursor, want).await?.unwrap_or_default();
+        let mut p = page(&bytes, cursor, max);
+        let full = bytes.len() as u64 >= want;
+        let left = bytes.len() as u64 - (p.cursor - cursor);
+        if full && left > 0 && p.events.is_empty() && p.cursor == cursor && want < MAX_WINDOW {
+            want = (want * 4).min(MAX_WINDOW);
+            continue;
+        }
+        if full && left > 0 {
+            // The window ended inside a line: there is more to read.
+            p.caught_up = false;
+        }
+        return Ok(p);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +619,63 @@ mod tests {
         let limited = page(RECORDED.as_bytes(), 0, 2);
         assert_eq!(limited.events.len(), 2);
         assert!(!limited.caught_up);
+    }
+
+    fn line(seq: u64, pad: usize) -> String {
+        format!(
+            r#"{{"seq":{seq},"ts":1,"turn":1,"type":"update","pad":"{}"}}"#,
+            "x".repeat(pad)
+        )
+    }
+
+    #[tokio::test]
+    async fn a_line_bigger_than_the_window_is_still_read_and_the_reader_moves_on() {
+        // Small events around one that is far bigger than the read window (an
+        // image result): a fixed window livelocked on it forever.
+        let mut file = String::new();
+        for (seq, pad) in [(1, 10), (2, 10), (3, 5000), (4, 10), (5, 10)] {
+            file.push_str(&line(seq, pad));
+            file.push('\n');
+        }
+        let data = file.into_bytes();
+        let read = |off: u64, len: u64| {
+            let d = data.clone();
+            async move {
+                let a = (off as usize).min(d.len());
+                let b = ((off + len) as usize).min(d.len());
+                Ok::<_, ()>(Some(d[a..b].to_vec()))
+            }
+        };
+        let mut cursor = 0u64;
+        let mut seqs = vec![];
+        for _ in 0..20 {
+            let p = read_page(read, cursor, 500, 256).await.unwrap();
+            seqs.extend(p.events.iter().map(|e| e.seq));
+            if p.cursor == cursor {
+                break;
+            }
+            cursor = p.cursor;
+        }
+        assert_eq!(seqs, [1, 2, 3, 4, 5]);
+        assert_eq!(cursor, data.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn a_window_that_ends_inside_a_line_is_not_caught_up() {
+        let data = format!("{}\n{}\n", line(1, 10), line(2, 400)).into_bytes();
+        let read = |off: u64, len: u64| {
+            let d = data.clone();
+            async move {
+                let a = (off as usize).min(d.len());
+                let b = ((off + len) as usize).min(d.len());
+                Ok::<_, ()>(Some(d[a..b].to_vec()))
+            }
+        };
+        let p = read_page(read, 0, 500, 200).await.unwrap();
+        assert_eq!(p.events.len(), 1);
+        assert!(!p.caught_up, "line 2 is still to come");
+        let p = read_page(read, p.cursor, 500, 200).await.unwrap();
+        assert_eq!(p.events.len(), 1);
+        assert!(p.caught_up);
     }
 }

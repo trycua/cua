@@ -1,0 +1,154 @@
+name: "CI: gate recheck"
+
+# Reruns `ci-gate` when a result it failed on turns green (CUA-3856). Without this, rerunning a
+# failed job left the gate red until someone also reran the gate. The standard pattern: a
+# `workflow_run: completed` trigger on every workflow the gate waits for (first runs and reruns
+# alike), plus the `local-ci` sign-off status. .github/scripts/ci_gate_recheck.py decides; it reruns
+# the gate's own run, so the required check keeps its name (`ci-gate`), its event and its place in
+# branch protection and auto-merge. The gate then recomputes its verdict from every run, as always.
+#
+# The list below must name every workflow the gate waits for (every pull_request
+# workflow except the ones the gate skips). .github/scripts/tests/
+# test_ci_gate_recheck.py fails when a workflow is added or renamed without updating it.
+#
+# Safe for fork pull requests: this runs from the default branch, never checks out pull request code,
+# and its only write is the rerun of a ci-gate run.
+
+on:
+  workflow_run:
+    types: [completed]
+    workflows:
+      - "CD: Benchmark images"
+      - "CD: Cua Perception release"
+      - "CD: Image linux"
+      - "CD: Image macOS"
+      - "CD: Image omarchy"
+      - "CD: Image runtime-gvisor"
+      - "CI: cua-bench ALE compatibility"
+      - "CI: Bench results and compare links"
+      - "CI: Cache hygiene"
+      - "CI: Check Docs Links"
+      - "CI: Check Docs"
+      - "CI: Check eMudhra Distrust"
+      - "CI: Contributor attribution"
+      - "CI: cua your-cloud providers"
+      - "CI: cua-compat Daytona SDK conformance"
+      - "CI: cua-compat E2B SDK surface and coverage"
+      - "CI: cua-compat"
+      - "CI: cua contrib providers"
+      - "CI: Cua Driver Bench"
+      - "CI: cua-driver contract clients"
+      - "CI: Cua Driver desktop readiness (non-certifying)"
+      - "CI: Cua Driver quick feedback (non-certifying)"
+      - "CI: Cua Driver release signature gate"
+      - "CI: cua-driver Valgrind"
+      - "CI: microVMs"
+      - "CI: OCI images as Spaces"
+      - "CI: cua-oidc"
+      - "CI: Cua Perception release contract"
+      - "CI: cua proto contract"
+      - "CI: cua-relay image"
+      - "CI: cua-s1 weights"
+      - "CI: cua-s1"
+      - "CI: cua-sandbox action lint"
+      - "CI: Image doctor with the driver and daemon under test"
+      - "CI: cua SDK"
+      - "CI: Cua Spaces desktop install smoke"
+      - "CI: Cua Spaces driver pin is current"
+      - "CI: Cua Spaces for macOS (SwiftUI)"
+      - "CI: Cua Spaces SwiftUI Rust slice (producer)"
+      - "CI: Cua Spaces web UI and Electron shell"
+      - "CI: Cua Spaces"
+      - "CI: cua-spacesd-html5"
+      - "CI: cua-spacesd"
+      - "CI: cua-driver distro-compat matrix"
+      - "CI: Driver Linux dependency bootstrap"
+      - "CI: Driver MCP candidate"
+      - "CI: elastic pool"
+      - "CI: flaky quarantine"
+      - "CI: Hyprland plugin unit and mock"
+      - "CI: Images, Chromium pin"
+      - "CI: Images on the current cua-spacesd"
+      - "CI: infinite-canvas (Swift)"
+      - "CI: Installers"
+      - "CI: jev-use"
+      - "CI: Lint TypeScript"
+      - "CI: Nix Linux Rust source"
+      - "CI: openkoalabot-example (TypeScript and Swift)"
+      - "CI: openkoalabot-example (Tauri)"
+      - "CI: pi-durable crash campaign"
+      - "CI: platform-linux off Linux"
+      - "CI: Public ContainerDisk References"
+      - "CI: cua-bench"
+      - "CI: Quick"
+      - "CI: Release metadata"
+      - "CI: Release cua-spacesd pin"
+      - "CI: Rust Linux unit"
+      - "CI: Rust macOS unit"
+      - "CI: Rust Windows unit"
+      - "CI: macOS Swift linker"
+      - "CI: Lume"
+      - "CI: Test Python"
+      - "CI: Test Scripts"
+      - "CI: @trycua/cursor-motion"
+      - "CI: VM density"
+      - "ClawHub: cua-driver skill"
+      - "Docs: Swift, Kotlin and Rust blocks compile"
+      - "Docs: Driver first-run Linux smoke"
+      - "Docs: MCP corpus parity"
+      - "CD: Docs MCP Server"
+      - "Docs: nightly host lanes"
+      - "Docs: page tests"
+      - "e2b-bindings"
+      - "e2b core features (nightly)"
+      - "E2E: public compat examples"
+      - "E2E: Cua Driver release gate"
+      - "E2E: cua SDK"
+      - "E2E: Rust Linux interactive"
+      - "Fuzz: Cua Driver tool-call boundary"
+      - "CI: License direction"
+      - "Nightly: Spaces.build on QEMU"
+      - "Nightly: RL-rollout Spaces perf guard"
+      - "Nightly: batched forks (perf guard)"
+      - "Nightly: Hyprland plugin requalification"
+      - "Nightly: QEMU fork fan-out"
+      - "Nightly: VM Space ready after boot"
+      - "Nightly: QEMU VM lifecycle (KVM)"
+      - "Perf: cua channel"
+      - "CD: Auto Release on Merge"
+      - "Release: Auto-merge release PRs"
+      - "CI: PR title"
+      - "Smoke: Cua Driver live agent loop"
+      - "Space egress (nightly)"
+  status:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  # One recheck per commit at a time; a later one sees the rerun already in progress and stops.
+  group: ci-gate-recheck-${{ github.event.workflow_run.head_sha || github.event.sha }}
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    name: recheck
+    if: >-
+      (github.event_name == 'workflow_run'
+        && (github.event.workflow_run.event == 'pull_request')
+        && contains(fromJSON('["success","neutral","skipped"]'), github.event.workflow_run.conclusion))
+      || (github.event_name == 'status' && github.event.context == 'local-ci' && github.event.state == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/ci_gate_recheck.py
+          sparse-checkout-cone-mode: false
+      - name: Rerun ci-gate if it failed before this result turned green
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ci_gate_recheck.py --event "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME"

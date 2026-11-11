@@ -125,6 +125,23 @@ pub fn refuse_frontmost_keys(input: PromptInput) -> Result<(), PromptProtected> 
     refuse_pid(input, pid).map_err(|_| Owner::of(pid).refusal())
 }
 
+/// Whether a process that draws only security prompts (SecurityAgent's
+/// keychain and authorization sheets, Touch ID, Gatekeeper and the like) has
+/// a window on screen. Only looks: nothing here answers, dismisses or types
+/// into a prompt. UserNotificationCenter does not count: it also draws
+/// "… quit unexpectedly" reports, which hold nothing up.
+pub fn security_prompt_on_screen() -> bool {
+    #[cfg(test)]
+    if fixture::shown().is_some() {
+        return true;
+    }
+    let mut seen = std::collections::HashSet::new();
+    crate::windows::on_screen_windows_any_layer()
+        .into_iter()
+        .filter(|window| seen.insert(window.pid))
+        .any(|window| Owner::of(window.pid).kind == PromptOwner::Always)
+}
+
 struct Owner {
     kind: PromptOwner,
     name: String,
@@ -466,6 +483,12 @@ pub(crate) mod fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shown_prompt_is_reported_to_browser_launches() {
+        let _shown = fixture::PromptShown::start();
+        assert!(security_prompt_on_screen());
+    }
 
     #[test]
     fn this_process_is_not_a_prompt() {

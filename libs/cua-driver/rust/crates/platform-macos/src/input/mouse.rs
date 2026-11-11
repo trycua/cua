@@ -844,10 +844,13 @@ where
     let wid = wid.ok_or_else(|| {
         anyhow::anyhow!("a background drag needs the exact target window (window_id)")
     })?;
+    let (local_x, local_y) = from_local
+        .ok_or_else(|| anyhow::anyhow!("a background drag needs its window-local start point"))?;
     drag_at_xy_background(
         pid,
         (from_x, from_y),
         (to_x, to_y),
+        (from_x - local_x, from_y - local_y),
         wid,
         duration_ms,
         steps,
@@ -897,8 +900,7 @@ enum BackgroundDragEventKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct BackgroundDragStep {
     kind: BackgroundDragEventKind,
-    /// Screen point. It is both the event location and the stamped window
-    /// location, as in the background click recipe.
+    /// Screen point: the event location.
     point: (f64, f64),
     /// Field 0 gesture phase: move 2, primer down 1, primer up 2, gesture 3.
     phase: i64,
@@ -952,13 +954,28 @@ fn background_drag_plan(
     plan
 }
 
+impl BackgroundDragStep {
+    /// The `CGEventSetWindowLocation` stamp. `stamp_origin` is the window's
+    /// screen origin on macOS 27+, which reads the stamp as window-local, and
+    /// `(0, 0)` before, which reads it as the screen point. The off-screen
+    /// primer keeps `(-1, -1)` either way, as the click recipe does.
+    fn window_location(&self, stamp_origin: (f64, f64)) -> (f64, f64) {
+        if self.point == (-1.0, -1.0) {
+            return self.point;
+        }
+        (self.point.0 - stamp_origin.0, self.point.1 - stamp_origin.1)
+    }
+}
+
 /// Background press-drag-release addressed to one window of `pid`.
 ///
 /// This is the background click route stretched over a gesture: every event
 /// is posted to the process (SkyLight `SLEventPostToPid`, or the public
 /// per-pid API only when the SPI is absent), carries the exact window in the
 /// routing fields (f51/f91/f92), the target pid (f40) and one gesture ID
-/// (f58), and is stamped with its own location. The hardware pointer is never
+/// (f58), and is stamped with its own location: window-local on macOS 27+,
+/// using `window_origin` (the window's screen origin), the screen point
+/// before. The hardware pointer is never
 /// warped and nothing is posted to the global HID tap, so the user's pointer,
 /// frontmost app and window order stay as they were. The caller makes the
 /// window AppKit-key without raising it first
@@ -973,6 +990,7 @@ pub fn drag_at_xy_background<F, G>(
     pid: i32,
     from: (f64, f64),
     to: (f64, f64),
+    window_origin: (f64, f64),
     wid: u32,
     duration_ms: u64,
     steps: usize,
@@ -1021,6 +1039,11 @@ where
     let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
     let window_id = wid as i64;
 
+    let stamp_origin = if window_location_is_window_local() {
+        window_origin
+    } else {
+        (0.0, 0.0)
+    };
     let mut stopped_at: Option<(f64, f64)> = None;
     let mut last_point = from;
     for mut step in background_drag_plan(from, to, steps, duration_ms) {
@@ -1059,7 +1082,8 @@ where
         set(91, window_id);
         set(92, window_id);
         set(58, gesture_id);
-        crate::input::skylight::set_window_location(ptr, step.point.0, step.point.1);
+        let (stamp_x, stamp_y) = step.window_location(stamp_origin);
+        crate::input::skylight::set_window_location(ptr, stamp_x, stamp_y);
         set_explicit_flags(&event, flags);
         dispatch_mouse_event(route, pid, &event);
         if matches!(step.kind, Down | Dragged) {
@@ -2406,6 +2430,38 @@ mod tests {
     }
 
     #[test]
+    fn macos_27_background_drag_stamps_window_local_points() {
+        // A window at (170, 194): on macOS 27 a screen-point stamp at
+        // (270, 294) would land at (270, 294) inside the window, not (100, 100).
+        let origin = (170.0, 194.0);
+        let plan = background_drag_plan((270.0, 294.0), (370.0, 394.0), 2, 0);
+        let stamps: Vec<_> = plan
+            .iter()
+            .map(|step| (step.kind, step.window_location(origin)))
+            .collect();
+        use BackgroundDragEventKind::*;
+        assert_eq!(
+            stamps,
+            [
+                (Move, (100.0, 100.0)),
+                (PrimerDown, (-1.0, -1.0)),
+                (PrimerUp, (-1.0, -1.0)),
+                (Down, (100.0, 100.0)),
+                (Dragged, (150.0, 150.0)),
+                (Dragged, (200.0, 200.0)),
+                (Up, (200.0, 200.0)),
+            ]
+        );
+        for step in &plan {
+            assert_eq!(
+                step.window_location((0.0, 0.0)),
+                step.point,
+                "before macOS 27 the stamp stays the screen point"
+            );
+        }
+    }
+
+    #[test]
     fn background_drag_plan_keeps_one_drag_for_zero_steps() {
         let plan = background_drag_plan((0.0, 0.0), (10.0, 0.0), 0, 0);
         let drags: Vec<_> = plan
@@ -2424,6 +2480,7 @@ mod tests {
             42,
             (100.0, 100.0),
             (200.0, 100.0),
+            (0.0, 0.0),
             7,
             0,
             2,
@@ -2477,6 +2534,7 @@ mod tests {
             42,
             (0.0, 0.0),
             (10.0, 10.0),
+            (0.0, 0.0),
             7,
             0,
             1,
@@ -2512,6 +2570,7 @@ mod tests {
             42,
             (0.0, 0.0),
             (100.0, 0.0),
+            (0.0, 0.0),
             7,
             0,
             4,

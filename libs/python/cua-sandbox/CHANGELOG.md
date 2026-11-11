@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/trycua/cua/compare/sandbox-v0.10.0...sandbox-v0.10.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **sandbox:** forward time_to_start to the local runtime's readiness budget ([#7304](https://github.com/trycua/cua/issues/7304)) ([6086a10](https://github.com/trycua/cua/commit/6086a10126945c1079b5069a720436aab32a2bf6))
+
 ## [0.10.0](https://github.com/trycua/cua/compare/sandbox-v0.9.1...sandbox-v0.10.0) (2026-11-10)
 
 

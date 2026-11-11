@@ -214,7 +214,9 @@ def plan(snapshot, sources, manifest=None, force=False):
     """Build matrix: one job per (distinct ABI key, distinct plugin tree).
 
     A combination that already passed, or a release that refuses that Hyprland
-    by its own pin (unsupported), is skipped unless forced. build-only and
+    by its own pin (unsupported), is skipped unless forced. unsupported only
+    holds while no main ref has that tree: main must build, so it is always
+    retried and reported. build-only and
     fail are retried, so a persistent failure is reported on every run and a
     transient one clears itself. Channels sharing an ABI key share one build.
     """
@@ -238,7 +240,8 @@ def plan(snapshot, sources, manifest=None, force=False):
     include = []
     for build in builds.values():
         for tree in trees.values():
-            if not force and (build["abi_key"], tree["tree"]) in done:
+            status = None if force else done.get((build["abi_key"], tree["tree"]))
+            if status == "pass" or (status == "unsupported" and "main" not in tree["refs"]):
                 continue
             include.append({
                 "id": f"{build['abi_key']}-{tree['tree'][:12]}",

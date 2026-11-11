@@ -233,6 +233,14 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(len(include), 3)  # A failure is retried.
         self.assertEqual(len(channels.plan(self.snapshot, SOURCES, previous, force=True)), 4)
 
+    def test_unsupported_never_skips_a_tree_main_builds(self):
+        key = self.snapshot["channels"]["arch"]["abi_key"]
+        previous = {"entries": [{"abi_key": key, "plugin": {"tree": "a" * 40}, "status": "unsupported"},
+                                {"abi_key": key, "plugin": {"tree": "b" * 40}, "status": "unsupported"}]}
+        include = channels.plan(self.snapshot, SOURCES, previous)
+        arch = [j["tree"] for j in include if j["abi_key"] == key]
+        self.assertEqual(arch, ["a" * 40])  # Tree a is main's too, so it is rebuilt; b is release-only.
+
 
 @unittest.skipUnless(shutil.which("git"), "git not installed")
 class SourcesTest(unittest.TestCase):

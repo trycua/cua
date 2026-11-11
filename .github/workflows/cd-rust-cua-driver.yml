@@ -1832,7 +1832,9 @@ jobs:
             # --required` fails at once with "no checks reported" until then,
             # which used to close every PR within seconds (#6679 to #6685).
             for _ in $(seq 1 30); do
-              gh pr merge "$PR_URL" --auto --squash --delete-branch && {
+              # No --delete-branch: with the merge queue on, gh refuses it and
+              # every attempt failed (the 0.45.x to 0.46.1 installer bumps).
+              gh pr merge "$PR_URL" --auto --squash && {
                 echo "Auto-merge queued for ${PR_URL}; installers advance to ${VERSION} when checks pass."
                 exit 0
               }

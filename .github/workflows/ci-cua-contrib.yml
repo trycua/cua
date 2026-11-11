@@ -22,6 +22,7 @@ on:
       - "libs/cua/crates/cua-daemon/**"
       - "libs/cua/crates/cua-daemon-core/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua-bench/cua_bench/**"
@@ -37,6 +38,7 @@ on:
       - "libs/cua/crates/cua-daemon/**"
       - "libs/cua/crates/cua-daemon-core/**"
       - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
       - "libs/cua/crates/cua-cli/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua-bench/cua_bench/**"
@@ -185,7 +187,7 @@ jobs:
       - name: Build the contrib binding and the fixtures
         working-directory: libs/cua
         run: |
-          cargo build --locked -p cua-sdk --features contrib
+          cargo build --locked -p cua-sdk-native --features contrib
           cargo build --locked -p cua-contrib --features testing,all --bin cua-contrib-fixtures
           cp target/debug/libcua_sdk.so python/src/cua/libcua_sdk.so
           echo "CUA_CONTRIB_FIXTURES=$PWD/target/debug/cua-contrib-fixtures" >>"$GITHUB_ENV"

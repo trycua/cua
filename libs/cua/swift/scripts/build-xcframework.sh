@@ -30,7 +30,7 @@ done
 target_dir="${CARGO_TARGET_DIR:-$cua_root/target}"
 installed="$(rustup target list --installed 2>/dev/null || true)"
 build() {
-  (cd "$cua_root" && cargo build --locked --release -p cua-sdk --target "$1")
+  (cd "$cua_root" && cargo build --locked --release -p cua-sdk-native --target "$1")
 }
 
 mac_targets=(aarch64-apple-darwin)

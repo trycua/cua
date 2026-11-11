@@ -16,6 +16,7 @@ import {
   THIS_COMPUTER,
   computerFor,
   spacesLabel,
+  thisComputerSubtitle,
 } from "./machines";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
@@ -134,5 +135,15 @@ describe("chatComputers", () => {
     const { computers, offline } = chatComputers(rows);
     expect(computers.map((c) => c.id)).toEqual(["mini", "pc"]);
     expect(offline).toBe(2);
+  });
+});
+
+describe("thisComputerSubtitle", () => {
+  it("says what this computer is, never its title again (CUA-3974)", () => {
+    expect(thisComputerSubtitle([{ os: "macos", model: "MacBook Pro", current: true }], "This Mac")).toBe("MacBook Pro");
+    expect(thisComputerSubtitle([{ os: "macos", current: true }], "This Mac")).toBe("macOS");
+    expect(thisComputerSubtitle([{ os: "macos", model: "This Mac", current: true }], "This Mac")).toBeNull();
+    expect(thisComputerSubtitle([{ os: "linux", model: "Studio", current: false }], "This Mac")).toBeNull();
+    expect(thisComputerSubtitle(undefined, "This Mac")).toBeNull();
   });
 });

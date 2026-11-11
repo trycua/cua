@@ -812,97 +812,112 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
         else {
             return Check::new("input.type", Status::Fail, "form window not found");
         };
-        if let Err(error) = ctx
-            .client
-            .windows()
-            .activate_window(pb::ActivateWindowRequest {
-                window: Some(wref.clone()),
-            })
-            .await
-        {
-            return Check::new(
-                "input.type",
-                Status::Fail,
-                format!("ActivateWindow on the form: {error}"),
-            );
-        }
-        if !form_focused(ctx, &form.title, Duration::from_secs(5)).await {
-            return Check::new(
-                "input.type",
-                Status::Fail,
-                "ActivateWindow succeeded but the form never became the focused window",
-            );
-        }
-        if ctx.supports("a11y") {
-            if let Ok(found) = ctx
+        let mut attempts = 0u8;
+        loop {
+            attempts += 1;
+            if let Err(error) = ctx
                 .client
-                .accessibility()
-                .find(pb::FindRequest {
+                .windows()
+                .activate_window(pb::ActivateWindowRequest {
                     window: Some(wref.clone()),
-                    query: Some(pb::AccessibilityQuery {
-                        name: "Name".into(),
-                        ..Default::default()
-                    }),
-                    max_results: 5,
                 })
                 .await
             {
-                let entry = found.into_inner().nodes.into_iter().find(|n| {
-                    n.role.contains("text")
-                        || n.role.contains("entry")
-                        || n.native_role.contains("text")
-                });
-                if let Some(b) = entry.and_then(|n| n.bounds) {
-                    let (x, y) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
-                    // The click is a screen point: whatever is on top there
-                    // receives it. windows.bounds parks the grid over the
-                    // form's corner, and on a tiling compositor (Hyprland) a
-                    // floating grid stays above the activated, tiled form, so
-                    // the click would focus the grid and the keys would go
-                    // there. Move the grid off the point first.
-                    if let Err(error) = uncover_point(ctx, &grid.title, x, y).await {
-                        return Check::new("input.type", Status::Fail, error);
-                    }
-                    let _ = click(ctx, x, y).await;
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let since = events(ctx, &form).await.len();
-        let report = match ctx.client.type_text("doctor").await {
-            Ok(response) => response.report,
-            Err(error) => {
                 return Check::new(
                     "input.type",
                     Status::Fail,
-                    format!("Keyboard type: {error}"),
+                    format!("ActivateWindow on the form: {error}"),
                 );
             }
-        };
-        let typed = wait_event_after(
-            ctx,
-            &form,
-            since,
-            |e| e["type"] == "entry_changed" && e["text"] == "doctor",
-            Duration::from_secs(5),
-        )
-        .await;
-        if typed.is_none() {
-            let last = events(ctx, &form)
-                .await
-                .into_iter()
-                .rev()
-                .find(|e| e["type"] == "entry_changed");
-            let after: Vec<Value> = events(ctx, &form).await.into_iter().skip(since).collect();
-            return Check::new(
-                "input.type",
-                Status::Fail,
-                format!(
-                    "the Name entry never read \"doctor\" (last: {}); {}",
-                    last.map(|e| e["text"].to_string()).unwrap_or("none".into()),
-                    type_diagnosis(report.as_ref(), &after)
-                ),
-            );
+            if !form_focused(ctx, &form.title, Duration::from_secs(5)).await {
+                return Check::new(
+                    "input.type",
+                    Status::Fail,
+                    "ActivateWindow succeeded but the form never became the focused window",
+                );
+            }
+            if ctx.supports("a11y") {
+                if let Ok(found) = ctx
+                    .client
+                    .accessibility()
+                    .find(pb::FindRequest {
+                        window: Some(wref.clone()),
+                        query: Some(pb::AccessibilityQuery {
+                            name: "Name".into(),
+                            ..Default::default()
+                        }),
+                        max_results: 5,
+                    })
+                    .await
+                {
+                    let entry = found.into_inner().nodes.into_iter().find(|n| {
+                        n.role.contains("text")
+                            || n.role.contains("entry")
+                            || n.native_role.contains("text")
+                    });
+                    if let Some(b) = entry.and_then(|n| n.bounds) {
+                        let (x, y) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
+                        // The click is a screen point: whatever is on top there
+                        // receives it. windows.bounds parks the grid over the
+                        // form's corner, and on a tiling compositor (Hyprland) a
+                        // floating grid stays above the activated, tiled form, so
+                        // the click would focus the grid and the keys would go
+                        // there. Move the grid off the point first.
+                        if let Err(error) = uncover_point(ctx, &grid.title, x, y).await {
+                            return Check::new("input.type", Status::Fail, error);
+                        }
+                        let _ = click(ctx, x, y).await;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let since = events(ctx, &form).await.len();
+            let report = match ctx.client.type_text("doctor").await {
+                Ok(response) => response.report,
+                Err(error) => {
+                    return Check::new(
+                        "input.type",
+                        Status::Fail,
+                        format!("Keyboard type: {error}"),
+                    );
+                }
+            };
+            let typed = wait_event_after(
+                ctx,
+                &form,
+                since,
+                |e| e["type"] == "entry_changed" && e["text"] == "doctor",
+                Duration::from_secs(5),
+            )
+            .await;
+            if typed.is_none() {
+                let last = events(ctx, &form)
+                    .await
+                    .into_iter()
+                    .rev()
+                    .find(|e| e["type"] == "entry_changed");
+                let after: Vec<Value> = events(ctx, &form).await.into_iter().skip(since).collect();
+                // Nothing reached the entry, so retrying cannot leave stray
+                // text behind. A fixture that is still starting up (the Windows
+                // one is PowerShell) or a focus change racing the first
+                // keystrokes loses the whole first attempt; a second attempt
+                // after re-focusing tells that apart from a driver that cannot
+                // type at all, which fails both attempts.
+                if attempts < 2 && !after.iter().any(|e| e["type"] == "entry_changed") {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                return Check::new(
+                    "input.type",
+                    Status::Fail,
+                    format!(
+                        "the Name entry never read \"doctor\" (last: {}); {}",
+                        last.map(|e| e["text"].to_string()).unwrap_or("none".into()),
+                        type_diagnosis(report.as_ref(), &after)
+                    ),
+                );
+            }
+            break;
         }
         let since = events(ctx, &form).await.len();
         if let Err(error) = ctx.client.press("backspace").await {
@@ -924,7 +939,11 @@ pub async fn run(ctx: &Ctx, rec: &mut Recorder<'_>) {
             "input.type",
             super::verdict(edited.is_some()),
             if edited.is_some() {
-                "typed \"doctor\", Backspace left \"docto\"".to_owned()
+                if attempts > 1 {
+                    format!("typed \"doctor\" on attempt {attempts} (the first delivered nothing), Backspace left \"docto\"")
+                } else {
+                    "typed \"doctor\", Backspace left \"docto\"".to_owned()
+                }
             } else {
                 "Backspace did not edit the entry".to_owned()
             },

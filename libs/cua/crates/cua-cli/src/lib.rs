@@ -39,6 +39,7 @@ mod ci_app;
 mod ci_cmd;
 mod ci_hosted;
 mod ci_overview;
+mod ci_sdk;
 mod ci_signin;
 mod ci_targets;
 mod cloud_cmd;

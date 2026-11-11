@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.32.0](https://github.com/trycua/cua/compare/cua-spaces-v0.31.4...cua-spaces-v0.32.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Agents tab starts agents from the Home box, one entry per Space, easy to clear ([#7275](https://github.com/trycua/cua/issues/7275)) ([5a0b65f](https://github.com/trycua/cua/commit/5a0b65f7d6af5a1c09e7f3aced03d809cbd4d521))
+
+## [0.31.4](https://github.com/trycua/cua/compare/cua-spaces-v0.31.3...cua-spaces-v0.31.4) (2026-11-10)
+
+
+### Performance Improvements
+
+* **cua-ci:** build cua-ci beside cua-sdk, not after it (CUA-3971) ([#7240](https://github.com/trycua/cua/issues/7240)) ([1d23545](https://github.com/trycua/cua/commit/1d23545a03689800046f5fd7ecf78c3d128dec61))
+
+## [0.31.3](https://github.com/trycua/cua/compare/cua-spaces-v0.31.2...cua-spaces-v0.31.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.21.0 in Cua Spaces ([#7241](https://github.com/trycua/cua/issues/7241)) ([9ffb9f3](https://github.com/trycua/cua/commit/9ffb9f3234af232e0cfb38ad8650f9013bc232f3))
+* **spaces:** a computer's row opens its shared desktop's Space page ([#7263](https://github.com/trycua/cua/issues/7263)) ([7b8d889](https://github.com/trycua/cua/commit/7b8d889130252a72972319d4f6791b59aeb442cb))
+* **spaces:** first agent on This Mac after Set up no longer fails to reach it ([#7161](https://github.com/trycua/cua/issues/7161)) ([4611678](https://github.com/trycua/cua/commit/46116784b637483e750f624ef0ef6fb74c745bde))
+* **spaces:** job Spaces show as one labeled row, not as raw runs ([#7006](https://github.com/trycua/cua/issues/7006)) ([8fe112f](https://github.com/trycua/cua/commit/8fe112f91046deb571c02bd0985d9fbbcf80e4b1))
+* **spaces:** the first-run test finds the permissions button by its mark, not its old label ([#7251](https://github.com/trycua/cua/issues/7251)) ([8c9e15d](https://github.com/trycua/cua/commit/8c9e15d0f3f199f856f998e83cdc23659c2bdebf))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua-cli:** build cua-compat beside cua-cli, not before it (CUA-3971) ([#7222](https://github.com/trycua/cua/issues/7222)) ([5bf6559](https://github.com/trycua/cua/commit/5bf6559ab9942885cb5972928dd764bca5b6f7e2))
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
 ## [0.31.2](https://github.com/trycua/cua/compare/cua-spaces-v0.31.1...cua-spaces-v0.31.2) (2026-11-10)
 
 

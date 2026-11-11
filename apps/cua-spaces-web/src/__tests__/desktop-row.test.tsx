@@ -125,7 +125,7 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
     let poll = 0;
     const studio = { id: "relay:studio", name: "Studio", provider: "relay", spacesdVersion: "", features: [], reachable: true, os: "macos" };
     const at = (ms: number) => new Date(Date.UTC(2026, 10, 8) + ms).toISOString();
-    const { hooks } = await mountApp("/home", {
+    const { hooks } = await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       answer: (op, out) => {
@@ -153,7 +153,7 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
   });
 
   it("lists running Spaces first, even when the list holds them last", async () => {
-    await mountApp("/home", {
+    await mountApp("/home/ask", {
       failsCreates: false,
       listsGhost: false,
       // The host lists them in the opposite order: the running ones come last.
@@ -173,7 +173,7 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
   });
 
   it("hidden from Home, it says how many are hidden with Show, and comes back from there or from its page", async () => {
-    const { router } = await mountApp("/home", withDesktop(true, true));
+    const { router } = await mountApp("/home/ask", withDesktop(true, true));
     const tile = () => document.querySelector('[data-home-spaces] [data-space-id="this-mac"]');
     await waitFor(() => expect(tile()).not.toBeNull(), { timeout: 15_000 });
     await act(

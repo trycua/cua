@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.47.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.3...cua-driver-rs-v0.47.4) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** unblock Cua Driver and cua SDK releases (X11 pixel click, SDK feed checkout, installer bump) ([#7265](https://github.com/trycua/cua/issues/7265)) ([d9d430b](https://github.com/trycua/cua/commit/d9d430bf52ef17c34adb081e42d7684ee739dc88))
+
+## [0.47.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.2...cua-driver-rs-v0.47.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** Linux X11 foreground gestures, right_click and set_value give the focus back ([#7254](https://github.com/trycua/cua/issues/7254)) ([802cf58](https://github.com/trycua/cua/commit/802cf587ebb5412fed6f69838df8c4adadfee6a5))
+* **cua-driver:** tell a live macOS app AppKit has not reported yet from an exited one in bring_to_front (CUA-3617) ([#7260](https://github.com/trycua/cua/issues/7260)) ([7ab7fe8](https://github.com/trycua/cua/commit/7ab7fe8bc1cd0e0801622077077d5ca119a2378a))
+
 ## [0.47.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.1...cua-driver-rs-v0.47.2) (2026-11-10)
 
 

@@ -152,6 +152,15 @@ RULES: dict[str, Rule] = {
             "Call the API by its plain name.",
         ),
         Rule(
+            "BG9",
+            "chained xdotool commands",
+            "escalatable",
+            "xdotool runs every command in a chain; a later key or pointer command does not get the first "
+            "command's --window and goes to the focused window or the real pointer.",
+            f"{INPUT_RS}:4-15 (keys go to the addressed window, never to whatever is focused)",
+            "Make one raw.xdotool call per command. Chains are allowed after raw.escalate_foreground(...).",
+        ),
+        Rule(
             "VR1",
             "action without a read-back",
             "warn",
@@ -232,7 +241,7 @@ XDOTOOL_COMMANDS = set(
     "keyup mousedown mousemove mousemove_relative mouseup search selectwindow set_desktop set_desktop_for_window "
     "set_num_desktops set_window type windowactivate windowclose windowfocus windowkill windowlower windowmap "
     "windowminimize windowmove windowquit windowraise windowreparent windowsize windowstate windowunmap "
-    "behave behave_screen_edge exec sleep get_desktop get_desktop_for_window get_desktop_viewport "
+    "behave behave_screen_edge exec script sleep get_desktop get_desktop_for_window get_desktop_viewport "
     "set_desktop_viewport get_num_desktops getwindowclassname".split()
 )
 # xdotool subcommands (first argument of raw.xdotool) and their rule; anything not listed is allowed.
@@ -243,6 +252,7 @@ XDOTOOL: dict[str, str] = {
     ),
     **dict.fromkeys(("windowactivate", "windowfocus", "windowraise", "windowmap"), "BG2"),
     **dict.fromkeys(("key", "keydown", "keyup", "type"), "BG3"),  # unless --window (XSendEvent)
+    **dict.fromkeys(("exec", "behave", "behave_screen_edge", "script"), "GUI1"),  # runs commands
 }
 # Modules a script may import. Everything else is GUI1.
 IMPORT_OK = {
@@ -407,6 +417,16 @@ def _const_str(node: ast.AST) -> str | None:
     return None
 
 
+def xdotool_commands(args: list[str | None]) -> list[tuple[str, bool]]:
+    """(command, has its own --window) for each command of an xdotool chain."""
+    starts = [i for i, a in enumerate(args) if i == 0 or a in XDOTOOL_COMMANDS]
+    out = []
+    for n, i in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(args)
+        out.append((str(args[i]), "--window" in args[i + 1 : end]))
+    return out
+
+
 def _pos(node: ast.AST) -> tuple[int, int]:
     return getattr(node, "lineno", 0), getattr(node, "col_offset", 0)
 
@@ -541,19 +561,17 @@ class _Walker(ast.NodeVisitor):
             )
             return
         sub = args[0]
-        chained = [a for a in args[1:] if a in XDOTOOL_COMMANDS]
-        if chained:
+        commands = xdotool_commands(args)
+        if len(commands) > 1:
             self.add(
-                "GUI2",
-                node,
-                f"xdotool command chain ({sub} ... {chained[0]}): one command per call",
+                "BG9", node, "xdotool command chain (" + " ".join(c for c, _ in commands) + ")"
             )
-        rule = XDOTOOL.get(sub)
-        has_window = "--window" in [a for a in args if a]
-        if rule == "BG3" and has_window:
-            self.add("BG6", node, f"xdotool {sub} --window (XSendEvent)")
-        elif rule:
-            self.add(rule, node, f"xdotool {sub}")
+        for command, windowed in commands:
+            rule = XDOTOOL.get(command)
+            if rule == "BG3" and windowed:
+                self.add("BG6", node, f"xdotool {command} --window (XSendEvent)")
+            elif rule:
+                self.add(rule, node, f"xdotool {command}")
         if sub in {"key", "type", "click"}:
             self.last_action = max(self.last_action, _pos(node))
 

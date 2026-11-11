@@ -666,20 +666,17 @@ class Raw:
         argv = [str(a) for a in args]
         if not argv:
             raise RuntimeError("xdotool needs a command")
-        chained = [a for a in argv[1:] if a in rawlint.XDOTOOL_COMMANDS]
-        if chained:
-            STATE.refuse(
-                "GUI2", f"xdotool command chain ({argv[0]} ... {chained[0]}); one command per call"
-            )
-        windowed = "--window" in argv
-        for token in argv[:1]:
-            if token in {"exec", "behave", "behave_screen_edge", "script"}:
-                STATE.refuse("GUI1", f"xdotool {token}")
-            rule = rawlint.XDOTOOL.get(token)
+        commands = rawlint.xdotool_commands(argv)
+        if len(commands) > 1:
+            STATE.check("BG9", "xdotool command chain (" + " ".join(c for c, _ in commands) + ")")
+        for command, windowed in commands:
+            rule = rawlint.XDOTOOL.get(command)
+            if rule == "GUI1":
+                STATE.refuse("GUI1", f"xdotool {command}")
             if rule == "BG3" and windowed:
-                STATE.check("BG6", f"xdotool {token} --window")
+                STATE.check("BG6", f"xdotool {command} --window")
             elif rule:
-                STATE.check(rule, f"xdotool {token}")
+                STATE.check(rule, f"xdotool {command}")
         done = subprocess.run([self._xdotool, *argv], capture_output=True, text=True, timeout=20)
         if done.returncode != 0:
             raise RuntimeError(

@@ -60,7 +60,7 @@ depth=12) -> text tree of showing nodes.
 - raw.screenshot(window_id=None, region=None) -> the PNG is returned to you as an image.
 - raw.x11, raw.xtst, raw.xi: libX11 / libXtst / libXi functions (ctypes calls with int and bytes arguments), raw.dpy \
 an open Display*, raw.root the root window. ctypes itself is not importable; use raw.pointer(), raw.windows() and \
-raw.active_window() for reads that would need out-parameters. raw.xdotool(*args) runs one xdotool command (no chaining). raw.sleep(s).
+raw.active_window() for reads that would need out-parameters. raw.xdotool(*args) runs one xdotool command (chains need a foreground escalation). raw.sleep(s).
 
 Background contract (checked before the script runs, and again while it runs):
 - The user's real pointer, keyboard focus, active window and stacking must stay as they are. Blocked: XTest motion/\

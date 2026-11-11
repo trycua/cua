@@ -86,6 +86,8 @@ class RawLintTest(unittest.TestCase):
             "getattr(raw.x11, 'XWarp' + 'Pointer')",
             "raw.__class__.__init__",
             "raw.xdotool(sub)",
+            'raw.xdotool("exec", "ls")',
+            'raw.xdotool("search", "--name", "x", "behave", "%@", "focus", "exec", "ls")',
             # private handles of the runtime (verifier round 1)
             'raw.xtst._lib["XTestFake" + "MotionEvent"](raw.dpy, -1, 5, 5, 0)',
             "x = raw._x",
@@ -113,16 +115,20 @@ class RawLintTest(unittest.TestCase):
             with self.subTest(src=src):
                 self.assertFalse(rawlint.lint(src).ok, src)
 
-    def test_xdotool_runs_one_command_per_call(self):
+    def test_xdotool_chains_need_an_escalation(self):
         # a chain would let a later key command go to the focused window (verifier round 5)
         src = 'raw.xdotool("key", "--window", "123", "a", "key", "b")\nreturn raw.pointer()'
-        self.assertBlocked(src, "GUI2")
-        self.assertTrue(rawlint.lint('raw.xdotool("search", "--name", "BenchLab")').ok)
-        self.assertTrue(
-            rawlint.lint(
-                'raw.xdotool("type", "--window", "5", "key words")\nreturn raw.pointer()'
-            ).ok
+        self.assertBlocked(src, "BG9")
+        self.assertIn("BG3", {f.rule for f in rawlint.lint(src).findings})
+        # each chained command with its own --window is still a chain, but sends nothing to the focused window
+        both = 'raw.xdotool("key", "--window", "1", "a", "key", "--window", "1", "b")\nreturn raw.pointer()'
+        self.assertEqual({f.rule for f in rawlint.lint(both).findings}, {"BG6", "BG9"})
+        # the pilot's escalated drag: mousemove + mousedown in one call
+        drag = (
+            ESC + 'raw.xdotool("mousemove", "300", "797", "mousedown", "1")\nreturn raw.pointer()'
         )
+        self.assertTrue(rawlint.lint(drag).ok)
+        self.assertTrue(rawlint.lint('raw.xdotool("search", "--name", "BenchLab")').ok)
         self.assertLessEqual(set(rawlint.XDOTOOL), rawlint.XDOTOOL_COMMANDS)
 
     def test_warnings_run(self):

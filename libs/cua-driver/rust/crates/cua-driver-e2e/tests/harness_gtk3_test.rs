@@ -539,7 +539,8 @@ fn harness_gtk3_invoke_menu_live_path() {
                 serde_json::json!({
                     "pid": pid,
                     "window_id": window_id,
-                    "path": ["Window", "Arrange", "Missing"]
+                    "path": ["Window", "Arrange", "Missing"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(refused.is_error(), "missing menu path was accepted");
@@ -567,7 +568,8 @@ fn harness_gtk3_invoke_menu_live_path() {
                 serde_json::json!({
                     "pid": pid,
                     "window_id": window_id,
-                    "path": ["Window", "Arrange", "Left"]
+                    "path": ["Window", "Arrange", "Left"],
+                    "delivery_mode": "foreground"
                 }),
             );
             assert!(

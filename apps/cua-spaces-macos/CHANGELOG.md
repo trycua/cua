@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/trycua/cua/compare/cua-spaces-v0.33.0...cua-spaces-v0.33.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **spaces:** fork a checkpoint as the kind its engine makes on a direct host ([#7318](https://github.com/trycua/cua/issues/7318)) ([972ad01](https://github.com/trycua/cua/commit/972ad01b8e0a31ad81758aef367f40b55ea4e800))
+
 ## [0.33.0](https://github.com/trycua/cua/compare/cua-spaces-v0.32.0...cua-spaces-v0.33.0) (2026-11-11)
 
 

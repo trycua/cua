@@ -246,9 +246,11 @@ uinput, escalate to `delivery_mode:"foreground"`. The AT-SPI path only fires
 a control under the point: when the hit test finds nothing deeper than the
 application's own frame or window (Chromium page content before its AT-SPI
 tree is populated), no action is fired. Chromium/Electron targets without a
-real focus-free pointer return `background_unavailable` before any input is
-sent. When foreground input is authorized, read the window again and click
-from that capture with `delivery_mode:"foreground"`. (`type_text` in the
+real focus-free pointer return `background_unavailable`, and an AT-SPI action
+under the point may already have run. When foreground input is authorized,
+read the window again and click from that capture with
+`delivery_mode:"foreground"` only if it shows no effect
+([No blind retry](WORKFLOW.md#no-blind-retry)). (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 
@@ -340,10 +342,7 @@ raw background PX possible on a standard compositor.
 
 - **Shell attestation.** The driver uses the WinRects helper only when its
   bus owner also owns `org.gnome.Shell` and runs a root-owned `gnome-shell`
-  image that no other user can write. After a package update, the running
-  Shell's `/proc/<pid>/exe` ends in ` (deleted)`; the driver then checks the
-  image the process still holds open, so the helper keeps working until the
-  next login.
+  image that no other user can write.
 - **Helper API and window capture.** Window screenshots use the helper's
   `CaptureWindow` (API 9 or later), which captures the window's own content
   even when another window covers it. With an older helper, the window image

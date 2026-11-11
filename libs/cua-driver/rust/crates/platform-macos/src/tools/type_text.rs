@@ -1729,13 +1729,17 @@ fn type_text_in_key_window(
         } else {
             crate::document_edit::DocumentEdited::NotADocument
         };
+        // A read-back that already held the line before the write proves
+        // nothing landed, so it never earns a submit.
+        let insert_observed = submit_body.is_some()
+            && ax_progress == Some(TypedProgress::Complete)
+            && insert_changed_value(before.as_deref(), after.as_deref());
         // Return is a pid-routed key: it reaches whichever field has focus,
         // so it goes out only once the written field is confirmed focused.
-        let return_reaches_field =
-            submit_body.is_some() && ax_progress == Some(TypedProgress::Complete) && {
-                let _ = crate::input::ax_actions::focus_element(element as usize);
-                crate::input::ax_actions::element_has_keyboard_focus(pid, element as usize)
-            };
+        let return_reaches_field = insert_observed && {
+            let _ = crate::input::ax_actions::focus_element(element as usize);
+            crate::input::ax_actions::element_has_keyboard_focus(pid, element as usize)
+        };
         if owns {
             unsafe {
                 CFRelease(element as _);
@@ -1749,10 +1753,15 @@ fn type_text_in_key_window(
                     ", then pressed Return"
                 }
                 Some(body) => {
+                    let reason = if insert_observed {
+                        "the field does not hold keyboard focus"
+                    } else {
+                        "the field's value did not visibly change"
+                    };
                     return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                         detail: format!(
                             " into{idx_str} {role} \"{title}\"; Return was not sent because \
-                             the field does not hold keyboard focus"
+                             {reason}"
                         ),
                         path: PATH_AX,
                         verified: false,
@@ -1863,6 +1872,13 @@ fn single_line_submit_body<'a>(role: &str, text: &'a str) -> Option<&'a str> {
         .strip_suffix("\r\n")
         .or_else(|| text.strip_suffix(['\n', '\r']))?;
     (!body.is_empty() && !body.contains(['\n', '\r', '\t'])).then_some(body)
+}
+
+/// Whether an AX insert visibly changed the field. Both values must be
+/// readable and differ; a field that already held the text reads as complete
+/// without anything landing.
+fn insert_changed_value(before: Option<&str>, after: Option<&str>) -> bool {
+    matches!((before, after), (Some(b), Some(a)) if a != b)
 }
 
 fn is_text_input_role(role: &str) -> bool {
@@ -2166,6 +2182,26 @@ mod tests {
         assert_eq!(indeterminate["synthesized_chars"], 0);
         assert_eq!(indeterminate["retryable"], false);
         assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
+    }
+
+    #[test]
+    fn submit_needs_a_visible_change_from_the_insert() {
+        use super::{insert_changed_value, typed_progress, TypedProgress};
+        // The field already held the line: read-back is "complete" but
+        // nothing landed, so Return must not go out.
+        let (before, after) = (Some("netflix.com"), Some("netflix.com"));
+        assert_eq!(
+            typed_progress(before, after, "netflix.com"),
+            TypedProgress::Complete
+        );
+        assert!(!insert_changed_value(before, after));
+        assert!(insert_changed_value(Some(""), Some("netflix.com")));
+        assert!(insert_changed_value(
+            Some("https://a.test"),
+            Some("netflix.com")
+        ));
+        assert!(!insert_changed_value(None, Some("netflix.com")));
+        assert!(!insert_changed_value(Some(""), None));
     }
 
     #[test]

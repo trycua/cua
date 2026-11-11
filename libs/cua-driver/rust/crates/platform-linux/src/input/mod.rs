@@ -3157,6 +3157,8 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
         if detents == 0 {
             return Ok(());
         }
+        prime_scroll_slave(display, ids, &device, scroll.x, scroll.y);
+        settle_pointer_enter(scroll.target_window);
         let unit = if scroll.ticks >= 0 { 1 } else { -1 };
         for _ in 0..detents {
             {
@@ -3174,6 +3176,113 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
         x11::xlib::XCloseDisplay(display);
     }
     result
+}
+
+/// Where the server has the master pointer `pointer_id` now.
+fn master_pointer_position(
+    display: *mut x11::xlib::Display,
+    pointer_id: i32,
+) -> Option<(i32, i32)> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let (mut root_ret, mut child_ret) = (0, 0);
+    let (mut rx, mut ry, mut wx, mut wy) = (0f64, 0f64, 0f64, 0f64);
+    let mut buttons = x11::xinput2::XIButtonState::default();
+    let mut mods = x11::xinput2::XIModifierState::default();
+    let mut group = x11::xinput2::XIModifierState::default();
+    let prev = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe {
+        x11::xinput2::XIQueryPointer(
+            display,
+            pointer_id,
+            root,
+            &mut root_ret,
+            &mut child_ret,
+            &mut rx,
+            &mut ry,
+            &mut wx,
+            &mut wy,
+            &mut buttons,
+            &mut mods,
+            &mut group,
+        )
+    };
+    unsafe { x11::xlib::XSetErrorHandler(prev) };
+    if !buttons.mask.is_null() {
+        unsafe { x11::xlib::XFree(buttons.mask as *mut _) };
+    }
+    (rc != 0).then(|| (rx.round() as i32, ry.round() as i32))
+}
+
+/// Emit a relative step on the uinput slave and wait until the server has
+/// moved the master to `expect`.
+fn step_and_confirm(
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    device: &Mutex<VirtualDevice>,
+    dx: i32,
+    expect: (i32, i32),
+) -> bool {
+    if emit_relative_motion(&mut device.lock().unwrap(), dx, 0).is_err() {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        if master_pointer_position(display, ids.pointer_id) == Some(expect) {
+            return true;
+        }
+        sleep(Duration::from_millis(2));
+    }
+    false
+}
+
+/// Make the uinput slave the master's last-used device before the first
+/// wheel detent.
+///
+/// After `XIWarpPointer` the first detent arrives as a slave switch (Qt's
+/// input log shows a valuator re-read ahead of every scroll, not only the
+/// first): the server sends a `DeviceChanged(SlaveSwitch)` first, and Qt
+/// answers it by re-reading the slave's scroll valuators with a synchronous
+/// `XIQueryDevice`. When that
+/// query runs after the server already applied the next detents, Qt takes the
+/// post-scroll value as its baseline and the detents cancel out: 3 down moved
+/// a Qt list 0 rows (trycua/cua#7369, Qt 5.15 and 6.4 on Xorg). A one-pixel
+/// step and back on the slave makes the switch happen now, with nothing to
+/// lose; [`settle_pointer_enter`] then waits until the target has handled it.
+fn prime_scroll_slave(
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    device: &Mutex<VirtualDevice>,
+    x: i32,
+    y: i32,
+) {
+    let step = if x > 0 { -1 } else { 1 };
+    if step_and_confirm(display, ids, device, step, (x + step, y)) {
+        step_and_confirm(display, ids, device, -step, (x, y));
+    }
+}
+
+/// Wait until the target has handled the events the warp and the slave
+/// switch just caused.
+///
+/// Qt re-reads its scroll devices' valuators (a synchronous `XIQueryDevice`)
+/// when a pointer enters one of its windows and on a slave switch, because
+/// the valuator may have moved elsewhere. A wheel detent the server applied
+/// before that re-read is folded into Qt's baseline, so it is lost, and the
+/// detents read against the later baseline scroll the wrong way: 3 down moved
+/// a Qt list 0 or 2 detents (trycua/cua#7369). A `_NET_WM_PING` sent now sits
+/// behind those events in the target's queue, so its answer means the re-read
+/// is done and every detent from here on counts.
+fn settle_pointer_enter(target_window: u64) {
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return;
+    };
+    let Ok(window) = Window::try_from(target_window) else {
+        return;
+    };
+    if sync_client(&conn, Some(window)) != ClientSync::Confirmed {
+        // No ping support or no answer: give the app's event loop a moment.
+        sleep(Duration::from_millis(60));
+    }
 }
 
 /// Pre-drag focus snapshot: the EWMH active window when a conforming WM is

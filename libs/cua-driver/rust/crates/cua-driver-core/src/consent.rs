@@ -878,6 +878,172 @@ mod tests {
         }
     }
 
+    /// Accepts each prompt only when the test releases it.
+    struct GatedProvider {
+        gate: tokio::sync::Semaphore,
+        requests: AtomicU64,
+    }
+
+    #[async_trait]
+    impl ProtectedConsentProvider for GatedProvider {
+        fn provider_id(&self) -> &'static str {
+            "test.gated-provider"
+        }
+
+        async fn request_consent(
+            &self,
+            request: &ConsentRequest,
+        ) -> Result<ProviderDecision, String> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            self.gate.acquire().await.unwrap().forget();
+            Ok(ProviderDecision {
+                action: ConsentAction::Accept,
+                request_digest: request.request_digest.clone(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_prompt_accepted_after_its_session_was_revoked_grants_nothing() {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicU64::new(0),
+        });
+        let grants = Arc::new(ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(
+            Some(provider.clone()),
+        ))));
+        let context = authorization_context(PermissionMode::Standard);
+        let session = context.runtime_session_key("public-a");
+        let ask = {
+            let grants = grants.clone();
+            let context = context.clone();
+            let session = session.clone();
+            move || {
+                let grants = grants.clone();
+                let context = context.clone();
+                let session = session.clone();
+                async move {
+                    grants
+                        .authorize(
+                            &context,
+                            "computer_history",
+                            RiskClass::R2,
+                            Some(&session),
+                            serde_json::json!({"kind": "history"}),
+                            "Read history",
+                            Duration::from_secs(60),
+                            Duration::from_secs(120),
+                        )
+                        .await
+                }
+            }
+        };
+
+        let pending = tokio::spawn(ask());
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // The session ends while its prompt is open, then the user accepts.
+        grants.revoke_session(&session);
+        provider.gate.add_permits(1);
+        assert_eq!(pending.await.unwrap().unwrap_err(), ConsentError::Canceled);
+
+        // The label's next episode is asked again instead of reusing it.
+        provider.gate.add_permits(1);
+        let next = ask().await.unwrap().expect("a fresh approval");
+        assert!(next.is_live());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_prompt_queued_behind_another_while_its_session_ends_grants_nothing() {
+        let provider = Arc::new(GatedProvider {
+            gate: tokio::sync::Semaphore::new(0),
+            requests: AtomicU64::new(0),
+        });
+        let grants = Arc::new(ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(
+            Some(provider.clone()),
+        ))));
+        let context = authorization_context(PermissionMode::Standard);
+        let ask = |session: &str| {
+            let grants = grants.clone();
+            let context = context.clone();
+            let session = context.runtime_session_key(session);
+            async move {
+                grants
+                    .authorize(
+                        &context,
+                        "computer_history",
+                        RiskClass::R2,
+                        Some(&session),
+                        serde_json::json!({"kind": "history"}),
+                        "Read history",
+                        Duration::from_secs(60),
+                        Duration::from_secs(120),
+                    )
+                    .await
+            }
+        };
+
+        // Another session's prompt holds admission; A's call waits behind it.
+        let other = tokio::spawn(ask("public-other"));
+        while provider.requests.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let queued = tokio::spawn(ask("public-a"));
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        grants.revoke_session(&context.runtime_session_key("public-a"));
+        provider.gate.add_permits(2);
+        assert!(other.await.unwrap().unwrap().is_some());
+        assert_eq!(queued.await.unwrap().unwrap_err(), ConsentError::Canceled);
+
+        // A's next episode is asked again.
+        provider.gate.add_permits(1);
+        assert!(ask("public-a").await.unwrap().is_some());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn an_approval_for_an_already_ended_session_covers_one_call() {
+        let provider = provider(ConsentAction::Accept);
+        let grants =
+            ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+        let context = authorization_context(PermissionMode::Standard);
+        let session = context.runtime_session_key("public-ended-before-consent");
+        drop(
+            crate::session::begin_session_dispatch(
+                &session,
+                Some("public-ended-before-consent"),
+                &session,
+                false,
+                crate::session::SessionTransport::McpStdio,
+                crate::session::SessionClientKind::Mcp,
+            )
+            .unwrap(),
+        );
+        assert!(crate::session::end_session_for_owner(&session, &session));
+        for _ in 0..2 {
+            assert!(grants
+                .authorize(
+                    &context,
+                    "computer_history",
+                    RiskClass::R2,
+                    Some(&session),
+                    serde_json::json!({"kind": "history"}),
+                    "Read history",
+                    Duration::from_secs(60),
+                    Duration::from_secs(120),
+                )
+                .await
+                .unwrap()
+                .is_some());
+        }
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 2);
+        crate::session::forget_ended_sessions_with_prefix(&session);
+    }
+
     #[tokio::test]
     async fn exact_accept_creates_a_revocable_grant() {
         let provider = provider(ConsentAction::Accept);

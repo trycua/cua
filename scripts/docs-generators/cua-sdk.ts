@@ -555,7 +555,7 @@ export const PAGES: PageSpec[] = [
     title: 'Lifetime and egress',
     description: 'How long a Space lives and which destinations it may reach, set after it exists.',
     intro:
-      '`set_lifetime` gives a Space an end (deleted or suspended then), enforced by the daemon whether or not the client still runs. `set_egress` replaces its egress policy ([`EgressPolicy`](/cua-sdk/reference/spaces#egresspolicy-record)).',
+      '`set_lifetime` gives a Space an end (deleted or suspended then), enforced by the daemon whether or not the client still runs. `set_egress` replaces its egress policy ([`EgressPolicy`](/cua-sdk/reference/spaces/lifetime#egresspolicy-record)).',
     members: [{ object: 'Spaces', title: 'Lifetime and egress', methods: ['set_lifetime', 'set_egress'] }],
     items: [],
   },

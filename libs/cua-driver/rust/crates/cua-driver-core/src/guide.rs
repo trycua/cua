@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 
 use crate::mcp_skills::embedded_file;
 use crate::protocol::ToolResult;
+use crate::recording_tools::ReplayRegistrySlot;
 use crate::tool::{Tool, ToolDef};
 use crate::tool_args::parse_typed_input;
 
@@ -322,9 +323,56 @@ pub fn description_hint(tool: &str) -> Option<&'static str> {
 #[derive(Deserialize)]
 struct GetGuideInput {
     topic: Option<String>,
+    tool: Option<String>,
 }
 
-pub struct GetGuideTool;
+/// `get_guide`. It holds a weak handle to the registry that owns it so
+/// `get_guide({tool})` can return another tool's full docs, which a compact
+/// `tools/list` leaves out.
+#[derive(Default)]
+pub struct GetGuideTool {
+    registry: Option<ReplayRegistrySlot>,
+}
+
+impl GetGuideTool {
+    pub fn new(registry: ReplayRegistrySlot) -> Self {
+        Self {
+            registry: Some(registry),
+        }
+    }
+
+    /// The full description and parameter docs of `name`.
+    fn tool_docs(&self, name: &str) -> ToolResult {
+        let name = name.trim();
+        let def = self
+            .registry
+            .as_ref()
+            .and_then(|slot| slot.lock().ok()?.upgrade())
+            .and_then(|registry| {
+                crate::policy::is_tool_listable(name)
+                    .then(|| registry.get_def(name).cloned())
+                    .flatten()
+            });
+        let Some(def) = def else {
+            return ToolResult::error(format!(
+                "get_guide: unknown tool {name:?}. Run `cua-driver list-tools` or set CUA_DRIVER_TOOL_PROFILE=full to list every tool."
+            ))
+            .with_structured(json!({"code": "unknown_tool", "tool": name}));
+        };
+        let entry = def.to_list_entry();
+        let description = entry["description"].as_str().unwrap_or_default();
+        let schema = serde_json::to_string_pretty(&entry["inputSchema"]).unwrap_or_default();
+        ToolResult::text(format!(
+            "{name}\n\n{description}\n\nParameters (JSON schema):\n{schema}\n"
+        ))
+        .with_structured(json!({
+            "tool": name,
+            "description": description,
+            "inputSchema": entry["inputSchema"],
+            "annotations": entry["annotations"],
+        }))
+    }
+}
 
 static DEF: OnceLock<ToolDef> = OnceLock::new();
 
@@ -334,9 +382,10 @@ fn def() -> &'static ToolDef {
         ToolDef {
             name: "get_guide".into(),
             description: format!(
-                "Read Cua Driver guidance on demand, taken from the guide bundled with this \
-                 driver (no skill install needed). Topics: {topics}. Call with no topic to list \
-                 them. Read-only."
+                "Read Cua Driver guidance on demand, from the guide bundled with this driver. \
+                 Pass `topic` ({topics}) for a guide, or `tool` for one tool's full description \
+                 and parameter docs, which the tool list shortens. Call with neither to list the \
+                 topics. Read-only."
             ),
             input_schema: json!({
                 "type": "object",
@@ -344,6 +393,10 @@ fn def() -> &'static ToolDef {
                     "topic": {
                         "type": "string",
                         "description": format!("One of: {topics}. Omit to list the topics.")
+                    },
+                    "tool": {
+                        "type": "string",
+                        "description": "A tool name, e.g. `click`: returns its full description and parameters."
                     }
                 },
                 "additionalProperties": false
@@ -367,6 +420,14 @@ impl Tool for GetGuideTool {
             Ok(input) => input,
             Err(result) => return result,
         };
+        if let Some(tool) = input
+            .tool
+            .as_deref()
+            .map(str::trim)
+            .filter(|tool| !tool.is_empty())
+        {
+            return self.tool_docs(tool);
+        }
         let names = topic_names();
         let Some(topic) = input
             .topic
@@ -434,7 +495,7 @@ mod tests {
     }
 
     async fn run(args: Value) -> ToolResult {
-        GetGuideTool.invoke(args).await
+        GetGuideTool::default().invoke(args).await
     }
 
     #[test]

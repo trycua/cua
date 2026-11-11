@@ -879,7 +879,8 @@ mod tests {
         let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
             .await
             .expect("SDK adapter");
-        let expected = sdk.tools_list();
+        // HTTP clients see the same client-facing list as stdio clients.
+        let expected = cua_driver_core::tool_profile::client_tools_list(sdk.tools_list());
         let response = dispatch(
             br#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#,
             &sdk,

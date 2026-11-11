@@ -131,6 +131,9 @@ impl Process {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            // Recovery tests drive session tools the default agent profile hides.
+            .env("CUA_DRIVER_TOOL_PROFILE", "full")
+            .env("CUA_DRIVER_TOOL_DOCS", "full")
             .env(
                 "CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS",
                 session_ttl_seconds.to_string(),

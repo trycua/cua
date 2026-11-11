@@ -259,7 +259,8 @@ fn def() -> &'static ToolDef {
     static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
     DEF.get_or_init(|| ToolDef {
         name: "page".into(),
-        description: "Legacy browser compatibility tool. Prefer get_browser_state and the \
+        description: "Legacy browser tool: read-only `get_text` and `query_dom` on a page. Prefer `get_browser_state` and the typed `browser_*` tools; mutating actions stay off unless the daemon operator sets CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1.\n\n\
+            Legacy browser compatibility tool. Prefer get_browser_state and the \
             typed browser_* tools for exact targeting, endpoint ownership, and consent. \
             Read-only get_text and query_dom remain available by default. Mutating actions \
             require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before \

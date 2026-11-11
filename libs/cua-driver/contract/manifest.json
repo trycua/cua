@@ -3154,7 +3154,7 @@
     },
     {
       "name": "parse_visual_regions",
-      "description": "Parse one immutable registered capture into model-neutral text and icon regions.",
+      "description": "Parse a screenshot into text and icon regions. Pass the `capture_id` returned by `get_window_state` or `get_desktop_state`. Use it when the accessibility tree misses the surface; the regions are model-neutral, so act on them with pixel coordinates.",
       "platforms": [
         "macos",
         "windows",

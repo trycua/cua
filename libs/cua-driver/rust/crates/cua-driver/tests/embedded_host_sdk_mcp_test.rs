@@ -168,7 +168,11 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         .args(&connection.mcp.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        // This test compares the SDK inventory with the MCP inventory, so it
+        // reads the full MCP surface rather than the default agent profile.
+        .env("CUA_DRIVER_TOOL_PROFILE", "full")
+        .env("CUA_DRIVER_TOOL_DOCS", "full");
     for variable in &connection.mcp.environment {
         proxy_command.env(&variable.name, &variable.value);
     }

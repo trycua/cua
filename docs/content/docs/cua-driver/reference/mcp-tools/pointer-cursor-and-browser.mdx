@@ -14,8 +14,8 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | [`drag`](#drag) | Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels: the same space get_window_state returns. | macOS, Linux, Windows |
-| [`scroll`](#scroll) | Scroll the target pid. | macOS, Linux, Windows |
-| [`move_cursor`](#move_cursor) | Move a cursor to (x, y). | macOS, Linux, Windows |
+| [`scroll`](#scroll) | Scroll a window or element. | macOS, Linux, Windows |
+| [`move_cursor`](#move_cursor) | Move the agent cursor overlay to (x, y). | macOS, Linux, Windows |
 | [`mouse_button_down`](#mouse_button_down) | Press and hold a mouse button at (x,y) via background X11 delivery. | Linux |
 | [`mouse_button_up`](#mouse_button_up) | Release a previously-held mouse button via background X11 delivery. | Linux |
 | [`mouse_drag`](#mouse_drag) | Move a previously-held mouse button to a new point via background X11 delivery. | Linux |
@@ -24,11 +24,11 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`set_agent_cursor_motion`](#set_agent_cursor_motion) | Configure the movement style, timing, effects and visibility timing for a session cursor. | macOS, Linux, Windows |
 | [`set_agent_cursor_theme`](#set_agent_cursor_theme) | Select an already-installed cursor theme for a session. | macOS, Linux, Windows |
 | [`get_agent_cursor_state`](#get_agent_cursor_state) | Return the session cursor's theme, semantic playback, position, visibility, and motion. | macOS, Linux, Windows |
-| [`page`](#page) | Legacy browser compatibility tool. | macOS, Linux, Windows |
-| [`get_browser_state`](#get_browser_state) | Read-only browser inspection. | macOS, Linux, Windows |
-| [`browser_prepare`](#browser_prepare) | Attach the browser tools to a browser. | macOS, Linux, Windows |
+| [`page`](#page) | Legacy browser tool: read-only `get_text` and `query_dom` on a page. | macOS, Linux, Windows |
+| [`get_browser_state`](#get_browser_state) | Read-only inspection of a browser page: the route for any web page in Chrome, Edge or Brave. | macOS, Linux, Windows |
+| [`browser_prepare`](#browser_prepare) | Attach the browser tools to a running Chrome, Edge or Brave. | macOS, Linux, Windows |
 | [`browser_navigate`](#browser_navigate) | Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). | macOS, Linux, Windows |
-| [`browser_click`](#browser_click) | Click a page element (by ref) or viewport coordinates in an exactly-bound tab. | macOS, Linux, Windows |
+| [`browser_click`](#browser_click) | Click a page element by `ref` (from `get_browser_state`) or by viewport coordinates, in an exactly-bound tab. | macOS, Linux, Windows |
 | [`browser_type`](#browser_type) | Type text into an exactly-bound tab via the Input domain. | macOS, Linux, Windows |
 | [`browser_select`](#browser_select) | Select one option of a native HTML &lt;select&gt; ref on an exactly-bound tab without opening its popup. | macOS, Linux, Windows |
 | [`browser_pointer`](#browser_pointer) | Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. | macOS, Linux, Windows |
@@ -49,7 +49,7 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels: the same space get_window_state returns. Top-left origin of the target's window.
+Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels: the same space get_window_state returns. Top-left origin of the target's window. Limits and fallbacks: `get_guide({topic:"drag"})`.
 
 Use for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.
 
@@ -59,7 +59,7 @@ Use for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbin
 
 When `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.
 
-A window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:"drag" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:"foreground", which briefly fronts the window and moves the physical pointer. Limits and fallbacks: `get_guide({topic:"drag"})`.
+A window-scoped drag (pid + window_id) runs in the background by default: the gesture is posted to that window, the real pointer does not move, and the user's frontmost window keeps focus. It works for controls that follow the drag events: sliders, canvases, and pointer-event widgets on web pages in Chrome. In an Electron window the driver sends the gesture from the app's main process, so pointer-capture widgets and HTML5 drag and drop also drop there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list by drag and drop, moving a file, HTML5 draggable content) cannot drop in the background, because macOS tracks those with the real pointer; the driver detects it, releases at once and returns background_unavailable with reason drag_and_drop_session. For a page in a browser tab already bound with get_browser_state, browser_pointer action:"drag" drives the same gesture through CDP with page refs. The result is not driver-verified: confirm with a screenshot or the accessibility tree, and only if nothing changed retry with delivery_mode:"foreground", which briefly fronts the window and moves the physical pointer.
 
 **macOS parameters**
 
@@ -155,7 +155,8 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Scroll the target pid.
+Scroll a window or element. Pass `element_token` (preferred) or window pixels `x, y` to send a wheel event there; with no target, `direction` sends PageUp/PageDown or arrow keys to the pid's focused scroller. Electron and Chromium windows drop background wheel events: use `delivery_mode:"foreground"` there.
+
 - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.
 - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.
 
@@ -248,6 +249,8 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
+
+Move the agent cursor overlay to (x, y). With `target {kind:"window", pid, window_id}` the point is in window screenshot pixels, as for `click`; without a target it is in screen points. Most background apps see no hover from this: for a web page in Chrome, Edge or Brave use `browser_pointer` hover.
 
 Move a cursor to (x, y). With target &#123;kind: "window", pid, window_id&#125;, x/y are window screenshot pixels (as for click) and only the agent cursor moves there; in a background app it also hovers through a route that leaves the real pointer alone where one exists (AXShowAlternateUI on the element under the point, or an Electron page) and says so. Without a target, moves only the agent cursor overlay, in screen points. Other macOS hover and tooltips follow the real pointer, so most background apps see no hover; for a web page in Chrome, Edge or Brave use browser_pointer hover instead. With scope=desktop, moves the user's real OS pointer in native get_desktop_state screenshot coordinates; over a window of an app that is not in front it refuses unless delivery_mode is "foreground".
 
@@ -481,6 +484,13 @@ Read and act on web pages, and prepare and navigate browsers.
 
 ### `page`
 
+Effect: mutating. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Legacy browser tool: read-only `get_text` and `query_dom` on a page. Prefer `get_browser_state` and the typed `browser_*` tools; mutating actions stay off unless the daemon operator sets CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1.
+
 Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.
 
 Actions:
@@ -492,7 +502,38 @@ Actions:
 - type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung: use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.
 - enable_javascript_apple_events: macOS-only; patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).
 
-Effect: mutating. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Linux">
+
+Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.
+
+Actions:
+- execute_javascript: Run JS and return the result.
+- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.
+- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.
+- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.
+- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText); no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.
+- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung: use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.
+- enable_javascript_apple_events: macOS-only; patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).
+
+</Tab>
+<Tab value="Windows">
+
+Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.
+
+Actions:
+- execute_javascript: Run JS and return the result.
+- get_text: Extract visible text from the page. On macOS, structuredContent.source identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves the triggering error and truncation state in structuredContent.
+- query_dom: Find elements matching a CSS selector, with the same macOS fallback metadata contract as get_text.
+- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.
+- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText); no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.
+- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung: use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.
+- enable_javascript_apple_events: macOS-only; patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -518,9 +559,29 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 
 ### `get_browser_state`
 
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Read-only inspection of a browser page: the route for any web page in Chrome, Edge or Brave. Bind with `pid` + `window_id`, then snapshot with `target_id` + `tab_id`, and act with `browser_click`, `browser_type` or `browser_pointer`. If the browser is not attached it refuses, and `detail.next_call` names the `browser_prepare` call to run. Setup and recovery: `get_guide({topic:"browser"})`.
+
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup: a browser that is not attached yet refuses with browser_consent_required or browser_requires_setup, and detail.next_call names the browser_prepare call that attaches it. Use this route for any web page in Chrome, Edge or Brave; desktop pointer tools move the user's pointer.
+
+</Tab>
+<Tab value="Linux">
+
 Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup: a browser that is not attached yet refuses with browser_consent_required or browser_requires_setup, and detail.next_call names the browser_prepare call that attaches it. Use this route for any web page in Chrome, Edge or Brave; desktop pointer tools move the user's pointer. Setup and recovery: `get_guide({topic:"browser"})`.
 
-Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Windows">
+
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup: a browser that is not attached yet refuses with browser_consent_required or browser_requires_setup, and detail.next_call names the browser_prepare call that attaches it. Use this route for any web page in Chrome, Edge or Brave; desktop pointer tools move the user's pointer. Setup and recovery: `get_guide({topic:"browser"})`.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -537,9 +598,29 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ### `browser_prepare`
 
+Effect: destructive. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Attach the browser tools to a running Chrome, Edge or Brave. Call it once with `pid`, `window_id` and `strategy {"kind":"existing_profile"}` when `get_browser_state` refuses with `browser_consent_required` or `browser_requires_setup`, then call `get_browser_state` again. It attaches, or refuses with nothing changed and says why. Setup and recovery: `get_guide({topic:"browser"})`.
+
+Attach the browser tools to a browser. For a page in the user's running Chrome, Edge or Brave, call it once with pid, window_id, session and strategy &#123;"kind":"existing_profile"&#125; when get_browser_state refuses with browser_consent_required or browser_requires_setup; then call get_browser_state again and act with browser_click, browser_type or browser_pointer. It attaches, or refuses with nothing changed and says why. Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front whenever the driver opens a new browser connection; sessions for the same browser share one approved connection, kept for up to 30 minutes idle and 8 hours in total, so later sessions do not prompt again), existing-profile attachment refuses with background_unavailable unless delivery_mode is "foreground" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations. A driver-owned isolated launch result carries an advisory lifecycle object: the browser process ends with the calling session after idle_expires_in_seconds without session activity, an isolated_named profile persists after the session and an isolated_new profile does not, and explicit end, disconnect, revocation or shutdown end it earlier.
+
+</Tab>
+<Tab value="Linux">
+
 Attach the browser tools to a browser. For a page in the user's running Chrome, Edge or Brave, call it once with pid, window_id, session and strategy &#123;"kind":"existing_profile"&#125; when get_browser_state refuses with browser_consent_required or browser_requires_setup; then call get_browser_state again and act with browser_click, browser_type or browser_pointer. It attaches, or refuses with nothing changed and says why. Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front whenever the driver opens a new browser connection; sessions for the same browser share one approved connection, kept for up to 30 minutes idle and 8 hours in total, so later sessions do not prompt again), existing-profile attachment refuses with background_unavailable unless delivery_mode is "foreground" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations. A driver-owned isolated launch result carries an advisory lifecycle object: the browser process ends with the calling session after idle_expires_in_seconds without session activity, an isolated_named profile persists after the session and an isolated_new profile does not, and explicit end, disconnect, revocation or shutdown end it earlier. Setup and recovery: `get_guide({topic:"browser"})`.
 
-Effect: destructive. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Windows">
+
+Attach the browser tools to a browser. For a page in the user's running Chrome, Edge or Brave, call it once with pid, window_id, session and strategy &#123;"kind":"existing_profile"&#125; when get_browser_state refuses with browser_consent_required or browser_requires_setup; then call get_browser_state again and act with browser_click, browser_type or browser_pointer. It attaches, or refuses with nothing changed and says why. Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front whenever the driver opens a new browser connection; sessions for the same browser share one approved connection, kept for up to 30 minutes idle and 8 hours in total, so later sessions do not prompt again), existing-profile attachment refuses with background_unavailable unless delivery_mode is "foreground" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations. A driver-owned isolated launch result carries an advisory lifecycle object: the browser process ends with the calling session after idle_expires_in_seconds without session activity, an isolated_named profile persists after the session and an isolated_new profile does not, and explicit end, disconnect, revocation or shutdown end it earlier. Setup and recovery: `get_guide({topic:"browser"})`.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -579,9 +660,29 @@ Exact browser input over CDP: clicks, typing, pointer, dialogs, files and downlo
 
 ### `browser_click`
 
+Effect: mutating. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Click a page element by `ref` (from `get_browser_state`) or by viewport coordinates, in an exactly-bound tab. It stays in the background by default, and is refused for heuristic bindings or while a page dialog is open. If the click opens a JavaScript dialog the call returns a `dialog` block for `browser_dialog` (hidden by default).
+
 Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route="dom_event" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. If a click's handler opens a page-owned JavaScript dialog, on either route, the call returns at once with a dialog block (present, kind, dialog_id) to pass to browser_dialog. Refused while a page-owned dialog is open on the tab, and for heuristic bindings.
 
-Effect: mutating. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Linux">
+
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route="dom_event" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. If a click's handler opens a page-owned JavaScript dialog, on either route, the call returns at once with a dialog block (present, kind, dialog_id) to pass to browser_dialog. Refused while a page-owned dialog is open on the tab, and for heuristic bindings.
+
+</Tab>
+<Tab value="Windows">
+
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route="dom_event" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. If a click's handler opens a page-owned JavaScript dialog, on either route, the call returns at once with a dialog block (present, kind, dialog_id) to pass to browser_dialog. Refused while a page-owned dialog is open on the tab, and for heuristic bindings.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |

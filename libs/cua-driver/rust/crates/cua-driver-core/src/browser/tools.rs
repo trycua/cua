@@ -424,7 +424,8 @@ impl GetBrowserStateTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "get_browser_state".into(),
-            description: "Read-only browser inspection. Mode 1 (bind): pass pid + \
+            description: "Read-only inspection of a browser page: the route for any web page in Chrome, Edge or Brave. Bind with `pid` + `window_id`, then snapshot with `target_id` + `tab_id`, and act with `browser_click`, `browser_type` or `browser_pointer`. If the browser is not attached it refuses, and `detail.next_call` names the `browser_prepare` call to run.\n\n\
+                Read-only browser inspection. Mode 1 (bind): pass pid + \
                 window_id of a native browser window to classify it, correlate it to \
                 a CDP target (exact-or-refuse), and mint a session-scoped target id \
                 plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The \
@@ -768,7 +769,8 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Attach the browser tools to a browser. For a page in the user's \
+            description: "Attach the browser tools to a running Chrome, Edge or Brave. Call it once with `pid`, `window_id` and `strategy {\"kind\":\"existing_profile\"}` when `get_browser_state` refuses with `browser_consent_required` or `browser_requires_setup`, then call `get_browser_state` again. It attaches, or refuses with nothing changed and says why.\n\n\
+                Attach the browser tools to a browser. For a page in the user's \
                 running Chrome, Edge or Brave, call it once with pid, window_id, session and \
                 strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with \
                 browser_consent_required or browser_requires_setup; then call \
@@ -1150,7 +1152,8 @@ impl BrowserClickTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_click".into(),
-            description: "Click a page element (by ref) or viewport coordinates in an \
+            description: "Click a page element by `ref` (from `get_browser_state`) or by viewport coordinates, in an exactly-bound tab. It stays in the background by default, and is refused for heuristic bindings or while a page dialog is open. If the click opens a JavaScript dialog the call returns a `dialog` block for `browser_dialog` (hidden by default).\n\n\
+                Click a page element (by ref) or viewport coordinates in an \
                 exactly-bound tab. Default route is trusted hardware-like input \
                 (Input.dispatchMouseEvent), and refuses where that route cannot \
                 preserve standalone-browser background posture unless \

@@ -71,7 +71,7 @@ const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unava
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
-        description: "Scroll the target pid.\n\
+        description: "Scroll a window or element. Pass `element_token` (preferred) or window pixels `x, y` to send a wheel event there; with no target, `direction` sends PageUp/PageDown or arrow keys to the pid's focused scroller. Electron and Chromium windows drop background wheel events: use `delivery_mode:\"foreground\"` there.\n\n\
             - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n\
             - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\
             \n\

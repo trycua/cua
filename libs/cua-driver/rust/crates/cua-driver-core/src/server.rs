@@ -904,7 +904,10 @@ async fn dispatch_request(
             Response::ok(id, initialize_result())
         }
 
-        "tools/list" => Response::ok(id, provider.tools_list()),
+        "tools/list" => Response::ok(
+            id,
+            crate::tool_profile::client_tools_list(provider.tools_list()),
+        ),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
@@ -1075,6 +1078,66 @@ mod dispatch_contract_tests {
         ) -> Result<serde_json::Value, String> {
             self.0.clone()
         }
+    }
+
+    /// Lists one hidden-by-default and one listed tool; invoking either works.
+    struct ProfileProvider;
+
+    #[async_trait::async_trait]
+    impl ToolProvider for ProfileProvider {
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": [
+                {"name": "click", "description": "Click.\n\nDetail.", "inputSchema": {"type": "object", "properties": {"session": {"type": "string"}}}},
+                {"name": "get_config", "description": "Read config."}
+            ]})
+        }
+
+        fn is_known_tool(&self, _name: &str) -> bool {
+            true
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            Ok(serde_json::json!({"content": [{"type": "text", "text": "ok"}]}))
+        }
+    }
+
+    /// The default profile narrows what `tools/list` advertises and compacts
+    /// its docs, while a hidden tool still answers a call by name.
+    #[tokio::test]
+    async fn default_tools_list_is_narrowed_and_hidden_tools_stay_callable() {
+        let list_request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/list"
+        }))
+        .unwrap();
+        let list =
+            result_of(handle_request(list_request, serde_json::json!(1), &ProfileProvider).await);
+        let names: Vec<&str> = list["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["click"]);
+        assert_eq!(list["tools"][0]["description"], "Click.");
+        assert!(list["tools"][0]["inputSchema"]["properties"]
+            .get("session")
+            .is_none());
+        assert_eq!(list["tool_profile"]["hidden"]["admin"][0], "get_config");
+
+        let result = result_of(
+            handle_request(
+                call_request("get_config"),
+                serde_json::json!(2),
+                &ProfileProvider,
+            )
+            .await,
+        );
+        assert_ne!(result["isError"], serde_json::json!(true), "{result}");
+        assert!(!result.to_string().contains("Unknown tool"), "{result}");
     }
 
     fn call_request(name: &str) -> Request {

@@ -13,7 +13,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| [`run_steps`](#run_steps) | The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. | macOS, Linux, Windows |
+| [`run_steps`](#run_steps) | The default way to act: run one or more actions in ONE call, in order, stopping at the first failure. | macOS, Linux, Windows |
 | [`run_script`](#run_script) | Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. | macOS, Linux, Windows |
 | [`start_recording`](#start_recording) | Start trajectory recording for the calling session. | macOS, Linux, Windows |
 | [`stop_recording`](#stop_recording) | Stop trajectory recording. | macOS, Linux, Windows |
@@ -26,7 +26,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`health_report`](#health_report) | Single-call end-to-end driver diagnostics. | macOS, Linux, Windows |
 | [`check_for_update`](#check_for_update) | Check the saved stable/nightly Cua Driver channel for a release on GitHub. | macOS, Linux, Windows |
 | [`install_extension`](#install_extension) | Preview or install one Driver-managed optional extension. | macOS, Linux, Windows |
-| [`get_guide`](#get_guide) | Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). | macOS, Linux, Windows |
+| [`get_guide`](#get_guide) | Read Cua Driver guidance on demand, from the guide bundled with this driver. | macOS, Linux, Windows |
 
 Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for every tool.
 
@@ -48,6 +48,27 @@ change it.
 
 ### `run_steps`
 
+Effect: destructive. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+The default way to act: run one or more actions in ONE call, in order, stopping at the first failure. Each step is `{tool, args}`; `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor. `pid` and `window_id` on run_steps are the default window of every step. Add `observe:{}` to get what changed in the same response instead of a separate get_window_state call. Element tokens come from an earlier get_window_state; a step that changes the UI can stale later tokens. Batching rules: `get_guide({topic:"batching"})`.
+
+Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. `args` are exactly that tool's arguments; `app`/`window` may replace `pid`/`window_id`. Steps that name no window use the run_steps default. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Steps pass the same checks as direct calls. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.
+
+Returns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:"latest"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.
+
+TARGET BY NAME (no earlier read needed, so one batch can cross screens): a step can be written `{"click": {...args}}` as well as `{tool, args}`, and its args may name the target instead of carrying a token: `role` (button, textfield, link, checkbox, menuitem, ...; AX/UIA/AT-SPI names also work), `name` (the element's label; exact match wins over substring, case-insensitive), `nth` (0-based, when several match), and `app` (app name or bundle id) and/or `window` (title substring) instead of pid/window_id. The batch reads the window fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to appear, and acts on it; with only `app` it uses that app's frontmost window, so a dialog that opened on top is found. Later steps inherit the window, so name `app` once. The first lookup in a window also reads it once for `observe`, so the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a fuller name.
+
+WAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is &#123;role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?&#125;: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.
+
+Example (fill a form, submit, confirm the dialog, check the result):
+&#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125;.
+
+</Tab>
+<Tab value="Linux">
+
 The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Steps pass the same checks as direct calls. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.
 
 Returns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:"latest"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.
@@ -59,7 +80,24 @@ WAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `exp
 Example (fill a form, submit, confirm the dialog, check the result):
 &#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125; Batching rules: `get_guide({topic:"batching"})`.
 
-Effect: destructive. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Windows">
+
+The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Steps pass the same checks as direct calls. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.
+
+Returns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:"latest"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.
+
+TARGET BY NAME (no earlier read needed, so one batch can cross screens): a step can be written `{"click": {...args}}` as well as `{tool, args}`, and its args may name the target instead of carrying a token: `role` (button, textfield, link, checkbox, menuitem, ...; AX/UIA/AT-SPI names also work), `name` (the element's label; exact match wins over substring, case-insensitive), `nth` (0-based, when several match), and `app` (app name or bundle id) and/or `window` (title substring) instead of pid/window_id. The batch reads the window fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to appear, and acts on it; with only `app` it uses that app's frontmost window, so a dialog that opened on top is found. Later steps inherit the window, so name `app` once. The first lookup in a window also reads it once for `observe`, so the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a fuller name.
+
+WAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is &#123;role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?&#125;: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.
+
+Example (fill a form, submit, confirm the dialog, check the result):
+&#123;"steps":[&#123;"set_value":&#123;"app":"Safari","role":"textfield","name":"Email","value":"ada@example.com"&#125;&#125;,&#123;"click":&#123;"role":"button","name":"Submit"&#125;,"expect":[&#123;"role":"button","name":"Confirm"&#125;]&#125;,&#123;"click":&#123;"role":"button","name":"Confirm"&#125;,"expect":[&#123;"name":"Confirm","gone":true&#125;,&#123;"text":"Thanks"&#125;]&#125;],"observe":&#123;&#125;&#125; Batching rules: `get_guide({topic:"batching"})`.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -82,6 +120,35 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ### `run_script`
 
+Effect: destructive. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps. Batching rules: `get_guide({topic:"batching"})`.
+
+The script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:
+- `await cua.getApp("TextEdit" | "com.apple.TextEdit" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)
+- `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`
+- app.getState(opts?) → get_window_state result (`tree_markdown` or `tree_diff`, `snapshot_id`; pass get_window_state options such as &#123;since:"latest"&#125;)
+- app.query(&#123;role?, name?, text?&#125;) → matching elements across the app's windows &#123;element_token, role, label, value, enabled, selected, frame&#125;, then matching static-text rows &#123;role, label, value, text, display_only&#125; (read text such as a status line from their `value`)
+- app.waitFor(&#123;role?, name?, text?, gone?, value?, timeout_ms?&#125;) and app.verify(predicate | predicates) (verify_state)
+- app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey("return" | "cmd+s", t?), hotkey(["cmd","s"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])
+where a target `t` is &#123;role, name, nth?&#125; (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.
+- `cua.call(tool, args)` for any other allowed tool: click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.
+A failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.
+
+Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.
+
+Example:
+const app = await cua.getApp("Calculator");
+for (const key of ["7", "multiply", "6", "equals"]) await app.click(&#123;role: "button", name: key&#125;);
+const [display] = await app.query(&#123;role: "statictext"&#125;);
+return display.value;.
+
+</Tab>
+<Tab value="Linux">
+
 Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.
 
 The script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:
@@ -103,7 +170,34 @@ for (const key of ["7", "multiply", "6", "equals"]) await app.click(&#123;role: 
 const [display] = await app.query(&#123;role: "statictext"&#125;);
 return display.value; Batching rules: `get_guide({topic:"batching"})`.
 
-Effect: destructive. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Windows">
+
+Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.
+
+The script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:
+- `await cua.getApp("TextEdit" | "com.apple.TextEdit" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)
+- `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`
+- app.getState(opts?) → get_window_state result (`tree_markdown` or `tree_diff`, `snapshot_id`; pass get_window_state options such as &#123;since:"latest"&#125;)
+- app.query(&#123;role?, name?, text?&#125;) → matching elements across the app's windows &#123;element_token, role, label, value, enabled, selected, frame&#125;, then matching static-text rows &#123;role, label, value, text, display_only&#125; (read text such as a status line from their `value`)
+- app.waitFor(&#123;role?, name?, text?, gone?, value?, timeout_ms?&#125;) and app.verify(predicate | predicates) (verify_state)
+- app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey("return" | "cmd+s", t?), hotkey(["cmd","s"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])
+where a target `t` is &#123;role, name, nth?&#125; (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.
+- `cua.call(tool, args)` for any other allowed tool: click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.
+A failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.
+
+Limits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.
+
+Example:
+const app = await cua.getApp("Calculator");
+for (const key of ["7", "multiply", "6", "equals"]) await app.click(&#123;role: "button", name: key&#125;);
+const [display] = await app.query(&#123;role: "statictext"&#125;);
+return display.value; Batching rules: `get_guide({topic:"batching"})`.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -378,9 +472,9 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants: Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check.
+Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants: Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass &#123;"prompt": false&#125; for a purely read-only status check. How to get them granted: `get_guide({topic:"permissions"})`.
 
-Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent. How to get them granted: `get_guide({topic:"permissions"})`.
+Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent.
 
 **macOS parameters**
 
@@ -503,9 +597,33 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 
 ### `get_guide`
 
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Read Cua Driver guidance on demand, from the guide bundled with this driver. Pass `topic` (overview, drag, browser, permissions, batching, menus) for a guide, or `tool` for one tool's full description and parameter docs, which the tool list shortens. Call with neither to list the topics. Read-only.
+
+**macOS parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="get_guide--macos--tool"></span>`tool` | `string` |  | A tool name, e.g. `click`: returns its full description and parameters. |
+
+</Tab>
+<Tab value="Linux">
+
 Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.
 
-Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+</Tab>
+<Tab value="Windows">
+
+Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |

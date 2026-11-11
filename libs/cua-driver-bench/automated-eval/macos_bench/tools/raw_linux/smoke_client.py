@@ -35,6 +35,12 @@ SCRIPTS = {
         'lo = raw.find(a, role="menu item", name="Low")[0]\nAtspi.Action.do_action(lo, 0)\nraw.sleep(0.4)\n'
         "return shown"
     ),
+    "chain_no_escalation": 'raw.xdotool("key", "--window", "1", "a", "key", "b")\nreturn raw.pointer()',
+    "escalated_chain": (
+        'raw.escalate_foreground("smoke: escalated pointer chain")\n'
+        'raw.xdotool("mousemove", "700", "500", "mousemove", "710", "505")\nreturn raw.pointer()'
+    ),
+    "private_handle": 'f = raw.xtst._lib\nreturn 1',
     "act": (
         'a = raw.app("BenchLab")\n'
         'q = raw.find(a, role="text", name="Quantity")[0]\n'

@@ -418,7 +418,11 @@ def _const_str(node: ast.AST) -> str | None:
 
 
 def xdotool_commands(args: list[str | None]) -> list[tuple[str, bool]]:
-    """(command, has its own --window) for each command of an xdotool chain."""
+    """(command, has its own --window) for each command of an xdotool chain.
+
+    Any argument equal to a command name starts a new command, even when xdotool would read it as data (typing the
+    word "exec"). The split errs toward refusing: xdotool's own parse depends on each command's option table, and a
+    refusal with its reason is better than a missed command. Type such text with EditableText instead."""
     starts = [i for i, a in enumerate(args) if i == 0 or a in XDOTOOL_COMMANDS]
     out = []
     for n, i in enumerate(starts):
@@ -572,7 +576,7 @@ class _Walker(ast.NodeVisitor):
                 self.add("BG6", node, f"xdotool {command} --window (XSendEvent)")
             elif rule:
                 self.add(rule, node, f"xdotool {command}")
-        if sub in {"key", "type", "click"}:
+        if any(c in {"key", "type", "click", "mousedown", "mouseup"} for c, _ in commands):
             self.last_action = max(self.last_action, _pos(node))
 
 

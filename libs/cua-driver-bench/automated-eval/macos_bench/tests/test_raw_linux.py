@@ -129,6 +129,11 @@ class RawLintTest(unittest.TestCase):
         )
         self.assertTrue(rawlint.lint(drag).ok)
         self.assertTrue(rawlint.lint('raw.xdotool("search", "--name", "BenchLab")').ok)
+        # a chained click is an action: without a later read it gets the read-back warning
+        clicks = rawlint.lint(ESC + 'raw.xdotool("mousemove", "5", "5", "click", "1")')
+        self.assertIn("VR1", {f.rule for f in clicks.findings})
+        # an argument equal to a command name is read as a command (documented; errs toward refusing)
+        self.assertFalse(rawlint.lint(ESC + 'raw.xdotool("type", "--window", "5", "exec")').ok)
         self.assertLessEqual(set(rawlint.XDOTOOL), rawlint.XDOTOOL_COMMANDS)
 
     def test_warnings_run(self):

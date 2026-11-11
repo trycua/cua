@@ -1788,7 +1788,8 @@ fn type_text_in_key_window(
                         ),
                         path: PATH_AX,
                         verified: false,
-                        delivered_chars: Some(body.chars().count()),
+                        // Without proof the line landed, no count is claimed.
+                        delivered_chars: insert_observed.then(|| body.chars().count()),
                     }));
                 }
                 None => "",

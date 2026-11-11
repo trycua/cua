@@ -5154,7 +5154,12 @@ mod tests {
     #[tokio::test]
     async fn ready_microvms_with_pending_downloads_show_them() {
         use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
-        for kind in [super::BackendKind::Firecracker, super::BackendKind::Vz] {
+        // `vz` is a component only on macOS.
+        let mut kinds = vec![super::BackendKind::Firecracker];
+        if cfg!(target_os = "macos") {
+            kinds.push(super::BackendKind::Vz);
+        }
+        for kind in kinds {
             let r = backend_report(kind, true, false, &["download the guest kernel"]);
             let (steps, _) = setup_full(r, &[kind.as_str()], true, true).await;
             assert_eq!(steps[0].status, Installable as i32, "{steps:?}");

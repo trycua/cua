@@ -1731,9 +1731,9 @@ fn type_text_in_key_window(
         };
         // A read-back that already held the line before the write proves
         // nothing landed, so it never earns a submit.
-        let insert_observed = submit_body.is_some()
-            && ax_progress == Some(TypedProgress::Complete)
-            && insert_changed_value(before.as_deref(), after.as_deref());
+        let insert_observed = ax_progress == Some(TypedProgress::Complete)
+            && submit_body
+                .is_some_and(|body| insert_added_body(before.as_deref(), after.as_deref(), body));
         // Return is a pid-routed key: it reaches whichever field has focus,
         // so it goes out only once the written field is confirmed focused.
         let return_reaches_field = insert_observed && {
@@ -1756,7 +1756,7 @@ fn type_text_in_key_window(
                     let reason = if insert_observed {
                         "the field does not hold keyboard focus"
                     } else {
-                        "the field's value did not visibly change"
+                        "the line was not seen landing in the field"
                     };
                     return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
                         detail: format!(
@@ -1874,11 +1874,16 @@ fn single_line_submit_body<'a>(role: &str, text: &'a str) -> Option<&'a str> {
     (!body.is_empty() && !body.contains(['\n', '\r', '\t'])).then_some(body)
 }
 
-/// Whether an AX insert visibly changed the field. Both values must be
-/// readable and differ; a field that already held the text reads as complete
-/// without anything landing.
-fn insert_changed_value(before: Option<&str>, after: Option<&str>) -> bool {
-    matches!((before, after), (Some(b), Some(a)) if a != b)
+/// Whether an AX insert put `body` into the field. Both values must be
+/// readable and `body` must occur more often after the write than before:
+/// a field that already held the text reads as complete without anything
+/// landing, and a partial write can change the value while an older copy of
+/// `body` still matches.
+fn insert_added_body(before: Option<&str>, after: Option<&str>, body: &str) -> bool {
+    match (before, after) {
+        (Some(b), Some(a)) => a.matches(body).count() > b.matches(body).count(),
+        _ => false,
+    }
 }
 
 fn is_text_input_role(role: &str) -> bool {
@@ -2185,8 +2190,8 @@ mod tests {
     }
 
     #[test]
-    fn submit_needs_a_visible_change_from_the_insert() {
-        use super::{insert_changed_value, typed_progress, TypedProgress};
+    fn submit_needs_the_insert_to_add_the_line() {
+        use super::{insert_added_body, typed_progress, TypedProgress};
         // The field already held the line: read-back is "complete" but
         // nothing landed, so Return must not go out.
         let (before, after) = (Some("netflix.com"), Some("netflix.com"));
@@ -2194,14 +2199,26 @@ mod tests {
             typed_progress(before, after, "netflix.com"),
             TypedProgress::Complete
         );
-        assert!(!insert_changed_value(before, after));
-        assert!(insert_changed_value(Some(""), Some("netflix.com")));
-        assert!(insert_changed_value(
-            Some("https://a.test"),
-            Some("netflix.com")
+        assert!(!insert_added_body(before, after, "netflix.com"));
+        // A partial write changed the value, but only the old copy matches.
+        assert_eq!(
+            typed_progress(Some("foo"), Some("foof"), "foo"),
+            TypedProgress::Complete
+        );
+        assert!(!insert_added_body(Some("foo"), Some("foof"), "foo"));
+        assert!(insert_added_body(Some("foo"), Some("foofoo"), "foo"));
+        assert!(insert_added_body(
+            Some(""),
+            Some("netflix.com"),
+            "netflix.com"
         ));
-        assert!(!insert_changed_value(None, Some("netflix.com")));
-        assert!(!insert_changed_value(Some(""), None));
+        assert!(insert_added_body(
+            Some("https://a.test"),
+            Some("netflix.com"),
+            "netflix.com"
+        ));
+        assert!(!insert_added_body(None, Some("netflix.com"), "netflix.com"));
+        assert!(!insert_added_body(Some(""), None, "netflix.com"));
     }
 
     #[test]

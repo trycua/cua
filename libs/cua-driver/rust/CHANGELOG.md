@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.11](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.10...cua-driver-rs-v0.47.11) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-driver:** stamp the window-local point on macOS 27 background drags ([#7372](https://github.com/trycua/cua/issues/7372)) ([a00a44b](https://github.com/trycua/cua/commit/a00a44bb04a7777cd0c65cf0f722e23b1b1790ad))
+
 ## [0.47.10](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.9...cua-driver-rs-v0.47.10) (2026-11-11)
 
 

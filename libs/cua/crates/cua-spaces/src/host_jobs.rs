@@ -953,9 +953,7 @@ impl JobExecutor for SpacesExecutor {
         let mut base = self.offers.clone();
         // QEMU installed after the daemon started (`cua runtime setup qemu`)
         // is offered without a restart: two file checks, not a re-detection.
-        if cfg!(target_os = "linux")
-            && !base.kinds.iter().any(|k| k == "vm")
-            && linux_qemu_ready()
+        if cfg!(target_os = "linux") && !base.kinds.iter().any(|k| k == "vm") && linux_qemu_ready()
         {
             base.kinds.push("vm".into());
             base.runtimes.push("qemu".into());

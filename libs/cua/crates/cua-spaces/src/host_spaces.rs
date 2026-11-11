@@ -5430,7 +5430,12 @@ mod fork_kind_tests {
         assert_eq!(fork_kind(Kind::Vm, "c", "qemu").unwrap(), Kind::Vm);
         // An engine this build does not name keeps what was asked.
         assert_eq!(fork_kind(Kind::Auto, "c", "").unwrap(), Kind::Auto);
-        let e = fork_kind(Kind::Container, "c", "qemu").unwrap_err().to_string();
-        assert!(e.contains("qemu checkpoint") && e.contains("vm Spaces"), "{e}");
+        let e = fork_kind(Kind::Container, "c", "qemu")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("qemu checkpoint") && e.contains("vm Spaces"),
+            "{e}"
+        );
     }
 }

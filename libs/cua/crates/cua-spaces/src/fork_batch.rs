@@ -1013,8 +1013,9 @@ impl crate::spaces::Spaces {
             } else {
                 let listing: std::pin::Pin<
                     Box<
-                        dyn std::future::Future<Output = Result<Vec<crate::pool_checkpoints::PoolCheckpoint>>>
-                            + Send
+                        dyn std::future::Future<
+                                Output = Result<Vec<crate::pool_checkpoints::PoolCheckpoint>>,
+                            > + Send
                             + '_,
                     >,
                 > = Box::pin(self.pool_checkpoints());

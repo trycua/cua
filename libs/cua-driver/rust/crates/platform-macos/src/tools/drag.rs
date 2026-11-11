@@ -298,13 +298,13 @@ impl Tool for DragTool {
         // of the drag resolve against ONE frame, so a window that closed
         // mid-call refuses rather than dragging across the desktop behind it.
         let (from_sx, from_sy, from_lx, from_ly, to_sx, to_sy, to_lx, to_ly) =
-            match super::px_frame::resolve_or_refuse(wid).await {
+            match super::px_frame::resolve_or_refuse(pid, wid).await {
                 Ok(frame) => {
                     let (fsx, fsy, flx, fly) = frame.to_screen(from_x, from_y);
                     let (tsx, tsy, tlx, tly) = frame.to_screen(to_x, to_y);
                     (fsx, fsy, flx, fly, tsx, tsy, tlx, tly)
                 }
-                Err(refusal) => return refusal,
+                Err(refusal) => return refusal.into_tool_result(),
             };
 
         // A toolkit that reads the hardware pointer (Tk) or drops routed

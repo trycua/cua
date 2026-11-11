@@ -38,7 +38,7 @@ use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 
 use super::pixel_route::PixelClickRoute;
-use super::ToolState;
+use super::{px_frame::PixelActionError, ToolState};
 
 pub struct ClickTool {
     state: Arc<ToolState>,
@@ -47,6 +47,35 @@ pub struct ClickTool {
 impl ClickTool {
     pub fn new(state: Arc<ToolState>) -> Self {
         Self { state }
+    }
+
+    /// Pin, glide and record the agent cursor at an element's center, the
+    /// visible half of an AX-path click.
+    async fn glide_cursor_to_element(
+        &self,
+        cursor_key: &str,
+        wid: u32,
+        center: Option<(f64, f64)>,
+        target_rect: Option<[f64; 4]>,
+    ) {
+        let Some((cx, cy)) = center else { return };
+        crate::cursor::overlay::send_command(
+            cursor_key.to_owned(),
+            cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+        );
+        crate::cursor::overlay::animate_cursor_to_target(
+            cursor_key.to_owned(),
+            cx,
+            cy,
+            target_rect,
+        )
+        .await;
+        // Keep the registry in sync with the overlay so get_agent_cursor_state
+        // reports a truthful position even on the AX path (no pixel coords).
+        self.state
+            .cursor_registry
+            .update_position(cursor_key, cx, cy);
+        self.state.cursor_registry.note_press(cursor_key, cx, cy);
     }
 }
 
@@ -708,6 +737,17 @@ impl ClickTool {
                 {
                     return refusal;
                 }
+                match tokio::task::spawn_blocking(move || {
+                    super::px_frame::verify_native_geometry(pid, wid)
+                })
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => return super::px_frame::refusal(&error),
+                    Err(error) => {
+                        return ToolResult::error(format!("Native geometry lookup failed: {error}"))
+                    }
+                }
                 let (cx, cy) = match center {
                     Some(c) => c,
                     None => {
@@ -805,28 +845,6 @@ impl ClickTool {
                 };
             }
 
-            if let Some((cx, cy)) = center {
-                // Pin overlay above target window first.
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-                crate::cursor::overlay::animate_cursor_to_target(
-                    cursor_key.clone(),
-                    cx,
-                    cy,
-                    target_rect,
-                )
-                .await;
-                // Keep the registry in sync with the overlay so
-                // get_agent_cursor_state reports a truthful position even when
-                // the click was dispatched via the AX path (no pixel coords).
-                self.state
-                    .cursor_registry
-                    .update_position(&cursor_key, cx, cy);
-                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
-            }
-
             // Finder icon/list items can expose a readable AXSelected state
             // while refusing both AXSelected writes and AXPress. Resolve a
             // verified coordinate frame only for those collection-like
@@ -838,6 +856,13 @@ impl ClickTool {
                     crate::input::ax_actions::nearest_container_selection_state(
                         selection_guard.as_ptr(),
                     )
+                    .filter(|_| {
+                        // perform_ax_click uses the pixel fallback only for an
+                        // element that does not advertise AXPress.
+                        !unsafe { copy_action_names(selection_guard.as_ptr() as AXUIElementRef) }
+                            .iter()
+                            .any(|action| action == "AXPress")
+                    })
                     .and_then(|_| nearest_selectable_container_center(selection_guard.as_ptr()))
                 })
                 .await
@@ -845,22 +870,29 @@ impl ClickTool {
             } else {
                 None
             };
-            let mut selection_pixel = if let Some(screen_center) = selection_center {
-                super::px_frame::resolve_or_refuse(wid)
-                    .await
-                    .ok()
-                    .map(|frame| {
-                        selection_pixel_target(screen_center, (frame.bounds.x, frame.bounds.y))
-                    })
-            } else {
-                None
+            // A confirmed native geometry mismatch is kept, not dropped: the
+            // semantic rungs still run, and only the pixel fallback refuses.
+            let mut selection_pixel = match selection_center {
+                Some(screen_center) => match super::px_frame::resolve_or_refuse(pid, wid).await {
+                    Ok(frame) => Ok(Some(selection_pixel_target(
+                        screen_center,
+                        (frame.bounds.x, frame.bounds.y),
+                    ))),
+                    Err(PixelActionError::Frame(
+                        error @ super::px_frame::PxFrameError::NativeGeometryMismatch { .. },
+                    )) => Err(error),
+                    Err(_) => Ok(None),
+                },
+                None => Ok(None),
             };
             // The selection fallback delivers a routed window-local pixel
             // click — a stricter (WindowPointer) rung than the semantic gate
             // above. In background, drop the fallback rather than silently
             // escalate when the pointer rung would refuse (e.g. a
             // minimized/hidden target); the semantic path still runs.
-            if selection_pixel.is_some()
+            if selection_pixel
+                .as_ref()
+                .is_ok_and(|target| target.is_some())
                 && !delivery_mode.is_foreground()
                 && _mutation_lease
                     .as_ref()
@@ -873,7 +905,15 @@ impl ClickTool {
                     .await
                     .is_err()
             {
-                selection_pixel = None;
+                selection_pixel = Ok(None);
+            }
+
+            // On a geometry mismatch the cursor moves only after the semantic
+            // action succeeded, so a refusal leaves it where it was.
+            let defer_cursor_position = selection_pixel.is_err();
+            if !defer_cursor_position {
+                self.glide_cursor_to_element(&cursor_key, wid, center, target_rect)
+                    .await;
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -907,7 +947,7 @@ impl ClickTool {
                 || async move {
                     tokio::task::spawn_blocking(move || {
                         let element_ptr = element_guard.as_ptr();
-                        if foreground {
+                        if foreground && selection_pixel.is_ok() {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
@@ -974,6 +1014,10 @@ impl ClickTool {
                     ),
                     fronted,
                 ))) => {
+                    if defer_cursor_position {
+                        self.glide_cursor_to_element(&cursor_key, wid, center, target_rect)
+                            .await;
+                    }
                     // For text inputs in web content, wait for the page to move
                     // DOM focus onto the field. The wait ends as soon as AX
                     // reports the field focused and stable, and is capped by
@@ -1009,7 +1053,7 @@ impl ClickTool {
                     Some(disabled) => {
                         super::element_disabled_result(pid, wid, disabled, foreground)
                     }
-                    None => ToolResult::error(format!("AX action failed: {e}")),
+                    None => super::px_frame::action_error(e.context("AX action failed")),
                 },
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
@@ -1120,7 +1164,7 @@ impl ClickTool {
             // Chromium recipe falls back to public PID posting. Its SkyLight
             // route uses the translated screen coordinates instead.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-                match super::px_frame::resolve_or_refuse(wid).await {
+                match super::px_frame::resolve_or_refuse(pid, wid).await {
                     Ok(frame) => {
                         let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
                         // A window-local point outside the live frame would
@@ -1144,7 +1188,7 @@ impl ClickTool {
                         }
                         (sx, sy, lx, ly)
                     }
-                    Err(refusal) => return refusal,
+                    Err(refusal) => return refusal.into_tool_result(),
                 }
             } else {
                 // No window_id → treat x,y as screen coordinates (legacy behaviour).
@@ -1750,7 +1794,7 @@ fn perform_ax_click(
     window: (i32, u32),
     action_str: &str,
     cursor_key: &str,
-    selection_pixel: Option<SelectionPixelTarget>,
+    selection_pixel: Result<Option<SelectionPixelTarget>, super::px_frame::PxFrameError>,
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
@@ -1803,7 +1847,7 @@ fn perform_ax_click(
         }
 
         if let (Some(target), Some(selection)) = (
-            selection_pixel,
+            selection_pixel?,
             crate::input::ax_actions::capture_nearest_container_selection(element_ptr),
         ) {
             let selected_role = selection.role().to_owned();

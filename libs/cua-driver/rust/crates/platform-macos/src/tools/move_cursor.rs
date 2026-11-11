@@ -154,9 +154,9 @@ impl MoveCursorTool {
             Ok(ratio) => ratio,
             Err(refusal) => return refusal,
         };
-        let frame = match super::px_frame::resolve_or_refuse(wid).await {
+        let frame = match super::px_frame::resolve_or_refuse(pid, wid).await {
             Ok(frame) => frame,
-            Err(refusal) => return refusal,
+            Err(refusal) => return refusal.into_tool_result(),
         };
         let (screen_x, screen_y, local_x, local_y) = frame.to_screen(x * ratio, y * ratio);
         if local_x < 0.0

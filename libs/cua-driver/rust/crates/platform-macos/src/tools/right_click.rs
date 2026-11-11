@@ -157,7 +157,7 @@ impl Tool for RightClickTool {
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
-                Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
+                Ok(Err(e)) => super::px_frame::action_error(e.context("Right-click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -176,7 +176,7 @@ impl Tool for RightClickTool {
         // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
         // refuses a window with no live frame).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-            match super::px_frame::resolve_or_refuse(wid).await {
+            match super::px_frame::resolve_or_refuse(pid, wid).await {
                 Ok(frame) => {
                     let translated = frame.to_screen(cx, cy);
                     if !delivery_mode.is_foreground()
@@ -193,7 +193,7 @@ impl Tool for RightClickTool {
                     }
                     translated
                 }
-                Err(refusal) => return refusal,
+                Err(refusal) => return refusal.into_tool_result(),
             }
         } else {
             (cx, cy, cx, cy)
@@ -341,6 +341,8 @@ fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::R
         // rather than erroring out.
         tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
     }
+
+    super::px_frame::verify_native_geometry(pid, wid)?;
 
     // Pixel right-click at the element's screen-space center.
     let (cx, cy) =

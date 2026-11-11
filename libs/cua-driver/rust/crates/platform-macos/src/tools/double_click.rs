@@ -137,6 +137,17 @@ impl Tool for DoubleClickTool {
                 return refusal;
             }
 
+            // Without AXOpen the pixel fallback is the only route, so a
+            // confirmed geometry mismatch refuses before the foreground rung
+            // fronts the window.
+            if delivery_mode.is_foreground() && !has_ax_open {
+                if let Err(refusal) =
+                    super::px_frame::refuse_pixel_on_native_mismatch(pid, Some(wid)).await
+                {
+                    return refusal;
+                }
+            }
+
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
             let ck = cursor_key.clone();
@@ -196,7 +207,9 @@ impl Tool for DoubleClickTool {
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(format!("{msg}{}", changes.result_suffix())),
                 Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
-                    .unwrap_or_else(|| ToolResult::error(format!("double_click failed: {e}"))),
+                    .unwrap_or_else(|| {
+                        super::px_frame::action_error(e.context("double_click failed"))
+                    }),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -265,6 +278,8 @@ fn ax_double_click(
             "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
         );
     }
+
+    super::px_frame::verify_native_geometry(pid, wid)?;
 
     // Resolve screen center and fall back to pixel double-click.
     let (cx, cy) = unsafe { element_screen_center(element) }

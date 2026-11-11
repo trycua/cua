@@ -300,11 +300,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Fetch cua-spacesd
         if: env.SPACESD_SOURCE == 'local'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-spacesd-linux-${{ matrix.arch }}
           path: libs/images/linux/dist/${{ matrix.arch }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
@@ -364,15 +364,15 @@ jobs:
       EVIDENCE: ${{ github.workspace }}/.bake-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: artifacts-linux-docker-amd64
           path: ${{ runner.temp }}/docker-tier
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Set up pasta (secure network)
         uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, KVM)
@@ -422,7 +422,7 @@ jobs:
       SMOKE_EVIDENCE: ${{ github.workspace }}/.images-evidence
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
@@ -485,7 +485,7 @@ jobs:
       tiers: ${{ steps.changes.outputs.tiers }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "evidence-linux-*"
           path: evidence
@@ -541,17 +541,17 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
       # Both arches' gate results: push refuses unless every required gate passed.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "evidence-linux-${{ matrix.tier }}-*"
           path: release/evidence
           merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: artifacts-linux-${{ matrix.tier }}-${{ matrix.arch }}
           path: release/artifacts/${{ matrix.arch }}
@@ -601,11 +601,11 @@ jobs:
       STAMP: ${{ needs.meta.outputs.stamp }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ./.github/actions/download-fresh-artifact
         with:
           pattern: "{evidence,pushed}-linux-${{ matrix.tier }}-*"
           path: release/evidence

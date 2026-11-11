@@ -142,7 +142,7 @@ fn wait_outcome(
     opt_in: AccessibilityOptIn,
     prior_timeouts: u32,
     attempted_at: Instant,
-    await_tree: impl FnOnce() -> bool,
+    await_tree: impl FnOnce(bool) -> bool,
 ) -> Option<Wait> {
     match opt_in {
         AccessibilityOptIn::NotAccepted => None,
@@ -150,11 +150,15 @@ fn wait_outcome(
             prior_timeouts,
             attempted_at,
         }),
-        // Chrome builds its web tree asynchronously after either opt-in, so
-        // both wait for it. Returning at once for `AXEnhancedUserInterface`
+        // Chrome builds its web tree asynchronously after any of these, so
+        // all wait for it. Returning at once for `AXEnhancedUserInterface`
         // let the first read return browser chrome only (CUA-1766).
-        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::ManualAccessibility => {
-            Some(if await_tree() {
+        AccessibilityOptIn::EnhancedUserInterface
+        | AccessibilityOptIn::ManualAccessibility
+        | AccessibilityOptIn::Deferred => {
+            // Writing a deferred opt-in again restarts the app's countdown.
+            let reassert = opt_in != AccessibilityOptIn::Deferred;
+            Some(if await_tree(reassert) {
                 Wait::Complete
             } else {
                 Wait::TimedOut {
@@ -300,11 +304,13 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
         enable_chromium_accessibility(app_element),
         prior_timeouts,
         attempted_at,
-        || {
+        |reassert| {
             await_web_content(
                 || probe_web_content(app_element),
                 || {
-                    enable_chromium_accessibility(app_element);
+                    if reassert {
+                        enable_chromium_accessibility(app_element);
+                    }
                 },
                 pump_for,
             )
@@ -596,21 +602,26 @@ mod tests {
     }
 
     #[test]
-    fn both_chromium_opt_ins_wait_for_web_content_and_others_do_not() {
+    fn chromium_opt_ins_wait_for_web_content_and_others_do_not() {
         let now = Instant::now();
-        for opt_in in [
-            AccessibilityOptIn::EnhancedUserInterface,
-            AccessibilityOptIn::ManualAccessibility,
+        for (opt_in, may_reassert) in [
+            (AccessibilityOptIn::EnhancedUserInterface, true),
+            (AccessibilityOptIn::ManualAccessibility, true),
+            (AccessibilityOptIn::Deferred, false),
         ] {
             let polls = Cell::new(0u32);
-            let ready = wait_outcome(opt_in, 0, now, || {
+            let ready = wait_outcome(opt_in, 0, now, |reassert| {
                 polls.set(polls.get() + 1);
+                assert_eq!(
+                    reassert, may_reassert,
+                    "{opt_in:?}: writing a deferred opt-in again restarts Chrome's countdown"
+                );
                 true
             });
             assert_eq!(ready, Some(Wait::Complete));
             assert_eq!(polls.get(), 1, "{opt_in:?} must wait for the web tree");
             assert_eq!(
-                wait_outcome(opt_in, 1, now, || false),
+                wait_outcome(opt_in, 1, now, |_| false),
                 Some(Wait::TimedOut {
                     attempts: 2,
                     attempted_at: now
@@ -620,7 +631,7 @@ mod tests {
         }
         let polls = Cell::new(0u32);
         assert_eq!(
-            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, || {
+            wait_outcome(AccessibilityOptIn::NotAccepted, 0, now, |_| {
                 polls.set(polls.get() + 1);
                 false
             }),
@@ -635,7 +646,7 @@ mod tests {
         let stamp = (100, 10);
         let backoff = Duration::from_secs_f64(REFUSED_RETRY_BACKOFF_SECONDS);
         let polls = Cell::new(0u32);
-        let wait = wait_outcome(AccessibilityOptIn::Refused, 1, now, || {
+        let wait = wait_outcome(AccessibilityOptIn::Refused, 1, now, |_| {
             polls.set(polls.get() + 1);
             false
         });
@@ -662,7 +673,7 @@ mod tests {
         let now = Instant::now();
         let stamp = (100, 10);
 
-        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, || true);
+        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, |_| true);
         assert_eq!(wait, Some(Wait::Complete));
 
         let cached = ProcessEnablement {
@@ -682,7 +693,7 @@ mod tests {
         let stamp = (100, 10);
         let backoff = Duration::from_secs_f64(MATERIALIZE_RETRY_BACKOFF_SECONDS);
 
-        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, || false);
+        let wait = wait_outcome(AccessibilityOptIn::ManualAccessibility, 0, now, |_| false);
         assert_eq!(
             wait,
             Some(Wait::TimedOut {

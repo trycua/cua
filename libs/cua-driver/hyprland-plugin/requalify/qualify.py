@@ -38,6 +38,11 @@ BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binut
 SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa", "at-spi2-core", "libx11", "libxcb", "libxext", "libxi")
 DRIVER_BINARY = Path("/driver/cua-driver")
 USER, UID = "cua", 1000
+# Omarchy's packaging key, full fingerprint. Verified 11 Nov 2026 against Omarchy's own scripts at
+# https://github.com/basecamp/omarchy/blob/0e7530fb7c23fbf496d44f072ad64efaa7713d14/bin/omarchy-update-keyring (pacman-key --recv-keys
+# <fingerprint> --keyserver keys.openpgp.org, then --lsign-key). Omarchy fetches the key from a keyserver
+# and does not ship the key bytes outside the package, so this does too; gpg checks the downloaded key
+# against the full fingerprint, so a keyserver cannot substitute a different key.
 OMARCHY_KEY = "40DFB630FF42BCFFB047046CF0134EE680CAC571"
 
 
@@ -89,7 +94,7 @@ def setup_pacman(job, log):
         # as Omarchy's own installer does, and retry: pacman's implicit lookup during -U is a single
         # attempt against one keyserver, and fails the whole job when that server is slow.
         for attempt in range(6):
-            server = ("keys.openpgp.org", "keyserver.ubuntu.com")[attempt % 2]
+            server = ("keys.openpgp.org", "keyserver.ubuntu.com")[attempt % 2]  # the first is the one Omarchy uses
             code, _ = run(["pacman-key", "--keyserver", server, "--recv-keys", OMARCHY_KEY], log, check=False)
             if code == 0:
                 run(["pacman-key", "--lsign-key", OMARCHY_KEY], log)

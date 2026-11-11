@@ -1914,7 +1914,9 @@ public final class AppModel {
             autoConnect: settings.autoConnect,
             overflow: placementOverflow,
             runtimes: runtimesInput,
-            showTips: !settings.tips.off))
+            showTips: !settings.tips.off,
+            closeWindowKeepsRunning: settings.closeWindowKeepsRunning,
+            closeNotice: !settings.closeNoticeOff))
     }
 
     // MARK: - Runtimes (Settings, Advanced)
@@ -2233,8 +2235,8 @@ public final class AppModel {
             // "Never ask again".
             await keyvault.setSkipUnlockPrompt(option != "on")
             if let error = keyvault.error { show(error: error) }
-        case "tips", "reset-tips":
-            // General's Show tips and Reset tips: the core's rule (`settings::choose`).
+        case "tips", "reset-tips", "close-window", "close-notice":
+            // General's Show tips, Reset tips and "When I close the window": the core's rule (`settings::choose`).
             settings = appSettingsChoose(settings: settings, row: row, option: option)
             saveSettings()
         case "telemetry":

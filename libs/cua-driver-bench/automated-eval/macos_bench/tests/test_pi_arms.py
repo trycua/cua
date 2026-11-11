@@ -56,7 +56,8 @@ SYSTEM = {
 class PiArmsTest(unittest.TestCase):
     def test_each_arm_mirrors_one_driver_arm(self):
         self.assertEqual(set(pia.ARMS) & set(arms.ALL_ARMS), set(pia.ARMS))
-        self.assertEqual(set(pia.SOURCE_ARM.values()), set(ca.CUA_ARMS))
+        # every pi arm mirrors a Cua Driver arm, except the raw-linux prototype (an adapter with no driver)
+        self.assertEqual(set(pia.SOURCE_ARM.values()), set(ca.CUA_ARMS) | {ca.RAW_LINUX_ARM})
 
     def test_argv_offers_read_tool_search_and_the_cua_server_only(self):
         argv = pia.argv("SYSTEM PROMPT", Path("/w/.claude/skills/cua-driver"), Path("/bin/pi"))

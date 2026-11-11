@@ -73,13 +73,13 @@ def claude_name(name: str) -> str:
     return name if name.startswith("mcp__cua__") else AS_CLAUDE.get(name, "Task")
 
 
-def skill_dir(cwd: Path) -> Path:
-    return (
-        cwd / ".claude" / "skills" / "cua-driver"
-    )  # written by claude_arms.prepare_cwd(source arm)
+def skill_dir(cwd: Path) -> Path | None:
+    """The source arm's skill, written by claude_arms.prepare_cwd; None for an arm without one (pi-raw-linux)."""
+    path = cwd / ".claude" / "skills" / "cua-driver"
+    return path if path.is_dir() else None
 
 
-def render_agent_dir(root: Path, mcp_json: Path, skills: Path, max_turns: int) -> dict[str, str]:
+def render_agent_dir(root: Path, mcp_json: Path, skills: Path | None, max_turns: int) -> dict[str, str]:
     """A fresh pi agent directory and HOME under ``root`` for one trial; returns pi's closed environment."""
     agent_dir = root / "agent"
     agent_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,8 @@ def render_agent_dir(root: Path, mcp_json: Path, skills: Path, max_turns: int) -
         "PI_OFFLINE": "1",
         "PI_SKIP_VERSION_CHECK": "1",
         "PI_TELEMETRY": "0",
-        "CDB_PI_READ_ALLOW": str(skills / "SKILL.md"),  # pi_gate.ts
+        # pi_gate.ts: the skill's SKILL.md is the one readable file; without a skill nothing is
+        "CDB_PI_READ_ALLOW": str(skills / "SKILL.md") if skills else "/nonexistent/SKILL.md",
         "CDB_PI_MAX_TURNS": str(max_turns),
     }
 
@@ -487,7 +488,7 @@ def init_check(
         problems.append(f"reply={text[:40]!r} tools={summary['tool_calls']['total']}")
     if init["tools_builtin"] != ["Read", "ToolSearch"] or init["mcp_tool_count"]:
         problems.append(f"declared tools {init['tools_builtin']} + {init['mcp_tool_count']} MCP")
-    if init["skills"] != ["cua-driver"]:
+    if init["skills"] != (["cua-driver"] if skill_dir(cwd) else []):
         problems.append(f"skills {init['skills']}")
     if result["models"] != [f"{PROVIDER}/{MODEL}"]:
         problems.append(f"answered by {result['models']}")

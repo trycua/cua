@@ -664,6 +664,20 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         elif source in ca.ADAPTER_ARMS:
             # No capture tool: the adapters have no screenshot of the whole desktop. A read-only list proves the
             # vendor tool answers through the adapter.
+            if source == ca.RAW_LINUX_ARM:
+                if set(tools) != {"run_script"}:
+                    raise RuntimeError("unexpected raw-linux tools/list")
+                result = call(
+                    "run_script",
+                    {"script": "raw.screenshot()\nreturn len(raw.windows())", "timeout_ms": 60000},
+                )
+                image = next(
+                    (b for b in result.get("content") or [] if b.get("type") == "image"), None
+                )
+                if image is None:
+                    raise RuntimeError("raw-linux run_script returned no image")
+                dest.write_bytes(base64.b64decode(image["data"], validate=True))
+                return f"{arm} real capture", "pass", rec.capture_detail(dest)
             if source == "cc-agent-desktop":
                 if "list_apps" not in tools:
                     raise RuntimeError("unexpected agent-desktop tools/list")
@@ -962,6 +976,38 @@ def resume_conflicts(ctx: Ctx) -> list[str]:
     return sorted(set(conflicts))
 
 
+def raw_linux_summary(log: Path, dest: Path) -> dict[str, Any]:
+    """Move the raw-linux call log into the trial and count its background findings per call."""
+    calls: list[dict[str, Any]] = []
+    if log.is_file():
+        shutil.move(str(log), dest)
+        for line in dest.read_text("utf-8").splitlines():
+            try:
+                calls.append(json.loads(line))
+            except ValueError:
+                continue
+    rules: dict[str, int] = {}
+    for call in calls:
+        for finding in call.get("lint") or []:
+            rules[finding["rule"]] = rules.get(finding["rule"], 0) + 1
+    return {
+        "calls": len(calls),
+        "ok": sum(1 for c in calls if c.get("ok")),
+        "lint_blocked": sum(1 for c in calls if c.get("lint_blocked")),
+        "lint_rules": rules,
+        "escalated": sum(1 for c in calls if c.get("escalated") and not c.get("lint_blocked")),
+        "runtime_blocked": sum(len(c.get("runtime_blocked") or []) for c in calls),
+        # the runtime hook saw the pointer, focus, active window or stacking change in a script that did not
+        # declare a foreground escalation: a violation the lint missed
+        "runtime_caught": sum(
+            1 for c in calls if c.get("watch_changed") and not c.get("escalated")
+        ),
+        "runtime_changed_escalated": sum(
+            1 for c in calls if c.get("watch_changed") and c.get("escalated")
+        ),
+    }
+
+
 def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]:
     args = ctx.args
     task = ctx.tasks[entry["task"]]
@@ -978,9 +1024,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
-    build_versions = (ctx.versions.get("builds") or {}).get(SOURCE_ARM.get(arm, arm)) or (
-        ctx.versions.get("builds") or {}
-    ).get("cc-cua-driver", {})
+    build_versions = (
+        {}
+        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM  # no Cua Driver in this arm
+        else (ctx.versions.get("builds") or {}).get(SOURCE_ARM.get(arm, arm))
+        or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
+    )
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
     shutil.rmtree(trial_dir, ignore_errors=True)
     artifacts = trial_dir / "artifacts"
@@ -1147,6 +1196,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             prompt += f"\nYou have about {timeout_s // 60} minutes and at most {max_turns} turns.\n"
         (artifacts / "prompt.txt").write_text(prompt, "utf-8")
         (artifacts / "argv.json").write_text(json.dumps(argv, indent=2) + "\n", "utf-8")
+        raw_arm = SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
+        if raw_arm:
+            ca.RAW_LINUX_LOG.parent.mkdir(parents=True, exist_ok=True)
+            ca.RAW_LINUX_LOG.unlink(missing_ok=True)
         recording = ctx.recorder.start(trial_dir / "rec") if ctx.recorder else False
         row["recording_started"] = bool(recording)
         sentinel.toggle_armed()
@@ -1221,6 +1274,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                     abort=v2.EitherEvent(ctx.abort, guard.stop) if guard else ctx.abort,
                 )
         agent_ended = time.monotonic()
+        if raw_arm:
+            row["raw_linux"] = raw_linux_summary(ca.RAW_LINUX_LOG, artifacts / "raw-calls.jsonl")
         if watcher:
             watcher.finish()
             front_seen, side_door = sorted(watcher.seen), set(watcher.side)
@@ -2625,7 +2680,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
         try:
             source = pia.SOURCE_ARM[arm]
-            ensure_agent_daemon(ctx, source)
+            if source in ca.CUA_BUILDS:
+                ensure_agent_daemon(ctx, source)
             status, detail = pia.init_check(
                 arm,
                 ctx.mcp[arm][0],
@@ -3120,7 +3176,10 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "example_argv_task": ctx.task_ids[0],
         "example_argv": {
             a: pia.argv(
-                ca.system_prompt_for(SOURCE_ARM[a]), Path(ca.CWD_ROOT) / ".claude/skills/cua-driver"
+                ca.system_prompt_for(SOURCE_ARM[a]),
+                None
+                if SOURCE_ARM[a] == ca.RAW_LINUX_ARM
+                else Path(ca.CWD_ROOT) / ".claude/skills/cua-driver",
             )
             if a in pia.ARMS
             else ca.claude_argv(

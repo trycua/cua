@@ -61,6 +61,7 @@ PI_ARMS = (
     "pi-cua-driver-main-skill",
     "pi-cua-driver-script",
     "pi-cua-driver-script-only",
+    "pi-raw-linux",  # no Cua Driver: scripts against Linux low-level APIs (tools/raw_linux)
 )
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS + PI_ARMS
 

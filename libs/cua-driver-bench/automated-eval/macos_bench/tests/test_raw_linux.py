@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
+"""The raw-linux prototype's background-use lint: what it blocks, warns about and lets through."""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE / "tools" / "raw_linux"))
+import rawlint  # noqa: E402
+
+ESC = 'raw.escalate_foreground("the toolbar only appears on a real hover")\n'
+
+
+def rules(source: str) -> list[tuple[str, str]]:
+    return sorted((f.rule, f.severity) for f in rawlint.lint(source).findings)
+
+
+class RawLintTest(unittest.TestCase):
+    def assertBlocked(self, source: str, rule: str) -> None:
+        report = rawlint.lint(source)
+        self.assertFalse(report.ok, source)
+        self.assertIn(rule, {f.rule for f in report.blocked}, source)
+        text = report.render()
+        self.assertIn("NOT run", text)
+        self.assertIn(rule, text)
+        self.assertIn("source:", text)
+        self.assertIn("instead:", text)
+
+    def test_atspi_action_with_read_back_is_clean(self):
+        src = (
+            'b = raw.find(raw.app("BenchLab"), role="push button", name="Apply")[0]\n'
+            "b.get_action_iface().do_action(0)\n"
+            "return raw.describe(b)\n"
+        )
+        self.assertEqual(rules(src), [])
+
+    def test_pointer_focus_and_key_theft_block_without_escalation(self):
+        cases = {
+            "raw.xtst.XTestFakeMotionEvent(raw.dpy, -1, 5, 5, 0)": "BG1",
+            "raw.xtst.XTestFakeButtonEvent(raw.dpy, 1, 1, 0)": "BG1",
+            "raw.x11.XWarpPointer(raw.dpy, 0, raw.root, 0, 0, 0, 0, 5, 5)": "BG1",
+            'Atspi.generate_mouse_event(5, 5, "b1c")': "BG1",
+            'raw.xdotool("mousemove", 5, 5)': "BG1",
+            'raw.xdotool("click", 1)': "BG1",
+            "raw.x11.XSetInputFocus(raw.dpy, 5, 1, 0)": "BG2",
+            "raw.x11.XRaiseWindow(raw.dpy, 5)": "BG2",
+            'raw.x11.XInternAtom(raw.dpy, b"_NET_ACTIVE_WINDOW", 0)': "BG2",
+            'raw.xdotool("windowactivate", "5")': "BG2",
+            'x = "wmctrl -a BenchLab"': "BG2",
+            'raw.xdotool("key", "Return")': "BG3",
+            'raw.xdotool("type", "hello")': "BG3",
+            "raw.xtst.XTestFakeKeyEvent(raw.dpy, 36, 1, 0)": "BG3",
+            'getattr(raw.xtst, "XTestFakeKeyEvent")(raw.dpy, 36, 1, 0)': "BG3",
+        }
+        for src, rule in cases.items():
+            with self.subTest(src=src):
+                self.assertBlocked(src + "\nreturn raw.pointer()", rule)
+
+    def test_escalation_admits_pointer_focus_and_keys_but_never_grabs(self):
+        report = rawlint.lint(ESC + 'raw.xdotool("mousemove", 5, 5)\nreturn raw.pointer()')
+        self.assertTrue(report.ok)
+        self.assertEqual(report.escalation_reason, "the toolbar only appears on a real hover")
+        self.assertIn("FOREGROUND (declared)", report.render())
+        self.assertBlocked(ESC + "raw.x11.XGrabKeyboard(raw.dpy, raw.root, 1, 1, 1, 0)", "BG4")
+        self.assertBlocked(ESC + "raw.x11.XGrabServer(raw.dpy)", "BG4")
+
+    def test_escalation_needs_a_literal_reason(self):
+        self.assertBlocked("r = 'x'\nraw.escalate_foreground(r)\nraw.xdotool('click', 1)", "GUI2")
+        self.assertBlocked("raw.escalate_foreground('')\nraw.xdotool('click', 1)", "GUI2")
+
+    def test_gui_only_side_doors_block(self):
+        for src in (
+            "import os",
+            "import subprocess",
+            "from pathlib import Path",
+            "open('/etc/hostname').read()",
+            "import ctypes\nctypes.CDLL('libX11.so.6')",
+            "eval('1')",
+            "__import__('os')",
+            "getattr(raw.x11, 'XWarp' + 'Pointer')",
+            "raw.__class__.__init__",
+            "raw.xdotool(sub)",
+        ):
+            with self.subTest(src=src):
+                self.assertFalse(rawlint.lint(src).ok, src)
+
+    def test_warnings_run(self):
+        src = 'raw.xdotool("type", "--window", "5", "hi")\nreturn raw.describe(x)'
+        report = rawlint.lint(src)
+        self.assertTrue(report.ok)
+        self.assertEqual({f.rule for f in report.findings}, {"BG6"})
+        self.assertIn("WARNING", report.render())
+        noread = rawlint.lint("b.get_action_iface().do_action(0)")
+        self.assertTrue(noread.ok)
+        self.assertEqual({f.rule for f in noread.findings}, {"VR1"})
+
+    def test_every_rule_cites_a_source_and_an_alternative(self):
+        for rule in rawlint.RULES.values():
+            self.assertTrue(rule.source and rule.instead and rule.why, rule.id)
+            self.assertIn(rule.severity, {"block", "escalatable", "warn"})
+        used = set(rawlint.NAMES.values()) | set(rawlint.STRINGS.values()) | set(rawlint.XDOTOOL.values())
+        self.assertLessEqual(used, set(rawlint.RULES))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -4113,11 +4113,15 @@ struct HitNode<'a> {
 /// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
 /// the toolkit stops returning a deeper child. O(depth) round-trips instead of
 /// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+///
+/// `stacking` says how far the toolkit's answer can be trusted where siblings
+/// overlap (see [`SiblingStacking`]).
 async fn descend_at_point<'a>(
     conn: &'a AccessibilityConnection,
     start: RawObjectRef,
     x: i32,
     y: i32,
+    stacking: SiblingStacking,
 ) -> Vec<HitNode<'a>> {
     let mut chain: Vec<HitNode<'a>> = Vec::new();
     let mut current = start;
@@ -4145,9 +4149,122 @@ async fn descend_at_point<'a>(
         if next.path.ends_with("/null") || next == current {
             break;
         }
+        let next = match stacking {
+            SiblingStacking::FirstMatch => later_sibling_on_top(conn, &current, &next, x, y)
+                .await
+                .unwrap_or(next),
+            SiblingStacking::Topmost => next,
+        };
         current = next;
     }
     chain
+}
+
+/// How a toolkit's `GetAccessibleAtPoint` picks among overlapping children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SiblingStacking {
+    /// The answer is the child drawn on top.
+    Topmost,
+    /// ATK's container default (GTK 2 and 3): the *first* child, in child
+    /// order, whose extents contain the point. A `GtkOverlay` lists its main
+    /// child first and draws its overlays above it, so a banner shown over a
+    /// button answers with the button underneath.
+    FirstMatch,
+}
+
+impl SiblingStacking {
+    fn of_toolkit(name: &str, version: &str) -> Self {
+        let name = name.trim();
+        let gtk3_or_older = version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major < 4);
+        if name.eq_ignore_ascii_case("gail") || (name.eq_ignore_ascii_case("gtk") && gtk3_or_older)
+        {
+            Self::FirstMatch
+        } else {
+            Self::Topmost
+        }
+    }
+
+    async fn of_app(app: &AccessibleProxy<'_>) -> Self {
+        let inner = app.inner();
+        let Some(application) = async {
+            atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .destination(inner.destination().to_owned())
+                .ok()?
+                .build()
+                .await
+                .ok()
+        }
+        .await
+        else {
+            return Self::Topmost;
+        };
+        let name = call(application.toolkit_name()).await.and_then(Result::ok);
+        let version = call(application.version()).await.and_then(Result::ok);
+        match (name, version) {
+            (Some(name), Some(version)) => Self::of_toolkit(&name, &version),
+            _ => Self::Topmost,
+        }
+    }
+}
+
+/// Overlapping siblings of one parent the stacking check reads at most; a
+/// container with more children (a list, a sheet) is not a stack.
+const STACKED_SIBLINGS_CAP: i32 = 32;
+
+/// For a [`SiblingStacking::FirstMatch`] toolkit: the last showing child of
+/// `parent` after `hit` whose extents contain the point, which the toolkit
+/// draws over `hit`. `None` keeps the toolkit's answer.
+async fn later_sibling_on_top(
+    conn: &AccessibilityConnection,
+    parent: &RawObjectRef,
+    hit: &RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Option<RawObjectRef> {
+    let count = raw_child_count(conn.connection(), parent).await.ok()?;
+    if !(2..=STACKED_SIBLINGS_CAP).contains(&count) {
+        return None;
+    }
+    let index = call(accessible_for(conn, hit).await.ok()?.get_index_in_parent())
+        .await?
+        .ok()?;
+    if index < 0 {
+        return None;
+    }
+    let parent = accessible_for(conn, parent).await.ok()?;
+    for sibling in (index + 1..count).rev() {
+        let Some(Ok(child)) = call(parent.get_child_at_index(sibling)).await else {
+            continue;
+        };
+        let Some(raw) = RawObjectRef::from_atspi(&child) else {
+            continue;
+        };
+        let Ok(acc) = accessible_for(conn, &raw).await else {
+            continue;
+        };
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if !matches!(
+            call(component.contains(x, y, CoordType::Window)).await,
+            Some(Ok(true))
+        ) {
+            continue;
+        }
+        if matches!(call(acc.get_state()).await, Some(Ok(state)) if is_showing_state(&state)) {
+            return Some(raw);
+        }
+    }
+    None
 }
 
 impl PartialEq for RawObjectRef {
@@ -4209,8 +4326,9 @@ pub fn perform_action_at_point_in(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
@@ -4300,6 +4418,19 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn only_gtk3_and_older_answer_at_point_with_the_first_matching_child() {
+        use super::SiblingStacking::{FirstMatch, Topmost};
+        let of = super::SiblingStacking::of_toolkit;
+        assert_eq!(of("gtk", "3.24.49"), FirstMatch);
+        assert_eq!(of("GAIL", "2.24.33"), FirstMatch);
+        assert_eq!(of("GTK", "4.14.4"), Topmost);
+        assert_eq!(of("gtk", ""), Topmost);
+        assert_eq!(of("Qt", "5.15.13"), Topmost);
+        assert_eq!(of("Chromium", "126.0"), Topmost);
+        assert_eq!(of("VCL", "3.24"), Topmost);
+    }
 
     #[test]
     fn only_vcl_measures_from_the_wm_frame() {

@@ -53,7 +53,11 @@ async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] =
   await waitFor(() => expect(document.querySelector("[data-new-run=permissions], [data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
   if (document.querySelector("[data-new-run=permissions]")) click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=agent]:not([data-state=looking])")).not.toBeNull(), { timeout: 15_000 });
-  // Every agent found is ticked: Continue connects them, with nothing to pick first.
+  // Every agent found is ticked: Continue connects them, with nothing to pick first, each step shown as it happens
+  // (CUA-4067); Continue again once nothing runs.
+  click("[data-onboarding-primary]");
+  await waitFor(() => expect(document.querySelector("[data-new-run-checklist]")).not.toBeNull(), { timeout: 15_000 });
+  await waitFor(() => expect(document.querySelector<HTMLButtonElement>("[data-onboarding-primary]")!.disabled).toBe(false), { timeout: 30_000 });
   click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
   // Nothing is made while the first run shows.

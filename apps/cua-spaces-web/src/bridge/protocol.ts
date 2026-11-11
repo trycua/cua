@@ -421,7 +421,8 @@ export interface HostOperations
   /** Whether each agent on This Mac is really connected (`AgentSetup.connectionStatusJson`, `cua connect status --json`); `refresh` skips the few-second cache. */
   "agents.status": { args: { refresh?: boolean }; result: ConnectionReport };
   /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault on This Mac (`cua connect setup --sign-in`). */
-  "agents.connect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: ConnectResult[] };
+  /** `driver`: also the Cua Driver the app carries (its `driver` part); a host without one reports no such part. */
+  "agents.connect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean; driver?: boolean }; result: ConnectResult[] };
   /** Disconnect: Cua's entry out of the agent's config (the previous one back) and, with `signIn`, the copy in Keyvault (`cua connect remove --sign-in`). */
   "agents.disconnect": { args: { agents: string[]; signIn: boolean; skills?: boolean; mcp?: boolean }; result: { removed_sign_ins: string[] } };
   /** Starts an agent's device-code sign-in made for Cua (Codex: `codex login --device-auth` in a folder Cua owns): the link and the code to show. */

@@ -398,6 +398,22 @@ export interface ConnectionRowView {
   action: { id: string; label: string } | null;
 }
 
+/** One part of Connect (`cua_agent_setup::connection::Part`): setup shows a row for each, per agent. */
+export type ConnectPart = "mcp" | "skills" | "driver" | "sign_in";
+
+/** How one part ended (`PartStatus`). */
+export type ConnectPartStatus = "done" | "needs_permission" | "skipped" | "failed";
+
+/** What one part did (`cua_agent_setup::connection::PartResult`). */
+export interface ConnectPartResult {
+  part: ConnectPart;
+  status: ConnectPartStatus;
+  /** Where it was written, as the person reads it (`~/.claude.json`, `Keyvault`); null when nothing was. */
+  where: string | null;
+  /** Why, when it failed, needs a permission or was skipped. */
+  line: string | null;
+}
+
 /** What Connect did for one agent (`cua_agent_setup::connection::ConnectResult`). */
 export interface ConnectResult {
   agent: string;
@@ -409,4 +425,6 @@ export interface ConnectResult {
     refused: string | null;
     line: string | null;
   } | null;
+  /** One result per part asked for, in the order they ran. Absent from hosts older than CUA-4067. */
+  parts?: ConnectPartResult[];
 }

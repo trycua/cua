@@ -215,7 +215,7 @@ impl Tool for SetValueTool {
             pid,
             Some((element_ptr, Some(element_index))),
             Some(window_id),
-        );
+        ) != Some(false);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -898,7 +898,7 @@ pub(super) fn is_chromium_web_select(pid: i32, window_id: u32, element: AXUIElem
             pid,
             Some((element as usize, None)),
             Some(window_id),
-        )
+        ) == Some(true)
 }
 
 /// Refusal for a background press that would open a Chromium `<select>` menu

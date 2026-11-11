@@ -131,6 +131,33 @@ document URL. An unchanged DOM click readback remains `unverifiable`, with
 readback evidence: effects elsewhere on the page can be invisible to that
 readback, so verify the expected postcondition before retrying.
 
+## macOS text insertion
+
+`type_text` keeps uncertain delivery `unverifiable`: missing, unchanged, or
+untrusted readback does not establish zero delivery or `delivery_failed`.
+Web-content AX values are not renderer evidence, and another focused field
+cannot confirm the addressed insertion. Unverifiable results omit delivered
+counts and retry escalation.
+
+An accepted or uncertain atomic AX write is not replayed through keystrokes.
+Its read-back is drained for a bounded time on the same target, keeping the
+strongest observation: the expected value confirms the write, and a trusted
+prefix is a partial insertion with its delivered count. A value that stays
+unchanged, missing or untrusted until the drain ends is still `unverifiable`,
+not zero delivered, and is not retryable: a timeout only means the driver
+stopped waiting.
+
+A known unsupported attribute, an element that reports `AXSelectedText` as
+not settable, or web content (whose AX value the page never sees) takes
+bounded synthesis instead of an AX write. Nothing was written, so this is the
+first delivery, not a replay.
+
+Reobserve/verify the intended postcondition. Seeing the expected text confirms
+the earlier write. If the effect is still absent or ambiguous, keep the prior
+action outcome unknown; do not replay automatically. Trusted partial insertion
+retains the `type_text_incomplete` error, but marks it non-retryable and omits
+`retry_from_character`.
+
 ## Window target resolution
 
 Window-scoped actions accept a PID without `window_id` only when that process

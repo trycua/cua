@@ -445,7 +445,7 @@ impl Tool for HotkeyTool {
                     pid,
                     Some((web_guard.as_ptr(), Some(index))),
                     Some(wid),
-                )
+                ) == Some(true)
             })
             .await
             .unwrap_or(true);
@@ -657,6 +657,19 @@ fn delivered_structured(foreground: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_ancestry_does_not_classify_an_ax_target_as_web_content() {
+        let element = unsafe { crate::ax::bindings::AXUIElementCreateApplication(-1) };
+        assert!(!element.is_null());
+        let is_web = super::super::type_text::target_in_web_area(
+            -1,
+            Some((element as usize, None)),
+            Some(7),
+        );
+        unsafe { core_foundation::base::CFRelease(element as _) };
+        assert_eq!(is_web, None);
+    }
 
     #[test]
     fn menu_safety_refusals_do_not_fall_back_to_keys() {

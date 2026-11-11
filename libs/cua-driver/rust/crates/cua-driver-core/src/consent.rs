@@ -270,8 +270,62 @@ impl ResourceGrant {
 /// content, selectors, and typed input are never retained by this store.
 pub struct ProtectedResourceGrants {
     broker: Arc<ApprovalBroker>,
-    grants: Mutex<HashMap<ResourceGrantKey, ResourceGrant>>,
+    grants: Mutex<GrantTable>,
     admission: tokio::sync::Mutex<()>,
+}
+
+#[derive(Default)]
+struct GrantTable {
+    granted: HashMap<ResourceGrantKey, ResourceGrant>,
+    /// Bumped by every revocation. An authorization keeps the value it saw
+    /// when it started and stores its grant only if nothing it would belong
+    /// to was revoked since, so an approval that outlived its session's end
+    /// (queued behind another prompt, or accepted after the end) is dropped.
+    revocations: u64,
+    /// The revocation that last named each session, kept only while an
+    /// authorization is in progress.
+    session_revoked_at: HashMap<String, u64>,
+    all_revoked_at: u64,
+    authorizing: usize,
+}
+
+impl GrantTable {
+    fn revoked_since(&self, key: &ResourceGrantKey, since: u64) -> bool {
+        let revoked_at = |session: &str| self.session_revoked_at.get(session).copied();
+        self.all_revoked_at > since
+            || revoked_at(&key.public_session).is_some_and(|at| at > since)
+            || revoked_at(&key.transport_session).is_some_and(|at| at > since)
+    }
+}
+
+/// One authorization in progress, and the revocation count it started at.
+struct Authorizing<'a> {
+    table: &'a Mutex<GrantTable>,
+    since: u64,
+}
+
+impl<'a> Authorizing<'a> {
+    fn start(table: &'a Mutex<GrantTable>) -> Self {
+        let mut grants = table.lock().unwrap();
+        grants.authorizing += 1;
+        Self {
+            table,
+            since: grants.revocations,
+        }
+    }
+}
+
+impl Drop for Authorizing<'_> {
+    fn drop(&mut self) {
+        let mut grants = self
+            .table
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        grants.authorizing -= 1;
+        if grants.authorizing == 0 {
+            grants.session_revoked_at.clear();
+        }
+    }
 }
 
 /// Runtime-owned proof that a process was created and remains managed by Cua.
@@ -367,7 +421,7 @@ impl ProtectedResourceGrants {
     pub fn new(broker: Arc<ApprovalBroker>) -> Self {
         Self {
             broker,
-            grants: Mutex::new(HashMap::new()),
+            grants: Mutex::new(GrantTable::default()),
             admission: tokio::sync::Mutex::new(()),
         }
     }
@@ -430,6 +484,11 @@ impl ProtectedResourceGrants {
             }
             ModeBehavior::RequireGrant => {}
         }
+        let authorizing = Authorizing::start(&self.grants);
+        // Read after the snapshot: an end that lands later bumps the counter
+        // past it. A session already ended here may still be recreated at
+        // lifecycle admission, so its approval covers this call only.
+        let ended = lifecycle_session.is_some_and(crate::session::is_session_ended);
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
         if let Some(grant) = self.lookup(&key, context) {
@@ -466,6 +525,11 @@ impl ProtectedResourceGrants {
                 unreachable!("handled before protected admission")
             }
         };
+        let mut grants = self.grants.lock().unwrap();
+        if grants.revoked_since(&key, authorizing.since) {
+            protected.revoke();
+            return Err(ConsentError::Canceled);
+        }
         let now = Instant::now();
         let grant = ResourceGrant {
             adapter_id: adapter_id.to_owned(),
@@ -479,7 +543,9 @@ impl ProtectedResourceGrants {
             idle_ttl,
             absolute_ttl,
         };
-        self.grants.lock().unwrap().insert(key, grant.clone());
+        if !ended {
+            grants.granted.insert(key, grant.clone());
+        }
         Ok(Some(grant))
     }
 
@@ -489,7 +555,8 @@ impl ProtectedResourceGrants {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
     ) -> Option<ResourceGrant> {
         let now = Instant::now();
-        let mut grants = self.grants.lock().unwrap();
+        let mut table = self.grants.lock().unwrap();
+        let grants = &mut table.granted;
         let grant = grants.get_mut(key)?;
         if grant.expired(now)
             || grant.mode != context.mode()
@@ -507,7 +574,13 @@ impl ProtectedResourceGrants {
 
     pub fn revoke_session(&self, session: &str) -> Vec<ProtectedGrant> {
         let mut removed = Vec::new();
-        self.grants.lock().unwrap().retain(|key, grant| {
+        let mut table = self.grants.lock().unwrap();
+        table.revocations += 1;
+        if table.authorizing > 0 {
+            let at = table.revocations;
+            table.session_revoked_at.insert(session.to_owned(), at);
+        }
+        table.granted.retain(|key, grant| {
             let keep = key.public_session != session && key.transport_session != session;
             if !keep {
                 grant.protected.revoke();
@@ -527,15 +600,23 @@ impl ProtectedResourceGrants {
     ) -> Option<ProtectedGrant> {
         let digest = digest_resource(adapter_id, resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &digest);
-        self.grants.lock().unwrap().remove(&key).map(|grant| {
-            grant.protected.revoke();
-            grant.protected
-        })
+        self.grants
+            .lock()
+            .unwrap()
+            .granted
+            .remove(&key)
+            .map(|grant| {
+                grant.protected.revoke();
+                grant.protected
+            })
     }
 
     pub fn revoke_all(&self) -> Vec<ProtectedGrant> {
-        let mut grants = self.grants.lock().unwrap();
-        let removed = grants
+        let mut table = self.grants.lock().unwrap();
+        table.revocations += 1;
+        table.all_revoked_at = table.revocations;
+        let removed = table
+            .granted
             .drain()
             .map(|(_, grant)| {
                 grant.protected.revoke();
@@ -552,7 +633,7 @@ impl ProtectedResourceGrants {
 
 impl Drop for ProtectedResourceGrants {
     fn drop(&mut self) {
-        for (_, grant) in self.grants.get_mut().unwrap().drain() {
+        for (_, grant) in self.grants.get_mut().unwrap().granted.drain() {
             grant.protected.revoke();
         }
     }

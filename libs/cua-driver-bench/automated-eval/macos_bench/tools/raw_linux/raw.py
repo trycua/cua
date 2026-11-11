@@ -31,8 +31,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+import warnings
+
 import gi
 
+warnings.simplefilter("ignore", DeprecationWarning)  # gi's deprecated Accessible.get_text etc. stay callable
 gi.require_version("Atspi", "2.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Atspi, Gdk  # noqa: E402
@@ -79,6 +82,41 @@ _X11.XTranslateCoordinates.argtypes = [ctypes.c_void_p, Window, Window, ctypes.c
     ctypes.c_void_p
 ] * 3
 _X11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+_X11.XQueryTree.argtypes = [ctypes.c_void_p, Window] + [ctypes.c_void_p] * 4
+
+
+class _XWindowAttributes(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+        ("width", ctypes.c_int),
+        ("height", ctypes.c_int),
+        ("border_width", ctypes.c_int),
+        ("depth", ctypes.c_int),
+        ("visual", ctypes.c_void_p),
+        ("root", Window),
+        ("c_class", ctypes.c_int),
+        ("bit_gravity", ctypes.c_int),
+        ("win_gravity", ctypes.c_int),
+        ("backing_store", ctypes.c_int),
+        ("backing_planes", ctypes.c_ulong),
+        ("backing_pixel", ctypes.c_ulong),
+        ("save_under", ctypes.c_int),
+        ("colormap", ctypes.c_ulong),
+        ("map_installed", ctypes.c_int),
+        ("map_state", ctypes.c_int),
+        ("all_event_masks", ctypes.c_long),
+        ("your_event_mask", ctypes.c_long),
+        ("do_not_propagate_mask", ctypes.c_long),
+        ("override_redirect", ctypes.c_int),
+        ("screen", ctypes.c_void_p),
+    ]
+
+
+_X11.XGetWindowAttributes.argtypes = [ctypes.c_void_p, Window, ctypes.POINTER(_XWindowAttributes)]
+_X11.XSetErrorHandler.restype = ctypes.c_void_p
+_ERROR_HANDLER = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda d, e: 0)
+_X11.XSetErrorHandler(_ERROR_HANDLER)  # a window that vanished between QueryTree and a read is not fatal
 _X11.XCloseDisplay.argtypes = [ctypes.c_void_p]
 
 
@@ -188,6 +226,29 @@ class _X:
         )
         return sx.value, sy.value, w.value, h.value
 
+    def popups(self) -> tuple[int, ...]:
+        """Mapped override-redirect children of the root: open menus, combo popups, tooltips. A GTK menu or combo
+        popup holds the keyboard grab while it is open, so the user's window loses key focus."""
+        root, parent = Window(), Window()
+        children = ctypes.POINTER(Window)()
+        n = ctypes.c_uint()
+        if not _X11.XQueryTree(
+            self.dpy, self.root, ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(n)
+        ):
+            return ()
+        out = []
+        try:
+            attrs = _XWindowAttributes()
+            for i in range(n.value):
+                w = children[i]
+                if _X11.XGetWindowAttributes(self.dpy, w, ctypes.byref(attrs)) and attrs.override_redirect:
+                    if attrs.map_state == 2 and attrs.width > 1 and attrs.height > 1:  # IsViewable
+                        out.append(int(w))
+        finally:
+            if children:
+                _X11.XFree(children)
+        return tuple(sorted(out))
+
     def clients(self) -> list[int]:
         _, v = self.prop(self.root, "_NET_CLIENT_LIST_STACKING")
         return [int(w) for w in v]
@@ -294,7 +355,7 @@ class Watch:
         self.x = _X()
         self.interval = interval
         self.before = self.sample()
-        self.changes: dict[str, list[Any]] = {"pointer": [], "focus": [], "active": [], "top": []}
+        self.changes: dict[str, list[Any]] = {"pointer": [], "focus": [], "active": [], "top": [], "popups": []}
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.loop, daemon=True)
 
@@ -304,6 +365,7 @@ class Watch:
             "focus": self.x.focus(),
             "active": self.x.active(),
             "top": self.x.top(),
+            "popups": self.x.popups(),
         }
 
     def loop(self) -> None:
@@ -347,6 +409,14 @@ class Watch:
             lines.append(f"active window changed from {label(self.before['active'])} to {label(after['active'])}")
         if moved.get("focus"):
             lines.append(f"keyboard focus changed from {label(self.before['focus'])} to {label(after['focus'])}")
+        new_popups = sorted({w for seen in moved.get("popups", []) for w in seen} - set(self.before["popups"]))
+        if new_popups:
+            lines.append(
+                f"{len(new_popups)} popup window(s) opened during the script (a menu or combo popup takes the "
+                "keyboard grab from the user's window while it is open)"
+            )
+        else:
+            moved.pop("popups", None)
         if moved.get("top"):
             lines.append(f"top of the stacking order changed from {label(self.before['top'])} to {label(after['top'])}")
         self.x.close()
@@ -471,21 +541,20 @@ class Raw:
         ]
         if flags:
             parts.append(",".join(flags))
-        comp = node.get_component_iface()
-        if comp is not None:
-            e = comp.get_extents(Atspi.CoordType.SCREEN)
-            parts.append(f"@({e.x},{e.y} {e.width}x{e.height})")
-        act = node.get_action_iface()
-        if act is not None:
-            names = [act.get_action_name(i) for i in range(act.get_n_actions())]
+        if node.get_component_iface() is not None:
+            e = Atspi.Component.get_extents(node, Atspi.CoordType.SCREEN)
+            if e.x > -100000:
+                parts.append(f"@({e.x},{e.y} {e.width}x{e.height})")
+        if node.get_action_iface() is not None:
+            names = [Atspi.Action.get_action_name(node, i) for i in range(Atspi.Action.get_n_actions(node))]
             if names:
                 parts.append("actions=" + "/".join(names))
-        text = node.get_text_iface()
-        if text is not None:
-            parts.append(f"text={text.get_text(0, min(text.get_character_count(), 200))!r}")
-        value = node.get_value_iface()
-        if value is not None:
-            parts.append(f"value={value.get_current_value()}")
+        if node.get_text_iface() is not None:
+            text = Atspi.Text.get_text(node, 0, 200)
+            if text and text != name:
+                parts.append(f"text={text!r}")
+        if node.get_value_iface() is not None:
+            parts.append(f"value={Atspi.Value.get_current_value(node)}")
         return " ".join(parts)
 
     def dump(self, root: Any, depth: int = 12, limit: int = 400, showing_only: bool = True) -> str:

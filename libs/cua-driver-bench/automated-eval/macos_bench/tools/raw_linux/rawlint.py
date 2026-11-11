@@ -53,7 +53,7 @@ RULES: dict[str, Rule] = {
             f"{INPUT_RS}:4-15 (no XTest fallback: it delivers to the focused window); "
             f"{DRV}/crates/platform-linux/src/tools/move_cursor.rs:45 (only scope=desktop moves the real pointer); "
             f"{LINUX_MD}:26-31 (foreground is an authorized escalation, never automatic)",
-            "Use the element's AT-SPI Action (acc.get_action_iface().do_action(i)), EditableText or Value interface. "
+            "Use the element's AT-SPI Action (Atspi.Action.do_action(acc, i)), EditableText or Value interface. "
             "If the task needs a real hover or drag and no accessible route exists, call "
             'raw.escalate_foreground("<why the background route is unavailable>") first.',
         ),
@@ -369,13 +369,17 @@ def _const_str(node: ast.AST) -> str | None:
     return None
 
 
+def _pos(node: ast.AST) -> tuple[int, int]:
+    return getattr(node, "lineno", 0), getattr(node, "col_offset", 0)
+
+
 class _Walker(ast.NodeVisitor):
     def __init__(self) -> None:
         self.findings: list[Finding] = []
         self.escalation: str | None = None
         self.escalated = False
-        self.last_action = 0
-        self.last_read = 0
+        self.last_action: tuple[int, int] = (0, 0)
+        self.last_read: tuple[int, int] = (0, 0)
         self.seen: set[tuple[str, int]] = set()
 
     def add(self, rule: str, node: ast.AST, detail: str) -> None:
@@ -394,9 +398,9 @@ class _Walker(ast.NodeVisitor):
         if rule:
             self.add(rule, node, f"{name}")
         if name in ACTIONS:
-            self.last_action = max(self.last_action, getattr(node, "lineno", 0))
+            self.last_action = max(self.last_action, _pos(node))
         if name in READS:
-            self.last_read = max(self.last_read, getattr(node, "lineno", 0))
+            self.last_read = max(self.last_read, _pos(node))
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -428,9 +432,9 @@ class _Walker(ast.NodeVisitor):
         elif node.id in NAMES and NAMES[node.id] != "GUI1":
             self.name_hit(node.id, node)
         if node.id in ACTIONS:
-            self.last_action = max(self.last_action, node.lineno)
+            self.last_action = max(self.last_action, _pos(node))
         if node.id in READS:
-            self.last_read = max(self.last_read, node.lineno)
+            self.last_read = max(self.last_read, _pos(node))
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> None:
@@ -483,10 +487,8 @@ class _Walker(ast.NodeVisitor):
             self.add("BG6", node, f"xdotool {sub} --window (XSendEvent)")
         elif rule:
             self.add(rule, node, f"xdotool {sub}")
-            if rule == "BG1" and sub != "mousemove":
-                self.last_action = max(self.last_action, node.lineno)
         if sub in {"key", "type", "click"}:
-            self.last_action = max(self.last_action, node.lineno)
+            self.last_action = max(self.last_action, _pos(node))
 
 
 def lint(source: str) -> Report:
@@ -494,10 +496,10 @@ def lint(source: str) -> Report:
     tree = ast.parse(source, "<script>", "exec")
     walker = _Walker()
     walker.visit(tree)
-    if walker.last_action and walker.last_read <= walker.last_action:
+    if walker.last_action > (0, 0) and walker.last_read <= walker.last_action:
         walker.add(
             "VR1",
-            ast.Constant(value=None, lineno=walker.last_action),
+            ast.Constant(value=None, lineno=walker.last_action[0]),
             "no read after the last action on this line",
         )
     return Report(walker.findings, walker.escalated, walker.escalation)

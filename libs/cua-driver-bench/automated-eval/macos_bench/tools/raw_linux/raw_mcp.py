@@ -35,6 +35,7 @@ import rawlint  # noqa: E402
 RUNNER = HERE / "runner.py"
 LOG = Path(os.environ["RAW_LOG"]) if os.environ.get("RAW_LOG") else None
 TMP = Path(os.environ.get("RAW_TMP") or tempfile.mkdtemp(prefix="raw-linux-"))
+TMP.mkdir(parents=True, exist_ok=True)
 PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
 
@@ -44,15 +45,16 @@ on and read back elements yourself. The script body runs inside a function, so `
 it; print() output is returned too. Each call is a fresh process: nothing persists between calls.
 
 Available (global `raw`, plus `Atspi`):
-- raw.Atspi / Atspi: gi.repository.Atspi (AT-SPI 2). Useful: Atspi.get_desktop(0) -> apps; acc.get_role_name(), \
-get_name(), get_child_count(), get_child_at_index(i), get_state_set().contains(Atspi.StateType.X); \
-acc.get_action_iface() -> get_n_actions(), get_action_name(i), do_action(i); acc.get_editable_text_iface() -> \
-set_text_contents(s); acc.get_text_iface() -> get_text(0, -1); acc.get_value_iface() -> get_current_value(), \
-set_current_value(v); acc.get_component_iface() -> get_extents(Atspi.CoordType.SCREEN); \
-acc.get_selection_iface() -> select_child(i).
+- raw.Atspi / Atspi: gi.repository.Atspi (AT-SPI 2). Call interface methods in class form on the accessible \
+itself (the get_*_iface() getters only tell you whether an interface exists): Atspi.Action.get_n_actions(acc), \
+Atspi.Action.get_action_name(acc, i), Atspi.Action.do_action(acc, i); Atspi.EditableText.set_text_contents(acc, s); \
+Atspi.Text.get_text(acc, 0, -1); Atspi.Value.get_current_value(acc), Atspi.Value.set_current_value(acc, v); \
+Atspi.Component.get_extents(acc, Atspi.CoordType.SCREEN); Atspi.Selection.select_child(acc, i). Tree: \
+Atspi.get_desktop(0), acc.get_role_name(), get_name(), get_child_count(), get_child_at_index(i), get_parent(), \
+get_state_set().contains(Atspi.StateType.SHOWING).
 - raw.app(name=None, pid=None) -> the AT-SPI application; raw.find(root, role=None, name=None, contains=None, \
-showing=None) -> list of accessibles (role names like "push button", "text", "spin button", "combo box", \
-"check box", "label", "menu item", "list item", "table cell"); raw.describe(acc) -> one line; raw.dump(root, \
+showing=None) -> list of accessibles (role names as get_role_name() returns them, e.g. "button", "text", \
+"spin button", "combo box", "check box", "label", "menu item", "list item", "table cell"; dump a tree to see them); raw.describe(acc) -> one line; raw.dump(root, \
 depth=12) -> text tree of showing nodes.
 - raw.windows() -> [{window_id, title, pid, frame:(x,y,w,h)}] bottom to top; raw.pointer(); raw.active_window().
 - raw.screenshot(window_id=None, region=None) -> the PNG is returned to you as an image.
@@ -64,12 +66,15 @@ Background contract (checked before the script runs, and again while it runs):
 buttons/keys, XWarpPointer, Atspi.generate_mouse_event / generate_keyboard_event, xdotool mousemove/click/key/type \
 (without --window)/windowactivate/windowfocus/windowraise, XSetInputFocus, XRaiseWindow, _NET_ACTIVE_WINDOW, \
 wmctrl, Wayland/portal input. Grabs (XGrabKeyboard/Pointer/Key/Button/Server) are always blocked.
-- Prefer AT-SPI: do_action for buttons/checks/menu items, set_text_contents for text, set_current_value for spin \
-buttons and sliders. These need no focus and no pointer.
+- Prefer AT-SPI: Action.do_action for buttons/checks/menu items/combo boxes, EditableText.set_text_contents for \
+text, Value.set_current_value for spin buttons and sliders. These need no focus and no pointer.
 - When a task truly needs the real pointer or keyboard (e.g. a hover-only control, a drag with no accessible \
 action, a tooltip that only shows on hover) and no accessible route works, put \
 `raw.escalate_foreground("<why the background route is unavailable>")` at the top of that script. The lint then \
 allows the pointer/focus/key calls in that script only, and the result reports the escalation.
+- Combo boxes: opening one with its "press" action shows a popup that takes the keyboard grab from the user's \
+window. Select an item without opening it: Atspi.Action.do_action on the (hidden) menu item, or \
+Atspi.Selection.select_child(combo, i).
 - Not available: files, processes, network, other imports (GUI-only); eval/exec/getattr with computed names.
 - An action the API accepted is not proof it worked: read the element back (get_text, get_current_value, states, \
 a screenshot) before you report success.

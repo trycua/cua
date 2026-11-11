@@ -33,7 +33,7 @@ class RawLintTest(unittest.TestCase):
 
     def test_atspi_action_with_read_back_is_clean(self):
         src = (
-            'b = raw.find(raw.app("BenchLab"), role="push button", name="Apply")[0]\n'
+            'b = raw.find(raw.app("BenchLab"), role="button", name="Apply")[0]\n'
             "b.get_action_iface().do_action(0)\n"
             "return raw.describe(b)\n"
         )
@@ -98,6 +98,11 @@ class RawLintTest(unittest.TestCase):
         noread = rawlint.lint("b.get_action_iface().do_action(0)")
         self.assertTrue(noread.ok)
         self.assertEqual({f.rule for f in noread.findings}, {"VR1"})
+        # a read later on the same line counts (one-line scripts)
+        oneline = rawlint.lint("Atspi.Action.do_action(b, 0); raw.sleep(0.3); return raw.dump(a)")
+        self.assertEqual(oneline.findings, [])
+        before = rawlint.lint("x = raw.dump(a); Atspi.Action.do_action(b, 0)")
+        self.assertEqual({f.rule for f in before.findings}, {"VR1"})
 
     def test_every_rule_cites_a_source_and_an_alternative(self):
         for rule in rawlint.RULES.values():

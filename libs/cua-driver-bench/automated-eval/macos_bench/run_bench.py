@@ -1134,6 +1134,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             SOURCE_ARM.get(arm) in ca.CUA_ARMS
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
+        elif SOURCE_ARM.get(arm) == ca.RAW_LINUX_ARM:
+            stop_agent_daemons(ctx)  # no Cua Driver (and no driver overlay) during a raw-linux trial
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = (
                 None  # set even when park_pointer raises, so the row shows the attempt

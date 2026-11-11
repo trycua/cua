@@ -20,8 +20,8 @@ use super::impl_::{
     position_named_session_keyboard_cursor, prove_token_element, resolve_cursor_key,
     resolve_element_local_coords, spawn_blocking_bounded, stale_observed_element,
     unavailable_chromium_background, unavailable_gtk_keyboard_background,
-    unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
-    wm_chord_background, KeyRoute, ToolState,
+    unavailable_qt_shortcut_background, unavailable_wayland_focused_input_background,
+    unavailable_webkit_keyboard_background, wm_chord_background, KeyRoute, ToolState,
 };
 
 // ── hotkey ────────────────────────────────────────────────────────────────────
@@ -256,6 +256,9 @@ impl Tool for HotkeyTool {
         }
         if let Some(result) = wm_chord_background(pid, xid, &key, &mods, delivery).await {
             return result;
+        }
+        if let Some(refusal) = unavailable_qt_shortcut_background(pid, xid, &mods, delivery) {
+            return refusal;
         }
 
         let px = args.get("x").and_then(|value| value.as_f64());

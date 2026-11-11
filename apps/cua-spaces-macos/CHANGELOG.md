@@ -1,5 +1,278 @@
 # Changelog
 
+## [0.33.6](https://github.com/trycua/cua/compare/cua-spaces-v0.33.5...cua-spaces-v0.33.6) (2026-11-11)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.24.2 in Cua Spaces ([#7361](https://github.com/trycua/cua/issues/7361)) ([7b3ed7d](https://github.com/trycua/cua/commit/7b3ed7d013572046ae3bbf0464bccf8c2528ca5c))
+
+## [0.33.5](https://github.com/trycua/cua/compare/cua-spaces-v0.33.4...cua-spaces-v0.33.5) (2026-11-11)
+
+
+### Bug Fixes
+
+* **cua-vmm:** boot cold when a guest cannot take a restored identity; one readiness budget per start ([#7354](https://github.com/trycua/cua/issues/7354)) ([82412af](https://github.com/trycua/cua/commit/82412afdca85c7fca0ca3c63d1be3f080fb0e9c2))
+
+## [0.33.4](https://github.com/trycua/cua/compare/cua-spaces-v0.33.3...cua-spaces-v0.33.4) (2026-11-11)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.47.8 in Cua Spaces ([#7323](https://github.com/trycua/cua/issues/7323)) ([76e8c49](https://github.com/trycua/cua/commit/76e8c4971d72d9d8a1dcca95d3dab60738d54d02))
+
+## [0.33.3](https://github.com/trycua/cua/compare/cua-spaces-v0.33.2...cua-spaces-v0.33.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.24.0 in Cua Spaces ([#7329](https://github.com/trycua/cua/issues/7329)) ([ced3db7](https://github.com/trycua/cua/commit/ced3db710caeeba1ae46853436521ddf7bd62a5e))
+
+## [0.33.2](https://github.com/trycua/cua/compare/cua-spaces-v0.33.1...cua-spaces-v0.33.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **runtime:** setup runsc no longer says already available on a runc-only Docker ([#7314](https://github.com/trycua/cua/issues/7314)) ([bc640ca](https://github.com/trycua/cua/commit/bc640ca8186aed9999f98596decf4b5a9cd9a607))
+
+## [0.33.1](https://github.com/trycua/cua/compare/cua-spaces-v0.33.0...cua-spaces-v0.33.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **spaces:** fork a checkpoint as the kind its engine makes on a direct host ([#7318](https://github.com/trycua/cua/issues/7318)) ([972ad01](https://github.com/trycua/cua/commit/972ad01b8e0a31ad81758aef367f40b55ea4e800))
+
+## [0.33.0](https://github.com/trycua/cua/compare/cua-spaces-v0.32.0...cua-spaces-v0.33.0) (2026-11-11)
+
+
+### Features
+
+* **spaces:** closing the window keeps Cua Spaces running, Quit stops the background service ([#7136](https://github.com/trycua/cua/issues/7136)) ([4af5875](https://github.com/trycua/cua/commit/4af587598509724ca1c716cbda5092d13794b8ea))
+* **spaces:** Home shows your computers as one supercomputer (CUA-3976) ([#7166](https://github.com/trycua/cua/issues/7166)) ([49f716e](https://github.com/trycua/cua/commit/49f716e9c7e224db0f1bafbb2957be385f308e01))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.22.0 in Cua Spaces ([#7293](https://github.com/trycua/cua/issues/7293)) ([2808b64](https://github.com/trycua/cua/commit/2808b642accf99c0a27b9667dc62f28a978c6837))
+* **spaces-macos:** bundle cua 0.23.0 in Cua Spaces ([#7302](https://github.com/trycua/cua/issues/7302)) ([61cbd6a](https://github.com/trycua/cua/commit/61cbd6a3cdf6d5a793f5b92c0de1e97d65d5755c))
+
+
+### Performance Improvements
+
+* **cua-sdk:** build libcua_sdk in its own crate so cua-sdk is rlib-only (CUA-3971) ([#7250](https://github.com/trycua/cua/issues/7250)) ([73b54ae](https://github.com/trycua/cua/commit/73b54aeb62c5c5a253be761d30f4026dea2f1fd5))
+
+## [0.32.0](https://github.com/trycua/cua/compare/cua-spaces-v0.31.4...cua-spaces-v0.32.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Agents tab starts agents from the Home box, one entry per Space, easy to clear ([#7275](https://github.com/trycua/cua/issues/7275)) ([5a0b65f](https://github.com/trycua/cua/commit/5a0b65f7d6af5a1c09e7f3aced03d809cbd4d521))
+
+## [0.31.4](https://github.com/trycua/cua/compare/cua-spaces-v0.31.3...cua-spaces-v0.31.4) (2026-11-10)
+
+
+### Performance Improvements
+
+* **cua-ci:** build cua-ci beside cua-sdk, not after it (CUA-3971) ([#7240](https://github.com/trycua/cua/issues/7240)) ([1d23545](https://github.com/trycua/cua/commit/1d23545a03689800046f5fd7ecf78c3d128dec61))
+
+## [0.31.3](https://github.com/trycua/cua/compare/cua-spaces-v0.31.2...cua-spaces-v0.31.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.21.0 in Cua Spaces ([#7241](https://github.com/trycua/cua/issues/7241)) ([9ffb9f3](https://github.com/trycua/cua/commit/9ffb9f3234af232e0cfb38ad8650f9013bc232f3))
+* **spaces:** a computer's row opens its shared desktop's Space page ([#7263](https://github.com/trycua/cua/issues/7263)) ([7b8d889](https://github.com/trycua/cua/commit/7b8d889130252a72972319d4f6791b59aeb442cb))
+* **spaces:** first agent on This Mac after Set up no longer fails to reach it ([#7161](https://github.com/trycua/cua/issues/7161)) ([4611678](https://github.com/trycua/cua/commit/46116784b637483e750f624ef0ef6fb74c745bde))
+* **spaces:** job Spaces show as one labeled row, not as raw runs ([#7006](https://github.com/trycua/cua/issues/7006)) ([8fe112f](https://github.com/trycua/cua/commit/8fe112f91046deb571c02bd0985d9fbbcf80e4b1))
+* **spaces:** the first-run test finds the permissions button by its mark, not its old label ([#7251](https://github.com/trycua/cua/issues/7251)) ([8c9e15d](https://github.com/trycua/cua/commit/8c9e15d0f3f199f856f998e83cdc23659c2bdebf))
+* **volume:** a stalled sync never hangs an agent start or the mount (CUA-4002) ([#7237](https://github.com/trycua/cua/issues/7237)) ([7f4a358](https://github.com/trycua/cua/commit/7f4a35873a00a101563394f54f8497d1288a3c8b))
+
+
+### Performance Improvements
+
+* **cua-cli:** build cua-compat beside cua-cli, not before it (CUA-3971) ([#7222](https://github.com/trycua/cua/issues/7222)) ([5bf6559](https://github.com/trycua/cua/commit/5bf6559ab9942885cb5972928dd764bca5b6f7e2))
+* **cua:** split cua-daemon into cua-daemon-core and the server (CUA-3971) ([#7214](https://github.com/trycua/cua/issues/7214)) ([9058fbe](https://github.com/trycua/cua/commit/9058fbe9f873c5ccc038a8350472045869275895))
+
+## [0.31.2](https://github.com/trycua/cua/compare/cua-spaces-v0.31.1...cua-spaces-v0.31.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spaces:** read spaces.json once per connect ([#7235](https://github.com/trycua/cua/issues/7235)) ([1344c86](https://github.com/trycua/cua/commit/1344c86d1cf892002c454b5c73139b9bca62f47a))
+
+## [0.31.1](https://github.com/trycua/cua/compare/cua-spaces-v0.31.0...cua-spaces-v0.31.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces:** an offline computer reads offline within seconds, not minutes (CUA-3981) ([#7175](https://github.com/trycua/cua/issues/7175)) ([ac7d344](https://github.com/trycua/cua/commit/ac7d344d5d7e5fedb83cf8d61f50252f49f02c52))
+* **spaces:** declutter the Computers page ([#7143](https://github.com/trycua/cua/issues/7143)) ([f0d57a5](https://github.com/trycua/cua/commit/f0d57a53ccc77ffc6a8d4d3b375649f7e83cbf24))
+* **spaces:** new-user friction from the 10 Nov device test (CUA-3980) ([#7176](https://github.com/trycua/cua/issues/7176)) ([55730e3](https://github.com/trycua/cua/commit/55730e3f48d43038276e22c6a8cf1fbf1934d9a5))
+* **spaces:** setup's step bars count the steps it really shows (CUA-3973) ([#7159](https://github.com/trycua/cua/issues/7159)) ([742d386](https://github.com/trycua/cua/commit/742d386788f43c76e7752d038dc12f9676b39717))
+
+## [0.31.0](https://github.com/trycua/cua/compare/cua-spaces-v0.30.0...cua-spaces-v0.31.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** Child Spaces and Warm start are always on, their Labs switches are gone (CUA-3751) ([#6873](https://github.com/trycua/cua/issues/6873)) ([57942a0](https://github.com/trycua/cua/commit/57942a0e67625dffe0f79f9ea146395ff1cdac53))
+
+## [0.30.0](https://github.com/trycua/cua/compare/cua-spaces-v0.29.0...cua-spaces-v0.30.0) (2026-11-10)
+
+
+### Features
+
+* **spaces:** agent chip shows model and reasoning level, with an inline Reasoning row ([#6861](https://github.com/trycua/cua/issues/6861)) ([bec0f80](https://github.com/trycua/cua/commit/bec0f80852f79ff8c4f6201436a10dcc29ad58d5))
+
+
+### Bug Fixes
+
+* **cua-daemon:** gate client-only code so the build without the client feature is warning-free ([#7209](https://github.com/trycua/cua/issues/7209)) ([ac6e7bf](https://github.com/trycua/cua/commit/ac6e7bff58ed7884ceb59bf6dedd74681e45e340))
+
+
+### Performance Improvements
+
+* **spaces:** install-local dev-fast by default, parallel cua-spacesd, --build-only (CUA-3971) ([#7184](https://github.com/trycua/cua/issues/7184)) ([ffb587a](https://github.com/trycua/cua/commit/ffb587a7933d535b8c2d7c11e6a6ee9e2f9fb123))
+
+## [0.29.0](https://github.com/trycua/cua/compare/cua-spaces-v0.28.1...cua-spaces-v0.29.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** show each Space's progress when spaces create makes several ([#7185](https://github.com/trycua/cua/issues/7185)) ([c4403a6](https://github.com/trycua/cua/commit/c4403a69674986ac086666b3108903cd60e1ab46))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.20.0 in Cua Spaces ([#7199](https://github.com/trycua/cua/issues/7199)) ([4b867b2](https://github.com/trycua/cua/commit/4b867b2dc7c03ee6db90a543a956b73d6fb35456))
+
+## [0.28.1](https://github.com/trycua/cua/compare/cua-spaces-v0.28.0...cua-spaces-v0.28.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-desktop:** bundle the web app's packages by their exports so the Electron shell boots ([#7194](https://github.com/trycua/cua/issues/7194)) ([8ed14fe](https://github.com/trycua/cua/commit/8ed14fe24bd2d253ed4486e33e6bede9294a73bd))
+
+## [0.28.0](https://github.com/trycua/cua/compare/cua-spaces-v0.27.3...cua-spaces-v0.28.0) (2026-11-10)
+
+
+### Features
+
+* **cua-driver:** connect --replace switches an agent from another Cua Driver ([#7190](https://github.com/trycua/cua/issues/7190)) ([e15e9dd](https://github.com/trycua/cua/commit/e15e9dd47cdc970e7cbed5fec87e377c28ddae0f))
+
+## [0.27.3](https://github.com/trycua/cua/compare/cua-spaces-v0.27.2...cua-spaces-v0.27.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces:** Restart to update quits the app when it does nothing so the update installs, and the release tests the upgrade ([#7133](https://github.com/trycua/cua/issues/7133)) ([ff264dc](https://github.com/trycua/cua/commit/ff264dc99316c41e7d1c1ad95b8f5b9578a380fd))
+
+## [0.27.2](https://github.com/trycua/cua/compare/cua-spaces-v0.27.1...cua-spaces-v0.27.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.19.0 in Cua Spaces ([#7182](https://github.com/trycua/cua/issues/7182)) ([1cf7418](https://github.com/trycua/cua/commit/1cf7418970b7c167765262d5ac38ada91ecc514e))
+
+## [0.27.1](https://github.com/trycua/cua/compare/cua-spaces-v0.27.0...cua-spaces-v0.27.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **cua-spaces:** hold Child Spaces on in the relay_publish opt-out test ([#7181](https://github.com/trycua/cua/issues/7181)) ([5b89d98](https://github.com/trycua/cua/commit/5b89d98fb55496c104ecac4221229bb2080ebdb9))
+
+## [0.27.0](https://github.com/trycua/cua/compare/cua-spaces-v0.26.2...cua-spaces-v0.27.0) (2026-11-10)
+
+
+### Features
+
+* **cua:** report agent run and Space create status to the terminal (OSC 7501) ([#5155](https://github.com/trycua/cua/issues/5155)) ([f54ca3d](https://github.com/trycua/cua/commit/f54ca3de1cd7468a5ec2e74be571a80d9b2b532b))
+
+## [0.26.2](https://github.com/trycua/cua/compare/cua-spaces-v0.26.1...cua-spaces-v0.26.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.18.1 in Cua Spaces ([#7167](https://github.com/trycua/cua/issues/7167)) ([752a41b](https://github.com/trycua/cua/commit/752a41b0df800250863eca3cd949738926236ba5))
+* **spaces-macos:** bundle Cua Driver 0.46.1 in Cua Spaces ([#7162](https://github.com/trycua/cua/issues/7162)) ([1a6184f](https://github.com/trycua/cua/commit/1a6184fc45c758f434fecf0109cd8071617b5f50))
+
+## [0.26.1](https://github.com/trycua/cua/compare/cua-spaces-v0.26.0...cua-spaces-v0.26.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-vmm:** one constant for the oldest Lume cua runs on ([#6946](https://github.com/trycua/cua/issues/6946)) ([311d525](https://github.com/trycua/cua/commit/311d525ab705dcebdc82dceefa175c32d2da1e18))
+
+## [0.26.0](https://github.com/trycua/cua/compare/cua-spaces-v0.25.2...cua-spaces-v0.26.0) (2026-11-09)
+
+
+### Features
+
+* **agents:** official sign-in on each computer, stop copying sign-ins by default (CUA-3907) ([#7045](https://github.com/trycua/cua/issues/7045)) ([5a14a01](https://github.com/trycua/cua/commit/5a14a01e43fc350dead0f5098d08958b68cff3ce))
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+
+### Bug Fixes
+
+* **auth:** redact tokens in Debug output ([#7071](https://github.com/trycua/cua/issues/7071)) ([#7097](https://github.com/trycua/cua/issues/7097)) ([646d5eb](https://github.com/trycua/cua/commit/646d5eb76db3ffaef409aef77986ac7d368be1a6))
+* **crash:** scrub tokens before sending to Sentry ([#7098](https://github.com/trycua/cua/issues/7098)) ([0d1eb93](https://github.com/trycua/cua/commit/0d1eb93c301e6ab1a9b1492ddb1db93f11f5fe7d))
+* **spaces-macos:** bundle cua 0.16.0 in Cua Spaces ([#7014](https://github.com/trycua/cua/issues/7014)) ([4e18418](https://github.com/trycua/cua/commit/4e18418b82fd70c34587406026086798be1a203f))
+* **spaces-macos:** bundle Cua Driver 0.45.4 in Cua Spaces ([#7100](https://github.com/trycua/cua/issues/7100)) ([a81c82c](https://github.com/trycua/cua/commit/a81c82c1d8cd8d28bf81df3de4fa9da1322b2ba0))
+* **spaces:** dogfood fixes from 8 Nov (setup, sign-in, Cua Driver, Local Network, Home) ([#7046](https://github.com/trycua/cua/issues/7046)) ([14f9e88](https://github.com/trycua/cua/commit/14f9e8845134af1c13a71e2f57e5b18565df0320))
+* **spaces:** install-local reads the pinned wasm-bindgen version without the trailing semicolon ([#7123](https://github.com/trycua/cua/issues/7123)) ([1a34d4e](https://github.com/trycua/cua/commit/1a34d4ecf173a8753d0d3d439fe770d3b189b59e))
+
+## [0.25.2](https://github.com/trycua/cua/compare/cua-spaces-v0.25.1...cua-spaces-v0.25.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **spaces-desktop:** resolve the web app's i18n dependencies in the Electron build ([#7117](https://github.com/trycua/cua/issues/7117)) ([258724d](https://github.com/trycua/cua/commit/258724de5296e70d0a4de6e403439c63bd8f9892))
+
+## [0.25.1](https://github.com/trycua/cua/compare/cua-spaces-v0.25.0...cua-spaces-v0.25.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-volume:** a saved presence heartbeat replaces the last one, and a saved change whose bytes are gone is forgotten (fixes [#6859](https://github.com/trycua/cua/issues/6859)) ([#6864](https://github.com/trycua/cua/issues/6864)) ([2349735](https://github.com/trycua/cua/commit/2349735830d4f6e8391c97557d578374e79a4ee2))
+
+## [0.25.0](https://github.com/trycua/cua/compare/cua-spaces-v0.24.0...cua-spaces-v0.25.0) (2026-11-09)
+
+
+### Features
+
+* **spaces:** a Space uses the pool, its runs are its children and are cleaned up with it ([#6945](https://github.com/trycua/cua/issues/6945)) ([a35099d](https://github.com/trycua/cua/commit/a35099d7bcc5548d9d1b86b901d20e025a0594b9))
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+* **cua-agents:** an agent's log event bigger than the read window no longer stalls the reader, and the journal keeps lines small ([#7004](https://github.com/trycua/cua/issues/7004)) ([8b339c5](https://github.com/trycua/cua/commit/8b339c56feb1b03252d3e72ff7a6e3d961af856f))
+* **spaces:** do not Authenticode-sign the Linux microVM init in the Windows build ([#7038](https://github.com/trycua/cua/issues/7038)) ([9ec4ba3](https://github.com/trycua/cua/commit/9ec4ba39013339524bfb54d2c0aeca8bd0035559))
+* **spaces:** hold back an agent's narration of its own process in the thread ([#7027](https://github.com/trycua/cua/issues/7027)) ([fa605be](https://github.com/trycua/cua/commit/fa605be7c8dc15c7042205ae98d5a85699c36a47))
+* **spaces:** New agent starts in your running Space, not a machine's desktop or an offline one ([#6976](https://github.com/trycua/cua/issues/6976)) ([f2068eb](https://github.com/trycua/cua/commit/f2068eb68198973a7463041ae32cb747dacd7aa0))
+* **spaces:** run Prettier on the Cua Spaces apps again ([#7073](https://github.com/trycua/cua/issues/7073)) ([6285c48](https://github.com/trycua/cua/commit/6285c481d2d867eb954a6e6c5531ba8a88182832))
+* **spaces:** runs from a Space are confined children and a Space cannot start its own daemon ([#7055](https://github.com/trycua/cua/issues/7055)) ([8275285](https://github.com/trycua/cua/commit/82752858f6256eaf4e8eccf9033cf27ad3163cea))
+* **spaces:** Start an agent says before Start when the agent has no provider to use ([#6977](https://github.com/trycua/cua/issues/6977)) ([e16eeb3](https://github.com/trycua/cua/commit/e16eeb3e71a5604c339c41d7770ece6da6ab69ce))
+
+## [0.24.0](https://github.com/trycua/cua/compare/cua-spaces-v0.23.1...cua-spaces-v0.24.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** Ask first and Secure Spaces are always on, their Labs switches are gone (CUA-3551) ([#6775](https://github.com/trycua/cua/issues/6775)) ([cc67e71](https://github.com/trycua/cua/commit/cc67e715d11b7450a82663bf7e308e6680422beb))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.44.0 and keep it current ([#7013](https://github.com/trycua/cua/issues/7013)) ([7e8a5b1](https://github.com/trycua/cua/commit/7e8a5b16cbf6cb3599bb975f3c6d2cb05fa17989))
+
+## [0.23.1](https://github.com/trycua/cua/compare/cua-spaces-v0.23.0...cua-spaces-v0.23.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **spaces-macos:** ask for Local Network when this Mac starts accepting Spaces from your other computers ([#7005](https://github.com/trycua/cua/issues/7005)) ([69b459b](https://github.com/trycua/cua/commit/69b459b33ca001a5e7026dee4f57da1ec02ee53f))
+
 ## [0.23.0](https://github.com/trycua/cua/compare/cua-spaces-v0.22.5...cua-spaces-v0.23.0) (2026-11-08)
 
 

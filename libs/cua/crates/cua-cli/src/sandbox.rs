@@ -101,7 +101,7 @@ impl EndedCloudArgs {
     }
 }
 
-#[derive(Args, Debug, Default)]
+#[derive(Args, Default)]
 pub struct CreateArgs {
     /// Image: a registry reference (`ghcr.io/org/image:tag`), an alias
     /// (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`).
@@ -256,6 +256,51 @@ pub struct CreateArgs {
     forkable: bool,
     #[command(flatten)]
     ended: EndedCloudArgs,
+}
+
+impl std::fmt::Debug for CreateArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateArgs")
+            .field("image", &self.image)
+            .field("on", &self.on)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("tier", &self.tier)
+            .field("name", &self.name)
+            .field("browser", &self.browser)
+            .field("open", &self.open)
+            .field("install", &self.install)
+            .field("cpu", &self.cpu)
+            .field("memory", &self.memory)
+            .field("network", &self.network)
+            .field("disk", &self.disk)
+            .field("ports", &self.ports)
+            .field("wait", &self.wait)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("overlays", &self.overlays)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_secret",
+                &self.registry_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("pool", &self.pool)
+            .field("ttl", &self.ttl)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("image_flag", &self.image_flag)
+            .field("wait_tcp", &self.wait_tcp)
+            .field("wait_http", &self.wait_http)
+            .field("view", &self.view)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("headless", &self.headless)
+            .field("no_spacesd", &self.no_spacesd)
+            .field("gpu", &self.gpu)
+            .field("profile", &self.profile)
+            .field("forkable", &self.forkable)
+            .field("ended", &self.ended)
+            .finish()
+    }
 }
 
 #[derive(Args, Debug)]
@@ -1891,7 +1936,7 @@ async fn create(
             match &steps {
                 Some(steps) => {
                     let steps = steps.clone();
-                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| steps.show(p))))
+                    Box::pin(sandboxes.create_reporting(o, Arc::new(move |p| drop(steps.show(p)))))
                 }
                 None => Box::pin(sandboxes.create(o)),
             };

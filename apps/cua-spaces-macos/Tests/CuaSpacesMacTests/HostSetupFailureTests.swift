@@ -16,8 +16,8 @@ struct HostSetupFailureTests {
     @Test func aMissingReleaseIsADownloadFailureWithoutTheURL() {
         let f = HostSetupFailure.presenting(Self.missingRelease)
         #expect(f.kind == .download)
-        #expect(f.title == "Couldn\u{2019}t download the Cua host service")
-        #expect(f.message.contains("update Cua Spaces"))
+        #expect(f.title == "Couldn\u{2019}t set up sharing for this Mac")
+        #expect(f.message.contains("internet connection"))
         #expect(!f.message.contains("http"))
         #expect(!f.title.contains("http"))
         #expect(f.details == Self.missingRelease, "details stay raw")

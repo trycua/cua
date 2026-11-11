@@ -3,7 +3,7 @@ title: A Space's exit and paths
 description: Send a Space's internet traffic out through this computer, another Space or a proxy, reach this computer's ports from a Space, and see the path between your computers.
 ---
 
-This page continues [A Space's network](/cua-sdk/guides/egress). Everything here is part of the Secure Spaces [experiment](/spaces/guides/experiments).
+This page continues [A Space's network](/cua-sdk/guides/egress). Everything here is part of Secure Spaces.
 
 ## Exit through
 
@@ -65,7 +65,7 @@ A runtime that can't protect a Space never starts it open on its own. `cua netwo
 ## Requirements
 
 - Containers: `nft` (nftables) where the container engine runs. A deny of another member of the same tree also needs the kernel module `nf_conntrack_bridge` (Linux 5.3 or later) on the engine's host. Without it the Space doesn't start, and the error says to load the module with `sudo modprobe nf_conntrack_bridge`.
-- VMs on Linux: `pasta` (the passt package) and unprivileged user namespaces, and `cua-netgw` for VMs that talk to their tree. Any passt works: cua asks `pasta --help` and passes `--host-lo-to-ns-lo` (which passt releases since late 2024 need to deliver a VM's forwarded ports to its loopback) only when the installed one lists it. Ubuntu 24.04 restricts those to programs with an AppArmor profile; allow pasta with one that grants `userns`, or set `kernel.apparmor_restrict_unprivileged_userns=0`.
+- VMs on Linux: `pasta` (the passt package) and unprivileged user namespaces, and `cua-netgw` for VMs that talk to their tree. Any passt works: cua asks `pasta --help` and passes `--host-lo-to-ns-lo` (which passt releases since late 2024 need to deliver a VM's forwarded ports to its loopback) only when the installed one lists it. Ubuntu 24.04 restricts those to programs with an AppArmor profile; allow pasta with one that grants `userns`, or set `kernel.apparmor_restrict_unprivileged_userns=0`. Cua carries the VM's published ports (its channel, SSH, the display) into the namespace itself rather than through pasta's forwards, which add about 40 ms to every round trip in passt releases before 2025; `CUA_NSFWD=0` uses pasta's forwards instead.
 
 To check it from inside a Space as root: `nft flush ruleset; iptables -F` changes nothing, a raw socket can't be opened in a container, and a connection to this computer's address times out.
 

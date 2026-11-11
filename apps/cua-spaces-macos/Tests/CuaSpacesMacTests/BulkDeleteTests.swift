@@ -25,7 +25,7 @@ struct BulkDeleteTests {
                     cloudDelete: nil, stopReason: nil,
                     sharing: AppSpaceSharingFacts(ownerId: "sam", ownerEmail: "sam@example.com",
                                                   ownerName: "Sam Rivera", role: "editor", team: nil,
-                                                  teamName: nil, editors: [], viewers: [], teams: []))
+                                                  teamName: nil, editors: [], viewers: [], teams: []), parent: nil)
     }
 
     @Test func deletingSeveralShowsEachDeletingAndAnswersOncePerId() async throws {

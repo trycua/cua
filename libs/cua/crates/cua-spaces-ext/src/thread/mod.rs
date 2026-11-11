@@ -1486,6 +1486,31 @@ pub fn dm_summary(
 }
 
 /// One task, as the entries so far say.
+/// The first few words of a task's text for a notice, without the leading
+/// `@handle`s that addressed it, in curly quotes: `“look at the flaky test”`.
+pub fn task_words(text: &str) -> String {
+    let body: Vec<&str> = text
+        .split_whitespace()
+        .skip_while(|w| w.starts_with('@'))
+        .take(6)
+        .collect();
+    let mut out = body.join(" ");
+    let more = text
+        .split_whitespace()
+        .skip_while(|w| w.starts_with('@'))
+        .count()
+        > 6;
+    out = out.trim_end_matches(['.', ',', ':', ';']).to_string();
+    if more {
+        out.push('…');
+    }
+    if out.is_empty() {
+        out = "its task".into();
+        return out;
+    }
+    format!("\u{201c}{out}\u{201d}")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TaskInfo {
     /// The task's entry.

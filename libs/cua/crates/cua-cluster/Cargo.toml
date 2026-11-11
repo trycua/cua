@@ -12,6 +12,9 @@ homepage = "https://cua.ai/docs/cua-sdk"
 keywords = ["cua","computer-use","scheduler","jobs","mesh"]
 categories = ["network-programming","asynchronous"]
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
+
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true

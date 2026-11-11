@@ -555,12 +555,21 @@ impl PressAdmission {
 
 /// Run `work` on the blocking pool with an admission that is cancelled when
 /// this future is dropped, so a worker that outlives its call presses nothing.
+/// A press already admitted cannot be recalled, so the worker shares the pid's
+/// mutation lease and holds the desktop lane until it returns: the next action
+/// waits for it rather than running beside it.
 async fn run_admitted<T: Send + 'static>(
+    mutation: Arc<super::BackgroundMutationLease>,
     work: impl FnOnce(&PressAdmission) -> T + Send + 'static,
 ) -> Result<T, tokio::task::JoinError> {
     let admission = PressAdmission::default();
     let _cancel = CancelOnDrop(admission.clone());
-    tokio::task::spawn_blocking(move || work(&admission)).await
+    let lane = cua_driver_core::tool::DesktopLease::current();
+    tokio::task::spawn_blocking(move || {
+        let _held = (mutation, lane);
+        work(&admission)
+    })
+    .await
 }
 
 /// What the background route knows about the pressed item.
@@ -773,7 +782,7 @@ pub(super) async fn run_in_background(
     path: Vec<String>,
     request: MenuRequest,
 ) -> ToolResult {
-    let _mutation = super::acquire_background_mutation(pid).await;
+    let mutation = Arc::new(super::acquire_background_mutation(pid).await);
     let document = tokio::task::spawn_blocking(move || document_path_of_window(pid, window_id))
         .await
         .ok()
@@ -782,7 +791,7 @@ pub(super) async fn run_in_background(
         .as_deref()
         .and_then(crate::apple_events::modified_time);
     let press_path = path.clone();
-    let outcome = run_admitted(move |admission| {
+    let outcome = run_admitted(mutation.clone(), move |admission| {
         let _key_focus = crate::key_focus_guard::protect(pid);
         unsafe { invoke_path_in_background(pid, window_id, &press_path, admission) }
     })
@@ -937,6 +946,7 @@ impl Tool for InvokeMenuTool {
         // window.
         let mut args = args;
         super::default_window_for_pid(&mut args);
+        let prompt = cua_driver_core::security_prompt::PromptInput::from_args(&args);
         let input: InvokeMenuInput =
             match cua_driver_core::tool_args::parse_typed_input("invoke_menu", args) {
                 Ok(input) => input,
@@ -950,6 +960,9 @@ impl Tool for InvokeMenuTool {
             Ok(pid) => pid,
             Err(_) => return refusal("invoke_menu: pid is out of range".into()),
         };
+        if let Err(refusal) = crate::security_prompt::refuse_pid(prompt, pid) {
+            return refusal;
+        }
         let window_id = match u32::try_from(input.window_id) {
             Ok(window_id) => window_id,
             Err(_) => return refusal("invoke_menu: window_id is out of range".into()),
@@ -1090,7 +1103,8 @@ mod tests {
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let (pressed_tx, pressed_rx) = std::sync::mpsc::channel();
-        let call = tokio::spawn(run_admitted(move |admission| {
+        let mutation = Arc::new(super::super::acquire_background_mutation(-92_002).await);
+        let call = tokio::spawn(run_admitted(mutation, move |admission| {
             let _ = started_tx.send(());
             let _ = release_rx.recv();
             let _ = pressed_tx.send(admission.admit(|| ()).is_ok());
@@ -1104,9 +1118,44 @@ mod tests {
         assert!(!pressed, "a worker whose call was dropped pressed the item");
     }
 
+    /// The next action on the same pid waits for a dropped call's worker to
+    /// finish its press, instead of running beside it.
+    #[tokio::test]
+    async fn a_dropped_call_keeps_the_pid_until_its_worker_returns() {
+        let pid = -92_001;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        // The call holds the pid's lease while it awaits the worker, as
+        // run_in_background does.
+        let call = tokio::spawn(async move {
+            let mutation = Arc::new(super::super::acquire_background_mutation(pid).await);
+            run_admitted(mutation.clone(), move |_| {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv();
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        let mut next = tokio::spawn(super::super::acquire_background_mutation(pid));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut next)
+                .await
+                .is_err(),
+            "the next action started while the dropped call's worker still ran"
+        );
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), next)
+            .await
+            .expect("the next action starts once the worker returns")
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn a_live_background_call_presses_once() {
-        let pressed = run_admitted(|admission| admission.admit(|| 7))
+        let mutation = Arc::new(super::super::acquire_background_mutation(-92_003).await);
+        let pressed = run_admitted(mutation, |admission| admission.admit(|| 7))
             .await
             .unwrap();
         assert!(matches!(pressed, Ok(7)));

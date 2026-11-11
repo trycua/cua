@@ -34,6 +34,54 @@
           {
             "button" : null,
             "enabled" : true,
+            "help" : "Your agents can still create and manage Spaces. Quit Cua Spaces in the menu bar, or press ⌘Q, to stop it.",
+            "id" : "close-window",
+            "kind" : "choice",
+            "label" : "When I close the window",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "keep",
+                "label" : "Keep running in the background"
+              },
+              {
+                "active" : false,
+                "id" : "quit",
+                "label" : "Quit Cua Spaces"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
+            "help" : null,
+            "id" : "close-notice",
+            "kind" : "toggle",
+            "label" : "Tell me when Cua Spaces keeps running",
+            "linkLabel" : null,
+            "linkUrl" : null,
+            "options" : [
+              {
+                "active" : true,
+                "id" : "on",
+                "label" : "On"
+              },
+              {
+                "active" : false,
+                "id" : "off",
+                "label" : "Off"
+              }
+            ],
+            "placeholder" : null,
+            "value" : null
+          },
+          {
+            "button" : null,
+            "enabled" : true,
             "help" : "Opening a running Space shows its live desktop",
             "id" : "auto-connect",
             "kind" : "toggle",

@@ -647,6 +647,10 @@ def changed_crates(changes: Changes, env: Dict[str, str]) -> Dict[str, Tuple[Wor
 
 LOCKFILE_RX = r"(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|uv\.lock|pyproject\.toml|rust-toolchain\.toml)$|^scripts/ci/(check-lockfiles\.sh|lockfile-drift-allowlist\.txt)$"
 TSX = "node docs/node_modules/tsx/dist/cli.mjs"
+# The pre-commit hook's Prettier.
+PRETTIER = "npx -y prettier@3.6.2"
+SPACES_APPS = "apps/cua-spaces/ apps/cua-spaces-web/ apps/cua-spaces-desktop/ apps/cua-spaces-mobile/"
+SPACES_PRETTIER_RX = r"^apps/cua-spaces(-web|-desktop|-mobile)?/.*\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|json|md|ya?ml|css|html)$"
 # CI's pnpm/action-setup reads the root package.json packageManager for docs.
 DOCS_DEPS = ("docs/node_modules/tsx/dist/cli.mjs", "{pnpm} --dir docs install --frozen-lockfile")
 
@@ -719,7 +723,7 @@ SYNC_REFS: List[Tuple[str, str, str]] = [
 # Checks whose standalone GitHub workflow was deleted because `CI: Quick` runs them (CUA-3558). On a
 # runner (CUA_CI_REQUIRE_TOOLS=1, set by ci-quick.yml) a missing tool fails them instead of skipping
 # them, so a runner image change can never turn one of these checks into a silent pass.
-QUICK_COVERED_IDS = "spdx,spdx-driver,lockfiles,actionlint,larger-runners,image-refs,image-tests,python,rust-fmt,docs-image-refs"
+QUICK_COVERED_IDS = "spdx,spdx-driver,spaces-prettier,lockfiles,actionlint,larger-runners,image-refs,image-tests,python,rust-fmt,docs-image-refs"
 REQUIRED_TOOL_CHECKS = set(QUICK_COVERED_IDS.split(",")) if os.environ.get("CUA_CI_REQUIRE_TOOLS") == "1" else set()
 
 
@@ -734,6 +738,15 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
     if changes.touches(r"^libs/cua-driver/.*\.(rs|swift)$"):
         add(Check("spdx-driver", "SPDX headers (Cua Driver, MIT)", "python3 scripts/spdx-headers.py --check libs/cua-driver",
                   fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True))
+
+    # Each Spaces app has its own .prettierrc.yaml. Only the changed files are checked: some files are not
+    # formatted yet, and each one is formatted the next time it changes. git lists the files, so a large
+    # change does not overflow the Windows command line.
+    if changes.existing(SPACES_PRETTIER_RX):
+        files = (f"{{ git diff -z --name-only --diff-filter=d {changes.base} -- {SPACES_APPS}; "
+                 f"git ls-files -z --others --exclude-standard -- {SPACES_APPS}; }} | {{ grep -zE '{SPACES_PRETTIER_RX}' || true; }} | sort -zu | xargs -0 -r ")
+        add(Check("spaces-prettier", "Prettier on the changed Cua Spaces app files", f"{files}{PRETTIER} --check",
+                  fix=f"{files}{PRETTIER} --write", safe_fix=True, tools=("npx",)))
 
     lock_hits = changes.touches(LOCKFILE_RX)
     if lock_hits:
@@ -852,7 +865,7 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                       ci=(("ci-cua-spaces-macos.yml", "node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build"),)))
 
     # Self-tests for this tool and the CI helper scripts.
-    if changes.touches(r"^(bin/ci$|scripts/ci/|\.github/workflows/)"):
+    if changes.touches(r"^(bin/ci$|scripts/ci/|scripts/spdx-headers\.py$|\.github/workflows/|.*\.sh$)"):
         add(Check("bin-ci-tests", "bin/ci tests and workflow sync", "python3 -m unittest discover -s scripts/ci/tests -q && python3 bin/ci --verify-sync",
                   ci=(("ci-test-scripts.yml", "python3 -m unittest discover -s scripts/ci/tests"),)))
     if changes.touches(r"^\.github/scripts/"):
@@ -1097,8 +1110,16 @@ def build_plan(changes: Changes, ctx: Context) -> List[Check]:
 ERROR_RX = re.compile(r"(error|Diff in|would reformat|FAIL|stale|out of sync|drift|panicked|not up to date|missing|no disposition|differ|warning: unused|✗|❌)", re.I)
 
 
+def read_log(log: Path) -> str:
+    """Log text, or "" when the file is gone (another bin/ci run pruned it); a report must never crash on that."""
+    try:
+        return log.read_text(errors="replace")
+    except OSError:
+        return ""
+
+
 def excerpt(log: Path, limit: int = 14) -> List[str]:
-    lines = [l.rstrip() for l in log.read_text(errors="replace").splitlines() if l.strip()]
+    lines = [l.rstrip() for l in read_log(log).splitlines() if l.strip()]
     rustc = [l for l in lines if re.match(r"(error(\[E\d+\])?: (?!failed to run custom build|could not compile|build failed)|\s+--> )", l)]
     if rustc:
         return [l[:220] for l in rustc[:limit]]
@@ -1185,7 +1206,7 @@ class Runner:
                 self.report(res)
             return res
         if c.classify:
-            status, detail = c.classify(logfile.read_text(errors="replace"), rc)
+            status, detail = c.classify(read_log(logfile), rc)
         res = Result(c, status, time.monotonic() - start, logfile, detail)
         if not self.quiet:
             self.report(res)
@@ -1199,9 +1220,9 @@ class Runner:
 def fix_commands(r: Result) -> List[str]:
     c = r.check
     cmds = []
-    if c.fix_from_output and r.log and r.log.exists():
+    if c.fix_from_output and r.log:
         rx = re.compile(c.fix_from_output)
-        for line in r.log.read_text(errors="replace").splitlines():
+        for line in read_log(r.log).splitlines():
             m = rx.search(line.strip())
             if m and m.group(1) not in cmds:
                 cmds.append(m.group(1))
@@ -1283,6 +1304,23 @@ def apply_fixes(results: List[Result], ctx: Context, logdir: Path) -> List[Resul
 def state_dir() -> Path:
     d = Path(git("rev-parse", "--absolute-git-dir").strip()) / "bin-ci"
     (d / "logs").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def new_run_logdir(root: Path, max_age: float = 6 * 3600) -> Path:
+    """A log directory owned by this run only. Runs sharing one worktree (a --quick and a --signoff, a hook, a retry)
+    used to wipe each other's logs at start, which crashed the report at default parallelism. Prune only old dirs."""
+    now = time.time()
+    for old in root.iterdir():
+        try:
+            if old.is_file():  # logs left by older versions of bin/ci
+                old.unlink()
+            elif old.name.startswith("run-") and now - old.stat().st_mtime > max_age:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:  # Windows: still open elsewhere; another run may have removed it already
+            pass
+    d = root / f"run-{os.getpid()}-{int(now)}"
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -1554,12 +1592,7 @@ def main(argv: Sequence[str]) -> int:
         print("bin/ci: no local check covers these files")
         return 0
 
-    logdir = state_dir() / "logs"
-    for old in logdir.glob("*.log"):
-        try:
-            old.unlink()
-        except OSError:  # Windows: a log another bin/ci run (a test of this one) still has open
-            pass
+    logdir = new_run_logdir(state_dir() / "logs")
     sweep_stale_targets()
     atexit.register(ctx.cleanup_target)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))

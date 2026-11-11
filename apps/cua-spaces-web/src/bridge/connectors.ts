@@ -27,6 +27,8 @@ export interface ConnectorAppInput {
   skills: boolean;
   mcp: boolean | null;
   mcpConfig: string | null;
+  /** The app's own sign-in is on this computer: a run here uses it, nothing to sign in to. */
+  signedIn?: boolean;
 }
 
 export interface ConnectorsInput {
@@ -293,6 +295,7 @@ export function connectorsInputOf(
       skills: r.skillsTotal > 0 ? r.skillsInstalled >= r.skillsTotal : r.configured,
       mcp: r.mcpConfig ? r.configured || /MCP/i.test(r.detail) : null,
       mcpConfig: r.mcpConfig,
+      signedIn: r.signedIn,
     })),
     keys: { keys: keys.keys, unavailable: keys.unavailable, ...(keys.warning ? { warning: keys.warning } : {}), error: keys.error },
     ...(keys.extras?.length ? { keyExtras: keys.extras } : {}),
@@ -313,13 +316,25 @@ export const connectorsView = (core: CoreClient, input: ConnectorsInput, os: Hos
 export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: string): ConnectPlan | null =>
   core.tryCall<ConnectPlan>("connectors.connectPlan", { input: input as unknown as Json, agent }) ?? null;
 
-export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
+export const providerSheet = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  provider: string,
+  os: HostOs = hostOs(),
+  forApp: string | null = null,
+): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
 
 export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
   core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
 
-export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
+export const providerPicker = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  forApp: string | null = null,
+  query = "",
+  expanded = false,
+): ProviderPickerView | null =>
   core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
 
 /** One model row of the prompt box's model menu. */

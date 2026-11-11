@@ -51,25 +51,139 @@ export function demoCiState(start: DemoCiStart): DemoCiState {
 function jobs(now: number): CiOverview["jobs"] {
   const base = { start_mode: "", machine: "", machine_type: "", cloud: "", spot: false, log_pool: "hosted", log_slot: "" };
   return [
-    { ...base, job_key: "9912/301", name: "test", repo: "acme/app", state: "running", queued_ms: now - 3 * MIN, wait_ms: 4_000, run_ms: null, cost_micros: null, all_in_micros: null, start_mode: "warm_pool", machine: "cua-ci-7", machine_type: "c7i.xlarge", cloud: "aws", spot: true, log_slot: "s7" },
-    { ...base, job_key: "9911/298", name: "build", repo: "acme/app", state: "passed", queued_ms: now - 16 * MIN, wait_ms: 6_000, run_ms: 72_000, cost_micros: 41_000, all_in_micros: 52_000, start_mode: "fork", machine: "cua-ci-7", machine_type: "c7i.xlarge", cloud: "aws", spot: true, log_slot: "s7" },
-    { ...base, job_key: "9910/295", name: "lint", repo: "acme/api", state: "failed", queued_ms: now - 2 * 60 * MIN, wait_ms: 21_000, run_ms: 38_000, cost_micros: 27_000, all_in_micros: 27_000, start_mode: "cold_create", machine: "cua-ci-4", machine_type: "c7i.large", cloud: "aws", log_slot: "s4" },
-    { ...base, job_key: "9905/280", name: "build", repo: "acme/docs", state: "passed", queued_ms: now - 5 * 60 * MIN, wait_ms: 1_800, run_ms: 94_000, cost_micros: 38_000, all_in_micros: 61_000, start_mode: "warm_pool", machine: "cua-ci-7", machine_type: "c7i.xlarge", cloud: "aws", spot: true, log_slot: "s7" },
-    { ...base, job_key: "9800/210", name: "unit", repo: "acme/app", state: "passed", queued_ms: now - 26 * 60 * MIN, wait_ms: 1_200, run_ms: 190_000, start_mode: "warm_pool", log_slot: "s1" },
-    { ...base, job_key: "9790/205", name: "ui tests", repo: "acme/app", state: "failed", queued_ms: now - 50 * 60 * MIN, wait_ms: 2_400, run_ms: 411_000, start_mode: "warm_pool", log_slot: "s1" },
-    { ...base, job_key: "9700/110", name: "release", repo: "acme/api", state: "passed", queued_ms: now - 4 * 24 * 60 * MIN, wait_ms: 3_000, run_ms: 133_000, cost_micros: 61_000, all_in_micros: 70_000, start_mode: "warm_pool", machine: "cua-ci-2", machine_type: "c7i.xlarge", cloud: "aws", log_slot: "s2" },
+    {
+      ...base,
+      job_key: "9912/301",
+      name: "test",
+      repo: "acme/app",
+      state: "running",
+      queued_ms: now - 3 * MIN,
+      wait_ms: 4_000,
+      run_ms: null,
+      cost_micros: null,
+      all_in_micros: null,
+      start_mode: "warm_pool",
+      machine: "cua-ci-7",
+      machine_type: "c7i.xlarge",
+      cloud: "aws",
+      spot: true,
+      log_slot: "s7",
+    },
+    {
+      ...base,
+      job_key: "9911/298",
+      name: "build",
+      repo: "acme/app",
+      state: "passed",
+      queued_ms: now - 16 * MIN,
+      wait_ms: 6_000,
+      run_ms: 72_000,
+      cost_micros: 41_000,
+      all_in_micros: 52_000,
+      start_mode: "fork",
+      machine: "cua-ci-7",
+      machine_type: "c7i.xlarge",
+      cloud: "aws",
+      spot: true,
+      log_slot: "s7",
+    },
+    {
+      ...base,
+      job_key: "9910/295",
+      name: "lint",
+      repo: "acme/api",
+      state: "failed",
+      queued_ms: now - 2 * 60 * MIN,
+      wait_ms: 21_000,
+      run_ms: 38_000,
+      cost_micros: 27_000,
+      all_in_micros: 27_000,
+      start_mode: "cold_create",
+      machine: "cua-ci-4",
+      machine_type: "c7i.large",
+      cloud: "aws",
+      log_slot: "s4",
+    },
+    {
+      ...base,
+      job_key: "9905/280",
+      name: "build",
+      repo: "acme/docs",
+      state: "passed",
+      queued_ms: now - 5 * 60 * MIN,
+      wait_ms: 1_800,
+      run_ms: 94_000,
+      cost_micros: 38_000,
+      all_in_micros: 61_000,
+      start_mode: "warm_pool",
+      machine: "cua-ci-7",
+      machine_type: "c7i.xlarge",
+      cloud: "aws",
+      spot: true,
+      log_slot: "s7",
+    },
+    {
+      ...base,
+      job_key: "9800/210",
+      name: "unit",
+      repo: "acme/app",
+      state: "passed",
+      queued_ms: now - 26 * 60 * MIN,
+      wait_ms: 1_200,
+      run_ms: 190_000,
+      start_mode: "warm_pool",
+      log_slot: "s1",
+    },
+    {
+      ...base,
+      job_key: "9790/205",
+      name: "ui tests",
+      repo: "acme/app",
+      state: "failed",
+      queued_ms: now - 50 * 60 * MIN,
+      wait_ms: 2_400,
+      run_ms: 411_000,
+      start_mode: "warm_pool",
+      log_slot: "s1",
+    },
+    {
+      ...base,
+      job_key: "9700/110",
+      name: "release",
+      repo: "acme/api",
+      state: "passed",
+      queued_ms: now - 4 * 24 * 60 * MIN,
+      wait_ms: 3_000,
+      run_ms: 133_000,
+      cost_micros: 61_000,
+      all_in_micros: 70_000,
+      start_mode: "warm_pool",
+      machine: "cua-ci-2",
+      machine_type: "c7i.xlarge",
+      cloud: "aws",
+      log_slot: "s2",
+    },
   ];
 }
 
 export function demoCiOverview(s: DemoCiState, now: number): CiOverview {
   const allowed = s.repos.filter((r) => r.allowed).length;
-  const used = s.busy ? [{ name: "acme/app", jobs_7d: 31 }, { name: "acme/api", jobs_7d: 9 }] : [];
+  const used = s.busy
+    ? [
+        { name: "acme/app", jobs_7d: 31 },
+        { name: "acme/api", jobs_7d: 9 },
+      ]
+    : [];
   return {
     generated_ms: now,
     setup: SETUP(s.connected, s.connected ? allowed : 0, used.length, s.busy),
-    github: s.connected ? { connected: true, mode: "hosted", login: ORG, choose_url: `https://github.com/organizations/${ORG}/settings/installations` } : { connected: false, mode: "none", login: "", choose_url: "" },
+    github: s.connected
+      ? { connected: true, mode: "hosted", login: ORG, choose_url: `https://github.com/organizations/${ORG}/settings/installations` }
+      : { connected: false, mode: "none", login: "", choose_url: "" },
     repositories: { used, all: s.connected ? s.repos.map((r) => ({ ...r })) : null },
-    usage: s.busy ? { starts_24h: 18, jobs_7d: 40, pass_rate_7d: 0.925, spend_7d_micros: 3_190_000 } : { starts_24h: 0, jobs_7d: 0, pass_rate_7d: null, spend_7d_micros: 0 },
+    usage: s.busy
+      ? { starts_24h: 18, jobs_7d: 40, pass_rate_7d: 0.925, spend_7d_micros: 3_190_000 }
+      : { starts_24h: 0, jobs_7d: 0, pass_rate_7d: null, spend_7d_micros: 0 },
     jobs: s.busy ? jobs(now) : [],
     targets: s.busy
       ? [
@@ -79,20 +193,39 @@ export function demoCiOverview(s: DemoCiState, now: number): CiOverview {
             warm: null,
             autopilot: {
               classes: [
-                { class: "linux", phase: "steady", jobs_seen: 212, warm_now: 1, idle_ttl_secs: 600, spot: true, reasons: ["Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.", "Spot machines were taken back 2 times in 212 jobs, so spot is still used."] },
+                {
+                  class: "linux",
+                  phase: "steady",
+                  jobs_seen: 212,
+                  warm_now: 1,
+                  idle_ttl_secs: 600,
+                  spot: true,
+                  reasons: [
+                    "Jobs arrive on weekdays between 9 and 18, so one machine is kept ready in those hours.",
+                    "Spot machines were taken back 2 times in 212 jobs, so spot is still used.",
+                  ],
+                },
                 { class: "macos", phase: "learning", jobs_seen: 6, warm_now: 0, idle_ttl_secs: 600, spot: false, reasons: [] },
               ],
             },
           },
         ]
       : [],
-    budget: s.busy ? { month_committed_micros: 12_400_000, monthly_micros: 50_000_000, state: "ok" } : { month_committed_micros: 0, monthly_micros: 0, state: "ok" },
+    budget: s.busy
+      ? { month_committed_micros: 12_400_000, monthly_micros: 50_000_000, state: "ok" }
+      : { month_committed_micros: 0, monthly_micros: 0, state: "ok" },
   };
 }
 
 type Handlers = { [K in CiOp]: (args: OpArgs<K>) => Promise<OpResult<K>> | OpResult<K> };
 
-export function demoCiHandlers(ctx: { state: DemoCiState; now: () => number; wait: (ms: number) => Promise<void>; stepMs: number; signedIn: () => boolean }): Handlers {
+export function demoCiHandlers(ctx: {
+  state: DemoCiState;
+  now: () => number;
+  wait: (ms: number) => Promise<void>;
+  stepMs: number;
+  signedIn: () => boolean;
+}): Handlers {
   const { state, now, wait, stepMs } = ctx;
   return {
     "ci.overview": async () => {
@@ -125,8 +258,8 @@ export function demoCiHandlers(ctx: { state: DemoCiState; now: () => number; wai
       await wait(stepMs);
       const changed: string[] = [];
       for (const r of state.repos) {
-        if (allow?.includes(r.name) && !r.allowed) (r.allowed = true), changed.push(`serving ${r.name}`);
-        if (remove?.includes(r.name) && r.allowed) (r.allowed = false), changed.push(`no longer serving ${r.name}`);
+        if (allow?.includes(r.name) && !r.allowed) ((r.allowed = true), changed.push(`serving ${r.name}`));
+        if (remove?.includes(r.name) && r.allowed) ((r.allowed = false), changed.push(`no longer serving ${r.name}`));
       }
       return { changed };
     },

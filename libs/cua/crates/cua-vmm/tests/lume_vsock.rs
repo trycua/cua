@@ -66,6 +66,8 @@ fn spec(name: &str) -> StartSpec {
 
 #[tokio::test]
 async fn a_macos_start_uses_the_vsock_forwards_lume_reports() {
+    // About the vsock path, not the network gateway Secure Spaces (on by default) puts a VM behind.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let host_port = guest_service();
     let state = fake(Some(json!({ "3211": host_port }))).await;
     let rt = fake_lume::runtime(serve(state.clone()).await);
@@ -98,6 +100,7 @@ async fn a_macos_start_uses_the_vsock_forwards_lume_reports() {
 
 #[tokio::test]
 async fn without_vsock_a_start_keeps_the_vm_address() {
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let state = fake(None).await;
     let rt = fake_lume::runtime(serve(state.clone()).await);
     let mut s = spec("cua-e2e-no-vsock");

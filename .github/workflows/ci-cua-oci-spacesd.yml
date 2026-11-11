@@ -18,18 +18,19 @@ on:
       - "libs/cua/crates/cua-vmm/src/inject.rs"
       - "libs/cua/crates/cua-vmm/src/container/**"
       - "libs/cua/crates/cua-vmm/src/microvm/**"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - "tests/e2e/local-runtimes/tests/oci_any.rs"
       - "tests/e2e/local-runtimes/tests/space_jobs.rs"
       - "libs/cua/crates/cua-spaces/src/space_jobs.rs"
       - ".github/workflows/ci-cua-oci-spacesd.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
       - "libs/cua-spacesd/**"
       - "libs/cua/crates/cua-vmm/src/inject.rs"
       - "libs/cua/crates/cua-vmm/src/container/**"
-      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-daemon-core/src/local.rs"
       - ".github/workflows/ci-cua-oci-spacesd.yml"
   workflow_dispatch:
 
@@ -51,12 +52,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   static:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: static cua-spacesd (musl)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -98,8 +99,8 @@ jobs:
 
   containers:
     name: containers (docker, runc)
-    needs: static
-    if: ${{ !failure() && !cancelled() && needs.static.result == 'success' }}
+    needs: [quick, static]
+    if: ${{ !failure() && !cancelled() && needs.static.result == 'success' && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

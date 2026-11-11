@@ -88,7 +88,16 @@ export function summarize(inputs: SpaceInput[], machines: MachineInfo[], loaded 
       statusWord: STATUS_WORD[tone],
       statusLine: s.state && s.state !== "Running" ? s.state : s.machine.online ? (top?.line ?? "") : "Offline",
       members: [
-        ...s.members.map<SpaceMemberRow>((m) => ({ id: m.name, name: m.identity?.displayName || m.name, kind: "agent", harness: m.harness, status: m.status, activity: m.activity, role: null, here: m.status === "working" })),
+        ...s.members.map<SpaceMemberRow>((m) => ({
+          id: m.name,
+          name: m.identity?.displayName || m.name,
+          kind: "agent",
+          harness: m.harness,
+          status: m.status,
+          activity: m.activity,
+          role: null,
+          here: m.status === "working",
+        })),
         ...s.people,
       ],
       lastMessage: s.last ? { text: s.last.text, author: s.last.author.name, tsMs: s.last.tsMs } : null,

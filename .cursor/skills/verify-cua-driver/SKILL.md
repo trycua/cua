@@ -93,7 +93,7 @@ The runner uses `cua-e2e-report --require-video` and ffprobe validation. A passi
 
 Testkit's child reaper owns daemon/fixture groups; the sentinel owns its own group. Scope exit reaps them. The X11 wrapper traps exit and kills/waits only the openbox and picom PIDs it captured with `$!`; xvfb-run and dbus-run-session own their sessions. The Wayland wrapper owns its compositor and bus PIDs. Never use process-name matching or kill another desktop.
 
-After session teardown, the helper invokes `scripts/check-evidence.sh` on the printed directory, even if the desktop command failed. The checker requires complete current-attempt evidence and checks `kill -0` against recorded daemon PIDs and discovered `CuaTestHarness` window PIDs, without killing them. Malformed extraction, zero recorded PIDs or any surviving PID fails verification, not permission to kill by name. Do not delete the evidence directory. A timeout or crash may leave incomplete evidence; inspect the launch log and recorded PIDs before retrying.
+After session teardown, the helper invokes `scripts/check-evidence.sh` on the printed directory, even if the desktop command failed. The checker requires complete current-attempt evidence for every cell declared in `cases.jsonl`, so a `CUA_E2E_CELL_FILTER` run is checked against the cells it selected, and checks `kill -0` against recorded daemon PIDs and discovered `CuaTestHarness` window PIDs, without killing them. Malformed extraction, zero recorded PIDs or any surviving PID fails verification, not permission to kill by name. Do not delete the evidence directory. A timeout or crash may leave incomplete evidence; inspect the launch log and recorded PIDs before retrying.
 
 ## Helpers
 

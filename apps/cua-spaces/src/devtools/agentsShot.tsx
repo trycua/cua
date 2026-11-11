@@ -92,8 +92,7 @@ const teleport = {
   // the monogram fallback for every row, which is what the panel shows when an
   // icon CANNOT be resolved -- a figure full of fallbacks says the product is
   // broken. Returning null for an app not in the map keeps that fallback honest.
-  spaceAppIcon: async (_space: string, appName: string) =>
-    (realAppIcons as Record<string, string>)[appName] ?? null,
+  spaceAppIcon: async (_space: string, appName: string) => (realAppIcons as Record<string, string>)[appName] ?? null,
   spacePrimaryDisplay: async () => null,
   spaceAppIcons: async (_s: string, requests: { appName: string }[]) =>
     requests.map((r) => (realAppIcons as Record<string, string>)[r.appName] ?? null),
@@ -123,8 +122,24 @@ const bridge = fakeSpacesBridge({
       os: "macos",
       reachable: true,
     },
-    { id: "direct:aurora", name: "aurora", provider: "direct", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
-    { id: "direct:orion", name: "orion", provider: "direct", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: false },
+    {
+      id: "direct:aurora",
+      name: "aurora",
+      provider: "direct",
+      spacesdVersion: "0.4.0",
+      features: [],
+      os: "linux",
+      reachable: true,
+    },
+    {
+      id: "direct:orion",
+      name: "orion",
+      provider: "direct",
+      spacesdVersion: "0.4.0",
+      features: [],
+      os: "linux",
+      reachable: false,
+    },
   ],
   status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
 });

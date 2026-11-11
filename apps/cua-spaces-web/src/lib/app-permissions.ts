@@ -64,22 +64,104 @@ export function homeAppsRowLine(permissions: readonly Pick<DriverPermission, "gr
   return off === 1 ? "One switch in System Settings is still off." : "Two switches in System Settings are still off.";
 }
 
+/** Local Network, on a Mac that runs macOS Spaces: its row's words, the same wherever it shows. */
+export function localNetworkWords(appName: string): PermissionWords {
+  return { title: "Run macOS Spaces on this Mac", sub: `Local Network, given to ${appName}` };
+}
+
+/**
+ * The Local Network row's live status: On once allowed; after Allow, while macOS's question waits for an answer;
+ * Off once the person said no; nothing before Allow (nothing was checked, so nothing is known).
+ */
+export function localNetworkStatus(input: { granted: boolean; waiting: boolean; denied: boolean }): { label: string; done: boolean; checking: boolean } | null {
+  if (input.granted) return { label: "On", done: true, checking: false };
+  if (input.waiting) return { label: "Waiting for your answer", done: false, checking: true };
+  if (input.denied) return { label: "Off", done: false, checking: false };
+  return null;
+}
+
+/** The Local Network row's button: Allow makes macOS ask; once it said no, the button opens the settings instead. */
+export function localNetworkButton(denied: boolean): string {
+  return denied ? "Open Settings" : "Allow";
+}
+
+/**
+ * Said just before macOS asks (under the rows), so its question is no surprise; once it said no, where to turn it on.
+ * Plain words: macOS's own question says "find and connect to devices on your local network".
+ */
+export function localNetworkNote(appName: string, denied: boolean): string {
+  return denied
+    ? `macOS Spaces can't start until you turn on ${appName} in System Settings, under Privacy & Security, Local Network.`
+    : `macOS Spaces run on a small network inside this Mac. After Allow, macOS asks if ${appName} can find devices on your local network. Click Allow there too.`;
+}
+
 /** The first run's permissions step. */
 export interface PermissionsStepView {
   title: string;
   line: string;
   /** Under the rows. */
   note: string;
-  /** The button: Continue once both are on, else Later (the step never blocks the run). */
-  primary: { label: "Continue" | "Later"; white: boolean };
+  /**
+   * The button. Continue (white) once everything is on. Until then it says it goes on without what is still off, so
+   * nobody reads it as done (the step never blocks the run).
+   */
+  primary: { label: string; white: boolean };
+  /** The rows still off, in the order they show: `id` is the row's `data-app-permission`. */
+  missing: { id: string; title: string }[];
+  /** Beside the button while something is off: what, by the rows' own titles. Pressing it shows that row. */
+  stillOff: string | null;
 }
 
-export function permissionsStepView(input: { appName: string; allGranted: boolean }): PermissionsStepView {
+/** "A", "A and B", "A, B and C". */
+export function listWords(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The button and the line beside it, from the rows still off. */
+function stepPrimary(missing: PermissionsStepView["missing"]): Pick<PermissionsStepView, "primary" | "stillOff"> {
+  if (missing.length === 0) return { primary: { label: "Continue", white: true }, stillOff: null };
   return {
-    title: `Let ${input.appName} see and use apps`,
-    line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
-    note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
-    primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+    primary: { label: missing.length === 1 ? "Continue without it" : "Continue without them", white: false },
+    stillOff: `Still off: ${listWords(missing.map((m) => m.title))}`,
+  };
+}
+
+/**
+ * `off`: the app's permissions still off (`screen`, `accessibility`); without it, both when `allGranted` is false.
+ * `localNetwork`: this Mac runs macOS Spaces, so the step also asks for Local Network (`off` until allowed, `denied`
+ * once macOS was told no); `none` on any other computer.
+ */
+export function permissionsStepView(input: {
+  appName: string;
+  allGranted: boolean;
+  off?: readonly DriverPermission["id"][];
+  localNetwork?: "none" | "off" | "denied" | "on";
+}): PermissionsStepView {
+  const ln = input.localNetwork ?? "none";
+  const off = input.allGranted ? [] : (input.off ?? (["screen", "accessibility"] as const));
+  const missing = off.map((id) => ({ id: String(id), title: permissionWords(id, input.appName).title }));
+  if (ln === "none") {
+    return {
+      title: `Let ${input.appName} see and use apps`,
+      line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
+      note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
+      missing,
+      ...stepPrimary(missing),
+    };
+  }
+  if (ln !== "on") missing.push({ id: "local-network", title: localNetworkWords(input.appName).title });
+  const done = input.allGranted && ln === "on";
+  return {
+    title: `Let ${input.appName} use this Mac`,
+    line: "Agents can then use the apps on this Mac, and macOS Spaces can run here. Your own pointer never moves.",
+    note: done
+      ? "All on. Agents can use apps on this Mac, and macOS Spaces can run here."
+      : ln === "on"
+        ? `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`
+        : localNetworkNote(input.appName, ln === "denied"),
+    missing,
+    ...stepPrimary(missing),
   };
 }
 
@@ -156,5 +238,9 @@ export function repairOutcome(after: {
     return { kind: "failed", title: "Cua Driver is off", description: "Agents can't use apps on this Mac. Turn on Let agents use apps, then Repair." };
   }
   const reason = after.lastError ?? after.lastTest?.failure ?? "Cua Driver isn't answering.";
-  return { kind: "failed", title: "Cua Driver still isn't working", description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.` };
+  return {
+    kind: "failed",
+    title: "Cua Driver still isn't working",
+    description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.`,
+  };
 }

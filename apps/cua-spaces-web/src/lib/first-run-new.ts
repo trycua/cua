@@ -6,63 +6,112 @@
  * screen says and which choices it offers, from what the app knows. Pure, so every state is tested
  * without a host. The page (`components/first-run-new`) draws it.
  *
- * 1 Combine your existing computers into one supercomputer. Add this computer (sign in) or Skip for now.
- * 1b Finish signing in in your browser: Try again, Use a code instead; "Sign-in didn't finish".
- * 2 Pick where your agents work: this Mac, the account's other computers (offline ones can't be
- *   picked), Add another computer you own, and a separate computer on this Mac.
- * 2b On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
- *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words.
- * 3 Connect the coding agents found on this Mac (all ticked, untick any to leave alone; Choose later skips it), or
- *   Install Claude Code / Install Codex instead. Kept in setup, not moved to the first job: that job is typed into the
- *   agent in the person's own terminal, so Cua has to be in the agent's settings before it, and there is no moment in
- *   the app to ask then. Nothing is a choice here: every agent found is connected, and a job picks its own agent.
- * 4 Ready: "<agents> can now use <computers>", one line to try in their own terminal. Done ends setup on Home.
+ * 1 Combine all your computers into one supercomputer. Add this computer (sign in) or Skip for now.
+ * 1b Finish signing in in your browser: Try again, Use a code instead; "Sign-in didn't finish". Once signed in, this
+ *   computer joins the account here ("Adding this Mac to your account"), with Try again if that fails.
+ *   There is no step to pick where agents work (Francesco, 8 Nov 2026): it confused people. Agents can use every
+ *   ready computer in the account; Settings and the Computers page change that, and make a separate computer.
+ * 2 On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
+ *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words. Left out when every one (and Local
+ *   Network, where it's asked) is already on: the step would ask nothing.
+ * 3 Which agents do you use? The coding agents found (all ticked, untick any to leave alone; Choose later skips it),
+ *   each with where it is installed, or Install Claude Code / Install Codex instead. Kept in setup, not moved to the
+ *   first job: that job is typed into the agent in the person's own terminal, so Cua has to be in the agent's settings
+ *   before it, and there is no moment in the app to ask then. A job picks its own agent.
+ * 4 Ready: "<agents> can now use <computers>" (every ready computer), one line to try in their own terminal. Done
+ *   ends setup on Home.
+ *
+ * The step dots under the page count exactly these steps (`runSteps`): one per step this run shows, so 4 on a Mac
+ * that still needs a permission and 3 elsewhere.
  *
  * The rest (invite a teammate, add another computer, let agents use apps on this Mac, Cua from Terminal) is
  * asked for on Home once the first job is done, not during setup (CUA-3150, idea C): `bringRestView`.
  */
 
 import type { Machine, SignInPhase } from "@/bridge";
-import { relativeTime } from "@/lib/utils";
 
-/** `next`: an older run's last screen, saved before the rest moved to Home; such a run finishes on Home. */
+/**
+ * `next`: an older run's last screen, saved before the rest moved to Home; such a run finishes on Home. `where`: an
+ * older run saved on the removed "Pick where your agents work" step; such a run goes on from the step after sign-in.
+ */
 export type NewRunScreen = "welcome" | "signin" | "where" | "permissions" | "agent" | "ready" | "next";
 
-/** The screens setup shows, in order. */
-export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "permissions", "agent", "ready"];
+/** The screens setup can show, in order (`RUN_STEPS` says which this run shows, and the step each belongs to). */
+export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "permissions", "agent", "ready"];
 
-/** The screen after 2: the permissions step on a Mac, else the coding agent. */
-export function afterWhere(os: string): NewRunScreen {
-  return os === "macos" ? "permissions" : "agent";
+/** One step of setup: one step dot, the screens it covers (the first is where its dot opens) and the name read out with it. */
+export type RunStepId = "computer" | "permissions" | "agents" | "ready";
+export interface RunStep {
+  id: RunStepId;
+  screens: readonly NewRunScreen[];
+  name: string;
+}
+
+/**
+ * Every step setup can have, in order. The step dots and where setup goes next are both read from this one list
+ * (`runSteps`), so the dots always count the steps the run really shows. Adding this computer is one step: the
+ * sign-in screen is the wait after its button, and an older run saved on the removed `where` step counts as it too.
+ */
+export const RUN_STEPS: readonly RunStep[] = [
+  { id: "computer", screens: ["welcome", "signin", "where"], name: "Add this computer" },
+  { id: "permissions", screens: ["permissions"], name: "Let Cua Spaces use apps" },
+  { id: "agents", screens: ["agent"], name: "Which agents do you use?" },
+  { id: "ready", screens: ["ready"], name: "Try your first job" },
+];
+
+/**
+ * What decides which steps a run shows. `permissions`, on a Mac: `ask` when Cua Spaces still needs one, `skip` when
+ * the app has none to give or every one is already on, null while that isn't known yet (the step is counted then).
+ * Other computers have no permissions step.
+ */
+export interface RunFacts {
+  os: string;
+  permissions: "ask" | "skip" | null;
+}
+
+/** The steps this run shows, in order: the only list the step dots and the moves between steps read. */
+export function runSteps(facts: RunFacts): RunStep[] {
+  return RUN_STEPS.filter((s) => s.id !== "permissions" || (facts.os === "macos" && facts.permissions !== "skip"));
+}
+
+/** The step a screen belongs to; null for the old last screen (`next`), which finishes on Home. */
+export function stepOf(screen: NewRunScreen): RunStepId | null {
+  return RUN_STEPS.find((s) => s.screens.includes(screen))?.id ?? null;
+}
+
+/** Where setup goes once the step `screen` belongs to is done or skipped: the next step's first screen; null: setup ends. */
+export function nextStepScreen(facts: RunFacts, screen: NewRunScreen): NewRunScreen | null {
+  const steps = runSteps(facts);
+  const id = stepOf(screen);
+  const at = steps.findIndex((s) => s.id === id);
+  if (at < 0) return null;
+  return steps[at + 1]?.screens[0] ?? null;
 }
 
 /** What the run keeps between launches (inside the first run's saved record, so Reset & Show clears it). */
 export interface NewRunSaved {
   screen: NewRunScreen;
-  /** The computers picked on screen 2: `this` for this computer, else a machine id or the separate computer's Space id. */
-  picks: string[];
   /** The coding agent Ready's line to try uses: the first one connected on screen 3 (setup id). */
   agent: string | null;
   /** The coding agents screen 3 connected (setup ids), in `CODING_AGENTS` order. */
   connected?: string[];
   /** The coding agents found on screen 3 that the person unticked, so they are left alone. */
   agentsOff?: string[];
-  /** This run asked to add this computer and the sign-in finished: its row says "just now". */
-  addedInRun: boolean;
-  /** The separate computer's create (its pending row id), once asked for. */
-  separatePendingId: string | null;
-  /** The furthest step dot reached (0 to 2), so a dot can go forward again only to a step already reached. */
-  reached: number;
+  /** The furthest step reached, so a dot can go forward again only to a step already reached. */
+  reachedStep?: RunStepId;
+  /**
+   * Whether this run shows the permissions step, decided when it leaves the first step (a Mac only), so the dots
+   * don't change once the person turns the permissions on there.
+   */
+  permissions?: "ask" | "skip";
 }
 
-export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", picks: ["this"], agent: null, addedInRun: false, separatePendingId: null, reached: 0 };
+export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", agent: null };
 
 /** "this Mac", "this PC", "this computer" (the app's THIS_MACHINE). */
 export function placeName(os: string): string {
   return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
 }
-
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** "Mac mini", "Mac mini and Build server", "Mac mini, Gaming PC and Build server". */
 export function listNames(names: string[]): string {
@@ -87,13 +136,28 @@ export interface WelcomeUsage {
   help: string | null;
 }
 
-export function welcomeUsage(view: { notice?: string | null; noticeLinkLabel?: string | null; noticeLinkUrl?: string | null; usage?: { label: string; on: boolean; enabled: boolean; help?: string | null } | null } | null): WelcomeUsage | null {
+export function welcomeUsage(
+  view: {
+    notice?: string | null;
+    noticeLinkLabel?: string | null;
+    noticeLinkUrl?: string | null;
+    usage?: { label: string; on: boolean; enabled: boolean; help?: string | null } | null;
+  } | null,
+): WelcomeUsage | null {
   if (!view?.usage || !view.notice || !view.noticeLinkLabel || !view.noticeLinkUrl) return null;
-  return { notice: view.notice, label: view.usage.label, linkLabel: view.noticeLinkLabel, linkUrl: view.noticeLinkUrl, on: view.usage.on, enabled: view.usage.enabled, help: view.usage.help ?? null };
+  return {
+    notice: view.notice,
+    label: view.usage.label,
+    linkLabel: view.noticeLinkLabel,
+    linkUrl: view.noticeLinkUrl,
+    on: view.usage.on,
+    enabled: view.usage.enabled,
+    help: view.usage.help ?? null,
+  };
 }
 
 export const WELCOME = {
-  title: "Combine your existing computers into one supercomputer.",
+  title: "Combine all your computers into one supercomputer.",
   // The headline picked on 7 Nov 2026 (CUA-3753), then the one-liner and what to do here (CUA-3150).
   line: "Your computers, shared by your team and its agents. Sign in on each one to use them all from here.",
   primary: "Add this computer",
@@ -103,17 +167,48 @@ export const WELCOME = {
 /* ---- 1b --------------------------------------------------------------------------------- */
 
 export interface SignInView {
-  state: "waiting" | "code" | "failed";
+  /** `adding`: signed in, and this computer is joining the account; `add-failed`: that didn't work. */
+  state: "waiting" | "code" | "failed" | "adding" | "add-failed";
   title: string;
   line: string;
   /** The waiting row's words (none once it failed). */
   waiting: string | null;
   /** The code to enter, and the page to enter it on, when signing in with a code. */
   code: { code: string; url: string | null } | null;
-  /** Which button is the white one: Try again only once sign-in failed. */
+  /** Which button is the white one: Try again only once sign-in (or adding this computer) failed. */
   tryAgainPrimary: boolean;
-  tryAgain: string;
+  /** Null while this computer is being added: there is nothing to try again yet. */
+  tryAgain: string | null;
   useCode: string | null;
+}
+
+/**
+ * The sign-in finished: this computer joins the account here, so setup has no separate step for it. Adding failed:
+ * why, with Try again, or a code from another computer when the account wants proof it's the owner (`needsProof`).
+ */
+export function addingView(input: { os: string; state: "adding" | "failed"; error: string | null; needsProof?: boolean }): SignInView {
+  const place = placeName(input.os);
+  if (input.state === "adding")
+    return {
+      state: "adding",
+      title: `Adding ${place} to your account`,
+      line: "You're signed in. This takes a few seconds.",
+      waiting: `Adding ${place}`,
+      code: null,
+      tryAgainPrimary: false,
+      tryAgain: null,
+      useCode: null,
+    };
+  return {
+    state: "add-failed",
+    title: `Couldn't add ${place} to your account`,
+    line: input.needsProof && input.error ? `Confirm it's you. ${input.error}` : (input.error ?? "Something went wrong. Try again."),
+    waiting: null,
+    code: null,
+    tryAgainPrimary: true,
+    tryAgain: "Try again",
+    useCode: input.needsProof ? "Use a code from another computer" : null,
+  };
 }
 
 /** Why a sign-in didn't finish, in the words of #6408 for a browser that never confirmed; the core's own line otherwise. */
@@ -149,205 +244,15 @@ export function signInView(phase: SignInPhase, url: string | null): SignInView {
   };
 }
 
-/* ---- 2 ---------------------------------------------------------------------------------- */
+/* ---- Where agents work ---------------------------------------------------------------- */
 
-export interface ComputerRow {
-  id: string;
-  name: string;
-  os: "macos" | "windows" | "linux" | null;
-  sub: string;
-  picked: boolean;
-  /** Offline or not sharing: shown greyed, with no check circle, and it can't be picked. */
-  disabled: boolean;
-  /** Offline: with others offline too, it folds into one "N offline" row (`OfflineFold`). */
-  offline: boolean;
-}
-
-/** Offline computers folded into one row, so a long list never pushes Continue off the screen. */
-export interface OfflineFold {
-  /** "14 offline". */
-  label: string;
-  sub: string;
-  rows: ComputerRow[];
-}
-
-/** From this many offline computers on, they fold into one row; a single one is shown as itself. */
-export const OFFLINE_FOLD_AT = 2;
-
-/** The offline rows as one fold, or null when there are too few to fold. */
-export function offlineFold(rows: readonly ComputerRow[]): OfflineFold | null {
-  const off = rows.filter((r) => r.offline);
-  if (off.length < OFFLINE_FOLD_AT) return null;
-  return { label: `${off.length} offline`, sub: "They can be picked once they're back online.", rows: off };
-}
-
-export interface WhereView {
-  title: string;
-  line: string;
-  thisRow: {
-    name: string;
-    /** "Added to your account just now", "In your account", "not added yet" ... */
-    status: string;
-    /** The white tick before the status (added in this run). */
-    tick: boolean;
-    model: string | null;
-    /** Signed out, the frame reads "MacBook Pro · not added yet": the model comes first. */
-    modelFirst: boolean;
-    picked: boolean;
-    /** Signed out: Add (opens 1b). Adding failed: Try again. */
-    action: { id: "add" | "retry-add" | "use-code"; label: string } | null;
-  };
-  /** Signed in: the account's other computers (empty: `emptyLine`). Signed out: null, and `signInLine` shows instead. */
-  others: ComputerRow[] | null;
-  /** The offline ones among `others`, folded into one row (null: none, or only one, which shows as itself). */
-  offlineFold: OfflineFold | null;
-  othersLabel: string;
-  emptyLine: string;
-  signInLine: { link: string; rest: string } | null;
-  /** Signed in only: it needs an account. */
-  addAnother: { title: string; sub: string } | null;
-  /**
-   * A separate computer on this one. Null where this computer can't make one (CUA-3150, idea D: offer only what
-   * it can run), unless the person already asked and the create was refused: then the one sentence says why.
-   */
-  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "making" | "ready" | "failed"; action: string | null } | null;
-  continueEnabled: boolean;
-}
-
-export interface WhereInput {
-  os: string;
-  signedIn: boolean;
-  /** This computer: being added, added (`addedInRun`: in this run), or the add failed. */
-  thisState: "adding" | "added" | "failed" | "signed-out";
-  addedInRun: boolean;
-  addError: string | null;
-  /** The add failed because the account wants proof it's the owner adding
-   * this computer (`needsProof`): its button is "Use a code from another
-   * computer", not Try again. */
-  addNeedsProof?: boolean;
-  model: string | null;
-  machines: Pick<Machine, "id" | "name" | "os" | "online" | "lastSeen" | "current" | "device" | "notSharing">[] | null;
-  picks: string[];
-  /** Whether this computer can make a separate computer: null while still checking. */
-  canMakeSeparate: boolean | null;
-  /** The person asked for one and this computer refused the create (it can't run virtual computers). */
-  separateRefused?: boolean;
-  /** Why not, in the host's words (used where the frame's sentence doesn't fit: not a Mac). */
-  separateBlocked: string | null;
-  separate: { phase: "none" | "making" | "ready" | "failed"; name: string | null; error: string | null };
-  now: number;
-}
-
-function machineOs(os: string): ComputerRow["os"] {
-  const o = os.toLowerCase();
-  if (o === "macos" || o === "darwin" || o === "mac") return "macos";
-  if (o === "windows" || o === "win32") return "windows";
-  if (o === "linux") return "linux";
-  return null;
-}
-
-const OS_WORD: Record<NonNullable<ComputerRow["os"]>, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
-
-/** The account's other computers: ones the app can reach are offered, offline ones shown greyed. */
-export function otherComputers(input: Pick<WhereInput, "machines" | "picks" | "now">): ComputerRow[] {
-  return (input.machines ?? [])
-    .filter((m) => !m.current && !m.device)
-    .map((m) => {
-      const os = machineOs(m.os);
-      const offline = !m.online;
-      const sub = offline
-        ? m.lastSeen
-          ? `Offline, last seen ${relativeTime(m.lastSeen * 1000, input.now)}`
-          : "Offline"
-        : m.notSharing
-          ? "Not sharing"
-          : `${os ? OS_WORD[os] : "Computer"} · ready`;
-      const disabled = offline || Boolean(m.notSharing);
-      return { id: m.id, name: m.name, os, sub, picked: !disabled && input.picks.includes(m.id), disabled, offline };
-    });
-}
-
-export function whereView(input: WhereInput): WhereView {
-  const place = placeName(input.os);
-  const Place = cap(place);
-  const thisPicked = input.picks.includes("this");
-  const separate = (() => {
-    const title = `Or make a separate computer on ${place}`;
-    // Known before anyone asks (the host's runtimes, its architecture, its room): not offered at all.
-    if (input.canMakeSeparate === false && !input.separateRefused) return null;
-    if (input.canMakeSeparate === false) {
-      const sub =
-        input.os === "macos"
-          ? "This Mac can't make one (older Intel Macs can't)."
-          : `${input.separateBlocked ? `${input.separateBlocked} ` : `${Place} can't make one. `}Your agents can still work on ${place} or on another computer you add.`;
-      return { title, sub, disabled: true, state: "offer" as const, action: null };
-    }
-    const s = input.separate;
-    if (s.phase === "making") return { title, sub: `Making ${s.name ?? "it"} now. You can continue; it keeps going.`, disabled: false, state: "making" as const, action: null };
-    if (s.phase === "ready") return { title, sub: `${s.name ?? "It"} is ready.`, disabled: false, state: "ready" as const, action: null };
-    if (s.phase === "failed") return { title, sub: `Couldn't make it. ${s.error ?? ""}`.trim(), disabled: false, state: "failed" as const, action: "Try again" };
-    if (input.canMakeSeparate === null) return { title, sub: "Checking whether this computer can make one…", disabled: true, state: "checking" as const, action: null };
-    return { title, sub: "A Linux computer just for your agents, away from your files. About 2 minutes.", disabled: false, state: "offer" as const, action: null };
-  })();
-
-  if (!input.signedIn) {
-    return {
-      title: "Pick where your agents work",
-      line: `No account needed for ${place}. Sign in to use your other computers too.`,
-      thisRow: { name: Place, status: "not added yet", tick: false, model: input.model, modelFirst: true, picked: thisPicked, action: { id: "add", label: "Add" } },
-      others: null,
-      offlineFold: null,
-      othersLabel: "Other computers in your account",
-      emptyLine: "",
-      signInLine: { link: "Sign in", rest: " to see your other computers." },
-      addAnother: null,
-      separate,
-      continueEnabled: input.picks.length > 0,
-    };
-  }
-  const others = otherComputers(input);
-  const status =
-    input.thisState === "adding"
-      ? "Adding to your account…"
-      : input.thisState === "failed"
-        ? input.addNeedsProof && input.addError
-          ? `Confirm it's you. ${input.addError}`
-          : `Couldn't add it to your account.${input.addError ? ` ${input.addError}` : ""}`
-        : input.addedInRun
-          ? "Added to your account just now"
-          : "In your account";
-  return {
-    title: "Pick where your agents work",
-    line: "Pick the computers your agents can use.",
-    thisRow: {
-      name: Place,
-      status,
-      tick: input.thisState === "added",
-      model: input.model,
-      modelFirst: false,
-      picked: thisPicked,
-      action:
-        input.thisState !== "failed"
-          ? null
-          : input.addNeedsProof
-            ? { id: "use-code", label: "Use a code from another computer" }
-            : { id: "retry-add", label: "Try again" },
-    },
-    others,
-    offlineFold: offlineFold(others),
-    othersLabel: "Other computers in your account",
-    emptyLine: "None yet. Computers you or your team sign in on show up here.",
-    signInLine: null,
-    addAnother: { title: "Add another computer you own", sub: "Install Cua Spaces on it and sign in. It shows up here." },
-    separate,
-    continueEnabled: input.picks.length > 0,
-  };
-}
-
-/** Picks a computer, or unpicks it. Offline computers never change. */
-export function togglePick(picks: string[], id: string, rows: ComputerRow[]): string[] {
-  if (rows.find((r) => r.id === id)?.disabled) return picks;
-  return picks.includes(id) ? picks.filter((p) => p !== id) : [...picks, id];
+/**
+ * The computers agents can use once setup is done: this one, then every other computer in the account that is
+ * online and sharing (not offline, not stopped sharing, not a device of its own). There is no step to pick them
+ * (Francesco, 8 Nov 2026); Settings and the Computers page change it.
+ */
+export function readyComputers(machines: readonly Pick<Machine, "name" | "online" | "current" | "device" | "notSharing">[] | null): string[] {
+  return ["this", ...(machines ?? []).filter((m) => !m.current && !m.device && m.online && !m.notSharing).map((m) => m.name)];
 }
 
 /* ---- 3 ---------------------------------------------------------------------------------- */
@@ -371,11 +276,9 @@ export interface AgentView {
   state: "looking" | "found" | "none";
   title: string;
   line: string;
-  /** "Found on this Mac". */
-  label: string;
-  /** Every agent found, ticked unless the person unticked it. */
-  agents: { id: string; name: string; maker: string; picked: boolean }[];
-  /** Under the list: where to change it later. */
+  /** Every agent found, ticked unless the person unticked it, with where it is installed ("On this Mac"). */
+  agents: { id: string; name: string; where: string; picked: boolean }[];
+  /** Under the list: each job picks its agent, and where to change this later. */
   note: string | null;
   continueEnabled: boolean;
   /** The quiet way past the step without connecting anything ("Choose later"); null while looking. */
@@ -387,23 +290,43 @@ export interface AgentView {
 /** Why setup asks for a coding agent at all, said in every state of screen 3. */
 export const NO_AI_OF_ITS_OWN = "Cua has no AI of its own.";
 
+/** "On this Mac", "On this Mac and Mac mini": this computer first, then the account's other computers that have it. */
+export function installedWhere(os: string, elsewhere: readonly string[] = []): string {
+  return `On ${listNames([placeName(os), ...elsewhere])}`;
+}
+
 /**
  * Screen 3. `found`: the coding agents installed on this computer (setup ids), null while still looking; `off`: the
- * ones the person unticked. Nothing has to be picked: every agent found starts ticked, Continue connects the ticked
- * ones (or, with none ticked, goes on like Choose later), and each job picks its own agent.
+ * ones the person unticked; `elsewhere`: per agent, the account's other computers it is installed on, where the app
+ * knows (it doesn't yet, so every row says "On this Mac"). Nothing has to be picked: every agent found starts ticked,
+ * Continue connects the ticked ones (or, with none ticked, goes on like Choose later), and each job picks its own agent.
  */
-export function agentView(input: { os: string; found: string[] | null; off?: readonly string[]; error: string | null }): AgentView {
+export function agentView(input: {
+  os: string;
+  found: string[] | null;
+  off?: readonly string[];
+  elsewhere?: Readonly<Record<string, readonly string[]>>;
+  error: string | null;
+}): AgentView {
   const place = placeName(input.os);
-  const label = `Found on ${place}`;
   if (input.found === null)
-    return { state: "looking", title: "Looking for your coding agents…", line: "", label, agents: [], note: null, continueEnabled: false, later: null, install: null, error: null };
+    return {
+      state: "looking",
+      title: "Looking for your coding agents…",
+      line: "",
+      agents: [],
+      note: null,
+      continueEnabled: false,
+      later: null,
+      install: null,
+      error: null,
+    };
   const found = CODING_AGENTS.filter((a) => input.found!.includes(a.id));
   if (found.length === 0) {
     return {
       state: "none",
       title: "Install a coding agent",
       line: `${NO_AI_OF_ITS_OWN} We didn't find a coding agent on ${place}. Install Claude Code, then sign in to it once.`,
-      label,
       agents: [],
       note: null,
       continueEnabled: false,
@@ -416,13 +339,12 @@ export function agentView(input: { os: string; found: string[] | null; off?: rea
   const one = found.length === 1 ? found[0]! : null;
   return {
     state: "found",
-    title: one ? `Use ${one.name} on all your computers` : "Use your coding agents on all your computers",
+    title: "Which agents do you use?",
     line: one
       ? `${NO_AI_OF_ITS_OWN} ${one.name} does the work, on your own plan.`
       : `${NO_AI_OF_ITS_OWN} ${listNames(found.map((a) => a.name))} do the work, each on your own plan.`,
-    label,
-    agents: found.map((a) => ({ id: a.id, name: a.name, maker: a.maker, picked: !off.includes(a.id) })),
-    note: "You pick the agent for each job. You can change this later in Settings.",
+    agents: found.map((a) => ({ id: a.id, name: a.name, where: installedWhere(input.os, input.elsewhere?.[a.id]), picked: !off.includes(a.id) })),
+    note: "You choose the agent each time you start a job. You can change this later in Settings.",
     continueEnabled: true,
     later: "Choose later",
     install: null,
@@ -450,8 +372,11 @@ export interface ReadyView {
   done: string;
 }
 
+/** From this many computers on, Ready counts the others instead of naming each ("this Mac and 5 other computers"). */
+export const READY_NAMES_AT_MOST = 4;
+
 /**
- * `computers`: the picked computers' names, this computer first as `this` (written "this Mac"). `canMakeSeparate`:
+ * `computers`: the ready computers' names (`readyComputers`), this computer first as `this` (written "this Mac"). `canMakeSeparate`:
  * false where this computer can't make a separate computer, so the line to try never asks for one (CUA-3150, idea D).
  */
 export function readyView(input: { os: string; agent: string; agents?: string[]; computers: string[]; canMakeSeparate?: boolean | null }): ReadyView {
@@ -459,7 +384,8 @@ export function readyView(input: { os: string; agent: string; agents?: string[];
   const a = agentInfo(input.agent);
   // Every agent connected is named; the line to try uses `agent`.
   const connected = input.agents?.length ? input.agents : [input.agent];
-  const names = input.computers.map((c) => (c === "this" ? place : c));
+  const all = input.computers.map((c) => (c === "this" ? place : c));
+  const names = all.length > READY_NAMES_AT_MOST ? [all[0]!, `${all.length - 1} other computers`] : all;
   const elsewhere = input.computers.find((c) => c !== "this");
   const task = elsewhere
     ? `Build this branch on ${elsewhere}`
@@ -500,7 +426,15 @@ export function bringRestView(input: { os: string; apps?: boolean; cli?: boolean
     rows: [
       { id: "invite", title: "Invite a teammate", sub: "They can use these computers and agents too." },
       { id: "add-computer", title: "Add another computer", sub: "Install Cua Spaces on it and sign in." },
-      ...(apps ? [{ id: "apps" as const, title: `Let agents use apps on ${place}`, sub: "They can see the screen and use the mouse and keyboard, after you allow it." }] : []),
+      ...(apps
+        ? [
+            {
+              id: "apps" as const,
+              title: `Let agents use apps on ${place}`,
+              sub: "They can see the screen and use the mouse and keyboard, after you allow it.",
+            },
+          ]
+        : []),
       ...(input.cli ? [{ id: "cli" as const, title: "Use Cua from Terminal", sub: "Adds the cua command." }] : []),
     ],
     dismiss: "Not now",
@@ -529,24 +463,17 @@ export function firstJobDone(signals: JobSignals, sinceMs: number): boolean {
   return taskDone || runDone;
 }
 
-/** Which progress dot is lit (screens 1 to 3 have dots; Ready none). */
-export function dotFor(screen: NewRunScreen): number | null {
-  return screen === "welcome" || screen === "signin" ? 0 : screen === "where" || screen === "permissions" ? 1 : screen === "agent" ? 2 : null;
-}
+/** The order of two steps in `RUN_STEPS` (a step left out of this run keeps its place). */
+const stepIndex = (id: RunStepId | null | undefined) => (id ? RUN_STEPS.findIndex((s) => s.id === id) : -1);
 
-/** The screen each step dot opens. */
-export const DOT_SCREENS = ["welcome", "where", "agent"] as const satisfies readonly NewRunScreen[];
-
-/** Each step's name, read out with its dot ("Step 2 of 3: Pick where your agents work"). */
-export const DOT_NAMES = [WELCOME.title, "Pick where your agents work", "Connect your coding agents"] as const;
-
-/** How far a run has got, once it's on `screen`: Ready counts as past the last dot. */
-export function reachedAfter(reached: number, screen: NewRunScreen): number {
-  return Math.max(reached, dotFor(screen) ?? DOT_SCREENS.length - 1);
+/** The furthest step a run has reached, once it's on `screen`. Never goes back. */
+export function furthestStep(reached: RunStepId | undefined, screen: NewRunScreen): RunStepId | undefined {
+  const here = stepOf(screen) ?? undefined;
+  return stepIndex(here) > stepIndex(reached) ? here : reached;
 }
 
 export interface StepDot {
-  /** "Step 2 of 3: Pick where your agents work". */
+  /** "Step 3 of 4: Which agents do you use?". */
   label: string;
   current: boolean;
   /** The screen a click opens; null: it can't be opened from here (a step not reached yet, or the one showing). */
@@ -554,15 +481,19 @@ export interface StepDot {
 }
 
 /**
- * The step dots on `screen`. A dot opens any earlier step, and a later step only once the run has
- * reached it, so a dot never skips the sign-in. On the sign-in, the first dot goes back to its start.
+ * The step dots on `screen`: one per step this run shows (`runSteps`), the current one lit. A dot opens any earlier
+ * step, and a later step only once the run has reached it, so a dot never skips the sign-in. On the sign-in, the
+ * first dot goes back to its start. Null on a screen that isn't a step (`next`).
  */
-export function stepDots(screen: NewRunScreen, reached: number): StepDot[] | null {
-  const at = dotFor(screen);
-  if (at === null) return null;
-  return DOT_SCREENS.map((to, i) => {
-    const open = to !== screen && (i <= at || i <= reached);
-    return { label: `Step ${i + 1} of ${DOT_SCREENS.length}: ${DOT_NAMES[i]}`, current: i === at, to: open ? to : null };
+export function stepDots(facts: RunFacts, screen: NewRunScreen, reached?: RunStepId): StepDot[] | null {
+  const steps = runSteps(facts);
+  const at = steps.findIndex((s) => s.screens.includes(screen));
+  if (at < 0) return null;
+  const far = Math.max(stepIndex(reached), stepIndex(steps[at]!.id));
+  return steps.map((step, i) => {
+    const to = step.screens[0]!;
+    const open = to !== screen && (i <= at || stepIndex(step.id) <= far);
+    return { label: `Step ${i + 1} of ${steps.length}: ${step.name}`, current: i === at, to: open ? to : null };
   });
 }
 

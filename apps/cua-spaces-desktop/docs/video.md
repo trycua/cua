@@ -19,18 +19,18 @@ The video never passes through IPC:
 3. The page's `MediaSession` opens a WebSocket straight to the daemon's
    loopback listener (rcdp wire v2).
 
-| | SwiftUI app | Electron app |
-|---|---|---|
-| Tiles (Spaces grid) | `VideoTier.tile`: 10 fps, 960 px long edge, view only | the same (`tier: "tile"`) |
-| Viewer (a Space's page, its own window) | full rate and size, `allow_activation`, input | the same (`tier: "full"`) |
-| Picture in picture | `StreamPiPWindow`: a floating panel, its own session | a floating window, its own session (`src/pip.ts`) |
-| One window (PiP) | `background_only`, reopened with activation on `would_require_activation` | the same (`windowId`, `activate`) |
-| Decode | VideoToolbox, one session per Space and tier | WebCodecs `prefer-hardware` with `optimizeForLatency`, one session per slot; software when the hardware decoder rejects the stream |
-| Keyboard | a click takes it; Control+Option pressed and released alone, a click on the page or Stop controlling gives it back; Esc and ⌘Esc go to the Space | the same (Ctrl+Shift+F12 off the Mac) |
-| ⌘ on a Linux or Windows Space | sent as Control | the same (`metaAsControl`) |
-| Scrolls | to the page until the viewer has the keyboard | the same (`scrollNeedsFocus`) |
-| Hidden window | every session stops; reopens when shown | the same (`visibilitychange`: minimized, fully covered, another desktop) |
-| Connecting, failed | "Connecting…" under the slot; a tile keeps its thumbnail, the viewer falls back to Open window | the same phases (`webcodecs-slots.ts`) |
+|                                         | SwiftUI app                                                                                                                                      | Electron app                                                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Tiles (Spaces grid)                     | `VideoTier.tile`: 10 fps, 960 px long edge, view only                                                                                            | the same (`tier: "tile"`)                                                                                                          |
+| Viewer (a Space's page, its own window) | full rate and size, `allow_activation`, input                                                                                                    | the same (`tier: "full"`)                                                                                                          |
+| Picture in picture                      | `StreamPiPWindow`: a floating panel, its own session                                                                                             | a floating window, its own session (`src/pip.ts`)                                                                                  |
+| One window (PiP)                        | `background_only`, reopened with activation on `would_require_activation`                                                                        | the same (`windowId`, `activate`)                                                                                                  |
+| Decode                                  | VideoToolbox, one session per Space and tier                                                                                                     | WebCodecs `prefer-hardware` with `optimizeForLatency`, one session per slot; software when the hardware decoder rejects the stream |
+| Keyboard                                | a click takes it; Control+Option pressed and released alone, a click on the page or Stop controlling gives it back; Esc and ⌘Esc go to the Space | the same (Ctrl+Shift+F12 off the Mac)                                                                                              |
+| ⌘ on a Linux or Windows Space           | sent as Control                                                                                                                                  | the same (`metaAsControl`)                                                                                                         |
+| Scrolls                                 | to the page until the viewer has the keyboard                                                                                                    | the same (`scrollNeedsFocus`)                                                                                                      |
+| Hidden window                           | every session stops; reopens when shown                                                                                                          | the same (`visibilitychange`: minimized, fully covered, another desktop)                                                           |
+| Connecting, failed                      | "Connecting…" under the slot; a tile keeps its thumbnail, the viewer falls back to Open window                                                   | the same phases (`webcodecs-slots.ts`)                                                                                             |
 
 ### Where it lives
 
@@ -110,12 +110,13 @@ order.
 
 Both apps have the same hooks:
 
-| Hook | What it does |
-|---|---|
+| Hook                               | What it does                                                                                                                                                                                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CUA_SPACES_VIDEO_BENCH=<spaceId>` | Opens the Spaces grid (its tiles) plus a second window streaming that Space at full rate and size: here its viewer window ("Open in window"), in the SwiftUI app a web UI window on its page. The windows are placed the same way in both apps, and neither app saves that placement as the window's own. |
-| `CUA_SPACES_VIDEO_STATS=<file>` | Writes every stream's counts once a second. |
+| `CUA_SPACES_VIDEO_STATS=<file>`    | Writes every stream's counts once a second.                                                                                                                                                                                                                                                               |
 
 The counts mean the same in both apps:
+
 - `decoded` is frames out of the decoder;
 - `presented` is frames handed to the view: the layer in the SwiftUI app, the
   canvas here;
@@ -129,6 +130,7 @@ decoded frame being drawn onto the canvas. Neither includes the compositor,
 so this is the like-for-like latency.
 
 The Electron app also counts:
+
 - `received`: frames whose packet arrived;
 - `painted`: frames on screen at the next compositor frame
   (`requestAnimationFrame`);
@@ -140,6 +142,7 @@ The SwiftUI app's report leaves these null.
 `scripts/video-bench.mjs` runs either app with those hooks. It waits for the
 streams to warm up, then measures CPU and memory of the app's processes over
 the window, the same way for both:
+
 - macOS: `top`, counting the app, its helpers, and the WebKit services
   started for the SwiftUI app;
 - Linux and Windows: the process tree.
@@ -196,6 +199,7 @@ It writes the same report, with CPU and memory from Electron's
 software-decode baseline.
 
 Notes:
+
 - The script needs Node 22.18 or later, which strips the types of
   `src/video-report.ts`.
 - The Electron hooks work in packaged builds too. They only open windows

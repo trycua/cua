@@ -53,7 +53,14 @@ function host(calls: Call[], opts: { offline?: string[]; resolved?: DefaultSpace
     answer: (op, out) =>
       op === "machines.list" ? [...(out as MachineRow[]), ...(opts.extra ?? [])].map((m) => (opts.offline?.includes(m.id) ? { ...m, online: false } : m)) : out,
     intercept: (op, args) => {
-      if (op === "spaces.rename" || op === "machines.rename" || op === "machines.remove" || op === "spaces.delete" || op === "spaces.setSettings" || op === "spaces.create") {
+      if (
+        op === "spaces.rename" ||
+        op === "machines.rename" ||
+        op === "machines.remove" ||
+        op === "spaces.delete" ||
+        op === "spaces.setSettings" ||
+        op === "spaces.create"
+      ) {
         calls.push([op, args as Record<string, unknown>]);
         if (op === "spaces.setSettings") return { ...(args as object), updatedAt: 1 };
         return op === "spaces.delete" ? "" : null;
@@ -71,25 +78,28 @@ const doubleClick = (el: HTMLElement) => {
   fireEvent.doubleClick(el, { detail: 2 });
 };
 
-
 describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
-  it("is the only view: no switch and no Machines in the nav, Cua Driver as a line under Computers, and an old Spaces as a tree override is gone", { timeout: 30000 }, async () => {
-    // A device that turned the Labs switch off before it was deleted.
-    localStorage.setItem("cua.flag.spaces_tree", "0");
-    clearRetiredFlagOverrides();
-    expect(localStorage.getItem("cua.flag.spaces_tree")).toBeNull();
-    const { router } = await mountApp("/spaces", host([]));
-    await router.load();
-    await waitFor(() => expect(q("[data-spaces-tree]")).not.toBeNull());
-    const sidebar = q("aside[aria-label=Sidebar]")!;
-    const nav = [...sidebar.querySelectorAll("nav a:not([data-sidebar-driver])")].map((a) => a.textContent ?? "");
-    expect(nav[0]).toMatch(/^Home/);
-    expect(nav[1]).toMatch(/^Computers/);
-    expect(nav.some((t) => /Machines|Spaces|Cua Driver/.test(t))).toBe(false);
-    // Cua Driver is no nav item of its own, but This Mac's setting, one line under Computers (CUA-3551).
-    await waitFor(() => expect(sidebar.querySelector("nav a:nth-of-type(2) + [data-sidebar-driver]")?.textContent).toBe("Cua Driver"));
-    expect(document.querySelector("h1")?.textContent).toBe("Computers");
-  });
+  it(
+    "is the only view: no switch and no Machines in the nav, Cua Driver as a line under Computers, and an old Spaces as a tree override is gone",
+    { timeout: 30000 },
+    async () => {
+      // A device that turned the Labs switch off before it was deleted.
+      localStorage.setItem("cua.flag.spaces_tree", "0");
+      clearRetiredFlagOverrides();
+      expect(localStorage.getItem("cua.flag.spaces_tree")).toBeNull();
+      const { router } = await mountApp("/spaces", host([]));
+      await router.load();
+      await waitFor(() => expect(q("[data-spaces-tree]")).not.toBeNull());
+      const sidebar = q("aside[aria-label=Sidebar]")!;
+      const nav = [...sidebar.querySelectorAll("nav a:not([data-sidebar-driver])")].map((a) => a.textContent ?? "");
+      expect(nav[0]).toMatch(/^Home/);
+      expect(nav[1]).toMatch(/^Computers/);
+      expect(nav.some((t) => /Machines|Spaces|Cua Driver/.test(t))).toBe(false);
+      // Cua Driver is no nav item of its own, but This Mac's setting, one line under Computers (CUA-3551).
+      await waitFor(() => expect(sidebar.querySelector("nav a:nth-of-type(2) + [data-sidebar-driver]")?.textContent).toBe("Cua Driver"));
+      expect(document.querySelector("h1")?.textContent).toBe("Computers");
+    },
+  );
 
   it("lists each computer with its Spaces, This Mac first, under one Computers item in the sidebar", { timeout: 30000 }, async () => {
     const { router } = await mountApp("/spaces", host([]));
@@ -110,32 +120,66 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     await waitFor(() => expect(within(sidebar).getByRole("link", { name: /^Computers/ }).textContent).toContain(String(rows.length)));
     // The first computer that isn't this Mac is the default until one is set.
     expect(q('[data-tree-status="relay:mac-mini"]')?.textContent).toMatch(/, Default$/);
+    // The fold caret sits inside the row, in a slot of its own: no negative margin pushes it out of the row's padding.
+    for (const caret of qa("[data-tree-fold]")) {
+      expect(caret.className).not.toMatch(/(^|\s)-m[lrxtb]?-\d/);
+      expect(caret.parentElement?.className).toContain("size-5");
+      expect(caret.closest('[role="cell"]')?.contains(caret)).toBe(true);
+    }
     // Folding a computer hides its Spaces.
     fireEvent.click(q('[data-tree-fold="relay:linux-box"]')!);
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')).toBeNull();
-    // A computer opens its own page.
+    // A computer that shares its desktop opens that desktop's Space page.
+    fireEvent.click(q('[data-tree-name="relay:linux-box"]')!, { detail: 0 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/relay%3Alinux-box"));
+  });
+
+  it("opens the computer's own page for a computer that cannot be opened as a desktop (offline)", { timeout: 30000 }, async () => {
+    const { router } = await mountApp("/spaces", host([], { offline: ["linux-box"] }));
+    await router.load();
+    await waitFor(() => expect(q('[data-tree-name="relay:linux-box"]')).not.toBeNull());
     fireEvent.click(q('[data-tree-name="relay:linux-box"]')!, { detail: 0 });
     await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/linux-box"));
   });
 
-  it("greys out the Spaces of an offline computer: they wait for it", { timeout: 30000 }, async () => {
+  it("greys out the Spaces of an offline computer: each reads Offline, with no sentence about it", { timeout: 30000 }, async () => {
     await mountApp("/spaces", host([], { offline: ["linux-box"] }));
-    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
+    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Offline"));
     expect(q('[data-tree-row="relay:linux-box/ubuntu-build"]')?.hasAttribute("data-dim")).toBe(true);
-    expect(document.body.textContent).toContain("Linux box is offline, so the 2 Spaces on it are too. They come back when it does.");
+    expect(document.body.textContent).not.toMatch(/Waits for|so the \d+ Spaces? on it/);
+    // The tasks cell of a row with none is empty.
+    expect(q('[data-tree-tasks="relay:linux-box/ubuntu-build"]')?.textContent).toBe("");
+    expect(document.body.textContent).not.toMatch(/\bNone\b/);
   });
 
-  it("folds offline computers with no Spaces on them into one \"N offline\" row that opens", { timeout: 30000 }, async () => {
-    const old = (n: number): MachineRow => ({ id: `old-${n}`, name: `Old box ${n}`, via: "relay", online: false, os: "linux", limits: [] });
+  it('folds offline computers with no Spaces on them into one "N offline" row that opens', { timeout: 30000 }, async () => {
+    const old = (n: number): MachineRow => ({
+      id: `old-${n}`,
+      name: `Old box ${n}`,
+      via: "relay",
+      online: false,
+      os: "linux",
+      limits: [],
+      lastSeen: Math.floor(Date.now() / 1000) - 40 * 24 * 3600,
+    });
     await mountApp("/spaces", host([], { extra: [old(1), old(2), old(3)] }));
     const fold = await found("[data-tree-offline-fold]");
-    expect(fold.textContent).toMatch(/^\d+ offline/);
-    expect(fold.textContent).toContain("Old box 1, Old box 2, Old box 3");
+    expect(fold.textContent).toMatch(/^4 offline computers hidden\s*Show$/);
+    expect(fold.textContent).not.toContain("Old box 1");
+    expect(fold.querySelector("[data-tree-fold], svg")).toBeNull();
+    // Hidden, there is nothing to remove from here.
+    expect(q("[data-machines-remove-old]")).toBeNull();
     expect(qa("[data-tree-name]").map((e) => e.textContent)).not.toContain("Old box 1");
     // The computers with Spaces stay in the list above it.
     expect(q('[data-tree-row="relay:linux-box"]')).not.toBeNull();
     fireEvent.click(q("[data-tree-offline-toggle]")!);
     await waitFor(() => expect(qa("[data-tree-name]").map((e) => e.textContent)).toContain("Old box 1"));
+    expect(q("[data-tree-offline-toggle]")?.textContent).toBe("Hide");
+    expect(q("[data-tree-offline-fold]")?.textContent).toMatch(/^4 offline computers\s*Hide/);
+    // Shown, "Remove old computers" sits with them; hidden again, it goes.
+    await waitFor(() => expect(q("[data-tree-offline-fold] [data-machines-remove-old]")?.textContent).toBe("Remove old computers"));
+    fireEvent.click(q("[data-tree-offline-toggle]")!);
+    await waitFor(() => expect(q("[data-machines-remove-old]")).toBeNull());
     // Each one keeps its row menu once shown.
     expect(qa("[data-tree-menu]").length).toBe(qa("[data-tree-row]").length);
   });
@@ -180,7 +224,7 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
       ],
     };
     await mountApp("/spaces", host([], { resolved }));
-    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Waits for Linux box"));
+    await waitFor(() => expect(q('[data-tree-status="relay:linux-box/ubuntu-build"]')?.textContent).toBe("Offline"));
     fireEvent.click(await found('[data-tree-menu="relay:linux-box"]'));
     const remove = await screen.findByRole("menuitem", { name: "Remove Linux box" });
     expect(remove.getAttribute("aria-disabled")).not.toBe("true");
@@ -211,7 +255,9 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     calls.length = 0;
     dialog = await open();
     fireEvent.click(q("[data-tree-also-delete]")!);
-    expect(dialog.textContent).toContain("The 2 Spaces leave your account now and won't come back. Linux box deletes them, with their files, the next time it comes online.");
+    expect(dialog.textContent).toContain(
+      "The 2 Spaces leave your account now and won't come back. Linux box deletes them, with their files, the next time it comes online.",
+    );
     expect(q("[data-tree-remove-confirm]")?.textContent).toBe("Remove and delete");
     fireEvent.click(q("[data-tree-remove-confirm]")!);
     await waitFor(() => expect(calls.map(([op]) => op)).toEqual(["machines.remove"]));

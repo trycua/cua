@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! `repo_push` belongs to the Ask first experiment. Against the in-process
-//! spacesd mock: while it is off the agent is not offered the tool and a call
-//! of it is an unknown tool, as today (nothing is measured, asked or sent);
-//! while it is on the tool is listed. Nothing runs in a guest.
+//! `repo_push` is part of Ask first, which is always on. Against the in-process spacesd mock the
+//! agent is offered the tool. Nothing runs in a guest.
 
 use cua_spaces::Spaces;
-use cua_spaces::experiments::{Gate, hold};
 use cua_spaces_ext::SpacesPersistent as _;
 use cua_spaces_ext::persistent::{AgentSpec, bridge};
 use cua_spacesd_client::testing::{MockAuth, MockServer};
@@ -66,30 +63,7 @@ fn names(listing: &Value) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn while_ask_first_is_off_the_agent_is_not_offered_repo_push_and_a_call_is_an_unknown_tool() {
-    let _off = hold(Gate::AskFirst, false);
-    let (_srv, _home, server) = bridge_for_ada().await;
-    let listing = rpc(&server, "tools/list", json!({})).await;
-    let tools = names(&listing);
-    assert!(!tools.iter().any(|t| t == "repo_push"), "{tools:?}");
-    assert!(tools.iter().any(|t| t == "notify_user"), "{tools:?}");
-    let reply = rpc(
-        &server,
-        "tools/call",
-        json!({"name": "repo_push", "arguments": {"path": "/home/cua/work", "repo": "acme/app", "branch": "fix"}}),
-    )
-    .await;
-    // Exactly what an agent gets today for a tool that does not exist.
-    assert_eq!(reply["error"]["code"], -32601, "{reply}");
-    assert!(
-        reply.to_string().contains("unknown tool repo_push"),
-        "{reply}"
-    );
-}
-
-#[tokio::test]
-async fn while_ask_first_is_on_the_agent_is_offered_repo_push() {
-    let _on = hold(Gate::AskFirst, true);
+async fn the_agent_is_offered_repo_push() {
     let (_srv, _home, server) = bridge_for_ada().await;
     let listing = rpc(&server, "tools/list", json!({})).await;
     let tools = names(&listing);

@@ -43,10 +43,21 @@ export function WaitingShare({
         </label>
       ) : null}
       <div className="flex justify-end gap-2">
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => run(onDeny, consent ? "Could not cancel the share" : "Could not turn the share down")} data-waiting-deny="">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => run(onDeny, consent ? "Could not cancel the share" : "Could not turn the share down")}
+          data-waiting-deny=""
+        >
           {consent ? "Cancel" : "Turn down"}
         </Button>
-        <Button size="sm" disabled={busy} onClick={() => run(() => onApprove(!consent && always), consent ? "Could not create the server" : "Could not approve the share")} data-waiting-approve="">
+        <Button
+          size="sm"
+          disabled={busy}
+          onClick={() => run(() => onApprove(!consent && always), consent ? "Could not create the server" : "Could not approve the share")}
+          data-waiting-approve=""
+        >
           {consent ? "Create server" : "Approve"}
         </Button>
       </div>

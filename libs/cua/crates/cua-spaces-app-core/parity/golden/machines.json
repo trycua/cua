@@ -263,7 +263,7 @@
       ],
       "pages": [
         [
-          "Ada's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online, 2 things to fix (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
           "Let other computers control this desktop: on (runs: hide-desktop)",
@@ -275,7 +275,7 @@
           "Remove from account -> host setup"
         ],
         [
-          "cua's Mac Studio — Online (rename: machine)",
+          "cua's Mac Studio — Online, 2 things to fix (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues warn: It runs Cua 0.3.9, older than this Mac’s 0.4.1. Update Cua on it.",
           "Let other computers create Spaces here: on (read-only)",
@@ -363,7 +363,7 @@
       ],
       "pages": [
         [
-          "Ada's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online, 2 things to fix (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
           "Let other computers control this desktop: on (runs: hide-desktop)",
@@ -375,7 +375,7 @@
           "Remove from account -> host setup"
         ],
         [
-          "cua's Mac Studio — Online (rename: machine)",
+          "cua's Mac Studio — Online, 2 things to fix (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues warn: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces 0.12.2 is ready to install. [Restart to update]",
           "Let other computers create Spaces here: on (read-only)",
@@ -463,7 +463,7 @@
       ],
       "pages": [
         [
-          "Ada's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online, 2 things to fix (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
           "Let other computers control this desktop: on (runs: hide-desktop)",
@@ -475,7 +475,7 @@
           "Remove from account -> host setup"
         ],
         [
-          "cua's Mac Studio — Online (rename: machine)",
+          "cua's Mac Studio — Online, 1 thing to fix (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues info: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces will update this Mac in its next release; there is nothing to install yet.",
           "Let other computers create Spaces here: on (read-only)",
@@ -609,7 +609,7 @@
       ],
       "pages": [
         [
-          "Ada's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online, 2 things to fix (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
           "Let other computers control this desktop: on (runs: hide-desktop)",
@@ -621,7 +621,7 @@
           "Remove from account -> host setup"
         ],
         [
-          "cua's Mac Studio — Online (rename: machine)",
+          "cua's Mac Studio — Online, 1 thing to fix (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues info: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces will update this Mac in its next release; there is nothing to install yet.",
           "Let other computers create Spaces here: on (read-only)",
@@ -756,7 +756,7 @@
       ],
       "pages": [
         [
-          "Ada's MacBook Pro — Online (rename: host)",
+          "Ada's MacBook Pro — Online, 2 things to fix (rename: host)",
           "issues fail: Cua can’t reach this Mac’s macOS Spaces: Local Network access is off for Cua Spaces. [Open Local Network settings]",
           "issues warn: Only 21 GB free. A macOS Space needs about 30 GB. [Free disk space]",
           "Let other computers control this desktop: on (runs: hide-desktop)",
@@ -768,7 +768,7 @@
           "Remove from account -> host setup"
         ],
         [
-          "cua's Mac Studio — Online (rename: machine)",
+          "cua's Mac Studio — Online, 1 thing to fix (rename: machine)",
           "issues warn: Running Spaces use 28 of 32 GB of memory on that Mac, so another may not start.",
           "issues info: It runs Cua 0.5.0, newer than this Mac’s 0.4.1. Cua Spaces will update this Mac in its next release; there is nothing to install yet.",
           "Let other computers create Spaces here: on (read-only)",

@@ -207,14 +207,34 @@ export function presenceMethods(ctx: BridgeContext, joiner?: PresenceJoiner): Ha
 export function syntheticPresence(now: () => number = Date.now): PresenceSessionLike {
   const me: PresenceParticipant = { participantId: "you", principalId: "user:you", displayName: "You", color: "#4363d8", kind: "human" };
   const others: { p: PresenceParticipant; period: number; radius: number; shape: string }[] = [
-    { p: { participantId: "ada", principalId: "user:ada", displayName: "Ada Lovelace", color: "#e6194b", kind: "human" }, period: 9_000, radius: 0.28, shape: "arrow" },
-    { p: { participantId: "agent", principalId: "agent:claude", displayName: "Claude", color: "#f58231", kind: "agent" }, period: 5_000, radius: 0.18, shape: "pointer" },
+    {
+      p: { participantId: "ada", principalId: "user:ada", displayName: "Ada Lovelace", color: "#e6194b", kind: "human" },
+      period: 9_000,
+      radius: 0.28,
+      shape: "arrow",
+    },
+    {
+      p: { participantId: "agent", principalId: "agent:claude", displayName: "Claude", color: "#f58231", kind: "agent" },
+      period: 5_000,
+      radius: 0.18,
+      shape: "pointer",
+    },
   ];
   let turn = 0;
   let left = false;
   const at = (o: (typeof others)[number], t: number): PresenceCursor => {
     const a = (2 * Math.PI * (t % o.period)) / o.period;
-    return { displayId: "", x: 0.5 + o.radius * Math.cos(a), y: 0.5 + o.radius * Math.sin(a), visible: true, pressed: false, shape: o.shape, shapeSource: "probe", atMs: t, receivedMs: t };
+    return {
+      displayId: "",
+      x: 0.5 + o.radius * Math.cos(a),
+      y: 0.5 + o.radius * Math.sin(a),
+      visible: true,
+      pressed: false,
+      shape: o.shape,
+      shapeSource: "probe",
+      atMs: t,
+      receivedMs: t,
+    };
   };
   return {
     me: async () => me,

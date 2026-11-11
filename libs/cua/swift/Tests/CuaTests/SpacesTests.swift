@@ -125,7 +125,18 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
 @Suite(.serialized) struct SpacesTests {
     @Test func everyContractToolMapsToAGeneratedMethod() {
         let rows = spacesToolMethods()
-        #expect(rows.count == 121)
+        // One source of truth for the tool set: the generated contract manifest.
+        let manifestURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("spaces-contract/manifest.json")
+        let manifest = try? JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        let expectedTools = Set(((manifest?["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String })
+        let gotTools = Set(rows.map { $0.tool })
+        #expect(!expectedTools.isEmpty, "could not read \(manifestURL.path)")
+        #expect(
+            gotTools == expectedTools && rows.count == expectedTools.count,
+            "binding tools differ from spaces-contract/manifest.json: missing \(expectedTools.subtracting(gotTools).sorted()), extra \(gotTools.subtracting(expectedTools).sorted()), rows \(rows.count) vs manifest \(expectedTools.count)")
         // Swift spells `Class.method_name` as `methodName` on the generated
         // protocol; check each against the protocol's requirement list.
         let spaceMethods: Set<String> = [

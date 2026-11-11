@@ -13,7 +13,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { agentMenuChoose, agentMenuSync, agentMenuView, useBridge, useSettings, type AgentMenuChange, type AgentMenuPrefs, type AgentMenuSettings } from "@/bridge";
+import {
+  agentMenuChoose,
+  agentMenuSync,
+  agentMenuView,
+  useBridge,
+  useSettings,
+  type AgentMenuChange,
+  type AgentMenuPrefs,
+  type AgentMenuSettings,
+} from "@/bridge";
 import type { Connectors } from "@/hooks/use-connectors";
 
 const NONE: AgentMenuPrefs = { shown: [], hidden: [], seen: [] };

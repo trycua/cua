@@ -1544,7 +1544,7 @@ pub async fn disconnect(
         said.push("stopped the service".to_string());
     }
     let runner = SpaceJobRunner::new(
-        Arc::new(cua_ci::sdk::SdkSpaces::new(cua)),
+        Arc::new(crate::ci_sdk::SdkSpaces::new(cua)),
         Arc::new(NoTarballs),
         paths.clone(),
         &state.machine_id,
@@ -1641,7 +1641,7 @@ pub async fn serve(
         cua_ci::github::Credentials::Token(cua_ci::Secret::new("")),
     )
     .map_err(err)?;
-    let spaces: Arc<dyn cua_ci::Spaces> = Arc::new(cua_ci::sdk::SdkSpaces::new(cua));
+    let spaces: Arc<dyn cua_ci::Spaces> = Arc::new(crate::ci_sdk::SdkSpaces::new(cua));
     let tarballs: Arc<dyn cua_ci::cache::TarballSource> = Arc::new(
         cua_ci::cache::TarballCache::new(paths.cache(), Arc::new(public)),
     );

@@ -339,7 +339,7 @@ struct ParityTests {
                           provider: provider(a["provider"] as! String),
                           now: Int64(a["now"] as! Int), image: a["image"] as? String, kind: kind,
                           hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false,
-                          host: a["host"] as? String, hostName: a["hostName"] as? String)
+                          host: a["host"] as? String, hostName: a["hostName"] as? String, parent: a["parent"] as? String)
         case "progress":
             return .progress(id: id, phase: a["phase"] as! String,
                              fraction: (a["fraction"] as? NSNumber)?.doubleValue,
@@ -1608,7 +1608,7 @@ struct ParityTests {
             id: w["id"] as! String, appName: w["appName"] as! String, title: w["title"] as! String,
             visible: w["visible"] as? Bool ?? true, appId: w["appId"] as! String,
             targetEpoch: (w["targetEpoch"] as! NSNumber).uint64Value,
-            widthPx: u("widthPx"), heightPx: u("heightPx"), pid: u("pid"))
+            widthPx: u("widthPx"), heightPx: u("heightPx"), pid: u("pid"), origin: nil)
     }
 
     func runStreamSection(_ f: [String: Any]) throws -> [Any] {

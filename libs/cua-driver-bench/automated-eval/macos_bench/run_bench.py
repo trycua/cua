@@ -629,7 +629,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                 if set(tools) != {"run_script"}:
                     raise RuntimeError("unexpected script-only Cua Driver tools/list")
                 # the same reads through the one tool; run_script returns the capture's image block
-                script = 'await cua.call("check_permissions", {}); await cua.call("get_desktop_state", {}); return 1'
+                script = "await cua.tools.check_permissions({}); await cua.tools.get_desktop_state({}); return 1"
                 result = call("run_script", {"script": script})
             elif (
                 "list_apps" not in tools

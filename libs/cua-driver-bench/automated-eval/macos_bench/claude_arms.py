@@ -123,11 +123,12 @@ SCRIPT_ONLY_SOCKET = "/tmp/cdb-bench-cua-script-only.sock"
 SCRIPT_ONLY_FLAG = ("CUA_DRIVER_SCRIPT_ONLY", "1")
 SCRIPT_ONLY_ADDENDUM = (
     "\n\nrun_script is the driver's only tool: every read and every action is a JavaScript async function body "
-    'that uses `cua.getApp("<App>")`. To look, return `(await app.getState()).tree_markdown` or '
-    "`app.query({role, name})`. To act, use app.click/typeText/setValue/pressKey/scroll with {role, name} targets, "
-    "app.waitFor({text}) between screens, loops and if/else, and `return` what you need to check the result. A "
-    "failed call throws with the script line and the nearest elements; fix the script and run it again from the "
-    "step that failed.\n"
+    "that calls the driver's tools directly as `await cua.tools.<name>(args)`; run_script's description lists "
+    "every tool's signature and `cua.describe(name)` returns one tool's full schema. To look, return "
+    "`(await cua.tools.get_window_state({pid, window_id})).tree_markdown`. To act, call the action tools "
+    "(click, type_text, set_value, press_key, scroll, move_cursor, ...) with {pid, role, name} targets or an "
+    "element_token, use loops and if/else, and `return` what you need to check the result. A failed call throws "
+    "with the script line and the nearest elements; fix the script and run it again from the step that failed.\n"
     'Pass "timeout_ms": 120000 on every run_script call.\n'
 )
 

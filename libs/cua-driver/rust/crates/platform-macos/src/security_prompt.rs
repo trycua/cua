@@ -161,11 +161,12 @@ fn is_consent_window(pid: i32, window_id: u32) -> bool {
 }
 
 /// The secure field and button titles of `pid`'s AX window `window_id`, or
-/// `None` when the window cannot be read.
+/// `None` when any part of the window cannot be read: a timed-out or failed
+/// read must not make a consent alert look like one without consent buttons.
 fn alert_content(pid: i32, window_id: u32) -> Option<AlertContent> {
     use crate::ax::bindings::{
-        ax_get_window_id, copy_ax_windows, copy_children, copy_string_attr,
-        AXUIElementCreateApplication, AXUIElementSetMessagingTimeout,
+        ax_get_window_id, copy_ax_windows_or_error, AXUIElementCreateApplication,
+        AXUIElementSetMessagingTimeout,
     };
     use core_foundation::base::{CFRelease, CFTypeRef};
 
@@ -177,42 +178,133 @@ fn alert_content(pid: i32, window_id: u32) -> Option<AlertContent> {
             return None;
         }
         AXUIElementSetMessagingTimeout(app, READ_TIMEOUT_SECONDS);
-        let windows = copy_ax_windows(app);
+        let windows = copy_ax_windows_or_error(app);
         CFRelease(app as CFTypeRef);
         let mut window = None;
-        for candidate in windows {
+        for candidate in windows.ok()? {
             if window.is_none() && ax_get_window_id(candidate) == Some(window_id) {
                 window = Some(candidate);
             } else {
                 CFRelease(candidate as CFTypeRef);
             }
         }
-        let window = window?;
-        let mut content = AlertContent::default();
-        let mut pending = vec![window];
+        let mut pending = vec![window?];
+        let mut content = Some(AlertContent::default());
         let mut visited = 0;
         while let Some(element) = pending.pop() {
             visited += 1;
-            if visited <= MAX_ELEMENTS {
-                match copy_string_attr(element, "AXRole").as_deref() {
-                    Some("AXButton") => {
-                        if let Some(title) = copy_string_attr(element, "AXTitle") {
-                            content.button_titles.push(title);
-                        }
-                    }
-                    Some("AXTextField") => {
-                        content.has_secure_field |= copy_string_attr(element, "AXSubrole")
-                            .as_deref()
-                            == Some("AXSecureTextField");
-                    }
-                    _ => {}
+            if let Some(found) = content.as_mut().filter(|_| visited <= MAX_ELEMENTS) {
+                match read_alert_element(element, found) {
+                    Some(children) => pending.extend(children),
+                    None => content = None,
                 }
-                pending.extend(copy_children(element));
+            } else {
+                content = None;
             }
             CFRelease(element as CFTypeRef);
         }
-        (visited <= MAX_ELEMENTS).then_some(content)
+        content
     }
+}
+
+/// Record `element`'s part of an alert and return its children, or `None`
+/// when a read failed.
+///
+/// # Safety
+///
+/// `element` must be valid; the caller must release every returned child.
+unsafe fn read_alert_element(
+    element: crate::ax::bindings::AXUIElementRef,
+    content: &mut AlertContent,
+) -> Option<Vec<crate::ax::bindings::AXUIElementRef>> {
+    match read_string(element, "AXRole")?.as_deref() {
+        Some("AXButton") => {
+            if let Some(title) = read_string(element, "AXTitle")? {
+                content.button_titles.push(title);
+            }
+        }
+        Some("AXTextField") => {
+            content.has_secure_field |=
+                read_string(element, "AXSubrole")?.as_deref() == Some("AXSecureTextField");
+        }
+        _ => {}
+    }
+    read_children(element)
+}
+
+/// A string attribute: `Some(None)` when the element has no such value,
+/// `None` when the read failed.
+unsafe fn read_string(
+    element: crate::ax::bindings::AXUIElementRef,
+    attribute: &str,
+) -> Option<Option<String>> {
+    use crate::ax::bindings::{kAXErrorSuccess, AXUIElementCopyAttributeValue};
+    use core_foundation::{
+        base::{CFGetTypeID, CFRelease, CFTypeRef, TCFType},
+        string::CFString,
+    };
+    let name = CFString::new(attribute);
+    let mut value: CFTypeRef = std::ptr::null();
+    let error = AXUIElementCopyAttributeValue(element, name.as_concrete_TypeRef(), &mut value);
+    if error != kAXErrorSuccess {
+        return absent_value(error).then_some(None);
+    }
+    if value.is_null() {
+        return Some(None);
+    }
+    if CFGetTypeID(value) != CFString::type_id() {
+        CFRelease(value);
+        return Some(None);
+    }
+    Some(Some(
+        CFString::wrap_under_create_rule(value as _).to_string(),
+    ))
+}
+
+/// An element's children, or `None` when the read failed.
+unsafe fn read_children(
+    element: crate::ax::bindings::AXUIElementRef,
+) -> Option<Vec<crate::ax::bindings::AXUIElementRef>> {
+    use crate::ax::bindings::{
+        kAXErrorSuccess, AXUIElementCopyAttributeValue, AXUIElementGetTypeID,
+    };
+    use core_foundation::{
+        array::CFArray,
+        base::{CFGetTypeID, CFRelease, CFRetain, CFTypeRef, TCFType},
+        string::CFString,
+    };
+    let name = CFString::new("AXChildren");
+    let mut value: CFTypeRef = std::ptr::null();
+    let error = AXUIElementCopyAttributeValue(element, name.as_concrete_TypeRef(), &mut value);
+    if error != kAXErrorSuccess {
+        return absent_value(error).then(Vec::new);
+    }
+    if value.is_null() {
+        return Some(Vec::new());
+    }
+    if CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
+        CFRelease(value);
+        return None;
+    }
+    let array = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
+    let element_type = AXUIElementGetTypeID();
+    let mut children = Vec::with_capacity(array.len() as usize);
+    for index in 0..array.len() {
+        let child = *array.get(index)?;
+        if CFGetTypeID(child) != element_type {
+            continue;
+        }
+        CFRetain(child);
+        children.push(child as crate::ax::bindings::AXUIElementRef);
+    }
+    Some(children)
+}
+
+/// Whether an AX error means the attribute simply has no value here, as
+/// opposed to a read that failed (a timeout, an invalid element, no access).
+fn absent_value(error: crate::ax::bindings::AXError) -> bool {
+    use crate::ax::bindings::{kAXErrorAttributeUnsupported, kAXErrorNoValue};
+    error == kAXErrorNoValue || error == kAXErrorAttributeUnsupported
 }
 
 /// The button labels the system's consent prompts use, in every language it

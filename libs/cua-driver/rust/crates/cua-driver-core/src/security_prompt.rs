@@ -149,17 +149,26 @@ pub struct AlertContent {
 
 /// Whether an alert asks for consent: it takes a password, or one of its
 /// buttons carries a label the system uses for its consent prompts (in the
-/// user's language, from the system's own strings). An alert whose content
-/// could not be read is treated as a consent alert.
+/// user's language, from the system's own strings). Only an alert read in
+/// full, with titled buttons none of which is a consent label, is not a
+/// consent alert: unreadable content, no titled buttons, or no known labels
+/// at all all count as consent.
 pub fn is_consent_alert(content: Option<&AlertContent>, consent_labels: &[String]) -> bool {
     let Some(content) = content else {
         return true;
     };
+    let titles: Vec<&str> = content
+        .button_titles
+        .iter()
+        .map(|title| title.trim())
+        .filter(|title| !title.is_empty())
+        .collect();
     content.has_secure_field
-        || content
-            .button_titles
+        || titles.is_empty()
+        || consent_labels.is_empty()
+        || titles
             .iter()
-            .any(|title| consent_labels.iter().any(|label| label == title.trim()))
+            .any(|title| consent_labels.iter().any(|label| label == title))
 }
 
 /// The refusal for input aimed at a prompt of `owner` (its process name), in
@@ -239,6 +248,14 @@ mod tests {
         assert!(
             is_consent_alert(None, &labels),
             "unreadable content fails closed"
+        );
+        assert!(
+            is_consent_alert(Some(&alert(&["", " "], false)), &labels),
+            "an alert whose button titles did not read fails closed"
+        );
+        assert!(
+            is_consent_alert(Some(&alert(&["Ignore"], false)), &[]),
+            "without the system's labels nothing can be ruled out"
         );
     }
 

@@ -72,6 +72,7 @@
              aria-label="txt-input" placeholder="type here"
              autocapitalize="off" autocorrect="off" spellcheck="false" />
       <span class="mirror" id="lbl-input-mirror" data-cua-id="lbl-input-mirror">mirror=</span>
+      <span hidden id="lbl-input-payload" data-cua-id="lbl-input-payload"></span>
       <input type="number" id="number-input" data-cua-id="number-input"
              aria-label="number-input" value="42" autofocus />
     </div>
@@ -220,6 +221,10 @@
 
   $('txt-input').addEventListener('input', e => {
     $('lbl-input-mirror').textContent = `mirror=${e.target.value}`;
+    // Event-driven editors consume the inserted payload, not the field value.
+    if (e.data && e.inputType === 'insertText') {
+      $('lbl-input-payload').textContent += e.data;
+    }
   });
 
   $('keyboard-input').addEventListener('keydown', e => {

@@ -184,6 +184,85 @@ fn wait_for_journal_text(journal: &FixtureJournal, id: &str, expected: &str) {
     }
 }
 
+#[test]
+#[ignore]
+fn harness_webview_type_text_refuses_value_assignment_before_mutation() {
+    let case = native_background_case(
+        "webview2",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::UiaValue,
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    let token = RefCell::new(None);
+    let payload = RefCell::new(String::new());
+    run_web_case_with_preparation(
+        case,
+        "webview2",
+        webview_exe(),
+        "CuaTestHarness WebView [ready",
+        |pid, wid, driver, journal| {
+            let state = snapshot(driver, pid, wid);
+            let index = ax::element_index_by_id(state.tree_text(), "txt-input")
+                .expect("text input missing from WebView2 snapshot");
+            let element = state.element_token(index);
+            // An intentional value write stays supported. Its DOM value is
+            // separate from the payload consumed by an input-event editor.
+            for value in ["seed", ""] {
+                let assigned = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": pid, "window_id": wid,
+                        "element_token": element, "value": value,
+                    }),
+                );
+                assert!(
+                    !assigned.is_error(),
+                    "explicit assignment failed: {}",
+                    assigned.text()
+                );
+                wait_for_journal_text(journal, "lbl-input-mirror", &format!("mirror={value}"));
+            }
+            payload.replace(journal.text("lbl-input-payload").unwrap_or_default());
+            let state = snapshot(driver, pid, wid);
+            let index = ax::element_index_by_id(state.tree_text(), "txt-input")
+                .expect("text input missing from fresh WebView2 snapshot");
+            token.replace(Some(state.element_token(index).to_owned()));
+        },
+        |pid, wid, driver, journal| {
+            let response = driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid,
+                    "element_token": token.borrow().as_ref().unwrap(),
+                    "text": "typed-payload", "delivery_mode": "background",
+                }),
+            );
+            assert!(
+                response.is_error(),
+                "web typing became a value write: {}",
+                response.text()
+            );
+            assert_eq!(response.structured()["code"], "background_unavailable");
+            wait_for_journal_text(journal, "lbl-input-mirror", "mirror=");
+            wait_for_journal_text(journal, "lbl-input-payload", &payload.borrow());
+            assert_eq!(journal.snapshot()["txt-input"]["value"], "");
+            response.text().to_owned()
+        },
+        |message, mut passed| {
+            passed.extend([OracleKind::FixtureState, OracleKind::Protocol]);
+            passed.sort();
+            passed.dedup();
+            Observation::refused(
+                RefusalCode::BackgroundUnavailable,
+                passed,
+                message,
+                Evidence::default(),
+            )
+        },
+    );
+}
+
 // ── WebView2 page tool ──────────────────────────────────────────────────────
 
 // ── Electron minimized snapshot ──────────────────────────────────────────────

@@ -15,6 +15,7 @@ pub struct RetainedElement {
     pub center: (i32, i32),
     pub rect: Option<(i32, i32, i32, i32)>,
     pub msaa_role: Option<i32>,
+    pub in_web_content: bool,
     pub read_while_minimized: bool,
 }
 
@@ -31,6 +32,7 @@ impl RetainedElement {
             center,
             rect: None,
             msaa_role: None,
+            in_web_content: false,
             read_while_minimized,
         }
     }
@@ -108,6 +110,7 @@ impl Clone for RetainedElement {
             center: self.center,
             rect: self.rect,
             msaa_role: self.msaa_role,
+            in_web_content: self.in_web_content,
             read_while_minimized: self.read_while_minimized,
         }
     }
@@ -148,6 +151,7 @@ impl UiaSnapshot {
                     center: (node.center_x, node.center_y),
                     rect: node.rect,
                     msaa_role: node.msaa_role,
+                    in_web_content: node.in_web_content,
                     read_while_minimized: false,
                 })
                 .collect(),

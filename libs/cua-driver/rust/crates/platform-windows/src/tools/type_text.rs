@@ -268,11 +268,18 @@ impl Tool for TypeTextTool {
             crate::terminal::TypeTextPolicy::Supported => {}
         }
 
+        // A renderer ValuePattern write changes the value without supplying the
+        // InputEvent payload that event-driven editors consume. Refuse before
+        // SetValue; explicit set_value and foreground input remain separate.
         // Refuse known background drops before the final WM_CHAR path. WPF is
         // conditional: indexed text still has a working UIA ValuePattern route,
         // while unindexed text would be posted to the top-level and disappear.
         if delivery == DeliveryMode::Background
-            && (crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
+            && ((admitted
+                .as_ref()
+                .is_some_and(|element| element.in_web_content)
+                && crate::input::has_chromium_descendant(hwnd))
+                || crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::TextInput)
                 || (elem_idx.is_none() && crate::input::delivery::is_wpf_target_window(hwnd)))
         {
             return crate::input::delivery::background_unavailable_error(

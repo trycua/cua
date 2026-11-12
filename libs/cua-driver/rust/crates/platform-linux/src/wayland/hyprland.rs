@@ -716,7 +716,7 @@ fn capture_output_png(name: &str) -> Result<Vec<u8>> {
 /// Place each output's capture at its logical rectangle inside the frame. A
 /// scaled output's capture is resized to its logical size, which must be a
 /// uniform scaling of the captured image.
-fn compose_frame(
+pub(super) fn compose_frame(
     frame: &DesktopFrame,
     mut capture: impl FnMut(&FrameOutput) -> Result<image::RgbaImage>,
 ) -> Result<image::RgbaImage> {
@@ -1817,6 +1817,49 @@ mod tests {
             monitor.transform = transform;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
+    }
+
+    #[test]
+    fn compose_frame_places_each_output_at_its_logical_rect() {
+        let frame = DesktopFrame {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 2,
+            scale: 1.0,
+            outputs: vec![
+                FrameOutput {
+                    name: "A".into(),
+                    x: 0,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                },
+                FrameOutput {
+                    name: "B".into(),
+                    x: 2,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                },
+            ],
+        };
+        let canvas = compose_frame(&frame, |output| {
+            let pixel = if output.name == "A" {
+                [255, 0, 0, 255]
+            } else {
+                [0, 255, 0, 255]
+            };
+            Ok(image::RgbaImage::from_pixel(
+                output.width,
+                output.height,
+                image::Rgba(pixel),
+            ))
+        })
+        .unwrap();
+        assert_eq!(canvas.dimensions(), (4, 2));
+        assert_eq!(canvas.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(canvas.get_pixel(3, 0).0, [0, 255, 0, 255]);
     }
 
     #[test]

@@ -94,6 +94,10 @@ pub struct AtspiTreeResult {
     /// False when the bounds phase ran out of time; some indexed elements then
     /// carry no frame even though they exist.
     pub bounds_complete: bool,
+    /// Set when the walk finished but deliberately published no frames
+    /// (compositor identity unproven, or niri client-side decoration margins).
+    /// `bounds_complete` can still be true; element_token actions still work.
+    pub frame_suppressed: Option<String>,
     /// Wall time the native snapshot took (walk + bounds), in milliseconds.
     pub elapsed_ms: u128,
 }
@@ -126,6 +130,7 @@ impl AtspiTreeResult {
             nodes_visited,
             nodes_pending,
             bounds_complete: walked.bounds_complete,
+            frame_suppressed: walked.bounds_suppressed,
             elapsed_ms: walked.elapsed.as_millis(),
         }
     }
@@ -806,6 +811,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 nodes_visited: 0,
                 nodes_pending: 0,
                 bounds_complete: true,
+                frame_suppressed: None,
                 elapsed_ms: 0,
             }
         }
@@ -875,6 +881,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         nodes_visited: 0,
         nodes_pending: 0,
         bounds_complete: true,
+        frame_suppressed: None,
         elapsed_ms: 0,
     }
 }
@@ -994,8 +1001,22 @@ mod budget_tests {
             window_scoped: true,
             truncation,
             bounds_complete: false,
+            bounds_suppressed: None,
             elapsed: std::time::Duration::from_millis(1234),
         }
+    }
+
+    #[test]
+    fn suppressed_frames_are_reported_separately_from_incomplete_bounds() {
+        let mut tree = walked(None);
+        tree.bounds_complete = true;
+        tree.bounds_suppressed = Some("client-side decoration margins".into());
+        let result = AtspiTreeResult::from_walked(tree, None);
+        assert!(result.bounds_complete);
+        assert_eq!(
+            result.frame_suppressed.as_deref(),
+            Some("client-side decoration margins")
+        );
     }
 
     #[test]

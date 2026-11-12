@@ -474,28 +474,14 @@ pub fn abort_pending(pid: u32, window_id: u64, error: BrowserRefusal) -> Browser
     }
 }
 
-/// Navigate the exact window to its fixed setup page. Under niri this route
-/// has no foreground path: it focuses the window through the GNOME Shell
-/// helper and writes the address field through the user's clipboard, so it
-/// refuses before any input and before the clipboard is read or written.
+/// Navigate the exact window to its fixed setup page. The focus and key
+/// delivery go through the shared foreground transaction, which niri supports.
 fn open_setup_page(
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
-    on_niri: bool,
     clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
-    if on_niri {
-        return Err(BrowserRefusal::new(
-            BrowserRefusalCode::BrowserRouteUnavailable,
-            format!(
-                "existing-profile {} setup has no niri foreground route: it would focus the \
-                 window through the GNOME Shell helper and paste the setup address through \
-                 the clipboard; nothing was sent and the clipboard was not touched",
-                descriptor.product_name
-            ),
-        ));
-    }
     let handle = SetupUiHandle {
         pid,
         window_id,
@@ -548,7 +534,6 @@ fn set_remote_debugging(
             pid,
             window_id,
             descriptor,
-            crate::wayland::is_wayland() && crate::wayland::niri::is_session(),
             &crate::clipboard::LinuxClipboard::new(),
         )?
     };
@@ -817,21 +802,6 @@ mod tests {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
-    }
-
-    #[test]
-    fn niri_refuses_setup_navigation_without_touching_the_clipboard() {
-        let clipboard = WatchedClipboard::default();
-        let Err(refused) = open_setup_page(1, 2, descriptor(), true, &clipboard) else {
-            panic!("setup navigation ran under niri");
-        };
-        assert_eq!(refused.code, BrowserRefusalCode::BrowserRouteUnavailable);
-        assert!(
-            refused.message.contains("no niri foreground route"),
-            "{}",
-            refused.message
-        );
-        assert_eq!(clipboard.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]

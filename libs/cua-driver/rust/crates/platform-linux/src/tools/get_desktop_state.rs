@@ -85,9 +85,12 @@ impl Tool for GetDesktopStateTool {
                     |hidden| {
                         // A multi-monitor layout is composed from the frame
                         // read above, so the image is exactly that frame.
-                        let png = match &hyprland_plan {
-                            Some(plan) if plan.composite => {
+                        let png = match (&hyprland_plan, &niri_frame) {
+                            (Some(plan), _) if plan.composite => {
                                 crate::wayland::hyprland::compose_desktop_capture(&plan.frame)?
+                            }
+                            (_, Some(frame)) if frame.outputs.len() > 1 => {
+                                crate::wayland::niri::compose_desktop_capture(frame)?
                             }
                             _ => crate::capture::screenshot_display_bytes()?,
                         };
@@ -106,10 +109,13 @@ impl Tool for GetDesktopStateTool {
             // abort the tool even though the screenshot already succeeded.
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
+            let hyprland_composite = hyprland_plan.as_ref().is_some_and(|plan| plan.composite);
             let hyprland_frame = hyprland_plan.map(|plan| plan.frame);
             let (screen_w, screen_h) = if let Some(frame) = &hyprland_frame {
                 (frame.width, frame.height)
             } else if let Some(frame) = &kwin_frame {
+                (frame.width, frame.height)
+            } else if let Some(frame) = &niri_frame {
                 (frame.width, frame.height)
             } else if crate::wayland::is_wayland() {
                 crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
@@ -186,6 +192,13 @@ impl Tool for GetDesktopStateTool {
                 (shot_w, shot_h),
                 (screen_w, screen_h),
             )?;
+            let composite = hyprland_composite
+                || niri_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.outputs.len() > 1)
+                || kwin_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.outputs.len() > 1);
             Ok((
                 b64,
                 shot_w,
@@ -198,6 +211,7 @@ impl Tool for GetDesktopStateTool {
                 capture_id,
                 overlay_capture,
                 kwin_distorted,
+                composite,
             ))
         })
         .await;
@@ -215,6 +229,7 @@ impl Tool for GetDesktopStateTool {
                 capture_id,
                 overlay_capture,
                 kwin_distorted,
+                composite,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -224,7 +239,7 @@ impl Tool for GetDesktopStateTool {
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
-                    "display": "primary",
+                    "display": if composite { "composite" } else { "primary" },
                     "screenshot_width": shot_w,
                     "screenshot_height": shot_h,
                     "screen_width": screen_w,

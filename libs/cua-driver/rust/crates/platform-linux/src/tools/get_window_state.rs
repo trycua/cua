@@ -793,6 +793,8 @@ impl Tool for GetWindowStateTool {
                             tr.nodes_pending,
                         ));
                         header.push('\n');
+                    } else if let Some(reason) = &tr.frame_suppressed {
+                        header.push_str(&format!("⚠️ element frames omitted: {reason}\n"));
                     } else if !tr.bounds_complete {
                         header.push_str(
                             "⚠️ bounds phase ran out of time: some elements have no frame \
@@ -817,6 +819,10 @@ impl Tool for GetWindowStateTool {
                     structured["nodes_visited"] = json!(tr.nodes_visited);
                     structured["nodes_pending"] = json!(tr.nodes_pending);
                     structured["bounds_complete"] = json!(tr.bounds_complete);
+                    if let Some(reason) = &tr.frame_suppressed {
+                        structured["frame_suppressed"] = json!(true);
+                        structured["frame_suppressed_reason"] = json!(reason);
+                    }
                     structured["walk_elapsed_ms"] = json!(tr.elapsed_ms as u64);
                     structured["timeout_ms"] = json!(timeout_ms);
                     structured["tree_markdown"] = json!(tr.tree_markdown);

@@ -9,11 +9,13 @@
 //! recognised, an IPC failure refuses instead of falling back to the generic
 //! wlr-foreign-toplevel title join, which would lose the niri id namespace.
 //!
-//! niri 26.04 reports a position only for floating windows
-//! (`tile_pos_in_workspace_view`): a tiled window's place depends on the
-//! view's scroll position, which IPC does not report. Window capture and
-//! window-coordinate pointer input therefore refuse a tiled window; the
-//! desktop scope reaches it with pixels of the single output.
+//! niri reports a position only for a window in the workspace view
+//! (`tile_pos_in_workspace_view`). Since niri#4711 (after 26.04) that
+//! includes tiled windows while they intersect the view, so window capture
+//! and window-coordinate pointer input work on them too. Releases before
+//! that field fall back to niri's own focused-window screenshot for capture;
+//! window-coordinate input still refuses, and the desktop scope reaches the
+//! window with pixels of the output.
 //!
 //! Pointer input and window capture first wait, a few short reads at most,
 //! for two consecutive reads that agree on the target, then check the layout
@@ -104,16 +106,8 @@ pub fn desktop_snapshot() -> Result<super::hyprland::DesktopSnapshot> {
 }
 
 fn desktop_snapshot_in(scene: &Scene) -> Result<super::hyprland::DesktopSnapshot> {
-    let (output, logical) = scene.single_output()?;
     Ok(super::hyprland::DesktopSnapshot {
-        frame: super::hyprland::DesktopFrame {
-            x: logical.x,
-            y: logical.y,
-            width: logical.width,
-            height: logical.height,
-            scale: logical.scale,
-            outputs: vec![frame_output(output, logical)],
-        },
+        frame: screen_frame_in(scene)?,
         pointer: Some(scene.pointer_space()?),
     })
 }
@@ -129,8 +123,9 @@ fn frame_output(output: &IpcOutput, logical: &IpcLogical) -> super::hyprland::Fr
 }
 
 /// Every enabled output's logical rectangle, and their bounding box with the
-/// largest scale, as Hyprland reports its frame. Desktop-scope input still
-/// needs a single output; reporting sizes does not.
+/// largest scale, as Hyprland reports its frame. Desktop scope uses this
+/// frame: the capture composes every output and a point must land on one of
+/// them, not in a gap.
 fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
     let mut outputs = Vec::new();
     let mut scale: f64 = 0.0;
@@ -157,6 +152,229 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
         scale,
         outputs,
     })
+}
+
+/// Capture one window through niri's own screenshot action. This is the
+/// fallback for niri releases before #4711, where a tiled window has no IPC
+/// position to crop from. The action takes the window by id and, on releases
+/// with `--path`, writes a file the driver owns, so focus does not change.
+/// Older releases write to the configured screenshot directory, where the
+/// driver focuses the target, waits for the new file, and restores focus.
+/// Either way the temporary file is removed. niri also puts the screenshot
+/// on the clipboard; its screenshot actions have no opt-out.
+pub fn screenshot_window(id: u64) -> Result<Vec<u8>> {
+    use std::time::{Duration, Instant, SystemTime};
+
+    let window = window_for_id(id)?;
+    if !window.on_screen {
+        bail!("niri screenshot fallback: the window is not on screen");
+    }
+    let size = window
+        .size
+        .ok_or_else(|| anyhow!("niri reports no window size"))?;
+
+    if let Ok(bytes) = screenshot_window_to_path(id) {
+        tracing::debug!("niri: screenshotted window {id} by id into a driver-owned file");
+        return fit_window_png(bytes, size);
+    }
+    tracing::debug!("niri: screenshotted window {id} through the configured screenshot directory");
+
+    let previous = focused_window_id();
+    let dir = screenshot_dir()?;
+    let before: std::collections::HashSet<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+                .collect()
+        })
+        .unwrap_or_default();
+    let started = SystemTime::now();
+
+    if previous != Some(id) {
+        run_niri_action(&["focus-window", "--id", &id.to_string()])?;
+        wait_for_focus(id, Duration::from_millis(800));
+    }
+    let result = (|| -> Result<Vec<u8>> {
+        run_niri_action(&["screenshot-window"])?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(path) = newest_screenshot(&dir, &before, started) {
+                let bytes = std::fs::read(&path)?;
+                let _ = std::fs::remove_file(&path);
+                return fit_window_png(bytes, size);
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "niri screenshot fallback: no new PNG appeared in {}",
+                    dir.display()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    })();
+    if let Some(previous) = previous.filter(|previous| *previous != id) {
+        let _ = run_niri_action(&["focus-window", "--id", &previous.to_string()]);
+    }
+    result
+}
+
+/// Screenshot a window by id into a temporary file the driver owns. niri
+/// >= 26.04 accepts `--path`; older releases reject it and the caller uses
+/// the configured screenshot directory instead. `--id` keeps focus where it
+/// is, so the window does not need to be brought forward.
+fn screenshot_window_to_path(id: u64) -> Result<Vec<u8>> {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "cua-driver-niri-{}-{unique}.png",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let path_arg = path.to_string_lossy().into_owned();
+    let result = (|| -> Result<Vec<u8>> {
+        run_niri_action(&[
+            "screenshot-window",
+            "--id",
+            &id.to_string(),
+            "--path",
+            &path_arg,
+        ])?;
+        // niri replies before it finishes writing the file, so wait for a
+        // size that stopped growing instead of reading a partial PNG.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut previous_len = 0;
+        while std::time::Instant::now() < deadline {
+            if let Ok(metadata) = std::fs::metadata(&path) {
+                let len = metadata.len();
+                if len > 0 && len == previous_len {
+                    return Ok(std::fs::read(&path)?);
+                }
+                previous_len = len;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        bail!(
+            "niri screenshot fallback: no screenshot appeared at {}",
+            path.display()
+        );
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// Scale a capture to the window size niri reports, so window-relative
+/// coordinates and the screenshot share one frame.
+fn fit_window_png(bytes: Vec<u8>, size: (u32, u32)) -> Result<Vec<u8>> {
+    let image = image::load_from_memory(&bytes)?;
+    if (image.width(), image.height()) == size {
+        return Ok(bytes);
+    }
+    let image = image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
+}
+
+fn focused_window_id() -> Option<u64> {
+    let output = std::process::Command::new("niri")
+        .args(["msg", "--json", "focused-window"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .ok()?
+        .get("id")?
+        .as_u64()
+}
+
+fn run_niri_action(args: &[&str]) -> Result<()> {
+    let output = std::process::Command::new("niri")
+        .args(["msg", "action"])
+        .args(args)
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "niri action {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn wait_for_focus(id: u64, budget: std::time::Duration) {
+    let deadline = std::time::Instant::now() + budget;
+    while std::time::Instant::now() < deadline {
+        if focused_window_id() == Some(id) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn screenshot_dir() -> Result<std::path::PathBuf> {
+    if let Some(home) = std::env::var_os("HOME") {
+        let config = std::env::var_os("NIRI_CONFIG")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(&home).join(".config/niri/config.kdl"));
+        if let Ok(text) = std::fs::read_to_string(config) {
+            for line in text.lines() {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("screenshot-path") {
+                    let rest = rest.trim();
+                    if let Some(value) = rest.strip_prefix('"').and_then(|v| v.split('"').next()) {
+                        let expanded = value.replace("~", &home.to_string_lossy());
+                        let path = std::path::PathBuf::from(expanded);
+                        let parent = path.parent().map(std::path::Path::to_path_buf);
+                        return Ok(parent.unwrap_or(path));
+                    }
+                }
+            }
+        }
+        return Ok(std::path::PathBuf::from(home).join("Pictures/Screenshots"));
+    }
+    bail!("niri screenshot fallback: HOME is not set")
+}
+
+fn newest_screenshot(
+    dir: &std::path::Path,
+    before: &std::collections::HashSet<std::path::PathBuf>,
+    started: std::time::SystemTime,
+) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "png") || before.contains(&path) {
+            continue;
+        }
+        let modified = entry.metadata().ok()?.modified().ok()?;
+        if modified < started {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(time, _)| modified > *time) {
+            best = Some((modified, path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+/// Compose every output's capture into the bounding-box desktop frame niri
+/// reports. Reuse the Hyprland composer: the frame layout and scale rules are
+/// the same.
+pub fn compose_desktop_capture(frame: &super::hyprland::DesktopFrame) -> Result<Vec<u8>> {
+    let canvas = super::hyprland::compose_frame(frame, |output| {
+        let png = super::niri_capture_output_png(&output.name)?;
+        Ok(image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8())
+    })?;
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
+    Ok(encoded.into_inner())
 }
 
 /// The output frame plus the monitor list `get_screen_size` reports, in the
@@ -239,8 +457,9 @@ fn describe_health(version: &str, outputs: Result<usize>) -> String {
     match outputs {
         Ok(1) => format!("niri {version}: IPC attested to WAYLAND_DISPLAY."),
         Ok(count) => format!(
-            "niri {version}: IPC attested to WAYLAND_DISPLAY; window capture and desktop \
-             input refuse because {count} outputs are enabled (one is supported)."
+            "niri {version}: IPC attested to WAYLAND_DISPLAY; window-coordinate input \
+             refuses because {count} outputs are enabled (window capture and desktop scope \
+             are supported)."
         ),
         Err(error) => format!(
             "niri {version}: IPC attested to WAYLAND_DISPLAY; the output layout is \
@@ -285,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_snapshot_uses_the_single_output_and_refuses_several() {
+    fn desktop_snapshot_spans_every_output() {
         let one = scene(
             vec![],
             vec![],
@@ -313,10 +532,18 @@ mod tests {
             ],
             false,
         );
+        let snapshot = desktop_snapshot_in(&two).unwrap();
         assert_eq!(
-            desktop_snapshot_in(&two).unwrap_err().to_string(),
-            "niri window capture and desktop input support a single output; this layout has 2"
+            (
+                snapshot.frame.x,
+                snapshot.frame.y,
+                snapshot.frame.width,
+                snapshot.frame.height
+            ),
+            (0, 0, 3840, 1080)
         );
+        assert_eq!(snapshot.frame.outputs.len(), 2);
+        assert_eq!(snapshot.frame.outputs[1].name, "DP-2");
     }
 
     #[test]
@@ -339,12 +566,49 @@ mod tests {
     }
 
     #[test]
+    fn fit_window_png_scales_a_capture_to_the_reported_window_size() {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &[255, 0, 0, 255, 0, 0, 0, 255],
+                2,
+                1,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let exact = fit_window_png(png.clone(), (2, 1)).unwrap();
+        assert_eq!(&exact, &png);
+        let fitted = fit_window_png(png, (4, 2)).unwrap();
+        let image = image::load_from_memory(&fitted).unwrap();
+        assert_eq!((image.width(), image.height()), (4, 2));
+    }
+
+    #[test]
+    fn newest_screenshot_skips_existing_files_and_returns_the_new_one() {
+        let dir = std::env::temp_dir().join(format!("niri-shot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("old.png");
+        std::fs::write(&old, b"old").unwrap();
+        let before: std::collections::HashSet<_> = [old.clone()].into_iter().collect();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let started = std::time::SystemTime::now();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let new = dir.join("new.png");
+        std::fs::write(&new, b"new").unwrap();
+        assert_eq!(newest_screenshot(&dir, &before, started), Some(new));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn health_note_states_attestation_and_the_single_output_limit() {
         assert_eq!(
             describe_health("26.04 (8ed0da4)", Ok(1)),
             "niri 26.04 (8ed0da4): IPC attested to WAYLAND_DISPLAY."
         );
-        assert!(describe_health("26.04", Ok(2)).contains("refuse because 2 outputs are enabled"));
+        assert!(describe_health("26.04", Ok(2))
+            .contains("window-coordinate input refuses because 2 outputs are enabled"));
         assert_eq!(
             inactive_health(Attestation::Unrelated(
                 "NIRI_SOCKET is served by pid 1 but WAYLAND_DISPLAY by pid 2".into()

@@ -26,6 +26,7 @@ pub mod kwin_helper;
 mod kwin_keystate;
 pub(crate) mod kwin_layout;
 pub mod niri;
+mod xkb_runtime;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
 pub mod overlay;
@@ -400,6 +401,9 @@ struct State {
     // button press at the output centre (over the just-activated window).
     vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
     output: Option<WlOutput>,
+    /// Every advertised output and its wl_output v4 name, so a niri window
+    /// capture can copy the output the window is on instead of only the first.
+    outputs: Vec<(WlOutput, Option<String>)>,
     /// wl_output v4 name of `output`, the output screencopy copies.
     output_name: Option<String>,
     // Logical (post-transform) output size: virtual-pointer absolute motion
@@ -570,6 +574,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 ));
             } else if interface == WlOutput::interface().name {
                 let out = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ());
+                state.outputs.push((out.clone(), None));
                 if state.output.is_none() {
                     state.output = Some(out);
                 }
@@ -612,6 +617,13 @@ impl Dispatch<WlOutput, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let wl_output::Event::Name { name } = &event {
+            if let Some(entry) = state
+                .outputs
+                .iter_mut()
+                .find(|(handle, _)| handle == output)
+            {
+                entry.1 = Some(name.clone());
+            }
             if state.output.as_ref() == Some(output) {
                 state.output_name = Some(name.clone());
             }
@@ -912,6 +924,11 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
 /// [`capture_via_screencopy`], plus the wl_output v4 name of the copied
 /// output when the compositor reports one.
 fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
+    screencopy_output(None)
+}
+
+/// Copy one output, or the first advertised output when `wanted` is `None`.
+fn screencopy_output(wanted: Option<&str>) -> anyhow::Result<(Vec<u8>, Option<String>)> {
     // The whole copy, connection included, waits at most this long.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     // On niri every round trip is bounded by it as well, so a stalled niri
@@ -935,10 +952,18 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
         .shm
         .clone()
         .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_shm"))?;
-    let output = state
-        .output
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_output to capture"))?;
+    let output = match wanted {
+        Some(name) => state
+            .outputs
+            .iter()
+            .find(|(_, output_name)| output_name.as_deref() == Some(name))
+            .map(|(output, _)| output.clone())
+            .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_output named {name:?}"))?,
+        None => state
+            .output
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_output to capture"))?,
+    };
 
     let frame = manager.capture_output(0, &output, &qh, ());
     // Drain Buffer / Flags events; spin until Ready or Failed (or timeout).
@@ -1050,7 +1075,12 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
     );
     cleanup_mmap(mmap_ptr, mmap_len, fd);
 
-    result.map(|png| (png, state.output_name.take()))
+    let name = state
+        .outputs
+        .iter()
+        .find(|(handle, _)| handle == &output)
+        .and_then(|(_, name)| name.clone());
+    result.map(|png| (png, name))
 }
 
 /// Allocate an anonymous shared-memory file of `size` bytes and mmap it RW.
@@ -1312,11 +1342,11 @@ fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec
 /// the copied output's own transform. grim, ext-image-copy and the portal
 /// are not tied to the attested compositor or orient differently, so niri
 /// never falls back to them.
-fn niri_display_capture() -> anyhow::Result<niri::DisplayCapture> {
+fn niri_display_capture(wanted: Option<&str>) -> anyhow::Result<niri::DisplayCapture> {
     // Read the transforms on both sides of the copy: a change in between
     // would orient the buffer with a transform it was not taken in.
     let before = niri::output_transforms()?;
-    let (png, output) = screencopy_first_output()?;
+    let (png, output) = screencopy_output(wanted)?;
     let output = output.ok_or_else(|| {
         anyhow::anyhow!("niri capture needs the wl_output name (wl_output v4) of the copied output")
     })?;
@@ -1343,9 +1373,44 @@ fn niri_display_capture() -> anyhow::Result<niri::DisplayCapture> {
 /// to a placed, unoverlapped floating window and scale it to the window's
 /// logical size, the window-local coordinate frame input uses. A tiled
 /// window refuses: niri does not report where it is.
+/// Capture one niri output by name as its oriented PNG, for the multi-output
+/// composer.
+pub(crate) fn niri_capture_output_png(name: &str) -> anyhow::Result<Vec<u8>> {
+    niri_display_capture(Some(name)).map(|capture| capture.png)
+}
+
 fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
-    let (png, plan) = niri::capture_window(xid, pid, niri_display_capture)
-        .map_err(|reason| surface_identity_unproven(xid, format!("niri: {reason}")))?;
+    // niri captures a toplevel directly once it ships
+    // ext_foreign_toplevel_image_capture_source_manager_v1 (niri #4599,
+    // merged for the release after 26.04). The toplevel identifier is the
+    // IPC window id, so this is exact: it needs no window position, works
+    // for tiled windows, and never changes focus.
+    match ext_screencopy::screenshot_toplevel_via_ext_copy(xid) {
+        Ok(Some(png)) => {
+            tracing::debug!(
+                "niri: captured window {xid} through ext-image-copy-capture toplevel source"
+            );
+            return fit_niri_window_png(xid, png);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::debug!("niri toplevel capture failed; using geometry: {error:#}");
+        }
+    }
+    let (png, plan) = match niri::capture_window(xid, pid, niri_display_capture) {
+        Ok(captured) => captured,
+        Err(reason)
+            if reason.starts_with("this niri release does not report where a tiled window is") =>
+        {
+            // niri before #4711 has no tiled-window position to crop from.
+            // Use the compositor's own focused-window screenshot instead.
+            return niri::screenshot_window(xid)
+                .map_err(|error| surface_identity_unproven(xid, format!("niri: {error}")));
+        }
+        Err(reason) => {
+            return Err(surface_identity_unproven(xid, format!("niri: {reason}")));
+        }
+    };
     let pixels = plan.pixels;
     let crop = crop_png_to_rect(
         &png,
@@ -1364,6 +1429,23 @@ fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
         plan.height,
         image::imageops::FilterType::Triangle,
     );
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
+}
+
+/// niri's toplevel capture is the client content box; window bounds include
+/// the server-side border. Scale the capture to the reported window size so
+/// window-relative coordinates and the screenshot share one frame.
+fn fit_niri_window_png(xid: u64, png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let Some(size) = niri::window_for_id(xid).ok().and_then(|window| window.size) else {
+        return Ok(png);
+    };
+    let image = image::load_from_memory(&png)?;
+    if (image.width(), image.height()) == size {
+        return Ok(png);
+    }
+    let image = image.resize_exact(size.0, size.1, image::imageops::FilterType::Triangle);
     let mut out = std::io::Cursor::new(Vec::new());
     image.write_to(&mut out, image::ImageFormat::Png)?;
     Ok(out.into_inner())
@@ -1412,7 +1494,7 @@ fn crop_png_to_rect(
 /// 6. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if niri::is_session() {
-        return niri_display_capture().map(|capture| capture.png);
+        return niri_display_capture(None).map(|capture| capture.png);
     }
     if is_wayland() && hyprland::is_session() {
         // The desktop action frame spans every powered output. The cascade
@@ -1814,6 +1896,55 @@ impl DesktopInputSpace {
             distorted.admit(&snapshot.frame, (x, y), (layout_x, layout_y))?;
         }
         Ok((layout_x, layout_y))
+    }
+}
+
+#[cfg(test)]
+mod desktop_input_space_tests {
+    use super::*;
+
+    fn space() -> DesktopInputSpace {
+        DesktopInputSpace {
+            snapshot: Some(hyprland::DesktopSnapshot {
+                frame: hyprland::DesktopFrame {
+                    x: 100,
+                    y: 50,
+                    width: 250,
+                    height: 100,
+                    scale: 1.0,
+                    outputs: vec![
+                        hyprland::FrameOutput {
+                            name: "DP-1".into(),
+                            x: 100,
+                            y: 50,
+                            width: 100,
+                            height: 100,
+                        },
+                        hyprland::FrameOutput {
+                            name: "DP-2".into(),
+                            x: 250,
+                            y: 50,
+                            width: 100,
+                            height: 100,
+                        },
+                    ],
+                },
+                pointer: None,
+            }),
+            kwin_distorted: None,
+        }
+    }
+
+    #[test]
+    fn multi_output_frame_adds_the_frame_origin_and_refuses_a_gap() {
+        let space = space();
+        assert_eq!(space.to_layout(0, 0), (100, 50));
+        assert_eq!(space.input_layout(10, 10).unwrap(), (110, 60));
+        assert_eq!(space.input_layout(160, 10).unwrap(), (260, 60));
+        assert!(
+            space.input_layout(125, 10).is_err(),
+            "layout (225, 60) is between two outputs"
+        );
     }
 }
 

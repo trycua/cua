@@ -662,3 +662,100 @@ Perception tests have four owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs` | The same loop with the published extension (OmniParser) and a resident Cua-S1-4B choosing the region, plus consumed and expired capture refusals | `s1-perception` lane of the Linux X11 runner, selected only by `ci-cua-s1-weights.yml` |
 
 Add a perception test to the directory that owns the code it exercises.
+
+## niri multi-output desktop frame (manual)
+
+niri 26.04 has no API to create an output. On a single-output host, load the
+kernel's virtual KMS module as a second output:
+
+```sh
+sudo modprobe vkms                 # root: creates Virtual-1
+niri msg outputs                   # eDP-2 + Virtual-1
+```
+
+niri hotplugs it automatically. To put a window on it, name its workspace and
+move the window there:
+
+```sh
+niri msg action focus-monitor-right
+niri msg action set-workspace-name multi
+niri msg action focus-window --id <window>
+niri msg action move-window-to-workspace multi
+niri msg action focus-workspace multi
+```
+
+Then `cua-driver call get_desktop_state` should report a frame spanning both
+outputs (for 1920x1080 + 1024x768 at x=1920: 2944x1080), list the window at its
+global frame coordinates, and accept a desktop-scope click there. Use a
+session label on the capture and click to exercise `capture_id` admission:
+
+```sh
+cid=$(cua-driver call get_desktop_state '{"session":"multi"}' | jq -r .capture_id)
+cua-driver call click "{\"scope\":\"desktop\",\"x\":2505,\"y\":494,\"capture_id\":\"$cid\",\"session\":\"multi\"}"
+```
+
+Turn the output off when done (`niri msg output Virtual-1 off`). The module can
+stay loaded until the compositor releases it; a reboot clears it. This is a
+manual host check, not a CI lane: CI has no second output.
+
+## libxkbcommon compatibility (manual)
+
+niri keyboard planning resolves `xkb_utf32_to_keysym` and
+`xkb_keymap_key_get_mods_for_level` at run time, because the release binary
+must still load on systems with libxkbcommon older than 1.0 (Ubuntu 20.04 has
+0.10.0). Verify the release binary against that library without a container:
+
+```sh
+mkdir -p /tmp/libxkb-old && cd /tmp/libxkb-old
+curl -fsSLO http://archive.ubuntu.com/ubuntu/pool/main/libx/libxkbcommon/libxkbcommon0_0.10.0-1_amd64.deb
+ar x libxkbcommon0_0.10.0-1_amd64.deb
+tar xf data.tar.xz
+LD_LIBRARY_PATH=/tmp/libxkb-old/usr/lib/x86_64-linux-gnu \
+  ~/.local/share/cua-driver-patched/cua-driver --version
+LD_LIBRARY_PATH=/tmp/libxkb-old/usr/lib/x86_64-linux-gnu \
+  ~/.local/share/cua-driver-patched/cua-driver list-tools >/dev/null
+```
+
+`ldd` should resolve `libxkbcommon.so.0` from `/tmp/libxkb-old`; the driver
+must print its version and list tools. `readelf -V` on the binary must show no
+`V_1.0.0` requirement for `libxkbcommon.so.0`.
+
+## niri tiled windows (manual, niri#4711+)
+
+Release 26.04 does not populate `tile_pos_in_workspace_view` for tiled
+windows. To exercise that path before the next niri release, build niri `main`
+and run it nested inside the current session:
+
+```sh
+git clone --depth 1 https://github.com/niri-wm/niri.git /tmp/niri-main
+cd /tmp/niri-main && cargo build --release
+```
+
+Start it with a script that launches a normal (not dialog) app and runs the
+driver, using the nested session's `WAYLAND_DISPLAY`/`NIRI_SOCKET`:
+
+```sh
+env WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \
+  NIRI_CONFIG=/tmp/niri-nested.kdl \
+  /tmp/niri-main/target/release/niri -- /tmp/nested-test.sh
+```
+
+Inside the nested session, `cua-driver list_windows` must report a non-zero
+tiled window rect (for example `16,16 453x998`), `get_window_state` must
+return that size with `frame_suppressed` unset, and window-coordinate typing
+and clicking must reach the app. On 26.04 the capture takes the screenshot
+fallback: `CUA_LOG=platform_linux=debug` must log
+`screenshotted window <id> by id into a driver-owned file`, no file may appear
+in niri's `screenshot-path`, and no `cua-driver-niri-*.png` may be left in
+`$TMPDIR`. `get_window_state` and a coordinate click
+must share a `session` label.
+
+The same niri build carries `ext_foreign_toplevel_image_capture_source_manager_v1`
+(niri#4599), which the driver prefers for every niri window. With
+`CUA_LOG=platform_linux=debug`, the daemon log must contain
+`captured window <id> through ext-image-copy-capture toplevel source` for the
+tiled window, and no screenshot file may appear in niri's `screenshot-path`.
+Browser identity has the same dependency: start Chrome with
+`--remote-debugging-port`, run `browser_prepare`, then `get_browser_state`;
+a tiled window must report `binding_quality: exact` and
+`binding_route: native_cdp_window`.

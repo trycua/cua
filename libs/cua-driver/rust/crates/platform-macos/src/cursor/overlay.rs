@@ -39,7 +39,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{
-    CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, MsgOutcome,
+    CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome,
     OverlayCommand, OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceGeometry,
     ZOrderEnforcer,
 };
@@ -119,7 +119,6 @@ const CURSOR_TILE_MARGIN: f64 = 64.0;
 /// The session badge's glow reaches this far past its pill.
 const BADGE_GLOW_PAD: f64 = cursor_overlay::session_badge_extents().above as f64;
 /// The focus rect's 2.5 pt stroke reaches past the rect.
-const FOCUS_RECT_PAD: f64 = 3.0;
 
 fn note_overlay_frame(paints: bool) {
     OVERLAY_FRAME_PAINTS.store(paints, Ordering::Release);
@@ -159,12 +158,11 @@ fn finite_position(pos: (f64, f64)) -> bool {
 }
 
 fn cursor_may_paint(state: &RenderState) -> bool {
-    state.focus_rect.is_some()
-        || (state.core.cfg.enabled
-            && state.core.visible
-            && state.core.placed
-            && state.core.idle_alpha > 0.0
-            && finite_position(state.core.pos))
+    state.core.cfg.enabled
+        && state.core.visible
+        && state.core.placed
+        && state.core.idle_alpha > 0.0
+        && finite_position(state.core.pos)
 }
 
 /// Paint cursor art into a display tile at a global top-left origin.
@@ -180,16 +178,12 @@ fn paint_surface(
         if !finite_position(rs.core.pos) {
             continue;
         }
-        let focus = rs.focus_rect.map(|rect| FocusRect {
-            rect,
-            t: rs.focus_rect_t,
-        });
         cursor_overlay::render_state::paint_cursor_with_badge(
             pm,
             &rs.core,
             origin.0,
             origin.1,
-            focus,
+            None,
             backing_scale,
             contains(frame, rs.core.pos),
         );
@@ -268,14 +262,6 @@ fn paint_bounds_for(map: &RenderMap, geometry: SurfaceGeometry) -> Option<[f64; 
         }
         if let Some([x, y, w, h]) = core.effect_bounds() {
             add([x, y, x + w, y + h]);
-        }
-        if let Some([x, y, w, h]) = rs.focus_rect {
-            add([
-                x - FOCUS_RECT_PAD,
-                y - FOCUS_RECT_PAD,
-                x + w + FOCUS_RECT_PAD,
-                y + h + FOCUS_RECT_PAD,
-            ]);
         }
     }
     let [x0, y0, x1, y1] = bounds?;
@@ -710,23 +696,16 @@ pub fn run_on_main_thread() {
 //
 // The platform-agnostic fields + tick + apply_command + render pipeline live
 // in `cursor_overlay::render_state` (2026-05 dedup audit). What stays here
-// is the macOS-specific NSScreen window dimensions and the focus-rect
-// overlay (a macOS-only post-arrival element highlight).
+// is the macOS-specific NSScreen window dimensions.
 
 struct RenderState {
     core: RenderStateCore,
-    /// Focus-highlight rectangle `[x, y, w, h]` in screen coords; None = not shown.
-    focus_rect: Option<[f64; 4]>,
-    /// Fade progress for the focus rect: 0.0 = fully visible, 1.0 = gone.
-    focus_rect_t: f64,
 }
 
 impl RenderEntry for RenderState {
     fn from_config(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
-            focus_rect: None,
-            focus_rect_t: 1.0,
         }
     }
 
@@ -742,19 +721,7 @@ impl RenderEntry for RenderState {
     /// [`RenderStateCore::tick_motion`]). Returns true if an arrival signal
     /// should be fired (the cursor just reached its target).
     fn tick(&mut self, dt: f64) -> bool {
-        let fire_arrival = self.core.tick_motion(dt);
-
-        // Advance focus-rect fade (fades out over ~600ms).  macOS-only —
-        // the shared core has no focus_rect concept.
-        if self.focus_rect.is_some() {
-            self.focus_rect_t = (self.focus_rect_t + dt / 0.6).min(1.0);
-            if self.focus_rect_t >= 1.0 {
-                self.focus_rect = None;
-                self.focus_rect_t = 1.0;
-            }
-        }
-
-        fire_arrival
+        self.core.tick_motion(dt)
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) -> bool {
@@ -765,12 +732,6 @@ impl RenderEntry for RenderState {
         //   - ClickPulse only updates `self.pos` if the cursor is still at
         //     the sentinel (otherwise the animation already landed it there).
         match cmd {
-            OverlayCommand::ShowFocusRect(rect) => {
-                // The focus box is an opt-in action mark (`cursor.marks`).
-                self.focus_rect = rect.filter(|_| self.core.options().marks);
-                self.focus_rect_t = 0.0; // reset fade to fully visible
-                true
-            }
             OverlayCommand::PinAbove(wid) => {
                 // The overlay window joins every Space, so a target on another
                 // Space would otherwise animate over the user's current one at
@@ -786,13 +747,11 @@ impl RenderEntry for RenderState {
     }
 
     /// The shared predicate (glide, spring, pulse, badge, resting motion,
-    /// idle fade) plus two macOS terms: the focus-rect fade, and the opaque
-    /// idle-hide countdown. The macOS loop parks on a blocking `recv` with no
+    /// idle fade) plus one macOS term: the opaque idle-hide countdown. The macOS loop parks on a blocking `recv` with no
     /// deadline, so a reduced-motion cursor must keep frame ticks through the
     /// countdown for its idle fade to start on time.
     fn needs_frame_tick(&self) -> bool {
         self.core.needs_frame_tick()
-            || self.focus_rect.is_some()
             || (self.core.motion.idle_hide_ms > 0.0 && self.core.is_revealed())
     }
 }
@@ -1790,22 +1749,17 @@ mod tests {
     }
 
     /// The tile holds every pixel the full-screen paint draws: cursor, badge,
-    /// glide and click effects, and focus rect, also where the screen edge
+    /// glide and click effects, also where the screen edge
     /// clamps the badge.
     #[test]
     fn the_tile_holds_every_pixel_of_the_full_screen_paint() {
         let starts = [(200.0, 150.0), (3.0, 4.0), (397.0, 296.0), (-30.0, 150.0)];
         let mut badge_frames = 0;
         let mut effect_frames = 0;
-        let focus_rects = [
-            None,
-            Some([150.0, 100.0, 120.0, 80.0]),
-            Some([-10.0, 280.0, 50.0, 40.0]),
-        ];
         for scale in [1.0, 2.0] {
             for (x, y) in starts {
                 for label in [None, Some("a session with a long name")] {
-                    for focus_rect in focus_rects {
+                    {
                         let mut map = RenderMap::new(
                             CursorConfig::default(),
                             MacScreen {
@@ -1817,8 +1771,8 @@ mod tests {
                         let frame = Some(ScreenFrame::new(0.0, 0.0, 400.0, 300.0));
                         assert!(map.seed_start_if_unplaced("sessA", x, y, frame));
                         let cursor = map.cursors.get_mut("sessA").unwrap();
-                        // Marks (the focus rect) and every motion effect are
-                        // opt-in; turn them all on so the tile must hold them.
+                        // Every motion effect is opt-in; turn them all on so the
+                        // tile must hold them.
                         cursor.core.options_override = Some(cursor_overlay::CursorOptions::ALL_ON);
                         cursor.core.motion.effects = cursor_overlay::MotionEffects {
                             trail: Some(true),
@@ -1832,7 +1786,6 @@ mod tests {
                                 Some(cursor_overlay::BadgeMode::Verbose);
                             cursor.apply_command(OverlayCommand::SetSessionLabel(label.to_owned()));
                         }
-                        cursor.apply_command(OverlayCommand::ShowFocusRect(focus_rect));
                         cursor.apply_command(OverlayCommand::MoveTo {
                             x: 400.0 - x,
                             y: 300.0 - y,
@@ -1917,7 +1870,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_rect_and_reduced_motion_countdown_keep_macos_frames() {
+    fn reduced_motion_countdown_keeps_macos_frames() {
         let mut map = empty_map();
         let cursor = placed(&mut map, "sessA");
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
@@ -1928,21 +1881,10 @@ mod tests {
 
         cursor.core.motion.idle_hide_ms = 0.0;
         assert!(!cursor.needs_frame_tick());
-        // The focus box is an opt-in mark: without `cursor.marks` it is dropped.
+        // A retired focus-rect command draws nothing and keeps no frames alive.
         cursor.core.options_override = Some(cursor_overlay::CursorOptions::NONE);
         cursor.apply_command(OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 10.0, 10.0])));
-        assert!(cursor.focus_rect.is_none());
         assert!(!cursor.needs_frame_tick());
-        cursor.core.options_override = Some(cursor_overlay::CursorOptions {
-            marks: true,
-            ..cursor_overlay::CursorOptions::NONE
-        });
-        cursor.apply_command(OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 10.0, 10.0])));
-        assert!(cursor.needs_frame_tick());
-        for _ in 0..60 {
-            cursor.tick(1.0 / 60.0);
-        }
-        assert!(cursor.focus_rect.is_none());
 
         cursor.core.idle_alpha = 0.0;
         assert!(!map.needs_frame_tick(), "a fully hidden cursor must park");

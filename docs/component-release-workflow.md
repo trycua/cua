@@ -241,10 +241,11 @@ git show origin/main:libs/lume/src/Update/VersionCheck.swift | \
 ```
 
 Require the exact tagged GitHub release, notarized archives, baked installer
-version, and updater tag prefix and canonical installer path to agree. Unlike
-Cua Driver, Lume's installer may use the repository-wide latest release as a
-fallback after its explicit and baked-version paths; verify the exact tagged
-release and baked version rather than relying on that fallback alone.
+version, and updater tag prefix and canonical installer path to agree. Lume
+releases are published with `make_latest: false`, so they never move the
+repository-wide Latest release. The installer resolves `LUME_VERSION`, then the
+baked version, then the highest published `lume-v*` release from the release
+list; it never reads `/releases/latest`.
 
 ## Failure recovery
 

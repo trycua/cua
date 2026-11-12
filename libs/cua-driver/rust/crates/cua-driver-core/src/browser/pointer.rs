@@ -21,7 +21,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
-use super::input::{ref_point, trusted_ref_point};
+use super::input::{ref_point, trusted_ref_point, trusted_ref_point_in_place};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::required_session_schema;
@@ -588,6 +588,21 @@ impl BrowserPointerTool {
             }
             (None, None) => None,
             _ => unreachable!("destination resolution matches request"),
+        };
+        // Scrolling the destination ref into view can move the origin, so
+        // prove the origin again where it now is, without scrolling.
+        let origin = match (origin_ref, destination_ref) {
+            (Some(reference), Some(_)) => match trusted_ref_point_in_place(
+                conn,
+                &reference.cdp_session,
+                reference.backend_node_id,
+            )
+            .await
+            {
+                Ok(point) => point,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
+            _ => origin,
         };
 
         self.engine

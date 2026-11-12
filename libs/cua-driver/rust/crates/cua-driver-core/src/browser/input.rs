@@ -60,6 +60,14 @@ pub(crate) async fn ref_point(
             json!({ "backendNodeId": backend_node_id }),
         )
         .await;
+    ref_box_center(conn, cdp_session, backend_node_id).await
+}
+
+async fn ref_box_center(
+    conn: &CdpConnection,
+    cdp_session: &str,
+    backend_node_id: i64,
+) -> Result<(f64, f64), BrowserRefusal> {
     let model = conn
         .call(
             Some(cdp_session),
@@ -88,7 +96,24 @@ pub(crate) async fn trusted_ref_point(
     cdp_session: &str,
     backend_node_id: i64,
 ) -> Result<(f64, f64), BrowserRefusal> {
-    let center = ref_point(conn, cdp_session, backend_node_id).await?;
+    let _ = conn
+        .call(
+            Some(cdp_session),
+            "DOM.scrollIntoViewIfNeeded",
+            json!({ "backendNodeId": backend_node_id }),
+        )
+        .await;
+    trusted_ref_point_in_place(conn, cdp_session, backend_node_id).await
+}
+
+/// [`trusted_ref_point`] without scrolling: for a point that a later scroll
+/// (another ref's) may have moved.
+pub(crate) async fn trusted_ref_point_in_place(
+    conn: &CdpConnection,
+    cdp_session: &str,
+    backend_node_id: i64,
+) -> Result<(f64, f64), BrowserRefusal> {
+    let center = ref_box_center(conn, cdp_session, backend_node_id).await?;
     let point = (center.0.floor(), center.1.floor());
     match ref_hit(conn, cdp_session, backend_node_id, point).await? {
         None => Ok(point),

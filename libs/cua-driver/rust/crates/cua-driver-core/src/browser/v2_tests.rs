@@ -95,6 +95,10 @@ pub(super) struct FixtureState {
     covering_node: Option<i64>,
     /// The covering node is a descendant of the hit-tested ref.
     covering_node_is_descendant: bool,
+    /// Scrolling this backend into view moves every main-frame box by `dy`.
+    scroll_into_view_shifts: Option<(i64, f64)>,
+    /// Accumulated main-frame box shift from such scrolls.
+    box_shift_y: f64,
     tab_visible: bool,
     select_outcome: Value,
     /// Extra page targets Chromium reports but cannot map to any browser
@@ -166,6 +170,8 @@ impl Default for FixtureState {
             layout_scroll_y: 0.0,
             covering_node: None,
             covering_node_is_descendant: false,
+            scroll_into_view_shifts: None,
+            box_shift_y: 0.0,
             tab_visible: true,
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
@@ -703,7 +709,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "DOM.getNodeForLocation" => {
                 let x = call.params["x"].as_f64().unwrap_or(f64::NAN);
                 let y = call.params["y"].as_f64().unwrap_or(f64::NAN)
-                    - if is_oopif { 0.0 } else { st.layout_scroll_y };
+                    - if is_oopif {
+                        0.0
+                    } else {
+                        st.layout_scroll_y + st.box_shift_y
+                    };
                 let known: &[i64] = if is_oopif { &[100] } else { &[10, 20, 21, 30] };
                 let under = known.iter().copied().find(|backend| {
                     let origin = (*backend * 10) as f64;
@@ -791,7 +801,14 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 MockReply::ok(json!({})).with_events(events)
             }
-            "DOM.scrollIntoViewIfNeeded" => MockReply::ok(json!({})),
+            "DOM.scrollIntoViewIfNeeded" => {
+                if let Some((backend, dy)) = st.scroll_into_view_shifts {
+                    if !is_oopif && call.params["backendNodeId"] == backend {
+                        st.box_shift_y += dy;
+                    }
+                }
+                MockReply::ok(json!({}))
+            }
             "DOM.getBoxModel" => {
                 let backend = call.params["backendNodeId"].as_i64().unwrap_or(0);
                 let known = if is_oopif {
@@ -800,7 +817,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     [10, 20, 21, 30].contains(&backend)
                 };
                 if known {
-                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64);
+                    let shift = if is_oopif { 0.0 } else { st.box_shift_y };
+                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64 + shift);
                     MockReply::ok(json!({
                         "model": {
                             "content": [x, y, x + 20.0, y, x + 20.0, y + 10.0, x, y + 10.0]
@@ -3407,6 +3425,43 @@ async fn trusted_ref_pointer_refuses_when_another_element_is_at_the_point() {
         .await;
 
     assert_trusted_refusal_sent_nothing(&f, &result, "covered");
+}
+
+fn exact_label_ref(snapshot: &Value, label: &str) -> String {
+    snapshot["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["frame"] == "main" && r["label"] == label)
+        .and_then(|r| r["ref"].as_str())
+        .unwrap_or_else(|| panic!("no main ref labelled {label:?}: {snapshot}"))
+        .to_owned()
+}
+
+#[tokio::test]
+async fn trusted_ref_drag_presses_where_the_origin_is_after_the_destination_scrolls() {
+    // Scrolling the destination (backend 21) into view moves the origin
+    // (main-btn, backend 10, box y 100..110) up by 50px.
+    let f = fixture_with(|state| state.scroll_into_view_shifts = Some((21, -50.0))).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let origin = ref_of(&snap, "main", "main-btn");
+    let destination = exact_label_ref(&snap, "type=text");
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": origin,
+            "destination_ref": destination, "action": "drag", "session": SESSION
+        }))
+        .await;
+
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    let points = mouse_points(&f);
+    // mouseMoved then mousePressed at the origin's current center, not y=105.
+    assert_eq!(points[0], (110.0, 55.0), "{points:?}");
+    assert_eq!(points[1], (110.0, 55.0), "{points:?}");
+    assert_eq!(*points.last().unwrap(), (220.0, 165.0), "{points:?}");
 }
 
 #[tokio::test]

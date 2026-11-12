@@ -311,8 +311,8 @@ fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
 
 /// The other visible top-level windows of `pid` with their `GW_OWNER` chain,
 /// for `get_window_state`'s `interaction_context`. Modality comes from
-/// `modal_by_disabled_owner`; `None` when it cannot be established or the
-/// modal window has no title to address it by. Blocking.
+/// `modal_by_disabled_owner`; `None` when it cannot be established, or when
+/// a modal or focused window has no title to address it by. Blocking.
 pub(crate) fn interaction_facts(
     pid: u32,
     target: u64,
@@ -336,14 +336,6 @@ pub(crate) fn interaction_facts(
         .collect();
     let modal =
         cua_driver_core::window_inspection::modal_by_disabled_owner(target, &owned, enabled)?;
-    // get_window_state addresses titled windows only, so a related surface
-    // without a title could not be inspected through next_call. An untitled
-    // modal leaves the relation unobservable (inspect the desktop instead);
-    // other untitled windows are left out of the report.
-    let addressable = |hwnd: u64| window_info_by_handle(hwnd).is_some();
-    if modal.iter().any(|hwnd| !addressable(*hwnd)) {
-        return None;
-    }
     let owned: Vec<_> = owned
         .into_iter()
         .map(
@@ -356,9 +348,11 @@ pub(crate) fn interaction_facts(
             },
         )
         .collect();
-    let mut related = cua_driver_core::window_inspection::related_by_owner_chain(target, &owned);
-    related.retain(|window| addressable(window.window_id));
-    Some(related)
+    // get_window_state addresses titled windows only.
+    cua_driver_core::window_inspection::keep_addressable(
+        cua_driver_core::window_inspection::related_by_owner_chain(target, &owned),
+        |hwnd| window_info_by_handle(hwnd).is_some(),
+    )
 }
 
 /// Every visible, non-minimized top-level HWND of `pid`, in z-order. Unlike

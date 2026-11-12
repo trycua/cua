@@ -181,6 +181,26 @@ pub fn modal_by_disabled_owner(
     Some(modal)
 }
 
+/// Keep only the windows `get_window_state` can address, so `next_call`
+/// never names one it would refuse. A modal or focused window that cannot be
+/// addressed could be the surface to act on, so the whole relation becomes
+/// unobservable (`None`, inspect the desktop instead); any other unaddressable
+/// window is left out.
+pub fn keep_addressable(
+    related: Vec<RelatedWindowFacts>,
+    addressable: impl Fn(u64) -> bool,
+) -> InteractionFacts {
+    let mut kept = Vec::with_capacity(related.len());
+    for window in related {
+        if addressable(window.window_id) {
+            kept.push(window);
+        } else if window.modal || window.focused {
+            return None;
+        }
+    }
+    Some(kept)
+}
+
 /// The facts behind one [`interaction_context`] decision. `None` means the
 /// platform could not enumerate the application's windows or their state, so
 /// absence of a related surface proves nothing.
@@ -479,6 +499,34 @@ mod tests {
             modal_by_disabled_owner(1, &[(1, None)], |hwnd| hwnd != 1),
             None
         );
+    }
+
+    #[test]
+    fn an_unaddressable_modal_or_focused_window_makes_the_relation_unobservable() {
+        let addressable = |id: u64| id < 100;
+        // An untitled inert window is dropped; the rest stay.
+        let kept = keep_addressable(
+            vec![
+                window(5, WindowOwnership::Target, true, false),
+                window(105, WindowOwnership::Target, false, false),
+            ],
+            addressable,
+        )
+        .unwrap();
+        assert_eq!(
+            kept.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            vec![5]
+        );
+        // An untitled modal, or an untitled window holding focus, could be
+        // the surface to act on but cannot be named in next_call.
+        for unaddressable in [
+            window(101, WindowOwnership::Target, true, false),
+            window(102, WindowOwnership::Target, false, true),
+        ] {
+            let facts = keep_addressable(vec![unaddressable], addressable);
+            assert_eq!(facts, None);
+            assert_eq!(interaction_context(&facts)["status"], "unobservable");
+        }
     }
 
     #[test]

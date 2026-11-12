@@ -1063,7 +1063,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
             return match run_native_capture_worker(
                 display_capture_gate(),
                 DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-                screenshot_main_display_sck,
+                || screenshot_main_display_sck(None),
             ) {
                 Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
                 Err(error) => {
@@ -1075,7 +1075,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
         match run_native_capture_worker(
             display_capture_gate(),
             DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-            move || screenshot_main_display_sck_excluding(overlay_window_id),
+            move || screenshot_main_display_sck(Some(overlay_window_id)),
         ) {
             Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
             Err(error) => {
@@ -1098,26 +1098,14 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     })
 }
 
-/// Main display through `SCScreenshotManager.captureImage(in:)`, which needs
-/// macOS 15.2 and skips the shareable-content query and the content filter.
-fn screenshot_main_display_sck() -> anyhow::Result<Vec<u8>> {
-    use screencapturekit::screenshot_manager::SCScreenshotManager;
-
-    let bounds = core_graphics::display::CGDisplay::main().bounds();
-    let image = SCScreenshotManager::capture_image_in_rect(screencapturekit::cg::CGRect::new(
-        bounds.origin.x,
-        bounds.origin.y,
-        bounds.size.width,
-        bounds.size.height,
-    ))
-    .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image_in_rect failed: {e}"))?;
-    cgimage_to_png(&image, "main display")
-}
-
-/// Main display at native pixel size through ScreenCaptureKit, with one
-/// window (the overlay) excluded. Requires macOS 14 for
-/// `SCScreenshotManager`.
-fn screenshot_main_display_sck_excluding(excluded_window_id: u32) -> anyhow::Result<Vec<u8>> {
+/// Main display at native pixel size through a ScreenCaptureKit display
+/// filter, with `excluded_window_id` (the overlay) left out. Requires macOS 14
+/// for `SCScreenshotManager`.
+///
+/// `SCScreenshotManager.captureImage(in:)` would skip the shareable-content
+/// query, but macOS keeps the `CGImage` and `IOSurface` of every call alive
+/// for the life of the process.
+fn screenshot_main_display_sck(excluded_window_id: Option<u32>) -> anyhow::Result<Vec<u8>> {
     use core_graphics::display::CGMainDisplayID;
     use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
     use screencapturekit::screenshot_manager::SCScreenshotManager;
@@ -1133,19 +1121,21 @@ fn screenshot_main_display_sck_excluding(excluded_window_id: u32) -> anyhow::Res
         .ok_or_else(|| {
             anyhow::anyhow!("ScreenCaptureKit does not list the main display {main_display_id}")
         })?;
-    let windows = content.windows();
-    let excluded = windows
-        .iter()
-        .find(|window| window.window_id() == excluded_window_id)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "ScreenCaptureKit does not list the overlay window {excluded_window_id}"
-            )
-        })?;
+    let overlay = excluded_window_id
+        .map(|window_id| {
+            content
+                .windows()
+                .into_iter()
+                .find(|window| window.window_id() == window_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("ScreenCaptureKit does not list the overlay window {window_id}")
+                })
+        })
+        .transpose()?;
 
     let mut filter = SCContentFilter::create()
         .with_display(&display)
-        .with_excluding_windows(&[excluded])
+        .with_excluding_windows(&overlay.iter().collect::<Vec<_>>())
         .build();
     // `screencapture` includes the menu bar; keep the same image.
     filter.set_include_menu_bar(true);

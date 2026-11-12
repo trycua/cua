@@ -1556,6 +1556,7 @@ final class LumeController {
             // Set default VM name if not provided
             let vmName = name ?? "\(imageName)_\(tag)"
 
+            Logger.info("Pulling \(image)")
             Logger.debug(
                 "Pulling image",
                 metadata: [
@@ -1599,6 +1600,7 @@ final class LumeController {
                 try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
             }
 
+            Logger.info("Pulled \(image) as VM \(vmName)")
             Logger.debug(
                 "Image pulled successfully",
                 metadata: [

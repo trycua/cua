@@ -117,7 +117,6 @@ const OVERLAY_CLEAR_GRACE: Duration = Duration::from_millis(250);
 const CURSOR_TILE_MARGIN: f64 = 64.0;
 /// The session badge's glow reaches this far past its pill.
 const BADGE_GLOW_PAD: f64 = cursor_overlay::session_badge_extents().above as f64;
-/// The focus rect's 2.5 pt stroke reaches past the rect.
 
 fn note_overlay_frame(paints: bool) {
     OVERLAY_FRAME_PAINTS.store(paints, Ordering::Release);

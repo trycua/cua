@@ -6226,8 +6226,8 @@ mod tests {
         ])));
         assert!(finite_computer_action_from_args(&args(&[
             "call",
-            "page",
-            r#"{"action":"insert_text","text":"private"}"#,
+            "browser_pointer",
+            r#"{"action":"hover","text":"private"}"#,
         ])));
         assert!(!finite_computer_action_from_args(&args(&[
             "call",

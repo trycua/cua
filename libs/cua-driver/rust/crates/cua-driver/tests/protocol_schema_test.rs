@@ -396,46 +396,34 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
 }
 
 #[test]
-fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
-    let args = serde_json::json!({
-        "action": "enable_javascript_apple_events",
-        "user_has_confirmed_enabling": false
-    });
+fn removed_legacy_page_actions_are_refused_even_with_the_old_opt_in() {
+    for action in [
+        "execute_javascript",
+        "click_element",
+        "insert_text",
+        "type_keystrokes",
+        "enable_javascript_apple_events",
+    ] {
+        let args = serde_json::json!({"action": action, "pid": 1, "window_id": 1});
 
-    {
         let mut driver = McpDriver::spawn().expect("spawn default source-built driver");
         let response = driver.call("page", args.clone());
-        assert!(response.is_error(), "mutation must refuse by default");
+        assert!(response.is_error(), "{action} must refuse by default");
+
+        // The old operator switch no longer enables anything.
+        let mut driver = McpDriver::spawn_with_env(&[
+            ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+            ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+            ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+        ])
+        .expect("spawn source-built driver with the removed switch set");
+        let response = driver.call("page", args);
         assert!(
-            response.text().contains("requires unrestricted mode"),
-            "default refusal must name the trusted launch gate: {}",
+            response.is_error(),
+            "{action} must stay refused when the removed switch is set: {}",
             response.text()
         );
     }
-
-    let mut driver = McpDriver::spawn_with_env(&[
-        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
-        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
-        ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
-    ])
-    .expect("spawn source-built driver with unrestricted legacy compatibility enabled");
-    let response = driver.call("page", args);
-    assert!(
-        response.is_error(),
-        "unconfirmed mutation must still refuse"
-    );
-    assert!(
-        response
-            .text()
-            .contains("Set user_has_confirmed_enabling=true"),
-        "enabled daemon should reach the explicit confirmation gate: {}",
-        response.text()
-    );
-    assert!(
-        !response.text().contains("disabled by default"),
-        "the daemon did not observe its startup environment: {}",
-        response.text()
-    );
 }
 
 #[test]

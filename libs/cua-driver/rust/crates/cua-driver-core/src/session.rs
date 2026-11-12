@@ -3325,10 +3325,10 @@ mod tests {
         assert!(pointer.computer_action);
 
         let page_write = begin_tool_call(
-            "page",
+            "browser_type",
             &serde_json::json!({
                 "session": "test-action-page-write-CD34",
-                "action": "insert_text",
+                "mode": "insert_text",
                 "text": "not retained"
             }),
             true,

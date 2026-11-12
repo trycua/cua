@@ -388,8 +388,15 @@ browser_click
 ```
 
 `trusted` is the default and models browser input through CDP's Input domain.
-Before dispatch, the driver refreshes the element box and hit-tests the point.
-It refuses stale, covered, or ambiguous targets.
+A trusted event lands on whatever the page renders at its point, so for a ref
+the driver scrolls the element into view, takes its box center, and hit-tests
+that point before dispatch. A point outside the visible viewport, or one where
+another element (a sticky header, a modal, an overlay) is rendered on top,
+returns `browser_input_trust_unavailable` with `hit_test` set to
+`outside_viewport` or `covered` and nothing sent. Refresh page state, or use
+`dom_event`, which dispatches on the element itself. Coordinate clicks are
+sent where you aim and are not hit-tested. This applies to `browser_pointer`
+refs on the trusted route too.
 
 Standalone Chromium on Linux can activate its native window when trusted CDP
 pointer input is used. CUA Driver detects that limitation and returns
@@ -561,7 +568,9 @@ result from the current host, process, window, session, and tab.
   action; never treat a readable `content_ref` as clickable or editable.
 - `browser_input_trust_unavailable`: either request `dom_event` when its
   semantics are acceptable or use the native action ladder. Do not foreground
-  the browser while calling the action background.
+  the browser while calling the action background. When `detail.hit_test` is
+  `covered` or `outside_viewport`, the ref's point did not reach the element;
+  snapshot again first, since the page may have changed under it.
 - closed tab, moved tab, browser restart, or reconnect: discard capabilities
   and bind again.
 

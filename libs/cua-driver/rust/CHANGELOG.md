@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.24](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.23...cua-driver-rs-v0.47.24) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** require every native input tool to publish the action result ([#7507](https://github.com/trycua/cua/issues/7507)) ([01596ff](https://github.com/trycua/cua/commit/01596ffcbac5335013480da62ed317411c5a2ce3)), closes [#2885](https://github.com/trycua/cua/issues/2885)
+
 ## [0.47.23](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.22...cua-driver-rs-v0.47.23) (2026-11-12)
 
 

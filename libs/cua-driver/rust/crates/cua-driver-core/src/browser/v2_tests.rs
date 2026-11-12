@@ -934,9 +934,8 @@ struct FixtureFocus {
     attach_activates_browser: bool,
     frontmost: StdMutex<Option<i64>>,
     restores: StdMutex<Vec<(i64, i64)>>,
-    /// The browser window is on another Space than the user's: the platform
-    /// can guard a background attach.
-    browser_off_space: bool,
+    /// The platform can guard a background attach.
+    guards_background_attach: bool,
     guards: StdMutex<Vec<(i64, u64)>>,
 }
 
@@ -962,7 +961,7 @@ impl BrowserPlatform for FixturePlatform {
         browser_pid: i64,
         window_id: u64,
     ) -> Option<Box<dyn std::any::Any + Send>> {
-        if !self.focus.browser_off_space {
+        if !self.focus.guards_background_attach {
             return None;
         }
         self.focus
@@ -1307,12 +1306,12 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
 async fn foreground_attach_fixture(
     frontmost: i64,
 ) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
-    attach_fixture_with_space(frontmost, false).await
+    attach_fixture_with_guard(frontmost, false).await
 }
 
-async fn attach_fixture_with_space(
+async fn attach_fixture_with_guard(
     frontmost: i64,
-    browser_off_space: bool,
+    guards_background_attach: bool,
 ) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
@@ -1321,7 +1320,7 @@ async fn attach_fixture_with_space(
         attach_activates_browser: true,
         frontmost: StdMutex::new(Some(frontmost)),
         restores: StdMutex::new(Vec::new()),
-        browser_off_space,
+        guards_background_attach,
         guards: StdMutex::new(Vec::new()),
     });
     let provider = Arc::new(FixtureProtectedProvider {
@@ -1754,10 +1753,9 @@ async fn background_existing_profile_attach_refuses_before_any_visible_effect() 
 }
 
 #[tokio::test]
-async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off_space() {
-    // pid 99 (the user's app) is in front on its Space; the browser window is
-    // on another Space, so the platform guards a background attach.
-    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+async fn background_existing_profile_attach_runs_under_the_platform_guard() {
+    // pid 99 (the user's app) is in front; the platform guards a background attach.
+    let (f, focus, _) = attach_fixture_with_guard(99, true).await;
     let result = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
@@ -1777,8 +1775,8 @@ async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off
 }
 
 #[tokio::test]
-async fn background_existing_profile_attach_on_the_users_space_still_refuses() {
-    let (f, focus, _) = attach_fixture_with_space(99, false).await;
+async fn background_existing_profile_attach_without_a_platform_guard_refuses() {
+    let (f, focus, _) = attach_fixture_with_guard(99, false).await;
     let result = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
@@ -1789,17 +1787,13 @@ async fn background_existing_profile_attach_on_the_users_space_still_refuses() {
         .await;
     let refused = structured(&result);
     assert_eq!(refused["code"], "background_unavailable", "{refused}");
-    assert_eq!(
-        refused["refusal"]["detail"]["background_attach_requires"],
-        "browser_window_on_another_space"
-    );
     assert!(!f.setup_invoked.load(Ordering::SeqCst));
     assert!(focus.guards.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn foreground_existing_profile_attach_does_not_use_the_background_guard() {
-    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let (f, focus, _) = attach_fixture_with_guard(99, true).await;
     let result = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,

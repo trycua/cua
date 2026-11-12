@@ -409,9 +409,8 @@ pub trait BrowserPlatform: Send + Sync {
     /// when the platform can keep it out of the user's way: while the returned
     /// value is alive, every self-activation of `browser_pid` is reverted
     /// within milliseconds. `None` (the default) keeps the refusal. macOS
-    /// returns a guard only when `window_id` is on another Space than the
-    /// user's active one, where the browser's consent window stays out of
-    /// sight.
+    /// returns a guard when `window_id` is on another Space than the user's,
+    /// or shown on the user's Space.
     fn guard_background_attach(
         &self,
         _browser_pid: i64,

@@ -281,18 +281,21 @@ impl Default for MacOsBrowserPlatform {
 /// background routes.
 static GUARDED_ATTACHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Whether a background existing-profile attach may run under the guard: only
-/// when WindowServer places the approved window on another Space than the
-/// user's active one. Chrome's consent window then opens on that Space, out of
-/// the user's sight; on the user's Space it would sit over their window.
 /// Whether an attach or cleanup is running under [`SelfActivationGuard`]: the
 /// setup then uses its background routes.
 pub(crate) fn guarded_attach_active() -> bool {
     GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0
 }
 
-fn guarded_attach_allowed(window_on_current_space: Option<bool>) -> bool {
-    window_on_current_space == Some(false)
+/// Whether a background existing-profile attach may run under the guard: for
+/// a window on another Space, or one shown on the user's Space. Chrome brings
+/// a minimized or hidden window back on screen to open the setup tab.
+fn guarded_attach_allowed(view: Option<crate::windows::WindowSpaceView>) -> bool {
+    view.is_some_and(|view| match view.on_current_space {
+        Some(true) => view.is_on_screen,
+        Some(false) => true,
+        None => false,
+    })
 }
 
 /// While alive, reverts every self-activation of `pid` within milliseconds:
@@ -886,7 +889,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
     ) -> Option<Box<dyn std::any::Any + Send>> {
         let pid = i32::try_from(browser_pid).ok()?;
         let window_id = u32::try_from(window_id).ok()?;
-        guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+        guarded_attach_allowed(crate::windows::window_space_view_by_id(window_id))
             .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn std::any::Any + Send>)
     }
 
@@ -1385,12 +1388,10 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // Turning remote debugging back off reopens Chrome's setup page,
         // which brings Chrome to the front; hand the front back afterwards.
         let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
-        // Chrome on another Space: the same guarded background routes as the
-        // attach, so the cleanup does not bring Chrome forward either.
+        // The same guarded background routes as the attach, so the cleanup
+        // does not bring Chrome forward either.
         let _guard = previous_front
-            .filter(|_| {
-                guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
-            })
+            .filter(|_| guarded_attach_allowed(crate::windows::window_space_view_by_id(window_id)))
             .map(|_| SelfActivationGuard::start(pid));
         let result = run_committed_consent_cleanup(
             CONSENT_CLEANUP_PASSES,
@@ -1842,10 +1843,17 @@ mod tests {
     }
 
     #[test]
-    fn guarded_background_attach_only_for_a_window_on_another_space() {
-        assert!(guarded_attach_allowed(Some(false)));
-        assert!(!guarded_attach_allowed(Some(true)));
-        // Unknown Space placement keeps the honest refusal.
+    fn guarded_background_attach_needs_a_window_chrome_will_not_bring_back() {
+        let view = |on_current_space, is_on_screen| {
+            Some(crate::windows::WindowSpaceView {
+                on_current_space,
+                is_on_screen,
+            })
+        };
+        assert!(guarded_attach_allowed(view(Some(false), false)));
+        assert!(guarded_attach_allowed(view(Some(true), true)));
+        assert!(!guarded_attach_allowed(view(Some(true), false)));
+        assert!(!guarded_attach_allowed(view(None, true)));
         assert!(!guarded_attach_allowed(None));
     }
 

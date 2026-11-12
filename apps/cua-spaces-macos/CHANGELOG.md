@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.1](https://github.com/trycua/cua/compare/cua-spaces-v0.34.0...cua-spaces-v0.34.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces:** forward create_space CPU and memory limits ([#7428](https://github.com/trycua/cua/issues/7428)) ([f2201ac](https://github.com/trycua/cua/commit/f2201ac55ce19fb513c4b53569d04d2016bce4b8))
+
 ## [0.34.0](https://github.com/trycua/cua/compare/cua-spaces-v0.33.7...cua-spaces-v0.34.0) (2026-11-12)
 
 

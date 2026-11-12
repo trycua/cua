@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The parity replay for Settings → Connectors (`agent-keys`): the core calls the
+ * The parity replay for Settings → Connections (`agent-keys`): the core calls the
  * section makes go through the bridge's own functions (`agent-keys.ts`), and
  * the states they reach are recorded for the Playwright harness to put on
  * the real screen (`window.__cuaParity.showAgentKeys`). See `parity.ts`.
@@ -54,7 +54,7 @@ export function agentKeysParityMethods(core: CoreClient, record: (c: AgentKeysCh
 }
 
 export interface AgentKeysParityHandle {
-  /** Settings → Connectors for this input, with a sheet or a Remove question open. */
+  /** Settings → Connections for this input, with a sheet or a Remove question open. */
   showAgentKeys(input: AgentKeysInput, open?: { sheet?: { provider: AgentKeyProvider; env: string | null } | null; removing?: string | null }): void;
 }
 

@@ -440,6 +440,35 @@ impl MeshClients {
             .collect()
     }
 
+    /// Drops every node's loopback forwards and the connections they carry.
+    /// Returns how many forwards were dropped and the Spaces that were
+    /// connected through them (no longer marked routed: the caller drops
+    /// their cached connections so their next call reconnects).
+    pub(crate) async fn shed_forwards(&self) -> (usize, Vec<String>) {
+        let spaces: Vec<String> = self
+            .routed
+            .lock()
+            .expect("routed")
+            .drain()
+            .map(|(space, _)| space)
+            .collect();
+        let dialers: Vec<Arc<Dialer>> = self
+            .nodes
+            .lock()
+            .await
+            .values()
+            .filter_map(|slot| match slot {
+                Slot::Ready { dialer, .. } => Some(dialer.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut n = 0;
+        for d in dialers {
+            n += d.forget_all().await;
+        }
+        (n, spaces)
+    }
+
     /// The status of each node, for displays and measurements.
     pub(crate) async fn status(&self) -> Vec<(String, cua_mesh::Status)> {
         self.nodes
@@ -748,16 +777,78 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shedding_drops_forwards_and_marks_their_spaces_to_reconnect() {
+        let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = cua_mesh::MeshConfig::new(
+            coord.url.clone(),
+            cua_mesh::NodeKind::Machine,
+            Some(dir.path().join("m.json")),
+            cua_mesh::static_auth(vec![("x-cua-machine-id".into(), "m1".into())]),
+        );
+        cfg.stun = vec![coord.stun.to_string()];
+        let machine = cua_mesh::Mesh::start(cfg).await.unwrap();
+        machine.wait_ready(Duration::from_secs(10)).await.unwrap();
+        let dialer = Arc::new(
+            Dialer::start(
+                &coord.url,
+                cua_mesh::static_auth(Vec::new()),
+                None,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap(),
+        );
+        let route = dialer
+            .route("m1", None, Duration::from_secs(10))
+            .await
+            .unwrap();
+        let clients = MeshClients::default();
+        let key = Key::Account(coord.url.clone());
+        clients.nodes.lock().await.insert(
+            key.clone(),
+            Slot::Ready {
+                dialer: dialer.clone(),
+                _lock: None,
+                account: None,
+            },
+        );
+        clients
+            .routed
+            .lock()
+            .unwrap()
+            .insert("relay:m1".into(), (key, false, 0));
+
+        let (n, spaces) = clients.shed_forwards().await;
+        assert_eq!((n, spaces), (1, vec!["relay:m1".to_owned()]));
+        // The forward's port is closed; the Space is no longer routed.
+        assert!(tokio::net::TcpStream::connect(route.local).await.is_err());
+        assert!(clients.routed.lock().unwrap().is_empty());
+        // The next route opens a fresh forward.
+        let again = dialer
+            .route("m1", None, Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(tokio::net::TcpStream::connect(again.local).await.is_ok());
+        machine.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_space_on_a_mesh_the_relay_turned_off_reconnects() {
         let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
-        let dialer = Dialer::start(
-            &coord.url,
-            cua_mesh::static_auth(Vec::new()),
+        // After the relay closes the session the node waits a random
+        // backoff plus up to 10 s of spread before it asks again; the
+        // test only cares what the node learns then, not how long it waits.
+        let mut cfg = cua_mesh::MeshConfig::new(
+            coord.url.clone(),
+            cua_mesh::NodeKind::Client,
             None,
-            Duration::from_secs(10),
-        )
-        .await
-        .unwrap();
+            cua_mesh::static_auth(Vec::new()),
+        );
+        cfg.reconnect_speedup = 1000;
+        let dialer = Dialer::start_with_config(cfg, Duration::from_secs(10))
+            .await
+            .unwrap();
         let clients = MeshClients::default();
         let key = Key::Account(coord.url.clone());
         clients.nodes.lock().await.insert(

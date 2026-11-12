@@ -71,13 +71,17 @@ fn forget_pool(home: &std::path::Path) {
     POOL.lock().unwrap_or_else(|e| e.into_inner()).remove(home);
 }
 
-/// The kind of Space a checkpoint of engine `runtime_type` forks as.
-fn kind_of_engine(runtime_type: &str) -> Option<Kind> {
+/// The kind of Space a checkpoint of engine `runtime_type` forks as (`None`
+/// when the engine is not one this build names).
+pub(crate) fn kind_of_engine(runtime_type: &str) -> Option<Kind> {
     match runtime_type {
         "qemu" | "lume" => Some(Kind::Vm),
         "firecracker" | "vz" | "microvm" => Some(Kind::MicroVm),
         "gvisor" | "runc" | "docker" | "podman" | "container" | "apple" => Some(Kind::Container),
-        _ => None,
+        other => match cua_sandbox_core::placement_of_backend(other).0 {
+            Kind::Auto => None,
+            k => Some(k),
+        },
     }
 }
 
@@ -470,7 +474,12 @@ impl Spaces {
             .map(|n| n.trim().to_string())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| format!("{checkpoint}-{:06x}", rand::random::<u32>() & 0xff_ffff));
+        let mut kinds = std::collections::BTreeMap::new();
+        if let Some(k) = kind_of_engine(&engine) {
+            kinds.insert(checkpoint.clone(), k.as_str().to_string());
+        }
         let spec = BatchSpec {
+            kinds,
             groups: vec![dpb::ForkBatchGroup {
                 source: checkpoint.clone(),
                 count: 1,
@@ -591,5 +600,30 @@ mod fork_on_tests {
         assert_eq!(crate::fork_batch::batch_growth("", true), Some(true));
         assert_eq!(crate::fork_batch::batch_growth("auto", false), Some(false));
         assert_eq!(crate::fork_batch::batch_growth("local", true), None);
+    }
+}
+
+#[cfg(test)]
+mod engine_kind_tests {
+    use super::*;
+
+    /// The kind a checkpoint forks as comes from its engine, whatever name
+    /// the engine is recorded under.
+    #[test]
+    fn a_checkpoints_engine_names_the_kind_of_its_forks() {
+        for (engine, kind) in [
+            ("qemu", Kind::Vm),
+            ("qemu-docker", Kind::Vm),
+            ("lume", Kind::Vm),
+            ("firecracker", Kind::MicroVm),
+            ("containerization", Kind::MicroVm),
+            ("gvisor", Kind::Container),
+            ("runc", Kind::Container),
+            ("docker", Kind::Container),
+        ] {
+            assert_eq!(kind_of_engine(engine), Some(kind), "{engine}");
+        }
+        assert_eq!(kind_of_engine(""), None);
+        assert_eq!(kind_of_engine("nothing-known"), None);
     }
 }

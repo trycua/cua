@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical browser-target mutation gates.
 //!
 //! Public session ids are capability namespaces, not browser identity. Gates

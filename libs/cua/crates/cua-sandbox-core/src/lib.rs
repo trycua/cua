@@ -51,6 +51,7 @@ pub mod profile;
 pub mod provider;
 pub mod proxy;
 pub mod refs;
+pub mod repo_cache;
 mod runtime;
 mod sandbox;
 pub mod settings;

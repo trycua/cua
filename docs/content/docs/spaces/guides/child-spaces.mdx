@@ -1,0 +1,121 @@
+---
+title: Child Spaces
+description: 'Let a Space make Spaces of its own: an agent inside it creates, uses and deletes children, without your account and without reaching anything else.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+A Space can make Spaces of its own. An agent working inside it can fork 32
+copies to run a benchmark, start a fresh machine to test a build, or try a
+change on a clean desktop, then delete them. These are its children: they
+belong to it, and it can reach nothing else.
+
+An agent run turns this on for its Space by itself. For any other Space you
+turn it on yourself.
+
+## Turn it on
+
+<Tabs items={['CLI', 'SDK']}>
+  <Tab value="CLI">
+    ```bash test="cli-shape" id="children-on"
+    cua spaces create linux --name studio --children
+    cua spaces children studio on
+    cua spaces children studio off
+    ```
+  </Tab>
+  <Tab value="SDK">
+    ```python skip="no-runner"
+    import cua
+
+    spaces = cua.auto().spaces()
+    await spaces.create(cua.SpaceCreateOptions(name="studio", children=True))
+    await spaces.set_children("studio", False)
+    ```
+  </Tab>
+</Tabs>
+
+Off ends the Space's right to make children at once. Children it already
+made keep running until they are deleted or their time runs out.
+
+## Inside the Space
+
+Nothing to set up. The same commands and tools work, and every Space they
+make is a child of this one:
+
+```bash skip="no-runner"
+cua spaces create linux --name worker
+cua spaces ls
+cua sb exec worker -- make test
+cua spaces rm worker
+```
+
+An agent gets the same as tools in its Space's own MCP server:
+`create_space`, `fork_space`, `list_spaces`, `space_bash`, `stop_space`,
+`start_space` and `delete_space`. Code that uses the SDK
+(`cua.auto()`) works too.
+
+## What a child gets
+
+- **Where.** A child runs on the same computer as its parent unless it asks
+  for `--on auto` (the least-loaded of your computers and linked clouds),
+  `--on host:<name>` or a linked cloud (`--on aws`). This computer's cua daemon
+  creates it with your own sign-in and cloud links. The Space asking never
+  holds them. A Windows child needs a machine with virtualization: a Windows
+  PC of yours, or a cloud host that offers it. Hetzner Cloud servers can't
+  run VMs, so Windows children don't go there.
+- **No wider network.** It keeps its parent's egress rules. A request for
+  wider ones is refused.
+- **Cost counted.** A child in a linked cloud counts what it adds per hour
+  against its tree's budget and your account's cloud budget. The stricter
+  one wins.
+- **No longer life.** It ends when its parent would, and after 4 hours at
+  most unless you give it longer.
+- **Limited depth.** A child may make children of its own, two levels
+  below the Space you made. Deeper requests are refused.
+
+## What you see
+
+When an agent makes a Space, the thread shows one row for it, like a subagent's: the OS logo, the
+Space's name and where it is ("Cloning the disk", "Ready in 54s", or why it could not be made).
+The row opens the child's page. The page exists from the moment the create starts, with its
+progress and Cancel, and a failed create stays with its reason and Remove from list. The agent
+is told the outcome too. If you say no to its request, it is told you said no and does not ask
+again; a request nobody answers for 30 minutes is closed the same way, with a note.
+
+Deleting a Space deletes the child Spaces under it first (`--keep-children` keeps them). Stopping
+a Space does not stop its children: they keep running until their own limit.
+
+## A budget per tree
+
+Each tree has a budget: how many child Spaces, vCPUs and memory its
+children may hold at once, and what they may cost. The defaults are 16
+Spaces, 16 vCPUs, 32 GiB and $2 an hour, so a runaway loop stays cheap.
+A child that does not fit is refused with what is left, in words an agent
+can act on. Creates in flight reserve their share first, so two at once
+can't pass the budget together.
+
+```bash test="cli-shape" id="children-budget"
+cua spaces budget studio
+cua spaces budget studio --spaces 32 --cpus 64 --memory 131072
+cua spaces budget studio --clear
+```
+
+Inside a Space, `cua spaces budget` shows its own tree's budget and use.
+Only you can change it.
+
+## What a Space can't do
+
+The channel a Space uses answers for its own children and nothing else.
+
+- **Other Spaces.** Your other Spaces, its parent and its siblings look
+  the same as a Space that does not exist.
+- **Your account.** It holds no account sign-in, cloud link or key, so it
+  can't share, connect clouds or reach your other computers.
+- **A copied capability.** The capability it holds works only on its own
+  channel. A copy taken from a snapshot, a fork or another Space is
+  refused.
+
+The channel is not a network port. The Space's own cua-spacesd keeps it on
+the Space's loopback and hands each connection to this computer's cua daemon
+over the connection the daemon opened. The daemon knows which Space is
+asking from the connection, never from what the Space says.

@@ -26,7 +26,7 @@ function host({ signedIn, configured }: { signedIn: boolean; configured: boolean
   return { adapter, setups };
 }
 
-describe.skipIf(!wasmBuilt)("signing in adds this computer", () => {
+describe.skipIf(!wasmBuilt)("signing in adds this machine", () => {
   it("a sign-in on a computer that isn't set up sets it up to provide Spaces, its screen private", async () => {
     const { adapter, setups } = host({ signedIn: false, configured: false });
     const store = new BridgeStore(adapter, await testCore());
@@ -64,6 +64,19 @@ describe.skipIf(!wasmBuilt)("signing in adds this computer", () => {
     await until(() => expect(store.get<SessionData>("session").data?.signedIn).toBe(true));
     await tick(50);
     expect(setups).toHaveLength(0);
+    store.dispose();
+  });
+
+  it("signed out, adding this computer sets nothing up and asks the host for nothing: the sign-in comes first", async () => {
+    const { adapter, setups } = host({ signedIn: false, configured: false });
+    const asked: string[] = [];
+    const spy = Object.assign(Object.create(adapter) as DataAdapter, {
+      call: ((op: string, args: Record<string, unknown>) => (asked.push(op), adapter.call(op as never, args as never))) as DataAdapter["call"],
+    });
+    const store = new BridgeStore(spy, await testCore());
+    expect(await store.addThisComputer(null)).toBe(false);
+    expect(setups).toHaveLength(0);
+    expect(asked.filter((op) => op.startsWith("host."))).toEqual([]);
     store.dispose();
   });
 

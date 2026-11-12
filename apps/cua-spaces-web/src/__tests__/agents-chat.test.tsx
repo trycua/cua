@@ -21,9 +21,15 @@ stubBrowserApis();
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
-const HERMES = "acct_ada/hermes/hermes";
-const CODEX = "acct_ada/codex/codex";
-const CLAUDE = "acct_grace/claude-code/claude code";
+const UBUNTU = "relay:linux-box/ubuntu-build";
+const RELEASE = "relay:mac-mini/release-checks";
+const DESIGN = "local:design-review";
+// Each agent in each Space is its own entry, keyed on its Space and handle there.
+const HERMES = `${UBUNTU}/hermes`;
+const HERMES_RELEASE = `${RELEASE}/hermes`;
+const CODEX = `${DESIGN}/codex`;
+const CLAUDE = `${UBUNTU}/claude`;
+const CURSOR = `${UBUNTU}/cursor`;
 const found = (s: string, timeout = 5000) =>
   waitFor(
     () => {
@@ -42,16 +48,22 @@ const click = async (el: HTMLElement) => {
 const open = (search = "", demo: Record<string, unknown> = {}) => mountApp(`/agents${search}`, { failsCreates: false, listsGhost: false, demo });
 
 describe("the Agents tab", () => {
-  it("lists every agent once, Needs you pinned, running first, with owners and unread", async () => {
+  it.skipIf(!wasmBuilt)("lists every agent once, Needs you pinned, running first, with owners and unread", async () => {
     await open();
     await found(`[data-chat='${CODEX}']`);
     // Needs you: Hermes's tag, Codex's question, Claude Code's push.
-    expect(qa("[data-needs-you]").map((n) => n.dataset.needsYou).sort()).toEqual(["approval", "approval", "question"]);
+    expect(
+      qa("[data-needs-you]")
+        .map((n) => n.dataset.needsYou)
+        .sort(),
+    ).toEqual(["approval", "approval", "question"]);
     expect(qa("[data-needs-you]").map((n) => n.textContent)).toContainEqual(expect.stringContaining("Which branch should the snapshots go to"));
-    // Hermes is in release-checks and ubuntu-build: one row.
+    // Hermes is in release-checks and ubuntu-build: one row for each.
     expect(qa(`[data-chat='${HERMES}']`)).toHaveLength(1);
-    expect(qa("[data-agent-section='Running'] [data-chat]").map((r) => r.dataset.chat)).toEqual(expect.arrayContaining([HERMES, CODEX, CLAUDE]));
-    expect(q("[data-agent-section='Others'] [data-chat]")?.dataset.chat).toBe("acct_linus/cursor/cursor");
+    expect(qa(`[data-chat='${HERMES_RELEASE}']`)).toHaveLength(1);
+    expect(qa("[data-agent-section='Running'] [data-chat]").map((r) => r.dataset.chat)).toEqual(expect.arrayContaining([HERMES_RELEASE, CODEX, CLAUDE]));
+    expect(qa("[data-agent-section='Others'] [data-chat]").map((r) => r.dataset.chat)).toEqual(expect.arrayContaining([HERMES, CURSOR]));
+    expect(q("[data-agent-section='Others'] [data-chat-count], [data-agent-section='Others'] h2")?.textContent).toContain("2");
     // A teammate's agent says whose it is; yours don't.
     expect(q(`[data-chat='${CLAUDE}']`)?.textContent).toContain("Grace's");
     expect(q(`[data-chat='${CODEX}']`)?.textContent).not.toContain("'s");
@@ -60,26 +72,30 @@ describe("the Agents tab", () => {
     expect(q(`[data-chat='${CODEX}'] [data-owner-badge]`)?.dataset.ownerBadge).toBe("acct_ada");
   });
 
-  it("one agent in two Spaces: All merges them with Space labels; the switch narrows to one", async () => {
-    await open(`?agent=${encodeURIComponent(HERMES)}`);
-    const dm = await found(`[data-dm='${HERMES}'][data-dm-space='all']`);
-    await waitFor(() => expect(dm.querySelectorAll("[data-dm-space-label]").length).toBeGreaterThan(1));
-    const labels = new Set(qa("[data-dm-space-label]").map((l) => l.dataset.dmSpaceLabel));
-    expect(labels).toEqual(new Set(["release-checks", "ubuntu-build"]));
+  it.skipIf(!wasmBuilt)("one agent in two Spaces is two entries, each opening its own Space's thread", async () => {
+    await open();
+    await found(`[data-chat='${HERMES}']`);
+    expect(qa(`[data-chat='${HERMES}']`)).toHaveLength(1);
+    expect(qa(`[data-chat='${HERMES_RELEASE}']`)).toHaveLength(1);
+    expect(q(`[data-chat='${HERMES}'] [data-chat-line]`)?.textContent).toContain("ubuntu-build");
+    expect(q(`[data-chat='${HERMES_RELEASE}'] [data-chat-line]`)?.textContent).toContain("release-checks");
+    // The Space tabs are gone: each thread is one Space's.
+    await click(q(`[data-chat='${HERMES}']`)!);
+    const dm = await found(`[data-dm='${HERMES}'][data-dm-space='${UBUNTU}']`);
+    expect(dm.querySelector("[aria-label='Space']")).toBeNull();
+    await waitFor(() => expect(q("[data-dm-log]")?.textContent).toContain("Two bullet points"));
+    expect(q("[data-dm-space-label]")).toBeNull();
+    expect(q("[data-dm-target]")?.dataset.dmTarget).toBe(UBUNTU);
+    await click(q(`[data-chat='${HERMES_RELEASE}']`)!);
+    await found(`[data-dm='${HERMES_RELEASE}'][data-dm-space='${RELEASE}']`);
     // Its approval, answered right here.
     const card = await found("[data-approval-state='open']");
     expect(card.textContent).toContain("Tag v0.9.4 and publish a release");
     await click([...card.querySelectorAll("button")].find((b) => b.textContent === "Approve")!);
     await found("[data-approval-state='approved']");
-    // Narrowed to ubuntu-build: only its entries, no labels, and the composer posts there.
-    await click([...document.querySelectorAll<HTMLElement>("[data-dm] button")].find((b) => b.textContent === "ubuntu-build")!);
-    await found(`[data-dm='${HERMES}'][data-dm-space='relay:linux-box/ubuntu-build']`);
-    await waitFor(() => expect(q("[data-dm-log]")?.textContent).toContain("Two bullet points"));
-    expect(q("[data-dm-space-label]")).toBeNull();
-    expect(q("[data-dm-target]")?.dataset.dmTarget).toBe("relay:linux-box/ubuntu-build");
   });
 
-  it("sending is an @mention task in the Space the composer names; members see it", async () => {
+  it.skipIf(!wasmBuilt)("sending is an @mention task in the Space the composer names; members see it", async () => {
     await open(`?agent=${encodeURIComponent(CODEX)}`);
     await found(`[data-dm='${CODEX}']`);
     expect(q("[data-dm-members-see]")?.textContent).toBe("Members see it");
@@ -100,7 +116,7 @@ describe("the Agents tab", () => {
     await waitFor(() => expect(task.dataset.taskState).toBe("done"), { timeout: 5000 });
   });
 
-  it("a teammate's agent at work: the working line with Watch, its push waiting for approval", async () => {
+  it.skipIf(!wasmBuilt)("a teammate's agent at work: the working line with Watch, its push waiting for approval", async () => {
     await open(`?agent=${encodeURIComponent(CLAUDE)}`);
     const line = await found("[data-dm-working]");
     expect(line.textContent).toContain("Bumping the retry timeout in ubuntu-build");
@@ -108,7 +124,7 @@ describe("the Agents tab", () => {
     expect(q("[data-dm-open-space]")?.textContent).toContain("ubuntu-build");
   });
 
-  it("when only its owner may task it, the composer says so and offers the Space", async () => {
+  it.skipIf(!wasmBuilt)("when only its owner may task it, the composer says so and offers the Space", async () => {
     await open(`?agent=${encodeURIComponent("acct_grace/hermes/hermes")}`, { threadRole: "member" });
     const locked = await found("[data-dm-locked]");
     expect(locked.textContent).toContain("can give Hermes tasks.");
@@ -116,45 +132,41 @@ describe("the Agents tab", () => {
     expect(q("[data-composer]")).toBeNull();
   });
 
-  it("no agents: one question and the ways in", async () => {
+  it("no agents: the box to start one, not an empty state with buttons", async () => {
     await open("", { noThread: true });
-    await found("[data-agents-empty]");
-    expect(q("[data-agents-empty]")?.textContent).toContain("Who should work for you?");
-    expect(qa("[data-agents-empty-row]").map((r) => r.dataset.agentsEmptyRow)).toEqual(expect.arrayContaining(["start", "connect"]));
+    await found("[data-agents-unset] [data-ask-box]");
+    expect(q("[data-agents-empty]")).toBeNull();
+    expect(document.body.textContent).not.toContain("Who should work for you?");
+    expect(document.body.textContent).not.toContain("Start one in a Space");
     expect(q("[data-agents-show-all]")).not.toBeNull();
   });
 
-  it("Connect on the empty page shows the app's real mark and opens Connectors at its row, connecting nothing", async () => {
-    const { router } = await open("", { noThread: true, agents: "unset" });
-    const row = await found('[data-agents-empty-row^="connect-mac-"]');
-    expect(row.querySelector("[data-app-mark]")).not.toBeNull();
-    expect(row.querySelector('[data-harness-mark="bot"]')).toBeNull();
-    const agent = row.dataset.agentsEmptyRow!.replace("connect-mac-", "");
-    await click(row);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connectors"));
-    expect((router.state.location.search as { app?: string }).app).toBe(agent);
-    // The row is there, and still off: opening the page did not connect it.
-    const appRow = await found(`[data-connector-app="${agent}"]`);
-    expect(appRow.dataset.state).toBe("not-connected");
-  });
-
-  it("New agent opens Add an agent with the Space in its title", async () => {
-    await open();
+  it.skipIf(!wasmBuilt)("New agent clears the selection: no popup, the unset view with the box", async () => {
+    const { router } = await open(`?agent=${encodeURIComponent(CODEX)}`);
+    await found(`[data-dm='${CODEX}']`);
     await click(await found("[data-new-agent]"));
-    await found("[data-add-agent='pick']");
-    expect(q("[data-add-agent='pick'] [aria-label='Space']")).not.toBeNull();
+    await found("[data-agents-unset] [data-ask-box]");
+    expect(q("[data-dm]")).toBeNull();
+    expect(q("[data-add-agent]")).toBeNull();
+    expect(q("[role='dialog']")).toBeNull();
+    expect((router.state.location.search as { new?: boolean }).new).toBe(true);
+    expect(q(`[data-chat='${CODEX}']`)?.getAttribute("aria-current")).toBeNull();
+    // Picking an entry opens it again.
+    await click(q(`[data-chat='${CODEX}']`)!);
+    await found(`[data-dm='${CODEX}']`);
+    expect(q("[data-agents-unset]")).toBeNull();
   });
 
-  it("ⓘ shows who the agent is in each of its Spaces", async () => {
+  it.skipIf(!wasmBuilt)("ⓘ shows who the agent is in its Space", async () => {
     await open(`?agent=${encodeURIComponent(HERMES)}`);
     await click(await found("[data-dm-info]"));
     const page = await found(`[data-agent-page='${HERMES}']`);
-    expect(page.querySelectorAll("[data-agent-page-space]")).toHaveLength(2);
+    expect(page.querySelectorAll("[data-agent-page-space]")).toHaveLength(1);
     expect(page.querySelector("[data-provenance='hermes']")).not.toBeNull();
     expect(page.querySelector("[data-agent-page-all]")).not.toBeNull();
   });
 
-  it("the thread's card links to the agent's DM (Activity, under Details)", async () => {
+  it.skipIf(!wasmBuilt)("the thread's card links to the agent's DM (Activity, under Details)", async () => {
     await mountApp(`/spaces/${encodeURIComponent("relay:linux-box/ubuntu-build")}`, { failsCreates: false, listsGhost: false });
     const name = await found("[data-author-name='claude']");
     await click(name);
@@ -178,7 +190,18 @@ describe("the DM and the list, as data", () => {
     state: "active",
     lastSeenMs: null,
   });
-  const member = (name: string, i: MemberIdentity | null, over: Partial<AgentMember> = {}): AgentMember => ({ name, harness: i?.harness.id ?? "", status: "idle", activity: null, sessions: 1, rights: null, youCan: null, heldBy: null, identity: i, ...over });
+  const member = (name: string, i: MemberIdentity | null, over: Partial<AgentMember> = {}): AgentMember => ({
+    name,
+    harness: i?.harness.id ?? "",
+    status: "idle",
+    activity: null,
+    sessions: 1,
+    rights: null,
+    youCan: null,
+    heldBy: null,
+    identity: i,
+    ...over,
+  });
   const space = (id: string) => ({ id, name: id.split(":").pop()!, os: "linux" as const }) as never;
 
   it.skipIf(!wasmBuilt)("keys one agent across Spaces on owner, harness and name; without an identity, on its Space", async () => {
@@ -187,17 +210,52 @@ describe("the DM and the list, as data", () => {
     expect(chatKey("local:x", member("bot", null))).toBe("local:x/bot");
     const chats = mergeChats(core, [
       { space: space("local:a"), role: "owner", members: [member("hermes", ident("ada", "hermes", "Hermes"), { status: "asleep" })] },
-      { space: space("local:b"), role: "owner", members: [member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes", dm: { unread: 2, last: null }, needsYou: [] })] },
+      {
+        space: space("local:b"),
+        role: "owner",
+        members: [
+          member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes", dm: { unread: 2, last: null }, needsYou: [] }),
+        ],
+      },
       { space: space("local:b"), role: "owner", members: [member("hermes-3", ident("grace", "hermes", "Hermes"))] },
     ]);
     expect(chats.map((c) => [c.key, c.spaces.length, c.tone, c.line, c.unread])).toEqual([
       ["ada/hermes/hermes", 2, "working", "Drafting notes in b", 2],
       ["grace/hermes/hermes", 1, "idle", "In b", 0],
     ]);
+    // The Agents tab lists each agent in each Space on its own.
+    const per = mergeChats(
+      core,
+      [
+        { space: space("local:a"), role: "owner", members: [member("hermes", ident("ada", "hermes", "Hermes"), { status: "asleep" })] },
+        {
+          space: space("local:b"),
+          role: "owner",
+          members: [member("hermes-2", ident("ada", "hermes", "Hermes"), { status: "working", activity: "drafting notes" })],
+        },
+      ],
+      [],
+      true,
+    );
+    expect(per.map((c) => [c.key, c.spaces.length, c.tone, c.line]).sort()).toEqual([
+      ["local:a/hermes", 1, "asleep", "Asleep in a"],
+      ["local:b/hermes-2", 1, "working", "Drafting notes in b"],
+    ]);
   });
 
   it("the DM rule (as the daemon's): the agent's entries, mine to it, and what hangs off them", () => {
-    const e = (seq: number, author: string, extra: Record<string, unknown> = {}) => ({ seq, kind: "message", text: "", mentions: [], reply_to: null, task: null, update: null, answer: null, author: { id: author }, ...extra });
+    const e = (seq: number, author: string, extra: Record<string, unknown> = {}) => ({
+      seq,
+      kind: "message",
+      text: "",
+      mentions: [],
+      reply_to: null,
+      task: null,
+      update: null,
+      answer: null,
+      author: { id: author },
+      ...extra,
+    });
     const entries = [
       e(1, "acct_ada", { mentions: ["codex"], task: { to: "codex" } }),
       e(2, "acct_ada", { mentions: ["hermes"], task: { to: "hermes" } }),

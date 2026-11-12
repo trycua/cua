@@ -206,6 +206,10 @@ If pacman owns the executable, update with `sudo pacman -Syu`; Driver's own
 update and channel commands refuse with pacman guidance (builds with
 [#3636](https://github.com/trycua/cua/pull/3636)).
 
+The Cua Driver inside Cua Spaces for Mac updates with the app. Its update and
+channel commands refuse and point to **Cua Spaces > Check for Updates…**, so a
+second standalone driver is never installed beside it.
+
 ### Before updating to 0.35
 
 0.35 changes three things that scripts and wrappers may depend on. The typed
@@ -329,18 +333,34 @@ to another release.
 
 ## Personalize the cursor
 
-The agent's cursor is an overlay, not the real pointer: a session-colored
-pointer (`cua.default`, the only built-in theme). Its color tells agents apart.
-It is a visual aid, not an authorization signal.
+The agent's cursor is an overlay, not the real pointer: a plain
+session-colored arrow (`cua.default`, the only built-in theme). Its color tells
+agents apart. It is a visual aid, not an authorization signal.
 
-By default the cursor carries no badge. A small chip appears for about a second
-when the agent brings something to the foreground or presses a key combo such
-as ⌘C. The session name appears when you hover over the cursor, or while two or
-more agent cursors are on screen. Nothing is shown while the cursor moves.
+By default the arrow floats gently, with a soft halo in its own
+color behind it. While it moves, its tip points along the path; it is upright
+again whenever it arrives. It never shows a mark next to it, whatever the
+agent does (click, type, press keys, scroll, drag), and no ripple or bounce. Each extra is a setting you can change for every cursor at once:
 
-The `cursor.badges` setting changes this for every cursor at once:
-`minimal` (the default), `verbose` (the session name on reveal, plus delivery
-and target chips on every action), or `off`. For example,
+- `cursor.float`: the gentle float, a slow sway and bob with a slight tilt.
+  It is on by default and settles to zero before every click, drag, scroll
+  and typing, so they land exactly;
+  `cua-driver config set cursor.float off` keeps the cursor still.
+- `cursor.halo`: the soft glow behind the arrow. On by default.
+- `cursor.rotate`: by default (`heading`) the tip points along the path while
+  the cursor moves, and it is upright again for every click. `lean` only tilts
+  it a little toward where it is going; `off` keeps it upright.
+- `cursor.motion.effects.glow`, `.ripple` and `.squish`: a glow while it moves,
+  a ring on each click, and a small press on each click.
+
+For example, `cua-driver config set cursor.halo off`. The old `cursor.marks`
+setting is retired: it is still accepted, but it does nothing.
+
+The cursor shows its session name when you hover over it, or while two or more
+agent cursors are on screen, and never while it moves. The `cursor.badges`
+setting changes this: `minimal` (the default), `verbose` (the session name on
+reveal, delivery and target chips on every action, and a short chip for key
+combos such as ⌘C), or `off`. For example,
 `cua-driver config set cursor.badges verbose` restores the earlier badge:
 
 ![Verbose badge combinations for background and foreground delivery across accessibility, pixel, browser, and desktop targets](https://github.com/user-attachments/assets/071dbfd0-b0d4-442f-9654-994c84db3029)
@@ -464,6 +484,10 @@ and `--no-zoom` gives a plain render. All options:
 [recording tools](/cua-driver/reference/mcp-tools).
 
 ## Computer History
+
+<Callout type="warn">
+  Computer History is deprecated. It is off by default, agents are no longer told to call `history_status` or `history_query`, and both tools will be removed in the release after 26 Nov 2026. To remove stored data, run `cua-driver history delete --yes`.
+</Callout>
 
 Computer History keeps an encrypted local record of actions performed through
 Cua Driver, so an agent can pick up where a previous run stopped. It is an

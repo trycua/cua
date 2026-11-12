@@ -108,6 +108,16 @@ pub const MEMBER_AUTH_OP: &str = "thread.member_auth";
 
 tokio::task_local! {
     static CALLER: Caller;
+    static DEVICE: CallerDevice;
+}
+
+/// The enrolled device behind a relay caller, as the relay vouched for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallerDevice {
+    /// The device id (`dev_...`), when the relay named it.
+    pub id: Option<String>,
+    /// The device is a phone (the relay's signed class).
+    pub phone: bool,
 }
 
 impl Caller {
@@ -121,6 +131,18 @@ impl Caller {
     /// authenticate someone other than the owner wrap their dispatch in it.
     pub async fn scope<F: Future>(self, fut: F) -> F::Output {
         CALLER.scope(self, fut).await
+    }
+
+    /// [`Caller::scope`] that also says which device made the call, and whether it is a
+    /// phone ([`Caller::current_device`]).
+    pub async fn scope_with_device<F: Future>(self, device: CallerDevice, fut: F) -> F::Output {
+        DEVICE.scope(device, CALLER.scope(self, fut)).await
+    }
+
+    /// The device behind the tool call this task is running (none for the owner's own
+    /// calls and for transports that do not say).
+    pub fn current_device() -> CallerDevice {
+        DEVICE.try_with(Clone::clone).unwrap_or_default()
     }
 
     /// The [`Caller::Member`] a [`MEMBER_AUTH_OP`] answer names.
@@ -188,6 +210,13 @@ pub trait SpacesExtension: Send + Sync + 'static {
     /// A Space is going away (removed, deleted, released): what this
     /// extension holds for it ends here, while the Space still answers.
     fn space_dropped<'a>(&'a self, spaces: &'a Spaces, space: &'a str) -> BoxFuture<'a, ()> {
+        let _ = (spaces, space);
+        Box::pin(async {})
+    }
+
+    /// A Space was deleted for good (its sandbox is gone): what lived in it
+    /// ends here. Not called when a Space is only forgotten or released.
+    fn space_deleted<'a>(&'a self, spaces: &'a Spaces, space: &'a str) -> BoxFuture<'a, ()> {
         let _ = (spaces, space);
         Box::pin(async {})
     }

@@ -4,9 +4,9 @@
 use crate::util::{self, internal, line};
 use clap::{Args, Subcommand};
 use cua_agent_setup::{
-    AgentSetup, AgentStatus, Change, ConnectionReport, ConnectionRow, ConnectionState, ImportState,
-    McpServer, McpState, Outcome, Parts, ProblemAction, RemoveOptions, SignedInState,
-    StatusOptions, Target, connection::ConnectParts,
+    AgentSetup, AgentStatus, Change, ConnectionReport, ConnectionRow, ConnectionState,
+    DRIVER_MCP_SERVER_NAME, ImportState, McpServer, McpState, Outcome, Parts, ProblemAction,
+    RemoveOptions, SignedInState, StatusOptions, Target, connection::ConnectParts,
 };
 use cua_sdk::CuaError;
 use std::{
@@ -34,7 +34,7 @@ pub enum AgentsCmd {
   # Background computer-use: the cua-driver skill and MCP server
   cua connect setup --cua-driver --agents all -y
   # Also copy each agent's sign-in to Keyvault on This Mac (Codex's
-  # ChatGPT sign-in, Claude Code's `claude setup-token`, Hermes' key)
+  # ChatGPT sign-in, the sign-in Claude Code already has, Hermes' key)
   cua connect setup --agents codex,claude --sign-in -y")]
     Setup(SetupCmdArgs),
     /// Whether each agent is really connected: installed and its version,
@@ -98,13 +98,23 @@ pub struct SetupCmdArgs {
     #[arg(long)]
     pub cua_driver: bool,
     /// Also make a sign-in for each agent's runs in your Spaces and keep it
-    /// in Keyvault on This Mac: Claude Code's `claude setup-token` (one
-    /// browser approval) and Codex's own device sign-in (a link and a code
-    /// to enter there, in a folder Cua owns); Hermes uses the providers
-    /// connected in Cua Spaces (Settings, Connectors).
-    /// The agent's own sign-in files are never read or changed.
+    /// in Keyvault on This Mac: the sign-in Claude Code already has (read
+    /// from where Claude Code keeps it, as an access token only; Claude
+    /// Code's own sign-in is never changed) and Codex's own device sign-in
+    /// (a link and a code to enter there, in a folder Cua owns); Hermes uses
+    /// the providers connected in Cua Spaces (Settings, Connections).
+    /// Only Claude Code's own sign-in is read, and only its access token is
+    /// kept; Codex's own `auth.json` is never read or changed.
     #[arg(long, conflicts_with = "cua_driver")]
     pub sign_in: bool,
+    /// Only the sign-in, as `--sign-in`, and nothing else: no Cua skills and no
+    /// MCP entry are added to any agent, Claude Code is never run to refresh its
+    /// own sign-in, and nothing is written outside the Cua home (the access
+    /// token goes to Keyvault, never printed). For a demo, or a home Space that
+    /// only needs the credential. On a Mac, macOS asks once to let Cua read the
+    /// Keychain item "Claude Code-credentials": that prompt is yours to answer.
+    #[arg(long, conflicts_with_all = ["cua_driver", "skills_only", "mcp_only"])]
+    pub sign_in_only: bool,
 }
 
 #[derive(Args, Debug)]
@@ -721,8 +731,8 @@ pub fn cmd_setup(args: &SetupCmdArgs, json: bool, out: &mut dyn Write) -> Result
     if args.cua_driver {
         return run_driver_setup(&setup, &args.base, &prompt, json, out);
     }
-    if args.sign_in {
-        return run_connect(&setup, &args.base, json, out);
+    if args.sign_in || args.sign_in_only {
+        return run_connect(&setup, &args.base, args.sign_in_only, json, out);
     }
     run_setup(&setup, &args.base, &prompt, json, out)
 }
@@ -732,19 +742,27 @@ pub fn cmd_setup(args: &SetupCmdArgs, json: bool, out: &mut dyn Write) -> Result
 fn run_connect(
     setup: &AgentSetup,
     args: &SetupArgs,
+    only: bool,
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
     let ids = match args.agents.as_deref() {
         Some(sel) => setup.select(sel).map_err(err)?,
+        // Sign-in only is for Claude Code unless an agent is named.
+        None if only => setup.select("claude-code").map_err(err)?,
         None => setup.select("all").map_err(err)?,
     };
     let server = mcp_server(setup, args.mcp_command.as_deref());
     let vault = cua_sdk::sign_in_vault();
-    let parts = ConnectParts {
-        skills: !args.mcp_only,
-        mcp: !args.skills_only,
-        sign_in: true,
+    let parts = if only {
+        ConnectParts::SIGN_IN_ONLY
+    } else {
+        ConnectParts {
+            skills: !args.mcp_only,
+            mcp: !args.skills_only,
+            sign_in: true,
+            driver: false,
+        }
     };
     // A sign-in with a code (Codex): the link and the code go to stderr, so
     // `--json` stays one line on stdout.
@@ -763,7 +781,7 @@ fn run_connect(
             &server,
             parts,
             vault.as_deref(),
-            cua_agent_setup::signin::SETUP_TOKEN_WAIT,
+            cua_agent_setup::signin::CLAUDE_IMPORT_WAIT,
             Some(&mut show),
         )
         .map_err(err)?;
@@ -781,7 +799,12 @@ fn run_connect(
             (None, Some(s)) if s.imported.is_some() => line(
                 out,
                 format!(
-                    "  ✓ {name}: connected; {} copied to Keyvault",
+                    "  ✓ {name}: {}; {} copied to Keyvault",
+                    if only {
+                        "sign-in only, nothing changed in its settings"
+                    } else {
+                        "connected"
+                    },
                     s.imported
                         .as_ref()
                         .map(|i| i.label.as_str())
@@ -798,7 +821,11 @@ fn run_connect(
     if !res.is_empty() {
         line(
             out,
-            "Restart your agents to load the cua MCP server. Undo with `cua connect remove --sign-in`.",
+            if only {
+                "Nothing was added to your agents. Undo with `cua connect remove --sign-in`."
+            } else {
+                "Restart your agents to load the cua MCP server. Undo with `cua connect remove --sign-in`."
+            },
         );
     }
     Ok(i32::from(failed))
@@ -898,7 +925,12 @@ pub fn run_driver_setup(
             ),
         );
     }
-    if parts.mcp && server.command == "cua-driver" {
+    // Nothing is written for a cua-driver that is missing or doesn't answer
+    // MCP (the rows above say why).
+    if outcomes
+        .iter()
+        .any(|o| o.failed() && o.target == Target::Mcp && o.item == DRIVER_MCP_SERVER_NAME)
+    {
         let how = if cfg!(windows) {
             "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Only cua-driver"
         } else {
@@ -906,7 +938,7 @@ pub fn run_driver_setup(
         };
         line(
             out,
-            format!("cua-driver is not installed yet. Install it with: {how}"),
+            format!("cua-driver is not installed or not working. Install it with: {how}"),
         );
     }
     line(

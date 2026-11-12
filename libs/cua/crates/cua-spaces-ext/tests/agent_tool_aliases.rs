@@ -54,6 +54,7 @@ fn strip(mut v: Value) -> Value {
         "member_since_ms",
         "next_fire",
         "name",
+        "handle",
         "botID",
     ] {
         if let Some(o) = v.as_object_mut() {

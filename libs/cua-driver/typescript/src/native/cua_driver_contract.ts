@@ -514,7 +514,14 @@ export type ActionResult = {
      * The call that moves the task forward, always safe to run as is (a read,
      * or a call that keeps the user's window where it is).
      */
-    nextCall?: ActionNextCall
+    nextCall?: ActionNextCall,
+    /**
+     * Present only when the `fast_path` config key is `on`: the check cost,
+     * the target class and the changed regions since the last read, as one
+     * JSON object. Absent when the flag is off, so default results are
+     * unchanged.
+     */
+    fastPath?: string
 }
 
 /**
@@ -546,7 +553,8 @@ const FfiConverterTypeActionResult = (() => {
                 summary: FfiConverterOptionalString.read(from),
                 error: FfiConverterOptionalTypeActionError.read(from),
                 hint: FfiConverterOptionalString.read(from),
-                nextCall: FfiConverterOptionalTypeActionNextCall.read(from)
+                nextCall: FfiConverterOptionalTypeActionNextCall.read(from),
+                fastPath: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -559,6 +567,7 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionError.write(value.error, into);
             FfiConverterOptionalString.write(value.hint, into);
             FfiConverterOptionalTypeActionNextCall.write(value.nextCall, into);
+            FfiConverterOptionalString.write(value.fastPath, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEffect.allocationSize(value.effect) +
@@ -569,7 +578,8 @@ const FfiConverterTypeActionResult = (() => {
              FfiConverterOptionalString.allocationSize(value.summary) +
              FfiConverterOptionalTypeActionError.allocationSize(value.error) +
              FfiConverterOptionalString.allocationSize(value.hint) +
-             FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall);
+             FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall) +
+             FfiConverterOptionalString.allocationSize(value.fastPath);
 
         }
     };
@@ -3163,6 +3173,13 @@ export type InvokeMenuInput = {
      */
     path: Array<string>,
     /**
+     * `background` (default) never takes the user's keyboard or pointer and refuses with
+     * `background_unavailable` when the item can only be reached by opening a menu. `foreground`
+     * is the explicit escalation that may activate the window and open menus. Linux honors it;
+     * macOS and Windows accept it and keep their existing menu behavior.
+     */
+    deliveryMode?: InputDeliveryMode,
+    /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
      * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
@@ -3193,6 +3210,7 @@ const FfiConverterTypeInvokeMenuInput = (() => {
                 pid: FfiConverterUInt32.read(from),
                 windowId: FfiConverterUInt64.read(from),
                 path: FfiConverterSequenceString.read(from),
+                deliveryMode: FfiConverterOptionalTypeInputDeliveryMode.read(from),
                 session: FfiConverterOptionalString.read(from)
             };
         }
@@ -3200,12 +3218,14 @@ const FfiConverterTypeInvokeMenuInput = (() => {
             FfiConverterUInt32.write(value.pid, into);
             FfiConverterUInt64.write(value.windowId, into);
             FfiConverterSequenceString.write(value.path, into);
+            FfiConverterOptionalTypeInputDeliveryMode.write(value.deliveryMode, into);
             FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
              FfiConverterUInt64.allocationSize(value.windowId) +
              FfiConverterSequenceString.allocationSize(value.path) +
+             FfiConverterOptionalTypeInputDeliveryMode.allocationSize(value.deliveryMode) +
              FfiConverterOptionalString.allocationSize(value.session);
 
         }
@@ -6685,6 +6705,9 @@ const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
+
+// FfiConverter for InputDeliveryMode | undefined
+const FfiConverterOptionalTypeInputDeliveryMode = new FfiConverterOptional(FfiConverterTypeInputDeliveryMode);
 
 // FfiConverter for Array<AppInfo>
 const FfiConverterSequenceTypeAppInfo = new FfiConverterArray(FfiConverterTypeAppInfo);

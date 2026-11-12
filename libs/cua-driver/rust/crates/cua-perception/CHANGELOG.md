@@ -2,6 +2,13 @@
 
 All notable changes to Cua Perception releases are documented here.
 
+## [0.2.2](https://github.com/trycua/cua/compare/cua-perception-v0.2.1...cua-perception-v0.2.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** add SPDX headers to cua-driver sources (CUA-3388) ([#6516](https://github.com/trycua/cua/issues/6516)) ([09ab2d0](https://github.com/trycua/cua/commit/09ab2d0d5f1f64e2ff1a37192484921505ff7114))
+
 ## [0.2.1](https://github.com/trycua/cua/compare/cua-perception-v0.2.0...cua-perception-v0.2.1) (2026-09-25)
 
 

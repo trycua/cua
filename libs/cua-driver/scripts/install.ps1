@@ -62,7 +62,7 @@
 #               every logon (Windows-native equivalent of macOS LaunchAgent).
 #               The task runs with LogonType=Interactive so it lands in
 #               Session 1+ with an attached desktop — required for the
-#               GUI tools (click, type_text, screenshot, get_window_state)
+#               GUI tools (click, type_text, get_window_state, get_desktop_state)
 #               to function. Default off; the post-install message prints
 #               the registration command so you can opt in later. Safe to
 #               re-run: existing task is replaced.
@@ -79,6 +79,16 @@
 #               this when you manage PATH out-of-band (chezmoi, a dotfiles
 #               repo, group policy). Idempotent either way: if the dir is
 #               already on PATH, nothing changes.
+#   -NoConnect  do not connect Claude Code, Codex and Cursor to Cua Driver.
+#               Same as $env:CUA_DRIVER_NO_CONNECT=1 (use the env var with
+#               `irm | iex`, which cannot take switches).
+#   -NoTest     do not run `cua-driver test` at the end. Same as
+#               $env:CUA_DRIVER_NO_TEST=1.
+#
+# After installing, this script runs `cua-driver connect` and then
+# `cua-driver test`. Each is skipped when the installed binary does not have
+# it yet, and a failing step never fails the install. There is no permission
+# step on Windows.
 #
 # Windows installer for the cross-platform cua-driver Rust implementation.
 
@@ -100,8 +110,12 @@ param(
     [switch]$AutoStart = $true,
     [switch]$NoAutoStart,
     [switch]$NoPathUpdate,
-    [switch]$RequireSignature
+    [switch]$RequireSignature,
+    [switch]$NoConnect,
+    [switch]$NoTest
 )
+if ($env:CUA_DRIVER_NO_CONNECT -eq '1') { $NoConnect = $true }
+if ($env:CUA_DRIVER_NO_TEST -eq '1') { $NoTest = $true }
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
 if ($NoAutoStart) { $AutoStart = $false }
@@ -149,7 +163,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.37.0" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.47.19" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a release published without valid
@@ -1257,6 +1271,11 @@ function Get-HttpStatusCode($exception) {
     }
 }
 
+# Seconds to wait before each retry of a release download. GitHub's release
+# CDN has answered 504 for minutes at a time, so the schedule spans about two
+# minutes (seven attempts) rather than a few seconds.
+$Script:ReleaseRetryDelays = @(5, 10, 15, 30, 30, 30)
+
 function Test-TransientDownloadFailure($statusCode) {
     # A missing status means the request failed below HTTP (DNS, connect,
     # timeout, TLS, etc.). Retry those plus standard transient HTTP statuses.
@@ -1271,7 +1290,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     $zipName = "cua-driver-rs-$version-$archLabel.zip"
     $url     = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$zipName"
     $zipPath = Join-Path $destDir $zipName
-    $maxAttempts = 3
+    $maxAttempts = $Script:ReleaseRetryDelays.Count + 1
 
     Write-Step "downloading $url"
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
@@ -1299,7 +1318,7 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
             }
             $isTransient = Test-TransientDownloadFailure $statusCode
             if ($isTransient -and $attempt -lt $maxAttempts) {
-                $delaySeconds = $attempt
+                $delaySeconds = $Script:ReleaseRetryDelays[$attempt - 1]
                 Write-WarningStep "download attempt $attempt of $maxAttempts failed; retrying the same release in $delaySeconds second(s): $($_.Exception.Message)"
                 Start-Sleep -Seconds $delaySeconds
                 continue
@@ -1323,7 +1342,8 @@ function Get-BaseVersion([string]$version) {
 function Get-ReleaseFile([string]$name, [string]$destPath) {
     # Returns $true when fetched, $false on HTTP 404; exits on anything else.
     $url = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$name"
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $maxAttempts = $Script:ReleaseRetryDelays.Count + 1
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         try {
             Invoke-WebRequest -Uri $url -OutFile $destPath -UseBasicParsing
             return $true
@@ -1332,11 +1352,13 @@ function Get-ReleaseFile([string]$name, [string]$destPath) {
             Remove-Item -LiteralPath $destPath -Force -ErrorAction SilentlyContinue
             $statusCode = Get-HttpStatusCode $_.Exception
             if ($statusCode -eq 404) { return $false }
-            if ((Test-TransientDownloadFailure $statusCode) -and $attempt -lt 3) {
-                Start-Sleep -Seconds $attempt
+            if ((Test-TransientDownloadFailure $statusCode) -and $attempt -lt $maxAttempts) {
+                $delaySeconds = $Script:ReleaseRetryDelays[$attempt - 1]
+                Write-WarningStep "download attempt $attempt of $maxAttempts failed; retrying $url in $delaySeconds second(s): $($_.Exception.Message)"
+                Start-Sleep -Seconds $delaySeconds
                 continue
             }
-            Write-ErrorStep "could not download ${url}: $($_.Exception.Message)"
+            Write-ErrorStep "could not download ${url} after $attempt attempt(s): $($_.Exception.Message)"
             exit 1
         }
     }
@@ -1398,11 +1420,23 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
         $cosign = Get-Command cosign -ErrorAction SilentlyContinue
         if ($cosign) {
             $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
-            & $cosign verify-blob --bundle $bundlePath `
-                --certificate-identity $identity `
-                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
-            if ($LASTEXITCODE -ne 0) {
-                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $verified = $false
+            $why = ''
+            try {
+                & $cosign verify-blob --bundle $bundlePath `
+                    --certificate-identity $identity `
+                    --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
+                $verified = $LASTEXITCODE -eq 0
+            } catch {
+                # A cosign that cannot start throws instead of setting $LASTEXITCODE.
+                $why = ' (cosign could not start)'
+            } finally {
+                $ErrorActionPreference = $prevEAP
+            }
+            if (-not $verified) {
+                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag$why; refusing to install it."
                 exit 1
             }
             Write-Step "verified the Sigstore signature of $zipName"
@@ -2006,22 +2040,73 @@ elseif ($AutoStart) {
     }
 }
 
+# Connect the user's agents and run the self-test, so one paste leaves Cua
+# Driver ready to use. Calls use the absolute path (the visible bin dir may not
+# be on this session's PATH yet) and are guarded so an older binary without
+# `connect` / `test` falls back to the hints below. A failing step never fails
+# the install.
+function Test-CuaDriverCommand {
+    param([string]$Binary, [string]$Name)
+    try {
+        $helpText = (& $Binary --help 2>&1 | Out-String)
+    } catch { return $false }
+    return [bool]($helpText -match "(?m)^Subcommands:.*(: |, )$([regex]::Escape($Name))(,|\s*$)")
+}
+
+$ConnectedAgent = ''
+if (-not $NoConnect -and (Test-CuaDriverCommand $installedBinary 'connect')) {
+    $connectOut = @()
+    $connectRc = 1
+    try {
+        $connectOut = @(& $installedBinary connect 2>$null)
+        $connectRc = $LASTEXITCODE
+    } catch { }
+    $connectOut | ForEach-Object { Write-Host $_ }
+    if ($connectRc -eq 0) {
+        foreach ($agentName in @('Claude Code', 'Codex', 'Cursor')) {
+            if ($connectOut -match "^$([regex]::Escape($agentName)): (already )?connected$") {
+                $ConnectedAgent = $agentName
+                break
+            }
+        }
+    }
+}
+
+if (-not $NoTest -and (Test-CuaDriverCommand $installedBinary 'test')) {
+    Write-Host ""
+    $testRc = 1
+    try {
+        & $installedBinary test
+        $testRc = $LASTEXITCODE
+    } catch { }
+    if ($testRc -ne 0) {
+        Write-Host "The test did not pass. Run it again later: $installedBinary test" -ForegroundColor Yellow
+    }
+}
+
+$SkipHints = $false
+if ($ConnectedAgent) {
+    Write-Host ""
+    Write-Host "Done. Ask $ConnectedAgent (restart it first if it is open): `"Use Cua Driver to open Notepad and write a haiku.`""
+    $SkipHints = $true
+}
+
 # Unified post-install hints come from a single shared text file so the
 # 4 Rust installers (this script + _install-rust.sh + install-local.ps1 +
 # install-local.sh) never drift. The .txt holds the OS-agnostic bulk
 # (Try-it / skill pack / MCP setup / docs link) with {{BINARY}}
 # placeholders; OS-specific bits (autostart) stay inline below.
 $HintsUrl = "https://cua.ai/driver/post-install-hints.txt"
-try {
+if (-not $SkipHints) { try {
     $hintsRaw = (Invoke-WebRequest -Uri $HintsUrl -UseBasicParsing -TimeoutSec 10).Content
     Write-Host ($hintsRaw -replace '\{\{BINARY\}\}', $installedBinary)
 }
 catch {
     # Network fetch failed — print one-line essentials so users always
     # get enough to recover.
-    Write-Host "Next steps: $installedBinary --version  |  $installedBinary mcp-config  |  $installedBinary skills install"
+    Write-Host "Next steps: $installedBinary --version  |  $installedBinary connect  |  $installedBinary skills install"
     Write-Host "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
-}
+} }
 
 # Windows-specific autostart hint (kept inline; OS-natural location).
 Write-Host ""

@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 /// One generic-password Keychain item (service + account + secret bytes).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeychainItem {
     pub service: String,
     #[serde(default)]
@@ -30,6 +30,17 @@ pub struct KeychainItem {
     /// an unlocked keychain. `None` falls back to `-A` (all apps).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trust_app: Option<String>,
+}
+
+impl std::fmt::Debug for KeychainItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeychainItem")
+            .field("service", &self.service)
+            .field("account", &self.account)
+            .field("secret", &format_args!("<redacted>"))
+            .field("trust_app", &self.trust_app)
+            .finish()
+    }
 }
 
 /// The reserved bundle entry a provider packs Keychain items into. Import

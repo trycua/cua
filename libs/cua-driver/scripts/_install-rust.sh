@@ -24,6 +24,21 @@
 #   --channel <name>     persist and install the latest stable or nightly release
 #   --require-signature  fail unless the archive's Sigstore bundle verifies
 #                        with cosign (needs cosign on PATH)
+#   --no-connect         do not connect Claude Code, Codex and Cursor to Cua
+#                        Driver (and skip the permission guide); same as
+#                        CUA_DRIVER_NO_CONNECT=1
+#   --no-test            do not run `cua-driver test` at the end; same as
+#                        CUA_DRIVER_NO_TEST=1
+#
+# After installing, this script runs `cua-driver connect` (connects every
+# supported agent found on the computer, installs the skill pack), then on
+# macOS, when run from a terminal outside CI, `cua-driver permissions grant`
+# (opens the permission guide and waits), then `cua-driver test`. Each step
+# is skipped when the installed binary does not have it yet, and a failing
+# step never fails the install. Run it as
+# `/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"` so the
+# terminal stays attached; with `curl ... | bash` there is no terminal for
+# the permission guide and that step is skipped.
 #
 # Every download is checked against the release's SHA256SUMS (or the older
 # checksums.txt); releases from CHECKSUMS_REQUIRED_FROM on must publish one.
@@ -142,6 +157,8 @@ HOME_DIR="${CUA_DRIVER_RS_HOME:-$HOME/.cua-driver}"
 # install is staged so a single rooted home (~/.cua-driver) is left behind.
 LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
 NO_MODIFY_PATH="${CUA_DRIVER_RS_NO_MODIFY_PATH:-0}"
+NO_CONNECT="${CUA_DRIVER_NO_CONNECT:-0}"
+NO_TEST="${CUA_DRIVER_NO_TEST:-0}"
 # Post-install GC: how many per-version release dirs to retain. Validated
 # below as a non-negative integer; 0 means "never GC". The dir that
 # `current` resolves to is always preserved regardless of cutoff.
@@ -172,6 +189,8 @@ while [[ $# -gt 0 ]]; do
             CHANNEL_ARG="$2"; CHANNEL_EXPLICIT=1; shift 2 ;;
         --channel=*) CHANNEL_ARG="${1#*=}"; CHANNEL_EXPLICIT=1; shift ;;
         --require-signature) REQUIRE_SIGNATURE=1; shift ;;
+        --no-connect) NO_CONNECT=1; shift ;;
+        --no-test) NO_TEST=1; shift ;;
         *) shift ;;
     esac
 done
@@ -668,7 +687,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.37.0" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.47.19" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -922,45 +941,55 @@ release_tarball_name() {
     esac
 }
 
-# Fetches one release tarball into $TMP_DIR. A confirmed HTTP 404 returns 44;
-# every other failure is retried at the same URL with bounded backoff, then
-# returns 1. This distinction is load-bearing: only a missing baked asset may
-# trigger release fallback. A timeout, TLS failure, rate limit, or server error
-# must never silently install an older version.
-download_release_tarball() {
-    local version="$1" tarball url partial http_code curl_status attempt retryable
-    tarball="$(release_tarball_name "$version")"
-    url="https://github.com/$REPO/releases/download/${TAG}/$tarball"
-    partial="$TMP_DIR/$tarball.partial"
-    log "downloading $url"
-    for attempt in 1 2 3; do
-        http_code=""
-        curl_status=0
-        http_code="$(
+# Fetches one release asset URL ($1) to $2. A confirmed HTTP 404 returns 44 at
+# once. A curl failure, 408, 429 or 5xx is retried at the same URL after each
+# delay in turn; any other failure, or the last retry failing, returns 1.
+# RELEASE_HTTP_CODE, RELEASE_CURL_STATUS and RELEASE_ATTEMPTS describe the last
+# attempt.
+fetch_release_url() {
+    local url="$1" dest="$2" partial="$2.partial" delay
+    # GitHub's release CDN has answered 504 for minutes at a time, so the
+    # retries span two minutes rather than a few seconds.
+    local delays=(5 10 15 30 30 30)
+    RELEASE_ATTEMPTS=0
+    while :; do
+        RELEASE_ATTEMPTS=$((RELEASE_ATTEMPTS + 1))
+        RELEASE_HTTP_CODE=""
+        RELEASE_CURL_STATUS=0
+        RELEASE_HTTP_CODE="$(
             curl -sSL -o "$partial" -w '%{http_code}' "$url"
-        )" || curl_status=$?
-        if (( curl_status == 0 )) && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-            mv "$partial" "$TMP_DIR/$tarball"
+        )" || RELEASE_CURL_STATUS=$?
+        if (( RELEASE_CURL_STATUS == 0 )) && [[ "$RELEASE_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+            mv "$partial" "$dest"
             return 0
         fi
         rm -f "$partial" 2>/dev/null || true
-        if [[ "$http_code" == "404" ]]; then
-            return 44
+        [[ "$RELEASE_HTTP_CODE" == "404" ]] && return 44
+        if (( RELEASE_CURL_STATUS == 0 )) \
+            && [[ "$RELEASE_HTTP_CODE" != "408" && "$RELEASE_HTTP_CODE" != "429" ]] \
+            && [[ ! "$RELEASE_HTTP_CODE" =~ ^5[0-9][0-9]$ ]]; then
+            return 1
         fi
-        retryable=0
-        if (( curl_status != 0 )) \
-            || [[ "$http_code" == "408" || "$http_code" == "429" ]] \
-            || [[ "$http_code" =~ ^5[0-9][0-9]$ ]]; then
-            retryable=1
-        fi
-        if (( retryable == 1 && attempt < 3 )); then
-            err "download attempt $attempt failed (HTTP ${http_code:-unknown}, curl exit $curl_status); retrying the same release"
-            sleep "$attempt"
-            continue
-        fi
-        break
+        (( RELEASE_ATTEMPTS > ${#delays[@]} )) && return 1
+        delay="${delays[$((RELEASE_ATTEMPTS - 1))]}"
+        err "download attempt $RELEASE_ATTEMPTS of $((${#delays[@]} + 1)) failed (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS); retrying $url in ${delay}s"
+        sleep "$delay"
     done
-    err "download failed after $attempt attempt(s) (HTTP ${http_code:-unknown}, curl exit $curl_status); refusing to fall back to an older release"
+}
+
+# Fetches one release tarball into $TMP_DIR. A confirmed HTTP 404 returns 44;
+# every other failure returns 1 after fetch_release_url's retries. This
+# distinction is load-bearing: only a missing baked asset may trigger release
+# fallback. A timeout, TLS failure, rate limit, or server error must never
+# silently install an older version.
+download_release_tarball() {
+    local version="$1" tarball url status=0
+    tarball="$(release_tarball_name "$version")"
+    url="https://github.com/$REPO/releases/download/${TAG}/$tarball"
+    log "downloading $url"
+    fetch_release_url "$url" "$TMP_DIR/$tarball" || status=$?
+    (( status == 0 || status == 44 )) && return "$status"
+    err "download failed after $RELEASE_ATTEMPTS attempt(s) (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS); refusing to fall back to an older release"
     return 1
 }
 
@@ -986,19 +1015,10 @@ COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 # Fetches one small release asset (SHA256SUMS, a bundle) to $2.
 # 0 = fetched, 44 = HTTP 404, 1 = any other failure (after retries).
 fetch_release_file() {
-    local name="$1" dest="$2" url http_code curl_status attempt
-    url="https://github.com/$REPO/releases/download/${TAG}/$name"
-    for attempt in 1 2 3; do
-        curl_status=0
-        http_code="$(curl -sSL -o "$dest" -w '%{http_code}' "$url")" || curl_status=$?
-        if (( curl_status == 0 )) && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-            return 0
-        fi
-        rm -f "$dest" 2>/dev/null || true
-        [[ "$http_code" == "404" ]] && return 44
-        (( attempt < 3 )) && sleep "$attempt"
-    done
-    err "could not download $url (HTTP ${http_code:-unknown}, curl exit $curl_status)"
+    local url="https://github.com/$REPO/releases/download/${TAG}/$1" status=0
+    fetch_release_url "$url" "$2" || status=$?
+    (( status == 0 || status == 44 )) && return "$status"
+    err "could not download $url after $RELEASE_ATTEMPTS attempt(s) (HTTP ${RELEASE_HTTP_CODE:-unknown}, curl exit $RELEASE_CURL_STATUS)"
     return 1
 }
 
@@ -1510,6 +1530,21 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
+    if command -v kwin_wayland >/dev/null 2>&1; then
+        # Ask the installed driver: the switch survives updates, so a user who
+        # turned it on must not read that it is off.
+        KWIN_STATUS="$("$CURRENT_LINK/$BINARY_NAME" kwin-capture status 2>/dev/null || true)"
+        case "$KWIN_STATUS" in
+            "kwin window capture: on"*|"kwin window capture: override-portal-deny"*)
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && log "$line"
+                done <<<"$KWIN_STATUS"
+                ;;
+            *)
+                log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+                ;;
+        esac
+    fi
 
     # Post-install GC of old per-version release dirs. Runs AFTER the
     # atomic `current` swap above so the about-to-be-active version is
@@ -1626,6 +1661,50 @@ if [[ "${REPLACED_SWIFT:-0}" == "1" ]]; then
     echo ""
 fi
 
+# Connect the user's agents, grant permissions and run the self-test, so one
+# paste leaves Cua Driver ready to use. Every call uses the absolute path
+# ($BIN_DIR may not be on this shell's PATH yet) and is guarded so an older
+# binary without `connect` / `test` falls back to the hints below. A failing
+# step never fails the install.
+driver_has_command() {
+    # `--help` prints one "Subcommands:" line; older binaries do not list the
+    # new ones (and exit 0 for any argument, so the exit code says nothing).
+    "$BIN_LINK" --help 2>&1 | grep -E "^Subcommands:.*(: |, )$1(,|\$)" >/dev/null 2>&1
+}
+
+CONNECTED_AGENT=""
+if [[ "$NO_CONNECT" != "1" ]] && driver_has_command connect; then
+    CONNECT_OUT="$("$BIN_LINK" connect 2>/dev/null)" && CONNECT_RC=0 || CONNECT_RC=$?
+    [[ -n "$CONNECT_OUT" ]] && printf '%s\n' "$CONNECT_OUT"
+    if [[ "$CONNECT_RC" == "0" ]]; then
+        for _agent in "Claude Code" "Codex" "Cursor"; do
+            if printf '%s\n' "$CONNECT_OUT" | grep -E "^$_agent: (already )?connected\$" >/dev/null; then
+                CONNECTED_AGENT="$_agent"
+                break
+            fi
+        done
+    fi
+fi
+
+# The permission guide needs a person at a terminal: stdin and stdout attached
+# and no CI. `curl ... | bash` has no terminal on stdin, so it skips this.
+if [[ "$NO_CONNECT" != "1" && "$(uname -s)" == "Darwin" && -t 0 && -t 1 && -z "${CI:-}" ]]; then
+    echo ""
+    echo "Next, turn on the two switches Cua Driver needs. A guide window will help."
+    "$BIN_LINK" permissions grant || echo "Permissions are not finished. Run later: $BIN_LINK permissions grant"
+fi
+
+if [[ "$NO_TEST" != "1" ]] && driver_has_command test; then
+    echo ""
+    "$BIN_LINK" test || echo "The test did not pass. Run it again later: $BIN_LINK test"
+fi
+
+if [[ -n "$CONNECTED_AGENT" ]]; then
+    echo ""
+    echo "Done. Ask $CONNECTED_AGENT (restart it first if it is open): \"Use Cua Driver to open TextEdit and write a haiku.\""
+    exit 0
+fi
+
 # Unified post-install hints come from a single shared text file so the
 # 4 Rust installers (this script + install.ps1 + install-local.sh +
 # install-local.ps1) never drift. The .txt holds the OS-agnostic bulk
@@ -1640,7 +1719,7 @@ else
     # Network fetch failed — print a one-line essentials fallback so the
     # user always gets enough to recover, even if hint-text fetching is
     # blocked. Skip everything else.
-    echo "Next steps: $BIN_LINK permissions grant  |  $BIN_LINK mcp-config --client <name>  |  $BIN_LINK list-tools"
+    echo "Next steps: $BIN_LINK permissions grant  |  $BIN_LINK connect  |  $BIN_LINK list-tools"
     echo "Docs: https://github.com/trycua/cua/tree/main/libs/cua-driver/rust"
 fi
 

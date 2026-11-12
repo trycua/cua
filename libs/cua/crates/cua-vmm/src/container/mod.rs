@@ -36,6 +36,7 @@ use crate::error::{Result, VmmError};
 use crate::exec::{ExecOutput, ExecRequest, GuestExec};
 use crate::host;
 use crate::runtime::Runtime;
+use crate::stack::boxed;
 use crate::types::*;
 
 pub use engine::{EngineEndpoint, EngineKind};
@@ -54,6 +55,9 @@ pub const BASE_REPO: &str = "cua-vmm/base";
 /// Engine repository of checkpoints and of the intermediate images this
 /// backend commits for port rebinds and forks.
 pub const CKPT_REPO: &str = "cua-vmm/checkpoint";
+/// Engine repository of the filesystems of prepared warm-pool members
+/// ([`Runtime::save_prepared`]): the image a prepared member starts from.
+pub const PREPARED_REPO: &str = "cua-vmm/prepared";
 
 /// On every container, image and volume the SDK creates: `true`. Garbage
 /// collection only ever touches objects that carry it (plus the images the
@@ -101,6 +105,7 @@ pub fn image_kind(repo: &str, tag: &str) -> &'static str {
         CKPT_REPO if tag.ends_with("-rebind") || tag.starts_with("fork-") => "intermediate",
         CKPT_REPO => "checkpoint",
         BASE_REPO => "base",
+        PREPARED_REPO => "prepared",
         _ => "build-image",
     }
 }
@@ -354,12 +359,33 @@ impl ContainerRuntime {
     /// NVIDIA GPUs for containers under `runtime` (`container` for runc,
     /// `gvisor`) on this host ([`crate::gpu::container_support`]).
     pub async fn gpu_support_for(&self, runtime: &str) -> crate::gpu::GpuSupport {
-        let nvidia = std::env::consts::OS == "linux"
+        let os = std::env::consts::OS;
+        let nvidia = (os == "linux" || os == "windows")
             && self
                 .runtimes()
                 .await
                 .is_ok_and(|r| r.iter().any(|r| r == "nvidia"));
-        crate::gpu::container_support(std::env::consts::OS, runtime, nvidia)
+        crate::gpu::container_support_wsl(os, runtime, nvidia, self.wsl_gpu().await)
+    }
+
+    /// The engine is a WSL 2 distribution on a PC with an NVIDIA driver: its
+    /// containers reach the GPU through `/dev/dxg` and `/usr/lib/wsl`
+    /// ([`apply_wsl_gpu`]) when the engine has no `nvidia` runtime.
+    pub async fn wsl_gpu(&self) -> bool {
+        if std::env::consts::OS != "windows" || host::which("nvidia-smi").is_none() {
+            return false;
+        }
+        if self
+            .runtimes()
+            .await
+            .is_ok_and(|r| r.iter().any(|r| r == "nvidia"))
+        {
+            return false;
+        }
+        self.docker.info().await.is_ok_and(|i| {
+            i.kernel_version
+                .is_some_and(|k| k.to_lowercase().contains("microsoft"))
+        })
     }
 
     /// OCI runtimes the engine has registered.
@@ -843,18 +869,29 @@ impl ContainerRuntime {
             None => spec,
         };
         let mut body = create_body(name, image, spec, base_labels, engine_runtime);
+        if spec.gpu.as_deref() == Some(crate::gpu::NVIDIA) && self.wsl_gpu().await {
+            apply_wsl_gpu(&mut body);
+        }
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
-        if let Some((net, mac)) = self.mac_config(name).await {
+        if let Some((net, mac)) = boxed(|| self.mac_config(name)).await? {
             body.networking_config = Some(net);
             body.labels
                 .get_or_insert_with(Default::default)
                 .insert(egress::LABEL_MAC.into(), mac);
         }
-        if (egress::policy_blocks(&spec.egress) || egress::blocks(name))
+        if (egress::secure() || egress::policy_blocks(&spec.egress) || egress::blocks(name))
             && let Some(hc) = body.host_config.as_mut()
         {
             hc.cap_drop = Some(vec!["NET_RAW".into()]);
+        }
+        // Its own resolv.conf: a user-defined network's embedded resolver
+        // (127.0.0.11) is out of reach under gVisor ([`egress`]).
+        if let Some((bind, servers)) = boxed(|| self.prepare_resolv(name)).await?
+            && let Some(hc) = body.host_config.as_mut()
+        {
+            hc.binds.get_or_insert_with(Vec::new).push(bind);
+            hc.dns = Some(servers.iter().map(|s| s.to_string()).collect());
         }
         if self.forwards_ports_by_number()
             && let Some(hc) = body.host_config.as_mut()
@@ -1225,17 +1262,35 @@ impl Runtime for ContainerRuntime {
         // pulled or created.
         self.group_runtime(spec).await?;
         let existing = self.inspect(&spec.name).await?;
-        // The policy: the start spec's for a new container (or one that has
-        // none kept); a kept one wins (`set_egress` changed it since).
+        // The policy and network settings: the start spec's for a new
+        // container (or one that has none kept); kept ones win (`set_egress`
+        // changed them since). A container kept from before network
+        // settings takes the spec's.
         match (&existing, egress::kept(&spec.name)) {
-            (Some(_), Some(_)) => {}
-            (Some(_), None) if spec.egress.is_empty() => {}
-            _ if spec.egress.is_empty() => egress::forget(&spec.name),
+            (Some(_), Some(k)) => {
+                if k.network.is_none() && spec.network.is_some() {
+                    egress::keep(
+                        &spec.name,
+                        &egress::Kept {
+                            network: spec.network.clone(),
+                            tree: k.tree.clone().or_else(|| spec.tree.clone()),
+                            ..k
+                        },
+                    )?;
+                }
+            }
+            (Some(_), None) if spec.egress.is_empty() && spec.network.is_none() => {}
+            _ if spec.egress.is_empty() && spec.network.is_none() && spec.tree.is_none() => {
+                egress::forget(&spec.name)
+            }
             _ => egress::keep(
                 &spec.name,
                 &egress::Kept {
                     policy: spec.egress.clone(),
                     table: None,
+                    network: spec.network.clone(),
+                    tree: spec.tree.clone(),
+                    drop_labels: vec![],
                 },
             )?,
         }
@@ -1266,7 +1321,7 @@ impl Runtime for ContainerRuntime {
                     }
                     let have = Self::published(&i);
                     if merged != env || spec.ports.iter().any(|p| !have.contains(p)) {
-                        self.recreate(&spec.name, &i, merged, &spec.ports).await?;
+                        boxed(|| self.recreate(&spec.name, &i, merged, &spec.ports)).await?;
                         i = self
                             .inspect(&spec.name)
                             .await?
@@ -1311,8 +1366,7 @@ impl Runtime for ContainerRuntime {
                             .as_ref()
                             .and_then(|c| c.labels.clone())
                             .unwrap_or_default();
-                        self.create(&spec.name, &img, spec, labels, None, None)
-                            .await?;
+                        boxed(|| self.create(&spec.name, &img, spec, labels, None, None)).await?;
                     }
                     self.start_policed(&spec.name).await?;
                 }
@@ -1358,11 +1412,12 @@ impl Runtime for ContainerRuntime {
                 let (spec, secret) = pool_member_spec(spec)?;
                 let spec = spec.as_ref();
                 // Warm: restore this configuration's golden checkpoint.
-                let plan = self.golden_plan(original, reference).await;
+                let plan = boxed(|| self.golden_plan(original, reference)).await;
                 if let Some(rec) = plan.as_ref().and_then(|p| p.record.as_ref()) {
-                    match self
-                        .start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
-                        .await
+                    match boxed(|| {
+                        self.start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
+                    })
+                    .await
                     {
                         Ok(inst) => return Ok(inst),
                         Err(e) => {
@@ -1393,14 +1448,16 @@ impl Runtime for ContainerRuntime {
                 let mut attempt = 0;
                 loop {
                     attempt += 1;
-                    self.create(
-                        &spec.name,
-                        reference,
-                        spec,
-                        HashMap::new(),
-                        platform.clone(),
-                        None,
-                    )
+                    boxed(|| {
+                        self.create(
+                            &spec.name,
+                            reference,
+                            spec,
+                            HashMap::new(),
+                            platform.clone(),
+                            None,
+                        )
+                    })
                     .await?;
                     if let Some(secret) = &secret
                         && let Err(e) = self.write_token_file(&spec.name, secret).await
@@ -1411,10 +1468,12 @@ impl Runtime for ContainerRuntime {
                     crate::progress::report(crate::progress::Progress::phase(
                         crate::progress::Phase::Booting,
                     ));
-                    match self.start_policed(&spec.name).await {
+                    match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
-                            self.unpolice(&spec.name).await;
+                            // Created just now: it has a resolv.conf exactly
+                            // under the secure default (`prepare_resolv`).
+                            self.unpolice(&spec.name, egress::secure()).await;
                             self.remove_force(&spec.name).await;
                             let msg = e.to_string();
                             if attempt < PORT_CONFLICT_ATTEMPTS && is_port_conflict(&msg) {
@@ -1443,7 +1502,8 @@ impl Runtime for ContainerRuntime {
                 .host_port(snapshot::SPACESD_PORT)
                 .map(|p| format!("http://{}:{p}", inst.endpoints.host));
             if let Err(e) =
-                snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token).await
+                boxed(|| snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token))
+                    .await
             {
                 // A clone must never run on with its source's identity.
                 let _ = self
@@ -1465,8 +1525,8 @@ impl Runtime for ContainerRuntime {
         }
         // Sidecars join the sandbox's network namespace and start before
         // readiness is checked (a probe may target a sidecar's port).
-        if let Err(e) = self.ensure_sidecars(spec).await {
-            let _ = self.delete(&spec.name).await;
+        if let Err(e) = boxed(|| self.ensure_sidecars(spec)).await {
+            let _ = boxed(|| self.delete(&spec.name)).await;
             return Err(e);
         }
         if !spec.probes.is_empty() {
@@ -1474,15 +1534,17 @@ impl Runtime for ContainerRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        self.wait_probes(
-            &spec.name,
-            &inst.endpoints,
-            &spec.probes,
-            spec.ready_timeout,
-        )
+        boxed(|| {
+            self.wait_probes(
+                &spec.name,
+                &inst.endpoints,
+                &spec.probes,
+                spec.ready_timeout,
+            )
+        })
         .await?;
         if let Some((plan, reference)) = record_golden {
-            self.spawn_golden(spec, &reference, plan).await;
+            boxed(|| self.spawn_golden(spec, &reference, plan)).await;
         }
         Ok(inst)
     }
@@ -1530,9 +1592,13 @@ impl Runtime for ContainerRuntime {
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         if Self::status_from(&before) == Status::Stopped {
             if self.needs_recreate(name, &before) {
+                // Recreating it would drop its writable layer: never done for you.
                 return Err(VmmError::invalid(format!(
-                    "{name} must be recreated for its egress policy before it runs again: \
-                     start it (not resume)"
+                    "{name} was made before its network settings, so it can start only on the \
+                     network it had. Joining the secure network means recreating it, and its \
+                     files would be lost: turn Secure Spaces off (`cua experiments disable \
+                     secure-spaces`) to keep using it as it is, or copy what you need out \
+                     (`cua sandbox cp`) and delete it"
                 )));
             }
             self.start_policed(name).await?;
@@ -1564,7 +1630,8 @@ impl Runtime for ContainerRuntime {
         }
         let mut labels = HashMap::new();
         labels.insert("cua.vmm.source".to_string(), source.to_string());
-        // A fork inherits its source's egress policy (applied at its start).
+        // A fork inherits its source's egress policy and network settings
+        // (applied at its start), and stays in its tree.
         egress::copy(source, new_name)?;
         // Memory: a running gVisor Space (checkpointed now) or a memory
         // checkpoint; the fork restores it when it starts.
@@ -1665,6 +1732,58 @@ impl Runtime for ContainerRuntime {
             BackendKind::Container,
             Some(name.into()),
         ))
+    }
+
+    fn keeps_prepared(&self) -> bool {
+        true
+    }
+
+    async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+        validate_name(tag)?;
+        let i = self
+            .inspect(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        // The root filesystem as it is now. gVisor keeps its writes in its
+        // own overlay, which a commit cannot see: the rootfs is streamed out.
+        if Self::isolation_from(&i) == Isolation::Gvisor && Self::status_from(&i) == Status::Running
+        {
+            self.export_import_as(name, PREPARED_REPO, tag, config_changes(i.config.as_ref()))
+                .await?;
+        } else {
+            self.commit(name, PREPARED_REPO, tag, true).await?;
+        }
+        Ok(Some(ImageSource::oci(format!("{PREPARED_REPO}:{tag}"))))
+    }
+
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        Ok(self
+            .docker
+            .inspect_image(&image)
+            .await
+            .ok()
+            .map(|_| ImageSource::oci(image)))
+    }
+
+    async fn drop_prepared(&self, tag: &str) -> Result<()> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        match self
+            .docker
+            .remove_image(
+                &image,
+                Some(bollard::query_parameters::RemoveImageOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) if is_not_found(&e) => Ok(()),
+            Err(e) => Err(engine_err(e)),
+        }
     }
 
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
@@ -1781,6 +1900,16 @@ impl Runtime for ContainerRuntime {
             &egress::Kept {
                 policy: policy.clone(),
                 table: previous.as_ref().and_then(|k| k.table.clone()),
+                // The lists are its network settings' own lists too.
+                network: Some(crate::network::NetworkSettings::with_lists(
+                    previous.as_ref().and_then(|k| k.network.clone()),
+                    policy,
+                )),
+                tree: previous.as_ref().and_then(|k| k.tree.clone()),
+                drop_labels: previous
+                    .as_ref()
+                    .map(|k| k.drop_labels.clone())
+                    .unwrap_or_default(),
             },
         )?;
         if !running && self.needs_recreate(name, &i) {
@@ -1802,6 +1931,44 @@ impl Runtime for ContainerRuntime {
         Ok(egress::kept(name).map(|k| k.policy).unwrap_or_default())
     }
 
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        self.blocked(name).await
+    }
+
+    /// Kept with the container; on the engine host at once while it runs
+    /// (a container not yet on its tree's network gets them at its next
+    /// start, recreated first).
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        settings.validate()?;
+        let i = self
+            .inspect(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        let previous = egress::kept(name);
+        let k = egress::Kept {
+            policy: settings.custom.split_domains().0,
+            network: Some(settings.clone()),
+            ..previous.clone().unwrap_or_default()
+        };
+        egress::keep(name, &k)?;
+        let running = matches!(Self::status_from(&i), Status::Running | Status::Paused);
+        if !running || self.needs_recreate(name, &i) {
+            return Ok(crate::network::Applied::NextStart);
+        }
+        if let Err(e) = self.police(name, &k.policy).await {
+            match previous {
+                Some(p) => egress::keep(name, &p)?,
+                None => egress::forget(name),
+            }
+            return Err(e);
+        }
+        Ok(crate::network::Applied::Now)
+    }
+
     async fn delete(&self, name: &str) -> Result<()> {
         let opts = RemoveContainerOptions {
             force: true,
@@ -1809,13 +1976,16 @@ impl Runtime for ContainerRuntime {
             ..Default::default()
         };
         // A restored container: the engine forgets it, and a fork that never
-        // started still owns its private checkpoint.
-        let (restored, image_id) = match self.inspect(name).await {
+        // started still owns its private checkpoint. Its resolv.conf is
+        // removed only when it mounts one (when it can't be told, as before).
+        let (restored, image_id, resolv) = match self.inspect(name).await {
             Ok(Some(i)) => (
                 restore_dir(&i).map(|d| (i.id.clone().unwrap_or_default(), d)),
                 i.image.clone(),
+                egress::has_resolv_bind(i.host_config.as_ref().and_then(|h| h.binds.as_ref())),
             ),
-            _ => (None, None),
+            Ok(None) => (None, None, false),
+            Err(_) => (None, None, true),
         };
         // Sidecars first: they hold the sandbox's network namespace.
         for sc in self.sidecar_names(name).await.unwrap_or_default() {
@@ -1829,7 +1999,7 @@ impl Runtime for ContainerRuntime {
             }
             Err(e) => return Err(engine_err(e)),
         }
-        self.unpolice(name).await;
+        self.unpolice(name, resolv).await;
         if let Some((id, dir)) = restored {
             let helper = self.helper();
             let _ = helper.forget(&[&id]).await;
@@ -1957,6 +2127,11 @@ impl Runtime for ContainerRuntime {
         renamed?;
         if egress::kept(member).is_some() {
             egress::copy(member, new_name)?;
+            // The member sits on the network of ITS tree (its own name). Renamed, the Space is still on that
+            // network, so it keeps that tree: with `None` (its own, by its new name) the Space looked as if it were
+            // on the wrong network at its next start, and a warm-claimed Space could never be started again
+            // ("was made before its network settings ... recreate it and its files would be lost").
+            egress::keep_tree_of_claimed(member, new_name)?;
             egress::forget(member);
         }
         if let Err(e) = persisted {
@@ -2299,7 +2474,7 @@ impl ContainerRuntime {
         }
         hc.port_bindings = Some(bindings);
         let mut labels = cfg.labels;
-        let networking_config = match self.mac_config(name).await {
+        let networking_config = match self.mac_config(name).await? {
             Some((net, mac)) => {
                 labels
                     .get_or_insert_with(Default::default)
@@ -2470,12 +2645,23 @@ impl ContainerRuntime {
     /// at 4 MiB and 5 s. The exit code is ignored: `cat` exits non-zero when
     /// one of several files is missing but still prints the rest.
     async fn exec_capture(&self, name: &str, argv: &[&str]) -> Result<String> {
+        self.exec_capture_as(name, argv, None).await
+    }
+
+    /// [`Self::exec_capture`] as `user` (`"0"`: root; none: the image's user).
+    pub(crate) async fn exec_capture_as(
+        &self,
+        name: &str,
+        argv: &[&str],
+        user: Option<&str>,
+    ) -> Result<String> {
         const CAP: usize = 4 << 20;
         let fut = async {
             let opts = CreateExecOptions::<String> {
                 cmd: Some(argv.iter().map(|a| a.to_string()).collect()),
                 attach_stdout: Some(true),
                 attach_stderr: Some(false),
+                user: user.map(str::to_string),
                 ..Default::default()
             };
             let created = match self.docker.create_exec(name, opts).await {
@@ -2568,6 +2754,12 @@ impl DockerExec {
     )> {
         let opts = CreateExecOptions::<String> {
             cmd: Some(vec!["/bin/sh".into(), "-c".into(), script.to_string()]),
+            // As root, whatever user the image runs as: a rootfs archive made as
+            // an unprivileged user (the headless image runs as `cua`) skips every
+            // directory it cannot read (/root, /etc/ssl/private, ...) and tar
+            // exits 2, so a checkpoint of such a Space failed (and would have
+            // been incomplete).
+            user: Some("0".into()),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             ..Default::default()
@@ -2850,6 +3042,35 @@ fn no_healthcheck() -> bollard::models::HealthConfig {
     }
 }
 
+/// A container that reaches the PC's GPU through WSL 2: `/dev/dxg`, the
+/// driver's libraries (`/usr/lib/wsl`, read-only) and their directory on the
+/// library path, in place of the `nvidia` runtime's device request.
+fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
+    const LIB: &str = "/usr/lib/wsl/lib";
+    let env = body.env.get_or_insert_with(Vec::new);
+    match env.iter().position(|e| e.starts_with("LD_LIBRARY_PATH=")) {
+        Some(i) => env[i] = format!("{}:{LIB}", env[i]),
+        None => env.push(format!("LD_LIBRARY_PATH={LIB}")),
+    }
+    env.push(format!(
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:{LIB}"
+    ));
+    if let Some(hc) = body.host_config.as_mut() {
+        hc.device_requests = None;
+        hc.devices
+            .get_or_insert_with(Vec::new)
+            .push(bollard::models::DeviceMapping {
+                path_on_host: Some("/dev/dxg".into()),
+                path_in_container: Some("/dev/dxg".into()),
+                cgroup_permissions: Some("rwm".into()),
+            });
+        let binds = hc.binds.get_or_insert_with(Vec::new);
+        binds.push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        // A job's member runs with its own PATH: `nvidia-smi` is on it.
+        binds.push("/usr/lib/wsl/lib/nvidia-smi:/usr/local/bin/nvidia-smi:ro".into());
+    }
+}
+
 /// The engine's device requests for [`StartSpec::gpu`]: every NVIDIA GPU
 /// (`--gpus all`) for [`crate::gpu::NVIDIA`].
 fn gpu_requests(spec: &StartSpec) -> Option<Vec<bollard::models::DeviceRequest>> {
@@ -2897,15 +3118,21 @@ pub const MAIN_HOSTNAME: &str = "main";
 /// refuses `--add-host` on them), so the entries go on the sandbox only.
 /// `None` without sidecars, so plain sandboxes are unchanged.
 fn sidecar_hosts(spec: &StartSpec) -> Option<Vec<String>> {
-    if spec.sidecars.is_empty() {
-        return None;
+    let mut hosts: Vec<String> = Vec::new();
+    if !spec.sidecars.is_empty() {
+        hosts.extend(
+            std::iter::once(MAIN_HOSTNAME)
+                .chain(spec.sidecars.iter().map(|s| s.name.as_str()))
+                .map(|h| format!("{h}:127.0.0.1")),
+        );
     }
-    Some(
-        std::iter::once(MAIN_HOSTNAME)
-            .chain(spec.sidecars.iter().map(|s| s.name.as_str()))
-            .map(|h| format!("{h}:127.0.0.1"))
-            .collect(),
-    )
+    // `host`: the computer that runs it, as on every runtime (only the
+    // ports its rules open answer there). Only under the secure default,
+    // where the host's rules decide.
+    if egress::secure() {
+        hosts.push(format!("{}:host-gateway", crate::tree::HOST_NAME));
+    }
+    (!hosts.is_empty()).then_some(hosts)
 }
 
 /// Why a sandbox with sidecars cannot run on gVisor under Docker.
@@ -3295,13 +3522,11 @@ mod tests {
             "a container: network takes no hosts"
         );
         // Names resolve on every container of the group.
-        assert_eq!(
-            main.host_config.as_ref().unwrap().extra_hosts,
-            Some(vec![
-                "main:127.0.0.1".to_string(),
-                "db:127.0.0.1".to_string()
-            ])
-        );
+        let mut want = vec!["main:127.0.0.1".to_string(), "db:127.0.0.1".to_string()];
+        if egress::secure() {
+            want.push("host:host-gateway".to_string());
+        }
+        assert_eq!(main.host_config.as_ref().unwrap().extra_hosts, Some(want));
         assert!(
             hc.port_bindings.is_none(),
             "a container: network publishes nothing"
@@ -3415,6 +3640,34 @@ mod tests {
     }
 
     #[test]
+    fn a_wsl_gpu_container_gets_dxg_and_the_driver_libraries() {
+        let mut spec = StartSpec::new("sb", ImageSource::Existing);
+        spec.gpu = Some(crate::gpu::NVIDIA.into());
+        let mut body = create_body("sb", "img:1", &spec, HashMap::new(), "runc".into());
+        assert!(body.host_config.as_ref().unwrap().device_requests.is_some());
+        apply_wsl_gpu(&mut body);
+        let hc = body.host_config.unwrap();
+        assert!(hc.device_requests.is_none(), "no nvidia runtime to ask");
+        assert_eq!(
+            hc.devices.unwrap()[0].path_on_host.as_deref(),
+            Some("/dev/dxg")
+        );
+        let binds = hc.binds.unwrap();
+        assert!(binds.contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string()));
+        assert!(
+            binds
+                .iter()
+                .any(|b| b.ends_with(":/usr/local/bin/nvidia-smi:ro")),
+            "a member's own PATH still finds nvidia-smi"
+        );
+        assert!(
+            body.env
+                .unwrap()
+                .contains(&"LD_LIBRARY_PATH=/usr/lib/wsl/lib".to_string())
+        );
+    }
+
+    #[test]
     fn create_body_carries_the_env_token() {
         let spec = StartSpec::new("sb", ImageSource::Existing)
             .env("CUA_ENV_TOKEN", "tok123")
@@ -3435,9 +3688,10 @@ mod tests {
         let plain = StartSpec::new("sb", ImageSource::Existing);
         let bare = create_body("sb", "img:1", &plain, HashMap::new(), "runc".into());
         assert!(bare.env.is_none());
-        assert!(
-            bare.host_config.as_ref().unwrap().extra_hosts.is_none(),
-            "no sidecars, no host entries"
+        assert_eq!(
+            bare.host_config.as_ref().unwrap().extra_hosts,
+            egress::secure().then(|| vec!["host:host-gateway".to_string()]),
+            "no sidecars: only `host` (under the secure default)"
         );
         assert!(
             bare.entrypoint.is_none() && bare.cmd.is_none(),

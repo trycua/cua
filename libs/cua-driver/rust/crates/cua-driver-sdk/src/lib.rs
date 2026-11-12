@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical typed Cua Driver SDK and UniFFI export boundary.
 //!
 //! [`CuaDriver::create`] owns the platform runtime in the importing process.
@@ -322,6 +325,26 @@ impl CuaDriver {
             DriverBackend::Daemon(_)
             | DriverBackend::PrivateWorker(_)
             | DriverBackend::Remote(_) => None,
+        }
+    }
+
+    /// Daemon-host seam for its permission gate: while awaiting, every tool
+    /// route refuses with `permissions_pending` before dispatch. Only an
+    /// embedded runtime has a gate; other backends ignore it.
+    #[doc(hidden)]
+    pub fn set_awaiting_permissions(&self, awaiting: bool) {
+        if let DriverBackend::Embedded(runtime) = &self.backend {
+            runtime.set_awaiting_permissions(awaiting);
+        }
+    }
+
+    /// The raw `permissions_pending` tool result while the permission gate is
+    /// pending, so a host transport can answer it before its own refusals.
+    #[doc(hidden)]
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(),
+            _ => None,
         }
     }
 
@@ -2043,6 +2066,16 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
+/// Test directory for Unix socket endpoints. sun_path holds 104 bytes on
+/// macOS and a long TMPDIR can use most of it, so tests bind under /tmp.
+#[cfg(all(test, unix))]
+fn socket_tempdir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("cd")
+        .tempdir_in("/tmp")
+        .unwrap()
+}
+
 #[cfg(test)]
 #[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
@@ -2071,6 +2104,7 @@ mod tests {
 
     mod native_windows;
     use super::*;
+    #[cfg(unix)]
     use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
@@ -2092,13 +2126,9 @@ mod tests {
 
     #[cfg(unix)]
     fn serve_once(response: Value) -> (tempfile::TempDir, String, std::thread::JoinHandle<Value>) {
-        // Short path under /tmp: sun_path holds ~104 bytes on macOS and a CI
-        // TMPDIR can eat most of it. The listener is bound before returning,
-        // so the client needs no readiness wait.
-        let directory = tempfile::Builder::new()
-            .prefix("cd")
-            .tempdir_in("/tmp")
-            .unwrap();
+        // The listener is bound before returning, so the client needs no
+        // readiness wait.
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("d.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = std::thread::spawn(move || {
@@ -3073,7 +3103,7 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn daemon_version_mismatch_is_refused_before_action_dispatch() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::socket_tempdir();
         let socket = directory.path().join("incompatible.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let action_dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));

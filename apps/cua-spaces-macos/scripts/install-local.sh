@@ -8,13 +8,36 @@
 # pattern as Cua Driver's libs/cua-driver/scripts/install-local.sh, which
 # installs cua-driver-local.)
 #
-#   scripts/install-local.sh [--release] [--no-launch] [--prefix DIR]
+#   scripts/install-local.sh [--release | --development] [--no-launch] [--prefix DIR]
 #                            [--with-lume-local] [--skip-rust-build]
 #                            [--skip-web-build] [--setup-signing]
-#                            [--require-stable-signing]
+#                            [--require-stable-signing] [--build-only]
+#                            [--rust-profile release|dev-fast]
 #
-#   --release            build the release configuration (default: debug)
+#   --release            build the release configuration: Rust and Swift fully
+#                        optimised (slow, rebuilds everything). Use it to check
+#                        what ships. The app reads no dev hooks. Release-grade
+#                        builds are opt-in: nothing else asks for them.
+#   --development        the fast dev loop: Rust with the `dev-fast` Cargo profile
+#                        (target/dev-fast: opt-level 1, incremental, no LTO) and
+#                        the Swift debug configuration, so the dev hooks work
+#                        (CUA_SPACES_*, and live reload of the web UI with
+#                        CUA_WEBUI_DEV=1 against `pnpm dev`). Still signed with
+#                        the stable local certificate. Not for anything you
+#                        hand to someone else.
+#                        Neither flag (the default): Rust dev-fast, Swift debug.
 #   --no-launch          do not open the app when it is installed
+#   --rust-profile NAME  the Cargo profile for the Rust build, whatever the other
+#                        flags say: release (fully optimised) or dev-fast (the
+#                        default, except with --release). `--release
+#                        --rust-profile dev-fast` is the release Swift build with
+#                        a lightly optimised Rust core: the Rust build after a
+#                        version bump (every workspace crate rebuilds) takes
+#                        about 70% of the release time.
+#   --build-only         build, stage, sign and verify the app, then stop: nothing
+#                        is installed, quit or registered (for timing a build or
+#                        checking that it builds). The app is left in
+#                        apps/cua-spaces-macos/.build/local-app.
 #   --prefix DIR         install under DIR instead of $HOME: the app in
 #                        DIR/Applications, `cua-local` in DIR/.local/bin
 #                        (the state, ~/.cua-local, stays in $HOME). DIR is
@@ -62,8 +85,8 @@
 # macOS asks for the renamed app's permissions once; the old id's permission rows
 # stay in macOS's list (macOS cannot clear them for an app that is gone), unused.
 #
-# Signing: the stable local certificate shared with Cua Driver's local install
-# (libs/cua-driver/scripts/_local-signing.sh), so the Screen Recording and
+# Signing: a stable local certificate (the one Cua Driver's local install
+# makes, libs/cua-driver/scripts/_local-signing.sh), so the Screen Recording and
 # Accessibility grants of Cua Spaces Local survive a rebuild. Without it the
 # bundle is signed ad hoc and the grants reset on every rebuild (reported).
 # On a fresh Keychain the certificate is created, but codesign cannot use it
@@ -76,6 +99,15 @@
 # terminal, no screen) it prints the exact commands instead. It never trusts
 # anything without that, never changes which certificate is used, and a
 # certificate-backed signature is still what it checks for.
+# The certificate lives in a Keychain this script owns,
+# ~/Library/Keychains/cua-spaces-local-signing.keychain-db (empty password, so
+# nothing is asked to unlock it and a locked login Keychain does not matter).
+# It writes nothing to your login Keychain; it reuses a certificate already
+# there, or the Keychain Cua Driver's local install made, as before.
+# By default it signs ad hoc (no certificate, no Keychain prompt at all);
+# CUA_LOCAL_SIGN=stable, --setup-signing or --require-stable-signing use the
+# stable certificate. CUA_LOCAL_SIGN=adhoc forces ad hoc. CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 turns the own Keychain off. When nothing works the app is
+# signed ad hoc and the script says why in one line.
 #
 # Uninstall: scripts/uninstall-local.sh.
 set -euo pipefail
@@ -93,6 +125,8 @@ die() { err "$*"; exit 1; }
 # --- Arguments ----------------------------------------------------------------
 
 CONFIG=debug
+RUST_PROFILE=dev-fast
+DEVELOPMENT=0
 LAUNCH=1
 PREFIX=""
 WITH_LUME_LOCAL=0
@@ -100,13 +134,23 @@ SKIP_RUST_BUILD=0
 SKIP_WEB_BUILD=0
 SETUP_SIGNING=0
 REQUIRE_STABLE_SIGNING=0
+BUILD_ONLY=0
+RUST_PROFILE_OVERRIDE=""
 
 usage() { sed -n '/^# Builds Cua Spaces/,/^# Uninstall:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --release) CONFIG=release ;;
+        --release) CONFIG=release; RUST_PROFILE=release; DEVELOPMENT=0 ;;
+        --development) CONFIG=debug; RUST_PROFILE=dev-fast; DEVELOPMENT=1 ;;
         --no-launch) LAUNCH=0 ;;
+        --build-only) BUILD_ONLY=1 ;;
+        --rust-profile)
+            [ "$#" -ge 2 ] || die "--rust-profile needs release or dev-fast"
+            RUST_PROFILE_OVERRIDE="$2"
+            shift
+            ;;
+        --rust-profile=*) RUST_PROFILE_OVERRIDE="${1#*=}" ;;
         --prefix)
             [ "$#" -ge 2 ] || die "--prefix needs a directory"
             PREFIX="$2"
@@ -123,6 +167,23 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+case "$RUST_PROFILE_OVERRIDE" in
+    "") ;;
+    release|dev-fast) RUST_PROFILE="$RUST_PROFILE_OVERRIDE" ;;
+    *) err "--rust-profile must be release or dev-fast (got: $RUST_PROFILE_OVERRIDE)"; exit 2 ;;
+esac
+
+# Ad hoc signing is the default: no certificate, no Keychain, no prompt. The
+# stable certificate (permissions that survive rebuilds) is opt-in with
+# --setup-signing, --require-stable-signing or CUA_LOCAL_SIGN=stable.
+if [ -z "${CUA_LOCAL_SIGN:-}" ]; then
+    if [ "$SETUP_SIGNING" = 1 ] || [ "$REQUIRE_STABLE_SIGNING" = 1 ]; then
+        CUA_LOCAL_SIGN=stable
+    else
+        CUA_LOCAL_SIGN=adhoc
+    fi
+fi
 
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
     die "do not run this script with sudo or as root."
@@ -189,7 +250,18 @@ case "${CARGO_TARGET_DIR:-/}" in
     /*) ;;
     *) die "CARGO_TARGET_DIR must be an absolute path (got: $CARGO_TARGET_DIR)." ;;
 esac
-SPACESD_BIN="${CARGO_TARGET_DIR:-$SPACESD_DIR/target}/release/cua-spacesd"
+# libs/cua and libs/cua-spacesd are separate Cargo workspaces (libs/cua pins its
+# toolchain in rust-toolchain.toml), so they must not share a target directory:
+# artifacts from one toolchain break the other (E0463 "can't find crate for
+# zeroize_derive"). A set CARGO_TARGET_DIR is used as a parent, one subdirectory
+# per workspace.
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    SPACESD_TARGET_DIR="$CARGO_TARGET_DIR/cua-spacesd"
+    export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/cua"
+else
+    SPACESD_TARGET_DIR="$SPACESD_DIR/target"
+fi
+SPACESD_BIN="$SPACESD_TARGET_DIR/$RUST_PROFILE/cua-spacesd"
 
 [ -x "$BUILD_SCRIPT" ] || die "missing $BUILD_SCRIPT"
 [ -f "$SIGNING_LIB" ] || die "missing $SIGNING_LIB (the stable local signing shared with Cua Driver)"
@@ -210,7 +282,7 @@ if [ -d "$CLI_LINK" ] && [ ! -L "$CLI_LINK" ]; then
     die "refusing to replace $CLI_LINK: it is a directory"
 fi
 if [ "$SKIP_RUST_BUILD" = 1 ] && [ ! -x "$SPACESD_BIN" ]; then
-    die "--skip-rust-build: there is no cua-spacesd build at $SPACESD_BIN. Build it ((cd libs/cua-spacesd && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)) or leave out --skip-rust-build."
+    die "--skip-rust-build: there is no cua-spacesd build at $SPACESD_BIN. Build it ((cd libs/cua-spacesd && cargo build --locked --profile $RUST_PROFILE -p cua-spacesd --bin cua-spacesd)) or leave out --skip-rust-build."
 fi
 if [ "$WITH_LUME_LOCAL" = 1 ]; then
     [ -f "$LUME_INSTALL" ] || die "--with-lume-local: missing $LUME_INSTALL"
@@ -264,7 +336,7 @@ check_prerequisites() {
     # The web UI's app core is Rust built for the browser (WebAssembly), with
     # the toolchain and the wasm-bindgen the release build pins.
     toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$WASM_TOOLCHAIN_FILE" 2>/dev/null | head -n 1)"
-    wasm_bindgen_version="$(sed -n 's/^const WASM_BINDGEN = "\(.*\)"/\1/p' "$WASM_SCRIPT" 2>/dev/null | head -n 1)"
+    wasm_bindgen_version="$(sed -n 's/^const WASM_BINDGEN = "\([^"]*\)".*/\1/p' "$WASM_SCRIPT" 2>/dev/null | head -n 1)"
     if [ -n "$toolchain" ]; then
         { have rustup && rustup target list --installed --toolchain "$toolchain" 2>/dev/null | grep -qx wasm32-unknown-unknown; } \
             || missing "the wasm32 Rust target for Rust $toolchain (the web UI; after Rust is installed): rustup toolchain install $toolchain --profile minimal --target wasm32-unknown-unknown"
@@ -299,40 +371,107 @@ fi
 
 printf '%sCua Spaces Local installer%s\n' "$BOLD$BLUE" "$NORMAL"
 echo "  source:  $REPO_ROOT"
-echo "  config:  $CONFIG"
+echo "  config:  $CONFIG (Rust: $RUST_PROFILE)"
 echo "  app:     $APP_DEST"
 echo "  cli:     $CLI_LINK"
 echo ""
 
 # --- Build -----------------------------------------------------------------------
 
-# The web UI first (as the release build does: pnpm install --frozen-lockfile,
-# pnpm build, which builds the app core's WebAssembly and then the pages): it
-# is the quick one to fail. CI=true keeps pnpm from asking questions.
+# Where the time goes, said once at the end (SECONDS is bash's own clock).
+T_BUILD_START=$SECONDS
+T_RUST_DONE=$SECONDS
+T_WEB_DONE=$SECONDS
+T_APP_DONE=$SECONDS
+fmt_secs() { if [ "$1" -ge 60 ]; then printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); else printf '%ds' "$1"; fi; }
+
+# The web UI (as the release build does: pnpm install --frozen-lockfile,
+# pnpm build, which builds the app core's WebAssembly and then the pages).
+# CI=true keeps pnpm from asking questions. Its build shares no target directory with the Rust build below, so
+# the two run side by side (a cold wasm build is minutes). Its output goes to a
+# log that is shown when it fails.
+WEB_PID=""
+WEB_BUILD_LOG=""
 if [ "$BUILD_WEB" = 1 ]; then
-    log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build)"
-    if ! (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build); then
+    log "building the web UI (apps/cua-spaces-web: pnpm install, pnpm build) in the background"
+    WEB_BUILD_LOG="$(mktemp -t cua-local-webui)"
+    (cd "$WEBUI_APP" && CI=true pnpm install --ignore-workspace --frozen-lockfile && pnpm build) >"$WEB_BUILD_LOG" 2>&1 &
+    WEB_PID=$!
+fi
+wait_for_web_ui() {
+    [ -n "$WEB_PID" ] || return 0
+    if wait "$WEB_PID"; then
+        ok "the web UI is built"
+        rm -f "$WEB_BUILD_LOG"
+    else
+        cat "$WEB_BUILD_LOG" >&2
+        rm -f "$WEB_BUILD_LOG"
         die "the web UI build failed (see above). Nothing was installed."
     fi
-fi
-if [ ! -f "$WEBUI_DIST/index.html" ]; then
-    web_ui_missing
-    exit 1
-fi
-
+    WEB_PID=""
+}
 if [ "$SKIP_RUST_BUILD" = 0 ]; then
+    # sccache, when installed, shares compiled crates between checkouts and
+    # survives a cargo clean. A set $RUSTC_WRAPPER (even empty) overrides this.
+    if [ -z "${RUSTC_WRAPPER+x}" ] && command -v sccache >/dev/null 2>&1; then
+        export RUSTC_WRAPPER=sccache
+        log "using sccache for the Rust builds"
+    fi
     if ! command -v cargo >/dev/null 2>&1 && [ -f "$HOME/.cargo/env" ]; then
         # shellcheck disable=SC1091
         . "$HOME/.cargo/env"
     fi
     command -v cargo >/dev/null 2>&1 || die "cargo is required (https://rustup.rs), or build the libraries yourself and pass --skip-rust-build."
-    log "building the Cua Spaces library and CLI (cargo, release)"
+    # macOS defaults to 256 open files; 256 codegen units with sccache exceed it
+    # ("Too many open files").
+    ulimit -n 10240 || true
+    # cua-spacesd is its own Cargo workspace and target directory, so it builds
+    # beside the library and CLI. The library's crates form a long chain
+    # (cua-daemon, cua-sdk, cua-compat, cua-cli) that uses a few of the cores;
+    # the daemon's build fits in the others and adds almost nothing to the wall
+    # clock. Its output goes to a log, shown when it fails.
+    log "building cua-spacesd from this checkout (cargo, $RUST_PROFILE) in the background"
+    SPACESD_BUILD_LOG="$(mktemp -t cua-local-spacesd)"
+    (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --profile "$RUST_PROFILE" -p cua-spacesd --bin cua-spacesd) >"$SPACESD_BUILD_LOG" 2>&1 &
+    SPACESD_PID=$!
+    log "building the Cua Spaces library and CLI (cargo, $RUST_PROFILE)"
     # The SDK dylib the app links, and the `cua` that goes into the bundle
     # (build-app.sh's defaults).
-    (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli)
-    "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
-    log "building cua-spacesd from this checkout (cargo, release)"
-    (cd "$SPACESD_DIR" && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
+    # --no-default-features leaves out AWS (EC2 and S3: the AWS SDK crates, a big share of a
+    # cold build). In this build every AWS feature says "this build doesn't include AWS
+    # support". Release builds keep the default `aws` feature.
+    (cd "$REPO_ROOT/libs/cua" && cargo build --locked --profile "$RUST_PROFILE" --no-default-features -p cua-spaces-ffi -p cua-spaces-cli)
+    CUA_CARGO_PROFILE_DIR="$RUST_PROFILE" "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
+    if wait "$SPACESD_PID"; then
+        tail -n 1 "$SPACESD_BUILD_LOG"
+        rm -f "$SPACESD_BUILD_LOG"
+    else
+        cat "$SPACESD_BUILD_LOG" >&2
+        rm -f "$SPACESD_BUILD_LOG"
+        die "the cua-spacesd build failed (see above). Nothing was installed."
+    fi
+fi
+T_RUST_DONE=$SECONDS
+# The network gateway (cua-netgw, Go): VM Spaces behind the secure default network, and every
+# child Space of a VM tree, need it next to `cua`. Without it a child Space an agent makes
+# inside a Space is refused ("cua-netgw is not installed"). Built when Go is installed.
+if [ -z "${CUA_NETGW_BIN:-}" ]; then
+    if command -v go >/dev/null 2>&1; then
+        log "building the network gateway (cua-netgw)"
+        if "$REPO_ROOT/libs/cua/netgw/build.sh" "$BUILD_OUT/.netgw" >/dev/null; then
+            export CUA_NETGW_BIN="$BUILD_OUT/.netgw/cua-netgw"
+        else
+            err "the network gateway did not build: VM Spaces and child Spaces will be refused in this build."
+        fi
+    else
+        err "Go is not installed, so cua-netgw is not bundled: VM Spaces and child Spaces will be refused in this build (brew install go)."
+    fi
+fi
+wait_for_web_ui
+T_WEB_DONE=$SECONDS
+if [ ! -f "$WEBUI_DIST/index.html" ]; then
+    web_ui_missing
+    exit 1
 fi
 [ -x "$SPACESD_BIN" ] || die "cargo did not produce $SPACESD_BIN"
 
@@ -350,9 +489,10 @@ SPACESD_CODE_HASH="$(code_hash "$SPACESD_BIN")" || die "cannot read the machine 
 log "building the app (build-app.sh --channel local $CONFIG)"
 mkdir -p "$BUILD_OUT"
 # build-app.sh prints the bundle path as its last line.
-if ! BUILT_APP="$(CUA_SPACESD_BIN="$SPACESD_BIN" CUA_WEBUI_DIST="$WEBUI_DIST" "$BUILD_SCRIPT" --channel local "$CONFIG" "$BUILD_OUT" | tee /dev/stderr | tail -n 1)"; then
+if ! BUILT_APP="$(CUA_CARGO_PROFILE_DIR="$RUST_PROFILE" CUA_SPACESD_BIN="$SPACESD_BIN" CUA_WEBUI_DIST="$WEBUI_DIST" "$BUILD_SCRIPT" --channel local "$CONFIG" "$BUILD_OUT" | tee /dev/stderr | tail -n 1)"; then
     die "build-app.sh failed"
 fi
+T_APP_DONE=$SECONDS
 [ -d "$BUILT_APP" ] || BUILT_APP="$BUILD_OUT/$LOCAL_APP_DIR_NAME"
 [ -d "$BUILT_APP" ] || die "build-app.sh did not produce an app bundle in $BUILD_OUT"
 if [ "$(basename "$BUILT_APP")" != "$LOCAL_APP_DIR_NAME" ]; then
@@ -481,6 +621,81 @@ signing_probe_locked() {
     return 1
 }
 
+# The Keychain this script owns for the stable local certificate. Its password
+# is empty on purpose: the certificate only signs development builds of Cua
+# Spaces Local on this Mac, and an empty password lets the script unlock it
+# anywhere (SSH, a VM) without asking. It is never the login Keychain.
+OWNED_SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-spaces-local-signing.keychain-db"
+OWNED_SIGNING=0
+OWNED_SIGNING_ERROR=""
+
+# Whether the login Keychain is locked and cannot be asked to unlock (an SSH
+# session): only looked at there, so nothing ever opens an unlock window.
+login_keychain_locked() {
+    local login="$HOME/Library/Keychains/login.keychain-db" rc=0
+    [ -n "${SSH_CONNECTION:-}" ] && [ -f "$login" ] || return 1
+    security_bounded 5 find-generic-password -s cua-local-lock-probe "$login" >/dev/null 2>&1 || rc=$?
+    [ "$rc" != 0 ] && [ "$rc" != 44 ]
+}
+security_bounded() {
+    local seconds="$1"
+    shift
+    perl -e 'alarm shift; exec @ARGV' "$seconds" security "$@"
+}
+
+# Picks the Keychain the stable local certificate is made in, unless something
+# already decides it: CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN or _IDENTITY (your
+# choice), the dedicated Keychain of Cua Driver's local install, or a stable
+# local certificate already in the login Keychain (it keeps signing as before,
+# so permissions granted to it survive). Otherwise it creates and unlocks its
+# own Keychain and points the shared helpers at it. Never writes to the login
+# Keychain and never changes the Keychain search list.
+choose_signing_keychain() {
+    local login="$HOME/Library/Keychains/login.keychain-db"
+    [ "$OS" = Darwin ] && command -v security >/dev/null 2>&1 || return 0
+    [ "${CUA_LOCAL_SIGNING_OWN_KEYCHAIN:-1}" != 0 ] || return 0
+    [ -z "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ] || return 0
+    [ -z "${CUA_DRIVER_LOCAL_SIGNING_IDENTITY:-}" ] || return 0
+    [ ! -f "$HOME/Library/Keychains/cua-driver-signing.keychain-db" ] || return 0
+    if [ -f "$login" ] && security find-certificate -c "$CUA_LOCAL_SIGN_CN" "$login" >/dev/null 2>&1; then
+        return 0
+    fi
+    OWNED_SIGNING=1
+    # Whatever happens next, the shared helpers must not fall back to the login Keychain.
+    export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$OWNED_SIGNING_KEYCHAIN"
+    if [ ! -f "$OWNED_SIGNING_KEYCHAIN" ]; then
+        mkdir -p "$(dirname "$OWNED_SIGNING_KEYCHAIN")" 2>/dev/null || true
+        if ! OWNED_SIGNING_ERROR="$(security create-keychain -p "" "$OWNED_SIGNING_KEYCHAIN" 2>&1)"; then
+            return 0
+        fi
+        # create-keychain may add the new one to the search list on some
+        # macOS versions; this script leaves the list as it found it.
+    fi
+    # No auto-lock timeout, then unlock it (a no-op when it is open).
+    security set-keychain-settings "$OWNED_SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+    if ! OWNED_SIGNING_ERROR="$(security unlock-keychain -p "" "$OWNED_SIGNING_KEYCHAIN" 2>&1)"; then
+        return 0
+    fi
+    OWNED_SIGNING_ERROR=""
+}
+
+# The one line that says why the app is signed ad hoc, and what to run.
+ad_hoc_reason() {
+    local kc
+    kc="$(local_signing_keychain)"
+    if [ "$OWNED_SIGNING" = 1 ] && [ -n "$OWNED_SIGNING_ERROR" ]; then
+        printf 'the script could not set up its signing Keychain (%s): %s' "$OWNED_SIGNING_KEYCHAIN" "$(printf '%s' "$OWNED_SIGNING_ERROR" | head -n 1)"
+    elif login_keychain_locked; then
+        printf 'the login Keychain is locked in this SSH session: run  security unlock-keychain "%s/Library/Keychains/login.keychain-db"  and build again' "$HOME"
+    elif [ "$SIGNING_PROBLEM" = locked ] || [ "$SIGNING_PROBLEM" = no-certificate ]; then
+        printf 'the Keychain %s is locked: run  security unlock-keychain "%s"  and build again' "$kc" "$kc"
+    elif [ -n "${CUA_DRIVER_LOCAL_SIGNING_IDENTITY:-}" ]; then
+        printf 'codesign cannot use the identity you chose (CUA_DRIVER_LOCAL_SIGNING_IDENTITY)'
+    else
+        printf 'macOS does not trust the local signing certificate yet: run  scripts/install-local.sh --setup-signing  once (one password prompt)'
+    fi
+}
+
 # Whether the Keychain exists but holds no stable local certificate although the
 # script just tried to create one (the shared helper swallows why it could not).
 signing_certificate_missing() {
@@ -532,9 +747,14 @@ print_signing_bootstrap() {
     if ! keychain_listed "$kc"; then
         echo "  security list-keychains -d user -s \"$kc\" \"$HOME/Library/Keychains/login.keychain-db\"" >&2
     fi
-    echo "  read -r -s -p 'Keychain password: ' KCPW; echo" >&2
-    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\$KCPW\" \"$kc\" >/dev/null; unset KCPW" >&2
-    echo "      (-l limits it to that certificate's key; do not drop it: without it every signing key in the Keychain is changed)" >&2
+    if [ "$OWNED_SIGNING" = 1 ]; then
+        # The script's own Keychain has an empty password and the script opens the key itself.
+        echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\" \"$kc\" >/dev/null" >&2
+    else
+        echo "  read -r -s -p 'Keychain password: ' KCPW; echo" >&2
+        echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\$KCPW\" \"$kc\" >/dev/null; unset KCPW" >&2
+        echo "      (-l limits it to that certificate's key; do not drop it: without it every signing key in the Keychain is changed)" >&2
+    fi
     echo "then run this script again, or run it with --setup-signing and it does this for you." >&2
 }
 
@@ -661,7 +881,11 @@ make_signing_identity_usable() {
         return 0
     fi
     # 3. codesign may use the key without a prompt. Needs the Keychain's
-    # password: asked here, used once, not stored.
+    # password: asked here, used once, not stored (ours has none).
+    if [ "$OWNED_SIGNING" = 1 ] && open_key_to_codesign "$kc" "" && signing_probe "$identity" "$macho"; then
+        ok "codesign can use the stable local certificate"
+        return 0
+    fi
     if [ -t 0 ]; then
         printf 'Password of the Keychain %s (used once, not stored): ' "$kc"
         read -r -s pw || pw=""
@@ -688,10 +912,20 @@ make_signing_identity_usable() {
 # has the certificate (never swap a working signature for an ad hoc one).
 sign_staged_app() {
     local app_stage="$1" app_dest="$2" sign_id requirement
-    sign_id="$(ensure_local_signing_identity)"
+    # CUA_LOCAL_SIGN=adhoc: sign ad hoc and never look for, create or use a
+    # certificate, so codesign never asks for a Keychain key ("codesign wants to
+    # access key id"). The grants then reset on each rebuild.
+    if [ "${CUA_LOCAL_SIGN:-}" = adhoc ]; then
+        sign_id="-"
+    else
+        choose_signing_keychain
+        sign_id="$(ensure_local_signing_identity)"
+    fi
     if [ "$sign_id" != "-" ]; then
+        # Our own Keychain has an empty password: codesign may use the key now.
+        if [ "$OWNED_SIGNING" = 1 ]; then open_key_to_codesign "$OWNED_SIGNING_KEYCHAIN" "" || true; fi
         make_signing_identity_usable "$sign_id" "$app_stage" || true
-    elif signing_certificate_missing; then
+    elif [ "${CUA_LOCAL_SIGN:-}" != adhoc ] && signing_certificate_missing; then
         SIGNING_PROBLEM=no-certificate
         warn "could not create the stable local certificate in $(local_signing_keychain): the Keychain is probably locked."
     fi
@@ -737,7 +971,7 @@ sign_staged_app() {
         err "could not verify the staged app's ad hoc requirement; the installed app was not changed."
         return 1
     fi
-    warn "$LOCAL_APP_DIR_NAME is signed ad hoc: its Screen Recording and Accessibility grants reset on the next rebuild."
+    warn "$LOCAL_APP_DIR_NAME is signed ad hoc because $(ad_hoc_reason). Its Screen Recording and Accessibility grants reset on the next rebuild."
     print_signing_bootstrap
 }
 
@@ -849,6 +1083,12 @@ if ! verify_local_bundle "$STAGE_APP"; then
     die "the staged app is not a valid Cua Spaces Local bundle; the installed app was not changed."
 fi
 
+ok "built and signed in $(fmt_secs $((SECONDS - T_BUILD_START))): Rust $(fmt_secs $((T_RUST_DONE - T_BUILD_START))), web UI (ran beside Rust) done at $(fmt_secs $((T_WEB_DONE - T_BUILD_START))), app $(fmt_secs $((T_APP_DONE - T_WEB_DONE))), signing and checks $(fmt_secs $((SECONDS - T_APP_DONE)))"
+if [ "$BUILD_ONLY" = 1 ]; then
+    ok "--build-only: nothing was installed. The app is at $BUILT_APP"
+    exit 0
+fi
+
 # --- Swap ------------------------------------------------------------------------
 
 log "installing $APP_DEST"
@@ -873,13 +1113,15 @@ quit_local_app "$APP_DEST"
 mkdir -p "$APP_PARENT"
 APP_BACKUP="$APP_DEST.install-backup.$$"
 rm -rf "$APP_BACKUP"
-if [ -d "$APP_DEST" ]; then
-    mv "$APP_DEST" "$APP_BACKUP"
-fi
+# Copy next to the destination first and rename it into place: a rename is atomic, so launchd, which
+# restarts the app's KeepAlive background items as soon as they exit, never starts a half-copied bundle
+# (dyld "Library missing: Sparkle" crash reports on every rebuild).
+APP_INCOMING="$APP_DEST.installing.$$"
+rm -rf "$APP_INCOMING"
 install_valid=false
 INSTALLED_REQUIREMENT=""
 INSTALLED_CLASS=""
-if ditto "$STAGE_APP" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
+if ditto "$STAGE_APP" "$APP_INCOMING"     && { [ ! -d "$APP_DEST" ] || mv "$APP_DEST" "$APP_BACKUP"; }     && mv "$APP_INCOMING" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
     INSTALLED_REQUIREMENT="$(designated_requirement "$APP_DEST")"
     INSTALLED_CLASS="$(classify_designated_requirement "$INSTALLED_REQUIREMENT")"
     if [ "$INSTALLED_REQUIREMENT" = "$STAGED_REQUIREMENT" ] \
@@ -897,15 +1139,18 @@ if [ "$install_valid" = true ]; then
     fi
     rm -rf "$APP_BACKUP"
 else
-    rm -rf "$APP_DEST"
+    rm -rf "$APP_INCOMING"
+    # Only remove what is at the destination when the old app was moved aside; if the copy itself
+    # failed, the old app is still in place and stays.
     if [ -d "$APP_BACKUP" ]; then
+        rm -rf "$APP_DEST"
         mv "$APP_BACKUP" "$APP_DEST"
         if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then
             restore_retired_local_app "$APP_DEST" "$LEGACY_HELPER_WAS_ENABLED"
         fi
         die "the installed copy did not verify; restored the previous $LOCAL_APP_DIR_NAME."
     fi
-    die "the installed copy did not verify and was removed."
+    die "the new copy could not be put in place; the installed app was not changed."
 fi
 ok "installed $APP_DEST"
 if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then

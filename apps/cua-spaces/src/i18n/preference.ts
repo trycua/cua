@@ -33,7 +33,8 @@ export function savedLocaleChoice(): string {
 export async function setLocaleChoice(choice: string): Promise<void> {
   try {
     if (choice === "system") window.localStorage?.removeItem(LOCALE_SETTING_KEY);
-    else if ((AVAILABLE_LOCALES as readonly string[]).includes(choice)) window.localStorage?.setItem(LOCALE_SETTING_KEY, choice);
+    else if ((AVAILABLE_LOCALES as readonly string[]).includes(choice))
+      window.localStorage?.setItem(LOCALE_SETTING_KEY, choice);
     else return;
   } catch {
     // Storage blocked: the switch still applies for this session.

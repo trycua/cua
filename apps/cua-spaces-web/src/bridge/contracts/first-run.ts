@@ -144,6 +144,10 @@ export interface FirstRunInput {
   agentUsedAt: string | null;
   signedIn: boolean;
   signingIn: boolean;
+  /** While signing in by a code: the code to enter (null: the browser flow). */
+  signInCode?: string | null;
+  /** The last sign-in didn't finish, for this reason (null: it did, or it is running). */
+  signInFailure?: import("./host").SignInFailure | null;
   host: FirstRunHost | null;
   hostSettingUp: boolean;
   offers: FirstRunOffer[];
@@ -153,6 +157,8 @@ export interface FirstRunInput {
   cli?: FirstRunCli;
   /** The CLI's name (`SettingsSnapshot.cli`); null: the plan's file name, else `cua`. */
   cliName?: string | null;
+  /** Ask first is on: no Try it screen, and the last screen's button opens the ask-first Space. */
+  askFirst?: boolean;
 }
 
 export interface FirstRunButton {

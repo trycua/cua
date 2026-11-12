@@ -99,7 +99,8 @@ extension AppNotchTile {
     var data: NotchData.Tile {
         NotchData.Tile(id: id, name: name, status: status.notchData, dim: dim, dropTarget: dropTarget,
                        targeted: targeted, symbol: symbol, label: label, location: location, progress: progress,
-                       progressLabel: progressLabel, signedIn: signedIn)
+                       progressLabel: progressLabel, signedIn: signedIn, desktop: desktop, pinned: pinned,
+                       note: note)
     }
 }
 

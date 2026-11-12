@@ -56,6 +56,10 @@ export interface AgentCardInput {
   joinedAtMs: number | null;
   nowMs: number;
   rights: { label: string; holders: string }[];
+  /** Every right is at its default: one "Default permissions" line instead of three rows. */
+  rightsDefault: boolean;
+  /** You may change its rights (the Space's owner and admins, and its owner). */
+  canEditRights: boolean;
   canRemove: boolean;
   connectors: ConnectorsInput;
 }
@@ -72,6 +76,14 @@ export interface AgentCardView {
   removeLabel: string | null;
   detailsLabel: string;
   details: CardDetail[];
+  /** "Owner": who runs it is a person, shown by name (never an id). */
+  ownerLabel: string;
+  ownerId: string;
+  ownerName: string;
+  /** "Default permissions", while every right is at its default. */
+  defaultPermissions: string | null;
+  /** "Edit", beside it, for those who may change the rights. */
+  editRightsLabel: string | null;
 }
 
 export const personCard = (core: CoreClient, input: PersonCardInput): PersonCardView | null =>

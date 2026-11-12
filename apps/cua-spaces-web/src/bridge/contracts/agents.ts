@@ -102,8 +102,16 @@ export interface AgentStartRequest {
   repo?: string;
   branch?: string;
   model?: string;
+  /** Reasoning level (`low`, `medium`, `high`, `xhigh`, `max`) for the agents that take one. */
+  effort?: string;
   /** Provider key names to forward (values never cross the bridge). Saved keys the harness reads go without being named. */
   envFromHost?: string[];
+  /** The run's folder (a continued chat's own, with `resumeSession`). */
+  cwd?: string;
+  /** Continue this session of the agent's own (a chat from `agents.recentThreads`) instead of a new one. */
+  resumeSession?: string;
+  /** With `resumeSession`: the earlier conversation, for when the agent can't reload its session. */
+  resumeContext?: string;
 }
 
 /** `agent_start`'s answer (snake_case, as the tool answers). */
@@ -390,6 +398,22 @@ export interface ConnectionRowView {
   action: { id: string; label: string } | null;
 }
 
+/** One part of Connect (`cua_agent_setup::connection::Part`): setup shows a row for each, per agent. */
+export type ConnectPart = "mcp" | "skills" | "driver" | "sign_in";
+
+/** How one part ended (`PartStatus`). */
+export type ConnectPartStatus = "done" | "needs_permission" | "skipped" | "failed";
+
+/** What one part did (`cua_agent_setup::connection::PartResult`). */
+export interface ConnectPartResult {
+  part: ConnectPart;
+  status: ConnectPartStatus;
+  /** Where it was written, as the person reads it (`~/.claude.json`, `Keyvault`); null when nothing was. */
+  where: string | null;
+  /** Why, when it failed, needs a permission or was skipped. */
+  line: string | null;
+}
+
 /** What Connect did for one agent (`cua_agent_setup::connection::ConnectResult`). */
 export interface ConnectResult {
   agent: string;
@@ -401,4 +425,6 @@ export interface ConnectResult {
     refused: string | null;
     line: string | null;
   } | null;
+  /** One result per part asked for, in the order they ran. Absent from hosts older than CUA-4067. */
+  parts?: ConnectPartResult[];
 }

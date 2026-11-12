@@ -244,6 +244,15 @@ async fn handle(State(s): State<S>, headers: HeaderMap, body: Bytes) -> axum::re
         "DescribeInstances" => xml(format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?><{action}Response xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>r-1</requestId><reservationSet/></{action}Response>"
         )),
+        "DescribeSubnets" => xml(format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><{action}Response xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>r-1</requestId><subnetSet/></{action}Response>"
+        )),
+        "DescribeRouteTables" => xml(format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><{action}Response xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>r-1</requestId><routeTableSet/></{action}Response>"
+        )),
+        "DescribeInternetGateways" => xml(format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><{action}Response xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>r-1</requestId><internetGatewaySet/></{action}Response>"
+        )),
         "DescribeSecurityGroups" => xml(format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?><{action}Response xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>r-1</requestId><securityGroupInfo/></{action}Response>"
         )),

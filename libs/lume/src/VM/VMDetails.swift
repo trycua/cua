@@ -55,11 +55,18 @@ struct VMDetails: Codable {
     /// The VM has a saved machine state (`POST /lume/vms/:name/suspend`)
     /// that its next run resumes.
     let savedState: Bool?
+    /// The running VM has a virtio socket device and forwards host loopback
+    /// ports to it (a run with `forwards`); absent otherwise.
+    let vsock: Bool?
+    /// Guest port to host loopback port (`127.0.0.1`), once the guest agent
+    /// answers over vsock; absent before that and for VMs without forwards.
+    let forwards: [String: UInt16]?
 
     enum CodingKeys: String, CodingKey {
         case name, os, cpuCount, memorySize, diskSize, display, status
         case provisioningOperation, vncUrl, ipAddress, sshAvailable, locationName, sharedDirectories
         case networkMode, downloadProgress, machineIdentifier, macAddress, savedState
+        case vsock, forwards
     }
 
     init(
@@ -80,7 +87,9 @@ struct VMDetails: Codable {
         downloadProgress: Double? = nil,
         machineIdentifier: String? = nil,
         macAddress: String? = nil,
-        savedState: Bool? = nil
+        savedState: Bool? = nil,
+        vsock: Bool? = nil,
+        forwards: [String: UInt16]? = nil
     ) {
         self.name = name
         self.os = os
@@ -100,6 +109,8 @@ struct VMDetails: Codable {
         self.machineIdentifier = machineIdentifier
         self.macAddress = macAddress
         self.savedState = savedState
+        self.vsock = vsock
+        self.forwards = forwards
     }
 
     // Custom encoder to always include optional fields (even when nil)
@@ -123,5 +134,7 @@ struct VMDetails: Codable {
         try container.encode(machineIdentifier, forKey: .machineIdentifier)
         try container.encode(macAddress, forKey: .macAddress)
         try container.encode(savedState ?? false, forKey: .savedState)
+        try container.encodeIfPresent(vsock, forKey: .vsock)
+        try container.encodeIfPresent(forwards, forKey: .forwards)
     }
 }

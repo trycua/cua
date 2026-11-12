@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Desktop-target pointer input drives the user's real pointer.
 //!
 //! `move_cursor`, `click`, `drag` and `scroll` with a desktop target post

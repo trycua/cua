@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Foreign-language adapter for an authenticated remote envelope carrier.
 
 use std::sync::Arc;

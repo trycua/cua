@@ -231,7 +231,11 @@ fn invoke_menu() -> ToolContract {
     contract::<InvokeMenuInput, ActionResult>(
         "invoke_menu",
         "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
-        &["menu.path.invoke", "accessibility.menu.native"],
+        &[
+            "menu.path.invoke",
+            "accessibility.menu.native",
+            "input.delivery_mode",
+        ],
         ToolAnnotations {
             read_only: false,
             destructive: true,

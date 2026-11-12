@@ -22,7 +22,6 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncE
 
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import { useFlag } from "./flags";
 import { useAgents, useSettings } from "./hooks";
 import type { RelayUsage } from "./ops/relay-usage";
 import { useRelayUsage } from "./relay-usage";
@@ -136,7 +135,16 @@ export function useTrackPlanClick(): (surface: "plan_card" | "account_menu") => 
 }
 
 /** Where a plan limit shows, or an upgrade link opens, outside the prompts above. */
-export type PlanLimitSurface = "app_create" | "app_connect" | "app_team" | "app_meter" | "app_share" | "app_machine" | "app_plan_card" | "app_account_menu" | "app_onboarding";
+export type PlanLimitSurface =
+  | "app_create"
+  | "app_connect"
+  | "app_team"
+  | "app_meter"
+  | "app_share"
+  | "app_machine"
+  | "app_plan_card"
+  | "app_account_menu"
+  | "app_onboarding";
 
 /** `url` with `?from=<surface>`, the rest kept (the core's `upgrade.link`); `url` itself without the core. */
 export function upgradeLink(core: CoreClient | null | undefined, url: string, surface: PlanLimitSurface): string {
@@ -199,7 +207,11 @@ export function useUpsellGate(surface: UpsellSurface, candidate: boolean, gated 
   const core = ctx?.core;
   const quiet = useQuiet();
   const track = useTrack();
-  const memory = useSyncExternalStore(subscribe, () => `${readMs(LAST_KEY)}:${readMs(dismissedKey(surface))}`, () => "");
+  const memory = useSyncExternalStore(
+    subscribe,
+    () => `${readMs(LAST_KEY)}:${readMs(dismissedKey(surface))}`,
+    () => "",
+  );
   const [held, setHeld] = useState(() => isHeld(surface));
   const [closed, setClosed] = useState(false);
   const tracked = useRef(false);
@@ -208,7 +220,8 @@ export function useUpsellGate(surface: UpsellSurface, candidate: boolean, gated 
     !gated ||
     (core?.tryCall<boolean>("upsell.allows", {
       state: { nowMs: Date.now(), lastPromptMs: readMs(LAST_KEY), dismissedMs: readMs(dismissedKey(surface)), quiet } satisfies UpsellState,
-    }) ?? false);
+    }) ??
+      false);
 
   useEffect(() => {
     if (held || closed || !candidate || !allowed) return;
@@ -272,16 +285,15 @@ function cardFor(core: CoreClient, reason: UpsellCardReason, usage: Partial<Rela
   );
 }
 
-/** Whether the flag is on and the core has a card for `reason` on this plan (draws and counts nothing). */
+/** Whether the core has a card for `reason` on this plan (draws and counts nothing). */
 export function useUpsellCardAvailable(reason: UpsellCardReason | null, usage: Partial<RelayUsage> | null): boolean {
   const core = useContext(BridgeContext)?.core;
-  const on = useFlag("upsell_cards");
   const accountApp = useSettings().data?.accountUrl ?? null;
-  return Boolean(on && core && reason && cardFor(core, reason, usage, accountApp));
+  return Boolean(core && reason && cardFor(core, reason, usage, accountApp));
 }
 
 export interface UpsellCardState {
-  /** The card to draw now; null when the flag is off, there is nothing to
+  /** The card to draw now; null when there is nothing to
    * offer, the core is missing or it was closed. */
   card: UpsellCard | null;
   click(): void;
@@ -291,20 +303,18 @@ export interface UpsellCardState {
 /**
  * The limit card for `reason`: what happened, what the plan gives, the price,
  * Upgrade and Not now. It is for the moment a limit stops the person, so it
- * is behind the `upsell_cards` flag (off unless turned on) and does not wait
- * for the 3-day gap. `reason` null: no limit here. `usage` carries the plan
+ * does not wait for the 3-day gap. `reason` null: no limit here. `usage` carries the plan
  * (none known: Free). Events: `upsell_card_<reason>_shown | click | dismiss`,
  * `shown` once per card drawn.
  */
 export function useUpsellCard(reason: UpsellCardReason | null, usage: Partial<RelayUsage> | null): UpsellCardState {
   const ctx = useContext(BridgeContext);
   const core = ctx?.core;
-  const on = useFlag("upsell_cards");
   const accountApp = useSettings().data?.accountUrl ?? null;
   const track = useTrack();
   const [closed, setClosed] = useState<UpsellCardReason | null>(null);
   const shown = useRef<UpsellCardReason | null>(null);
-  const card = on && core && reason && closed !== reason ? cardFor(core, reason, usage, accountApp) : null;
+  const card = core && reason && closed !== reason ? cardFor(core, reason, usage, accountApp) : null;
   const shownReason = card?.reason ?? null;
   useEffect(() => {
     if (!shownReason || shown.current === shownReason) return;

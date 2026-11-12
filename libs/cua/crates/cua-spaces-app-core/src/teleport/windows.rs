@@ -64,6 +64,23 @@ pub struct RemoteWindow {
     /// app up by), when the window list reports one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// The Space the picture comes from, when another Space shows this
+    /// window here (`stream_space_window`); absent on a Space's own windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<RemoteWindowOrigin>,
+}
+
+/// Where a shown window lives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteWindowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`), when known.
+    #[serde(default)]
+    pub os: String,
 }
 
 /// One app's remote windows.

@@ -64,11 +64,11 @@ view at launch in debug builds (release builds ignore the recording hooks).
 **New Space** (Cmd+N, the sidebar's +, the notch's New, or the menu bar item)
 is a step-by-step sheet:
 
-1. **System**: Linux, Windows or macOS, the image (a dropdown of the published
+1. **System**: Linux, macOS or Windows, the image (a dropdown of the published
    entries of `libs/images/sandbox-images.json`, the same list the docs show),
    and where it runs: This Mac, one of your own computers, or your own cloud
-   account. Cua no longer rents cloud machines. **Advanced** picks the kind (container or virtual
-   machine, when the image comes in both) and the runtime, offering only what
+   account. Cua no longer rents cloud computers. **Advanced** picks the kind (container or virtual
+   computer, when the image comes in both) and the runtime, offering only what
    the image runs there: containers `auto`, `gvisor`, `runc`; VMs `auto` and
    the image's `qemu` or `lume`.
 2. **Resources**: CPU cores and memory.
@@ -78,28 +78,28 @@ is a step-by-step sheet:
 Every create is one `create_space {image, on, kind, runtime, ...}` call.
 Spaces on this Mac run through
 `cua-vmm`. The notch "+" drop creates in the default location. **Connect by
-address** adds a machine that already runs cua-spacesd (`host:port` plus its
+address** adds a computer that already runs cua-spacesd (`host:port` plus its
 token). Delete deletes a created Space's sandbox; a Space
 added by address is only removed from the list.
 
-### First run and "This machine"
+### First run and "This computer"
 
 The first launch shows the welcome flow in the main window, one step per page
 with page dots: Welcome, Command line (put the bundled `cua` on PATH), Sign in,
-AI agents (cua skills and the cua MCP server), This machine, Done. Every write
+AI agents (cua skills and the cua MCP server), This computer, Done. Every write
 asks first and shows its path.
 
-"This machine" asks what the machine is for:
+"This computer" asks what the computer is for:
 
-- **Access other machines**: nothing is installed. The signed-in account's
-  own machines (`relay:<id>`) appear automatically.
-- **Set up this machine for unattended access**: `cua-host` (the library
+- **Access other computers**: nothing is installed. The signed-in account's
+  own computers (`relay:<id>`) appear automatically.
+- **Set up this computer for unattended access**: `cua-host` (the library
   behind `cua host setup`) installs cua-spacesd as a service that joins the Cua
   relay (`https://relay.cua.ai`, or `CUA_RELAY_URL`). Direct `ip:port` is
   under **Advanced**. On macOS the Screen Recording and Accessibility panes are
   listed for the user to open; nothing is granted programmatically.
 
-The sidebar always has a **This machine** entry with its sharing state and
+The sidebar always has a **This computer** entry with its sharing state and
 **Stop sharing** / Resume / Remove.
 
 ### Installers

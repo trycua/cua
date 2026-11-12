@@ -145,7 +145,7 @@ impl Default for StorageInput {
 }
 
 /// `volume_storage_set`'s argument (snake_case: the tool's shape).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DriveStorageUpdate {
     pub backend: String,
@@ -157,8 +157,23 @@ pub struct DriveStorageUpdate {
     pub dry_run: bool,
 }
 
+impl std::fmt::Debug for DriveStorageUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveStorageUpdate")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
+}
+
 /// The S3 form (and the backend choice) as edited.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StorageForm {
     pub backend: String,
@@ -169,6 +184,21 @@ pub struct StorageForm {
     pub path_style: bool,
     pub access_key_id: String,
     pub secret_access_key: String,
+}
+
+impl std::fmt::Debug for StorageForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageForm")
+            .field("backend", &self.backend)
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("root", &self.root)
+            .field("path_style", &self.path_style)
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Default for StorageForm {
@@ -1142,7 +1172,7 @@ mod tests {
             cache: None,
         };
         let v = storage_section(&linux, &storage_initial());
-        assert_eq!(v.rows[0].options[0].label, "This machine");
+        assert_eq!(v.rows[0].options[0].label, "This computer");
         let t = texts(&v);
         assert!(t.contains(&"Mounted at".to_string()), "{t:?}");
         assert!(t.contains(&"~/Cua Volume".to_string()), "{t:?}");

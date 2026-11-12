@@ -56,6 +56,19 @@
     {
       "agree": true,
       "case": "remote spaces",
+      "count": 4,
+      "menu": [
+        "status: 4 Spaces running (disabled)",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings…",
+        "quit: Quit Cua Spaces"
+      ],
+      "notch": "4"
+    },
+    {
+      "agree": true,
+      "case": "remote spaces and hosting",
       "count": 3,
       "menu": [
         "status: 3 Spaces running (disabled)",
@@ -65,19 +78,6 @@
         "quit: Quit Cua Spaces"
       ],
       "notch": "3"
-    },
-    {
-      "agree": true,
-      "case": "remote spaces and hosting",
-      "count": 2,
-      "menu": [
-        "status: 2 Spaces running (disabled)",
-        "open: Open Cua Spaces",
-        "new-space: New Space…",
-        "settings: Settings…",
-        "quit: Quit Cua Spaces"
-      ],
-      "notch": "2"
     },
     {
       "agree": true,

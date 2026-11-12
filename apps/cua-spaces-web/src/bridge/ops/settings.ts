@@ -20,6 +20,8 @@ import type {
   DriveStorageInput,
   Experiments,
   LoginItemReport,
+  RepoCacheChange,
+  RepoCacheView,
   StorageInput,
   StorageRequest,
   UpdateChannelId,
@@ -58,6 +60,13 @@ export interface SettingsOperations {
   "runtimes.check": { args: { kind: string; path: string }; result: RuntimePathCheck };
   /** The host's file panel, to pick a kind's binary (null: cancelled). */
   "runtimes.browse": { args: { kind: string }; result: { path: string | null } };
+
+  /** The repo cache (Settings, General): on or off, what it holds, what the last week saved. */
+  "repoCache.get": { args: Empty; result: RepoCacheView };
+  /** Turns it on or off and sets its size; answers the cache after. */
+  "repoCache.set": { args: RepoCacheChange; result: RepoCacheView };
+  /** Deletes every repository it holds; answers the cache after. */
+  "repoCache.clear": { args: Empty; result: RepoCacheView };
 
   /** The account's devices and access log (`devices_snapshot`). */
   "devices.get": { args: Empty; result: DevicesInput };
@@ -104,6 +113,9 @@ export const SETTINGS_OPERATIONS = [
   "loginItem.openSettings",
   "runtimes.check",
   "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -125,20 +137,34 @@ type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 /** A tool answer that is a JSON object, or null. */
 const objectOrNull = <T>(v: unknown): T | null => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as T) : null);
 
-const osOf = (platform: string | undefined): StorageInput["os"] =>
-  platform === "linux" || platform === "windows" ? platform : "macos";
+const osOf = (platform: string | undefined): StorageInput["os"] => (platform === "linux" || platform === "windows" ? platform : "macos");
 
 /* ---- Tauri ----------------------------------------------------------------- */
 
 /** Tauri: the shell's commands, and the daemon's Spaces tools through `agents_tool`. */
 export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string | undefined; write(key: string, value: string): Promise<void> }): Handlers {
   const tool = (name: string, args: Record<string, unknown> = {}) => invoke<unknown>("agents_tool", { tool: name, args });
-  const platform = () => invoke<{ platform?: string } | null>("get_environment").then((e) => e?.platform, () => undefined);
+  const platform = () =>
+    invoke<{ platform?: string } | null>("get_environment").then(
+      (e) => e?.platform,
+      () => undefined,
+    );
 
   const about = async (): Promise<AboutInput> => {
     const [version, p] = await Promise.all([invoke<string | null>("plugin:app|version").catch(() => null), platform()]);
     // The Tauri updater has one feed and no controls to offer.
-    return { platform: osOf(p), version: version ?? "", build: "", os: "", updater: false, autoCheck: false, autoInstall: false, channel: "stable", lastCheck: null, checking: false };
+    return {
+      platform: osOf(p),
+      version: version ?? "",
+      build: "",
+      os: "",
+      updater: false,
+      autoCheck: false,
+      autoInstall: false,
+      channel: "stable",
+      lastCheck: null,
+      checking: false,
+    };
   };
 
   const loginItem = async (): Promise<LoginItemReport> => {
@@ -158,7 +184,13 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
       tool("volume_mount_status").catch(() => null),
       tool("volume_cache_stats").catch(() => null),
     ]);
-    return { os: osOf(p), home: null, storage: objectOrNull<DriveStorageInput>(s), mount: objectOrNull<DriveMountInput>(m), cache: objectOrNull<DriveCacheInput>(c) };
+    return {
+      os: osOf(p),
+      home: null,
+      storage: objectOrNull<DriveStorageInput>(s),
+      mount: objectOrNull<DriveMountInput>(m),
+      cache: objectOrNull<DriveCacheInput>(c),
+    };
   };
 
   const EXPERIMENTS_KEY = "cua.settings.experiments";
@@ -178,6 +210,9 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
     "update.install": () => Promise.reject(new UnsupportedOperationError("tauri", "update.install")),
     "runtimes.check": () => Promise.reject(new UnsupportedOperationError("tauri", "runtimes.check")),
     "runtimes.browse": () => Promise.reject(new UnsupportedOperationError("tauri", "runtimes.browse")),
+    "repoCache.get": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.get")),
+    "repoCache.set": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.set")),
+    "repoCache.clear": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.clear")),
 
     // The Tauri app keeps the switches in its UI storage, as its own Settings does.
     "experiments.get": async () => readExperiments(),
@@ -254,7 +289,17 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
 }
 
 /** The Tauri updater has one feed and no controls. */
-export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install", "runtimes.check", "runtimes.browse"] as const satisfies readonly SettingsOpName[];
+export const TAURI_SETTINGS_UNSUPPORTED = [
+  "about.set",
+  "about.checkNow",
+  "update.get",
+  "update.install",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
+] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
 export const SETTINGS_TAURI_COMMANDS = {
@@ -270,6 +315,9 @@ export const SETTINGS_TAURI_COMMANDS = {
   "loginItem.openSettings": ["host_open_settings"],
   "runtimes.check": [],
   "runtimes.browse": [],
+  "repoCache.get": [],
+  "repoCache.set": [],
+  "repoCache.clear": [],
   "devices.get": ["devices_snapshot"],
   "devices.enroll": ["devices_enroll"],
   "devices.checkEnrolled": ["devices_check_enrolled"],
@@ -297,9 +345,9 @@ interface WkAppInfo {
 /** The experiments' row ids (`experiments::row_id`). */
 const EXPERIMENT_ROWS: Record<keyof Experiments, string> = {
   cuaVolume: "experiment:cua_volume",
-  yourCloud: "experiment:your_cloud",
-  sharing: "experiment:sharing",
-  webUi: "experiment:web_ui",
+  ciRunners: "experiment:ci_runners",
+  tcpShares: "experiment:tcp_shares",
+  mobile: "experiment:mobile",
 };
 
 /**

@@ -82,6 +82,61 @@ impl LocalRuntime for FakeRuntime {
     }
 }
 
+#[cfg(feature = "mcp")]
+#[tokio::test]
+async fn mcp_create_space_forwards_resource_sizes_for_every_member() {
+    use cua_spaces::mcp::McpServer;
+    use serde_json::json;
+
+    for (cpus, memory_mb, count) in [
+        (None, None, 1),
+        (Some(1), None, 1),
+        (None, Some(1536), 1),
+        (Some(1), Some(1536), 1),
+        (Some(1), Some(1536), 2),
+    ] {
+        let srv = MockServer::start(MockAuth::default()).await;
+        let rt = Arc::new(FakeRuntime {
+            port: srv.addr.port(),
+            started: Mutex::new(vec![]),
+            deleted: Mutex::new(vec![]),
+            running: Mutex::new(BTreeMap::new()),
+        });
+        let reg = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let spaces = Spaces::builder()
+            .home(reg.path())
+            .sandboxes(
+                cua_sandbox_core::Sandboxes::builder()
+                    .local(rt.clone())
+                    .state_dir(state.path())
+                    .build(),
+            )
+            .build();
+        let mut arguments = json!({
+            "on": "local",
+            "image": "cua-e2e-local/linux:docker-local-arm64",
+            "spacesd": true,
+            "name": "sized",
+            "count": count,
+        });
+        if let Some(cpus) = cpus {
+            arguments["cpus"] = json!(cpus);
+        }
+        if let Some(memory_mb) = memory_mb {
+            arguments["memory_mb"] = json!(memory_mb);
+        }
+        let outcome = McpServer::new(spaces).call("create_space", arguments).await;
+        assert!(!outcome.is_error, "{outcome:?}");
+        let started = rt.started.lock().unwrap();
+        assert_eq!(started.len(), count);
+        for spec in started.iter() {
+            assert_eq!(spec.cpus, cpus.unwrap_or(2), "{}", spec.name);
+            assert_eq!(spec.memory_mb, memory_mb.unwrap_or(4096), "{}", spec.name);
+        }
+    }
+}
+
 #[tokio::test]
 async fn create_locally_starts_with_a_fresh_token_and_delete_deletes() {
     let srv = MockServer::start(MockAuth::default()).await;
@@ -200,7 +255,12 @@ async fn a_local_space_is_named_what_it_was_created_as() {
     assert_eq!(named.name, "todo7b-probe");
     let generated = spaces.create(create(None)).await.unwrap().ready().unwrap();
     let short = generated.id.strip_prefix("local:").unwrap();
-    assert!(short.starts_with("space-"), "{}", generated.id);
+    // A Space made without a name gets a friendly one (`brave-otter`).
+    assert!(
+        cua_spaces_contract::names::is_pet_name(short),
+        "{}",
+        generated.id
+    );
     assert_eq!(generated.name, short);
     let listed: BTreeMap<String, String> = spaces
         .list()
@@ -382,10 +442,9 @@ async fn an_interrupted_local_create_is_registered_or_preserved() {
         Some(RecoveryOutcome::Registered),
         "{got:?}"
     );
-    assert!(matches!(
-        outcome("local:early"),
-        Some(RecoveryOutcome::Failed(_))
-    ));
+    // Nothing was ever started for "early": no state file, and the runtime
+    // has no such instance. Its journal has nothing left to inspect.
+    assert_eq!(outcome("local:early"), Some(RecoveryOutcome::NothingLeft));
     assert!(
         matches!(outcome("local:cut"), Some(RecoveryOutcome::Failed(_))),
         "{got:?}"
@@ -406,10 +465,9 @@ async fn an_interrupted_local_create_is_registered_or_preserved() {
     );
     assert!(creating.join("busy.json").exists());
     assert!(!creating.join("half.json").exists());
-    for name in ["early", "cut"] {
-        assert!(creating.join(format!("{name}.json")).exists());
-        std::fs::remove_file(creating.join(format!("{name}.json"))).unwrap();
-    }
+    assert!(!creating.join("early.json").exists());
+    assert!(creating.join("cut.json").exists());
+    std::fs::remove_file(creating.join("cut.json")).unwrap();
     assert_eq!(good.running.lock().unwrap().get("cut"), Some(&true));
     assert!(good.deleted.lock().unwrap().is_empty());
 
@@ -615,9 +673,9 @@ impl LocalRuntime for UnreadyRuntime {
 }
 
 /// A Space whose start fails after its instance exists leaves nothing
-/// running that no registry lists: the instance of a generated name is
-/// deleted, and the error says why. A name the caller chose is never
-/// deleted (it may be an instance the caller already had).
+/// running that no registry lists: the instance this create made is
+/// deleted, and the error says why, whoever chose the name. A name that
+/// already had an instance is never deleted (it may be one the caller had).
 #[tokio::test]
 async fn a_space_that_fails_to_start_leaves_no_instance() {
     let rt = Arc::new(UnreadyRuntime::default());
@@ -642,14 +700,27 @@ async fn a_space_that_fails_to_start_leaves_no_instance() {
     let e = spaces.create(create(None)).await.unwrap_err();
     assert!(e.to_string().contains("Local Network access"), "{e}");
     let deleted = rt.deleted.lock().unwrap().clone();
-    assert_eq!(deleted.len(), 1, "{deleted:?}");
-    assert!(deleted[0].starts_with("space-"), "{deleted:?}");
+    assert!(!deleted.is_empty(), "{deleted:?}");
+    assert!(
+        deleted
+            .iter()
+            .all(|d| cua_spaces_contract::names::is_pet_name(d)),
+        "{deleted:?}"
+    );
     assert!(rt.running.lock().unwrap().is_empty());
     assert!(spaces.list().unwrap().is_empty());
 
+    // A name the caller chose is this attempt's too: a failed create must
+    // not leave a VM holding the machine's capacity against the retry.
     spaces.create(create(Some("mine"))).await.unwrap_err();
-    assert_eq!(rt.deleted.lock().unwrap().len(), 1);
-    assert!(rt.running.lock().unwrap().contains_key("mine"));
+    assert!(rt.deleted.lock().unwrap().iter().any(|d| d == "mine"));
+    assert!(rt.running.lock().unwrap().is_empty());
+
+    // But a name that already had an instance is left alone.
+    rt.running.lock().unwrap().insert("theirs".into(), true);
+    spaces.create(create(Some("theirs"))).await.unwrap_err();
+    assert!(!rt.deleted.lock().unwrap().iter().any(|d| d == "theirs"));
+    assert!(rt.running.lock().unwrap().contains_key("theirs"));
 }
 
 /// `cua sb resume` on a local Space returns once its cua-spacesd answers,

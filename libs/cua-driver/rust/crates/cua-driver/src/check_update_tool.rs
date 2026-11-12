@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `check_for_update` MCP tool — programmatic mirror of
 //! `cua-driver check-update`.
 //!

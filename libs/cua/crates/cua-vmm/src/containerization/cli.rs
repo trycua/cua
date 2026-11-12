@@ -40,6 +40,10 @@ pub fn shm_mib(memory_mb: u64) -> u64 {
 /// loopback forwarder runs in a launchd helper that macOS's Local Network
 /// privacy keeps from reaching the guest).
 ///
+/// `dns`: the nameservers the guest uses ([`guest_dns`]); the guest never
+/// gets vmnet's own resolver, which answers with the truncated bit set and
+/// serves no TCP.
+///
 /// `inject_dir`: the host directory holding the injected cua-spacesd
 /// ([`crate::inject`]), bound read-only at [`crate::inject::GUEST_DIR`]; the
 /// supervisor it runs starts as root.
@@ -49,6 +53,7 @@ pub fn run_args(
     env_file: Option<&str>,
     labels: &BTreeMap<String, String>,
     inject_dir: Option<&str>,
+    dns: &[String],
 ) -> Vec<String> {
     let mut a: Vec<String> = vec![
         "run".into(),
@@ -71,6 +76,11 @@ pub fn run_args(
     if let Some(arch) = spec.arch {
         a.push("--arch".into());
         a.push(arch.oci().into());
+    }
+    // The guest's resolvers: see [`guest_dns`].
+    for ns in dns {
+        a.push("--dns".into());
+        a.push(ns.clone());
     }
     for (k, v) in labels {
         a.push("--label".into());
@@ -361,6 +371,112 @@ pub fn parse_containers(stdout: &str) -> Result<Vec<ContainerInfo>, serde_json::
     })
 }
 
+/// A short stable name for `s` (a file name that never collides across
+/// images).
+pub fn short_hash(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let d = Sha256::digest(s.as_bytes());
+    d[..6].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Public resolvers a guest falls back on (after the host's own).
+pub const FALLBACK_DNS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
+
+/// The nameservers for a guest, in order: `$CUA_GUEST_DNS` (a comma list)
+/// when set, else the host's own IPv4 resolvers from `resolv_conf` (its
+/// `/etc/resolv.conf`; never a loopback, link-local or unspecified one, which
+/// only the host reaches), at most two, then [`FALLBACK_DNS`].
+///
+/// Why not the resolver `container` configures (the vmnet gateway,
+/// `192.168.64.1`): it answers every AAAA lookup with the truncated bit
+/// set although the answer is whole, so glibc retries over TCP, the
+/// gateway serves none, and `getaddrinfo` fails with "Temporary failure in
+/// name resolution" for every name that is looked up for both families
+/// (curl, node, git, pip). Programs that ask for IPv4 alone worked, which
+/// is why the guest could `getent hosts` a name and still not download.
+pub fn guest_dns(env: Option<&str>, resolv_conf: &str) -> Vec<String> {
+    use std::net::Ipv4Addr;
+    fn valid(ip: &Ipv4Addr) -> bool {
+        !(ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast())
+    }
+    fn push(out: &mut Vec<String>, ip: Ipv4Addr) {
+        let s = ip.to_string();
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    if let Some(list) = env.map(str::trim).filter(|l| !l.is_empty()) {
+        for item in list.split(',') {
+            if let Ok(ip) = item.trim().parse::<Ipv4Addr>()
+                && valid(&ip)
+            {
+                push(&mut out, ip);
+            }
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    let mut host = 0;
+    for line in resolv_conf.lines() {
+        let mut w = line.split_whitespace();
+        if w.next() != Some("nameserver") {
+            continue;
+        }
+        if let Some(Ok(ip)) = w.next().map(str::parse::<Ipv4Addr>)
+            && valid(&ip)
+            && host < 2
+        {
+            push(&mut out, ip);
+            host += 1;
+        }
+    }
+    for f in FALLBACK_DNS {
+        if let Ok(ip) = f.parse() {
+            push(&mut out, ip);
+        }
+    }
+    out
+}
+
+/// Whether `container image inspect --format json` output (one image or a
+/// list) holds a variant whose manifest digest is `digest`: the image the
+/// registry serves now is already in the store.
+pub fn image_has_variant(stdout: &str, digest: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else {
+        return false;
+    };
+    let images: Vec<&Value> = match &v {
+        Value::Array(a) => a.iter().collect(),
+        other => vec![other],
+    };
+    images.iter().any(|i| {
+        i.get("variants")
+            .and_then(Value::as_array)
+            .is_some_and(|vs| {
+                vs.iter()
+                    .any(|x| x.get("digest").and_then(Value::as_str) == Some(digest))
+            })
+    })
+}
+
+/// Whether a failed pull's stderr says the registry wanted a sign-in
+/// (Apple's puller refuses a private package's anonymous token exchange
+/// with "refusing insecure credential exchange").
+pub fn auth_refused(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    [
+        "credential exchange",
+        "unauthorized",
+        "denied",
+        "authentication required",
+        "authentication challenge",
+    ]
+    .iter()
+    .any(|k| s.contains(k))
+}
+
 /// Whether a failed command's stderr says the container does not exist.
 pub fn not_found(stderr: &str) -> bool {
     let s = stderr.to_ascii_lowercase();
@@ -394,6 +510,7 @@ mod tests {
             Some("/tmp/env"),
             &labels,
             None,
+            &["192.168.1.1".to_string(), "1.1.1.1".to_string()],
         );
         let s = a.join(" ");
         assert!(
@@ -403,6 +520,7 @@ mod tests {
         assert!(s.contains("--shm-size 2048M"), "{s}");
         assert!(s.contains("--label ai.cua.managed=true"), "{s}");
         assert!(s.contains("--env-file /tmp/env"), "{s}");
+        assert!(s.contains("--dns 192.168.1.1 --dns 1.1.1.1"), "{s}");
         assert!(!s.contains("--publish"), "{s}");
         assert!(
             s.ends_with("--entrypoint /bin/sh ghcr.io/trycua/linux@sha256:ab -c sleep 1"),
@@ -410,7 +528,7 @@ mod tests {
         );
         // No command: the image's own ENTRYPOINT/CMD.
         spec.command = Some(vec![]);
-        let a = run_args(&spec, "img", None, &BTreeMap::new(), None);
+        let a = run_args(&spec, "img", None, &BTreeMap::new(), None, &[]);
         assert_eq!(a.last().map(String::as_str), Some("img"));
         assert!(!a.contains(&"--entrypoint".to_string()));
         assert!(!a.contains(&"--env-file".to_string()));
@@ -426,7 +544,14 @@ mod tests {
             "--on-exit".into(),
             "serve".into(),
         ]);
-        let a = run_args(&spec, "alpine:3.20", None, &BTreeMap::new(), Some("/h/sd"));
+        let a = run_args(
+            &spec,
+            "alpine:3.20",
+            None,
+            &BTreeMap::new(),
+            Some("/h/sd"),
+            &[],
+        );
         let s = a.join(" ");
         assert!(s.contains("--user 0"), "{s}");
         assert!(
@@ -437,6 +562,54 @@ mod tests {
             s.ends_with("--entrypoint /.cua/bin/cua-spacesd alpine:3.20 supervise --on-exit serve"),
             "{s}"
         );
+    }
+
+    #[test]
+    fn a_guest_resolves_through_the_hosts_resolvers_not_vmnets() {
+        let conf = "# macOS\nsearch lan\nnameserver 192.168.1.1\nnameserver fe80::1%en0\n\
+                    nameserver 127.0.0.1\nnameserver 10.0.0.2\nnameserver 10.0.0.3\n";
+        // The host's first two IPv4 resolvers, then the public fallback; a
+        // loopback or link-local one is never named (the guest cannot
+        // reach it).
+        assert_eq!(
+            guest_dns(None, conf),
+            ["192.168.1.1", "10.0.0.2", "1.1.1.1", "8.8.8.8"]
+        );
+        // A host with no usable resolver still resolves.
+        assert_eq!(guest_dns(None, "nameserver 127.0.0.53\n"), FALLBACK_DNS);
+        assert_eq!(guest_dns(None, ""), FALLBACK_DNS);
+        // The override wins and is not extended; junk in it is dropped.
+        assert_eq!(
+            guest_dns(Some("9.9.9.9, nope, 127.0.0.1,149.112.112.112"), conf),
+            ["9.9.9.9", "149.112.112.112"]
+        );
+        assert_eq!(guest_dns(Some("nope"), ""), FALLBACK_DNS);
+        assert_eq!(
+            guest_dns(Some("1.1.1.1"), "nameserver 1.1.1.1\n"),
+            ["1.1.1.1"]
+        );
+    }
+
+    #[test]
+    fn a_loaded_image_is_found_by_its_manifest_digest() {
+        let out = r#"[{"id":"i","variants":[{"digest":"sha256:aa"},{"digest":"sha256:bb"}]}]"#;
+        assert!(image_has_variant(out, "sha256:bb"));
+        assert!(image_has_variant(
+            r#"{"variants":[{"digest":"sha256:cc"}]}"#,
+            "sha256:cc"
+        ));
+        assert!(!image_has_variant(out, "sha256:cc"));
+        assert!(!image_has_variant("[]", "sha256:aa"));
+        assert!(!image_has_variant("not json", "sha256:aa"));
+    }
+
+    #[test]
+    fn a_private_registrys_refusal_is_recognized() {
+        assert!(auth_refused(
+            "Error: refusing insecure credential exchange: authorization server https://ghcr.io/token issued its own authentication challenge"
+        ));
+        assert!(auth_refused("unauthorized: authentication required"));
+        assert!(!auth_refused("no space left on device"));
     }
 
     #[test]

@@ -45,8 +45,7 @@ public struct HelperMoveSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Cua Spaces moved its background helper", systemImage: "arrow.triangle.2.circlepath")
                 .font(.headline)
-            Text("macOS needs you to allow it once more.")
-            Text("The helper is what lets the people and agents you share this Mac with see the screen and use the mouse and keyboard. It is now part of Cua Spaces, so macOS lists it as \u{201C}Cua Spaces\u{201D} and remembers your answer after updates.")
+            Text("macOS now lists it as \u{201C}Cua Spaces\u{201D}, so it needs your OK once more.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {

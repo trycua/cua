@@ -169,7 +169,7 @@ pub fn stored_of(rec: &AgentRecord, owner: &Author) -> Stored {
     Stored {
         origin: Origin::Space,
         member_id: format!("mem_{}", rec.name),
-        display_name: rec.name.clone(),
+        display_name: rec.handle().to_string(),
         icon: Some("harness".into()),
         harness: HarnessInfo {
             id: harness_id(&rec.harness).into(),
@@ -203,7 +203,7 @@ pub fn identity_of(rec: &AgentRecord, owner: &Author) -> Identity {
     let s = stored_of(rec, owner);
     Identity {
         origin: s.origin,
-        handle: rec.name.clone(),
+        handle: rec.handle().to_string(),
         display_name: s.display_name,
         collides: None,
         icon: s.icon,

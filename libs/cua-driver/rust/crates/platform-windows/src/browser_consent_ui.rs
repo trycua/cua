@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Windows UIA handling for Chromium's browser-owned debugging consent.
 
 use std::time::{Duration, Instant};
@@ -308,6 +311,7 @@ where
             is_trusted_prompt_node(nodes, node)
                 && node.control_type == "Button"
                 && node.actions.iter().any(|action| action == "invoke")
+                && node.enabled != Some(false)
                 && node.element_ptr != 0
                 && node.rect.is_some()
         }) {

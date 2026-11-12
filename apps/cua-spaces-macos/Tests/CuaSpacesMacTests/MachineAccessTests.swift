@@ -22,9 +22,9 @@ enum MachinesFixture {
                     addedAt: "2026-09-28T08:00:00Z", os: os,
                     osName: os == .macos ? "macOS" : "Ubuntu",
                     osPrettyName: os == .macos ? "macOS 26.0" : "Ubuntu 24.04.3 LTS",
-                    image: nil, imageDigest: nil, kind: nil, arch: "arm64", reachable: reachable,
+                    image: nil, imageDigest: nil, kind: nil, arch: "arm64", hidden: false, reachable: reachable,
                     error: error, host: host, hostName: hostName, power: power, powerState: powerState,
-                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
+                    cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil, parent: nil)
     }
 
     /// This Mac's relay machine id (its host setup).
@@ -122,7 +122,7 @@ enum MachinesFixture {
 }
 
 
-/// Your machines from this Mac: listed while it is signed in but not
+/// Your computers from this Mac: listed while it is signed in but not
 /// enrolled (Connect greyed out under why, with the one action), and a
 /// machine that does not share its desktop shows why instead of Stream,
 /// Agents and Teleport.
@@ -149,9 +149,9 @@ struct MachineAccessTests {
 
     @Test func notEnrolledPendingAndExpiredListMachinesWithConnectGreyedOut() async throws {
         for (e, kind, status) in [
-            (MachinesFixture.Enrollment.never, AppEnrollmentKind.needsEnrollment, "Not enrolled"),
-            (.pending, .waiting, "Waiting for approval"),
-            (.expired, .due, "Re-verification due"),
+            (MachinesFixture.Enrollment.never, AppEnrollmentKind.needsEnrollment, "Not trusted yet"),
+            (.pending, .waiting, "Waiting to be added"),
+            (.expired, .due, "Needs a quick check"),
         ] {
             let m = await MachinesFixture.model(rows: MachinesFixture.rows(reachable: false), enrollment: e)
             let notice = try #require(m.devices.accessNotice)

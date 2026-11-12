@@ -26,6 +26,7 @@ spec.loader.exec_module(inputs)
 
 ACTION = yaml.safe_load((ROOT / ".github/actions/spaces-rust-slice/action.yml").read_text())
 PRODUCER = yaml.safe_load((ROOT / ".github/workflows/ci-cua-spaces-rust-slice.yml").read_text())
+BUILD = yaml.safe_load((ROOT / ".github/workflows/cd-cua-spaces-build.yml").read_text())
 MACOS = yaml.safe_load((ROOT / ".github/workflows/ci-cua-spaces-macos.yml").read_text())
 
 needs_toml = pytest.mark.skipif(inputs._load_toml is None, reason="no TOML parser for the dependency closure")
@@ -119,6 +120,8 @@ def test_the_files_outside_the_hashed_tree_are_derived_from_the_code(extra):
     assert "libs/cua-spacesd/VERSION" in extra
     # cua-agent-setup's build script embeds the skills; the hash drops libs/cua Markdown.
     assert "libs/cua/skills" in extra
+    # cua-cli's embed! macro includes the bench files, READMEs among them.
+    assert "libs/cua/bench" in extra
     # Cargo merges the repository's .cargo/config.toml into every build below it.
     assert ".cargo" in extra
     # Read only by unit tests (`#[cfg(test)]`, `#[test]`) or tests/: not in the library.
@@ -137,9 +140,10 @@ def test_the_files_outside_the_hashed_tree_are_derived_from_the_code(extra):
 @needs_toml
 def test_nothing_inside_libs_cua_is_left_out_unless_the_build_reads_it(extra):
     # The skills (embedded by cua-agent-setup) and the proto directory (the
-    # contract the build compiles) hold Markdown the hash would otherwise drop.
+    # contract the build compiles) hold Markdown the hash would otherwise drop,
+    # and so do the bench files cua-cli embeds.
     inside = [p for p in extra if p.startswith("libs/cua/")]
-    assert inside == ["libs/cua/proto", "libs/cua/skills"]
+    assert inside == ["libs/cua/bench", "libs/cua/proto", "libs/cua/skills"]
 
 
 # ------------------------------------------------------------------ the key
@@ -195,7 +199,12 @@ def test_the_action_keys_the_cache_on_the_script():
 
 @needs_toml
 def test_the_producer_runs_on_main_when_any_input_changes(extra):
-    patterns = PRODUCER[True]["push"]["paths"]
+    # The producer is a stage of the one main pipeline (cd-cua-spaces-build.yml),
+    # which calls it; it has no push trigger of its own, so it never builds
+    # beside the pipeline (CUA-3562).
+    assert "push" not in PRODUCER[True] and "workflow_call" in PRODUCER[True]
+    assert PRODUCER["jobs"] and BUILD["jobs"]["slice"]["uses"] == "./.github/workflows/ci-cua-spaces-rust-slice.yml"
+    patterns = BUILD[True]["push"]["paths"]
     for entry in extra:
         for path in tracked(entry):
             assert any(glob_matches(p, path) for p in patterns), f"{path} does not trigger the producer"
@@ -304,6 +313,16 @@ def test_a_read_in_ordinary_code_counts_and_one_in_a_test_module_does_not(tmp_pa
         'const OUT: &str = include_str!(concat!(env!("OUT_DIR"), "/generated.rs"));\n'
     )
     assert reads_of(tmp_path, {"src/lib.rs": src}) == {"a.json", "crate/d.bin"}
+
+
+def test_a_concat_with_a_macro_variable_reads_the_whole_prefix_directory(tmp_path):
+    # cua-cli embeds the bench files this way, Markdown included.
+    src = (
+        "macro_rules! embed {\n"
+        '    ($($p:literal),*) => { &[$(include_str!(concat!("../../bench/", $p))),*] };\n'
+        "}\n"
+    )
+    assert reads_of(tmp_path, {"src/lib.rs": src}) == {"bench"}
 
 
 def test_text_that_only_looks_like_code_is_not_a_read_or_a_test_boundary(tmp_path):

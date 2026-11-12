@@ -22,7 +22,10 @@ describe("the update state machine", () => {
   });
 
   it("keeps a downloaded update through later checks, the same update found again, and failures", () => {
-    const ready = run([{ type: "available", version: "0.9.3" }, { type: "downloaded", version: "0.9.3" }]);
+    const ready = run([
+      { type: "available", version: "0.9.3" },
+      { type: "downloaded", version: "0.9.3" },
+    ]);
     expect(run([{ type: "checking" }], ready)).toBe(ready);
     expect(run([{ type: "none" }], ready)).toBe(ready);
     expect(run([{ type: "available", version: "0.9.3" }], ready)).toBe(ready);
@@ -31,7 +34,10 @@ describe("the update state machine", () => {
   });
 
   it("downloads a newer update over the one waiting", () => {
-    const ready = run([{ type: "available", version: "0.9.3" }, { type: "downloaded", version: "0.9.3" }]);
+    const ready = run([
+      { type: "available", version: "0.9.3" },
+      { type: "downloaded", version: "0.9.3" },
+    ]);
     expect(run([{ type: "available", version: "0.9.4" }], ready)).toMatchObject({ status: "available", version: "0.9.4", percent: null });
   });
 
@@ -54,6 +60,8 @@ describe("the update state machine", () => {
 
   it("points at the repository's release tag", () => {
     expect(releaseNotesUrl(" 0.9.3-rc.4 ")).toBe("https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3-rc.4");
+    expect(releaseNotesUrl("0.21.0-nightly.20261105.42")).toBe("https://github.com/trycua/cua/releases/tag/cua-spaces-nightly");
+    expect(releaseNotesUrl("0.21.0-nightly.20261105")).toBe("https://github.com/trycua/cua/releases/tag/cua-spaces-nightly");
   });
 
   it("checks shortly after launch, and every few hours", () => {

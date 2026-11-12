@@ -10,6 +10,7 @@ on:
       - "libs/cua/rust-toolchain.toml"
       - "libs/cua/Cargo.lock"
       - ".github/workflows/ci-cua-relay-image.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -25,7 +26,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
   reproducible:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: reproducible image (linux/amd64)
     runs-on: ubuntu-latest
     timeout-minutes: 120

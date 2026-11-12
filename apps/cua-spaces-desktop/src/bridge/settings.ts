@@ -9,7 +9,7 @@
 // runtimes, launch at login, usage data, the update channel, the
 // experiments, Welcome's "Show again", the coding agents (`model.agents`)
 // and the Keyvault's switches (`model.keyvault`).
-import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput } from "../native/generated/index";
+import type { AppLoginItemStatus, AppSettingsInput, AppTeamInput, AppTelemetryInput, RepoCacheStatus } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
 import { words } from "../model/errors";
 import { bounded } from "../model/time";
@@ -20,6 +20,23 @@ import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
 import { encode } from "./value";
 import { cliSetting } from "./cli";
+
+/** The repo cache as the page reads it (`RepoCacheView`); the SDK's numbers are 64-bit. */
+function repoCacheView(s: RepoCacheStatus | null) {
+  if (!s) throw Failure.unsupported("The repo cache is not available in this build");
+  return {
+    enabled: s.enabled,
+    repos: s.repos,
+    bytes: Number(s.bytes),
+    capBytes: Number(s.capBytes),
+    sizeSetting: s.sizeSetting,
+    summary: s.summary,
+    week: s.week,
+    hits: s.hits,
+    misses: s.misses,
+    secondsSaved: Number(s.secondsSaved),
+  };
+}
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -66,22 +83,30 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     runtimes: model.runtimesInput(),
     // Settings, General's Show tips (the tips themselves live in `AppSettings.tips`).
     showTips: !model.settings.tips.off,
+    // The close-window rows are the Mac app's (its background service): none here.
+    closeWindowKeepsRunning: undefined,
+    closeNotice: true,
   };
   const page = model.native.appSettingsPage(input);
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
-
 export function experimentsPage(model: AppModel) {
-  const page = model.native.appExperimentsPage(model.settings.experiments);
-  return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
+  return model.native.appExperimentsPage(model.settings.experiments);
+}
+
+/** The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+export function refreshDaemonExperiments(model: AppModel): void {
+  const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
+  const now = model.settings.experiments;
+  if (kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile) return;
+  model.settings = { ...model.settings, experiments: { ...now, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile } };
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
  * no updater), the global shortcut (null: none here) and the account app. */
 export function settingsState(model: AppModel, parts: HostParts) {
+  refreshDaemonExperiments(model);
   return {
     page: encode(settingsPage(model, parts)),
     experiments: encode(experimentsPage(model)),
@@ -90,12 +115,19 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The channel and environment this app runs as (CUA_CHANNEL, CUA_ENV, as cua-home resolves
+    // them): the page's title bar tag ("Local · Staging", the core's `environment.tag`).
+    target: model.native.appTarget(),
     // The CLI this app installs and whether it is here (`cli.ts`).
     cli: cliSetting(model),
     // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`): the page's core lays out every kind's row.
     runtimes: encode(model.runtimesInput()),
     // The app core's own settings the page changes (`settings.update`).
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
+    // The Spaces and machine desktops pinned to the notch, in pin order.
+    notchPinned: [...model.settings.notchPinned],
+    // Which coding apps the agent menu shows (`AppSettings.agentMenu*`, the core's `agent_menu`).
+    agentMenu: { shown: [...model.settings.agentMenuShown], hidden: [...model.settings.agentMenuHidden], seen: [...model.settings.agentMenuSeen] },
   };
 }
 
@@ -106,8 +138,23 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const t = args.tips;
     if (!t || typeof t !== "object" || Array.isArray(t)) throw Failure.badArgs("tips: {off, done}");
     const { off, done } = t as { off?: unknown; done?: unknown };
-    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string")) throw Failure.badArgs("tips: {off: boolean, done: string[]}");
+    if (typeof off !== "boolean" || !Array.isArray(done) || !done.every((d) => typeof d === "string"))
+      throw Failure.badArgs("tips: {off: boolean, done: string[]}");
     patch.tips = { off, done: done as string[] };
+  }
+  if ("notchPinned" in args) {
+    const ids = args.notchPinned;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
+    patch.notchPinned = ids as string[];
+  }
+  if ("agentMenu" in args) {
+    const m = args.agentMenu as { shown?: unknown; hidden?: unknown; seen?: unknown } | null;
+    const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen))
+      throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
+    patch.agentMenuShown = m.shown as string[];
+    patch.agentMenuHidden = m.hidden as string[];
+    patch.agentMenuSeen = m.seen as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;
@@ -192,7 +239,7 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "global-shortcut": {
         // The keys that bring the app forward from any app (Mac). The option is the accelerator.
         const system = parts().system;
-        if (!system?.setGlobalShortcut) throw Failure.failed("This computer has no shortcut to change.");
+        if (!system?.setGlobalShortcut) throw Failure.failed("This machine has no shortcut to change.");
         try {
           system.setGlobalShortcut(option);
         } catch (e) {
@@ -267,7 +314,6 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         if (!updates.updater) throw Failure.unsupported("Updates are off in this build");
         updates.choose(option);
       } else if (row.startsWith("experiment:")) {
-        if (WEB_UI_ROWS.has(row)) throw Failure.unsupported("This app is the new UI");
         chooseExperiment(model, row, option);
       } else if (row.startsWith("agent:")) {
         // An AI agents row: configure it, or remove what cua added.
@@ -299,7 +345,28 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       if (!ctx.ui.chooseProgram) throw Failure.unsupported("This build has no file picker");
       return { path: (await ctx.ui.chooseProgram(caller.window)) ?? null };
     },
-    // The page's tips (`AppSettings.tips`), saved as given.
+    // Settings, General: the repo cache (the daemon's; the page shows its words).
+    "repoCache.get": async () => repoCacheView(await model.backend.repoCacheStatus()),
+    "repoCache.set": async (args) => {
+      const change: { enabled?: boolean; sizeGb?: number | null } = {};
+      if (args.enabled !== undefined) {
+        if (typeof args.enabled !== "boolean") throw Failure.badArgs("enabled: true or false");
+        change.enabled = args.enabled;
+      }
+      if (args.sizeGb !== undefined) {
+        const g = args.sizeGb;
+        if (g !== null && (typeof g !== "number" || !Number.isFinite(g) || g < 0 || g > 100_000))
+          throw Failure.badArgs("sizeGb: a number of GB, 0 or more, or null for automatic");
+        change.sizeGb = g;
+      }
+      try {
+        return repoCacheView(await model.backend.setRepoCache(change));
+      } catch (error) {
+        throw Failure.failed(words(error));
+      }
+    },
+    "repoCache.clear": async () => repoCacheView(await model.backend.clearRepoCache()),
+    // The page's tips (`AppSettings.tips`) and the notch's pins (`AppSettings.notchPinned`), saved as given.
     "settings.update": (args) => {
       save(settingsUpdate(args));
       return settingsState(model, parts());

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Linux AT-SPI handling for Chromium's browser-owned debugging consent.
 
 use std::time::{Duration, Instant};
@@ -8,6 +11,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
+use crate::interaction::{session_policy, with_target_foreground};
 
 fn normalized_text(node: &AtspiNode) -> String {
     [
@@ -82,6 +86,7 @@ fn exact_prompt_button(
             role_is(node, &["push button", "button"])
                 && normalized_text(node) == label
                 && !node.actions.is_empty()
+                && node.enabled != Some(false)
                 && node.element_index.is_some()
         })
         .map(|node| {
@@ -171,18 +176,6 @@ fn prove_window_owner(pid: u32, window_id: u64) -> Result<(), BrowserRefusal> {
     Ok(())
 }
 
-fn with_target_foreground<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        crate::wayland::with_target_foreground(pid, window_id, body)
-    } else {
-        crate::input::with_x11_foreground(window_id, 80, body)
-    }
-}
-
 fn exact_button_center(
     bounds: &[(usize, i32, i32, u32, u32)],
     element_index: usize,
@@ -201,7 +194,7 @@ fn exact_button_center(
 }
 
 fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, session_policy().setup, || {
         let tree = crate::atspi::walk_tree(pid, window_id, None);
         let index = exact_allow_button(&tree.nodes, &tree.bounds)
             .map_err(|error| anyhow::anyhow!(error.message))?
@@ -209,8 +202,8 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
                 anyhow::anyhow!("the exact Chromium remote-debugging consent action became stale")
             })?;
         let (center_x, center_y) = exact_button_center(&tree.bounds, index)?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            crate::wayland::click_focused(center_x, center_y, 1, 1)
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
+            crate::wayland::click_focused((center_x, center_y).into(), 1, 1)
         } else {
             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)
         }
@@ -285,7 +278,14 @@ async fn consent_action<T: Send + 'static>(
     check_deadline(deadline)?;
     // Commit before scheduling: dropping a running blocking task cannot cancel it.
     let worker = action.perform(|| {
+        // The worker waits on the one foreground transaction and runs under
+        // no action of its own, so it binds this one: every wait it makes,
+        // that one included, ends at the consent deadline instead of
+        // outliving the attempt it serves.
+        let bound =
+            crate::input::action::Action::new(deadline.saturating_duration_since(Instant::now()));
         tokio::task::spawn_blocking(move || {
+            let _bound = crate::input::action::bind(bound);
             check_deadline(deadline)?;
             operation().map_err(|error| {
                 BrowserRefusal::new(

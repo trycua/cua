@@ -403,7 +403,7 @@ async fn sharing_needs_the_users_confirmation() {
     assert_eq!(e.tag(), "permission_denied", "{e}");
     assert_eq!(
         no.asked.lock().unwrap().as_slice(),
-        [format!("Let bob@example.com use {id} (see and control it)")]
+        ["let bob@example.com use \"studio\" (see and control it)".to_string()]
     );
     assert!(relay.machine(&reg.machine.id).unwrap().allow.is_empty());
     assert!(spaces.share_audit(None, 10).unwrap().is_empty());
@@ -465,6 +465,41 @@ async fn relay_register_publishes_a_space_for_the_accounts_devices() {
             .await
             .unwrap()
     );
+}
+
+/// A Space added by hand (a URL and a token) is the owner's own business on
+/// this computer: adding it, listing it and using it never puts it on the
+/// relay, so no other computer or phone of the account lists it. Only an
+/// explicit `relay_register` publishes a Space.
+#[tokio::test]
+async fn a_space_added_by_hand_is_never_published_to_the_relay() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    let env = MockServer::start(MockAuth::default()).await;
+    // The Space could be attached (the feature is there): nothing asks it to.
+    env.state.advertise(&["relay_attach"]);
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(
+            &relay.url,
+            Arc::new(StaticToken("ada-token".into())),
+        ))
+        .build();
+    let info = spaces
+        .add(&env.url(), None, Some("typed-in".into()))
+        .await
+        .unwrap();
+    // Use it the ways an app does: list, open, read its state.
+    assert!(spaces.list().unwrap().iter().any(|i| i.id == info.id));
+    let _ = spaces.space(&info.id).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let ada = cua_host::RelayClient::new(&relay.url).unwrap();
+    assert!(
+        ada.machines("ada-token").await.unwrap().is_empty(),
+        "nothing of the account's directory came from adding a Space"
+    );
+    assert!(env.state.relay_attached.lock().unwrap().is_none());
 }
 
 /// The hermetic world of the tests below: a fake relay with two accounts
@@ -575,11 +610,54 @@ async fn deleting_a_relay_registered_space_removes_its_machine() {
     assert!(!ada.list_all().await.unwrap().iter().any(|i| i.id == id));
 }
 
+/// CUA-2841: `rm` of a relay-registered Space takes its machine off the
+/// relay too, and a Space whose delete could not reach the relay (it is
+/// gone here, its machine is still remembered) is removed by
+/// `relay-unregister local:<name>`.
+#[tokio::test]
+async fn rm_and_relay_unregister_leave_no_stale_relay_record() {
+    let (relay, ada, _bob, homes) = two_accounts().await;
+    let env = MockServer::start(MockAuth::default()).await;
+    env.state.advertise(&["relay_attach"]);
+    let info = ada.add(&env.url(), None, Some("bot".into())).await.unwrap();
+    let state = env.state.clone();
+    let handle = relay.clone();
+    tokio::spawn(async move {
+        for _ in 0..400 {
+            if let Some(a) = state.relay_attached.lock().unwrap().clone() {
+                handle.set_online(&a.machine_id, true, "0.1.0");
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+    let r = ada.relay_register(&info.id).await.unwrap();
+    assert!(relay.machine(&r.machine).is_some());
+    ada.remove(&info.id).await.unwrap();
+    assert!(
+        relay.machine(&r.machine).is_none(),
+        "rm removed the machine"
+    );
+
+    // A Space that is gone here, its machine still remembered.
+    let ghost = "space-00000000000000bb";
+    register(&relay, ghost, false).await;
+    let file = homes[0].path().join("shared-spaces.json");
+    std::fs::write(
+        &file,
+        serde_json::json!({"local:ghost": {"machine": ghost}}).to_string(),
+    )
+    .unwrap();
+    assert!(ada.relay_unregister("local:ghost").await.unwrap());
+    assert!(relay.machine(ghost).is_none(), "stale record removed");
+    assert!(!ada.relay_unregister("local:ghost").await.unwrap_or(false));
+}
+
 /// Removing a stale record: `rm` of a gone Space's `relay:<machine>` and
-/// `relay_unregister` of a machine that is no longer connected remove it
-/// from the relay directory; a host that is connected now is refused with
-/// the remedy that works (`cua host remove` on it), and a live Space
-/// registration is untouched by `rm`.
+/// `relay_unregister` of a machine that is no longer connected (or listed
+/// as connected but not answering) remove it from the relay directory, and
+/// a live Space registration is untouched by `rm`. A host that answers is
+/// refused with `cua host remove` (covered in `computer_identity.rs`).
 #[tokio::test]
 async fn stale_relay_records_can_be_removed() {
     let (relay, ada, _bob, _homes) = two_accounts().await;
@@ -605,18 +683,13 @@ async fn stale_relay_records_can_be_removed() {
     );
     assert!(relay.machine(live).is_none());
 
-    // A host: connected, it is refused with a remedy that can be carried
-    // out; once that machine is gone, its record is removed.
+    // A host: one that is connected and answers is refused with a remedy
+    // that can be carried out (see `computer_identity.rs`; the fake relay
+    // here has nothing behind the id, so a listed-connected host is a
+    // ghost that can be removed). `rm` and `delete` never remove a host.
     let host = "0123abcd4567ef890123abcd4567ef89";
     register(&relay, host, true).await;
     relay.set_online(host, true, "0.1.0");
-    let e = ada
-        .relay_unregister(&format!("relay:{host}"))
-        .await
-        .unwrap_err();
-    assert_eq!(e.tag(), "invalid_argument", "{e}");
-    assert!(e.to_string().contains("cua host remove"), "{e}");
-    assert!(relay.machine(host).is_some());
     // `rm` and `delete` never remove a host's record.
     ada.remove(&format!("relay:{host}")).await.unwrap();
     relay.set_online(host, false, "");

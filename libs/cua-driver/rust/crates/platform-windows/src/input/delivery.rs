@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared delivery-mode logic for cua-driver-rs Windows input tools.
 //!
 //! Mirrors the macOS `DeliveryMode` model (see platform-macos

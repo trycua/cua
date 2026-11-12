@@ -131,6 +131,14 @@ pub fn is_action_result_tool(name: &str) -> bool {
     ACTION_RESULT_TOOLS.contains(&name)
 }
 
+/// Action-result tools that act on native desktop state.
+///
+/// Browser actions are scheduled per CDP tab inside the browser engine; every
+/// other action-result tool drives the shared native input and window state.
+pub fn is_desktop_action_result_tool(name: &str) -> bool {
+    is_action_result_tool(name) && !name.starts_with("browser_")
+}
+
 #[derive(
     Debug,
     Clone,
@@ -680,7 +688,15 @@ mod tests {
         );
         assert_eq!(
             contract.capabilities,
-            vec!["menu.path.invoke", "accessibility.menu.native"]
+            vec![
+                "menu.path.invoke",
+                "accessibility.menu.native",
+                "input.delivery_mode"
+            ]
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["delivery_mode"]["enum"],
+            serde_json::json!(["background", "foreground"])
         );
     }
 

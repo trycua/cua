@@ -71,6 +71,13 @@ fn the_swift_app_leaves_the_mcp_server_name_to_the_channel() {
         "no AgentMcpServer in the Swift app: did LiveAgentSetup move? Update this test"
     );
     for (file, call) in &servers {
+        // The Cua Driver entry (`EmbeddedDriver.serverName`) names itself for
+        // the channel already: `cua-driver`, or `cua-driver-local` for Cua
+        // Spaces Local, so Local never writes over the released app's entry.
+        // `DriverConnect` carries that same name into the checklist's connect (`name: $0.serverName`).
+        if call.contains("name: driver.serverName") || call.contains("name: $0.serverName") {
+            continue;
+        }
         assert!(
             call.contains("name: \"\""),
             "{} builds `{call}`: pass `name: \"\"` so the SDK names the server for the channel \

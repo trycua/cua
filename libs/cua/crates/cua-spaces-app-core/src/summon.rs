@@ -28,7 +28,7 @@ struct Startable {
     harness: &'static str,
     handle: &'static str,
     label: &'static str,
-    /// The setup id its sign-in is checked under (Settings, Connectors).
+    /// The setup id its sign-in is checked under (Settings, Connections).
     app: &'static str,
 }
 
@@ -115,7 +115,17 @@ pub fn parse_mentions(text: &str) -> Vec<String> {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SummonMember {
+    /// What the Space calls it: the `@handle` the thread matches.
     pub handle: String,
+    /// Its name on the host (`claude-8` in `cua agent ls`), when that differs
+    /// from the handle. Never what the page types; an @mention of it still
+    /// reaches this member (the thread accepts it as an alias).
+    pub key: String,
+    /// It runs on this device's own sign-ins (a Home's agent, added from here):
+    /// waking it is checked against them, so "not connected" is said up front
+    /// instead of a message nobody answers. Other members run on their owner's
+    /// keys, which this device cannot see.
+    pub mine: bool,
     /// `claude-code`, `codex`, ... (empty when the thread doesn't say).
     pub harness: String,
     pub label: String,
@@ -130,7 +140,11 @@ pub struct SummonInput {
     pub people: Vec<String>,
     /// Agents can be added to this Space (`thread.agentAdd` there, and you may post).
     pub can_add: bool,
-    /// Coding apps and saved sign-ins (Settings, Connectors).
+    /// The text is what the person typed in this Space's thread: an @mention
+    /// of nobody here is reported (never a silent no-op). Off for Ask first's
+    /// job, which may @mention computers and Spaces as places.
+    pub report_unknown: bool,
+    /// Coding apps and saved sign-ins (Settings, Connections).
     pub connectors: ConnectorsInput,
 }
 
@@ -163,9 +177,25 @@ fn taken(input: &SummonInput) -> Vec<String> {
     input
         .members
         .iter()
-        .map(|m| m.handle.clone())
+        .flat_map(|m| [m.handle.clone(), m.key.clone()])
+        .filter(|h| !h.is_empty())
         .chain(input.people.iter().cloned())
         .collect()
+}
+
+/// The member an `@token` names: its handle, else (as an alias) its host
+/// name. The same rule the thread applies when it reads the posted text.
+pub fn member_named<'a>(input: &'a SummonInput, token: &str) -> Option<&'a SummonMember> {
+    input
+        .members
+        .iter()
+        .find(|m| m.handle.eq_ignore_ascii_case(token))
+        .or_else(|| {
+            input
+                .members
+                .iter()
+                .find(|m| !m.key.is_empty() && m.key.eq_ignore_ascii_case(token))
+        })
 }
 
 /// The handle a new `harness` agent gets in this Space.
@@ -198,10 +228,13 @@ pub fn candidates(input: &SummonInput) -> Vec<SummonCandidate> {
                 label: s.label.into(),
                 harness: s.harness.into(),
                 member: false,
+                // The Connections words: a sign-in that stopped working needs a reconnect.
                 detail: if ready {
                     "Starts in this Space".into()
+                } else if connectors::needs_reconnect(&input.connectors, s.app) {
+                    "Needs reconnect".into()
                 } else {
-                    "Not connected yet".into()
+                    "Not connected".into()
                 },
             });
         }
@@ -214,13 +247,14 @@ pub fn candidates(input: &SummonInput) -> Vec<SummonCandidate> {
 #[serde(rename_all = "camelCase")]
 pub struct CantWake {
     /// `not-connected` (no sign-in it can use), `cant-add` (this Space can't
-    /// add agents), `failed` (adding or waking it failed).
+    /// add agents), `failed` (adding or waking it failed), `no-such-member`
+    /// (an @mention of nobody in this Space).
     pub reason: String,
     pub handle: String,
     pub harness: String,
     /// The agent's name ("Claude Code").
     pub name: String,
-    /// The setup id Connect runs for (Settings, Connectors).
+    /// The setup id Connect runs for (Settings, Connections).
     pub app: String,
     /// "Claude Code isn't connected yet".
     pub text: String,
@@ -229,7 +263,7 @@ pub struct CantWake {
     pub connect_label: Option<String>,
     /// While Connect runs.
     pub connecting_label: String,
-    /// The app's page in Settings, Connectors ("Claude Code settings").
+    /// The app's page in Settings, Connections ("Claude Code settings").
     pub open_label: Option<String>,
     /// Once connected: the message goes again.
     pub retry_label: String,
@@ -259,10 +293,14 @@ fn cant_wake(
             format!("{name} isn't connected yet"),
             if providers.is_empty() {
                 format!("Connect {name} so it can work in your Spaces.")
+            } else if providers.len() > 3 {
+                format!(
+                    "It needs a connected provider to work in your Spaces. Your message is saved: it goes again once {name} is connected."
+                )
             } else {
                 format!(
                     "It needs a sign-in to {} to work in your Spaces. Your message is saved: it goes again once {name} is connected.",
-                    providers.join(" or ")
+                    connectors::or_list(&providers)
                 )
             },
             true,
@@ -295,7 +333,7 @@ fn cant_wake(
         detail,
         connect_label: connect.then(|| format!("Connect {name}")),
         connecting_label: if plan.app_token {
-            "Approve in your browser…".into()
+            "Reading your Claude Code sign-in…".into()
         } else if plan.device {
             "Enter the code in your browser…".into()
         } else {
@@ -349,7 +387,8 @@ pub struct SummonStep {
     pub harness: String,
     /// `wake` (in the Space: the posted message wakes it), `add` (add it
     /// asleep under `handle` first, then post), `blocked` (post only; see
-    /// `cant_wake`).
+    /// `cant_wake`), `unknown` (nobody by that name is in the Space: post
+    /// only; `cant_wake` says so).
     pub action: String,
     pub cant_wake: Option<CantWake>,
 }
@@ -371,26 +410,72 @@ fn startable_for(input: &SummonInput, handle: &str) -> Option<&'static Startable
     })
 }
 
+/// The line under a message that @mentions nobody who is in the Space.
+fn unknown_mention(input: &SummonInput, handle: &str) -> CantWake {
+    let here: Vec<String> = input
+        .members
+        .iter()
+        .map(|m| format!("@{}", m.handle))
+        .collect();
+    CantWake {
+        reason: "no-such-member".into(),
+        handle: handle.into(),
+        harness: String::new(),
+        name: String::new(),
+        app: String::new(),
+        text: format!("Nobody called @{handle} is in this Space"),
+        detail: if here.is_empty() {
+            "Your message was posted, but no agent is in this Space to read it. Add one first."
+                .into()
+        } else {
+            format!(
+                "Your message was posted, but it did not reach anyone. Agents here: {}.",
+                here.join(", ")
+            )
+        },
+        connect_label: None,
+        connecting_label: String::new(),
+        open_label: None,
+        retry_label: String::new(),
+        retried_text: String::new(),
+        only_you: true,
+        only_you_label: ONLY_YOU.into(),
+        dismiss_label: "Dismiss".into(),
+    }
+}
+
 pub fn plan(input: &SummonInput, text: &str) -> SummonPlan {
     let steps = parse_mentions(text)
         .into_iter()
         .filter_map(|h| {
-            if let Some(m) = input
-                .members
-                .iter()
-                .find(|m| m.handle.eq_ignore_ascii_case(&h))
-            {
+            if let Some(m) = member_named(input, &h) {
                 // In the Space already: the posted message wakes it. It runs on
                 // its owner's keys, which this device can't see, so nothing is
-                // checked here; the thread says if it can't start.
+                // checked here; the thread says if it can't start. One of this
+                // device's own (a Home's agent) is: it runs on these sign-ins.
+                let blocked = startable(&m.harness)
+                    .filter(|s| m.mine && !connectors::signed_in(&input.connectors, s.app))
+                    .map(|s| cant_wake(input, s, &m.handle, "not-connected", None));
                 return Some(SummonStep {
                     handle: m.handle.clone(),
                     harness: m.harness.clone(),
-                    action: "wake".into(),
-                    cant_wake: None,
+                    action: if blocked.is_some() { "blocked" } else { "wake" }.into(),
+                    cant_wake: blocked,
                 });
             }
-            let s = startable_for(input, &h)?;
+            let Some(s) = startable_for(input, &h) else {
+                // A person, `@everyone`, or nobody: only the last is a mistake worth a line.
+                let person = input.people.iter().any(|p| p.eq_ignore_ascii_case(&h));
+                if !input.report_unknown || person || h == "everyone" {
+                    return None;
+                }
+                return Some(SummonStep {
+                    handle: h.clone(),
+                    harness: String::new(),
+                    action: "unknown".into(),
+                    cant_wake: Some(unknown_mention(input, &h)),
+                });
+            };
             let blocked = if !input.can_add {
                 Some(cant_wake(input, s, &h, "cant-add", None))
             } else if !connectors::signed_in(&input.connectors, s.app) {
@@ -477,9 +562,11 @@ mod tests {
                 handle: "hermes".into(),
                 harness: "hermes".into(),
                 label: "Hermes".into(),
+                ..Default::default()
             }],
             people: vec!["grace".into()],
             can_add: true,
+            report_unknown: true,
             connectors: ConnectorsInput {
                 apps: vec![ConnectorAppInput {
                     agent: "claude-code".into(),
@@ -495,6 +582,10 @@ mod tests {
                             env: (*e).into(),
                             last4: "abcd".into(),
                             added_ms: 1,
+                            expired: false,
+                            label: None,
+                            region: None,
+                            fields: Default::default(),
                         })
                         .collect(),
                     ..Default::default()
@@ -523,7 +614,7 @@ mod tests {
         let rest: Vec<_> = c[1..].iter().map(|c| c.handle.as_str()).collect();
         assert_eq!(rest, ["claude", "codex", "openclaw"]);
         assert_eq!(c[1].label, "Claude Code");
-        assert_eq!(c[1].detail, "Not connected yet");
+        assert_eq!(c[1].detail, "Not connected");
         let c = candidates(&input(&["CLAUDE_CODE_OAUTH_TOKEN"]));
         assert_eq!(c[1].detail, "Starts in this Space");
         // A Space that can't add agents offers only its members.
@@ -549,6 +640,85 @@ mod tests {
     }
 
     #[test]
+    fn the_hosts_name_for_a_member_is_an_alias_never_what_the_page_types() {
+        // `cua agent ls` says claude-8; the Space calls the member @claude.
+        let mut i = input(&[]);
+        i.members.push(SummonMember {
+            handle: "claude".into(),
+            key: "claude-8".into(),
+            harness: "claude-code".into(),
+            label: "Claude Code".into(),
+            ..Default::default()
+        });
+        // Ask first's message names the handle, whichever name it was given.
+        assert_eq!(first_message(&i, "claude-code", "hi").text, "@claude hi");
+        // The alias still wakes the member (no add, no unknown note).
+        let s = &plan(&i, "@claude-8 hi").steps;
+        assert_eq!(s.len(), 1);
+        assert_eq!(
+            (s[0].handle.as_str(), s[0].action.as_str()),
+            ("claude", "wake")
+        );
+        // A new agent never takes the host name of a member either.
+        i.members.clear();
+        i.members.push(SummonMember {
+            handle: "hermes".into(),
+            key: "claude-2".into(),
+            harness: "hermes".into(),
+            label: "Hermes".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            candidates(&i)
+                .iter()
+                .find(|c| c.harness == "claude-code")
+                .unwrap()
+                .handle,
+            "claude"
+        );
+    }
+
+    #[test]
+    fn a_homes_agent_without_a_sign_in_says_so_instead_of_waking_nothing() {
+        let mut i = input(&[]);
+        i.members.push(SummonMember {
+            handle: "claude".into(),
+            key: "claude-8".into(),
+            harness: "claude-code".into(),
+            label: "Claude Code".into(),
+            mine: true,
+        });
+        let s = &plan(&i, "@claude hi").steps[0];
+        assert_eq!(s.action, "blocked");
+        let c = s.cant_wake.as_ref().unwrap();
+        assert_eq!(c.reason, "not-connected");
+        assert_eq!(c.text, "Claude Code isn't connected yet");
+        assert_eq!(c.handle, "claude");
+        // Signed in: woken. Not this device's: never checked against its sign-ins.
+        let mut ok = input(&["CLAUDE_CODE_OAUTH_TOKEN"]);
+        ok.members = i.members.clone();
+        assert_eq!(plan(&ok, "@claude hi").steps[0].action, "wake");
+        i.members[1].mine = false;
+        assert_eq!(plan(&i, "@claude hi").steps[0].action, "wake");
+    }
+
+    #[test]
+    fn an_at_of_nobody_here_is_said_plainly() {
+        let p = plan(&input(&["CLAUDE_CODE_OAUTH_TOKEN"]), "@ghost are you there");
+        let c = p.steps[0].cant_wake.clone().unwrap();
+        assert_eq!(p.steps[0].action, "unknown");
+        assert_eq!(c.reason, "no-such-member");
+        assert_eq!(c.text, "Nobody called @ghost is in this Space");
+        assert!(c.detail.contains("Agents here: @hermes"), "{}", c.detail);
+        assert_eq!(c.connect_label, None);
+        // A person, or Ask first's job (places are @mentioned there), is not reported.
+        assert!(plan(&input(&[]), "@grace hi").steps.is_empty());
+        let mut i = input(&[]);
+        i.report_unknown = false;
+        assert!(plan(&i, "@my-mac run it").steps.is_empty());
+    }
+
+    #[test]
     fn sending_adds_wakes_or_says_why_not() {
         // Signed in: Claude Code is added, then woken by the message; Hermes,
         // in the Space, is woken; people and unknown names have no step.
@@ -562,7 +732,11 @@ mod tests {
             .iter()
             .map(|s| (s.handle.as_str(), s.action.as_str()))
             .collect();
-        assert_eq!(s, [("claude", "add"), ("hermes", "wake")]);
+        // `@nobody` is nobody in this Space: it says so instead of doing nothing.
+        assert_eq!(
+            s,
+            [("claude", "add"), ("hermes", "wake"), ("nobody", "unknown")]
+        );
 
         // No sign-in: blocked, with Connect.
         let p = plan(&input(&[]), "@claude fix the build");
@@ -574,17 +748,17 @@ mod tests {
         assert_eq!(c.connect_label.as_deref(), Some("Connect Claude Code"));
         assert_eq!(c.open_label.as_deref(), Some("Claude Code settings"));
         assert_eq!(c.retry_label, "Send again");
-        assert_eq!(c.connecting_label, "Approve in your browser…");
+        assert_eq!(c.connecting_label, "Reading your Claude Code sign-in…");
         assert!(c.detail.contains("sign-in to Anthropic"));
 
         // A member runs on its owner's keys: woken, never checked against this device's.
         let p = plan(&input(&[]), "@hermes go");
         assert_eq!(p.steps[0].action, "wake");
-        // A new Hermes needs Anthropic or OpenAI.
+        // A new Hermes needs a connected provider.
         let mut i = input(&[]);
         i.members.clear();
         let c = plan(&i, "@hermes go").steps[0].cant_wake.clone().unwrap();
-        assert!(c.detail.contains("Anthropic or OpenAI"));
+        assert!(c.detail.contains("a connected provider"));
 
         // Codex isn't on This Mac: no settings page to open; Connect still asks for a key.
         let c = plan(&input(&[]), "@codex go").steps[0]

@@ -30,7 +30,16 @@
 import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
-import type { AgentEventsPage, AgentMessageSent, AgentSetupRow, AgentStarted, ConnectionReport, ConnectResult, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
+import type {
+  AgentEventsPage,
+  AgentMessageSent,
+  AgentSetupRow,
+  AgentStarted,
+  ConnectionReport,
+  ConnectResult,
+  PersistentAgent,
+  SpaceAgentRun,
+} from "../contracts/agents";
 import type { CancelOutcome, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
@@ -42,6 +51,11 @@ import {
   type SessionSnapshot,
   type SettingsSnapshot,
   type SettingsValues,
+  type NetworkEventWire,
+  type ServiceWire,
+  type TreeBudgetWire,
+  type TreeNodeWire,
+  type SpaceNetworkWire,
 } from "../protocol";
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
 import type { CreateProgress } from "../contracts/host";
@@ -52,7 +66,10 @@ import { STOPPED_SHARING_ERROR, stoppedSharingLine, withNotSharing } from "../sh
 import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
 import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitThreadOps } from "../ops/thread";
+import { webkitAgentThreadsOps } from "../ops/agent-threads";
+import { webkitAgentSignInOps } from "../ops/agent-sign-in";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
+import { webkitGithubOps } from "../ops/github";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
@@ -60,13 +77,16 @@ import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DefaultSpace, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
-import type { LinkCreate, ShareLink } from "../ops/links";
+import type { CiConnectAnswer, CiLogLine, CiOverview } from "../contracts/ci-runners";
+import type { LinkCreate, ShareLink, ShareSettings } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { cloudApproveWebkitOps } from "../ops/cloud-approve";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import { webkitDriverOps } from "../ops/driver";
 import type { CliInstallPlan } from "../contracts/first-run";
 import type { BulkResult } from "../contracts/spaces-page";
 import type { CreatingElsewhere, ListStatus, SpaceAccess, SpaceRow, SpaceSharingFacts } from "../contracts/spaces";
@@ -127,6 +147,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     error: opt(s.sdk?.error),
     host: opt(s.host),
     hostName: opt(s.hostName),
+    parent: opt(s.parent),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
     stopReason: off ? opt(s.power?.stopReason) : undefined,
@@ -143,9 +164,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
 export function sharingOf(a: SpaceAccess): SpaceSharingFacts | undefined {
   if (a.kind === "mine" && a.people.length === 0) return undefined;
   const people = (role: "editor" | "viewer") => a.people.filter((p) => !p.team && p.role === role).map((p) => p.who);
-  const teams = a.people
-    .filter((p) => p.team)
-    .map((p) => ({ key: p.who.replace(/^team:/, ""), name: p.name ?? p.who.replace(/^team:/, ""), role: p.role }));
+  const teams = a.people.filter((p) => p.team).map((p) => ({ key: p.who.replace(/^team:/, ""), name: p.name ?? p.who.replace(/^team:/, ""), role: p.role }));
   const owner = a.role === "owner";
   return {
     ownerId: a.ownerEmail ?? a.ownerName ?? "",
@@ -289,6 +308,7 @@ function fromPageRows(spaces: WkSpaces, machines: WkMachines, rows: MachinePageR
 }
 
 const rowsById = (s: WkSettings) => new Map(s.page.sections.flatMap((sec) => sec.rows).map((r) => [r.id, r] as const));
+const only = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const active = (r: WkSettingsRow | undefined) => r?.options.find((o) => o.active)?.id;
 const lockedBy = (r: WkSettingsRow | undefined) => (r && !r.enabled && r.help?.startsWith("Set by ") ? r.help.slice(7) : undefined);
 
@@ -301,9 +321,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
   const on = (id: string) => (rows.has(id) ? active(rows.get(id)) === "on" : null);
-  const protection = [...rows.values()]
-    .filter((r) => r.id.startsWith("keyvault-protection:"))
-    .map((r) => ({ label: r.label, value: r.value ?? "" }));
+  const protection = [...rows.values()].filter((r) => r.id.startsWith("keyvault-protection:")).map((r) => ({ label: r.label, value: r.value ?? "" }));
   return {
     values: {
       theme: page.theme,
@@ -313,11 +331,14 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       defaultLocation: DEFAULT_SETTINGS.defaultLocation,
       // The core lays out `launch-at-login` once the host read the login item.
       launchAtLogin: loginRow && loginRow.enabled ? active(loginRow) === "on" : null,
-      updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" ? s.updateChannel : null,
+      // `beta` (a host from before Nightly) is Nightly.
+      updateChannel: s.updateChannel === "stable" ? "stable" : s.updateChannel === "nightly" || s.updateChannel === "beta" ? "nightly" : null,
       // The core's General row (`settings::auto_connect_row`), when the host lays it out.
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
       ...(s.tips ? { tips: { off: s.tips.off === true, done: Array.isArray(s.tips.done) ? s.tips.done : [] } } : {}),
+      ...(s.agentMenu ? { agentMenu: { shown: only(s.agentMenu.shown), hidden: only(s.agentMenu.hidden), seen: only(s.agentMenu.seen) } } : {}),
+      ...(Array.isArray(s.notchPinned) ? { notchPinned: s.notchPinned.filter((id): id is string => typeof id === "string") } : {}),
     },
     defaultLocation: null,
     telemetry: telemetry
@@ -334,6 +355,8 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       runtimes: s.runtimes ?? null,
       autoConnect: on("auto-connect"),
       overflow: on("placement-overflow"),
+      closeWindowKeepsRunning: rows.has("close-window") ? active(rows.get("close-window")) === "keep" : null,
+      closeNotice: on("close-notice"),
       keyvaultAutoWipe: on("keyvault-auto-wipe"),
       keyvaultUnlockPrompt: on("keyvault-unlock-prompt"),
       keyvaultSiteIcons: on("keyvault-site-icons"),
@@ -342,6 +365,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
     accountUrl: s.accountUrl ?? null,
     cli: s.cli && s.cli.name ? { name: s.cli.name, installed: Boolean(s.cli.installed) } : null,
+    target: s.target ? { channel: s.target.channel, env: s.target.env, authHost: s.target.authHost ?? "" } : null,
   };
 }
 
@@ -374,7 +398,11 @@ const snakeKey = (k: string) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`
 function snake(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(snake);
   if (v && typeof v === "object") {
-    return Object.fromEntries(Object.entries(v).filter(([k]) => k !== "blob").map(([k, x]) => [snakeKey(k), x === null ? undefined : snake(x)]));
+    return Object.fromEntries(
+      Object.entries(v)
+        .filter(([k]) => k !== "blob")
+        .map(([k, x]) => [snakeKey(k), x === null ? undefined : snake(x)]),
+    );
   }
   return v;
 }
@@ -432,6 +460,13 @@ export function toHostStatus(h: WkHostState): HostStatus {
     // The rest of the core's state, as the host sends it: the logs, the
     // provided Spaces, and whether sharing waits for a sign-in.
     maxMacosVms: h.maxMacosVms ?? 0,
+    maxMemoryGb: h.maxMemoryGb ?? 0,
+    maxDiskGb: h.maxDiskGb ?? 0,
+    maxRunMinutes: h.maxRunMinutes ?? 0,
+    usedMemoryGb: h.usedMemoryGb ?? 0,
+    usedDiskGb: h.usedDiskGb ?? 0,
+    totalMemoryGb: h.totalMemoryGb ?? 0,
+    totalDiskGb: h.totalDiskGb ?? 0,
     recentAccess: list(h.recentAccess) as HostStatus["recentAccess"],
     accessLogError: h.accessLogError ?? null,
     providedSpaces: list(h.providedSpaces) as HostStatus["providedSpaces"],
@@ -484,10 +519,7 @@ const BACKGROUND = { light: "#f7f8fa", dark: "#16181c" } as const;
 
 /* ---- The adapter ---------------------------------------------------------------- */
 
-export function createWebkitAdapter(
-  win: HostWindow = globalThis.window as HostWindow,
-  options: WebkitAdapterOptions = {},
-): DataAdapter {
+export function createWebkitAdapter(win: HostWindow = globalThis.window as HostWindow, options: WebkitAdapterOptions = {}): DataAdapter {
   const electron = options.host === "electron";
   const transport: HostTransport | null = electron ? electronTransport(win) : webkitTransport(win);
   if (!transport) throw new Error(electron ? "window.cuaDesktop is not available" : "window.webkit.messageHandlers.cua is not available");
@@ -528,7 +560,13 @@ export function createWebkitAdapter(
           else if (r.ok) resolve(r.result as T);
           else {
             const e = r.error;
-            reject(new HostError(e?.message ?? `${method} failed`, e?.code, e && { title: e.title, details: e.details, actionLabel: e.actionLabel }));
+            reject(
+              new HostError(
+                e?.message ?? `${method} failed`,
+                e?.code,
+                e && { title: e.title, details: e.details, actionLabel: e.actionLabel, kind: e.kind, refusalCode: e.refusalCode },
+              ),
+            );
           }
         },
         (e: unknown) => {
@@ -548,7 +586,6 @@ export function createWebkitAdapter(
     // title bar, its controls); the SwiftUI host reads only `color`.
     void request("window.setBackgroundColor", { color: BACKGROUND[dark ? "dark" : "light"], appearance: theme }).catch(() => {});
   }
-
 
   // Creates this page started: the host lists each as its own pending row
   // too, which the store already draws.
@@ -600,6 +637,31 @@ export function createWebkitAdapter(
       await request("spaces.rename", { spaceId, name });
       return null;
     },
+    // A Space's network, as the host's SDK says it (camelCase JSON as-is).
+    "network.get": ({ spaceId }) => request<SpaceNetworkWire>("network.get", { spaceId }),
+    "network.set": (args) => request<{ applied: "now" | "next_start" }>("network.set", args),
+    "network.log": ({ spaceId }) => request<NetworkEventWire[]>("network.log", { spaceId }),
+    "network.ackNotice": async ({ spaceId }) => {
+      await request("network.ackNotice", { spaceId });
+      return null;
+    },
+    "spaces.setAccess": async (args) => {
+      await request("spaces.setAccess", args);
+      return null;
+    },
+    // Child Spaces (the Child Spaces experiment), as the host's SDK says them.
+    "spaces.tree": () => request<TreeNodeWire[]>("spaces.tree", {}),
+    "children.set": async (args) => {
+      await request("children.set", args);
+      return null;
+    },
+    "budget.get": ({ spaceId }) => request<TreeBudgetWire>("budget.get", { spaceId }),
+    "budget.set": (args) => request<TreeBudgetWire>("budget.set", args),
+    "services.list": ({ spaceId }) => request<ServiceWire[]>("services.list", { spaceId }),
+    "services.control": async (args) => {
+      await request("services.control", args);
+      return null;
+    },
     "spaces.open": async ({ spaceId }) => {
       await request("spaces.open", { id: spaceId });
       return null;
@@ -609,8 +671,9 @@ export function createWebkitAdapter(
       machinesView = machines?.view ? fromHostView(machines.view) : null;
       return toMachineRows(spaces, machines, os);
     },
-    "host.status": async () => {
-      const h = await request<WkHostState | null>("host.status");
+    // The args (localNetwork, localNetworkCheck) go to the app: without them it never lists the Local Network row.
+    "host.status": async (args) => {
+      const h = await request<WkHostState | null>("host.status", { ...args });
       if (!h) throw new HostError("This Mac has not reported its sharing status yet", "not_found");
       return toHostStatus(h);
     },
@@ -644,6 +707,8 @@ export function createWebkitAdapter(
           break;
         // The app core's own settings (`AppSettings`), saved as given.
         case "tips":
+        case "notchPinned":
+        case "agentMenu":
           return toSettingsSnapshot(await request<WkSettings>("settings.update", { [key]: value ?? null }), page);
       }
       return settingsSnapshot();
@@ -683,6 +748,10 @@ export function createWebkitAdapter(
       await request("session.signOut");
       return null;
     },
+    "session.resetOnboarding": async () => {
+      await request("onboarding.reset");
+      return null;
+    },
     "session.completeOnboarding": async ({ mode, launchAtLogin }) => {
       await request("onboarding.complete", launchAtLogin === undefined ? { mode } : { mode, launchAtLogin });
       return null;
@@ -706,11 +775,18 @@ export function createWebkitAdapter(
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
     "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "agents.status": ({ refresh }) => request<ConnectionReport>("agents.status", { refresh: refresh ?? false }),
-    "agents.connect": async ({ agents, signIn, skills, mcp }) =>
+    "agents.connect": async ({ agents, signIn, skills, mcp, driver }) =>
       // No timeout: Claude Code's sign-in waits for its one browser approval.
-      list(await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true }, null)) as ConnectResult[],
+      list(
+        await request("agents.connect", { agents, signIn, skills: skills ?? true, mcp: mcp ?? true, ...(driver ? { driver } : {}) }, null),
+      ) as ConnectResult[],
     "agents.disconnect": ({ agents, signIn, skills, mcp }) =>
-      request<{ removed_sign_ins: string[] }>("agents.disconnect", { agents, signIn, ...(skills === undefined ? {} : { skills }), ...(mcp === undefined ? {} : { mcp }) }),
+      request<{ removed_sign_ins: string[] }>("agents.disconnect", {
+        agents,
+        signIn,
+        ...(skills === undefined ? {} : { skills }),
+        ...(mcp === undefined ? {} : { mcp }),
+      }),
     "agents.signInStart": ({ agent }) => request<OpResult<"agents.signInStart">>("agents.signInStart", { agent }),
     "agents.signInWait": ({ id }) => request<OpResult<"agents.signInWait">>("agents.signInWait", { id }),
     "session.openExternal": async ({ url }) => {
@@ -723,7 +799,10 @@ export function createWebkitAdapter(
     ...webkitTelemetryNoticeOps(request),
     ...webkitAgentDetailOps(request),
     ...webkitThreadOps(request),
+    ...webkitAgentThreadsOps(request),
+    ...webkitAgentSignInOps(request),
     ...webkitAgentKeysOps(request),
+    ...webkitGithubOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
     ...webkitKeyvaultSetupOps(request, () => new HostError("Cua Spaces asks for the passphrase in its own prompt", "native_only")),
     // Electron draws a Space's video in the page, on a ticket from the
@@ -743,18 +822,40 @@ export function createWebkitAdapter(
       await request("machines.checkHealth");
       return null;
     },
-    "machines.remove": async ({ machine, device }) => {
-      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+    "machines.remove": async ({ machine, device, deleteSpaces }) => {
+      // `deleteSpaces` only when asked: an older host never sees it.
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null, ...(deleteSpaces ? { deleteSpaces: true } : {}) });
       return null;
     },
+    // The default Space (ops/spaces-settings.ts): the relay's own words.
+    "spaces.settings": () => request<SpacesSettings | null>("spaces.settings"),
+    "spaces.setSettings": ({ defaultSpace, fallback, fallbackOn }) =>
+      request<SpacesSettings | null>("spaces.setSettings", { defaultSpace, fallback: [...(fallback ?? [])], fallbackOn: fallbackOn ?? true }),
+    "spaces.resolveDefault": () => request<DefaultSpace | null>("spaces.resolveDefault"),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),
     "links.create": (a: LinkCreate) => request<ShareLink>("links.create", a as unknown as Record<string, unknown>),
     "links.stop": ({ id }) => request<{ stopped: string[] }>("links.stop", { id }),
+    "links.approve": ({ id, always }) => request<ShareLink>("links.approve", { id, always: always === true }),
+    "links.deny": ({ id }) => request<{ denied: string }>("links.deny", { id }),
+    "shares.settings.get": () => request<ShareSettings>("shares.settings.get"),
+    "shares.settings.set": ({ settings }) => request<ShareSettings>("shares.settings.set", { settings } as unknown as Record<string, unknown>),
+    "shares.edge.remove": () => request<{ ended: string[] }>("shares.edge.remove"),
     // The bundled CLI on PATH (the app core's installer in the host).
     "cli.plan": () => request<CliInstallPlan | null>("cli.plan"),
     "cli.install": ({ modifyPath }) => request<CliInstallPlan>("cli.install", { modifyPath }),
+    // CI Runners: the host runs the bundled `cua ci app <op>` (ops/ci.ts).
+    "ci.overview": ({ live }) => request<CiOverview>("ci.overview", { live: live === true }),
+    "ci.connect": ({ githubOrg }) => request<CiConnectAnswer>("ci.connect", githubOrg ? { githubOrg } : {}),
+    "ci.connectToken": ({ org, token }) => request<CiConnectAnswer>("ci.connectToken", token ? { org, token } : { org }),
+    "ci.connectCancel": async () => {
+      await request("ci.connectCancel");
+      return null;
+    },
+    "ci.repositories": ({ allow, remove }) => request<{ changed?: string[] }>("ci.repositories", { allow: allow ?? [], remove: remove ?? [] }),
+    "ci.goal": ({ target, goal }) => request<{ goal: string; applied: boolean }>("ci.goal", { target, goal }),
+    "ci.log": ({ jobKey, pool, slot }) => request<{ lines: CiLogLine[] }>("ci.log", { jobKey, pool, slot }),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {
@@ -769,6 +870,8 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),
+    // Cua Driver inside Cua Spaces: the Mac app's embedded driver (ops/driver.ts).
+    ...webkitDriverOps(request),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native AT-SPI access over D-Bus via the `atspi` crate (zbus).
 //!
 //! Replaces the previous `python3 -c "import pyatspi; ..."` subprocess bridge:
@@ -162,6 +165,12 @@ pub(crate) const INPUT_QUERY_BUDGET: Duration = Duration::from_millis(1500);
 /// snapshot answers it. Larger than [`INPUT_QUERY_BUDGET`] because the caller
 /// named a specific element and a miss is an error, not a fallback.
 pub(crate) const INDEX_RESOLVE_BUDGET: Duration = Duration::from_secs(6);
+/// Budget the toolkit lookup in front of an EditableText write leaves unspent,
+/// so the write itself still answers before the operation's deadline.
+const EDITABLE_WRITE_RESERVE: Duration = Duration::from_millis(250);
+/// Budget a walk in front of an EditableText write leaves unspent: the toolkit
+/// lookup gets what is above [`EDITABLE_WRITE_RESERVE`].
+const EDITABLE_WALK_RESERVE: Duration = Duration::from_millis(500);
 
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
@@ -1079,6 +1088,38 @@ fn correlate_hyprland_frame(
     Some(frame.ordinal)
 }
 
+/// A niri window as a correlation client: its title and size. Tiled windows
+/// have a size but no placement; an unknown size (0x0) never matches.
+fn niri_client(window: &crate::wayland::niri::Window) -> (String, u32, u32) {
+    let (width, height) = window.size.unwrap_or((0, 0));
+    (window.title.clone(), width, height)
+}
+
+/// [`correlate_hyprland_frame`] for niri, which also keeps the single-root
+/// shortcut, but only while niri shows the process exactly one window: the
+/// requested one.
+fn correlate_niri_frame(
+    frames: &[HyprlandFrame],
+    clients: &[(&str, u32, u32)],
+    target: usize,
+    roots: usize,
+) -> Option<usize> {
+    if roots == 1 && clients.len() == 1 && target == 0 {
+        return Some(0);
+    }
+    correlate_hyprland_frame(frames, clients, target)
+}
+
+/// Whether a toolkit frame's Window extents are niri's window size, give or
+/// take a pixel of rounding. An unknown frame or window never fits.
+fn niri_frame_fits(frame: Option<(i32, i32, i32, i32)>, window: Option<(u32, u32)>) -> bool {
+    let (Some((_, _, width, height)), Some((window_width, window_height))) = (frame, window) else {
+        return false;
+    };
+    (i64::from(width) - i64::from(window_width)).abs() <= 1
+        && (i64::from(height) - i64::from(window_height)).abs() <= 1
+}
+
 #[cfg(test)]
 mod hyprland_frame_tests {
     use super::*;
@@ -1151,6 +1192,73 @@ mod hyprland_frame_tests {
     }
 
     #[test]
+    fn niri_binds_only_the_window_a_lone_root_belongs_to() {
+        // niri lists A and B for the process; only B's root is exported yet.
+        let mut b = frame("B");
+        b.browser_root = false;
+        b.size = None;
+        let clients = [("A", 800, 600), ("B", 800, 600)];
+        assert_eq!(correlate_niri_frame(&[b], &clients, 0, 1), None);
+        let mut b = frame("B");
+        b.browser_root = false;
+        assert_eq!(correlate_niri_frame(&[b], &clients, 1, 1), Some(7));
+        // With one window for the process, its lone root is that window's,
+        // whatever the toolkit names it.
+        assert_eq!(
+            correlate_niri_frame(&[frame("untitled")], &[("A", 800, 600)], 0, 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn niri_frames_publish_only_when_the_toolkit_frame_is_the_window() {
+        // Measured in the nested niri lane: GTK 3's frame with client-side
+        // decorations includes a 26 px shadow on every side of a 940x780
+        // window, which put every element 26 px right and below its pixels.
+        assert!(!niri_frame_fits(Some((0, 0, 992, 832)), Some((940, 780))));
+        // With niri's prefer-no-csd the frame is the window.
+        assert!(niri_frame_fits(Some((0, 0, 940, 780)), Some((940, 780))));
+        // A pixel of rounding (fractional scale) and nothing more.
+        assert!(niri_frame_fits(Some((0, 0, 627, 519)), Some((626, 520))));
+        assert!(!niri_frame_fits(Some((0, 0, 942, 780)), Some((940, 780))));
+        // An unknown frame or an unplaced window proves nothing.
+        assert!(!niri_frame_fits(None, Some((940, 780))));
+        assert!(!niri_frame_fits(Some((0, 0, 940, 780)), None));
+    }
+
+    #[test]
+    fn niri_binds_a_tiled_chromium_root_by_size() {
+        // niri reports no position for tiled windows, but their size still
+        // identifies the BrowserRootView whose title carries the profile.
+        let tiled = |id, title: &str, size| crate::wayland::niri::Window {
+            id,
+            pid: Some(42),
+            title: title.into(),
+            app_id: "chromium".into(),
+            workspace: Some(1),
+            focused: false,
+            focus_rank: 0,
+            on_screen: true,
+            size: Some(size),
+            placement: Err(crate::wayland::niri::Unplaced::Tiled),
+        };
+        let owned = [
+            niri_client(&tiled(1, "Page - Google Chrome", (800, 600))),
+            niri_client(&tiled(2, "Other - Google Chrome", (640, 480))),
+        ];
+        let clients = owned
+            .iter()
+            .map(|(title, width, height)| (title.as_str(), *width, *height))
+            .collect::<Vec<_>>();
+        let mut other = frame("Other - Google Chrome - Cua Test");
+        other.ordinal = 8;
+        other.size = Some((640, 480));
+        let frames = [frame("Page - Google Chrome - Cua Test"), other];
+        assert_eq!(correlate_niri_frame(&frames, &clients, 0, 2), Some(7));
+        assert_eq!(correlate_niri_frame(&frames, &clients, 1, 2), Some(8));
+    }
+
+    #[test]
     fn preserves_exact_non_chromium_matching() {
         let mut candidate = frame("Editor");
         candidate.browser_root = false;
@@ -1176,10 +1284,32 @@ async fn resolve_window_frame(
     xid: u64,
     seeds: &[RawObjectRef],
 ) -> Option<usize> {
-    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let windows = crate::wayland::hyprland::list_windows().ok()?;
-        let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
-        let target = owned.iter().position(|window| window.address == xid)?;
+    let hyprland = crate::wayland::is_wayland() && crate::wayland::hyprland::is_session();
+    // Before the single-root shortcut: niri may list a window whose root is
+    // not exported yet, and the one root then belongs to another window.
+    let niri = !hyprland && crate::wayland::is_wayland() && crate::wayland::niri::is_session();
+    if hyprland || niri {
+        let (owned, target): (Vec<(String, u32, u32)>, usize) = if hyprland {
+            let windows = crate::wayland::hyprland::list_windows().ok()?;
+            let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
+            let target = owned.iter().position(|window| window.address == xid)?;
+            let owned = owned
+                .iter()
+                .map(|window| (window.title.clone(), window.width, window.height))
+                .collect();
+            (owned, target)
+        } else {
+            // An X11 client's niri pid is xwayland-satellite's, so it never
+            // matches and its walk stays unscoped.
+            let windows = crate::wayland::niri::list_windows().ok()?;
+            let owned: Vec<_> = windows
+                .iter()
+                .filter(|window| window.pid == Some(pid))
+                .collect();
+            let target = owned.iter().position(|window| window.id == xid)?;
+            let owned = owned.iter().map(|window| niri_client(window)).collect();
+            (owned, target)
+        };
         let chromium = std::fs::read_link(format!("/proc/{pid}/exe"))
             .ok()
             .and_then(|path| {
@@ -1225,9 +1355,13 @@ async fn resolve_window_frame(
         }
         let clients = owned
             .iter()
-            .map(|window| (window.title.as_str(), window.width, window.height))
+            .map(|(title, width, height)| (title.as_str(), *width, *height))
             .collect::<Vec<_>>();
-        return correlate_hyprland_frame(&frames, &clients, target);
+        return if niri {
+            correlate_niri_frame(&frames, &clients, target, seeds.len())
+        } else {
+            correlate_hyprland_frame(&frames, &clients, target)
+        };
     }
     if seeds.len() == 1 {
         // One top-level: on X11, and on compositors without a GNOME Shell,
@@ -1302,7 +1436,7 @@ async fn resolve_window_frame(
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
 ///
-/// Issue #22865: caps protect against Electron / large web apps that produce
+/// These caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
     conn: &'a AccessibilityConnection,
@@ -1743,7 +1877,7 @@ async fn collect_visited_bounded_opts<'a>(
         let child_in_web_doc = in_web_doc || is_document_role(&role);
 
         // Enqueue children (fetched above) before moving `acc` into `visited`.
-        // Honor max_depth (#22865): skip enqueueing descendants whose depth
+        // Honor max_depth: skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth < d).unwrap_or(true);
         // A menu that is not open (a menubar entry that is not expanded, or
@@ -2134,7 +2268,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                     ));
                 }
             }
-            let act_str = v.actions.join(",");
+            let attrs = indexed_row_attrs(v.enabled, &v.actions);
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
@@ -2150,7 +2284,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 .map(|note| format!(" ({note})"))
                 .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [actions=[{act_str}]]{collapsed_note}{unlabelled_shown}
+                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [{attrs}]{collapsed_note}{unlabelled_shown}
 ",
                 role = v.role,
                 desc = description_shown.as_deref().unwrap_or(""),
@@ -2194,11 +2328,10 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             idx += 1;
         } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"{marker}
+                "{indent}- {role} = \"{name}\"
 ",
                 role = v.role,
                 name = v.name,
-                marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
             ));
         }
     }
@@ -2206,31 +2339,14 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
     (md, nodes)
 }
 
-/// Why a visible, named control is listed without an index. A disabled
-/// button is rendered as `- push button = "Restore" (disabled)` so a caller
-/// learns it must enable it (select something) rather than assume the tree
-/// dropped it.
-fn passive_marker(
-    role: &str,
-    has_action: bool,
-    has_component: bool,
-    enabled: Option<bool>,
-) -> &'static str {
-    let control = has_action
-        || (has_component
-            && matches!(
-                role.trim().to_ascii_lowercase().as_str(),
-                "button"
-                    | "push button"
-                    | "toggle button"
-                    | "menu item"
-                    | "check box"
-                    | "radio button"
-            ));
-    if control && enabled == Some(false) {
-        " (disabled)"
+/// The bracketed attributes of an indexed row: `enabled=false` for a disabled
+/// control (as on macOS), then its actions.
+fn indexed_row_attrs(enabled: Option<bool>, actions: &[String]) -> String {
+    let actions = format!("actions=[{}]", actions.join(","));
+    if enabled == Some(false) {
+        format!("enabled=false {actions}")
     } else {
-        ""
+        actions
     }
 }
 
@@ -2306,9 +2422,14 @@ fn is_enabled_state(state: &StateSet) -> bool {
 /// no Action even though a coordinate click on their bounds is operable. Keep
 /// every such control in the shared index space so physical-input fallbacks can
 /// address it without inventing pixels in the caller. Some GTK4 buttons expose
-/// only Component plus their control role; include those only when the state set
-/// positively verifies that they are enabled. Passive component-backed labels
-/// and containers remain outside the index.
+/// only Component plus their control role; include those too. Passive
+/// component-backed labels and containers remain outside the index, and so does
+/// a node whose state set could not be read.
+///
+/// A disabled control is indexed and published with `enabled: false`, as on
+/// macOS: enablement is state the caller needs to read (a form's Save button),
+/// not a reason to hide the row. The token writers refuse it
+/// (`tools::impl_::refuse_if_disabled`).
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -2337,16 +2458,15 @@ fn is_indexable_capabilities(
     enabled: Option<bool>,
 ) -> bool {
     let normalized_role = role.trim().to_ascii_lowercase();
-    let pixel_addressable_control = has_component
-        && enabled == Some(true)
-        && matches!(normalized_role.as_str(), "button" | "push button");
+    let pixel_addressable_control =
+        has_component && matches!(normalized_role.as_str(), "button" | "push button");
     !is_passive_role(&normalized_role)
         && (has_action
             || has_editable
             || has_value
             || has_selectable_state
             || pixel_addressable_control)
-        && enabled == Some(true)
+        && enabled.is_some()
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -2385,7 +2505,7 @@ pub struct WalkedTree {
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
 /// `max_elements = None` keeps the historical 5 000-node default; `max_depth
-/// = None` keeps the historical unbounded depth. Issue #22865.
+/// = None` keeps the historical unbounded depth.
 pub fn walk_tree_bounded(
     pid: u32,
     xid: u64,
@@ -2712,29 +2832,61 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
     })
 }
 
-/// Pick the editable node to write into, by priority:
+fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
+    let flags = visited.iter().map(|v| EditableFlags {
+        editable: v.has_editable,
+        focused: v.focused,
+        in_web_doc: v.in_web_doc,
+    });
+    visited.get(pick_editable_index(flags, complete)?)
+}
+
+#[derive(Clone, Copy)]
+struct EditableFlags {
+    editable: bool,
+    focused: bool,
+    in_web_doc: bool,
+}
+
+/// Index of the sole editable node, or `None` when there are none or several.
+fn only_editable(nodes: impl Iterator<Item = EditableFlags>) -> Option<usize> {
+    let mut editables = nodes.enumerate().filter(|(_, n)| n.editable);
+    match (editables.next(), editables.next()) {
+        (Some((index, _)), None) => Some(index),
+        _ => None,
+    }
+}
+
+/// Index of the editable to write into, by priority:
 ///   1. the focused editable (if the toolkit exposes focus),
 ///   2. an editable inside web/document content — for a browser this is the
 ///      page's field, not the address bar (which sorts first in the tree but is
 ///      chrome),
-///   3. the first editable anywhere (covers single-field apps like a GTK dialog
-///      entry, or a GTK4 GtkEntry).
+///   3. the *only* editable, when the app has exactly one (covers single-field
+///      apps like a GTK dialog entry, or a GTK4 GtkEntry).
 ///
-/// Choose the editable to write into. `complete` says whether `visited` is the
-/// whole tree: on a *partial* walk the "first editable anywhere" fallback is
-/// withheld, because the field the user means (the focused one) may simply not
-/// have been reached yet and writing into an arbitrary earlier field (a name
-/// box, a search entry) would be a silent misdelivery.
-fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
-    visited
-        .iter()
-        .find(|v| v.has_editable && v.focused)
-        .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-        .or_else(|| {
-            complete
-                .then(|| visited.iter().find(|v| v.has_editable))
-                .flatten()
-        })
+/// Rule 3 used to take the first editable in tree order. In Geany that is the
+/// toolbar search entry, several nodes above the document, so text written
+/// while nothing reported focus landed in the search box and the write was
+/// still reported as confirmed. With more than one candidate and no focus to
+/// choose between them, no pick is safe, so this returns `None` and the caller
+/// falls through to a route that follows the app's real focus.
+///
+/// `complete` says whether the nodes are the whole tree. A *partial* walk keeps
+/// only rule 1: the focused field may not have been reached yet, and rules 2
+/// and 3 would then write into an earlier field (a second page input, a search
+/// box), a silent misdelivery.
+fn pick_editable_index(
+    nodes: impl Iterator<Item = EditableFlags> + Clone,
+    complete: bool,
+) -> Option<usize> {
+    let first =
+        |rule: fn(&EditableFlags) -> bool| nodes.clone().position(|n| n.editable && rule(&n));
+    first(|n| n.focused).or_else(|| {
+        complete
+            .then(|| first(|n| n.in_web_doc).or_else(|| only_editable(nodes.clone())))
+            .flatten()
+    })
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI
@@ -2771,11 +2923,15 @@ async fn write_into_editable_acc(
         .proxies()
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+    let Some(len) = editable_insert_length_for(text, toolkit_of(acc)).await else {
+        dlog!("toolkit unknown, no safe InsertText length for non-ASCII text");
+        return Ok(false);
+    };
 
     // A focus-free EditableText write is the strongest background route. Try it
     // before GrabFocus: WebKitGTK can invalidate the original proxy when focus
     // changes, and writing through that stale object then returns false.
-    if write_through_editable_proxies(&proxies, text).await? {
+    if write_through_editable_proxies(&proxies, text, len).await? {
         return Ok(true);
     }
 
@@ -2798,12 +2954,13 @@ async fn write_into_editable_acc(
         dlog!("Target has no Component interface, skipping GrabFocus");
     }
 
-    write_through_editable_proxies(&proxies, text).await
+    write_through_editable_proxies(&proxies, text, len).await
 }
 
 async fn write_through_editable_proxies(
     proxies: &atspi::proxy::proxy_ext::Proxies<'_>,
     text: &str,
+    len: i32,
 ) -> Result<bool> {
     let et = proxies
         .editable_text()
@@ -2814,7 +2971,6 @@ async fn write_through_editable_proxies(
         Ok(tp) => tp.caret_offset().await.unwrap_or(0),
         Err(_) => 0,
     };
-    let len = text.chars().count() as i32;
 
     if et.insert_text(off, text, len).await.unwrap_or(false) {
         return Ok(true);
@@ -2823,6 +2979,77 @@ async fn write_through_editable_proxies(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// `length` for writing `text`, from the toolkit `lookup` names (polled only
+/// for non-ASCII text). `None` when no length is safe: send nothing rather than
+/// a guess.
+async fn editable_insert_length_for(
+    text: &str,
+    lookup: impl std::future::Future<Output = Option<String>>,
+) -> Option<i32> {
+    if text.is_ascii() {
+        return editable_insert_length(None, text);
+    }
+    let toolkit = before_write_reserve(lookup).await.flatten();
+    editable_insert_length(toolkit.as_deref(), text)
+}
+
+/// Run `lookup` only while it leaves [`EDITABLE_WRITE_RESERVE`] of the budget
+/// for the write; `None` once it would eat into it. A write that went out but
+/// answered after the deadline would be retried as synthetic input and typed
+/// twice.
+async fn before_write_reserve<T>(lookup: impl std::future::Future<Output = T>) -> Option<T> {
+    let budget = remaining_budget().saturating_sub(EDITABLE_WRITE_RESERVE);
+    if budget.is_zero() {
+        return None;
+    }
+    tokio::time::timeout(budget, lookup).await.ok()
+}
+
+/// Run a walk that finds the element to write into, so it stops early enough
+/// for the toolkit lookup and the write. A big app's tree outlasts any budget,
+/// and with none left the write would be skipped or answer past the deadline.
+async fn walk_before_write<T>(walk: impl std::future::Future<Output = T>) -> T {
+    let early = OP_DEADLINE
+        .try_with(|deadline| deadline.checked_sub(EDITABLE_WALK_RESERVE))
+        .ok()
+        .flatten();
+    match early {
+        Some(deadline) => OP_DEADLINE.scope(deadline, walk).await,
+        None => walk.await,
+    }
+}
+
+/// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
+/// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
+/// the tail and a longer one appends uninitialized memory. GTK3 reads bytes, the
+/// unit AT-SPI documents. Every other toolkit gets bytes too because no count is
+/// larger: one that ignores or clamps `length` still inserts the whole text, and
+/// only one that reads a smaller unit exactly would over-read. ASCII is the same
+/// in every unit. Any other text for an unknown toolkit has no safe length:
+/// UTF-16 units cut GTK3 short and bytes over-read in Qt.
+fn editable_insert_length(toolkit: Option<&str>, text: &str) -> Option<i32> {
+    let length = match toolkit {
+        _ if text.is_ascii() => text.len(),
+        Some(name) if name.trim().eq_ignore_ascii_case("qt") => text.encode_utf16().count(),
+        Some(_) => text.len(),
+        None => return None,
+    };
+    i32::try_from(length).ok()
+}
+
+/// The toolkit behind an element, from its application's root object.
+async fn toolkit_of(acc: &AccessibleProxy<'_>) -> Option<String> {
+    let inner = acc.inner();
+    let application = atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .destination(inner.destination().to_owned())
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    call(application.toolkit_name()).await?.ok()
 }
 
 /// Write into the best editable exposed by the current AT-SPI tree without
@@ -2840,7 +3067,7 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
                 visited,
                 truncation,
                 ..
-            } = collect_visited_bounded(conn, pid, 0, None, None)
+            } = walk_before_write(collect_visited_bounded(conn, pid, 0, None, None))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             if write_into_editable(&visited, truncation.is_none(), text).await? {
@@ -2859,7 +3086,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = walk_before_write(collect_visited(conn, pid))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let target = visited
@@ -2873,7 +3100,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
                 // GrabFocus can rebuild WebKitGTK's accessibility object. Walk
                 // the same index space again and retry only that exact element;
                 // never fall through to a different focused/first editable.
-                let refreshed = collect_visited(conn, pid)
+                let refreshed = walk_before_write(collect_visited(conn, pid))
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
                 let refreshed_target = refreshed
@@ -2912,7 +3139,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                 visited,
                 truncation,
                 ..
-            } = match collect_visited_bounded(conn, pid, 0, None, None).await? {
+            } = match walk_before_write(collect_visited_bounded(conn, pid, 0, None, None)).await? {
                 Some(v) => v,
                 None => return Ok(false),
             };
@@ -3270,13 +3497,22 @@ fn at_point_activation_index(
     actions: &[String],
     is_deepest_hit: bool,
 ) -> Option<usize> {
-    if is_container_role(role) || crate::at_point_policy::is_top_level_shell_role(role) {
+    if is_container_role(role)
+        || crate::at_point_policy::is_top_level_shell_role(role)
+        || is_web_document_role(role)
+    {
         return None;
     }
     if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
         return None;
     }
     activation_index(role, actions)
+}
+
+/// A web document's `doDefault` dispatches no DOM click (Chromium on X11
+/// answers true and the page sees nothing), so it is never an at-point target.
+pub(crate) fn is_web_document_role(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("document web")
 }
 
 /// What an at-point accessibility click did, for the tool result.
@@ -3385,64 +3621,194 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
 /// snapshot index is retained across mutations.
 pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
-    invoke_menu_path_in(pid, 0, path)
+    invoke_menu_path_in(pid, 0, path, MenuOpening::Allowed)
+}
+
+/// Whether [`invoke_menu_path_in`] may open intermediate menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuOpening {
+    /// Open each menu along the path when the final item cannot be reached
+    /// directly (the window was activated for a foreground delivery).
+    Allowed,
+    /// Background delivery: never open a menu. An open GTK, Qt or VCL menu
+    /// grabs the core keyboard and pointer, so the user's keystrokes land in
+    /// the menu instead of their own window for as long as it stays open
+    /// (trycua/cua#7371).
+    Forbidden,
+}
+
+/// The final menu item cannot be reached without opening a menu, and the
+/// delivery forbids opening one ([`MenuOpening::Forbidden`]). Nothing was
+/// actuated.
+#[derive(Debug)]
+pub struct MenuMustOpen {
+    pub detail: String,
+}
+
+impl std::fmt::Display for MenuMustOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the menu item is only reachable by opening a menu ({})",
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for MenuMustOpen {}
+
+/// The unique live node for `path` (all of it, or a prefix) in one walk;
+/// `Ok(None)` when no node matches it.
+fn resolve_menu_segment(
+    visited: &[Visited<'_>],
+    scoped_frame: Option<usize>,
+    path: &[String],
+) -> Result<Option<usize>> {
+    let depth = path.len() - 1;
+    let mut matches = exact_menu_path_matches(visited, path);
+    if matches.len() > 1 {
+        if let Some(scope) = scoped_frame {
+            let scoped: Vec<usize> = matches
+                .iter()
+                .copied()
+                .filter(|index| visited[*index].frame_ordinal == scope)
+                .collect();
+            if !scoped.is_empty() {
+                matches = scoped;
+            }
+        }
+    }
+    if matches.len() > 1 {
+        matches = dedupe_menu_matches(visited, matches);
+    }
+    match matches.as_slice() {
+        [index] => Ok(Some(*index)),
+        [] => Ok(None),
+        _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
+    }
+}
+
+/// A menu node that opens a submenu rather than running a command: GTK and
+/// Qt give it the `menu` role, a command item is `menu item` / `check menu
+/// item` / `radio menu item`.
+fn opens_submenu(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("menu")
+}
+
+/// The decision for one resolved final item, before any action is fired.
+#[derive(Debug, PartialEq, Eq)]
+enum LeafPlan {
+    /// Fire the item's own action; no menu opens.
+    Direct,
+    /// The item is itself a submenu: firing it opens a menu.
+    OpensMenu,
+}
+
+fn leaf_plan(role: &str) -> LeafPlan {
+    if opens_submenu(role) {
+        LeafPlan::OpensMenu
+    } else {
+        LeafPlan::Direct
+    }
+}
+
+/// Fire the safe activation action of `target`. `Ok(false)` is the toolkit
+/// declining it (LibreOffice VCL answers that for an item of a closed menu).
+async fn fire_menu_node(target: &Visited<'_>, depth: usize) -> Result<bool> {
+    if target.enabled == Some(false) {
+        anyhow::bail!("menu path segment {depth} is disabled");
+    }
+    let chosen = activation_index(&target.role, &target.actions)
+        .ok_or_else(|| anyhow!("menu path segment {depth} has no safe activation action"))?;
+    let proxies = target
+        .acc
+        .proxies()
+        .await
+        .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
+    let action = proxies
+        .action()
+        .await
+        .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+    action
+        .do_action(chosen as i32)
+        .await
+        .map_err(|error| anyhow!("doAction failed: {error}"))
 }
 
 /// [`invoke_menu_path`] scoped to the caller's native window: when the same
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+///
+/// GTK 3 and Qt publish closed menus, so the final item is usually in the
+/// first walk: its action is fired directly and no menu ever opens (GTK runs
+/// the item's `activate` and leaves its menus unposted). Only when the item
+/// is missing or declines a closed-menu action does the path open each menu
+/// in turn, and only when `opening` allows it; otherwise [`MenuMustOpen`] is
+/// returned with nothing actuated.
+pub fn invoke_menu_path_in(
+    pid: u32,
+    xid: u64,
+    path: &[String],
+    opening: MenuOpening,
+) -> Result<()> {
     bounded(
         async {
             let conn = shared_connection().await?;
+            let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let last = path.len() - 1;
+            match resolve_menu_segment(&collected.visited, collected.scoped_frame, path)? {
+                Some(index) => {
+                    let target = &collected.visited[index];
+                    if opening == MenuOpening::Forbidden
+                        && leaf_plan(&target.role) == LeafPlan::OpensMenu
+                    {
+                        return Err(MenuMustOpen {
+                            detail: format!(
+                                "segment {last} is a submenu, and invoking it opens that menu"
+                            ),
+                        }
+                        .into());
+                    }
+                    if fire_menu_node(target, last).await? {
+                        return Ok(());
+                    }
+                    if last == 0 {
+                        anyhow::bail!("menu path segment {last} rejected its native action");
+                    }
+                    if opening == MenuOpening::Forbidden {
+                        // Declined with its menu closed; the hop walk would
+                        // open the menu. Nothing ran.
+                        return Err(MenuMustOpen {
+                            detail: "the app declines the item's action while its menu is closed"
+                                .into(),
+                        }
+                        .into());
+                    }
+                }
+                None if last == 0 => anyhow::bail!("menu path segment 0 was not found"),
+                None if opening == MenuOpening::Forbidden => {
+                    return Err(MenuMustOpen {
+                        detail: "the app does not publish the item until its menu opens".into(),
+                    }
+                    .into())
+                }
+                None => {}
+            }
+            drop(collected);
             for depth in 0..path.len() {
                 let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let visited = collected.visited;
-                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
-                if matches.len() > 1 {
-                    if let Some(scope) = collected.scoped_frame {
-                        let scoped: Vec<usize> = matches
-                            .iter()
-                            .copied()
-                            .filter(|index| visited[*index].frame_ordinal == scope)
-                            .collect();
-                        if !scoped.is_empty() {
-                            matches = scoped;
-                        }
-                    }
-                }
-                if matches.len() > 1 {
-                    matches = dedupe_menu_matches(&visited, matches);
-                }
-                let target_index = match matches.as_slice() {
-                    [index] => *index,
-                    [] => anyhow::bail!("menu path segment {depth} was not found"),
-                    _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
-                };
-                let target = &visited[target_index];
-                if target.enabled == Some(false) {
-                    anyhow::bail!("menu path segment {depth} is disabled");
-                }
-                let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
-                    anyhow!("menu path segment {depth} has no safe activation action")
-                })?;
-                let proxies = target
-                    .acc
-                    .proxies()
-                    .await
-                    .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
-                let action = proxies
-                    .action()
-                    .await
-                    .map_err(|error| anyhow!("Action unavailable: {error}"))?;
-                let accepted = action
-                    .do_action(chosen as i32)
-                    .await
-                    .map_err(|error| anyhow!("doAction failed: {error}"))?;
-                if !accepted {
+                let index = resolve_menu_segment(
+                    &collected.visited,
+                    collected.scoped_frame,
+                    &path[..=depth],
+                )?
+                .ok_or_else(|| anyhow!("menu path segment {depth} was not found"))?;
+                if !fire_menu_node(&collected.visited[index], depth).await? {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
                 if depth + 1 != path.len() {
@@ -3453,6 +3819,41 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+#[cfg(test)]
+mod menu_leaf_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_item_fires_directly_and_a_submenu_would_open_a_menu() {
+        // trycua/cua#7371: background invoke_menu must never open a menu,
+        // because an open menu grabs the user's keyboard. Command items run
+        // through their own action; only a submenu node opens one.
+        for role in [
+            "menu item",
+            "check menu item",
+            "radio menu item",
+            "Menu Item",
+        ] {
+            assert_eq!(leaf_plan(role), LeafPlan::Direct, "{role}");
+        }
+        for role in ["menu", "Menu", " menu "] {
+            assert_eq!(leaf_plan(role), LeafPlan::OpensMenu, "{role}");
+        }
+    }
+
+    #[test]
+    fn menu_must_open_names_why_nothing_ran() {
+        let error: anyhow::Error = MenuMustOpen {
+            detail: "segment 1 is a submenu".into(),
+        }
+        .into();
+        assert!(error.downcast_ref::<MenuMustOpen>().is_some());
+        assert!(error
+            .to_string()
+            .contains("only reachable by opening a menu"));
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.
@@ -3698,6 +4099,11 @@ pub fn element_bounds_ref(
             "web-content bounds need the document origin; re-walk"
         ));
     }
+    if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+        return Err(anyhow!(
+            "niri element bounds need the window's frame size check; re-walk"
+        ));
+    }
     let offset = window_to_screen_offset(pid, xid, None);
     require_exact_origin(offset, xid, exact_wayland_origin_required(xid))?;
     let coord = if offset.is_some() {
@@ -3761,6 +4167,25 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
             }
         },
         || Err(anyhow!("element_showing (cached element) timed out")),
+    )
+}
+
+/// Whether a snapshot-cached element is enabled right now, read from its own
+/// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
+/// state set.
+pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(Some(is_enabled_state(&state))),
+                Some(Err(_)) => Ok(None),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_enabled (cached element) timed out")),
     )
 }
 
@@ -3858,11 +4283,15 @@ struct HitNode<'a> {
 /// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
 /// the toolkit stops returning a deeper child. O(depth) round-trips instead of
 /// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+///
+/// `stacking` says how far the toolkit's answer can be trusted where siblings
+/// overlap (see [`SiblingStacking`]).
 async fn descend_at_point<'a>(
     conn: &'a AccessibilityConnection,
     start: RawObjectRef,
     x: i32,
     y: i32,
+    stacking: SiblingStacking,
 ) -> Vec<HitNode<'a>> {
     let mut chain: Vec<HitNode<'a>> = Vec::new();
     let mut current = start;
@@ -3890,9 +4319,122 @@ async fn descend_at_point<'a>(
         if next.path.ends_with("/null") || next == current {
             break;
         }
+        let next = match stacking {
+            SiblingStacking::FirstMatch => later_sibling_on_top(conn, &current, &next, x, y)
+                .await
+                .unwrap_or(next),
+            SiblingStacking::Topmost => next,
+        };
         current = next;
     }
     chain
+}
+
+/// How a toolkit's `GetAccessibleAtPoint` picks among overlapping children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SiblingStacking {
+    /// The answer is the child drawn on top.
+    Topmost,
+    /// ATK's container default (GTK 2 and 3): the *first* child, in child
+    /// order, whose extents contain the point. A `GtkOverlay` lists its main
+    /// child first and draws its overlays above it, so a banner shown over a
+    /// button answers with the button underneath.
+    FirstMatch,
+}
+
+impl SiblingStacking {
+    fn of_toolkit(name: &str, version: &str) -> Self {
+        let name = name.trim();
+        let gtk3_or_older = version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major < 4);
+        if name.eq_ignore_ascii_case("gail") || (name.eq_ignore_ascii_case("gtk") && gtk3_or_older)
+        {
+            Self::FirstMatch
+        } else {
+            Self::Topmost
+        }
+    }
+
+    async fn of_app(app: &AccessibleProxy<'_>) -> Self {
+        let inner = app.inner();
+        let Some(application) = async {
+            atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .destination(inner.destination().to_owned())
+                .ok()?
+                .build()
+                .await
+                .ok()
+        }
+        .await
+        else {
+            return Self::Topmost;
+        };
+        let name = call(application.toolkit_name()).await.and_then(Result::ok);
+        let version = call(application.version()).await.and_then(Result::ok);
+        match (name, version) {
+            (Some(name), Some(version)) => Self::of_toolkit(&name, &version),
+            _ => Self::Topmost,
+        }
+    }
+}
+
+/// Overlapping siblings of one parent the stacking check reads at most; a
+/// container with more children (a list, a sheet) is not a stack.
+const STACKED_SIBLINGS_CAP: i32 = 32;
+
+/// For a [`SiblingStacking::FirstMatch`] toolkit: the last showing child of
+/// `parent` after `hit` whose extents contain the point, which the toolkit
+/// draws over `hit`. `None` keeps the toolkit's answer.
+async fn later_sibling_on_top(
+    conn: &AccessibilityConnection,
+    parent: &RawObjectRef,
+    hit: &RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Option<RawObjectRef> {
+    let count = raw_child_count(conn.connection(), parent).await.ok()?;
+    if !(2..=STACKED_SIBLINGS_CAP).contains(&count) {
+        return None;
+    }
+    let index = call(accessible_for(conn, hit).await.ok()?.get_index_in_parent())
+        .await?
+        .ok()?;
+    if index < 0 {
+        return None;
+    }
+    let parent = accessible_for(conn, parent).await.ok()?;
+    for sibling in (index + 1..count).rev() {
+        let Some(Ok(child)) = call(parent.get_child_at_index(sibling)).await else {
+            continue;
+        };
+        let Some(raw) = RawObjectRef::from_atspi(&child) else {
+            continue;
+        };
+        let Ok(acc) = accessible_for(conn, &raw).await else {
+            continue;
+        };
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if !matches!(
+            call(component.contains(x, y, CoordType::Window)).await,
+            Some(Ok(true))
+        ) {
+            continue;
+        }
+        if matches!(call(acc.get_state()).await, Some(Ok(state)) if is_showing_state(&state)) {
+            return Some(raw);
+        }
+    }
+    None
 }
 
 impl PartialEq for RawObjectRef {
@@ -3954,8 +4496,9 @@ pub fn perform_action_at_point_in(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
@@ -3988,16 +4531,9 @@ async fn decoration_frame_origin(
 }
 
 async fn toolkit_measures_from_frame(app: &AccessibleProxy<'_>) -> bool {
-    let Some(Ok(proxies)) = call(app.proxies()).await else {
-        return false;
-    };
-    let Some(Ok(application)) = call(proxies.application()).await else {
-        return false;
-    };
-    let Some(Ok(name)) = call(application.toolkit_name()).await else {
-        return false;
-    };
-    is_frame_coordinate_toolkit(&name)
+    toolkit_of(app)
+        .await
+        .is_some_and(|name| is_frame_coordinate_toolkit(&name))
 }
 
 /// VCL (LibreOffice) measures `Window` coordinates from the WM frame, title
@@ -4052,6 +4588,19 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn only_gtk3_and_older_answer_at_point_with_the_first_matching_child() {
+        use super::SiblingStacking::{FirstMatch, Topmost};
+        let of = super::SiblingStacking::of_toolkit;
+        assert_eq!(of("gtk", "3.24.49"), FirstMatch);
+        assert_eq!(of("GAIL", "2.24.33"), FirstMatch);
+        assert_eq!(of("GTK", "4.14.4"), Topmost);
+        assert_eq!(of("gtk", ""), Topmost);
+        assert_eq!(of("Qt", "5.15.13"), Topmost);
+        assert_eq!(of("Chromium", "126.0"), Topmost);
+        assert_eq!(of("VCL", "3.24"), Topmost);
+    }
 
     #[test]
     fn only_vcl_measures_from_the_wm_frame() {
@@ -4985,7 +5534,9 @@ pub fn perform_action_at_point(
             for (i, v) in visited.iter().enumerate() {
                 if v.actions.is_empty()
                     || !v.has_component
+                    || v.enabled == Some(false)
                     || is_container_role(&v.role)
+                    || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
                 {
                     continue;
@@ -5120,6 +5671,7 @@ pub fn perform_action_at_screen_point(
                 .into_iter()
                 .filter(|&(idx, ..)| {
                     !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                        && action_nodes[idx].enabled != Some(false)
                 })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
@@ -5280,10 +5832,13 @@ async fn set_value_on(
             Ok(tp) => tp.caret_offset().await.unwrap_or(0),
             Err(_) => 0,
         };
-        let len = value.chars().count() as i32;
-        if et.insert_text(off, value, len).await.unwrap_or(false) {
-            commit_editable_write(&proxies).await;
-            return Ok(());
+        match editable_insert_length_for(value, toolkit_of(acc)).await {
+            Some(len) if et.insert_text(off, value, len).await.unwrap_or(false) => {
+                commit_editable_write(&proxies).await;
+                return Ok(());
+            }
+            Some(_) => {}
+            None => dlog!("toolkit unknown, no safe InsertText length for non-ASCII value"),
         }
     }
     if has_value {
@@ -5309,7 +5864,7 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = walk_before_write(collect_visited(conn, pid))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -5400,8 +5955,69 @@ pub enum OptionPick {
     Picked { name: String },
     /// No option has that text; nothing was changed.
     NoMatch { options: Vec<String> },
-    /// The element lists no options (or cannot select them).
+    /// Every read of the element answered, and it lists no options.
+    NoOptions,
+    /// No options could be read (or selected): a read failed or timed out,
+    /// or the element has no selection route.
     Unavailable,
+}
+
+/// A pick was sent to the toolkit, which then failed or did not answer in
+/// time: the option may be set. Not a failure to route around
+/// or report as "nothing changed".
+#[derive(Debug)]
+pub struct OptionPickSent(pub String);
+impl std::fmt::Display for OptionPickSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for OptionPickSent {}
+
+/// Send a pick and read the toolkit's answer: `true` picked, `false` refused
+/// (nothing changed). A reply saying the option is gone means it never ran.
+/// Any other error reply, or no answer, is [`OptionPickSent`].
+async fn send_pick(
+    request: &str,
+    name: &str,
+    pick: impl std::future::Future<Output = atspi::zbus::Result<bool>>,
+) -> Result<OptionPick> {
+    // `call` gives up without sending once the deadline has passed.
+    if deadline_passed() {
+        return Err(anyhow!(
+            "{request} for option {name:?} was not sent in time"
+        ));
+    }
+    let error = match call(pick).await {
+        Some(Ok(true)) => {
+            return Ok(OptionPick::Picked {
+                name: name.to_owned(),
+            })
+        }
+        Some(Ok(false)) => return Err(anyhow!("{request} was refused for option {name:?}")),
+        Some(Err(error)) => error,
+        None => {
+            return Err(OptionPickSent(format!(
+                "{request} for option {name:?} did not answer in time"
+            ))
+            .into())
+        }
+    };
+    let failed = format!("{request} for option {name:?} failed: {error}");
+    match &error {
+        atspi::zbus::Error::MethodError(reply, ..)
+            if matches!(
+                reply.as_str(),
+                "org.freedesktop.DBus.Error.UnknownObject"
+                    | "org.freedesktop.DBus.Error.UnknownMethod"
+                    | "org.freedesktop.DBus.Error.UnknownInterface"
+                    | "org.freedesktop.DBus.Error.ServiceUnknown"
+            ) =>
+        {
+            Err(anyhow!(failed))
+        }
+        _ => Err(OptionPickSent(failed).into()),
+    }
 }
 
 struct OptionNode {
@@ -5412,31 +6028,44 @@ struct OptionNode {
     index: i32,
 }
 
+/// The options [`list_options`] found, and whether every read it made
+/// answered: an incomplete scan with no options proves nothing about the
+/// element.
+struct OptionScan {
+    options: Vec<OptionNode>,
+    complete: bool,
+}
+
 /// The options under `oref`: item children, or the items of its popup menu
 /// or list child (one level down), in order.
-async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Vec<OptionNode> {
+async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> OptionScan {
     let zconn = conn.connection();
-    let mut options = Vec::new();
+    let mut scan = OptionScan {
+        options: Vec::new(),
+        complete: true,
+    };
     let Some(Ok(children)) = call(raw_children(zconn, oref)).await else {
-        return options;
+        scan.complete = false;
+        return scan;
     };
     for (position, child) in children.into_iter().enumerate() {
-        if options.len() >= OPTION_SCAN_CAP {
+        if scan.options.len() >= OPTION_SCAN_CAP {
             break;
         }
         let Some(Ok(acc)) = call(accessible_for(conn, &child)).await else {
+            scan.complete = false;
             continue;
         };
-        let role = call(acc.get_role_name())
-            .await
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
+        let Some(Ok(role)) = call(acc.get_role_name()).await else {
+            scan.complete = false;
+            continue;
+        };
         if is_option_role(&role) {
             let name = call(acc.name())
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: child,
                 name,
                 index: position as i32,
@@ -5447,19 +6076,21 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
             continue;
         }
         let Some(Ok(items)) = call(raw_children(zconn, &child)).await else {
+            scan.complete = false;
             continue;
         };
         for (index, item) in items.into_iter().enumerate() {
-            if options.len() >= OPTION_SCAN_CAP {
+            if scan.options.len() >= OPTION_SCAN_CAP {
                 break;
             }
             let Some(Ok(item_acc)) = call(accessible_for(conn, &item)).await else {
+                scan.complete = false;
                 continue;
             };
-            let item_role = call(item_acc.get_role_name())
-                .await
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
+            let Some(Ok(item_role)) = call(item_acc.get_role_name()).await else {
+                scan.complete = false;
+                continue;
+            };
             if !is_option_role(&item_role) {
                 continue;
             }
@@ -5467,14 +6098,14 @@ async fn list_options(conn: &AccessibilityConnection, oref: &RawObjectRef) -> Ve
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
-            options.push(OptionNode {
+            scan.options.push(OptionNode {
                 oref: item,
                 name,
                 index: index as i32,
             });
         }
     }
-    options
+    scan
 }
 
 /// Pick the option `value` names on a snapshot-cached selection container
@@ -5494,7 +6125,7 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
             if !ifaces.contains(Interface::Selection) {
                 return Ok(OptionPick::Unavailable);
             }
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let options = list_options(conn, &raw_ref(object_ref)).await.options;
             if options.is_empty() {
                 return Ok(OptionPick::Unavailable);
             }
@@ -5511,18 +6142,12 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
                 .selection()
                 .await
                 .map_err(|e| anyhow!("Selection unavailable: {e}"))?;
-            match call(selection.select_child(option.index)).await {
-                Some(Ok(true)) => Ok(OptionPick::Picked {
-                    name: option.name.clone(),
-                }),
-                Some(Ok(false)) => Err(anyhow!(
-                    "Selection.SelectChild({}) was refused for option {:?}",
-                    option.index,
-                    option.name
-                )),
-                Some(Err(e)) => Err(anyhow!("Selection.SelectChild failed: {e}")),
-                None => Err(anyhow!("Selection.SelectChild did not answer in time")),
-            }
+            send_pick(
+                &format!("Selection.SelectChild({})", option.index),
+                &option.name,
+                selection.select_child(option.index),
+            )
+            .await
         },
         || Err(anyhow!("select option (cached element) timed out")),
     )
@@ -5537,9 +6162,14 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
         async {
             let conn = shared_connection().await?;
             live_accessible(conn, object_ref).await?;
-            let options = list_options(conn, &raw_ref(object_ref)).await;
+            let scan = list_options(conn, &raw_ref(object_ref)).await;
+            let options = scan.options;
             if options.is_empty() {
-                return Ok(OptionPick::Unavailable);
+                return Ok(if scan.complete {
+                    OptionPick::NoOptions
+                } else {
+                    OptionPick::Unavailable
+                });
             }
             let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
             let Some(found) = match_option(&names, value) else {
@@ -5566,14 +6196,12 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
             let chosen = activation_index(&role, &actions).ok_or_else(|| {
                 anyhow!("option {:?} advertises no activation action", option.name)
             })?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => Ok(OptionPick::Picked {
-                    name: option.name.clone(),
-                }),
-                Some(Ok(false)) => Err(anyhow!("option {:?} refused its action", option.name)),
-                Some(Err(e)) => Err(anyhow!("option action failed: {e}")),
-                None => Err(anyhow!("option action did not answer in time")),
-            }
+            send_pick(
+                "the option's action",
+                &option.name,
+                ap.do_action(chosen as i32),
+            )
+            .await
         },
         || Err(anyhow!("activate option (cached element) timed out")),
     )
@@ -5586,7 +6214,7 @@ pub fn options_showing_ref(object_ref: &ObjectRef) -> bool {
         REF_ACTION_BUDGET,
         async {
             let conn = shared_connection().await?;
-            for option in list_options(conn, &raw_ref(object_ref)).await {
+            for option in list_options(conn, &raw_ref(object_ref)).await.options {
                 if let Some(Ok(acc)) = call(accessible_for(conn, &option.oref)).await {
                     if let Some(Ok(state)) = call(acc.get_state()).await {
                         if is_showing_state(&state) {
@@ -5888,16 +6516,24 @@ fn screen_answer_overrides_window(
     !native_origin_attested && screen_extents_trusted(raw, display)
 }
 
-/// True only when the Hyprland compositor identifies this exact client
-/// (nonzero address `xid` AND `pid`) as native Wayland, not XWayland. Missing,
-/// mismatched, or unreported clients fail closed, so `Screen` extents keep
-/// winning, which is correct for XWayland GTK and LibreOffice. Performs
-/// blocking compositor IPC: async callers must use `bounded_blocking`.
+/// True only when the compositor identifies this exact client (nonzero
+/// window id `xid` AND `pid`) as native Wayland, not XWayland, with an origin.
+/// Hyprland reports XWayland per client; under niri an X11 client belongs to
+/// xwayland-satellite's pid, so a matching pid on a placed niri window is a
+/// native client. Missing, mismatched, or unreported clients fail closed, so
+/// `Screen` extents keep winning, which is correct for XWayland GTK and
+/// LibreOffice. Performs blocking compositor IPC: async callers must use
+/// `bounded_blocking`.
 fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
     xid != 0
         && crate::wayland::is_wayland()
-        && crate::wayland::hyprland::is_session()
-        && crate::wayland::hyprland::native_client_attested(xid, pid)
+        && if crate::wayland::hyprland::is_session() {
+            crate::wayland::hyprland::native_client_attested(xid, pid)
+        } else {
+            crate::wayland::niri::is_session()
+                && crate::wayland::niri::window_for_id(xid)
+                    .is_ok_and(|window| window.pid == Some(pid) && window.placement.is_ok())
+        }
 }
 
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
@@ -6014,6 +6650,17 @@ fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i
                 crate::wayland::hyprland::window_for_pid(pid)
             }?;
             return (window.pid == pid).then_some((window.x, window.y));
+        }
+        if crate::wayland::niri::is_session() {
+            // Only a placed floating niri window has an origin. A tiled one
+            // has none, and no observed or default origin may stand in.
+            let window = if xid != 0 {
+                crate::wayland::niri::window_for_id(xid).ok()
+            } else {
+                crate::wayland::niri::window_for_pid(pid)
+            }?;
+            let placed = window.placement.ok()?;
+            return (window.pid == Some(pid)).then_some((placed.rect.x, placed.rect.y));
         }
         // Native Wayland: clients can't query a window's screen origin, and
         // AT-SPI CoordType::Screen collapses to (0,0) on Mutter. The bundled
@@ -6482,17 +7129,19 @@ async fn gnome_window_bound_element_async(
 }
 
 /// Whether a snapshot of window `xid` may bind its elements to that window as
-/// element tokens. Hyprland needs a correlated top-level. Elsewhere a native
-/// walk's correlated top-level counts, or else the window-scope rule for an
-/// uncorrelated walk: always on X11 and on compositors without a GNOME Shell,
-/// and on GNOME only when the attested Shell lists exactly `xid` for the PID.
+/// element tokens. Compositors addressed by exact window ids (Hyprland, niri)
+/// need a correlated top-level, since an application-wide walk can include
+/// another window of the same process. Elsewhere a native walk's correlated
+/// top-level counts, or else the window-scope rule for an uncorrelated walk:
+/// always on X11 and on compositors without a GNOME Shell, and on GNOME only
+/// when the attested Shell lists exactly `xid` for the PID.
 pub(crate) fn snapshot_binds_window(
-    hyprland_session: bool,
+    exact_window_ids: bool,
     window_scoped: bool,
     trusted: bool,
     unscoped_walk_proven: impl FnOnce() -> bool,
 ) -> bool {
-    if hyprland_session {
+    if exact_window_ids {
         return window_scoped;
     }
     (trusted && window_scoped) || unscoped_walk_proven()
@@ -6500,7 +7149,8 @@ pub(crate) fn snapshot_binds_window(
 
 pub fn snapshot_binds_window_for(pid: u32, xid: u64, window_scoped: bool, trusted: bool) -> bool {
     snapshot_binds_window(
-        crate::wayland::is_wayland() && crate::wayland::hyprland::is_session(),
+        crate::wayland::is_wayland()
+            && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session()),
         window_scoped,
         trusted,
         || window_scope_proven(pid, xid, None),
@@ -6631,7 +7281,7 @@ async fn element_bounds_for_visited(
             .await
             .flatten();
     if crate::wayland::is_wayland()
-        && crate::wayland::hyprland::is_session()
+        && (crate::wayland::hyprland::is_session() || crate::wayland::niri::is_session())
         && (offset.is_none() || scoped_frame.is_none())
     {
         return (Vec::new(), true);
@@ -6704,7 +7354,7 @@ async fn element_bounds_for_visited(
     // title-bar offset). Normalize that frame to the compositor window origin
     // before adding the screen offset. Native GTK reports (0,0), so this is a
     // no-op there.
-    let window_frame_origin = if offset.is_some() {
+    let window_frame_extents = if offset.is_some() {
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -6718,7 +7368,7 @@ async fn element_bounds_for_visited(
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
                         match call(component.get_extents(CoordType::Window)).await {
-                            Some(Ok((x, y, _, _))) => Some((x, y)),
+                            Some(Ok(extents)) => Some(extents),
                             _ => None,
                         }
                     }
@@ -6732,6 +7382,33 @@ async fn element_bounds_for_visited(
     } else {
         None
     };
+    let window_frame_origin = window_frame_extents.map(|(x, y, _, _)| (x, y));
+    // niri's origin is its window geometry. A toolkit's Window extents start
+    // there only when its frame is that size: GTK 3 measures from its
+    // client-side shadow, Chromium from its resize margins, and where the
+    // window starts inside such a frame is not on the bus. Publish no frames
+    // rather than shifted ones.
+    if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
+        let window = bounded_blocking(move || {
+            if xid != 0 {
+                crate::wayland::niri::window_for_id(xid).ok()
+            } else {
+                crate::wayland::niri::window_for_pid(pid)
+            }
+        })
+        .await
+        .flatten();
+        let window_size = window
+            .and_then(|window| window.placement.ok())
+            .map(|placed| (placed.rect.width, placed.rect.height));
+        if !niri_frame_fits(window_frame_extents, window_size) {
+            dlog!(
+                "element bounds: niri window {xid} is {window_size:?} but its accessible frame \
+                 is {window_frame_extents:?}; publishing no frames"
+            );
+            return (Vec::new(), true);
+        }
+    }
     // Add compositor decorations and the embedded document origin for web
     // descendants only. Electron commonly contributes zero for both; WebKitGTK
     // under Sway needs the sum.
@@ -7117,8 +7794,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, bounded_blocking,
         combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_showing_state, is_web_process_bus, listing_state, passive_marker,
+        indexed_row_attrs, is_activation_action, is_enabled_state, is_indexable_capabilities,
+        is_passive_role, is_showing_state, is_web_process_bus, listing_state,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         wayland_window_origin, ApplicationSelection,
@@ -7286,7 +7963,7 @@ mod coord_tests {
             true,
             Some(true)
         ));
-        assert!(!is_indexable_capabilities(
+        assert!(is_indexable_capabilities(
             "button",
             true,
             false,
@@ -7310,7 +7987,7 @@ mod coord_tests {
     }
 
     #[test]
-    fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
+    fn hidden_controls_are_not_listed_and_offscreen_ones_are_marked() {
         // `Showing` is the on-screen state.
         assert!(!is_showing_state(&StateSet::new(
             State::Enabled | State::Visible
@@ -7356,17 +8033,17 @@ mod coord_tests {
             "menu item",
             &StateSet::new(State::Enabled)
         ));
-        // A visible but insensitive button keeps a marker in the markdown.
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let click = vec!["click".to_owned()];
         assert_eq!(
-            passive_marker("push button", true, true, Some(false)),
-            " (disabled)"
+            indexed_row_attrs(Some(false), &click),
+            "enabled=false actions=[click]"
         );
-        assert_eq!(
-            passive_marker("push button", false, true, Some(false)),
-            " (disabled)"
-        );
-        assert_eq!(passive_marker("push button", true, true, Some(true)), "");
-        assert_eq!(passive_marker("label", false, true, Some(false)), "");
+        assert_eq!(indexed_row_attrs(Some(true), &click), "actions=[click]");
+        assert_eq!(indexed_row_attrs(None, &[]), "actions=[]");
     }
 
     #[test]
@@ -7396,11 +8073,20 @@ mod coord_tests {
 
     #[test]
     fn component_role_fallback_rejects_unverified_or_passive_nodes() {
-        for enabled in [None, Some(false)] {
-            assert!(!is_indexable_capabilities(
-                "button", false, false, false, false, true, enabled
-            ));
-        }
+        assert!(!is_indexable_capabilities(
+            "button", false, false, false, false, true, None
+        ));
+        // A disabled component-only button is indexed so its `enabled: false`
+        // can be read.
+        assert!(is_indexable_capabilities(
+            "button",
+            false,
+            false,
+            false,
+            false,
+            true,
+            Some(false)
+        ));
         assert!(!is_indexable_capabilities(
             "button",
             false,
@@ -7994,6 +8680,13 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["doDefault"]), true),
             Some(0)
         );
+        // Its document is not: `doDefault` there dispatches no DOM click.
+        for deepest in [false, true] {
+            assert_eq!(
+                at_point_activation_index("document web", &acts(&["doDefault"]), deepest),
+                None
+            );
+        }
     }
 
     #[test]
@@ -8461,10 +9154,10 @@ mod token_scope_tests {
                 assert!(snapshot_binds_window(false, window_scoped, trusted, || {
                     gnome_window_scope_proven(REQUESTED_B, None, false, || false, || None)
                 }));
-                // Hyprland keeps its correlated-top-level rule.
+                // Hyprland and niri keep their correlated-top-level rule.
                 assert_eq!(
                     snapshot_binds_window(true, window_scoped, trusted, || {
-                        panic!("Hyprland asks no Shell")
+                        panic!("exact-id compositors ask no Shell")
                     }),
                     window_scoped
                 );
@@ -8499,5 +9192,180 @@ mod token_scope_tests {
         )
         .is_ok());
         assert!(window_element_membership(Some(0), None, proven(None, vec![REQUESTED_B])).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod pick_editable_tests {
+    use super::{pick_editable_index, EditableFlags};
+
+    const ENTRY: EditableFlags = EditableFlags {
+        editable: true,
+        focused: false,
+        in_web_doc: false,
+    };
+    const PAGE_FIELD: EditableFlags = EditableFlags {
+        in_web_doc: true,
+        ..ENTRY
+    };
+    const LABEL: EditableFlags = EditableFlags {
+        editable: false,
+        ..ENTRY
+    };
+
+    fn pick(nodes: &[EditableFlags], complete: bool) -> Option<usize> {
+        pick_editable_index(nodes.iter().copied(), complete)
+    }
+
+    #[test]
+    fn a_reached_focused_editable_wins_on_any_walk() {
+        let focused = EditableFlags {
+            focused: true,
+            ..PAGE_FIELD
+        };
+        let tree = [ENTRY, PAGE_FIELD, LABEL, focused];
+        assert_eq!(pick(&tree, true), Some(3));
+        assert_eq!(pick(&tree, false), Some(3));
+    }
+
+    #[test]
+    fn a_partial_walk_writes_nowhere_but_the_focused_editable() {
+        // The focused field may sit past where the walk stopped, so neither an
+        // earlier page field nor an earlier entry is a safe target.
+        assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], false), None);
+        assert_eq!(pick(&[PAGE_FIELD], false), None);
+        assert_eq!(pick(&[ENTRY], false), None);
+    }
+
+    #[test]
+    fn a_complete_walk_without_focus_prefers_page_content_then_the_only_editable() {
+        assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], true), Some(2));
+        assert_eq!(pick(&[LABEL, ENTRY, LABEL], true), Some(1));
+        assert_eq!(pick(&[LABEL], true), None);
+    }
+
+    #[test]
+    fn several_editables_with_no_focus_and_no_page_content_pick_nothing() {
+        // Geany: the toolbar search entry sorts above the document, and tree
+        // order is not a reason to write into it.
+        assert_eq!(pick(&[LABEL, ENTRY, ENTRY], true), None);
+        assert_eq!(pick(&[ENTRY, ENTRY], true), None);
+    }
+
+    #[test]
+    fn focus_on_a_non_editable_node_is_not_a_target() {
+        let focused_label = EditableFlags {
+            focused: true,
+            ..LABEL
+        };
+        assert_eq!(pick(&[focused_label, PAGE_FIELD], false), None);
+        assert_eq!(pick(&[focused_label, PAGE_FIELD], true), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod editable_insert_length_tests {
+    use super::{
+        deadline_passed, editable_insert_length, editable_insert_length_for, walk_before_write,
+        EDITABLE_WRITE_RESERVE, INPUT_QUERY_BUDGET, OP_DEADLINE,
+    };
+    use std::time::Duration;
+    use tokio::time::{sleep, Instant};
+
+    async fn answers_after(delay: Duration, toolkit: &str) -> Option<String> {
+        sleep(delay).await;
+        Some(toolkit.to_owned())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_delayed_lookup_sends_no_length_and_leaves_the_write_its_reserve() {
+        let deadline = Instant::now() + Duration::from_millis(400);
+        OP_DEADLINE
+            .scope(deadline, async {
+                let lookup = answers_after(Duration::from_secs(1), "GTK");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
+                assert_eq!(deadline - Instant::now(), EDITABLE_WRITE_RESERVE);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_that_outlasts_the_budget_leaves_the_lookup_and_the_write_their_time() {
+        let deadline = Instant::now() + INPUT_QUERY_BUDGET;
+        OP_DEADLINE
+            .scope(deadline, async {
+                walk_before_write(async {
+                    while !deadline_passed() {
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await;
+                assert!(!deadline_passed());
+                let lookup = answers_after(Duration::from_millis(100), "Qt");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, Some(5));
+                assert!(deadline - Instant::now() >= EDITABLE_WRITE_RESERVE);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_lookup_runs_when_only_the_reserve_is_left() {
+        let deadline = Instant::now() + EDITABLE_WRITE_RESERVE;
+        OP_DEADLINE
+            .scope(deadline, async {
+                let lookup = answers_after(Duration::ZERO, "GTK");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
+                assert_eq!(Instant::now() + EDITABLE_WRITE_RESERVE, deadline);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_lookup_sends_no_length_for_non_ascii_text() {
+        OP_DEADLINE
+            .scope(Instant::now() + Duration::from_secs(1), async {
+                let failed = async { None };
+                assert_eq!(editable_insert_length_for("ñ🙂ab", failed).await, None);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_prompt_lookup_names_the_unit_and_ascii_needs_none() {
+        OP_DEADLINE
+            .scope(Instant::now() + Duration::from_secs(1), async {
+                let gtk = answers_after(Duration::from_millis(10), "GTK");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", gtk).await, Some(8));
+                let qt = answers_after(Duration::from_millis(10), "Qt");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", qt).await, Some(5));
+                let never = std::future::pending();
+                assert_eq!(editable_insert_length_for("abc", never).await, Some(3));
+            })
+            .await;
+    }
+
+    #[test]
+    fn qt_gets_utf16_units_because_it_resizes_the_string_to_exactly_that() {
+        // Measured on Qt 6: 4 drops the last character, 8 appends garbage.
+        assert_eq!(editable_insert_length(Some("Qt"), "ñ🙂ab"), Some(5));
+        assert_eq!(editable_insert_length(Some("qt"), "ok"), Some(2));
+    }
+
+    #[test]
+    fn every_other_toolkit_gets_bytes() {
+        for toolkit in ["GTK", "gail", "Chromium"] {
+            assert_eq!(
+                editable_insert_length(Some(toolkit), "ñ🙂ab"),
+                Some(8),
+                "{toolkit}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_toolkit_gets_no_length_for_text_the_units_disagree_on() {
+        // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
+        assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
+        assert_eq!(editable_insert_length(None, "abc"), Some(3));
     }
 }

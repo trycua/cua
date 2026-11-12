@@ -12,10 +12,8 @@ import { Button } from "@/components/ui/button";
 import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
-import { useFlag } from "@/bridge/flags";
-import { LegacyVolumePage } from "@/legacy/routes/volume/index";
 
-export const Route = createFileRoute("/volume/")({ component: VolumePageSwitch });
+export const Route = createFileRoute("/volume/")({ component: VolumePage });
 
 /**
  * Volume, as the SwiftUI app's `DrivePageView` lays it out: Open in Finder
@@ -63,7 +61,11 @@ function VolumeBody() {
         {view.openLabel ? (
           <Section>
             <div className="flex items-center gap-4 px-4 py-3">
-              <p className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground" title={view.mountPath ?? view.mountLine ?? undefined} data-drive-mount-line="">
+              <p
+                className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground"
+                title={view.mountPath ?? view.mountLine ?? undefined}
+                data-drive-mount-line=""
+              >
                 {view.mountLine}
               </p>
               <Button
@@ -170,7 +172,19 @@ function Section({ title, kind, children }: { title?: string; kind?: string; chi
 }
 
 /** A `LineView`: its text, a muted trailing part, and up to two buttons. */
-function Line({ line, busy, onAction, onSecondary, primary }: { line: LineView; busy: boolean; onAction?: () => void; onSecondary?: () => void; primary?: boolean }) {
+function Line({
+  line,
+  busy,
+  onAction,
+  onSecondary,
+  primary,
+}: {
+  line: LineView;
+  busy: boolean;
+  onAction?: () => void;
+  onSecondary?: () => void;
+  primary?: boolean;
+}) {
   return (
     <div className="flex min-h-11 items-center gap-4 px-4 py-2" data-drive-line={line.id}>
       <span className="min-w-0 flex-1 truncate text-[13px]" title={line.text} data-line-text="">
@@ -214,9 +228,4 @@ function Conflict({ conflict: c, busy, onOpen, onResolve }: { conflict: Conflict
       </Button>
     </div>
   );
-}
-
-/** The redesign behind `spaces_redesign` (Settings → Advanced → Labs); off, the page as it was. */
-function VolumePageSwitch() {
-  return useFlag("spaces_redesign") ? <VolumePage /> : <LegacyVolumePage />;
 }

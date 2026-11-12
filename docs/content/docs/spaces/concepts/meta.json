@@ -2,7 +2,8 @@
   "title": "Concepts",
   "pages": [
     "how-spaces-works",
-    "computers-devices-and-spaces",
-    "space-kinds"
+    "machines-and-spaces",
+    "space-kinds",
+    "runtime-conformance"
   ]
 }

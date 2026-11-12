@@ -22,6 +22,14 @@ struct ThreadBridgeTests {
         #expect(args["follow_ms"] as? Int == 25_000)
     }
 
+    @Test func readCarriesTheLiveKeyOnlyWithAFollow() throws {
+        let (_, followed) = try WebUIBridge.threadToolCall(
+            "thread.read", ["spaceId": "local:dev", "after": 41, "followMs": 25_000, "liveAfter": "claude=thinking"])
+        #expect(followed["live_after"] as? String == "claude=thinking")
+        let (_, plain) = try WebUIBridge.threadToolCall("thread.read", ["spaceId": "local:dev", "after": 41, "liveAfter": "claude=thinking"])
+        #expect(plain["live_after"] == nil)
+    }
+
     @Test func readPagesBack() throws {
         let (_, args) = try WebUIBridge.threadToolCall("thread.read", ["spaceId": "local:dev", "before": 40, "limit": 100])
         #expect((args["before"] as? NSNumber)?.intValue == 40)
@@ -130,5 +138,59 @@ struct ThreadBridgeTests {
         // A Space that is not there is a real error, not an old daemon.
         #expect(!WebUIBridge.missingThreadTool("not_found: no Space local:gone"))
         #expect(!WebUIBridge.missingThreadTool("unknown tool volume_ls"))
+    }
+}
+
+/// What the daemon's `thread_read` answers for a push the host asks about,
+/// as the Rust core's parity flow (`thread-cards.json`) feeds it.
+private final class CardTools: AgentsToolRunning, @unchecked Sendable {
+    let answer: [String: Any]
+    init(_ answer: [String: Any]) { self.answer = answer }
+    func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any { answer }
+}
+
+/// The push card and Cua's own author are the app core's (`threadCards.*`,
+/// drawn by the web UI this app hosts): the Mac host passes the host's card
+/// data and the `system` author through untouched, and draws none of the
+/// words itself.
+@MainActor
+struct ThreadCardContractTests {
+    static let core = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("../../libs/cua/crates/cua-spaces-app-core/parity").standardized
+    static let sources = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Sources")
+
+    func canonical(_ v: Any) -> String {
+        String(decoding: try! JSONSerialization.data(withJSONObject: v, options: [.sortedKeys, .fragmentsAllowed]), as: UTF8.self)
+    }
+
+    @Test func theHostsCardAndTheSystemAuthorPassThroughUntouched() async throws {
+        let flow = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.core.appendingPathComponent("thread-cards.json"))) as! [String: Any]
+        let steps = flow["steps"] as! [[String: Any]]
+        let card = (steps[0]["args"] as! [String: Any])["input"] as! [String: Any]
+        let system: [String: Any] = ["kind": "system", "id": "system:host", "name": "Cua"]
+        let entry: [String: Any] = [
+            "seq": 7, "kind": "approval", "author": system, "text": "Hermes wants to push a branch and open a pull request on acme/app.",
+            "approval": ["action": "export:repo.push", "details": "Branch fix/retry-backoff.", "state": "open", "card": card] as [String: Any],
+        ]
+        let model = PersistentModel(tools: CardTools(["entries": [entry], "cursor": 7]))
+        let got = try await model.daemonTool("thread_read", ["space": "local:dev"]) as! [String: Any]
+        let e = (got["entries"] as! [[String: Any]])[0]
+        #expect(canonical(e) == canonical(entry))
+        #expect(((e["author"] as! [String: Any])["kind"] as? String) == "system")
+        let files = (((e["approval"] as! [String: Any])["card"] as! [String: Any])["files"] as! [[String: Any]])
+        #expect(files.count == 3 && files[0]["path"] as? String == "src/net/retry.py")
+    }
+
+    @Test func theMacHostDrawsNoCardOrAuthorWordsOfItsOwn() throws {
+        // The words are the core's; a copy in Swift would drift from the web and Electron cards.
+        let banned = ["Will open a pull request", "Push and open", "wants to push a branch", "files changed", "\"APP\"", "cua-app-icon"]
+        let walker = FileManager.default.enumerator(at: Self.sources, includingPropertiesForKeys: nil)!
+        for case let url as URL in walker where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for word in banned { #expect(!text.contains(word), "\(url.lastPathComponent) draws \(word) itself") }
+        }
     }
 }

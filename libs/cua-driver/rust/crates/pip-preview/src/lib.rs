@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! pip-preview — shared types + trait for the experimental
 //! picture-in-picture agent preview window.
 //!

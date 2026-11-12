@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Click the "Domains" hyperlink in Chrome via the daemon pipe.
 
 #[cfg(target_os = "windows")]
@@ -73,7 +76,7 @@ fn main() {
         eprintln!("Tree dump (first 2000 chars):");
         eprintln!(
             "{}",
-            &state_resp
+            state_resp
                 .replace("\\n", "\n")
                 .chars()
                 .take(2000)

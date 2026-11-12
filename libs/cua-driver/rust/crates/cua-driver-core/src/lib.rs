@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent Driver core and dual-era MCP dispatch.
 //!
 //! Stdio supports legacy initialization and modern per-request negotiation.
@@ -39,7 +42,12 @@ pub const PARENT_LIVENESS_STDIN_ENV: &str = "CUA_DRIVER_PARENT_LIVENESS_STDIN";
 
 /// Only the exact value `1` counts — fail-safe for anything else.
 pub fn embedded_mode() -> bool {
-    std::env::var_os(EMBEDDED_ENV).is_some_and(|v| v == "1")
+    is_embedded_sentinel(std::env::var_os(EMBEDDED_ENV).as_deref())
+}
+
+/// The [`EMBEDDED_ENV`] rule on an already-read value.
+pub fn is_embedded_sentinel(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| v == "1")
 }
 
 /// Parent-EOF shutdown is valid only for a directly embedded daemon. Requiring
@@ -52,6 +60,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 pub mod action_record;
 pub mod action_target;
 pub mod agent_cursor;
+pub mod app_names;
 pub mod authorization;
 pub mod background_input;
 pub mod batch_nudge;
@@ -71,15 +80,20 @@ pub mod cursor_sampler;
 pub mod cursor_shape;
 pub mod daemon;
 pub mod delivery;
+pub mod deprecation;
 pub mod desktop_capture_scale;
 pub mod element_frame;
 pub mod element_query;
 pub mod element_token;
 pub mod expectation;
+pub mod fast_path;
 pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
+#[cfg(feature = "keyring")]
+pub mod history_keyring;
 pub mod image_utils;
+pub mod input_pacing;
 pub mod interactive_input;
 pub mod key_pacing;
 pub mod launch_guard;
@@ -100,6 +114,7 @@ pub mod recording_zoom;
 pub mod recovery_hint;
 #[cfg(feature = "script")]
 pub mod script_tool;
+pub mod security_prompt;
 pub mod server;
 pub mod session;
 pub mod session_authorization;
@@ -118,6 +133,7 @@ pub mod tool;
 pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
+pub mod type_pacing;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;

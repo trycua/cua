@@ -3,6 +3,8 @@
 # macOS harness tests use the installed, TCC-authorized cua-driver daemon path.
 # The install must embed CUA_DRIVER_SOURCE_SHA; the Lume wrapper owns that step.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -369,6 +371,8 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_counter \
     harness_appkit_counter_px_background \
     harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved \
+    harness_appkit_disabled_control_is_published_and_its_press_refused \
+    harness_appkit_foreground_from_the_background_rereads_enablement_after_activation \
     harness_appkit_px_background_press_key_reports_honest_delivery_truth \
     harness_appkit_exact_activation_with_agent_cursor \
     harness_appkit_exact_activation_ignores_competing_application_window \
@@ -424,6 +428,9 @@ EOF
     # than typed matrix results, so they must not leave unowned trajectories.
     run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
+      --ignored --nocapture --test-threads=1
+    run_test frontmost-app env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test frontmost_app_macos_test -- \
       --ignored --nocapture --test-threads=1
     # Tk derives click locations from the hardware pointer. The rows skip with
     # an explicit reason when python3 lacks tkinter (hosted images may not ship

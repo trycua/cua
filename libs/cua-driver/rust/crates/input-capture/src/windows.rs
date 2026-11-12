@@ -6,6 +6,7 @@
 //!   1. drop OS-injected events (our own actuation / replay) — `*_INJECTED`,
 //!   2. drop events while the target window is not foreground (window-scoping),
 //!   3. drop events when indicator rendering is stale or the pointer is outside the target.
+//!
 //! Only after all three may an event be buffered. The keyboard path feeds the
 //! shared [`Coalescer`] so typing is redacted and coalesced.
 //!

@@ -83,6 +83,7 @@ impl Coalescer {
         Some(HumanEvent::Text { t_ms })
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn discard(&mut self) {
         self.char_count = 0;
         self.run_start_ms = None;

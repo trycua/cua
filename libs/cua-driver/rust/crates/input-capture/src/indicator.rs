@@ -286,56 +286,6 @@ mod platform {
         rect.right > rect.left && rect.bottom > rect.top
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn maximized_resize_frame_clamps_to_visible_work_area() {
-            let reported = RECT {
-                left: -8,
-                top: -8,
-                right: 1288,
-                bottom: 776,
-            };
-            let work_area = RECT {
-                left: 0,
-                top: 0,
-                right: 1280,
-                bottom: 768,
-            };
-
-            let visible = intersect_rect(reported, work_area);
-
-            assert_eq!(visible.left, 0);
-            assert_eq!(visible.top, 0);
-            assert_eq!(visible.right, 1280);
-            assert_eq!(visible.bottom, 768);
-        }
-
-        #[test]
-        fn visible_frame_requires_positive_area() {
-            assert!(rect_has_area(RECT {
-                left: 100,
-                top: 50,
-                right: 900,
-                bottom: 650,
-            }));
-            assert!(!rect_has_area(RECT {
-                left: 100,
-                top: 50,
-                right: 100,
-                bottom: 650,
-            }));
-            assert!(!rect_has_area(RECT {
-                left: 100,
-                top: 650,
-                right: 900,
-                bottom: 50,
-            }));
-        }
-    }
-
     /// A 32-bit premultiplied-BGRA DIB section + memory DC for layered paint.
     struct DibSurface {
         screen_dc: HDC,
@@ -484,6 +434,56 @@ mod platform {
                 let _ = DeleteDC(self.dc);
                 ReleaseDC(None, self.screen_dc);
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn maximized_resize_frame_clamps_to_visible_work_area() {
+            let reported = RECT {
+                left: -8,
+                top: -8,
+                right: 1288,
+                bottom: 776,
+            };
+            let work_area = RECT {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 768,
+            };
+
+            let visible = intersect_rect(reported, work_area);
+
+            assert_eq!(visible.left, 0);
+            assert_eq!(visible.top, 0);
+            assert_eq!(visible.right, 1280);
+            assert_eq!(visible.bottom, 768);
+        }
+
+        #[test]
+        fn visible_frame_requires_positive_area() {
+            assert!(rect_has_area(RECT {
+                left: 100,
+                top: 50,
+                right: 900,
+                bottom: 650,
+            }));
+            assert!(!rect_has_area(RECT {
+                left: 100,
+                top: 50,
+                right: 100,
+                bottom: 650,
+            }));
+            assert!(!rect_has_area(RECT {
+                left: 100,
+                top: 650,
+                right: 900,
+                bottom: 50,
+            }));
         }
     }
 }

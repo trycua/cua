@@ -6436,6 +6436,75 @@ const FfiConverterTypeWindowElement = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * A readable native row with no action handle: static text, a label, a
+ * read-only value. It comes from the same walk as `elements`, carries no
+ * `element_index` or `element_token`, and no action tool accepts it.
+ * `parent_index` names the nearest addressable ancestor in `elements`.
+ */
+export type WindowObservation = {
+    role: string,
+    depth: number,
+    label?: string,
+    value?: string,
+    frame?: ElementFrame,
+    parentIndex?: bigint,
+    inWebContent?: boolean
+}
+
+/**
+ * Generated factory for {@link WindowObservation} record objects.
+ */
+export const WindowObservation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WindowObservation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WindowObservation>,
+    });
+})();
+
+const FfiConverterTypeWindowObservation = (() => {
+    type TypeName = WindowObservation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                role: FfiConverterString.read(from),
+                depth: FfiConverterUInt32.read(from),
+                label: FfiConverterOptionalString.read(from),
+                value: FfiConverterOptionalString.read(from),
+                frame: FfiConverterOptionalTypeElementFrame.read(from),
+                parentIndex: FfiConverterOptionalUInt64.read(from),
+                inWebContent: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.role, into);
+            FfiConverterUInt32.write(value.depth, into);
+            FfiConverterOptionalString.write(value.label, into);
+            FfiConverterOptionalString.write(value.value, into);
+            FfiConverterOptionalTypeElementFrame.write(value.frame, into);
+            FfiConverterOptionalUInt64.write(value.parentIndex, into);
+            FfiConverterOptionalBoolean.write(value.inWebContent, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.role) +
+             FfiConverterUInt32.allocationSize(value.depth) +
+             FfiConverterOptionalString.allocationSize(value.label) +
+             FfiConverterOptionalString.allocationSize(value.value) +
+             FfiConverterOptionalTypeElementFrame.allocationSize(value.frame) +
+             FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +
+             FfiConverterOptionalBoolean.allocationSize(value.inWebContent);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type WindowStateOutput = {
     pid: number,
     windowId: bigint,
@@ -6444,6 +6513,15 @@ export type WindowStateOutput = {
     windowTitle?: string,
     treeMarkdown?: string,
     elements?: Array<WindowElement>,
+    /**
+     * Display-only rows of the same walk. Absent means the platform did not
+     * observe them, never that the window has none.
+     */
+    observations?: Array<WindowObservation>,
+    /**
+     * True when `observations` stopped at its row cap.
+     */
+    observationsTruncated?: boolean,
     elementCount?: bigint,
     totalElementCount?: bigint,
     returnedElementCount?: bigint,
@@ -6517,6 +6595,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 windowTitle: FfiConverterOptionalString.read(from),
                 treeMarkdown: FfiConverterOptionalString.read(from),
                 elements: FfiConverterOptionalSequenceTypeWindowElement.read(from),
+                observations: FfiConverterOptionalSequenceTypeWindowObservation.read(from),
+                observationsTruncated: FfiConverterOptionalBoolean.read(from),
                 elementCount: FfiConverterOptionalUInt64.read(from),
                 totalElementCount: FfiConverterOptionalUInt64.read(from),
                 returnedElementCount: FfiConverterOptionalUInt64.read(from),
@@ -6549,6 +6629,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalString.write(value.windowTitle, into);
             FfiConverterOptionalString.write(value.treeMarkdown, into);
             FfiConverterOptionalSequenceTypeWindowElement.write(value.elements, into);
+            FfiConverterOptionalSequenceTypeWindowObservation.write(value.observations, into);
+            FfiConverterOptionalBoolean.write(value.observationsTruncated, into);
             FfiConverterOptionalUInt64.write(value.elementCount, into);
             FfiConverterOptionalUInt64.write(value.totalElementCount, into);
             FfiConverterOptionalUInt64.write(value.returnedElementCount, into);
@@ -6580,6 +6662,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalString.allocationSize(value.windowTitle) +
              FfiConverterOptionalString.allocationSize(value.treeMarkdown) +
              FfiConverterOptionalSequenceTypeWindowElement.allocationSize(value.elements) +
+             FfiConverterOptionalSequenceTypeWindowObservation.allocationSize(value.observations) +
+             FfiConverterOptionalBoolean.allocationSize(value.observationsTruncated) +
              FfiConverterOptionalUInt64.allocationSize(value.elementCount) +
              FfiConverterOptionalUInt64.allocationSize(value.totalElementCount) +
              FfiConverterOptionalUInt64.allocationSize(value.returnedElementCount) +
@@ -6784,6 +6868,12 @@ const FfiConverterSequenceTypeWindowElement = new FfiConverterArray(FfiConverter
 // FfiConverter for Array<WindowElement> | undefined
 const FfiConverterOptionalSequenceTypeWindowElement = new FfiConverterOptional(FfiConverterSequenceTypeWindowElement);
 
+// FfiConverter for Array<WindowObservation>
+const FfiConverterSequenceTypeWindowObservation = new FfiConverterArray(FfiConverterTypeWindowObservation);
+
+// FfiConverter for Array<WindowObservation> | undefined
+const FfiConverterOptionalSequenceTypeWindowObservation = new FfiConverterOptional(FfiConverterSequenceTypeWindowObservation);
+
 // FfiConverter for WindowBounds | undefined
 const FfiConverterOptionalTypeWindowBounds = new FfiConverterOptional(FfiConverterTypeWindowBounds);
 
@@ -6924,6 +7014,7 @@ export default Object.freeze({
     FfiConverterTypeWindowBounds,
     FfiConverterTypeWindowElement,
     FfiConverterTypeWindowInfo,
+    FfiConverterTypeWindowObservation,
     FfiConverterTypeWindowPredicate,
     FfiConverterTypeWindowStateOutput,
   }

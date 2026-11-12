@@ -125,7 +125,7 @@
       "type": "integer"
      },
      "tree_format": {
-      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value). \"both\": the two together, as before; roughly doubles the size.",
+      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value), plus `observations`: display-only rows such as static text, with role, label, value and frame but no element_token, for reading and verify_state only. \"both\": the two together, as before; roughly doubles the size.",
       "enum": [
        "markdown",
        "elements",

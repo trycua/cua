@@ -1896,6 +1896,7 @@ dependencies = [
  "icu_normalizer",
  "image",
  "indexmap",
+ "input-capture",
  "jsonschema",
  "keyring 4.2.0",
  "libc",
@@ -3862,6 +3863,21 @@ checksum = "4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7"
 dependencies = [
  "block-padding 0.4.2",
  "hybrid-array",
+]
+
+[[package]]
+name = "input-capture"
+version = "0.47.19"
+dependencies = [
+ "anyhow",
+ "core-foundation 0.10.1",
+ "objc2 0.5.2",
+ "objc2-foundation 0.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "windows 0.58.0",
 ]
 
 [[package]]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Privacy-safe human input observations for cua-driver demonstrations.
 //!
 //! Windows and macOS capture are implemented. Other platforms return

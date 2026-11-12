@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Visible recording indicator drawn around the target window.
 //!
 //! Windows uses a click-through layered tool window and macOS uses AppKit

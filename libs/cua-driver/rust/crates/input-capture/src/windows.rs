@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows human-input capture backend.
 //!
 //! Installs low-level `WH_KEYBOARD_LL` / `WH_MOUSE_LL` hooks on a dedicated

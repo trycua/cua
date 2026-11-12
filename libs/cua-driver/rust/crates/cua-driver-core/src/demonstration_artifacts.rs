@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Deterministic, local artifacts for a human demonstration.
 
 use std::collections::{BTreeMap, BTreeSet};

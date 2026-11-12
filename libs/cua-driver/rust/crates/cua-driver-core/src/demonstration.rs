@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Human demonstration lifecycle and artifact writing.
 //!
 //! Human observations are separate from executable tool-call recording.

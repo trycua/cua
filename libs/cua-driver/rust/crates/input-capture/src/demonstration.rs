@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Lifecycle coupling for the recording indicator and platform input capture.
 
 use std::sync::atomic::{AtomicUsize, Ordering};

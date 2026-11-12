@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Private health signal shared by the indicator and input hook.
 //!
 //! A recent successful frame submission allows capture; a stalled renderer

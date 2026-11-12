@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Convert key presses into privacy-safe text and command observations.
 
 use crate::event::{HumanEvent, Modifiers};

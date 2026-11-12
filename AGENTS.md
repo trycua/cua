@@ -76,11 +76,10 @@ before every `git push`.
 - **Quick stage.** CI starts with a `quick` job that runs `bin/ci --quick`
   (formatting, lockfiles, headers, lint). The heavy jobs wait for it, so a
   failure there stops the run in about a minute.
-- **Agent pull requests need a sign-off.** After a green `bin/ci` on a clean
-  tree, push and run `bin/ci --signoff`. That sets the `local-ci` status on the
-  head commit. `ci-gate` reports an agent PR without it (and blocks it once
-  `REQUIRE_LOCAL_CI` is on): "Run bin/ci and bin/ci --signoff on this head
-  commit." Sign off again after every new commit.
+- **Agent pull requests need a sign-off.** The `local-ci` status on the head
+  commit is set automatically: `ci-local-signoff.yml` runs `bin/ci --quick` on
+  our Mac runner on every push. `ci-gate` blocks a PR without it. If the runner
+  is down, push and run `bin/ci --signoff` yourself.
 
 Reviewers of an agent PR check, before approving, that the `local-ci` status is
 `success` on the current head commit (`gh api repos/trycua/cua/commits/<sha>/statuses`)

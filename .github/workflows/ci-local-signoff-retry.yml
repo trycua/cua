@@ -1,0 +1,54 @@
+name: "CI: local-ci sign-off retry"
+
+# Reruns a `CI: local-ci sign-off` run that ended without a verdict (CUA-4001): the Mac runner was lost
+# mid-job, the job timed out, or every attempt hit an infra flake. A run with a verdict is never rerun:
+# a real check failure sets `local-ci` = failure, and that stands until the next push.
+#
+# Bounded: at most 3 attempts per run (the first plus two reruns), only while the commit is still the
+# head of an open pull request and still has no `local-ci` status. Manual cancels and runs superseded
+# by a newer push are left alone.
+#
+# Safe for any pull request: this runs from the default branch, never checks out code, and its only
+# write is the rerun of the failed jobs of a sign-off run (which itself never runs fork code).
+
+on:
+  workflow_run:
+    workflows: ["CI: local-ci sign-off"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  retry:
+    name: retry
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && contains(fromJSON('["failure","timed_out"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      MAX_ATTEMPTS: "3"
+    steps:
+      - name: Rerun the failed jobs when there is no verdict
+        run: |
+          set -euo pipefail
+          if (( ATTEMPT >= MAX_ATTEMPTS )); then
+            echo "::warning::run $RUN_ID already had $ATTEMPT attempts; leaving it (ci-remote-sweep is the fallback)"
+            exit 0
+          fi
+          state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+          if [[ -n "$state" ]]; then echo "local-ci on ${SHA:0:10} is already $state; nothing to retry"; exit 0; fi
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:$BRANCH&per_page=10" --jq '.[0].head.sha // ""')
+          if [[ "$head" != "$SHA" ]]; then echo "${SHA:0:10} is no longer the head of an open pull request; nothing to retry"; exit 0; fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/rerun-failed-jobs" >/dev/null
+          echo "Reran the failed jobs of run $RUN_ID (attempt $((ATTEMPT + 1)) of $MAX_ATTEMPTS) for ${SHA:0:10}"

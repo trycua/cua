@@ -410,7 +410,7 @@ def test_release_please_pull_request_is_exempt_from_the_sign_off():
 def test_branch_of_this_repo_needs_a_local_ci_status():
     missing = run_local_ci()
     assert missing.returncode == 1
-    assert 'Run bin/ci --quick and bin/ci --signoff on this head commit.' in missing.stdout
+    assert 'No local-ci sign-off: the CI: local-ci sign-off workflow sets it on every push' in missing.stdout
     assert set(missing.source) == {'statuses'}
     assert run_local_ci(state='failure').returncode == 1
     assert run_local_ci(state='success').returncode == 0

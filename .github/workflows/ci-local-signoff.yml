@@ -1,0 +1,153 @@
+name: "CI: local-ci sign-off"
+
+# Sets the `local-ci` sign-off that ci-gate requires on every pull request from a branch of this
+# repository (CUA-4001). It runs `bin/ci --quick` on our own Mac runners, the same command the
+# agent-run `ci-remote` used to run over ssh, and sets the status from the result. Nobody has to
+# start it, and an infra flake is retried instead of leaving the pull request unsigned.
+#
+#   bin-ci    self-hosted Mac (label cua-local-ci), read-only token, no secrets. Runs `bin/ci --quick`
+#             on the pull request head, up to 3 attempts when the failure looks like infra (a worker
+#             start timeout, a vanished log file, bin/ci's guard exit 3), and reports a verdict.
+#   sign-off  GitHub-hosted, never checks out pull request code. Sets `local-ci` from the verdict:
+#             success, or failure on a real check failure (so ci-gate fails at once). No verdict
+#             (runner lost, all attempts flaked) sets nothing; ci-local-signoff-retry.yml reruns it.
+#             After a success it reruns a ci-gate run that already failed waiting for the sign-off
+#             (a status set with the job token does not fire the `status` event ci-gate-recheck uses).
+#
+# Security: trycua/cua is public and the runner is our machine, so fork code must never reach it.
+#   - Only pull requests whose head is a branch of this repository run here (the `if:` below).
+#   - The `if:` lives in a file a fork can edit, so the runner enforces it too: a root-owned
+#     job-started hook (.github/runners/local-ci/job-started.sh) refuses any job that is not this
+#     workflow on a same-repository pull request, before the first step runs.
+#   - pull_request only, never pull_request_target; the self-hosted job's token can only read.
+#   - The runner is an unprivileged, password-less user; its work directory is emptied after every job.
+# Fork pull requests are unchanged: their sign-off is a green `CI: Quick` run on GitHub-hosted runners.
+#
+# ci-gate does not wait for this workflow (its skip list names it): the gate's own sign-off step
+# waits for the status, and the agent-run ci-remote-sweep still sets it when the runner is down.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-local-signoff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bin-ci:
+    name: bin/ci --quick (Mac)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [cua-local-ci]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.run.outputs.verdict }}
+      summary: ${{ steps.run.outputs.summary }}
+      failed: ${{ steps.run.outputs.failed }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain if it is missing
+        run: |
+          set -euo pipefail
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' libs/cua/rust-toolchain.toml 2>/dev/null | head -1)
+          if [[ -z "$channel" ]] || ! command -v rustup >/dev/null; then exit 0; fi
+          rustup toolchain list | grep -q "^$channel" || rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt
+      - name: bin/ci --quick
+        id: run
+        env:
+          CARGO_BUILD_JOBS: "6"
+          VITEST_MAX_WORKERS: "6"
+        run: |
+          # No -e (GitHub's default shell sets it): a failed attempt or a grep with no match must not end the step
+          # before the verdict is written.
+          set +e -uo pipefail
+          # Infra, not the change: a vitest worker that never started under load, a bin/ci log file
+          # that vanished, a dropped connection while installing. Same list as ci-remote-sweep.
+          flake='Timeout waiting for worker to respond|Failed to start forks worker|No such file or directory.*bin-ci/logs|Connection (reset|closed|timed out)|ETIMEDOUT|ECONNRESET|EAI_AGAIN'
+          log=$RUNNER_TEMP/bin-ci.log
+          verdict=infra
+          for attempt in 1 2 3; do
+            echo "::group::attempt $attempt"
+            python3 bin/ci --quick 2>&1 | tee "$log"
+            rc=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            if [[ $rc == 0 ]]; then verdict=pass; break; fi
+            # Exit 3 is bin/ci's disk guard; the patterns above are infra. Anything else is a real failure.
+            if [[ $rc != 3 ]] && ! grep -qE "$flake" "$log"; then verdict=fail; break; fi
+            echo "::warning title=infra flake, attempt $attempt of 3::bin/ci exited $rc with an infra error; retrying"
+          done
+          clean=$(sed 's/\x1b\[[0-9;]*m//g' "$log")
+          summary=$({ grep -E '^bin/ci: .* in ' <<<"$clean" || true; } | tail -1 | sed 's/^bin\/ci: //')
+          failed=$({ grep -E '^[[:space:]]*FAIL ' <<<"$clean" || true; } | sed -E 's/^[[:space:]]*FAIL[[:space:]]+//; s/[[:space:]]+[0-9.]+s$//' | head -5 | paste -sd ';' - | sed 's/;/; /g')
+          {
+            echo "verdict=$verdict"
+            echo "summary=${summary:0:100}"
+            echo "failed=${failed:0:100}"
+          } >> "$GITHUB_OUTPUT"
+          echo "verdict: $verdict (${summary:-no summary})"
+          [[ $verdict == pass ]]
+
+  sign-off:
+    name: set local-ci
+    needs: bin-ci
+    if: always() && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # statuses: the sign-off itself. actions: rerun a ci-gate run that gave up before it.
+      actions: write
+      contents: read
+      statuses: write
+    steps:
+      - name: Set the local-ci status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RESULT: ${{ needs.bin-ci.result }}
+          VERDICT: ${{ needs.bin-ci.outputs.verdict }}
+          SUMMARY: ${{ needs.bin-ci.outputs.summary }}
+          FAILED: ${{ needs.bin-ci.outputs.failed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          status() {
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f context=local-ci -f state="$1" \
+              -f description="${2:0:140}" -f target_url="$RUN_URL" --jq .state >/dev/null
+            echo "local-ci = $1 on ${SHA:0:10}: $2"
+          }
+          case "$VERDICT" in
+            pass) status success "bin/ci quick: ${SUMMARY:-passed} (Mac CI runner, GitHub Actions)" ;;
+            fail) status failure "bin/ci quick failed: ${FAILED:-see the run}"; exit 1 ;;
+            *)
+              if [[ "$RESULT" == cancelled ]]; then echo "Cancelled (a newer push supersedes it); no sign-off."; exit 0; fi
+              echo "::error title=no verdict::No bin/ci verdict (job $RESULT: runner lost or infra flakes on every attempt). local-ci left unset; ci-local-signoff-retry reruns this, and ci-remote-sweep is the fallback."
+              exit 1 ;;
+          esac
+      - name: Check out the gate recheck from the default branch
+        if: needs.bin-ci.outputs.verdict == 'pass'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/ci_gate_recheck.py
+          sparse-checkout-cone-mode: false
+      - name: Rerun ci-gate if it already failed waiting for the sign-off
+        if: needs.bin-ci.outputs.verdict == 'pass'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq -n --arg sha "$SHA" --arg at "$now" '{context: "local-ci", state: "success", sha: $sha, updated_at: $at}' > "$RUNNER_TEMP/status.json"
+          python3 .github/scripts/ci_gate_recheck.py --event "$RUNNER_TEMP/status.json" --event-name status

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.47.20](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.19...cua-driver-rs-v0.47.20) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** deprecate Computer History, removal after 26 Nov 2026 ([#7478](https://github.com/trycua/cua/issues/7478)) ([0b6922b](https://github.com/trycua/cua/commit/0b6922bad2363be5215c9e527307c2ff6657b3be))
+* **cua-driver:** index disabled Linux and Windows controls and report enabled: false ([#7469](https://github.com/trycua/cua/issues/7469)) ([8419740](https://github.com/trycua/cua/commit/841974073db20f11b259166e81aa5c2509e6b423))
+* **cua-driver:** render macOS cursors on every display and remove all action marks ([#7458](https://github.com/trycua/cua/issues/7458)) ([8fb8d67](https://github.com/trycua/cua/commit/8fb8d67e3bdecd3b030298c945929efe4f02cb77))
+* **cua-driver:** show when direct capture was last verified in permissions status ([#7480](https://github.com/trycua/cua/issues/7480)) ([8dba7a5](https://github.com/trycua/cua/commit/8dba7a5d1bd031ef3e313f9855aba2637b37d9cf)), closes [#2881](https://github.com/trycua/cua/issues/2881)
+
 ## [0.47.19](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.18...cua-driver-rs-v0.47.19) (2026-11-12)
 
 

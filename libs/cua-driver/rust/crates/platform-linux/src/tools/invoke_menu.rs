@@ -114,11 +114,6 @@ impl Tool for InvokeMenuTool {
         // under the focus guard). `delivery_mode:"foreground"` is the explicit
         // escalation that activates the window first, as every other tool.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        let mut args = args;
-        if let Some(object) = args.as_object_mut() {
-            // Not part of the closed InvokeMenuInput contract; consumed above.
-            object.remove("delivery_mode");
-        }
         let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
             Ok(input) => input,
             Err(result) => return result,

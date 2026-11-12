@@ -467,7 +467,25 @@ def run_shard(
     return 1 if any(c != 0 for c in codes.values()) else 0
 
 
+def raise_open_file_limit(want: int = 10240) -> None:
+    """macOS shells default to 256 open files, too few for the Rust test binaries
+    this runner starts (scripts/ci/tests/test_nofile_limit.py pins this)."""
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == resource.RLIM_INFINITY or soft >= want:
+            return
+        resource.setrlimit(
+            resource.RLIMIT_NOFILE,
+            (want if hard == resource.RLIM_INFINITY else min(want, hard), hard),
+        )
+    except (ImportError, ValueError, OSError):
+        pass
+
+
 def main() -> int:
+    raise_open_file_limit()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument(
         "--lanes",

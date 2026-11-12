@@ -611,7 +611,7 @@ fn shell_helper_pose_update(
     if let Some(track) = track {
         if matches!(command.cmd, OverlayCommand::MoveTo { .. }) {
             if let Some(seq) = poses.model.move_seq(&command.key) {
-                update.arrival = Some((Duration::from_secs_f64(track.arrival_secs()), seq));
+                update.arrival = Some((Duration::from_secs_f64(track.release_secs()), seq));
             }
         }
         update.track = Some(track.to_json());

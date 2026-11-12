@@ -263,7 +263,7 @@ pub fn register_tools_with_cursor_and_provider(
 /// read-only commands such as describe/list-tools must not mutate X11 devices.
 #[cfg(target_os = "linux")]
 pub fn recover_orphaned_mpx_devices() {
-    input::reap_orphaned_master_pointers();
+    input::release_orphaned_master_pairs();
 }
 
 #[cfg(test)]

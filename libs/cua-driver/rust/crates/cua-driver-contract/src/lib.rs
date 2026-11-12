@@ -688,7 +688,15 @@ mod tests {
         );
         assert_eq!(
             contract.capabilities,
-            vec!["menu.path.invoke", "accessibility.menu.native"]
+            vec![
+                "menu.path.invoke",
+                "accessibility.menu.native",
+                "input.delivery_mode"
+            ]
+        );
+        assert_eq!(
+            contract.input_schema["properties"]["delivery_mode"]["enum"],
+            serde_json::json!(["background", "foreground"])
         );
     }
 

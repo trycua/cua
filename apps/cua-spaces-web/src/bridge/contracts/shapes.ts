@@ -543,6 +543,8 @@ const SettingsShape = ref(
         runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
         overflow: optNull(bool),
+        closeWindowKeepsRunning: optNull(bool),
+        closeNotice: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),
@@ -1051,6 +1053,16 @@ const ConnectResultsShape = list(
           refused: nullable(str),
           line: nullable(str),
         }),
+      ),
+      parts: opt(
+        list(
+          object({
+            part: oneOf("mcp", "skills", "driver", "sign_in"),
+            status: oneOf("done", "needs_permission", "skipped", "failed"),
+            where: nullable(str),
+            line: nullable(str),
+          }),
+        ),
       ),
     }),
   ),

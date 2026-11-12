@@ -1141,7 +1141,7 @@ fi
         self.assertEqual(
             package["dependencies"],
             {
-                "@anthropic-ai/claude-code": "2.1.224",
+                "@anthropic-ai/claude-code": "2.1.322",
                 "@modelcontextprotocol/sdk": "1.30.0",
                 "@openai/codex": "0.146.1",
             },

@@ -74,7 +74,7 @@ jobs:
       - name: CLI-shape lane (cua, cua-driver and lume commands parse)
         run: python3 tests/e2e/cua-sdk/docs/cli_shape.py
 
-      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
 
       - name: Config lane (JSON / YAML / TOML blocks parse and match their schema)
         run: >

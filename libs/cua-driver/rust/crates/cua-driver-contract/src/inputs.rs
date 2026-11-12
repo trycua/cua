@@ -131,6 +131,10 @@ fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
     ClickButton::json_schema(generator)
 }
 
+fn input_delivery_mode_schema(generator: &mut SchemaGenerator) -> Schema {
+    InputDeliveryMode::json_schema(generator)
+}
+
 fn scroll_by_schema(generator: &mut SchemaGenerator) -> Schema {
     ScrollBy::json_schema(generator)
 }
@@ -745,6 +749,13 @@ pub struct InvokeMenuInput {
     /// (1 to 16 labels).
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
+    /// `background` (default) never takes the user's keyboard or pointer and refuses with
+    /// `background_unavailable` when the item can only be reached by opening a menu. `foreground`
+    /// is the explicit escalation that may activate the window and open menus. Linux honors it;
+    /// macOS and Windows accept it and keep their existing menu behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "input_delivery_mode_schema")]
+    pub delivery_mode: Option<InputDeliveryMode>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default, skip_serializing_if = "Option::is_none")]

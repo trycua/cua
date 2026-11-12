@@ -162,13 +162,17 @@ async fn observe_dom_click(
     }
 }
 
-fn dom_click_action_record(observation: &DomClickObservation) -> ActionExecutionRecord {
+fn click_readback_action_record(
+    observation: &DomClickObservation,
+    transport: ActionTransport,
+    delivery: ActualDelivery,
+) -> ActionExecutionRecord {
     let mut builder = ActionExecutionRecord::builder(
         observation.effect,
-        ActionTransport::BrowserCdpRuntimeFunction,
+        transport,
         RequestedDelivery::NotApplicable,
     )
-    .actual_delivery(ActualDelivery::Background);
+    .actual_delivery(delivery);
     if observation.readback_available {
         builder = builder.evidence(ActionEvidence {
             kind: EvidenceKind::BrowserReadback,
@@ -1473,7 +1477,11 @@ impl Tool for BrowserClickTool {
                             ext_ref.as_deref().unwrap_or("?")
                         ),
                     };
-                    let action_record = dom_click_action_record(&observation);
+                    let action_record = click_readback_action_record(
+                        &observation,
+                        ActionTransport::BrowserCdpRuntimeFunction,
+                        ActualDelivery::Background,
+                    );
                     ToolResult::text(text).with_action_record(action_record)
                 }
                 (Ok(_), Some(open)) => {
@@ -1485,6 +1493,7 @@ impl Tool for BrowserClickTool {
                         open.kind,
                         dialog_capability_id(open.generation)
                     );
+                    // The dialog blocks the renderer, so no readback can run.
                     ToolResult::text(text).with_structured(json!({
                         "status": "ok",
                         "effect": "unverifiable",
@@ -1557,6 +1566,33 @@ impl Tool for BrowserClickTool {
                 BrowserVisualActionKind::Click,
             )
             .await;
+
+        // A ref-targeted trusted click gets the same bounded target readback
+        // as the dom_event route, so a press that misses its target is not
+        // reported like one that toggled it. Coordinate clicks have no node.
+        let readback_object = match backend_node_id {
+            Some(backend) => conn
+                .call(
+                    Some(cdp),
+                    "DOM.resolveNode",
+                    json!({ "backendNodeId": backend }),
+                )
+                .await
+                .ok()
+                .and_then(|resolved| {
+                    resolved
+                        .pointer("/object/objectId")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                }),
+            None => None,
+        };
+        let before = match readback_object.as_deref() {
+            Some(object_id) => {
+                read_dom_click_state(conn, cdp, object_id, DOM_CLICK_BASELINE_DEADLINE).await
+            }
+            None => None,
+        };
 
         if let Err(error) = conn
             .call(
@@ -1654,8 +1690,38 @@ impl Tool for BrowserClickTool {
             "y": y,
         });
         let Some(open) = opened else {
-            return ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}"))
-                .with_structured(structured);
+            let text = format!("clicked ({x:.0}, {y:.0}) in {tab_id}");
+            let Some(object_id) = readback_object else {
+                return ToolResult::text(text).with_structured(structured);
+            };
+            let observation = observe_dom_click(conn, cdp, &object_id, before).await;
+            let text = match observation.effect {
+                ActionEffect::Confirmed => {
+                    format!("{text}; bounded semantic readback confirmed a target-state change")
+                }
+                _ if observation.readback_available => format!(
+                    "{text}; bounded semantic target state remained unchanged; application \
+                     effect is unverifiable. Refresh page state and verify the expected \
+                     postcondition"
+                ),
+                _ => format!(
+                    "{text}; application effect not verified because semantic target readback \
+                     was unavailable. Refresh page state and verify the expected postcondition"
+                ),
+            };
+            let delivery = if foreground {
+                ActualDelivery::Foreground
+            } else {
+                ActualDelivery::Background
+            };
+            let action_record = click_readback_action_record(
+                &observation,
+                ActionTransport::BrowserCdpInputMouse,
+                delivery,
+            );
+            return ToolResult::text(text)
+                .with_structured(structured)
+                .with_action_record(action_record);
         };
         structured["dialog"] = dialog_block(&open);
         structured["escalation"] = json!({

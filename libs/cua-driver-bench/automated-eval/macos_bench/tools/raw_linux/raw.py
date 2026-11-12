@@ -47,7 +47,8 @@ gi.require_version("Atspi", "2.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Atspi, Gdk  # noqa: E402
 
-import rawlint  # noqa: E402
+import rawlint
+import treediff  # noqa: E402
 
 Window = ctypes.c_ulong
 Atom = ctypes.c_ulong
@@ -692,8 +693,19 @@ class Raw:
             parts.append(f"value={Atspi.Value.get_current_value(node)}")
         return " ".join(parts)
 
-    def dump(self, root: Any, depth: int = 12, limit: int = 400, showing_only: bool = True) -> str:
-        """An indented text tree of ``root`` (``describe`` per node)."""
+    def dump(
+        self, root: Any, depth: int = 12, limit: int = 400, showing_only: bool = True, full: bool = False
+    ) -> str:
+        """An indented text tree of ``root`` (``describe`` per node). In the tree-diff variant (RAW_DUMP_DIFF), a
+        second dump of the same root in a trial returns only the lines that changed since the last one, unless
+        ``full=True``."""
+        text = self._dump(root, depth, limit, showing_only)
+        store = os.environ.get("RAW_DUMP_DIR")
+        if not store:
+            return text
+        return treediff.dump_diff(Path(store), dump_key(root, depth, limit, showing_only), text, full)
+
+    def _dump(self, root: Any, depth: int, limit: int, showing_only: bool) -> str:
         lines: list[str] = []
 
         def walk(node: Any, level: int) -> None:
@@ -765,6 +777,21 @@ class Raw:
                 f"xdotool {' '.join(argv)} exited {done.returncode}: {done.stderr.strip()[:300]}"
             )
         return done.stdout.strip()
+
+
+# ------------------------------------------------------------------ tree diff (the pi-raw-linux-diff variant)
+
+
+def dump_key(root: Any, depth: int, limit: int, showing_only: bool) -> str:
+    """Which earlier dump a dump is compared with: the same root (app, role, name) and the same options."""
+    import hashlib
+
+    try:
+        app = root.get_application().get_name() or ""
+        ident = f"{app}|{root.get_role_name()}|{root.get_name() or ''}"
+    except Exception:  # noqa: BLE001 - a dead node gets its own key
+        ident = repr(root)
+    return hashlib.sha256(f"{ident}|{depth}|{limit}|{showing_only}".encode()).hexdigest()[:16]
 
 
 def make() -> Raw:

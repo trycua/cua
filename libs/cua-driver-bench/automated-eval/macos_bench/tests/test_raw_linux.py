@@ -292,3 +292,36 @@ class TaskGrantTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TreeDiffTest(unittest.TestCase):
+    """pi-raw-linux-diff: a re-dump of the same root returns only what changed (tools/raw_linux/treediff.py)."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        import treediff
+
+        self.diff = treediff.dump_diff
+        self.store = Path(tempfile.mkdtemp())
+
+    def test_first_dump_is_whole_and_unchanged_says_so(self):
+        tree = "[frame] 'A'\n  [button] 'Apply'\n  [text] 'Qty' text='1'"
+        self.assertEqual(self.diff(self.store, "k", tree, False), tree)
+        self.assertIn("unchanged", self.diff(self.store, "k", tree, False))
+        self.assertEqual(self.diff(self.store, "k", tree, True), tree)
+
+    def test_a_changed_line_comes_back_with_its_place(self):
+        lines = ["[frame] 'A'"] + [f"  [label] 'row {i}'" for i in range(30)] + ["  [text] 'Qty' text='1'"]
+        self.diff(self.store, "k", "\n".join(lines), False)
+        lines[-1] = "  [text] 'Qty' text='3'"
+        out = self.diff(self.store, "k", "\n".join(lines), False)
+        self.assertIn("- " + "  [text] 'Qty' text='1'", out)
+        self.assertIn("+ " + "  [text] 'Qty' text='3'", out)
+        self.assertIn("@ " + "  [label] 'row 29'", out)
+        self.assertNotIn("row 3'", out)
+
+    def test_other_roots_are_kept_apart_and_a_large_change_is_whole(self):
+        self.diff(self.store, "a", "x\ny", False)
+        self.assertEqual(self.diff(self.store, "b", "p\nq", False), "p\nq")
+        self.assertEqual(self.diff(self.store, "a", "m\nn", False), "m\nn")  # the diff would be longer

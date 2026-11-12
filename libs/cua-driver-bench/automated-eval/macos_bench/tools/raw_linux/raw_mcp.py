@@ -15,7 +15,8 @@ Every call is appended to RAW_LOG (JSONL) so the bench can count lint blocks and
 
 Environment: RAW_LOG (call log path), RAW_TMP (scratch directory for screenshots), PYTHON (interpreter for the
 runner, default this one), RAW_TRIAL (the per-trial JSON the harness writes before each trial: the task's
-foreground grant, the per-app AT-SPI coverage labels, and the Cua Driver socket, binary and session for raw.driver).
+foreground grant, the per-app AT-SPI coverage labels, and the Cua Driver socket, binary and session for raw.driver),
+RAW_DUMP_DIFF=1 (the tree-diff variant: a re-dump returns only what changed since the trial's last dump of that root).
 The trial file is read on every call, so one server process serves every trial of a run.
 """
 
@@ -41,6 +42,12 @@ TMP = Path(os.environ.get("RAW_TMP") or tempfile.mkdtemp(prefix="raw-linux-"))
 TMP.mkdir(parents=True, exist_ok=True)
 PYTHON = os.environ.get("PYTHON") or sys.executable
 DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS = 30_000, 120_000
+DUMP_DIFF = os.environ.get("RAW_DUMP_DIFF") == "1"  # the pi-raw-linux-diff variant
+DIFF_NOTE = (
+    "\n- Tree diffs: a second raw.dump of the same root in this task returns only what changed since your last dump "
+    "of it (\"-\" removed, \"+\" new or changed, \"@\" the unchanged line above a change), or says it is unchanged. "
+    "raw.dump(root, full=True) returns the whole tree."
+)
 
 DESCRIPTION = """\
 Run one Python script against the Linux desktop. The script body runs inside a function, so `return` a value \
@@ -124,7 +131,13 @@ def description(settings: dict) -> str:
         else "AT-SPI coverage of this task's apps: not measured."
     )
     grant = GRANTED if settings.get("foreground_grant") else NOT_GRANTED
-    return DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
+    text = DESCRIPTION.replace("{coverage}", coverage).replace("{grant}", grant)
+    if DUMP_DIFF:
+        text = text.replace(
+            "raw.dump(root, depth=12) -> text tree of showing nodes.",
+            "raw.dump(root, depth=12) -> text tree of showing nodes." + DIFF_NOTE,
+        )
+    return text
 
 
 SCHEMA = {
@@ -158,6 +171,9 @@ def runner_env(settings: dict) -> dict[str, str]:
     for key, name in (("socket", "RAW_DRIVER_SOCKET"), ("bin", "RAW_DRIVER_BIN"), ("session", "RAW_DRIVER_SESSION")):
         if driver.get(key):
             env[name] = str(driver[key])
+    env.pop("RAW_DUMP_DIR", None)
+    if DUMP_DIFF:  # the tree-diff variant: dumps of one trial are compared with that trial's earlier dumps
+        env["RAW_DUMP_DIR"] = str(TMP / "dumps" / str(driver.get("session") or settings.get("trial_id") or "none"))
     return env
 
 

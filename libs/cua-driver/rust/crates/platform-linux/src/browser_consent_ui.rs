@@ -86,6 +86,7 @@ fn exact_prompt_button(
             role_is(node, &["push button", "button"])
                 && normalized_text(node) == label
                 && !node.actions.is_empty()
+                && node.enabled != Some(false)
                 && node.element_index.is_some()
         })
         .map(|node| {

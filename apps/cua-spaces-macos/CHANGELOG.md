@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.35.0](https://github.com/trycua/cua/compare/cua-spaces-v0.34.6...cua-spaces-v0.35.0) (2026-11-12)
+
+
+### Features
+
+* **cua-sdk:** ship cua-cli on PyPI as a thin wheel that fetches the signed CLI ([#7474](https://github.com/trycua/cua/issues/7474)) ([b890fca](https://github.com/trycua/cua/commit/b890fcada5e762fa5bd2820548ae1fffa63f452c))
+
+
+### Bug Fixes
+
+* **cua-driver:** deprecate Computer History, removal after 26 Nov 2026 ([#7478](https://github.com/trycua/cua/issues/7478)) ([0b6922b](https://github.com/trycua/cua/commit/0b6922bad2363be5215c9e527307c2ff6657b3be))
+* **cua-driver:** render macOS cursors on every display and remove all action marks ([#7458](https://github.com/trycua/cua/issues/7458)) ([8fb8d67](https://github.com/trycua/cua/commit/8fb8d67e3bdecd3b030298c945929efe4f02cb77))
+
 ## [0.34.6](https://github.com/trycua/cua/compare/cua-spaces-v0.34.5...cua-spaces-v0.34.6) (2026-11-12)
 
 

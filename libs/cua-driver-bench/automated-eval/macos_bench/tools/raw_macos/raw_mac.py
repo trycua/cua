@@ -700,13 +700,11 @@ class Raw:
             if _text_of(el) == text:
                 STATE.route("set_text:ax_value")
                 return {"route": "ax_value", "value": text}
-        before = focus_sample()
-        _focus_in_app(el)
+        _focus_in_app(el, "raw.set_text")
         self.post_key(pid, ["cmd", "a"])
         self.post_text(pid, text)
         time.sleep(0.25)
         value = _text_of(el)
-        _note_focus(before, "set_text")
         STATE.route("set_text:typed")
         return {"route": "typed", "value": value, "ok": value == text}
 
@@ -731,13 +729,11 @@ class Raw:
         if role != "AXPopUpButton":
             raise ValueError(f"raw.select needs an AXPopUpButton or AXComboBox, not {role}")
         if _in_web_area(el):
-            before = focus_sample()
-            _focus_in_app(el)
+            _focus_in_app(el, "raw.select")
             self.post_text(pid, label)
             deadline = time.monotonic() + 1.0
             while time.monotonic() < deadline and _chosen(el) != label.casefold():
                 time.sleep(0.05)
-            _note_focus(before, "select")
             STATE.route("select:typeahead")
             value = _ax_get(el, "AXValue")
             return {"route": "typeahead", "value": value, "ok": _chosen(el) == label.casefold()}
@@ -844,9 +840,10 @@ class Raw:
         target = _calc_cell_el(table, cell)
         if target is None:
             raise LookupError(f"cell {cell} is not on screen in this sheet")
-        for el, attr in ((table, "AXFocused"), (target, "AXSelected"), (target, "AXFocused")):
-            AX.AXUIElementSetAttributeValue(el, attr, True)
-            time.sleep(0.1)
+        _focus_in_app(table, "raw.set_cell")
+        AX.AXUIElementSetAttributeValue(target, "AXSelected", True)
+        time.sleep(0.1)
+        _focus_in_app(target, "raw.set_cell")
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline and _calc_name_box(win) != cell:
             time.sleep(0.05)
@@ -1343,18 +1340,27 @@ def _chromium(pid: int) -> bool:
     return "chrome" in bid or "chromium" in bid or "electron" in bid
 
 
-def _focus_in_app(el: Any) -> None:
-    """Move the app's own keyboard focus to ``el`` (AXFocused). In a background app this does not activate it or make
-    its window key (checked in the bench guest); the caller compares the user's front app and key window after."""
+def _focus_in_app(el: Any, what: str) -> None:
+    """Move a background app's own keyboard focus to ``el`` (AXFocused), as Cua Driver's background set_value does for
+    a web <select> (platform-macos/src/tools/set_value.rs:979-985), and prove it left the user alone. The element must
+    not belong to the frontmost app or the user's app; the frontmost app, its key window and its focused element are
+    read before and after, and any change is refused under MB3 like a script's own AXFocused write (warned on a
+    granted trial). In the bench guest this focus move never made the background window key (sentinel key_loss 0)."""
+    pid = Raw().ax.pid(el)
+    before = focus_sample()
+    if pid == before["front"]:
+        STATE.check("MB3", f"{what}: focus inside {app_name(pid)}, the frontmost app")
+    STATE.to_user(pid, what)
     AX.AXUIElementSetAttributeValue(el, "AXFocused", True)
     time.sleep(0.12)
-
-
-def _note_focus(before: dict[str, Any], what: str) -> None:
     after = focus_sample()
-    if after["front"] != before["front"] or after["key_window"] != before["key_window"]:
-        with STATE.lock:
-            STATE.runtime_warned.append(f"MB3: {what} moved the user's front app or key window")
+    moved = [k for k in ("front", "key_window", "focused") if after[k] != before[k]]
+    STATE.route("in_app_focus")
+    if moved:
+        STATE.check(
+            "MB3",
+            f"{what}: the user's {', '.join(moved)} changed after an in-app focus in {app_name(pid)}",
+        )
 
 
 def _menu_items(popup: Any) -> list[Any]:

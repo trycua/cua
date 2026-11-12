@@ -96,8 +96,8 @@ raw.pointer_drag(x0, y0, x1, y1). raw.sleep(s).
 Background contract (checked before the script runs, and again while it runs):
 - The user's frontmost app, key window, focused element, window order and real cursor must stay as they are. \
 Foreground routes: raw.pointer_*, AXRaise, setting AXFrontmost / AXMain / AXFocused / AXFocusedUIElement / \
-AXMinimized / AXHidden through raw.ax.set (raw.set_text and raw.select move focus only inside the target app and \
-check that the user's window kept it).
+AXMinimized / AXHidden through raw.ax.set. raw.set_text, raw.select and raw.set_cell move focus only inside a \
+background target app and are refused (MB3) if the user's front app, key window or focused element changes.
 - {grant}
 - Menus are foreground too: AXShowMenu, and AXPress on an AXPopUpButton, AXMenuButton or AXMenuBarItem, open a menu \
 that takes key focus from the user's window and lifts the target window over it. A native AppKit pop-up lists its \

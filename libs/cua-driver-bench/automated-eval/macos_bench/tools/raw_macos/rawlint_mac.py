@@ -81,7 +81,8 @@ RULES: dict[str, Rule] = {
             f"{MACOS_MD}:619-630 (background dispatch keeps the user's front window key); {MAC}/key_focus_guard.rs:4-19 "
             "(the driver guards and hands back key focus the target takes)",
             "Set the field's text with raw.set_text(el, text): it writes AXValue, and only if the field ignores that it "
-            "focuses the field inside its own app and types, checking that the user's window kept key focus.",
+            "focuses the field inside its own background app and types; a change to the user's front app, key window "
+            "or focused element is refused under this rule.",
         ),
         Rule(
             "MB4",

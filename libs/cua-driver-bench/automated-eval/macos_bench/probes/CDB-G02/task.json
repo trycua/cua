@@ -22,5 +22,9 @@
   "atspi_coverage": {
     "Copperfield Mail, Signal Quay Chat, Daymark Calendar (Electron; AT-SPI app name 'electron', one per window)": "full",
     "LibreOffice Calc (AT-SPI app name 'soffice'; cells sit behind one 'document spreadsheet' node)": "partial"
+  },
+  "ax_coverage": {
+    "Copperfield Mail, Signal Quay Chat, Daymark Calendar (Electron)": "partial",
+    "LibreOffice Calc (cells behind one AXTable; no per-cell AXValue writes)": "partial"
   }
 }

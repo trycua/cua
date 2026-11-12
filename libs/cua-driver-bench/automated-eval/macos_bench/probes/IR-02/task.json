@@ -24,5 +24,8 @@
   },
   "atspi_coverage": {
     "BenchLab (GTK3; AT-SPI app name 'BenchLab')": "full"
+  },
+  "ax_coverage": {
+    "BenchLab (AppKit; pop-up buttons list their items only while open)": "full"
   }
 }

@@ -15,5 +15,13 @@
   "sentinel_frontmost": false,
   "timeout_s": 360,
   "max_turns": 45,
-  "separate_run": true
+  "separate_run": true,
+  "ax_coverage": {
+    "Rillwatch Cases, Margin Lantern Manual (Electron)": "partial",
+    "Chromium (the Morrowglass Archive site)": "partial"
+  },
+  "foreground_grant": {
+    "granted": false,
+    "reason": "a background route exists (AX actions or the driver's background delivery)"
+  }
 }

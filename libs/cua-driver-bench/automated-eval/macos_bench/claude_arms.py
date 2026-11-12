@@ -354,17 +354,32 @@ BROWSER_USE_SERVER = "browseruse"
 # mcp__cua__* tool filter is the same as the Cua Driver pi arms'. Source arm of pi-raw-linux only.
 RAW_LINUX_ARM = "cc-raw-linux"
 RAW_LINUX_ADAPTER = ADAPTER_TOOLS / "raw_linux" / "raw_mcp.py"
-RAW_LINUX_LOG = Path("/tmp/cdb-raw-linux/calls.jsonl")  # the session's private /tmp; moved into each trial
+RAW_LOG = Path("/tmp/cdb-raw-linux/calls.jsonl")  # the session's private /tmp; moved into each trial
 # Per-trial settings the harness writes before each raw-linux trial (raw_mcp.trial): the task's foreground grant,
 # its AT-SPI coverage labels and the fallback Cua Driver (socket, binary, session).
-RAW_LINUX_TRIAL = RAW_LINUX_LOG.parent / "trial.json"
+RAW_TRIAL = RAW_LOG.parent / "trial.json"
 # The fallback driver is the main arm's build and daemon (same binary, run_script off), so raw.driver calls get the
 # same driver the pi-cua-driver-main arm gets.
-RAW_LINUX_FALLBACK = "cc-cua-driver-main"
+RAW_FALLBACK = "cc-cua-driver-main"
+# The raw-macos prototype: the same shape on macOS (tools/raw_macos): Python against the Accessibility API and
+# per-process event posting (pyobjc), the same lint/hook design, the same per-trial file and the same fallback.
+# Its runner needs pyobjc and its own TCC grants, so it runs on RAW_MACOS_PYTHON (a venv in the bench guest).
+RAW_MACOS_ARM = "cc-raw-macos"
+RAW_MACOS_ADAPTER = ADAPTER_TOOLS / "raw_macos" / "raw_mcp_mac.py"
+RAW_MACOS_PYTHON = Path(os.environ.get("CDB_RAW_MACOS_PYTHON") or Path.home() / "rmb/venv/bin/python")
+# The tree-diff variant of raw-linux: the same arm, except a re-dump of the same root in a trial returns only what
+# changed since the last one (RAW_DUMP_DIFF=1 in raw_mcp.py).
+RAW_LINUX_DIFF_ARM = "cc-raw-linux-diff"
+RAW_LINUX_ARMS = (RAW_LINUX_ARM, RAW_LINUX_DIFF_ARM)
+RAW_ARMS = (*RAW_LINUX_ARMS, RAW_MACOS_ARM)
+# The app whose window plays the user in the background condition; raw-macos refuses input posted to it.
+RAW_USER_APPS = ("Bench Sentinel",)
 ADAPTER_ARMS = {
     "cc-agent-desktop": AGENT_DESKTOP_SERVER,
     "cc-browser-use": BROWSER_USE_SERVER,
     RAW_LINUX_ARM: "cua",
+    RAW_LINUX_DIFF_ARM: "cua",
+    RAW_MACOS_ARM: "cua",
 }
 
 
@@ -383,18 +398,31 @@ def adapter_entry(arm: str) -> dict[str, Any]:
     elif arm == "cc-browser-use":
         script = BROWSER_USE_ADAPTER
         env.update({"BU_BIN": str(BROWSER_USE_BIN), "BU_SHOT": "ondemand"})
-    elif arm == RAW_LINUX_ARM:
+    elif arm in RAW_LINUX_ARMS:
         python = "/usr/bin/python3" if Path("/usr/bin/python3").is_file() else sys.executable
         env = desktop.desktop_env(
             WORK / "raw-linux-home",
             {
-                "RAW_LOG": str(RAW_LINUX_LOG),
-                "RAW_TMP": str(RAW_LINUX_LOG.parent / "shots"),
-                "RAW_TRIAL": str(RAW_LINUX_TRIAL),
+                "RAW_LOG": str(RAW_LOG),
+                "RAW_TMP": str(RAW_LOG.parent / "shots"),
+                "RAW_TRIAL": str(RAW_TRIAL),
                 "PYTHON": python,
+                "RAW_DUMP_DIFF": "1" if arm == RAW_LINUX_DIFF_ARM else "0",
             },
         )
         return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_LINUX_ADAPTER)], "env": env}
+    elif arm == RAW_MACOS_ARM:
+        python = str(RAW_MACOS_PYTHON)
+        env = desktop.desktop_env(
+            WORK / "raw-macos-home",
+            {
+                "RAW_LOG": str(RAW_LOG),
+                "RAW_TMP": str(RAW_LOG.parent / "shots"),
+                "RAW_TRIAL": str(RAW_TRIAL),
+                "PYTHON": python,
+            },
+        )
+        return {"type": "stdio", "command": python, "args": ["-I", "-B", str(RAW_MACOS_ADAPTER)], "env": env}
     else:
         raise ValueError(f"not an adapter arm: {arm}")
     return {
@@ -429,6 +457,11 @@ ARM_DESCRIPTIONS = {
     RAW_LINUX_ARM: "One run_script tool (server cua) running Python against AT-SPI, Xlib/XTest and xdotool behind a "
     "background-use lint and runtime hook, with raw.driver(...) to the main build's Cua Driver as the fallback; "
     "foreground granted per task by the harness (tools/raw_linux), no skill",
+    RAW_LINUX_DIFF_ARM: "The cc-raw-linux setup, except a re-dump of the same root in a trial returns only what "
+    "changed since the last dump (tools/raw_linux, RAW_DUMP_DIFF=1)",
+    RAW_MACOS_ARM: "One run_script tool (server cua) running Python against the macOS Accessibility API and "
+    "per-process event posting behind a background-use lint and runtime hook, with raw.driver(...) to the main "
+    "build's Cua Driver as the fallback; foreground granted per task by the harness (tools/raw_macos), no skill",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-claude-cu-helper": "Claude Code + "
@@ -439,6 +472,18 @@ ARM_DESCRIPTIONS = {
     "cc-browser-use": "Claude Code + Browser Use macOS harness 0.2.1 through a minimal MCP adapter (server browseruse), "
     "the vendor skill as the server instructions",
 }
+
+RAW_MACOS_ADDENDUM = (
+    "\n\nrun_script is your only tool: every read and every action is one Python script against the macOS "
+    "desktop's low-level APIs (the Accessibility API through `raw.ax`, events posted to one process through "
+    "`raw.post_click`/`raw.post_key`); its description lists what is available and the background rules the script is "
+    "checked against. To look, `return raw.dump(raw.ax.app(pid))` or take `raw.screenshot(window_id)`. To act, use AX "
+    "actions and values on the elements you found, use loops and if/else, and `return` what you need to check the "
+    "result. Where an app's AX tree does not reach what you need, call the Cua Driver from the same script with "
+    "`raw.driver(tool, args)`. A blocked or failed script comes back with the rule or the traceback; fix it and run it "
+    "again.\n"
+    'Pass "timeout_ms": 120000 on every run_script call.\n'
+)
 
 RAW_LINUX_ADDENDUM = (
     "\n\nrun_script is your only tool: every read and every action is one Python script against the Linux "
@@ -467,8 +512,10 @@ def system_prompt_for(arm: str, *, browser: bool = False) -> str:
             "Do not use the network.",
             "Do not use the internet; the task's localhost site is allowed.",
         )
-    if arm == RAW_LINUX_ARM:
+    if arm in RAW_LINUX_ARMS:
         return prompt + RAW_LINUX_ADDENDUM
+    if arm == RAW_MACOS_ARM:
+        return prompt + RAW_MACOS_ADDENDUM
     build = CUA_BUILDS.get(arm)
     if build is None:
         return prompt

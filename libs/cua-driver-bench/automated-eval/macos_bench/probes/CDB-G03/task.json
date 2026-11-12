@@ -23,5 +23,10 @@
     "Ledger Lantern Mail (Electron; AT-SPI app name 'electron')": "full",
     "LibreOffice Calc (AT-SPI app name 'soffice'; cells sit behind one 'document spreadsheet' node)": "partial",
     "GnuCash (AT-SPI app name 'gnucash'; register rows and page tabs without actions)": "partial"
+  },
+  "ax_coverage": {
+    "Ledger Lantern Mail (Electron)": "partial",
+    "LibreOffice Calc": "partial",
+    "GnuCash (GTK on macOS)": "partial"
   }
 }

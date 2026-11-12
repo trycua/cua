@@ -155,9 +155,10 @@ def foreground_grant_problems(tid: str, spec: dict[str, Any]) -> list[str]:
         or not str(grant.get("reason") or "").strip()
     ):
         return [f"{tid}: foreground_grant must be {{granted: bool, reason: text}}"]
-    labels = spec.get("atspi_coverage", {})
-    if not isinstance(labels, dict) or not all(v in {"full", "partial", "none"} for v in labels.values()):
-        return [f"{tid}: atspi_coverage labels must be full, partial or none"]
+    for key in ("atspi_coverage", "ax_coverage"):
+        labels = spec.get(key, {})
+        if not isinstance(labels, dict) or not all(v in {"full", "partial", "none"} for v in labels.values()):
+            return [f"{tid}: {key} labels must be full, partial or none"]
     return []
 
 

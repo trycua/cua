@@ -595,11 +595,11 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         path, _ = ctx.mcp[arm]
         if source in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, source)
-        elif source == ca.RAW_LINUX_ARM:
-            ensure_agent_daemon(ctx, ca.RAW_LINUX_FALLBACK)
-            fallback = ca.CUA_BUILDS[ca.RAW_LINUX_FALLBACK]
-            ca.RAW_LINUX_TRIAL.parent.mkdir(parents=True, exist_ok=True)
-            ca.RAW_LINUX_TRIAL.write_text(
+        elif source in ca.RAW_ARMS:
+            ensure_agent_daemon(ctx, ca.RAW_FALLBACK)
+            fallback = ca.CUA_BUILDS[ca.RAW_FALLBACK]
+            ca.RAW_TRIAL.parent.mkdir(parents=True, exist_ok=True)
+            ca.RAW_TRIAL.write_text(
                 json.dumps(
                     {
                         "trial_id": "preflight",
@@ -684,9 +684,9 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
         elif source in ca.ADAPTER_ARMS:
             # No capture tool: the adapters have no screenshot of the whole desktop. A read-only list proves the
             # vendor tool answers through the adapter.
-            if source == ca.RAW_LINUX_ARM:
+            if source in ca.RAW_ARMS:
                 if set(tools) != {"run_script"}:
-                    raise RuntimeError("unexpected raw-linux tools/list")
+                    raise RuntimeError(f"unexpected {source} tools/list")
                 result = call(
                     "run_script",
                     {
@@ -700,7 +700,7 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
                     (b for b in result.get("content") or [] if b.get("type") == "image"), None
                 )
                 if image is None:
-                    raise RuntimeError("raw-linux run_script returned no image")
+                    raise RuntimeError(f"{source} run_script returned no image")
                 dest.write_bytes(base64.b64decode(image["data"], validate=True))
                 return f"{arm} real capture", "pass", rec.capture_detail(dest)
             if source == "cc-agent-desktop":
@@ -1081,8 +1081,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
     build_versions = (ctx.versions.get("builds") or {}).get(
-        ca.RAW_LINUX_FALLBACK  # raw-linux's fallback driver is the main build
-        if SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
+        ca.RAW_FALLBACK  # raw-linux's fallback driver is the main build
+        if SOURCE_ARM.get(arm, arm) in ca.RAW_ARMS
         else SOURCE_ARM.get(arm, arm)
     ) or (ctx.versions.get("builds") or {}).get("cc-cua-driver", {})
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
@@ -1189,8 +1189,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             SOURCE_ARM.get(arm) in ca.CUA_ARMS
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
-        elif SOURCE_ARM.get(arm) == ca.RAW_LINUX_ARM:
-            ensure_agent_daemon(ctx, ca.RAW_LINUX_FALLBACK)  # raw.driver's fallback: the main build's daemon
+        elif SOURCE_ARM.get(arm) in ca.RAW_ARMS:
+            ensure_agent_daemon(ctx, ca.RAW_FALLBACK)  # raw.driver's fallback: the main build's daemon
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = (
                 None  # set even when park_pointer raises, so the row shows the attempt
@@ -1253,24 +1253,33 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             prompt += f"\nYou have about {timeout_s // 60} minutes and at most {max_turns} turns.\n"
         (artifacts / "prompt.txt").write_text(prompt, "utf-8")
         (artifacts / "argv.json").write_text(json.dumps(argv, indent=2) + "\n", "utf-8")
-        raw_arm = SOURCE_ARM.get(arm, arm) == ca.RAW_LINUX_ARM
-        row["foreground_grant"] = v2.foreground_grant(spec)  # every arm: the task's grant, for comparison
+        raw_arm = SOURCE_ARM.get(arm, arm) in ca.RAW_ARMS
+        # every arm: the task's grant, for comparison. On macOS the background condition never grants foreground:
+        # its brief tells the agent to keep the user's window in front (bench_v2.BACKGROUND_BRIEF).
+        grant = v2.foreground_grant(spec) and not (
+            SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_ARM and condition == "background"
+        )
+        row["foreground_grant"] = grant
         if raw_arm:
-            ca.RAW_LINUX_LOG.parent.mkdir(parents=True, exist_ok=True)
-            ca.RAW_LINUX_LOG.unlink(missing_ok=True)
-            fallback = ca.CUA_BUILDS[ca.RAW_LINUX_FALLBACK]
+            ca.RAW_LOG.parent.mkdir(parents=True, exist_ok=True)
+            ca.RAW_LOG.unlink(missing_ok=True)
+            fallback = ca.CUA_BUILDS[ca.RAW_FALLBACK]
             settings = {
                 "trial_id": entry["trial_id"],
-                "foreground_grant": v2.foreground_grant(spec),
-                "coverage": spec.get("atspi_coverage") or {},
+                "foreground_grant": grant,
+                "coverage": (
+                    spec.get("ax_coverage") if SOURCE_ARM.get(arm, arm) == ca.RAW_MACOS_ARM else spec.get("atspi_coverage")
+                )
+                or {},
+                "user_apps": list(ca.RAW_USER_APPS) if condition == "background" else [],
                 "driver": {
                     "socket": fallback.socket,
                     "bin": str(fallback.bin),
                     "session": f"raw-{entry['trial_id']}-a{attempt}",
                 },
             }
-            ca.RAW_LINUX_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
-            shutil.copy(ca.RAW_LINUX_TRIAL, artifacts / "raw-trial.json")
+            ca.RAW_TRIAL.write_text(json.dumps(settings) + "\n", "utf-8")
+            shutil.copy(ca.RAW_TRIAL, artifacts / "raw-trial.json")
         recording = ctx.recorder.start(trial_dir / "rec") if ctx.recorder else False
         row["recording_started"] = bool(recording)
         sentinel.toggle_armed()
@@ -1346,7 +1355,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 )
         agent_ended = time.monotonic()
         if raw_arm:
-            row["raw_linux"] = raw_linux_summary(ca.RAW_LINUX_LOG, artifacts / "raw-calls.jsonl")
+            row["raw_linux" if SOURCE_ARM.get(arm, arm) in ca.RAW_LINUX_ARMS else "raw_macos"] = raw_linux_summary(
+                ca.RAW_LOG, artifacts / "raw-calls.jsonl"
+            )
         if watcher:
             watcher.finish()
             front_seen, side_door = sorted(watcher.seen), set(watcher.side)
@@ -2752,7 +2763,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         try:
             source = pia.SOURCE_ARM[arm]
             ensure_agent_daemon(
-                ctx, ca.RAW_LINUX_FALLBACK if source == ca.RAW_LINUX_ARM else source
+                ctx, ca.RAW_FALLBACK if source in ca.RAW_ARMS else source
             )
             status, detail = pia.init_check(
                 arm,
@@ -3089,8 +3100,8 @@ def setup_arms(ctx: Ctx) -> None:
             or arm == "cc-cua-driver"
             or arm in {SOURCE_ARM.get(a) for a in ctx.arm_names}
             or (
-                arm == ca.RAW_LINUX_FALLBACK
-                and ca.RAW_LINUX_ARM in {SOURCE_ARM.get(a) for a in ctx.arm_names}
+                arm == ca.RAW_FALLBACK
+                and set(ca.RAW_ARMS) & {SOURCE_ARM.get(a) for a in ctx.arm_names}
             )
         },
         pins=pins,
@@ -3254,7 +3265,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
             a: pia.argv(
                 ca.system_prompt_for(SOURCE_ARM[a]),
                 None
-                if SOURCE_ARM[a] == ca.RAW_LINUX_ARM
+                if SOURCE_ARM[a] in ca.RAW_ARMS
                 else Path(ca.CWD_ROOT) / ".claude/skills/cua-driver",
             )
             if a in pia.ARMS

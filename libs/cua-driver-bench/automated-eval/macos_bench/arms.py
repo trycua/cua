@@ -62,6 +62,8 @@ PI_ARMS = (
     "pi-cua-driver-script",
     "pi-cua-driver-script-only",
     "pi-raw-linux",  # no Cua Driver: scripts against Linux low-level APIs (tools/raw_linux)
+    "pi-raw-linux-diff",  # pi-raw-linux with tree diffs on re-dumps
+    "pi-raw-macos",  # the same on macOS: AX + per-process events (tools/raw_macos)
 )
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS + PI_ARMS
 

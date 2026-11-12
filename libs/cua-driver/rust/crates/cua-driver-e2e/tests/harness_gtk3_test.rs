@@ -544,6 +544,7 @@ fn harness_gtk3_disabled_control_is_published_and_its_writers_refused() {
         let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built Linux driver");
         *evidence = recording_evidence(driver.recording_dir());
         let (pid, window_id) = launch_with_env(&mut driver, &[("CUA_GTK3_DISABLED_CONTROL", "1")]);
+        driver.start_behavior_recording();
         let state = snapshot(&mut driver, pid, window_id);
         assert!(
             state.tree_text().contains("disabled_checked=False"),

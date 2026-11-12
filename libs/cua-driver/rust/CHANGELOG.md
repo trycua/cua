@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.17](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.16...cua-driver-rs-v0.47.17) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** accept delivery_mode on invoke_menu so foreground menus work on Linux ([#7423](https://github.com/trycua/cua/issues/7423)) ([ac72070](https://github.com/trycua/cua/commit/ac720702eb9790eee69188490b54a4175494040d))
+
 ## [0.47.16](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.15...cua-driver-rs-v0.47.16) (2026-11-12)
 
 

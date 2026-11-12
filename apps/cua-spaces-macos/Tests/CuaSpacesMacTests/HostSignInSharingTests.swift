@@ -166,6 +166,9 @@ struct HostSignInSharingTests {
         let host = FixtureHost()
         let (m, _, _) = await sharing(host)
         #expect(m.panel.toggles.allSatisfy { $0.enabled })
+        // A new setup shares the desktop and provides Spaces.
+        #expect(m.panel.toggles.map(\.on) == [true, true])
+        await m.run(.stopProvidingSpaces)
         await m.run(.hideDesktop)
         #expect(m.panel.toggles.map(\.on) == [false, false])
         #expect(m.panel.toggles.allSatisfy { $0.enabled })

@@ -131,7 +131,7 @@ const MODEL: Record<string, (a: Args) => unknown> = {
   'keyvault.credentialForm': (a) => kvCredentialForm(a.overview),
   'keyvault.passphraseCheck': (a) => kvPassphraseCheck(a.mode, a.passphrase, a.confirm),
   'sidebar.build': (a) => sidebar(a.spaces, a.query ?? '', a.selectedId ?? null),
-  'sidebar.detail': (a) => spaceDetail(a.space, a.usage, a.hostArch, a.experiments),
+  'sidebar.detail': (a) => spaceDetail(a.space, a.usage, a.hostArch),
   'experiments.page': (a) => experimentsPage(a.experiments),
   'experiments.choose': (a) => chooseExperiment(a.experiments, a.row, a.option),
   'settings.withStorage': (a) => settingsWithStorage(a.page, a.storage, a.experiments),
@@ -213,6 +213,7 @@ describe('app core parity flows (webview)', () => {
       'create-space',
       'create-resources',
       'create-gpu',
+      'create-microvm',
       'create-cancel',
       'teleport-review',
       'teleport-sign-ins',
@@ -249,6 +250,15 @@ describe('app core parity flows (webview)', () => {
       'create-stages',
       'first-run',
       'create-retry',
+      'spaces-menu',
+      'bulk-confirm',
+      'tips',
+      'pro-banner',
+      'connectors',
+      'github-connection',
+      'thread-cards',
+      'ci-runners',
+      'prepare',
     ]);
   });
 

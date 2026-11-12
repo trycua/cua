@@ -90,7 +90,7 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
         empty_title: "No Spaces yet".into(),
         empty_action: "Linux".into(),
         empty_linux_detail: empty_linux_detail(),
-        empty_detail: "Choose a system for your first Space.".into(),
+        empty_detail: "Pick a system to start it.".into(),
         empty_macos_action: "macOS".into(),
         empty_macos_detail: empty_macos_detail(),
         volume_label: volume_shown(input.experiments.as_ref()).then(|| "Volume".into()),

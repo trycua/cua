@@ -45,7 +45,13 @@ export type ShareHandlers = {
   [K in ShareOpName]: (args: ShareOperations[K]["args"]) => Promise<ShareOperations[K]["result"]>;
 };
 
-export const SHARE_OPERATIONS = ["sharing.list", "sharing.share", "sharing.unshare", "sharing.removals", "sharing.ackRemovals"] as const satisfies readonly ShareOpName[];
+export const SHARE_OPERATIONS = [
+  "sharing.list",
+  "sharing.share",
+  "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
+] as const satisfies readonly ShareOpName[];
 
 const row = <K extends ShareOpName>(op: K, tauri: string) => ({
   webkit: { methods: [op] as const },

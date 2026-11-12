@@ -53,6 +53,9 @@ pub struct ListProgress {
 pub struct SpaceListing {
     pub spaces: Vec<SpaceInfo>,
     pub progress: ListProgress,
+    /// Spaces your other computers are creating now
+    /// ([`Spaces::creating_elsewhere`]).
+    pub creating: Vec<crate::resources::creates::CreatingElsewhere>,
 }
 
 /// How a read of the account's computers ended.
@@ -187,7 +190,11 @@ impl Spaces {
                 notice: why,
             },
         };
-        Ok(SpaceListing { spaces, progress })
+        Ok(SpaceListing {
+            spaces,
+            progress,
+            creating: self.creating_elsewhere(),
+        })
     }
 
     /// The account's computers the directory last listed, other than this

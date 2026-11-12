@@ -26,13 +26,7 @@ jobs:
         run: |
           # Service → tag prefix → directory
           declare -A SERVICE_TAG_DIR
-          SERVICE_TAG_DIR["docker/xfce-cua"]="docker-xfce-cua-v|libs/xfce-cua/"
-          SERVICE_TAG_DIR["docker/xfce"]="docker-xfce-v|libs/xfce/"
-          SERVICE_TAG_DIR["docker/kasm"]="docker-kasm-v|libs/kasm/"
           SERVICE_TAG_DIR["docker/lumier"]="docker-lumier-v|libs/lumier/"
-          SERVICE_TAG_DIR["docker/qemu-android"]="docker-cua-qemu-android-v|libs/qemu-docker/android/"
-          SERVICE_TAG_DIR["docker/qemu-linux"]="docker-cua-qemu-linux-v|libs/qemu-docker/linux/"
-          SERVICE_TAG_DIR["docker/qemu-windows"]="docker-cua-qemu-windows-v|libs/qemu-docker/windows/"
 
           UNRELEASED=""
           UNRELEASED_COUNT=0

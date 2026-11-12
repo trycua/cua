@@ -86,7 +86,8 @@ export function PipView({ params }: { params: PipParams }) {
     return () => watch.disconnect();
   }, [live]);
 
-  const openSpace = () => void desktop()?.invoke(ELECTRON_BRIDGE_CHANNEL, { id: `pip-open-${Date.now()}`, method: "spaces.open", args: { id: params.spaceId } });
+  const openSpace = () =>
+    void desktop()?.invoke(ELECTRON_BRIDGE_CHANNEL, { id: `pip-open-${Date.now()}`, method: "spaces.open", args: { id: params.spaceId } });
   const badge = pipBadge(slot ? slot.phase : null, slot?.reason);
   const label = params.title && params.spaceName ? `${params.title} — ${params.spaceName}` : params.title || params.spaceName;
 
@@ -94,7 +95,7 @@ export function PipView({ params }: { params: PipParams }) {
     <div data-pip={params.spaceId} className="group relative h-screen w-screen overflow-hidden bg-black text-white select-none">
       <div ref={ref} data-pip-stream className="absolute inset-0" />
       {badge ? (
-        <div data-pip-status={badge.tone} className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/65 px-2 py-1 text-[11px] font-medium">
+        <div data-pip-status={badge.tone} className="absolute top-2 left-2 flex items-center gap-1.5 rounded-lg bg-black/65 px-2 py-1 text-[11px] font-medium">
           <span className={cn("size-[7px] rounded-full", badge.tone === "red" ? "bg-red-500" : "bg-yellow-400")} />
           {badge.text}
           {slot?.phase === "failed" ? (
@@ -106,10 +107,22 @@ export function PipView({ params }: { params: PipParams }) {
       ) : null}
       <div className="app-drag absolute inset-x-0 top-0 flex h-8 items-center gap-1 bg-gradient-to-b from-black/75 to-transparent pr-1 pl-3 opacity-0 transition-opacity group-hover:opacity-100">
         <span className="min-w-0 flex-1 truncate text-xs text-white/90">{label}</span>
-        <button type="button" title="Open Space" aria-label="Open Space" onClick={openSpace} className="grid size-6 place-items-center rounded-md text-white/80 hover:bg-white/15 hover:text-white">
+        <button
+          type="button"
+          title="Open Space"
+          aria-label="Open Space"
+          onClick={openSpace}
+          className="grid size-6 place-items-center rounded-lg text-white/80 hover:bg-white/15 hover:text-white"
+        >
           <AppWindowIcon className="size-3.5" />
         </button>
-        <button type="button" title="Close" aria-label="Close" onClick={() => window.close()} className="grid size-6 place-items-center rounded-md text-white/80 hover:bg-white/15 hover:text-white">
+        <button
+          type="button"
+          title="Close"
+          aria-label="Close"
+          onClick={() => window.close()}
+          className="grid size-6 place-items-center rounded-lg text-white/80 hover:bg-white/15 hover:text-white"
+        >
           <XIcon className="size-3.5" />
         </button>
       </div>

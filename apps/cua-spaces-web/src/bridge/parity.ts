@@ -55,7 +55,13 @@ import {
   telemetryShare,
   telemetryStorage,
 } from "./telemetry";
+import { githubView } from "./github";
+import { ciReduce, ciView } from "./ci-runners";
+import { prepareHidden, prepareListed, prepareMetrics, prepareReduce, prepareView } from "./prepare-core";
+import { holdWarmStart } from "@/lib/prepare/store";
 import { hostFormInitial, hostFormReduce, hostFormView, type HostFormView } from "./this-machine";
+import type { AccountMenuInput, ProBannerInput } from "./contracts/spaces-page";
+import { accountMenu, bulkConfirm, bulkDone, bulkProgress, chooseSettings, proBanner, spaceMenu, tipsReduce, tipsView } from "./spaces-page";
 
 type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -140,7 +146,7 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
 
     // A Space's detail (space-detail.ts).
     "sidebar.detail": (a) => {
-      const detail = spaceDetail(core, a.space, a.usage, a.hostArch, a.experiments);
+      const detail = spaceDetail(core, a.space, a.usage, a.hostArch);
       record({ kind: "space-detail", space: a.space, usage: a.usage ?? null, hostArch: a.hostArch ?? null, detail });
       return detail;
     },
@@ -161,7 +167,21 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
       const view = core.tryCall<MachinesView>("machines.view", {
         input: {
           page: { hostOs: "macos", spaces: [], now: 0 },
-          rows: [{ id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: null, deviceOnly: false, spaceId: null, stoppedSharing: false, lastSeen: null }],
+          rows: [
+            {
+              id: "this-mac",
+              name: "This Mac",
+              online: true,
+              os: "macos",
+              via: "local",
+              current: true,
+              device: null,
+              deviceOnly: false,
+              spaceId: null,
+              stoppedSharing: false,
+              lastSeen: null,
+            },
+          ],
           host: a.state,
         },
       });
@@ -194,6 +214,35 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
 
     // Usage events (telemetry.ts).
     ...telemetryMethods(core, (method, signals) => record({ kind: "telemetry", method, signals })),
+
+    // The new Spaces page's decisions (spaces-page.ts).
+    ...spacesPageMethods(core),
+  };
+}
+
+/** The new Spaces page's wrappers (spaces-page.ts), by core method. */
+function spacesPageMethods(core: CoreClient): Record<string, (a: Args) => unknown> {
+  return {
+    "spaces.menu": (a) => spaceMenu(core, a),
+    "spaces.bulkConfirm": (a) => bulkConfirm(core, a.items),
+    "spaces.bulkProgress": (a) => bulkProgress(core, a.items, a.finished ?? []),
+    "spaces.bulkDone": (a) => bulkDone(core, a.items, a.results),
+    "tips.view": (a) => tipsView(core, a.place, a.facts, a.state),
+    "tips.reduce": (a) => tipsReduce(core, a.state, a.event),
+    "settings.choose": (a) => chooseSettings(core, a.settings, a.row, a.option),
+    "upsell.proBanner": (a) => proBanner(core, a as ProBannerInput),
+    "account.menu": (a) => accountMenu(core, a as AccountMenuInput),
+    // Connections, GitHub (github.ts).
+    "githubConnection.view": (a) => githubView(core, (a.input ?? null) as never, (a.input as { error?: string } | undefined)?.error ?? null),
+    // CI Runners (ci-runners.ts).
+    "ciRunners.reduce": (a) => ciReduce(core, a.state, a.action),
+    "ciRunners.view": (a) => ciView(core, a.overview, a.state),
+    // Preparing the ask-first Space (prepare-core.ts).
+    "prepare.reduce": (a) => prepareReduce(core, a.state, a.action),
+    "prepare.view": (a) => prepareView(core, a.state),
+    "prepare.metrics": (a) => prepareMetrics(core, a.state),
+    "prepare.hidden": (a) => prepareHidden(core, a.state),
+    "prepare.listed": (a) => prepareListed(core, a.state, a.ids),
   };
 }
 
@@ -321,6 +370,9 @@ declare global {
 export function installParityHandle(store: BridgeStore): () => void {
   if (typeof window === "undefined" || store.adapter.mode !== "demo") return () => {};
   if (!new URLSearchParams(window.location.search).has("parity")) return () => {};
+  // A parity replay records exactly the events its flow makes: the warm home (on by default now) would add a
+  // space-create of its own, so it is held for the replay page, as the unit-test harness holds it.
+  holdWarmStart(true);
   const core = store.core;
   window.__cuaParity = {
     coreStatus: core.status,

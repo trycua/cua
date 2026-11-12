@@ -10,7 +10,9 @@
 //! that carry the tag. The file is the single source of truth; the docs page
 //! [`DOCS_URL`] shows it verbatim, and tests keep the three (the policy, the
 //! calls `aws.rs` makes, the docs) from drifting apart. The Google Cloud
-//! list is [`crate::gcp::PERMISSIONS`], checked against the same page.
+//! list is [`crate::gcp::PERMISSIONS`], checked against the same page and
+//! the trust script's custom role; Azure's built-in roles are checked
+//! against the trust template and the page.
 
 /// The docs page that shows the policy and how to attach it.
 pub const DOCS_URL: &str =
@@ -28,6 +30,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     const AWS_SOURCE: &str = include_str!("aws.rs");
+    const AWSNET_SOURCE: &str = include_str!("awsnet.rs");
+    const AWS_SHARES_SOURCE: &str = include_str!("aws_shares.rs");
     const GCP_SOURCE: &str = include_str!("gcp.rs");
     const DOCS: &str =
         include_str!("../../../../../docs/content/docs/cua-sdk/guides/your-cloud-safety.mdx");
@@ -45,6 +49,54 @@ mod tests {
         "security-group/*",
         "vpc/",
     ];
+
+    /// The inline policy of the CloudFormation trust stack: between the
+    /// `# BEGIN cua-policy` and `# END cua-policy` lines, after
+    /// `PolicyDocument:`.
+    fn template_policy() -> Value {
+        let t = include_str!("../templates/aws/cua-spaces.yaml");
+        let block = t
+            .split("# BEGIN cua-policy")
+            .nth(1)
+            .and_then(|b| b.split("# END cua-policy").next())
+            .expect("the template marks its policy");
+        let json = block
+            .split_once("PolicyDocument:")
+            .expect("PolicyDocument")
+            .1;
+        serde_json::from_str(json).expect("the template's policy is JSON")
+    }
+
+    #[test]
+    fn the_trust_stack_grants_exactly_the_published_policy_plus_a_cost_read() {
+        let mut want = policy();
+        want["Statement"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "Sid": "CuaReadCostOfWhatItCreates",
+                "Effect": "Allow",
+                "Action": "ce:GetCostAndUsage",
+                "Resource": "*"
+            }));
+        assert_eq!(template_policy(), want);
+        let t = include_str!("../templates/aws/cua-spaces.yaml");
+        // No IAM actions, and the trust names the per-account issuer's
+        // audience and subject.
+        let actions: Vec<String> = template_policy()["Statement"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|s| strings(&s["Action"]))
+            .collect();
+        assert!(actions.contains(&"ec2:RunInstances".to_string()));
+        assert!(!actions.iter().any(|a| a.starts_with("iam:")));
+        assert!(t.contains("RoleName: cua-spaces"));
+        assert!(t.contains(r#""${IssuerHost}/a/${CuaAccount}:aud": "sts.amazonaws.com""#));
+        assert!(t.contains(r#""${IssuerHost}/a/${CuaAccount}:sub": "account:${CuaAccount}""#));
+        assert!(t.contains("sts:AssumeRoleWithWebIdentity"));
+        assert!(t.contains("MaxSessionDuration: 3600"));
+    }
 
     fn policy() -> Value {
         serde_json::from_str(aws_policy_json()).expect("the policy is JSON")
@@ -72,7 +124,10 @@ mod tests {
     /// Every `ec2.<op>(` and `sts.<op>(` call in `aws.rs` outside its tests,
     /// as `service:Operation`, plus the SSM read the image parameter needs.
     fn used_actions() -> BTreeSet<String> {
-        let src = AWS_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let aws = AWS_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let net = AWSNET_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let shares = AWS_SHARES_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let src = &format!("{aws}\n{net}\n{shares}");
         let b = src.as_bytes();
         let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
         let mut out = BTreeSet::new();
@@ -145,9 +200,14 @@ mod tests {
                 assert!(!a.contains('*'), "{sid}: wildcard action {a}");
             }
         }
+        // IAM counts a managed policy's size without whitespace.
         assert!(
-            aws_policy_json().len() < 6144,
-            "IAM managed policies are limited to 6,144 characters"
+            aws_policy_json()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .count()
+                < 6144,
+            "IAM managed policies are limited to 6,144 characters (whitespace not counted)"
         );
     }
 
@@ -161,6 +221,10 @@ mod tests {
             "ec2:DescribeInstances",
             "sts:GetCallerIdentity",
             "ec2:GetConsoleOutput",
+            "ec2:CreateVpc",
+            "ec2:CreateInternetGateway",
+            "ec2:AssociateRouteTable",
+            "ec2:DeleteVpc",
         ] {
             assert!(used.contains(known), "scanner missed {known}: {used:?}");
         }
@@ -199,6 +263,8 @@ mod tests {
             "Disassociate",
             "Reboot",
             "Put",
+            "Allocate",
+            "Release",
         ];
         for s in statements().iter().filter(|s| s["Effect"] == "Allow") {
             let sid = s["Sid"].as_str().unwrap();
@@ -270,6 +336,24 @@ mod tests {
             docs, code,
             "the docs list the GCP permissions in gcp.rs, exactly"
         );
+        // The trust script's role grants exactly these too.
+        let script: BTreeSet<String> = crate::trust::gcp::script_permissions()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            script, code,
+            "templates/gcp/cua-trust.sh grants the permissions in gcp.rs, exactly"
+        );
+        // Azure: the template grants the two roles the page names, by id.
+        let template = crate::trust::azure::TEMPLATE;
+        for (name, id) in crate::trust::azure::ROLES {
+            assert!(template.contains(id), "the Azure template lacks {name}");
+            assert!(
+                DOCS.contains(name) && DOCS.contains(id),
+                "your-cloud-safety.mdx must name the Azure role {name} ({id})"
+            );
+        }
         assert!(DOCS.contains("## Least-privilege access"));
         assert!(DOCS_URL.ends_with("#least-privilege-access"));
     }

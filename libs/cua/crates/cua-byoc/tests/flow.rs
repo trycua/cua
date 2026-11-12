@@ -491,3 +491,50 @@ async fn a_boot_log_that_never_arrives_is_given_up_on() {
     assert!(w.fake.calls().iter().any(|c| c == "delete fake-1"));
     assert!(w.fake.account.lock().unwrap().resources.is_empty());
 }
+
+#[tokio::test]
+async fn a_connections_own_limits_refuse_a_machine_before_any_cloud_call() {
+    let w = world(Tier::Vm).await;
+    guest_joins(&w);
+    let clouds = w.sandboxes.clouds().unwrap();
+    clouds.connect(&aws(), false, Some(2)).await.unwrap();
+    let store = cua_byoc::Store::new(w.dir.path());
+    let mut conn = store.connection("aws").unwrap().unwrap();
+    let before = w.fake.calls().len();
+
+    // Larger than the connection allows.
+    conn.max_size = Some(cua_byoc::MaxSize {
+        vcpu: 1,
+        mem_gib: 1,
+    });
+    store.connect(conn.clone()).unwrap();
+    let mut big = create("big");
+    big.cpus = 2;
+    big.memory_mb = 4096;
+    let err = w.sandboxes.create(big).await.unwrap_err();
+    assert!(
+        matches!(err, cua_sandbox_core::Error::InvalidArgument(_)),
+        "{err:?}"
+    );
+    assert!(
+        err.to_string()
+            .contains("allows machines up to 1 vCPU and 1 GB"),
+        "{err}"
+    );
+
+    // This month's budget is used up.
+    conn.max_size = None;
+    conn.budget_usd_month = Some(0.0);
+    store.connect(conn).unwrap();
+    let err = w.sandboxes.create(create("over")).await.unwrap_err();
+    assert!(matches!(err, cua_sandbox_core::Error::Cloud(_)), "{err:?}");
+    assert!(
+        err.to_string()
+            .contains("budget of $0.00 this month is reached"),
+        "{err}"
+    );
+
+    // Neither reached the cloud, nor recorded anything.
+    assert_eq!(w.fake.calls().len(), before, "{:?}", w.fake.calls());
+    assert!(store.resources().unwrap().is_empty());
+}

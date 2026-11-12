@@ -10,7 +10,17 @@ import type { ShareEntry } from "../../contracts/share";
 import type { ShareHandlers } from "../../ops/share";
 
 export function demoShares(): Map<string, ShareEntry[]> {
-  return new Map([["local:design-review", [{ who: "grace@cua.ai", role: "editor", connected: true }]]]);
+  return new Map([
+    ["local:design-review", [{ who: "grace@cua.ai", role: "editor", connected: true }]],
+    // The Space with a thread (`demo/thread.ts`): the people in it.
+    [
+      "relay:linux-box/ubuntu-build",
+      [
+        { who: "grace@example.com", role: "editor", connected: true },
+        { who: "linus@example.com", role: "viewer", connected: false },
+      ],
+    ],
+  ]);
 }
 
 export function demoShareHandlers({ wait, stepMs, teamFull }: { wait(ms: number): Promise<void>; stepMs: number; teamFull?: boolean }): ShareHandlers {

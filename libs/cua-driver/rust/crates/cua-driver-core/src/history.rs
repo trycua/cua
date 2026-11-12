@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Encrypted, metadata-only Computer History.
 //!
 //! History is deliberately separate from trajectory recording.  It accepts
@@ -2399,6 +2402,7 @@ fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
 fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
     OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(path)

@@ -380,7 +380,12 @@ pub fn display_name(id: &str, reported: &str) -> String {
 
 impl SpaceRow {
     fn from_info(info: SpaceInfo) -> Self {
-        let name = display_name(&info.id, &info.name);
+        // Renamed elsewhere (the Cua app, `cua spaces rename`): that name.
+        let name = if info.display_name.is_empty() {
+            display_name(&info.id, &info.name)
+        } else {
+            info.display_name.clone()
+        };
         Self {
             id: info.id,
             name,
@@ -536,6 +541,7 @@ pub fn space_host(h: cua_spaces::host_spaces::HostOffer) -> cua_spaces_app_core:
             memory_free_mb: n.memory_free_mb,
             spaces: n.running.values().sum(),
             problem: n.problem,
+            kinds: n.kinds,
         }),
     }
 }

@@ -1,6 +1,8 @@
 //! End-to-end behaviour of cua-agent-setup against fixture configs for every
 //! agent format, always in a temporary HOME (never the real one).
 
+mod common;
+
 use cua_agent_setup::{
     AGENTS, AgentSetup, Change, Format, HostEnv, McpServer, Outcome, Parts, Target, registry,
 };
@@ -140,6 +142,23 @@ fn one(out: Vec<Outcome>) -> Outcome {
     out.into_iter().next().unwrap()
 }
 
+/// A stand-in cua-driver at `path`: `mcp` answers one MCP `initialize`
+/// (or, when `answers` is false, reads it and never answers).
+#[cfg(unix)]
+fn fake_driver(path: &Path, answers: bool) -> PathBuf {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let body = if answers {
+        "read line\nprintf '%s\\n' 'not json: a log line'\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"serverInfo\":{\"name\":\"cua-driver\",\"version\":\"9.9.9\"}}}'\n"
+    } else {
+        "read line\nexit 3\n"
+    };
+    common::write_executable(
+        path,
+        format!("#!/bin/sh\n[ \"$1\" = mcp ] || exit 2\n{body}"),
+    );
+    path.to_path_buf()
+}
+
 /// A user config for `agent` holding one unrelated server (and comments
 /// where the format has them), plus the parsed path to the servers object.
 fn fixture(agent: &str) -> (&'static str, String) {
@@ -148,7 +167,7 @@ fn fixture(agent: &str) -> (&'static str, String) {
             ".claude.json",
             "{\n  \"numStartups\": 12,\n  \"mcpServers\": {\n    \"other\": {\"type\": \"stdio\", \"command\": \"other-mcp\", \"args\": []}\n  },\n  \"projects\": {}\n}\n".into(),
         ),
-        "codex" => (
+        "codex" | "t3code" => (
             ".codex/config.toml",
             "# my codex config\nmodel = \"gpt-5\" # pinned\n\n[mcp_servers.other]\ncommand = \"other-mcp\" # keep\nargs = []\n".into(),
         ),
@@ -277,7 +296,12 @@ fn every_mcp_agent_merges_idempotently_backs_up_and_removes_only_its_entry() {
         let st = s.detect().into_iter().find(|x| x.id == a.id).unwrap();
         assert!(st.cua_configured && st.cua_managed, "{}: {st:?}", a.id);
         assert_eq!(st.mcp_config.as_deref(), Some(file.as_path()));
-        assert!(st.installed, "{}: the config marks it installed", a.id);
+        // T3 Code's config is Codex's: it doesn't mark T3 Code installed.
+        assert!(
+            st.installed || a.id == "t3code",
+            "{}: the config marks it installed",
+            a.id
+        );
 
         // A new command updates the entry (still one backup).
         let o = one(s
@@ -550,11 +574,9 @@ fn detection_uses_path_markers_and_app_bundles() {
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let codex = bin.join(if cfg!(windows) { "codex.exe" } else { "codex" });
-    std::fs::write(&codex, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+        common::write_executable(&codex, "#!/bin/sh\n");
         // A non-executable file is not a binary.
         std::fs::write(bin.join("claude"), "").unwrap();
     }
@@ -785,10 +807,29 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     );
 }
 
+#[test]
+fn a_skill_the_user_installed_another_way_is_not_outdated() {
+    let t = T::new();
+    let s = t.setup();
+    s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
+        .unwrap();
+    let dest = t.home.join(".cline/skills/cua-sandboxes");
+    // Another installer replaced it with different content that cua never
+    // wrote: setup skips it without --force, so it can never match the
+    // bundled copy and must not keep the agent in "not set up".
+    std::fs::write(
+        dest.join("SKILL.md"),
+        "---\nname: cua-sandboxes\ndescription: newer from its own installer\n---\n",
+    )
+    .unwrap();
+    let st = s.detect().into_iter().find(|a| a.id == "cline").unwrap();
+    assert_eq!(st.skills_installed, ["cua-sandboxes"]);
+    assert!(st.skills_outdated.is_empty(), "{st:?}");
+}
+
 #[cfg(unix)]
 #[test]
 fn claude_code_is_configured_through_its_own_cli_when_present() {
-    use std::os::unix::fs::PermissionsExt;
     let mut t = T::new();
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -804,8 +845,7 @@ fn claude_code_is_configured_through_its_own_cli_when_present() {
         config.display()
     );
     let claude = bin.join("claude");
-    std::fs::write(&claude, script).unwrap();
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&claude, script);
     t.env.path = vec![bin];
     t.env.run_agent_clis = true;
     let s = t.setup();
@@ -850,6 +890,7 @@ fn state_file_records_what_cua_wrote() {
     assert!(o.detail.contains("does not support MCP"));
 }
 
+#[cfg(unix)]
 #[test]
 fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let t = T::new();
@@ -859,7 +900,9 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let agents = ids(&["claude-code", "codex", "pi"]);
     s.configure_mcp(&ids(&["claude-code"]), &server()).unwrap();
 
-    let driver = McpServer::driver("/opt/drv/bin/cua-driver");
+    let exe = fake_driver(&t.home.join("opt/drv/bin/cua-driver"), true);
+    let exe_s = exe.display().to_string();
+    let driver = McpServer::driver(exe_s.as_str());
     assert_eq!(driver.name, cua_agent_setup::DRIVER_MCP_SERVER_NAME);
     assert_eq!(driver.args, ["mcp"]);
     let out = s
@@ -886,7 +929,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     let after = t.read(&file);
     let m = registry::find("claude-code").unwrap().mcp.unwrap();
     let entry = cua_agent_setup_get(m.format, &file, &after, m.key_path, "cua-driver").unwrap();
-    assert_eq!(entry["command"], "/opt/drv/bin/cua-driver");
+    assert_eq!(entry["command"], exe_s.as_str());
     assert!(cua_agent_setup_get(m.format, &file, &after, m.key_path, "cua").is_some());
 
     // Status sees both; idempotent.
@@ -913,7 +956,7 @@ fn cua_driver_setup_adds_its_skill_and_server_beside_cua_and_removes_both() {
     assert_eq!(state["mcp"][&key]["name"], "cua");
     assert_eq!(
         state["servers"]["cua-driver"][&key]["value"]["command"],
-        "/opt/drv/bin/cua-driver"
+        exe_s.as_str()
     );
 
     // Plain remove undoes Cua Spaces' entry only: Cua Driver's server and
@@ -990,12 +1033,10 @@ fn the_driver_command_resolves_from_path_then_local_bin() {
     } else {
         "cua-driver"
     });
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&exe, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     assert_eq!(
         McpServer::driver_for(&t.env).command,
         exe.display().to_string()
@@ -1009,6 +1050,136 @@ fn the_driver_command_resolves_from_path_then_local_bin() {
     assert_eq!(
         McpServer::driver_for(&env).command,
         on_path.display().to_string()
+    );
+}
+
+/// The reported bug: no cua-driver on the machine. Set up must not write a
+/// server agents can't start, and must say why.
+#[test]
+fn a_missing_cua_driver_fails_with_a_reason_and_leaves_configs_alone() {
+    let t = T::new();
+    let (rel, text) = fixture("claude-code");
+    let file = t.write(rel, &text);
+    let s = t.setup();
+    let driver = McpServer::driver_for(&t.env);
+    assert_eq!(driver.command, "cua-driver");
+    let out = s
+        .setup_cua_driver(&ids(&["claude-code", "pi"]), &driver, Parts::ALL, false)
+        .unwrap();
+    let mcp: Vec<&Outcome> = out.iter().filter(|o| o.target == Target::Mcp).collect();
+    assert_eq!(mcp.len(), 1, "{mcp:#?}");
+    assert_eq!(mcp[0].change, Change::Failed);
+    assert_eq!(mcp[0].agents, ["claude-code"]);
+    assert!(mcp[0].detail.contains("isn't installed"), "{mcp:#?}");
+    assert_eq!(t.read(&file), text);
+    // The skill still installs.
+    assert!(t.home.join(".claude/skills/cua-driver/SKILL.md").is_file());
+    // An absolute path that doesn't exist fails the same way.
+    let gone = McpServer::driver(t.home.join("nope/cua-driver").display().to_string());
+    let out = s
+        .setup_cua_driver(
+            &ids(&["claude-code"]),
+            &gone,
+            Parts {
+                skills: false,
+                mcp: true,
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(one(out).change, Change::Failed);
+    assert_eq!(t.read(&file), text);
+}
+
+/// A cua-driver that never answers MCP is not "done" either.
+#[cfg(unix)]
+#[test]
+fn a_cua_driver_that_does_not_answer_mcp_fails() {
+    let t = T::new();
+    let (rel, text) = fixture("claude-code");
+    let file = t.write(rel, &text);
+    let exe = fake_driver(&t.home.join(".local/bin/cua-driver"), false);
+    let o = one(t
+        .setup()
+        .setup_cua_driver(
+            &ids(&["claude-code"]),
+            &McpServer::driver(exe.display().to_string()),
+            Parts {
+                skills: false,
+                mcp: true,
+            },
+            false,
+        )
+        .unwrap());
+    assert_eq!(o.change, Change::Failed);
+    assert!(o.detail.contains("didn't answer"), "{o:#?}");
+    assert_eq!(t.read(&file), text);
+}
+
+/// Re-running set up repairs an entry an older build wrote with the bare
+/// `cua-driver` name: it now points at the installed binary's absolute path.
+#[cfg(unix)]
+#[test]
+fn set_up_again_repairs_a_bare_cua_driver_entry() {
+    let t = T::new();
+    let (rel, text) = fixture("claude-code");
+    let file = t.write(rel, &text);
+    let s = t.setup();
+    let m = registry::find("claude-code").unwrap().mcp.unwrap();
+    // What 0.9.x wrote with no cua-driver installed.
+    s.configure_mcp(&ids(&["claude-code"]), &McpServer::driver("cua-driver"))
+        .unwrap();
+    let before = t.read(&file);
+    let entry = cua_agent_setup_get(m.format, &file, &before, m.key_path, "cua-driver").unwrap();
+    assert_eq!(entry["command"], "cua-driver");
+
+    let exe = fake_driver(&t.home.join(".local/bin/cua-driver"), true);
+    let mut env = t.env.clone();
+    env.path = vec![t.home.join(".local/bin")];
+    let s = AgentSetup::new(env.clone());
+    // The bare name resolves to the installed binary, checked, then written.
+    for driver in [McpServer::driver("cua-driver"), McpServer::driver_for(&env)] {
+        let o = one(s
+            .setup_cua_driver(
+                &ids(&["claude-code"]),
+                &driver,
+                Parts {
+                    skills: false,
+                    mcp: true,
+                },
+                false,
+            )
+            .unwrap());
+        assert!(
+            matches!(o.change, Change::Updated | Change::Unchanged),
+            "{o:#?}"
+        );
+        let after = t.read(&file);
+        let entry = cua_agent_setup_get(m.format, &file, &after, m.key_path, "cua-driver").unwrap();
+        assert_eq!(entry["command"], exe.display().to_string());
+        assert_eq!(entry["args"], json!(["mcp"]));
+    }
+    assert_eq!(cua_agent_setup::driver::check(&exe).unwrap(), "9.9.9");
+}
+
+/// On macOS the binary inside CuaDriver.app counts when no link exists.
+#[test]
+fn cua_driver_is_found_inside_its_app_on_macos() {
+    let t = T::new();
+    let mut env = t.env.clone();
+    env.os = cua_agent_setup::Os::MacOs;
+    let exe = t
+        .home
+        .join("Applications/CuaDriver.app/Contents/MacOS/cua-driver");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    #[cfg(unix)]
+    common::write_executable(&exe, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+    assert_eq!(cua_agent_setup::driver::locate(&env), Some(exe.clone()));
+    assert_eq!(
+        McpServer::driver_for(&env).command,
+        exe.display().to_string()
     );
 }
 
@@ -1038,12 +1209,10 @@ fn hermes_is_detected_from_its_bin_home_or_app() {
     } else {
         "hermes"
     });
-    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    common::write_executable(&exe, "#!/bin/sh\n");
+    #[cfg(not(unix))]
+    std::fs::write(&exe, "#!/bin/sh\n").unwrap();
     t.env.path = vec![bin];
     let st = get(&t.setup());
     assert_eq!(st.evidence, [format!("bin:{}", exe.display())]);
@@ -1273,7 +1442,7 @@ fn sign_in_is_refused_without_a_sign_in_an_install_or_agent_commands() {
     let mut t = T::new();
     let err = |s: &AgentSetup, id: &str| s.sign_in(id).unwrap_err().to_string();
     assert!(err(&t.setup(), "nope").contains("unknown agent"));
-    assert!(err(&t.setup(), "claude-code").contains("no sign-in"));
+    assert!(err(&t.setup(), "cursor").contains("no sign-in"));
     // Isolated environments never run an agent's CLI.
     assert!(err(&t.setup(), "codex").contains("off in this environment"));
     t.env.run_agent_clis = true;
@@ -1283,7 +1452,6 @@ fn sign_in_is_refused_without_a_sign_in_an_install_or_agent_commands() {
 #[cfg(unix)]
 #[test]
 fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
-    use std::os::unix::fs::PermissionsExt;
     let mut t = T::new();
     let bin = t.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1298,8 +1466,7 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     // Its PATH is only `bin` below: no mkdir there.
     std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
     let codex = bin.join("codex");
-    std::fs::write(&codex, script).unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&codex, script);
     t.env.path = vec![bin];
     t.env.run_agent_clis = true;
     let s = t.setup();
@@ -1313,4 +1480,105 @@ fn sign_in_runs_the_agents_own_login_and_detect_sees_it() {
     assert_eq!(t.read(&log).trim(), "login");
     let a = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
     assert!(a.installed && a.signed_in, "{a:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_code_signs_in_with_its_own_login_and_a_failing_one_says_why() {
+    let mut t = T::new();
+    let bin = t.home.join("bin");
+    let log = t.home.join("claude-argv.log");
+    common::write_script(
+        &bin,
+        "claude",
+        &format!(
+            "printf '%s\\n' \"$*\" >> '{}'\nsleep 0.3\nexit 0",
+            log.display()
+        ),
+    );
+    t.env.path = vec![bin.clone(), "/bin".into(), "/usr/bin".into()];
+    t.env.run_agent_clis = true;
+    t.setup().sign_in("claude-code").unwrap();
+    assert_eq!(t.read(&log).trim(), "auth login");
+    // A login that stops with an error at once: its own last line, in words.
+    common::write_script(
+        &bin,
+        "claude",
+        "echo 'opening the browser' >&2\necho '\x1b[31mNo browser found\x1b[0m' >&2\nexit 1",
+    );
+    let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
+    assert!(
+        e.contains("Claude Code's sign-in stopped: No browser found"),
+        "{e}"
+    );
+    // No output: the exit code.
+    common::write_script(&bin, "claude", "exit 7");
+    let e = t.setup().sign_in("claude-code").unwrap_err().to_string();
+    assert!(e.contains("exit code 7"), "{e}");
+    // One still waiting for the browser is not started twice (last: it stays
+    // registered while it runs).
+    let runs = t.home.join("claude-runs.log");
+    common::write_script(
+        &bin,
+        "claude",
+        &format!("echo run >> '{}'\nsleep 5", runs.display()),
+    );
+    t.setup().sign_in("claude-code").unwrap();
+    t.setup().sign_in("claude-code").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(t.read(&runs).lines().count(), 1);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn hermes_signs_in_in_terminal() {
+    let mut t = T::new();
+    let bin = t.home.join("bin");
+    let log = t.home.join("osascript.log");
+    common::write_script(&bin, "hermes", "exit 0");
+    common::write_script(
+        &bin,
+        "osascript",
+        &format!("printf '%s' \"$*\" > '{}'", log.display()),
+    );
+    t.env.path = vec![bin];
+    t.env.run_agent_clis = true;
+    t.setup().sign_in("hermes").unwrap();
+    let said = t.read(&log);
+    assert!(
+        said.contains("Terminal") && said.contains("hermes") && said.contains("model"),
+        "{said}"
+    );
+}
+
+/// Cua's own setup (its entry in a new `~/.claude.json`, its skills under
+/// `~/.claude/skills`) is no sign Claude Code is installed: the first run
+/// showed "Ready" on a Mac without it (CUA-3063).
+#[test]
+fn what_cua_writes_does_not_make_an_agent_installed() {
+    let t = T::new();
+    let s = t.setup();
+    let claude = |s: &AgentSetup| {
+        s.detect()
+            .into_iter()
+            .find(|a| a.id == "claude-code")
+            .unwrap()
+    };
+    assert!(!claude(&s).installed);
+    s.configure_mcp(&ids(&["claude-code"]), &server()).unwrap();
+    s.install_skills(&ids(&["claude-code"]), &[], false)
+        .unwrap();
+    let after = claude(&s);
+    assert!(after.cua_configured, "{after:?}");
+    assert!(!after.installed, "{:?}", after.evidence);
+    // Codex: cua's config.toml alone is not Codex either.
+    s.configure_mcp(&ids(&["codex"]), &server()).unwrap();
+    let codex = s.detect().into_iter().find(|a| a.id == "codex").unwrap();
+    assert!(!codex.installed, "{:?}", codex.evidence);
+    // What the agent writes itself does count.
+    t.write(".claude/settings.json", "{}");
+    assert!(claude(&s).installed);
+    let t = T::new();
+    t.write(".claude.json", "{\"numStartups\": 3}");
+    assert!(claude(&t.setup()).installed);
 }

@@ -313,7 +313,7 @@ impl SpaceWindow {
 
 /// Where an in-product stream connects. Distinct from the operator-facing
 /// display tools — `FRICTION.md` §10.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StreamEndpoint {
     pub host: String,
     pub port: u16,
@@ -322,6 +322,17 @@ pub struct StreamEndpoint {
     /// Minted fresh on every boot of the Space, so a cached value is valid
     /// only until it restarts.
     pub token: String,
+}
+
+impl std::fmt::Debug for StreamEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamEndpoint")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("driver_port", &self.driver_port)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl StreamEndpoint {
@@ -1408,7 +1419,7 @@ pub struct CreateSpaceOptions {
     /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
     /// `modal`) or `host:<name>`. Unset: the user default.
     pub on: Option<String>,
-    /// `auto` (default), `container` or `vm`.
+    /// `auto` (default), `container`, `vm` or `microvm`.
     pub kind: Option<String>,
     /// `auto` (default) or an engine the location offers for the kind.
     pub runtime: Option<String>,

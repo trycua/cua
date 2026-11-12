@@ -212,7 +212,9 @@ impl Connection {
     pub fn hotspot_start(&self, space_id: &str) -> Result<HotspotStatus> {
         Ok(HotspotStatus::decode(&self.call_object(
             "hotspot_start",
-            json!({ "space": space_id }),
+            // This call is the user's own explicit start; the tool's
+            // `confirm` guards agents that reach it without asking.
+            json!({ "space": space_id, "confirm": true }),
         )?))
     }
 
@@ -491,6 +493,22 @@ impl Connection {
         Ok(expect_array(&payload, None))
     }
 
+    /// `cloud_cost`: what the machines Cua created cost, grouped `by`
+    /// `space`, `agent`, `day` or `cloud` since `since` (`YYYY-MM-DD`;
+    /// `None`: the first of this month): `by`, `since`, `until`, `rows`
+    /// (each `key`, `usd`, `hours`, `machines`) and `total_usd`.
+    pub fn cloud_cost(
+        &self,
+        provider: Option<&str>,
+        by: &str,
+        since: Option<&str>,
+    ) -> Result<Map<String, Value>> {
+        self.call_object(
+            "cloud_cost",
+            json!({ "provider": provider, "by": by, "since": since }),
+        )
+    }
+
     /// `cloud_sweep`: what Cua left in your clouds; deletes it unless
     /// `dry_run`.
     pub fn cloud_sweep(
@@ -723,6 +741,12 @@ impl Space {
         })
     }
 
+    /// `space_job`: a background job in the Space (`arguments` as the tool
+    /// takes them: `action` and its fields).
+    pub fn job(&self, arguments: Value) -> Result<Map<String, Value>> {
+        self.call_object("space_job", self.arguments(arguments))
+    }
+
     /// `space_write`. Literal text, no local file, no shell quoting.
     pub fn write_text(&self, text: &str, path: &str) -> Result<RemoteFile> {
         let target = self.guest_path(path);
@@ -735,6 +759,13 @@ impl Space {
             byte_count: Some(text.len() as u64),
             path: target,
         })
+    }
+
+    /// `space_service`: keeps a command running in the Space (restarts,
+    /// health checks, start on boot, logs). `arguments` are the tool's own
+    /// (`action`, `name`, `command`, ...); the Space is filled in.
+    pub fn keep_service(&self, arguments: Value) -> Result<Value> {
+        self.call("space_service", self.arguments(arguments))
     }
 
     /// `upload`. Reports the path it actually wrote — `FRICTION.md` §13:

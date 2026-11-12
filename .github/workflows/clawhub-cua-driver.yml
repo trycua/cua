@@ -26,7 +26,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   CARGO_NET_RETRY: "10"
@@ -65,7 +64,7 @@ jobs:
 
           skill_text = Path("libs/cua-driver/rust/Skills/cua-driver/SKILL.md").read_text()
           frontmatter = skill_text.split("---", 2)[1]
-          match = re.search(r"^version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
+          match = re.search(r"^  version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
           if not match:
               raise SystemExit("SKILL.md frontmatter has no version")
           print(match.group(1))
@@ -123,7 +122,7 @@ jobs:
           cargo_version = cargo["workspace"]["package"]["version"]
           skill_text = Path(os.environ["SKILL_PATH"], "SKILL.md").read_text()
           frontmatter = skill_text.split("---", 2)[1]
-          match = re.search(r"^version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
+          match = re.search(r"^  version:\s*([^\s#]+)", frontmatter, re.MULTILINE)
           if not match:
               raise SystemExit("SKILL.md frontmatter has no version")
           skill_version = match.group(1)

@@ -75,7 +75,36 @@ extension ParityTests {
             }
             return lines
         }
-        return ["view": name, "summary": v.summary, "groups": groups, "pages": pages]
+        var frame: [String: Any] = ["view": name, "summary": v.summary, "groups": groups, "pages": pages]
+        if !v.clouds.group.rows.isEmpty { frame["clouds"] = cloudsFrame(v.clouds, order: v.order) }
+        return frame
+    }
+
+    /// The Clouds group and each cloud's page in words (`parity.rs`'s `view_frame`).
+    static func cloudsFrame(_ c: AppCloudsView, order: [String]) -> [String: Any] {
+        let dot = { (h: String) in h == "ok" ? "\u{25cf}" : h == "warn" ? "\u{25d0}" : "\u{25cb}" }
+        let rows = c.group.rows.map { "\(dot($0.health)) \($0.name) \u{2014} \($0.line) (\($0.logo))" }
+        let pages: [[String]] = c.pages.map { p in
+            var lines = ["\(p.name) \u{2014} \(p.status)"]
+            for i in p.issues {
+                lines.append("issue \(i.level): \(i.text)\(i.action.map { " [\($0.label)]" } ?? "")")
+            }
+            if let s = p.spend { lines.append("spend \(s.amount) \(s.ofBudget) (\(s.resets)) \(s.note)") }
+            if let r = p.running {
+                let ms = r.machines.map { "\($0.name) \($0.by) \($0.cost)".trimmingCharacters(in: .whitespaces) }
+                lines.append("\(r.title): \(ms.joined(separator: "; "))")
+            }
+            if let t = p.token { lines.append("token: \(t.lock); \(t.holdersLabel) \(t.holders)") }
+            for s in p.settings { lines.append("\(s.label): \(s.value)") }
+            if let a = p.switchAuth { lines.append("[\(a.label)]") }
+            if let a = p.approval {
+                let rows = a.rows.map { "\($0.label) \($0.value)" }.joined(separator: "; ")
+                lines.append("approval: \(a.title) \(a.intro) (\(rows)) [\(a.approveLabel) / \(a.denyLabel)]")
+            }
+            if let d = p.disconnect { lines.append("\(d.label) -> \(d.confirm.confirmLabel)") }
+            return lines
+        }
+        return ["order": order, "title": c.group.title, "rows": rows, "connect": c.group.connectLabel, "pages": pages]
     }
 }
 
@@ -105,7 +134,7 @@ struct MachinesViewTests {
             view.groups.flatMap(\.ids).contains(id)
         })
         let me = view.machines.first { $0.current }
-        #expect(me?.toggles.map(\.label) == ["Let my other devices use this Mac"])
+        #expect(me?.toggles.map(\.label) == ["Let other computers control this desktop"])
         #expect(me?.toggles.allSatisfy(\.editable) == true)
         #expect(view.summary.contains("online"))
         // Another machine's switches are read-only.
@@ -113,15 +142,58 @@ struct MachinesViewTests {
         // A device of its own leaves the account by revoking it.
         let work = view.machines.first { $0.name == "Work laptop" }
         #expect(work?.remove?.device == "dev_work")
-        #expect(work?.remove?.label == "Remove from account")
+        #expect(work?.remove?.label == "Revoke")
+        #expect(work?.line == "Signed in, not sharing")
+        // One list: no separate group for it.
+        #expect(view.groups.first { $0.id == "devices" } == nil)
+        #expect(view.groups.contains { $0.ids.contains("dev_work") })
         // No Space actions on a machine: its Spaces only lead to the Space.
-        #expect(view.machines.allSatisfy { $0.newSpace.label == "New Space here" })
+        #expect(view.machines.filter { $0.line != "Signed in, not sharing" }.allSatisfy { $0.newSpace.label == "New Space here" })
+        #expect(work?.newSpace.label == "")
 
         let bridge = WebUIBridge(model: m, allowedOrigins: [])
         let answer = bridge.machines()["view"] as? [String: Any]
         #expect(answer?["summary"] as? String == view.summary)
         let ids = (answer?["machines"] as? [[String: Any]])?.map { $0["id"] as? String }
         #expect(ids == view.machines.map(\.id))
+    }
+
+    /// A connected cloud is a row in the Clouds group, with its page; Disconnect forgets it.
+    @Test func aConnectedCloudIsInTheCloudsGroup() async throws {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend)
+        await m.cloud.refresh()
+        #expect(m.machinesView.clouds.group.rows.isEmpty, "nothing connected: no group, only the sheet's own entry")
+        backend.fixtureCloudConnected = true
+        await m.cloud.refresh()
+        let clouds = m.machinesView.clouds
+        #expect(clouds.group.title == "Clouds" && clouds.group.connectLabel == "Connect a cloud")
+        #expect(m.machinesView.order.first == "clouds", "the clouds come first in the list")
+        #expect(clouds.group.rows.map(\.name) == ["AWS"])
+        #expect(clouds.pages.first?.status == "Connected")
+        #expect(clouds.pages.first?.disconnect?.label == "Disconnect AWS\u{2026}")
+        try await m.disconnectCloud("aws", deleteResources: false)
+        #expect(backend.fixtureCloudCalls.contains("cloud_disconnect"))
+        #expect(m.machinesView.clouds.group.rows.isEmpty)
+    }
+
+    /// An agent's link waits; the cloud says this person may approve, so its
+    /// page offers the review, and `clouds.approve` reaches `cloud_approve`.
+    @Test func aPersonApprovesAnAgentsLink() async throws {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend)
+        backend.fixtureCloudConnected = true
+        backend.fixtureCloudWaiting = true
+        await m.cloud.refresh()
+        let page = try #require(m.machinesView.clouds.pages.first)
+        #expect(page.status == "Waiting for approval")
+        #expect(page.approval?.intro.hasPrefix("eval-runner set up AWS") == true)
+        #expect(page.issues.first?.action?.id == "review")
+        #expect(WebUIBridge.methods.contains("clouds.approve"))
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        _ = try await bridge.handle("clouds.approve", ["provider": "aws", "approve": true])
+        #expect(backend.fixtureCloudCalls.contains("cloud_approve"))
+        #expect(m.machinesView.clouds.pages.first?.status == "Connected")
     }
 
     /// `machines.rename` renames the relay machine from this enrolled
@@ -144,6 +216,52 @@ struct MachinesViewTests {
 
         // Nothing to remove is refused.
         await #expect(throws: (any Error).self) { _ = try await bridge.handle("machines.remove", [:]) }
+    }
+
+    /// `machines.remove` with `deleteSpaces` deletes the Spaces made on the
+    /// computer too (`relay_unregister_computer`); without it they are only
+    /// detached, as before (CUA-3413).
+    @Test func removeAComputerWithItsSpaces() async throws {
+        let backend = FixtureSpacesBackend()
+        let m = await signedInModel(backend: backend, devices: FixtureDevices())
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        _ = try await bridge.handle("machines.remove", ["machine": "m2"])
+        #expect(backend.unregistered == ["relay:m2"])
+        #expect(backend.unregisteredWithSpaces.isEmpty)
+        _ = try await bridge.handle("machines.remove", ["machine": "m3", "deleteSpaces": true])
+        #expect(backend.unregistered == ["relay:m2", "relay:m3"])
+        #expect(backend.unregisteredWithSpaces == ["relay:m3"])
+    }
+
+    /// The default Space: read, replaced and resolved from this enrolled
+    /// device; a bad id is refused before the relay is asked; signed out,
+    /// each answers null (CUA-3413).
+    @Test func defaultSpaceSettings() async throws {
+        let devices = FixtureDevices()
+        let m = await signedInModel(backend: FixtureSpacesBackend(), devices: devices)
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        for method in ["spaces.settings", "spaces.setSettings", "spaces.resolveDefault"] {
+            #expect(WebUIBridge.methods.contains(method))
+        }
+        let unset = try #require(try await bridge.handle("spaces.settings", [:]) as? [String: Any])
+        #expect(unset["defaultSpace"] is NSNull)
+        #expect(unset["fallbackOn"] as? Bool == true)
+
+        let machine = try #require(devices.current.machines.first).id
+        let saved = try #require(try await bridge.handle(
+            "spaces.setSettings", ["defaultSpace": "relay:\(machine)", "fallback": [String](), "fallbackOn": true]) as? [String: Any])
+        #expect(saved["defaultSpace"] as? String == "relay:\(machine)")
+        #expect(devices.calls.contains("set-spaces-settings:relay:\(machine)"))
+
+        let resolved = try #require(try await bridge.handle("spaces.resolveDefault", [:]) as? [String: Any])
+        let order = try #require(resolved["order"] as? [[String: Any]])
+        #expect(order.first?["role"] as? String == "default")
+        #expect(order.last?["role"] as? String == "here")
+
+        await #expect(throws: (any Error).self) {
+            _ = try await bridge.handle("spaces.setSettings", ["defaultSpace": "local:x", "fallback": [String](), "fallbackOn": true])
+        }
+        await #expect(throws: (any Error).self) { _ = try await bridge.handle("spaces.setSettings", ["fallback": [String]()]) }
     }
 
     /// `checkMachineHealth` asks only the machines the view says can be
@@ -197,5 +315,53 @@ struct MachinesViewTests {
         backend.fixtureHealth[""] = nil
         await m.checkMachineHealth()
         #expect(m.machinesView.machines.first { $0.current }?.issues.isEmpty == true)
+    }
+
+    /// Local Network turned on for the app, but the daemon still runs with
+    /// what macOS decided for it before: the app's own connect gets out, so
+    /// the daemon is started again and This Mac checked again, and the issue
+    /// the person just fixed goes (no red dot for it). At most one restart
+    /// in ten minutes; none while the app is blocked too.
+    @Test func aDaemonStillBlockedAfterAccessIsOnIsStartedAgain() async throws {
+        let backend = FixtureSpacesBackend()
+        let blocked = AppMachinesViewHealth(
+            id: "", checks: [
+                AppMachinesViewCheck(id: "machine.local_network", status: "fail", message: "blocked",
+                                     remediation: "", facts: ["app": "Cua Spaces"]),
+            ], cuaVersion: "0.4.1", error: nil)
+        backend.fixtureHealth[""] = blocked
+        let m = await signedInModel(backend: backend)
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked])
+        m.localNetworkGate = LocalNetworkGate(probe: probe)
+        var restarts = 0
+        m.restartDaemon = {
+            restarts += 1
+            backend.fixtureHealth[""] = nil
+            return true
+        }
+        var clock = Date()
+        m.listClock = { clock }
+
+        // The app is blocked too: access is off, the issue stays.
+        await m.checkMachineHealth()
+        #expect(restarts == 0)
+        #expect(m.machinesView.machines.first { $0.current }?.health == "fail")
+
+        // Access turned on: the app gets out, the daemon does not.
+        probe.answers = [.allowed]
+        await m.checkMachineHealth()
+        #expect(restarts == 1)
+        let me = try #require(m.machinesView.machines.first { $0.current })
+        #expect(me.issues.isEmpty)
+        #expect(me.health != "fail")
+
+        // Blocked again soon after: no second restart within ten minutes.
+        backend.fixtureHealth[""] = blocked
+        clock += 60
+        await m.checkMachineHealth()
+        #expect(restarts == 1)
+        clock += AppModel.localNetworkRestartEvery
+        await m.checkMachineHealth()
+        #expect(restarts == 2)
     }
 }

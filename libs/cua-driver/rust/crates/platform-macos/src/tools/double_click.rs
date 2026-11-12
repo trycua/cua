@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -122,6 +125,17 @@ impl Tool for DoubleClickTool {
             } else {
                 None
             };
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                &element_guard,
+                "double_click",
+                delivery_mode.is_foreground(),
+            )
+            .await
+            {
+                return refusal;
+            }
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
@@ -144,15 +158,34 @@ impl Tool for DoubleClickTool {
                 "double_click.ax",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        ax_double_click(
-                            pid,
+                        let act = || {
+                            ax_double_click(
+                                pid,
+                                wid,
+                                element_guard.as_ptr(),
+                                idx,
+                                &ck,
+                                has_ax_open,
+                                foreground,
+                            )
+                        };
+                        if !foreground {
+                            return act();
+                        }
+                        // Front, act, restore, as click's foreground AX path
+                        // does; activation can enable the control.
+                        let mut outcome = None;
+                        crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
                             wid,
-                            element_guard.as_ptr(),
-                            idx,
-                            &ck,
-                            has_ax_open,
-                            foreground,
-                        )
+                            || {
+                                outcome = Some(act()?);
+                                Ok(())
+                            },
+                        )?;
+                        outcome.ok_or_else(|| {
+                            anyhow::anyhow!("foreground double_click did not execute")
+                        })
                     })
                     .await
                 },
@@ -162,7 +195,8 @@ impl Tool for DoubleClickTool {
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(format!("{msg}{}", changes.result_suffix())),
-                Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
+                Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
+                    .unwrap_or_else(|| ToolResult::error(format!("double_click failed: {e}"))),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -203,6 +237,17 @@ fn ax_double_click(
     foreground: bool,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
+    // The caller's early read skips a foreground call into a background app,
+    // so this read, right before input, is the one that always runs.
+    if foreground {
+        // Activation has just run; the app may not have enabled it yet.
+        crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+            element_ptr,
+            "double_click",
+        )?;
+    } else {
+        crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
+    }
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {

@@ -14,6 +14,7 @@ use cua_proto::env::v1::{
     filesystem_service_client::FilesystemServiceClient,
     host_snapshots_service_client::HostSnapshotsServiceClient,
     host_spaces_service_client::HostSpacesServiceClient,
+    host_thread_service_client::HostThreadServiceClient,
     presence_service_client::PresenceServiceClient, process_service_client::ProcessServiceClient,
     stream_service_client::StreamServiceClient, system_service_client::SystemServiceClient,
     teleport_service_client::TeleportServiceClient, tunnel_service_client::TunnelServiceClient,
@@ -107,6 +108,9 @@ pub struct ConnectOptions {
     pub connect_timeout: Duration,
     /// Timeout of the `GetCapabilities` probe.
     pub probe_timeout: Duration,
+    /// How long a process start waits for `ProcessStart`
+    /// ([`crate::process::PROCESS_START_DEADLINE`] by default).
+    pub start_timeout: Duration,
     /// Connection keepalive.
     pub keepalive: Keepalive,
     /// Reconnect / retry policy.
@@ -130,6 +134,7 @@ impl ConnectOptions {
             gateway: None,
             connect_timeout: Duration::from_secs(10),
             probe_timeout: Duration::from_secs(15),
+            start_timeout: crate::process::PROCESS_START_DEADLINE,
             keepalive: Keepalive::default(),
             retry: RetryPolicy::default(),
             probe: true,
@@ -182,6 +187,12 @@ impl ConnectOptions {
     /// Sets the probe timeout.
     pub fn probe_timeout(mut self, timeout: Duration) -> Self {
         self.probe_timeout = timeout;
+        self
+    }
+
+    /// Sets how long a process start waits for `ProcessStart`.
+    pub fn start_timeout(mut self, timeout: Duration) -> Self {
+        self.start_timeout = timeout;
         self
     }
 
@@ -425,6 +436,9 @@ impl SpacesdClient {
     raw_client!(/// Raw `HostSnapshotsService` client (a host's checkpoints, and
         /// copying them between hosts).
         host_snapshots, HostSnapshotsServiceClient);
+    raw_client!(/// Raw `HostThreadService` client (the threads of the Spaces a
+        /// host provides).
+        host_thread, HostThreadServiceClient);
 
     /// `GetCapabilities`, cached after the first successful call.
     pub async fn capabilities(&self) -> Result<pb::GetCapabilitiesResponse> {

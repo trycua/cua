@@ -67,6 +67,51 @@ pub fn app_creates_reduce(state: AppCreatesState, action: AppCreateAction) -> Ap
     core::spaces::creating::reduce(&state, &action)
 }
 
+/// The actions that make the pending rows show the Spaces agents asked this
+/// computer to make (read from this computer's cua home, which the daemon writes):
+/// run each through `app_creates_reduce` on every list refresh.
+#[uniffi::export]
+pub fn app_agent_creates_actions(state: AppCreatesState, now_ms: i64) -> Vec<AppCreateAction> {
+    let creates: Vec<core::spaces::creating::AgentCreate> =
+        cua_spaces::child_creates::visible(&cua_home::cua_home())
+            .into_iter()
+            .map(|e| core::spaces::creating::AgentCreate {
+                key: e.key,
+                name: e.name,
+                os: e.os,
+                state: match e.state {
+                    cua_spaces::child_creates::State::Creating => "creating",
+                    cua_spaces::child_creates::State::Ready => "ready",
+                    cua_spaces::child_creates::State::Failed => "failed",
+                }
+                .into(),
+                phase: e.code,
+                percent: e.percent,
+                space: e.space,
+                error: e.error,
+                started_ms: e.started_ms,
+                parent: e.parent,
+            })
+            .collect();
+    core::spaces::creating::agent_actions(&state, &creates, now_ms)
+}
+
+/// The person removed an agent's failed create from the list: it is not drawn again.
+#[uniffi::export]
+pub fn app_agent_create_remove(pending_id: String) {
+    for e in cua_spaces::child_creates::visible(&cua_home::cua_home()) {
+        if core::spaces::creating::agent_pending_id(&e.key, e.started_ms) == pending_id {
+            cua_spaces::child_creates::hide(&cua_home::cua_home(), &e.key, e.started_ms);
+        }
+    }
+}
+
+/// Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
+#[uniffi::export]
+pub fn app_agent_create_is_agents(id: String) -> bool {
+    core::spaces::creating::is_agent_pending(&id)
+}
+
 /// The registry's Spaces plus a row per Space being created.
 #[uniffi::export]
 pub fn app_creates_compose(spaces: Vec<AppSpace>, state: AppCreatesState) -> Vec<AppSpace> {
@@ -123,19 +168,7 @@ pub fn app_space_detail_live(
     core::spaces::sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
 }
 
-/// [`app_space_detail_live`] without what Settings, Experiments hides (the
-/// Share button while Sharing is off).
-#[uniffi::export]
-pub fn app_space_detail_with(
-    space: AppSpace,
-    usage: Option<AppSpaceUsage>,
-    host_arch: Option<String>,
-    experiments: AppExperiments,
-) -> AppSpaceDetail {
-    core::spaces::sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &experiments)
-}
-
-/// [`app_space_detail_with`] as this device sees it: `access` (from
+/// [`app_space_detail_live`] as this device sees it: `access` (from
 /// [`app_machine_access_notice`]) greys out Connect on every Space reached
 /// through the relay while this device is not enrolled; one of your
 /// machines that does not share its desktop shows its note in place of the
@@ -145,14 +178,12 @@ pub fn app_space_detail_for(
     space: AppSpace,
     usage: Option<AppSpaceUsage>,
     host_arch: Option<String>,
-    experiments: AppExperiments,
     access: Option<AppMachineAccessNotice>,
 ) -> AppSpaceDetail {
     core::spaces::sidebar::detail_for(
         &space,
         usage.as_ref(),
         host_arch.as_deref(),
-        &experiments,
         access.as_ref(),
     )
 }
@@ -203,10 +234,27 @@ pub fn app_usage_refresh_ms() -> u64 {
     core::spaces::sidebar::USAGE_REFRESH_MS
 }
 
+/// The system this process runs on, from the platform the library was
+/// built for. The shells run in the same process as the library, so this is
+/// the real host, never a macOS default.
+fn host_space_os() -> core::model::SpaceOs {
+    space_os_of_platform(std::env::consts::OS)
+}
+
+/// Maps Rust's `std::env::consts::OS` to a Space's system.
+fn space_os_of_platform(platform: &str) -> core::model::SpaceOs {
+    match platform {
+        "macos" => core::model::SpaceOs::Macos,
+        "windows" => core::model::SpaceOs::Windows,
+        "linux" => core::model::SpaceOs::Linux,
+        _ => core::model::SpaceOs::Unknown,
+    }
+}
+
 /// The "This machine" roster entry.
 #[uniffi::export]
 pub fn app_this_machine_space(status: Option<AppHostSummaryInput>, now_ms: i64) -> AppSpace {
-    core::host::this_machine_space(status.as_ref(), now_ms, core::model::SpaceOs::Macos)
+    core::host::this_machine_space(status.as_ref(), now_ms, host_space_os())
 }
 
 /// Adds the "This machine" entry to a roster, first.
@@ -216,12 +264,7 @@ pub fn app_with_this_machine(
     status: Option<AppHostSummaryInput>,
     now_ms: i64,
 ) -> Vec<AppSpace> {
-    core::host::with_this_machine(
-        &spaces,
-        status.as_ref(),
-        now_ms,
-        core::model::SpaceOs::Macos,
-    )
+    core::host::with_this_machine(&spaces, status.as_ref(), now_ms, host_space_os())
 }
 
 /// The words of a Space's sections (Stream, Agents, Teleport).
@@ -507,6 +550,13 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
         provide_spaces: status.provide_spaces,
         max_spaces: status.max_spaces,
         max_macos_vms: status.max_macos_vms,
+        max_memory_gb: status.max_memory_gb,
+        max_disk_gb: status.max_disk_gb,
+        max_run_minutes: status.max_run_minutes,
+        used_memory_gb: status.used_memory_gb,
+        used_disk_gb: status.used_disk_gb,
+        total_memory_gb: status.total_memory_gb,
+        total_disk_gb: status.total_disk_gb,
         provided_spaces: status
             .provided_spaces
             .into_iter()
@@ -698,6 +748,24 @@ pub fn app_cloud_connect_view(
 #[uniffi::export]
 pub fn app_cloud_connect_input_from_json(json: String) -> Result<AppCloudConnectInput> {
     from_json("cloud connect input", &json)
+}
+
+/// The clouds the Computers page draws, from a `cloud_status` result (its
+/// JSON): the Clouds group and each cloud's page come from them
+/// (`AppMachinesViewInput.clouds`). `can_approve`: the host has the approve
+/// tool (none does yet).
+#[uniffi::export]
+pub fn app_clouds_input_from_status(
+    json: String,
+    now: u64,
+    can_approve: bool,
+) -> Result<AppCloudsInput> {
+    let status: serde_json::Value = from_json("cloud status", &json)?;
+    Ok(core::cloud_page::input_from_status(
+        &status,
+        now,
+        can_approve,
+    ))
 }
 
 /// A "Connect a cloud" action from JSON (parity flows).
@@ -1038,6 +1106,14 @@ pub fn app_about_allowed_channels(channel: AppUpdateChannel) -> Vec<String> {
     core::about::allowed_channels(channel)
 }
 
+/// The appcast a Sparkle updater on `channel` reads, from the app's own
+/// `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+/// keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+#[uniffi::export]
+pub fn app_about_feed_url(channel: AppUpdateChannel, stable_feed: String) -> Option<String> {
+    core::about::feed_url(channel, &stable_feed)
+}
+
 /// What this launch does (refresh after an update; the version to record).
 #[uniffi::export]
 pub fn app_about_after_launch(input: AppLaunchInput) -> AppLaunchPlan {
@@ -1164,6 +1240,7 @@ pub fn app_space_host(host: cua_sdk::SpacesHost) -> AppSpaceHost {
             memory_free_mb: l.memory_free_mb,
             spaces: l.spaces,
             problem: l.problem,
+            kinds: l.kinds,
         }),
     }
 }
@@ -1494,6 +1571,13 @@ pub fn app_notch_reduce(state: AppNotchState, event: AppNotchEvent) -> AppNotchT
 #[uniffi::export]
 pub fn app_notch_view(state: AppNotchState, spaces: Vec<AppSpace>) -> AppNotchView {
     core::notch::view(&state, &spaces)
+}
+
+/// `pinned` (the notch's pins, in pin order) with `id` pinned or, when it
+/// already is, unpinned: Pin to notch and Unpin from notch.
+#[uniffi::export]
+pub fn app_notch_toggle_pin(pinned: Vec<String>, id: String) -> Vec<String> {
+    core::notch::toggle_pin(&pinned, &id)
 }
 
 /// The springs and delays every shell animates with.
@@ -1930,6 +2014,15 @@ impl KeyvaultClient {
         cua_sdk::support::run(async move { inner.inventory(&app, profile).await.map_err(kv_error) })
             .await
     }
+
+    /// Whether a teleport of `app` can work now: the Keyvault's state, what
+    /// macOS lets the daemon read, and the profiles. Reads no value and asks
+    /// for no presence.
+    pub async fn readiness(&self, app: String, profile: Option<String>) -> Result<KvReadiness> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { inner.readiness(&app, profile).await.map_err(kv_error) })
+            .await
+    }
 }
 
 // ---- Onboarding and settings ---------------------------------------------
@@ -2061,6 +2154,21 @@ pub fn app_account_app_url() -> String {
     cua_home::env::account_app_url()
 }
 
+/// Which build and deployment this app runs as: its channel (`stable` or
+/// `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+/// and the host of the sign-in server it uses, resolved as every other part
+/// of the app resolves them. The web UI's title bar tag ("Local · Staging",
+/// the app core's `environment.tag`) is drawn from it, so every shell agrees.
+#[uniffi::export]
+pub fn app_target() -> AppTarget {
+    let (channel, env) = cua_home::channel::CuaChannel::current_with_env();
+    AppTarget {
+        channel: channel.name().to_string(),
+        env: env.name().to_string(),
+        auth_host: core::environment_tag::auth_host(&cua_home::env::oidc_issuer()),
+    }
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]
@@ -2127,29 +2235,120 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
     core::resources::warning_view(&core_of(&warning))
 }
 
-/// Reads the settings file (defaults when missing or damaged).
+/// Reads the settings file (defaults when missing or damaged). The
+/// experiments the daemon enforces (CI runners, Public TCP shares, Phone app) are what
+/// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
-    core::settings::load(std::path::Path::new(&path))
+    let mut settings = core::settings::load(std::path::Path::new(&path));
+    settings.experiments = sync_experiments_from_home(settings.experiments, &cua_home::cua_home());
+    settings
 }
 
-/// Writes the settings file.
+/// The experiments the daemon enforces ([`cua_spaces::experiments::Gate`])
+/// of `experiments`, with the switches `home` keeps laid over them: what
+/// `cua experiments enable` set wins over what the app's file remembers.
+fn sync_experiments_from_home(
+    mut experiments: AppExperiments,
+    home: &std::path::Path,
+) -> AppExperiments {
+    use cua_spaces::experiments::{Gate, switch};
+    if let Some(on) = switch(home, Gate::CiRunners) {
+        experiments.ci_runners = on;
+    }
+    if let Some(on) = switch(home, Gate::TcpShares) {
+        experiments.tcp_shares = on;
+    }
+    if let Some(on) = switch(home, Gate::Mobile) {
+        experiments.mobile = on;
+    }
+    experiments
+}
+
+/// Keeps the daemon's experiments of `experiments` in `home` (only a change
+/// is written).
+fn sync_experiments_to_home(
+    experiments: &AppExperiments,
+    home: &std::path::Path,
+) -> std::io::Result<()> {
+    use cua_spaces::experiments::{Gate, set_switch};
+    set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
+    set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
+    set_switch(home, Gate::Mobile, experiments.mobile)
+}
+
+/// Writes the settings file, and keeps the experiments the daemon enforces
+/// where it reads them (the cua home).
 #[uniffi::export]
 pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
     core::settings::save(std::path::Path::new(&path), &settings)
-        .map_err(|e| CuaError::Internal(e.to_string()))
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    sync_experiments_to_home(&settings.experiments, &cua_home::cua_home())
+        .map_err(|e| CuaError::Internal(format!("keep the experiment switches: {e}")))
 }
 
-/// The settings with the New UI as a launch of `version` shows it: the
-/// user's choice, else the default for the update channel and version
-/// (again after the channel changes).
-#[uniffi::export]
-pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
-    core::settings::resolve_new_ui(&settings, &version)
+#[cfg(test)]
+mod experiment_sync_tests {
+    use super::*;
+
+    #[test]
+    fn a_switch_off_once_for_an_always_on_feature_is_ignored_and_removed_on_save() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("experiments");
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["secure-spaces", "ask-first", "child-spaces", "warm-pools"] {
+            std::fs::write(dir.join(n), "off\n").unwrap();
+        }
+        // Reading ignores them.
+        let seen = sync_experiments_from_home(AppExperiments::default(), home.path());
+        assert_eq!(seen, AppExperiments::default());
+        // Writing removes them.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        for n in ["secure-spaces", "ask-first", "child-spaces", "warm-pools"] {
+            assert!(!dir.join(n).exists(), "{n}");
+        }
+    }
+
+    #[test]
+    fn the_daemon_switches_follow_the_cua_home_both_ways() {
+        let home = tempfile::tempdir().unwrap();
+        // Nothing kept: the app's own file decides.
+        let mine = AppExperiments {
+            ci_runners: true,
+            ..Default::default()
+        };
+        assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
+        // What `cua experiments enable` set wins.
+        cua_spaces::experiments::set_switch(
+            home.path(),
+            cua_spaces::experiments::Gate::Mobile,
+            true,
+        )
+        .unwrap();
+        let seen = sync_experiments_from_home(mine, home.path());
+        assert!(seen.mobile && seen.ci_runners);
+        // The app's switches land in the home for the daemon.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        assert_eq!(
+            cua_spaces::experiments::switch(home.path(), cua_spaces::experiments::Gate::CiRunners),
+            Some(true)
+        );
+        // Only the daemon's experiments are kept there.
+        let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            kept.iter()
+                .all(|n| n == "ci-runners" || n == "tcp-shares" || n == "mobile"),
+            "{kept:?}"
+        );
+    }
 }
 
 /// The update channel of an install's first launch, from the file's
-/// `channel`: Beta for a prerelease, else unchanged.
+/// `channel`: Nightly for a prerelease, else unchanged.
 #[uniffi::export]
 pub fn app_settings_first_launch_channel(
     channel: AppUpdateChannel,
@@ -2173,6 +2372,25 @@ pub fn app_settings_choose_experiment(
 #[uniffi::export]
 pub fn app_settings_page(input: AppSettingsInput) -> AppSettingsPage {
     core::settings::page(&input)
+}
+
+/// A runtime binary's one line in Settings, Advanced ("Docker 27.3 found",
+/// "Not a Docker or Podman binary").
+#[uniffi::export]
+pub fn app_runtime_path_verdict(check: AppRuntimePathCheck) -> AppRuntimePathVerdict {
+    core::runtimes::path_verdict(&check)
+}
+
+/// The setting a runtime row's choice changes (`runtime.<kind>` or
+/// `runtime.<kind>_path`; a `None` value unsets it), or none for any other
+/// row.
+#[uniffi::export]
+pub fn app_runtimes_choose(
+    input: Option<AppRuntimesInput>,
+    row: String,
+    option: String,
+) -> Option<AppRuntimeSettingChange> {
+    core::runtimes::choose(input.as_ref(), &row, &option)
 }
 
 /// The Settings page with Settings, Storage after General while the Cua
@@ -2636,6 +2854,45 @@ pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
     queued
 }
 
+/// A Pro or Teams surface's event (`upsell_<surface>_<action>`), knowing
+/// the plan and, for the meter past a limit, its cap (`kind`): a `click`
+/// also records the upgrade link opened, the meter shown past a limit the
+/// plan limit shown.
+#[uniffi::export]
+pub fn app_telemetry_upsell(
+    surface: String,
+    action: String,
+    kind: Option<String>,
+    plan: Option<String>,
+) -> Vec<AppTelemetrySignal> {
+    core::telemetry::upsell_with(&surface, &action, kind.as_deref(), plan.as_deref())
+}
+
+/// A plan limit shown at `surface` (`action` `shown`: `app_create`,
+/// `app_connect`, `app_meter`, `app_team`, ...) or its upgrade link opened
+/// (`opened`); `kind` is the cap (none: not from a limit), `plan` the plan.
+#[uniffi::export]
+pub fn app_telemetry_plan_limit(
+    action: String,
+    surface: String,
+    kind: Option<String>,
+    plan: Option<String>,
+) -> Vec<AppTelemetrySignal> {
+    core::telemetry::plan_limit(
+        &action,
+        &surface,
+        kind.as_deref().unwrap_or_default(),
+        plan.as_deref().unwrap_or_default(),
+    )
+}
+
+/// The upgrade link `url` with `?from=<surface>` (the account app's purchase
+/// funnel reads it), its other parameters kept.
+#[uniffi::export]
+pub fn app_upgrade_link(url: String, surface: String) -> String {
+    core::telemetry::upgrade_link(&url, &surface)
+}
+
 /// The app started (`app_launched`).
 #[uniffi::export]
 pub fn app_telemetry_launched(onboarding_eligible: Option<bool>) -> Vec<AppTelemetrySignal> {
@@ -2779,7 +3036,7 @@ pub fn app_telemetry_enroll(
     core::telemetry::enroll(&state, &action)
 }
 
-// ---- Getting started and the command palette -----------------------------
+// ---- Machines and the command palette -------------------------------------
 
 /// The getting-started checklist after `action`, and its usage events.
 #[uniffi::export]
@@ -2794,6 +3051,18 @@ pub fn app_checklist_reduce(
 #[uniffi::export]
 pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction {
     core::checklist::observe_from(&seen)
+}
+
+/// Checklist state from JSON, steps as words (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
+    from_json("checklist state", &json)
+}
+
+/// The getting-started checklist as drawn.
+#[uniffi::export]
+pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
+    core::checklist::view(&state)
 }
 
 /// The Machines page's rows: this machine, your machines, your devices of
@@ -2822,18 +3091,6 @@ pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPage
     from_json("machines page input", &json)
 }
 
-/// Checklist state from JSON, steps as words (fixtures, parity flows).
-#[uniffi::export]
-pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
-    from_json("checklist state", &json)
-}
-
-/// The getting-started checklist as drawn.
-#[uniffi::export]
-pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
-    core::checklist::view(&state)
-}
-
 /// The default keyboard shortcuts (the shared UI's `keybindings.json`).
 #[uniffi::export]
 pub fn app_keybindings() -> Vec<AppKeybinding> {
@@ -2845,6 +3102,112 @@ pub fn app_keybindings() -> Vec<AppKeybinding> {
 #[uniffi::export]
 pub fn app_palette_rank(entries: Vec<AppPaletteEntry>, query: String) -> Vec<u32> {
     core::palette::rank(&entries, &query)
+}
+
+// ---- The new Spaces page (CUA-2204) ----------------------------------------
+
+/// A Space's "…" and right-click menu (`spaces.menu`).
+#[uniffi::export]
+pub fn app_space_menu(input: AppSpaceMenuInput) -> Vec<AppSpaceMenuItem> {
+    core::space_menu::menu(&input)
+}
+
+/// The confirm dialog for deleting and leaving `items` (none: nothing
+/// selected).
+#[uniffi::export]
+pub fn app_bulk_confirm(items: Vec<AppBulkItem>) -> Option<AppBulkConfirmView> {
+    core::bulk_confirm::confirm(&items)
+}
+
+/// The selection bar while it runs ("Deleting 1 of 3…"); `finished`: the
+/// ids done so far. None once all are finished.
+#[uniffi::export]
+pub fn app_bulk_progress(items: Vec<AppBulkItem>, finished: Vec<String>) -> Option<String> {
+    core::bulk_confirm::progress(&items, &finished)
+}
+
+/// The toast once every result is in ("Deleted 3 Spaces. 29 GB freed.").
+#[uniffi::export]
+pub fn app_bulk_done(items: Vec<AppBulkItem>, results: Vec<AppBulkResult>) -> AppBulkDone {
+    core::bulk_confirm::done(&items, &results)
+}
+
+/// The tip for `place` now, if any.
+#[uniffi::export]
+pub fn app_tips_view(
+    place: AppTipPlace,
+    facts: AppTipFacts,
+    state: AppTipsState,
+) -> Option<AppTip> {
+    core::tips::view(place, &facts, &state)
+}
+
+/// The tips after `event` (save them in `AppSettings.tips`).
+#[uniffi::export]
+pub fn app_tips_reduce(state: AppTipsState, event: AppTipsEvent) -> AppTipsState {
+    core::tips::reduce(&state, &event)
+}
+
+/// The settings after a Settings row the core owns (`tips`, `reset-tips`);
+/// any other row leaves them as they are.
+#[uniffi::export]
+pub fn app_settings_choose(settings: AppSettings, row: String, option: String) -> AppSettings {
+    core::settings::choose(&settings, &row, &option)
+}
+
+/// The Pro banner at the sidebar's foot (Free only).
+#[uniffi::export]
+pub fn app_pro_banner(input: AppProBannerInput) -> AppProBanner {
+    core::upsell::pro_banner(&input)
+}
+
+/// The account menu (Settings, Plan, Sign out).
+#[uniffi::export]
+pub fn app_account_menu(input: AppAccountMenuInput) -> Vec<AppAccountMenuItem> {
+    core::account::menu(&input)
+}
+
+/// The app settings' defaults (a fresh install's), without reading a file.
+#[uniffi::export]
+pub fn app_settings_defaults() -> AppSettings {
+    core::settings::AppSettings::default()
+}
+
+/// A Space menu's input from JSON (parity flows).
+#[uniffi::export]
+pub fn app_space_menu_input_from_json(json: String) -> Result<AppSpaceMenuInput> {
+    from_json("space menu input", &json)
+}
+
+/// Bulk delete and leave items from JSON (parity flows).
+#[uniffi::export]
+pub fn app_bulk_items_from_json(json: String) -> Result<Vec<AppBulkItem>> {
+    from_json("bulk items", &json)
+}
+
+/// Bulk delete and leave results from JSON (the host's
+/// `spaces.deleteMany` / `spaces.leave` results, parity flows).
+#[uniffi::export]
+pub fn app_bulk_results_from_json(json: String) -> Result<Vec<AppBulkResult>> {
+    from_json("bulk results", &json)
+}
+
+/// Tip facts from JSON (parity flows).
+#[uniffi::export]
+pub fn app_tip_facts_from_json(json: String) -> Result<AppTipFacts> {
+    from_json("tip facts", &json)
+}
+
+/// A tips event from JSON (parity flows).
+#[uniffi::export]
+pub fn app_tips_event_from_json(json: String) -> Result<AppTipsEvent> {
+    from_json("tips event", &json)
+}
+
+/// The relay's usage from JSON (parity flows).
+#[uniffi::export]
+pub fn app_relay_usage_from_json(json: String) -> Result<AppRelayUsage> {
+    from_json("relay usage", &json)
 }
 
 // ---- Fixtures ----------------------------------------------------------------
@@ -2946,8 +3309,8 @@ pub(crate) fn setup_options_for_request(
     request: AppHostSetupRequest,
 ) -> Result<cua_sdk::HostSetupOptions> {
     let request = core::host::validate_setup(request).map_err(CuaError::InvalidArgument)?;
-    // The default choice is "let my other devices use this computer": its
-    // screen and Spaces. Pass what the core resolved, not the SDK's own
+    // The default setup lets other machines create Spaces here and keeps
+    // the desktop private. Pass what the core resolved, not the SDK's own
     // (CLI) profile defaults, so both agree.
     let (share_desktop, provide_spaces) = request.settings();
     Ok(cua_sdk::HostSetupOptions {
@@ -2960,7 +3323,7 @@ pub(crate) fn setup_options_for_request(
         runner: None,
         profile: request.profile,
         share_desktop: Some(share_desktop),
-        provide_spaces: Some(provide_spaces),
+        provide_spaces,
     })
 }
 
@@ -3018,27 +3381,32 @@ mod host_setup_tests {
             (o.share_desktop, o.provide_spaces),
             (Some(false), Some(true))
         );
-        // The default choice, "let my other devices use this computer",
-        // turns on the screen and Spaces; a direct connection only the screen.
+        // The default setup keeps the desktop private and leaves Spaces to
+        // the host's default (cua_host::default_provide_spaces: on for a
+        // new relay setup, kept as it was on a machine set up before); a
+        // direct connection always shares the screen.
         let o = setup_options_for_request(AppHostSetupRequest {
             mode: "relay".into(),
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(
-            (o.share_desktop, o.provide_spaces),
-            (Some(true), Some(true))
-        );
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(false), None));
+        // The desktop choice also lets other machines control this desktop.
+        let o = setup_options_for_request(AppHostSetupRequest {
+            mode: "relay".into(),
+            profile: Some("desktop".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(true), None));
         let o = setup_options_for_request(AppHostSetupRequest {
             mode: "direct".into(),
             direct: Some("10.0.0.2:4000".into()),
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(
-            (o.share_desktop, o.provide_spaces),
-            (Some(true), Some(false))
-        );
+        // Direct mode: the host's default keeps Spaces off.
+        assert_eq!((o.share_desktop, o.provide_spaces), (Some(true), None));
     }
 }
 
@@ -3313,6 +3681,7 @@ mod resources_tests {
                     allocated: 87 * GIB,
                     shares_space: true,
                 }),
+                base: None,
             }],
             computers: vec![rt::ComputerResources {
                 id: "mini".into(),
@@ -3385,7 +3754,7 @@ mod resources_tests {
         assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
         assert_eq!(
             v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
-            rt::words::warning(&runtime.warning)
+            rt::words::warning_on(&runtime.warning, rt::words::Host::Mac)
         );
         // A running Space.
         let s = &runtime.spaces[0];
@@ -3399,5 +3768,27 @@ mod resources_tests {
             format!("{} in use", rt::words::computer_memory(c))
         );
         assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
+    }
+}
+
+#[cfg(test)]
+mod host_os_tests {
+    use super::*;
+    use crate::app_core::core::model::SpaceOs;
+
+    #[test]
+    fn platform_words_map_to_their_system() {
+        assert_eq!(space_os_of_platform("macos"), SpaceOs::Macos);
+        assert_eq!(space_os_of_platform("windows"), SpaceOs::Windows);
+        assert_eq!(space_os_of_platform("linux"), SpaceOs::Linux);
+        assert_eq!(space_os_of_platform("freebsd"), SpaceOs::Unknown);
+    }
+
+    #[test]
+    fn this_machine_space_carries_the_real_host_system() {
+        let want = space_os_of_platform(std::env::consts::OS);
+        assert_eq!(app_this_machine_space(None, 0).os, want);
+        let roster = app_with_this_machine(Vec::new(), None, 0);
+        assert_eq!(roster[0].os, want);
     }
 }

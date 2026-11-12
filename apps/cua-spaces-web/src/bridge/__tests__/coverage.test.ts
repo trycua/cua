@@ -11,18 +11,26 @@ import { HOST_COVERAGE, WEBKIT_HOST_ONLY } from "../coverage";
 import { NEW_SPACE_ARGS } from "../ops/new-space";
 import { AGENT_DETAIL_ARGS } from "../ops/agent-detail";
 import { AGENT_KEYS_ARGS } from "../ops/agent-keys";
+import { GITHUB_ARGS } from "../ops/github";
 import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { SPACES_SETTINGS_ARGS } from "../ops/spaces-settings";
 import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
+import { CI_ARGS } from "../ops/ci";
 import { LINKS_ARGS } from "../ops/links";
 import { CLI_ARGS } from "../ops/cli";
+import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
+import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
+import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_ARGS } from "../ops/agent-sign-in";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
+import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type OpArgs, type OpName } from "../protocol";
@@ -36,6 +44,20 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.open": { spaceId: "s1" },
   "spaces.setPower": { spaceId: "s1", on: true },
   "spaces.delete": { spaceId: "s1" },
+  "spaces.deleteMany": { ids: ["s1"] },
+  "spaces.leave": { ids: ["s1"] },
+  "spaces.rename": { spaceId: "s1", name: "studio-2" },
+  "network.get": { spaceId: "s1" },
+  "network.set": { spaceId: "s1", network: "internet", allow: [], deny: [] },
+  "network.log": { spaceId: "s1" },
+  "network.ackNotice": { spaceId: "s1" },
+  "spaces.setAccess": { spaceId: "s1", clipboard: "ask" },
+  "spaces.tree": {},
+  "children.set": { spaceId: "s1", enabled: true },
+  "budget.get": { spaceId: "s1" },
+  "budget.set": { spaceId: "s1", limits: { maxSpaces: 4 } },
+  "services.list": { spaceId: "s1" },
+  "services.control": { spaceId: "s1", name: "web", action: "restart" },
   "machines.list": {},
   "host.status": {},
   "settings.get": {},
@@ -52,6 +74,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "session.signIn": {},
   "session.signOut": {},
   "session.completeOnboarding": { mode: "client" },
+  "session.resetOnboarding": {},
   "session.openExternal": { url: "https://cua.ai" },
   "agents.list": {},
   "agents.runs": { spaceId: "s1" },
@@ -63,9 +86,15 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.setup": {},
   "agents.configure": { agents: null },
   "agents.signIn": { agent: "codex" },
+  "agents.status": { refresh: true },
+  "agents.connect": { agents: ["codex"], signIn: true },
+  "agents.disconnect": { agents: ["codex"], signIn: true },
+  "agents.signInStart": { agent: "codex" },
+  "agents.signInWait": { id: "codex-1" },
   ...AGENT_DETAIL_ARGS,
   ...NEW_SPACE_ARGS,
   ...AGENT_KEYS_ARGS,
+  ...GITHUB_ARGS,
   ...KEYVAULT_SETUP_ARGS,
   ...KEYVAULT_MANAGE_ARGS,
   "teleport.catalog": { spaceId: "s1" },
@@ -77,6 +106,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "teleport.plan": { spaceId: "s1", entry: { json: "{}" } as never, move: "app_only", files: [], sensitiveGroups: [] },
   "teleport.run": { spaceId: "s1", plan: { json: "{}" } as never, consent: { approved: true, acknowledgeSensitive: false }, runId: "run-1" },
   "teleport.sites": { providerId: "chrome" },
+  "teleport.readiness": { providerId: "chrome", profile: null },
   "teleport.remembered": { providerId: "chrome", spaceId: "s1" },
   "teleport.streamWindow": { spaceId: "s1", spaceName: "Aurora", windowId: "w-1", appName: "Firefox", title: "Mozilla Firefox" },
   "sharing.list": { spaceId: "s1" },
@@ -96,7 +126,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "volume.reveal": { path: "/Users/ada/Cua Volume/public" },
   "agents.setupDriver": { agents: ["codex"] },
   "about.get": {},
-  "about.set": { channel: "beta" },
+  "about.set": { channel: "nightly" },
   "about.checkNow": {},
   "update.get": {},
   "update.install": {},
@@ -105,6 +135,11 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "loginItem.get": {},
   "loginItem.set": { on: true },
   "loginItem.openSettings": {},
+  "runtimes.check": { kind: "container", path: "/usr/local/bin/docker" },
+  "runtimes.browse": { kind: "container" },
+  "repoCache.get": {},
+  "repoCache.set": { enabled: true, sizeGb: 2 },
+  "repoCache.clear": {},
   "devices.get": {},
   "devices.enroll": {},
   "devices.checkEnrolled": {},
@@ -126,6 +161,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "telemetry.acknowledgeLinkNotice": {},
   "crashReporting.config": {},
   "spaces.usage": { spaceId: "s1" },
+  "spaces.reach": { spaceId: "s1" },
   "spaces.windows": { spaceId: "s1" },
   "stream.pip": { spaceId: "s1", command: { type: "open", row: "desktop" } },
   "spaces.thumbnail": { spaceId: "s1" },
@@ -135,19 +171,27 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" },
+  "host.limits": { maxSpaces: 6 },
   "host.openSettings": { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
   "startup.get": {},
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...SPACES_SETTINGS_ARGS,
   ...NUDGES_ARGS,
   ...RESOURCES_ARGS,
   ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
+  ...CI_ARGS,
   ...LINKS_ARGS,
   ...CLI_ARGS,
+  ...THREAD_ARGS,
   ...PRESENCE_ARGS,
+  ...CLOUD_APPROVE_ARGS,
+  ...AGENT_THREADS_ARGS,
+  ...AGENT_SIGN_IN_ARGS,
   ...RUNTIME_FIX_ARGS,
+  ...DRIVER_ARGS,
 };
 
 const unsupportedOn = (op: OpName, host: "webkit" | "tauri") =>
@@ -177,6 +221,11 @@ function webkitResult(method: string): unknown {
       return { app: { id: "app", name: "App" }, spaceId: "s1", moves: "appOnly", steps: [], consent: [], json: "{}" };
     case "spaces.cancelCreate":
       return { id: "pending:1", state: "cancelled", message: "" };
+    case "spaces.deleteMany":
+    case "spaces.leave":
+      return { results: [{ id: "s1", ok: true }] };
+    case "spaces.rename":
+      return {};
     case "onboarding.get":
     case "onboarding.complete":
       return { completed: true, mode: "client" };
@@ -184,7 +233,19 @@ function webkitResult(method: string): unknown {
     case "host.setUp":
     case "host.joinWithCode":
     case "host.action":
-      return { configured: false, sharing: false, serviceInstalled: false, serviceRunning: false, serviceKind: "process", clients: [], permissions: [], shareDesktop: true, provideSpaces: false, maxSpaces: 0 };
+    case "host.limits":
+      return {
+        configured: false,
+        sharing: false,
+        serviceInstalled: false,
+        serviceRunning: false,
+        serviceKind: "process",
+        clients: [],
+        permissions: [],
+        shareDesktop: true,
+        provideSpaces: false,
+        maxSpaces: 0,
+      };
     case "keyvault.approve":
       return { id: "grant-1", requestId: "req-1", items: [] };
     case "keyvault.revokeGrant":
@@ -272,7 +333,10 @@ describe("bridge contract coverage", () => {
       const outcome = await createWebkitAdapter(webkitWindow(sent))
         .call(op, ARGS[op] as never)
         .then(() => null, failure);
-      expect(sent.filter((m) => !cov.methods.includes(m)), op).toEqual([]);
+      expect(
+        sent.filter((m) => !cov.methods.includes(m)),
+        op,
+      ).toEqual([]);
       if (unsupportedOn(op, "webkit")) {
         expect(outcome, op).toBe("unsupported");
         expect(sent, op).toEqual([]);
@@ -306,7 +370,10 @@ describe("bridge contract coverage", () => {
         .call(op, ARGS[op] as never)
         .then(() => null, failure);
       expect([...channels], op).toEqual(sent.length ? [ELECTRON_BRIDGE_CHANNEL] : []);
-      expect(sent.filter((m) => !methods.includes(m)), op).toEqual([]);
+      expect(
+        sent.filter((m) => !methods.includes(m)),
+        op,
+      ).toEqual([]);
       if (!cov.electron && unsupportedOn(op, "webkit")) {
         expect(outcome, op).toBe("unsupported");
         continue;
@@ -331,7 +398,10 @@ describe("bridge contract coverage", () => {
       expect(outcome, op).not.toBe("unsupported");
       // An empty list: the page answers from the shell's UI storage, with no command.
       if (HOST_COVERAGE[op].tauri.length > 0) expect(seen.length, `${op} sent nothing`).toBeGreaterThan(0);
-      expect(seen.filter((c) => !HOST_COVERAGE[op].tauri.includes(c as never)), op).toEqual([]);
+      expect(
+        seen.filter((c) => !HOST_COVERAGE[op].tauri.includes(c as never)),
+        op,
+      ).toEqual([]);
     }
   });
 });

@@ -13,8 +13,12 @@
 //! # Ok(()) }
 //! ```
 
+// The SDK-backed gateway futures nest deep enough to pass rustc's default (128).
+#![recursion_limit = "256"]
+
 pub mod auth;
 pub mod backend;
+pub mod cli;
 pub mod connect;
 pub mod daytona;
 pub mod e2b;

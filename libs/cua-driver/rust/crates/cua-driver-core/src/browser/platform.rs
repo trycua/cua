@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The platform-adapter contract for the browser-tool surface.
 //!
 //! Core owns schemas, semantics, CDP handling, the target/ref store,
@@ -366,6 +369,18 @@ pub trait BrowserPlatform: Send + Sync {
                     format!("could not launch an isolated browser process: {error}"),
                 )
             })
+    }
+
+    /// Whether an OS keychain or password prompt is on screen now: on macOS
+    /// a SecurityAgent or LocalAuthentication window, such as "<app> wants to use your confidential
+    /// information stored in ... in your keychain". Core checks it before and
+    /// while it launches an isolated browser and stops the launch when one is
+    /// open, because a browser that asks for a keychain secret waits on the
+    /// prompt and every further launch adds another. Implementations only
+    /// look; nothing may ever answer, dismiss or type into the prompt. The
+    /// default reports none.
+    fn security_prompt_open(&self) -> bool {
+        false
     }
 
     /// Explain why a trusted CDP Input route cannot preserve background

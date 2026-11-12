@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use cua_vmm::RootfsResolver;
 use cua_vmm::containerization::{ContainerizationConfig, ContainerizationRuntime};
 
 const SCRIPT: &str = r#"
@@ -38,16 +39,17 @@ cmd="$1"; shift
 mkdir -p "$S/c"
 case "$cmd" in
   run)
-    ports=""; labels=""; name=""; envf=""; ep=""
+    ports=""; labels=""; name=""; envf=""; ep=""; dns=""
     while [ $# -gt 0 ]; do
       case "$1" in
-        --detach|--progress|--name|--cpus|--memory|--shm-size|--cap-add|--label|--env-file|--publish|--entrypoint|--arch) ;;
+        --detach|--progress|--name|--cpus|--memory|--shm-size|--cap-add|--label|--env-file|--publish|--entrypoint|--arch|--dns) ;;
         *) break ;;
       esac
       case "$1" in
         --detach) shift; continue ;;
         --name) name="$2" ;;
         --env-file) envf="$2" ;;
+        --dns) dns="${dns:+$dns,}$2" ;;
         --entrypoint) ep="$2" ;;
         --label) k="${2%%=*}"; v="${2#*=}"; labels="${labels:+$labels,}\"$k\":\"$v\"" ;;
         --publish) spec="${2%/tcp}"; rest="${spec#*:}"; h="${rest%%:*}"; g="${rest#*:}"
@@ -56,7 +58,13 @@ case "$cmd" in
       shift 2
     done
     image="$1"
+    # `container run` pulls a missing image by itself, anonymously.
+    k=$(printf '%s' "$image" | tr '/:@' '___')
+    if [ -f "$S/private/$k" ] && [ ! -f "$S/img/$k" ]; then
+      echo "Error: refusing insecure credential exchange: authorization server https://ghcr.io/token issued its own authentication challenge" >&2; exit 1
+    fi
     if [ -f "$S/c/$name.image" ]; then echo "Error: container $name already exists" >&2; exit 1; fi
+    printf '%s' "$dns" > "$S/c/$name.dns"
     printf '%s' "$image" > "$S/c/$name.image"
     printf '%s' "$ports" > "$S/c/$name.ports"
     printf '%s' "$labels" > "$S/c/$name.labels"
@@ -82,6 +90,31 @@ case "$cmd" in
   stop) [ "$1" = "--time" ] && shift 2; printf stopped > "$S/c/$1.state" ;;
   start) [ -f "$S/c/$1.image" ] || exit 1; printf running > "$S/c/$1.state" ;;
   delete) [ "$1" = "--force" ] && shift; rm -f "$S/c/$1".* ;;
+  image)
+    sub="$1"; shift
+    key() { printf '%s' "$1" | tr '/:@' '___'; }
+    mkdir -p "$S/img"
+    case "$sub" in
+      pull)
+        while [ $# -gt 0 ]; do case "$1" in --progress|--arch|--scheme) shift 2 ;; *) break ;; esac; done
+        image="$1"
+        if [ -f "$S/private/$(key "$image")" ] && [ ! -f "$S/img/$(key "$image")" ]; then
+          echo "Error: refusing insecure credential exchange: authorization server https://ghcr.io/token issued its own authentication challenge" >&2; exit 1
+        fi
+        [ -f "$S/img/$(key "$image")" ] || printf 'sha256:pulled' > "$S/img/$(key "$image")"
+        echo "$image" ;;
+      load)
+        [ "$1" = "--input" ] || { echo "load: no --input" >&2; exit 2; }
+        # The fake archive: IMAGE=<ref> and DIGEST=<d> lines.
+        ref=$(sed -n 's/^IMAGE=//p' "$2"); dg=$(sed -n 's/^DIGEST=//p' "$2")
+        [ -n "$ref" ] || { echo "Error: not an OCI archive" >&2; exit 1; }
+        printf '%s' "$dg" > "$S/img/$(key "$ref")"
+        echo "$ref" ;;
+      inspect)
+        [ -f "$S/img/$(key "$1")" ] || { echo "Error: image not found: $1" >&2; exit 1; }
+        printf '[{"id":"i","variants":[{"digest":"%s","platform":{"architecture":"arm64","os":"linux"},"config":{"architecture":"arm64","config":{"Cmd":["/bin/true"],"User":"cua"}}}]}]\n' "$(cat "$S/img/$(key "$1")")" ;;
+      *) echo "fake container: unknown image command $sub" >&2; exit 2 ;;
+    esac ;;
   logs) echo "boot failed: no init" ;;
   exec)
     [ "$1" = "--interactive" ] && shift
@@ -134,7 +167,32 @@ impl FakeContainer {
             bin: Some(self.dir.path().join("container")),
             auto_install: false,
             graceful_stop: std::time::Duration::from_secs(1),
+            resolver: None,
         })
+    }
+
+    /// [`Self::runtime`] with a resolver (images are pulled through it).
+    pub fn runtime_with(
+        &self,
+        resolver: std::sync::Arc<dyn RootfsResolver>,
+    ) -> ContainerizationRuntime {
+        ContainerizationRuntime::new(ContainerizationConfig {
+            root: self.root(),
+            bin: Some(self.dir.path().join("container")),
+            auto_install: false,
+            graceful_stop: std::time::Duration::from_secs(1),
+            resolver: Some(resolver),
+        })
+    }
+
+    /// Makes `image` private: `container` cannot pull it anonymously.
+    pub fn make_private(&self, image: &str) {
+        std::fs::create_dir_all(self.state().join("private")).unwrap();
+        let key: String = image
+            .chars()
+            .map(|c| if matches!(c, '/' | ':' | '@') { '_' } else { c })
+            .collect();
+        std::fs::write(self.state().join("private").join(key), "").unwrap();
     }
 
     /// Every call, one line each (`args | APP_ROOT=...`).

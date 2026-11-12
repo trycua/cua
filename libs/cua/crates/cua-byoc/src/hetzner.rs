@@ -11,7 +11,10 @@
 //! never in `config.toml` or the connection record), or is read from
 //! `HCLOUD_TOKEN` or the `hcloud` CLI's active context where it already is.
 //! `cua cloud connect hetzner` saves a token it was given only after the
-//! checks passed.
+//! checks passed. A connection whose token is sealed to the account's
+//! devices ([`crate::model::Auth::Sealed`]) gets it from
+//! [`crate::api::SecretSource`] instead, opened in memory only when a call
+//! needs it.
 //!
 //! What a sandbox creates, all labelled with the sandbox's tags:
 //!
@@ -47,7 +50,7 @@ use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 use serde_json::{Value, json};
 
-use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
+use crate::api::{CloudApi, Result, Secret, SecretSource, Target, Tested, cloud_err};
 use crate::model::{
     self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
 };
@@ -130,6 +133,7 @@ enum Source {
     Saved,
     Env,
     Hcloud,
+    Sealed,
 }
 
 impl Source {
@@ -139,6 +143,7 @@ impl Source {
             Source::Saved => "the token saved by `cua cloud connect hetzner`",
             Source::Env => "HCLOUD_TOKEN",
             Source::Hcloud => "the hcloud CLI's active context",
+            Source::Sealed => "the account's token, sealed to your devices",
         }
     }
 }
@@ -149,9 +154,13 @@ pub struct Hetzner {
     api: String,
     store: Arc<dyn TokenStore>,
     /// A token from a connect or test in flight (not saved yet).
-    staged: Mutex<Option<String>>,
+    staged: Mutex<Option<Secret>>,
     hcloud_config: Option<std::path::PathBuf>,
     poll: Duration,
+    /// Held while the shared firewall is found or created.
+    firewall_lock: tokio::sync::Mutex<()>,
+    /// Sealed connections' tokens.
+    secrets: Mutex<Option<Arc<dyn SecretSource>>>,
 }
 
 impl Default for Hetzner {
@@ -183,6 +192,8 @@ impl Hetzner {
             staged: Mutex::new(None),
             hcloud_config,
             poll: Duration::from_secs(2),
+            firewall_lock: tokio::sync::Mutex::new(()),
+            secrets: Mutex::new(None),
         }
     }
 
@@ -192,10 +203,16 @@ impl Hetzner {
         self
     }
 
+    /// The token on this device: the one given now, the saved one, the
+    /// environment's or the hcloud CLI's (not a sealed one).
     fn token_and_source(&self) -> Option<(String, Source)> {
         if let Some(t) = self.staged.lock().unwrap().clone() {
-            return Some((t, Source::Given));
+            return Some((t.expose().to_string(), Source::Given));
         }
+        self.saved_token()
+    }
+
+    fn saved_token(&self) -> Option<(String, Source)> {
         if let Some(t) = self.store.load() {
             return Some((t, Source::Saved));
         }
@@ -212,14 +229,36 @@ impl Hetzner {
             .map(|t| (t, Source::Hcloud))
     }
 
-    fn token(&self) -> Result<String> {
-        self.token_and_source().map(|(t, _)| t).ok_or_else(|| {
-            Error::ContribNotConfigured(
-                "hetzner: no API token: run `cua cloud connect hetzner` with a Read & Write \
+    fn sealed_source(&self) -> Option<Arc<dyn SecretSource>> {
+        self.secrets.lock().unwrap().clone()
+    }
+
+    /// The token a call uses: the one given now (a connect's checks), the
+    /// sealed one when the connection is sealed (and nothing else then),
+    /// else this device's.
+    async fn token_with_source(&self) -> Result<Option<(Secret, Source)>> {
+        if let Some(t) = self.staged.lock().unwrap().clone() {
+            return Ok(Some((t, Source::Given)));
+        }
+        if let Some(src) = self.sealed_source()
+            && let Some(t) = src.secret("hetzner").await
+        {
+            return t.map(|t| Some((t, Source::Sealed)));
+        }
+        Ok(self.saved_token().map(|(t, s)| (Secret::new(t), s)))
+    }
+
+    async fn token(&self) -> Result<Secret> {
+        self.token_with_source()
+            .await?
+            .map(|(t, _)| t)
+            .ok_or_else(|| {
+                Error::ContribNotConfigured(
+                    "hetzner: no API token: run `cua cloud connect hetzner` with a Read & Write \
                  project token (HCLOUD_TOKEN, or --token-stdin)"
-                    .into(),
-            )
-        })
+                        .into(),
+                )
+            })
     }
 
     /// One call: `Ok(None)` for a 404, Hetzner's own message otherwise.
@@ -248,11 +287,14 @@ impl Hetzner {
         body: Option<&Value>,
         what: &str,
     ) -> Result<(reqwest::StatusCode, Value)> {
-        let token = self.token()?;
+        let token = self.token().await?;
         let url = format!("{}{path}", self.api);
         let mut tries = 0;
         loop {
-            let mut req = self.http.request(method.clone(), &url).bearer_auth(&token);
+            let mut req = self
+                .http
+                .request(method.clone(), &url)
+                .bearer_auth(token.expose());
             if let Some(b) = body {
                 req = req.json(b);
             }
@@ -295,19 +337,25 @@ impl Hetzner {
             .collect()
     }
 
+    async fn find_firewall(&self, name: &str) -> Result<Option<Value>> {
+        Ok(self
+            .get(
+                &format!("/firewalls?name={name}"),
+                "look up the Cua firewall",
+            )
+            .await?
+            .and_then(|v| v["firewalls"].as_array().and_then(|a| a.first().cloned())))
+    }
+
     /// The dedicated firewall: reused when it is this owner's, created
     /// (with no rules) when missing, refused when a firewall of that name
     /// is not Cua's.
     async fn ensure_firewall(&self, owner: &str) -> Result<Resource> {
         let name = Self::firewall_name(owner);
         let tags = firewall_tags(owner);
-        let existing = self
-            .get(
-                &format!("/firewalls?name={name}"),
-                "look up the Cua firewall",
-            )
-            .await?
-            .and_then(|v| v["firewalls"].as_array().and_then(|a| a.first().cloned()));
+        // One caller at a time: concurrent first launches make it once.
+        let _one = self.firewall_lock.lock().await;
+        let existing = self.find_firewall(&name).await?;
         let id = match existing {
             Some(f) => {
                 if !model::is_ours(&labels_of(&f), owner) {
@@ -324,16 +372,38 @@ impl Hetzner {
             }
             None => {
                 let body = json!({"name": name, "labels": hlabels(&tags), "rules": []});
-                let v = self
-                    .call(
+                let (status, v) = self
+                    .raw(
                         reqwest::Method::POST,
                         "/firewalls",
                         Some(&body),
                         "create the Cua firewall",
                     )
-                    .await?
-                    .unwrap_or(Value::Null);
-                id_of(&v["firewall"])
+                    .await?;
+                if status.is_success() {
+                    id_of(&v["firewall"])
+                } else if status == reqwest::StatusCode::CONFLICT
+                    || v["error"]["code"] == "uniqueness_error"
+                {
+                    // Made by another process between the look and the
+                    // create: the same firewall, when it is Cua's.
+                    match self.find_firewall(&name).await? {
+                        Some(f) if model::is_ours(&labels_of(&f), owner) => id_of(&f),
+                        _ => {
+                            return Err(cloud_err(
+                                "hetzner",
+                                "create the Cua firewall",
+                                error_message(status, &v),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(cloud_err(
+                        "hetzner",
+                        "create the Cua firewall",
+                        error_message(status, &v),
+                    ));
+                }
             }
         };
         Ok(Resource {
@@ -660,6 +730,14 @@ impl CloudApi for Hetzner {
     }
 
     fn detect(&self) -> CloudCredentials {
+        if self.staged.lock().unwrap().is_none()
+            && self.sealed_source().is_some_and(|s| s.sealed("hetzner"))
+        {
+            return CloudCredentials {
+                found: true,
+                source: Source::Sealed.describe().into(),
+            };
+        }
         match self.token_and_source() {
             Some((_, s)) => CloudCredentials {
                 found: true,
@@ -692,7 +770,7 @@ impl CloudApi for Hetzner {
     fn stage_secret(&self, t: &Target) {
         // Held for the checks; saved only when they pass.
         if let Some(tok) = t.token.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            *self.staged.lock().unwrap() = Some(tok.to_string());
+            *self.staged.lock().unwrap() = Some(Secret::new(tok));
         }
     }
 
@@ -702,11 +780,11 @@ impl CloudApi for Hetzner {
         let staged = self.staged.lock().unwrap().take();
         let token = match (staged, self.token_and_source()) {
             (Some(t), _) => Some(t),
-            (None, Some((t, Source::Env))) => Some(t),
+            (None, Some((t, Source::Env))) => Some(Secret::new(t)),
             _ => None,
         };
         if let Some(t) = token {
-            self.store.save(&t).map_err(Error::Io)?;
+            self.store.save(t.expose()).map_err(Error::Io)?;
         }
         Ok(())
     }
@@ -714,6 +792,27 @@ impl CloudApi for Hetzner {
     fn forget_secret(&self) {
         *self.staged.lock().unwrap() = None;
         self.store.clear();
+    }
+
+    fn seals(&self) -> bool {
+        true
+    }
+
+    fn unstage_secret(&self) {
+        *self.staged.lock().unwrap() = None;
+    }
+
+    fn local_secret(&self, t: &Target) -> Option<Secret> {
+        t.token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(Secret::new)
+            .or_else(|| self.token_and_source().map(|(t, _)| Secret::new(t)))
+    }
+
+    fn attach_secrets(&self, source: Arc<dyn SecretSource>) {
+        *self.secrets.lock().unwrap() = Some(source);
     }
 
     fn kinds(&self, _: &Connection) -> Vec<CloudKind> {
@@ -751,7 +850,14 @@ impl CloudApi for Hetzner {
 
     async fn test(&self, conn: &Connection) -> Tested {
         let mut t = Tested::default();
-        let Some((_, source)) = self.token_and_source() else {
+        let source = match self.token_with_source().await {
+            Ok(s) => s.map(|(_, s)| s),
+            Err(e) => {
+                t.check("credentials", false, e.to_string());
+                return t;
+            }
+        };
+        let Some(source) = source else {
             t.check(
                 "credentials",
                 false,

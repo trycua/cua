@@ -339,7 +339,13 @@ pub fn estimate_mb(usage: &Usage, pending: &[Pending], req: &Request) -> u64 {
         .and_then(|f| like(&|v: &VmUse| v.shared_file.as_ref() == Some(f)))
         .or_else(|| like(&|v: &VmUse| v.memory_mb == req.memory_mb))
         .unwrap_or(req.memory_mb);
-    est.clamp(64, req.memory_mb + req.memory_mb / 10 + 64)
+    est.clamp(64, vm_ceiling_mb(req.memory_mb))
+}
+
+/// The most one VM of `memory_mb` guest RAM can hold: its RAM plus QEMU's
+/// own (~10% and 64 MiB).
+fn vm_ceiling_mb(memory_mb: u64) -> u64 {
+    memory_mb + memory_mb / 10 + 64
 }
 
 /// What pending VMs hold that `usage` does not show yet.
@@ -393,6 +399,77 @@ pub fn pending_totals(usage: &Usage, pending: &[Pending]) -> PendingTotals {
 /// not finished (each counts as at least its estimate; those already
 /// measured in `usage` count as the larger of the two).
 pub fn decide(
+    cfg: &DensityConfig,
+    usage: &Usage,
+    pending: &[Pending],
+    req: &Request,
+) -> Result<Admit, Refusal> {
+    decide_inner(cfg, usage, pending, req).map_err(|r| {
+        // A VM that never fits (bigger than everything VMs may use) is not
+        // held back by the others: nothing to stop.
+        if r.0.contains(NEVER_FITS) {
+            r
+        } else {
+            Refusal(format!("{} {}", r.0, holders_note(usage, pending, req)))
+        }
+    })
+}
+
+/// Marks a refusal of a VM bigger than the host's whole VM memory limit.
+const NEVER_FITS: &str = "more than this host's VM memory limit";
+
+/// Opens the sentence that names the VMs holding this host's capacity; its
+/// presence is how a refusal is told from one where none of this runtime's
+/// VMs is running ([`HOLDERS_NONE`]).
+pub const HOLDERS_RUNNING: &str = "Running now:";
+/// Said when no VM of this runtime runs: the host's capacity is held by
+/// other programs, or the limits are set too tight for this machine.
+pub const HOLDERS_NONE: &str = "No Cua VM is running";
+
+/// What to stop or free, for a refusal: the VMs holding capacity, biggest
+/// first, or that none is.
+pub fn holders_note(usage: &Usage, pending: &[Pending], req: &Request) -> String {
+    let mut vms: Vec<(&str, u64, u32)> = usage
+        .vms
+        .iter()
+        .filter(|v| v.name != req.name)
+        .map(|v| {
+            let held = pending
+                .iter()
+                .find(|p| p.name == v.name)
+                .map_or(v.private_mb, |p| p.expected_mb.max(v.private_mb));
+            (v.name.as_str(), held, v.vcpus)
+        })
+        .collect();
+    for p in pending {
+        if p.name != req.name && !vms.iter().any(|(n, _, _)| *n == p.name) {
+            vms.push((p.name.as_str(), p.expected_mb, p.vcpus));
+        }
+    }
+    if vms.is_empty() {
+        return format!(
+            "{HOLDERS_NONE} on this machine, so other programs are using its memory or CPUs: close some, or raise the limits (CUA_VM_MAX_RSS_FRACTION, CUA_VM_MIN_AVAILABLE_MB)."
+        );
+    }
+    vms.sort_by_key(|(_, mb, _)| std::cmp::Reverse(*mb));
+    let shown: Vec<String> = vms
+        .iter()
+        .take(5)
+        .map(|(n, mb, c)| format!("{n} ({}, {c} vCPUs)", gib(*mb)))
+        .collect();
+    let more = vms.len().saturating_sub(5);
+    format!(
+        "{HOLDERS_RUNNING} {}{}. Stop or delete the ones you do not need; `cua sb list` shows them.",
+        shown.join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    )
+}
+
+fn decide_inner(
     cfg: &DensityConfig,
     usage: &Usage,
     pending: &[Pending],
@@ -875,7 +952,87 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Windows: the host's memory (`GlobalMemoryStatusEx`) and a VM process's private
+/// bytes (`GetProcessMemoryInfo`), so admission and warm pools can see them.
+#[cfg(windows)]
+mod imp {
+    use super::{HostMemory, Pressure};
+    use std::path::Path;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    pub fn process_private_bytes(pid: u32) -> Option<u64> {
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let mut c: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+            c.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+            let ok =
+                GetProcessMemoryInfo(h, (&mut c as *mut PROCESS_MEMORY_COUNTERS_EX).cast(), c.cb);
+            CloseHandle(h);
+            (ok != 0).then_some(c.PrivateUsage as u64)
+        }
+    }
+
+    pub fn file_resident_bytes(_: &Path) -> Option<u64> {
+        None
+    }
+
+    pub fn host_memory() -> Option<HostMemory> {
+        let m = host_memory_of(unsafe {
+            let mut s: MEMORYSTATUSEX = std::mem::zeroed();
+            s.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+            if GlobalMemoryStatusEx(&mut s) == 0 {
+                return None;
+            }
+            (s.ullTotalPhys >> 20, s.ullAvailPhys >> 20)
+        });
+        Some(m)
+    }
+
+    /// [`HostMemory`] from `(total, available)` MiB: less than 15% available
+    /// is a warning, less than 7% critical.
+    pub fn host_memory_of((total_mb, available_mb): (u64, u64)) -> HostMemory {
+        let pct = available_mb.saturating_mul(100) / total_mb.max(1);
+        HostMemory {
+            total_mb,
+            available_mb,
+            compressed_mb: 0,
+            pressure: if pct < 7 {
+                Pressure::Critical
+            } else if pct < 15 {
+                Pressure::Warn
+            } else {
+                Pressure::Normal
+            },
+        }
+    }
+
+    pub fn hypervisor_slots() -> Option<super::HypervisorSlots> {
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn windows_memory_pressure_follows_what_is_left() {
+            assert_eq!(host_memory_of((16_000, 8_000)).pressure, Pressure::Normal);
+            assert_eq!(host_memory_of((16_000, 1_900)).pressure, Pressure::Warn);
+            assert_eq!(host_memory_of((16_000, 800)).pressure, Pressure::Critical);
+            assert!(host_memory().is_some_and(|m| m.total_mb > 0));
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 mod imp {
     use super::HostMemory;
     use std::path::Path;
@@ -967,6 +1124,42 @@ mod tests {
             shared_file: None,
             shared_file_mb: 0,
         }
+    }
+
+    #[test]
+    fn a_refusal_names_the_vms_holding_the_host() {
+        let (cfg, mut u) = runner();
+        // Two VMs left running (a failed create's leftover among them) hold
+        // the 6.2 GiB VMs may use: the next 4 GiB VM is refused and the
+        // message names them, biggest first.
+        u.vms = vec![vm("leftover", 3_900, None), vm("mine", 2_000, None)];
+        let e = decide(&cfg, &u, &[], &fresh("next", 4096)).unwrap_err().0;
+        assert!(e.contains("VM memory limit"), "{e}");
+        assert!(e.contains(HOLDERS_RUNNING), "{e}");
+        assert!(
+            e.find("leftover").unwrap() < e.find("mine").unwrap(),
+            "biggest first: {e}"
+        );
+        assert!(!e.contains(HOLDERS_NONE), "{e}");
+    }
+
+    #[test]
+    fn a_refusal_with_no_vm_running_says_other_programs_hold_it() {
+        let (cfg, mut u) = runner();
+        // Nothing of ours runs, yet only 1 GiB of memory is available.
+        u.host = host(7_990, 1_000);
+        let e = decide(&cfg, &u, &[], &fresh("first", 4096)).unwrap_err().0;
+        assert!(e.contains(HOLDERS_NONE), "{e}");
+        assert!(!e.contains(HOLDERS_RUNNING), "{e}");
+    }
+
+    #[test]
+    fn a_vm_that_never_fits_is_not_blamed_on_the_others() {
+        let (cfg, mut u) = runner();
+        u.vms = vec![vm("other", 100, None)];
+        let e = decide(&cfg, &u, &[], &fresh("huge", 20_000)).unwrap_err().0;
+        assert!(e.contains("more than this host's VM memory limit"), "{e}");
+        assert!(!e.contains(HOLDERS_RUNNING), "{e}");
     }
 
     #[test]
@@ -1142,6 +1335,74 @@ mod tests {
         let mut r = req("n", Some("/w2/mem.ram"));
         r.shared_file_mb = 4096;
         assert!(decide(&c, &u, &[], &r).is_err());
+    }
+
+    /// The bake in `libs/images/linux/tests/bake-world.sh`: a 4 GiB
+    /// forkable VM restored from its golden snapshot maps its own 4 GiB
+    /// `mem.ram` on an empty 7.8 GiB runner (cap 6.2 GiB). Its RAM file is
+    /// its guest RAM, so it needs about 4.5 GiB, not 8 (RAM file + guest RAM
+    /// again).
+    #[test]
+    fn a_vm_alone_on_its_ram_file_counts_its_guest_ram_once() {
+        let c = DensityConfig {
+            max_rss_fraction: 0.8,
+            vcpu_overcommit: 8.0,
+            min_available_mb: 1024,
+            enabled: true,
+        };
+        let u = Usage {
+            host: host(7_990, 7_400),
+            host_cpus: 2,
+            ..Default::default()
+        };
+        let r = Request {
+            name: "bake-world".into(),
+            vcpus: 2,
+            memory_mb: 4096,
+            shared_file: Some("/vms/bake-world/mem.ram".into()),
+            shared_file_mb: 4096,
+        };
+        let a = decide(&c, &u, &[], &r).expect("a 4 GiB VM fits an empty 6.2 GiB cap");
+        // The file (4096) plus QEMU's own: the ceiling of one 4 GiB VM.
+        assert_eq!(a.expected_mb + r.shared_file_mb, vm_ceiling_mb(4096));
+        assert_eq!(a.expected_mb, 4096 / 10 + 64);
+        // While it launches it reserves that ceiling, not 8 GiB.
+        let p = Pending {
+            name: r.name.clone(),
+            vcpus: 2,
+            expected_mb: a.expected_mb,
+            at: Instant::now(),
+            shared_file: r.shared_file.clone(),
+            shared_file_mb: r.shared_file_mb,
+        };
+        assert_eq!(pending_totals(&u, &[p]).mb, vm_ceiling_mb(4096));
+        // Anonymous RAM of the same size is estimated as before.
+        let anon = Request {
+            shared_file: None,
+            shared_file_mb: 0,
+            ..r.clone()
+        };
+        assert_eq!(decide(&c, &u, &[], &anon).unwrap().expected_mb, 4096);
+        // A 6 GiB VM on its own file still does not fit a 6.2 GiB cap with
+        // QEMU's share on top.
+        let big = Request {
+            memory_mb: 6144,
+            shared_file_mb: 6144,
+            ..r.clone()
+        };
+        let e = decide(&c, &u, &[], &big).unwrap_err().0;
+        assert!(e.contains("needs about 6.7 GiB"), "{e}");
+        // Once its file is counted (a running fork maps it), a sibling needs
+        // only what siblings use privately.
+        let u = Usage {
+            vms: vec![VmUse {
+                memory_mb: 4096,
+                ..vm("f0", 300, Some("/vms/bake-world/mem.ram"))
+            }],
+            shared: vec![("/vms/bake-world/mem.ram".into(), 2000)],
+            ..u
+        };
+        assert_eq!(decide(&c, &u, &[], &r).unwrap().expected_mb, 300);
     }
 
     #[test]

@@ -44,7 +44,12 @@ describe("MediaCanvas stream telemetry", () => {
   it("reports one raw summary to the native bucketer when the stream ends", () => {
     const { t, recordStream } = bridge();
     const view = render(
-      <MediaCanvas ticket={{ wsUrl: "ws://127.0.0.1:1/media?ticket=x" }} interactive={false} audio={false} telemetry={t} />,
+      <MediaCanvas
+        ticket={{ wsUrl: "ws://127.0.0.1:1/media?ticket=x" }}
+        interactive={false}
+        audio={false}
+        telemetry={t}
+      />,
     );
     expect(recordStream).not.toHaveBeenCalled();
     view.unmount();

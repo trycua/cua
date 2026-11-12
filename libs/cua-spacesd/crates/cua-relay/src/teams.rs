@@ -1571,6 +1571,7 @@ mod tests {
             name: None,
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }
@@ -1593,6 +1594,7 @@ mod tests {
             host: None,
             confirmed: true,
             meta: BTreeMap::new(),
+            hidden_for: Vec::new(),
         }
     }
 

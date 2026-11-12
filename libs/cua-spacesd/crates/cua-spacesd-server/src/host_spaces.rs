@@ -38,6 +38,8 @@ use cua_proto::env::v1::host_snapshots_service_server::{
 };
 use cua_proto::env::v1::host_spaces_service_client::HostSpacesServiceClient;
 use cua_proto::env::v1::host_spaces_service_server::{HostSpacesService, HostSpacesServiceServer};
+use cua_proto::env::v1::host_thread_service_client::HostThreadServiceClient;
+use cua_proto::env::v1::host_thread_service_server::{HostThreadService, HostThreadServiceServer};
 use cua_proto::env::v1::*;
 use tonic::{Code, Request, Response, Status};
 
@@ -54,6 +56,11 @@ pub const CALLER_METADATA: &str = "x-cua-host-caller";
 
 /// The feature `GetCapabilities` reports while this host provides Spaces.
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+
+/// The feature `GetCapabilities` reports while this host serves the
+/// threads of the Spaces it provides to other people (`HostThreadService`):
+/// whenever it provides Spaces.
+pub const HOST_THREAD_FEATURE: &str = "host_thread";
 
 /// The feature `GetCapabilities` reports while this host runs cluster jobs
 /// (`HostJobsService`): whenever it provides Spaces.
@@ -158,7 +165,7 @@ mod routed_tests {
     }
 }
 
-fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
+pub(crate) fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
     let raw = std::fs::read(path).map_err(|e| {
         status(
             Code::FailedPrecondition,
@@ -188,6 +195,7 @@ impl ServiceProvider for HostSpacesProvider {
         vec![
             feature(HOST_SPACES_FEATURE, providing, limitation),
             feature(HOST_JOBS_FEATURE, providing, limitation),
+            feature(HOST_THREAD_FEATURE, providing, limitation),
         ]
     }
 
@@ -206,6 +214,7 @@ impl ServiceProvider for HostSpacesProvider {
                     .max_decoding_message_size(64 * 1024 * 1024)
                     .max_encoding_message_size(64 * 1024 * 1024),
             )
+            .add_service(HostThreadServiceServer::new(HostThreadImpl(host.clone())))
             .add_service(HostSpacesServiceServer::new(host))
     }
 
@@ -244,6 +253,7 @@ impl ServiceProvider for HostSpacesProvider {
             "cua.env.v1.HostSpacesService",
             "cua.env.v1.HostJobsService",
             "cua.env.v1.HostSnapshotsService",
+            "cua.env.v1.HostThreadService",
         ]
     }
 
@@ -268,7 +278,7 @@ impl HostJobsImpl {
     async fn client<T>(
         &self,
         req: &Request<T>,
-    ) -> Result<(HostJobsServiceClient<tonic::transport::Channel>, String), Status> {
+    ) -> Result<(HostJobsServiceClient<DaemonChannel>, String), Status> {
         let policy = read_policy(&self.0.policy_file)?;
         if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
             return Err(refusal);
@@ -343,6 +353,49 @@ impl HostJobsService for HostJobsImpl {
     }
 }
 
+/// `HostThreadService`: the threads of the Spaces this host provides, for
+/// the people it is shared with (view-only shares too: they read only).
+/// Forwarded to the daemon like `HostSpacesService`, with the verified
+/// caller; the daemon decides what each caller may do.
+struct HostThreadImpl(HostSpacesImpl);
+
+/// How long a forwarded thread call may take: a `thread_read` long poll
+/// waits up to 25 s on the daemon, plus the call itself.
+const THREAD_CALL: Duration = Duration::from_secs(60);
+
+#[tonic::async_trait]
+impl HostThreadService for HostThreadImpl {
+    async fn call_thread_tool(
+        &self,
+        request: Request<CallThreadToolRequest>,
+    ) -> Result<Response<CallThreadToolResponse>, Status> {
+        let policy = read_policy(&self.0.policy_file)?;
+        if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(&request)) {
+            return Err(refusal);
+        }
+        let who = caller_json_of(&request)?;
+        if !policy.provide_spaces {
+            return Err(status(
+                Code::FailedPrecondition,
+                ErrorReason::FeatureUnsupported,
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+            ));
+        }
+        let daemon = policy.spaces_daemon.ok_or_else(|| {
+            status(
+                Code::FailedPrecondition,
+                ErrorReason::NotInitialized,
+                "this host's policy names no cua daemon; run `cua host setup` on it again",
+            )
+        })?;
+        let channel = daemon_channel(&daemon).await?;
+        // Never the arguments or the result here: they carry messages.
+        HostThreadServiceClient::new(channel)
+            .call_thread_tool(with_caller(request.into_inner(), &who, Some(THREAD_CALL))?)
+            .await
+    }
+}
+
 // Keep the JSON readable as ASCII gRPC metadata without losing Unicode names.
 struct AsciiJsonFormatter;
 
@@ -365,20 +418,41 @@ impl serde_json::ser::Formatter for AsciiJsonFormatter {
     }
 }
 
-/// The verified caller as the daemon receives it.
+/// The verified caller as the daemon receives it. A view-only share is
+/// refused.
 fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
-    let who = caller(req);
-    if who.viewer.is_some() {
+    if caller(req).account.is_some_and(|a| a.space.is_some()) {
+        return Err(status(
+            Code::PermissionDenied,
+            ErrorReason::PermissionDenied,
+            "a Space shared with you reaches only its thread on this host",
+        ));
+    }
+    if caller(req).viewer.is_some() {
         return Err(status(
             Code::PermissionDenied,
             ErrorReason::PermissionDenied,
             "a view-only share cannot create or delete Spaces on this host",
         ));
     }
+    caller_json_of(req)
+}
+
+/// The verified caller as the daemon receives it, a view-only share as
+/// role `viewer` (the daemon lets it read only).
+fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
+    let who = caller(req);
+    let viewer = who.viewer.is_some();
     let value = match (&who.account, who.asserted, who.token_verified) {
+        (Some(a), true, _) if a.space.is_some() => serde_json::json!({
+            "account": a.account, "email": a.email, "name": a.name,
+            "role": a.role, "space": a.space, "via": "relay",
+            "device": a.device, "phone": a.phone.is_some(),
+        }),
         (Some(a), true, _) => serde_json::json!({
             "account": a.account, "email": a.email, "name": a.name,
-            "role": a.role,
+            "role": if viewer { "viewer" } else { a.role.as_str() },
+            "device": a.device, "phone": a.phone.is_some(),
             // Who vouched: the relay (an assertion, also over the mesh) or
             // the host's tailnet (`--tailnet`).
             "via": if who.principal.as_ref().is_some_and(|p| p.id.starts_with("tailnet:")) {
@@ -410,8 +484,110 @@ fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
 #[cfg(unix)]
 static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Channel, Status> {
+/// What a call to the host's daemon carries: the daemon's own token where it
+/// listens on loopback (a Windows host; its Unix socket needs none).
+#[derive(Clone, Default)]
+pub(crate) struct DaemonAuth(Option<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>);
+
+impl tonic::service::Interceptor for DaemonAuth {
+    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(v) = &self.0 {
+            req.metadata_mut().insert("authorization", v.clone());
+        }
+        Ok(req)
+    }
+}
+
+/// The channel to the host's daemon ([`DaemonAuth`] on it).
+pub(crate) type DaemonChannel =
+    tonic::service::interceptor::InterceptedService<tonic::transport::Channel, DaemonAuth>;
+
+/// Where the daemon of `cua_home` listens (its discovery file `daemon.json`:
+/// the loopback URL and the token), for a host with no Unix socket.
+#[cfg(not(unix))]
+fn daemon_discovery(cua_home: &str) -> Option<(String, String)> {
+    let home = if cua_home.is_empty() {
+        std::env::var("CUA_HOME").ok()?
+    } else {
+        cua_home.to_string()
+    };
+    let raw = std::fs::read(Path::new(&home).join("daemon.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    Some((
+        v.get("loopback_url")?.as_str()?.to_string(),
+        v.get("token")?.as_str()?.to_string(),
+    ))
+}
+
+pub(crate) async fn daemon_channel(daemon: &SpacesDaemon) -> Result<DaemonChannel, Status> {
     #[cfg(unix)]
+    {
+        let ch = unix_daemon_channel(daemon).await?;
+        Ok(tonic::service::interceptor::InterceptedService::new(
+            ch,
+            DaemonAuth::default(),
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        // A Windows host: the daemon listens on loopback, with a token.
+        let connect = || async {
+            let (url, token) = daemon_discovery(&daemon.cua_home)?;
+            let auth = tonic::metadata::MetadataValue::try_from(format!("Bearer {token}")).ok()?;
+            let ch = tonic::transport::Endpoint::from_shared(url)
+                .ok()?
+                .connect_timeout(Duration::from_secs(5))
+                .connect()
+                .await
+                .ok()?;
+            Some(tonic::service::interceptor::InterceptedService::new(
+                ch,
+                DaemonAuth(Some(auth)),
+            ))
+        };
+        if let Some(ch) = connect().await {
+            return Ok(ch);
+        }
+        let Some(bin) = daemon.cua_bin.as_deref().filter(|b| !b.is_empty()) else {
+            return Err(status(
+                Code::Unavailable,
+                ErrorReason::TargetUnavailable,
+                "the cua daemon on this host is not running (on it: `cua daemon start`)",
+            ));
+        };
+        tracing::info!(%bin, "starting the host's cua daemon");
+        let mut cmd = tokio::process::Command::new(bin);
+        cmd.args(["daemon", "start"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .env("CUA_DAEMON_STARTED_BY", "host");
+        if !daemon.cua_home.is_empty() {
+            cmd.env("CUA_HOME", &daemon.cua_home);
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(20), cmd.status()).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(ch) = connect().await {
+                return Ok(ch);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(status(
+                    Code::Unavailable,
+                    ErrorReason::TargetUnavailable,
+                    format!(
+                        "the cua daemon on this host did not start (`{bin} daemon start`); \
+                         run it on the host and retry"
+                    ),
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn unix_daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Channel, Status> {
     {
         let socket = PathBuf::from(&daemon.socket);
         let connect = |socket: PathBuf| async move {
@@ -469,15 +645,6 @@ async fn daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Chann
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
-    #[cfg(not(unix))]
-    {
-        let _ = daemon;
-        Err(status(
-            Code::Unimplemented,
-            ErrorReason::FeatureUnsupported,
-            "providing Spaces from a Windows host is not supported yet",
-        ))
-    }
 }
 
 impl HostSpacesImpl {
@@ -485,7 +652,7 @@ impl HostSpacesImpl {
     async fn forward_to<T>(
         &self,
         req: &Request<T>,
-    ) -> Result<(HostSpacesServiceClient<tonic::transport::Channel>, String), Status> {
+    ) -> Result<(HostSpacesServiceClient<DaemonChannel>, String), Status> {
         self.forward(req, true).await
     }
 
@@ -496,7 +663,7 @@ impl HostSpacesImpl {
         &self,
         req: &Request<T>,
         provided: bool,
-    ) -> Result<(HostSpacesServiceClient<tonic::transport::Channel>, String), Status> {
+    ) -> Result<(HostSpacesServiceClient<DaemonChannel>, String), Status> {
         let policy = read_policy(&self.policy_file)?;
         if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
             return Err(refusal);
@@ -567,8 +734,11 @@ pub async fn wake_daemon(policy_file: PathBuf) {
         }
     };
     let who = serde_json::json!({"account": "local", "role": "owner", "via": "token"}).to_string();
-    let Ok(request) = with_caller(GetHostSpacesRequest {}, &who, Some(Duration::from_secs(60)))
-    else {
+    let Ok(request) = with_caller(
+        GetHostSpacesRequest::default(),
+        &who,
+        Some(Duration::from_secs(60)),
+    ) else {
         return;
     };
     if let Err(error) = HostSpacesServiceClient::new(channel)
@@ -603,13 +773,7 @@ impl HostSnapshotsImpl {
     async fn client<T>(
         &self,
         req: &Request<T>,
-    ) -> Result<
-        (
-            HostSnapshotsServiceClient<tonic::transport::Channel>,
-            String,
-        ),
-        Status,
-    > {
+    ) -> Result<(HostSnapshotsServiceClient<DaemonChannel>, String), Status> {
         let policy = read_policy(&self.0.policy_file)?;
         if let Some(refusal) = peer_refusal(&policy, crate::peer::peer_of(req)) {
             return Err(refusal);
@@ -876,6 +1040,35 @@ impl HostSpacesService for HostSpacesImpl {
 
 #[cfg(test)]
 mod tests {
+    use tonic::service::Interceptor as _;
+
+    #[test]
+    fn calls_to_the_daemon_carry_its_token_only_where_it_has_one() {
+        let mut none = DaemonAuth::default();
+        let req = none.call(Request::new(())).unwrap();
+        assert!(req.metadata().get("authorization").is_none());
+        let v = tonic::metadata::MetadataValue::try_from("Bearer tok").unwrap();
+        let mut some = DaemonAuth(Some(v));
+        let req = some.call(Request::new(())).unwrap();
+        assert_eq!(req.metadata().get("authorization").unwrap(), "Bearer tok");
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn a_windows_host_finds_its_daemon_in_the_discovery_file() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(daemon_discovery(&d.path().to_string_lossy()).is_none());
+        std::fs::write(
+            d.path().join("daemon.json"),
+            br#"{"pid":1,"socket_path":null,"loopback_url":"http://127.0.0.1:5","token":"t"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            daemon_discovery(&d.path().to_string_lossy()),
+            Some(("http://127.0.0.1:5".to_string(), "t".to_string()))
+        );
+    }
+
     use super::*;
     use crate::auth::{CallerIdentity, RelayCaller};
 
@@ -958,6 +1151,42 @@ mod tests {
             }
             assert!(forwarded.metadata().contains_key("grpc-timeout"));
         }
+    }
+
+    /// The daemon is told which device made a call and whether it is a phone, so
+    /// what a phone answers is attributed to it and what widens a Space's reach
+    /// is not its to answer.
+    #[test]
+    fn the_caller_the_daemon_gets_names_the_device_and_whether_it_is_a_phone() {
+        let phone = req(CallerIdentity {
+            asserted: true,
+            account: Some(RelayCaller {
+                account: "ada".into(),
+                role: "owner".into(),
+                device: Some("dev_phone_1".into()),
+                phone: Some(crate::auth::PhoneCaller {
+                    device: "dev_phone_1".into(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let v: serde_json::Value = serde_json::from_str(&caller_json(&phone).unwrap()).unwrap();
+        assert_eq!(v["device"], "dev_phone_1");
+        assert_eq!(v["phone"], true);
+        let computer = req(CallerIdentity {
+            asserted: true,
+            account: Some(RelayCaller {
+                account: "ada".into(),
+                role: "owner".into(),
+                device: Some("dev_mac_1".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let v: serde_json::Value = serde_json::from_str(&caller_json(&computer).unwrap()).unwrap();
+        assert_eq!(v["device"], "dev_mac_1");
+        assert_eq!(v["phone"], false);
     }
 
     #[test]

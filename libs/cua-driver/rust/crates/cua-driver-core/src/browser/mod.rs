@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-agnostic browser-tool v1 core.
 //!
 //! Typed browser inspection, preparation, navigation, input, dialog, upload,
@@ -59,7 +62,8 @@ pub mod types;
 mod v2_tests;
 
 pub use adapter_support::{
-    is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+    fetch_json_version_ws_url, is_firefox, loopback_websocket_port, parse_devtools_active_port,
+    BrowserCursorTracker,
 };
 pub use engine::BrowserEngine;
 pub use platform::{

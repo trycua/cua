@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { Link } from "@tanstack/react-router";
-
 import { hostResources, type Machine, type ResourcesSnapshot } from "@/bridge";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { lowDiskWarning, size } from "@/lib/resources";
@@ -14,13 +12,15 @@ export interface ComputerWarning {
   kind: "disk";
   machineId: string;
   text: string;
+  /** "33 GB left", for the computer's own row. */
+  free: string;
   level: "low" | "critical";
   /** This computer: its Spaces can be sorted by what they use. */
   local: boolean;
 }
 
 /**
- * What needs action on your computers, nothing else: today a disk nearly or
+ * What needs action on your computers, nothing else (the Computers page marks it on the computer's own row): today a disk nearly or
  * completely full ("Disk almost full on This Mac (12 GB left)"). A computer
  * that is just offline is not a warning, and nothing shows while all is well.
  *
@@ -40,29 +40,9 @@ export function computerWarnings(snapshot: ResourcesSnapshot | null, machines: r
       machineId: m.id,
       level: disk.level,
       local: Boolean(m.current),
+      free: size(host.diskFree),
       text: disk.level === "critical" ? `Disk full on ${name} (${size(host.diskFree)} left)` : `Disk almost full on ${name} (${size(host.diskFree)} left)`,
     });
   }
   return out;
-}
-
-/** Home's warning lines: one quiet row each, only while there is one. */
-export function ComputerWarnings({ snapshot, machines }: { snapshot: ResourcesSnapshot | null; machines: readonly Machine[] }) {
-  const warnings = computerWarnings(snapshot, machines);
-  if (!warnings.length) return null;
-  return (
-    <section data-computer-warnings="" aria-label="Needs attention" className="mb-4 divide-y divide-foreground/10 border-y border-foreground/10">
-      {warnings.map((w) => (
-        <p key={`${w.kind}:${w.machineId}`} role="status" data-computer-warning={w.kind} data-low-disk={w.level} className="flex items-center gap-2.5 py-2 text-[13px] text-muted-foreground">
-          <span aria-hidden className={w.level === "critical" ? "size-1.5 shrink-0 rounded-full bg-destructive" : "size-1.5 shrink-0 rounded-full bg-[#d18a12]"} />
-          <span className="min-w-0 flex-1">{w.text}</span>
-          {w.local ? (
-            <Link to="/spaces" search={{ sort: "size" }} data-see-space-use="" className="shrink-0 text-[13px] text-muted-foreground underline decoration-foreground/30 underline-offset-2 hover:text-foreground">
-              See what’s using space
-            </Link>
-          ) : null}
-        </p>
-      ))}
-    </section>
-  );
 }

@@ -9,16 +9,20 @@
 //!
 //! [`METHODS`] lists every method; `dispatch_covers_every_method` checks it.
 
+use crate::agent_list;
 use crate::keyvault::{approval, browse, vault, view as kv};
 use crate::model::*;
+use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
-    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host,
-    local_network, login_item, machines, notch, notifications, nudges, onboarding,
-    onboarding_preview, palette, paths, persistent, presence, relay_usage, resources, settings,
-    share, sign_in, telemetry, upsell, window, wizard,
+    CoreError, about, account, agent_keys, agent_menu, agents, bulk_confirm, checklist, ci_runners,
+    cloud_connect, cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview,
+    drive_page, drive_settings, driver_preview, environment_tag, experiments, github_connection,
+    host, local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    onboarding_preview, palette, paths, persistent, prepare, presence, relay_usage, resources,
+    runtimes, settings, share, sign_in, space_menu, summon, telemetry, thread_cards, tips, upsell,
+    window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -62,6 +66,8 @@ pub const METHODS: &[&str] = &[
     "spaces.desktopCover",
     "stream.pipReduce",
     "stream.pipClick",
+    "stream.viewContext",
+    "stream.viewLine",
     "window.chrome",
     "window.emptyLinuxDetail",
     "window.menuBar",
@@ -73,6 +79,8 @@ pub const METHODS: &[&str] = &[
     "wizard.reduce",
     "wizard.view",
     "wizard.createArgs",
+    "wizard.firstSpaceOffers",
+    "firstPrompts.choose",
     "wizard.pickerImages",
     "wizard.pickerGroups",
     "wizard.findImage",
@@ -162,6 +170,7 @@ pub const METHODS: &[&str] = &[
     "onboarding.reduce",
     "onboarding.view",
     "onboarding.copy",
+    "onboarding.resetPlan",
     "onboarding.signedInText",
     "onboarding.signInCodeText",
     "signIn.footer",
@@ -183,11 +192,34 @@ pub const METHODS: &[&str] = &[
     "settings.defaults",
     "settings.formatHotkey",
     "settings.page",
+    "settings.runtimePathVerdict",
+    "settings.runtimeChoose",
     "loginItem.launchPlan",
     "agentKeys.view",
     "agentKeys.form",
     "agentKeys.removeConfirm",
     "agentKeys.nameProblem",
+    "connectors.view",
+    "connectors.connectPlan",
+    "connectors.providerSheet",
+    "connectors.providerPicker",
+    "connectors.models",
+    "connectors.agents",
+    "agentMenu.view",
+    "agentMenu.choose",
+    "agentMenu.sync",
+    "connectors.importSheet",
+    "connectors.appDetail",
+    "connectors.setupCard",
+    "summon.candidates",
+    "summon.plan",
+    "summon.failed",
+    "summon.firstMessage",
+    "summon.parseMentions",
+    "summon.queuedNote",
+    "profileCard.person",
+    "agentList.view",
+    "profileCard.agent",
     "about.view",
     "diagnostics.createReport",
     "diagnostics.reportMailto",
@@ -198,6 +230,7 @@ pub const METHODS: &[&str] = &[
     "about.allowedChannels",
     "notch.layout",
     "notch.tiles",
+    "notch.togglePin",
     "notch.initial",
     "notch.reduce",
     "notch.view",
@@ -237,12 +270,14 @@ pub const METHODS: &[&str] = &[
     "agents.order",
     "agents.settingsRows",
     "agents.setupSummary",
+    "agents.connectionRows",
     "paths.displayPath",
     "paths.displayPaths",
     "devices.view",
     "machines.merge",
     "machines.pageRows",
     "machines.view",
+    "machines.account",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -260,6 +295,12 @@ pub const METHODS: &[&str] = &[
     "cloudConnect.inputFromStatus",
     "cloudConnect.cloudsFromStatus",
     "cloudConnect.isCloudWord",
+    "clouds.inputFromStatus",
+    "clouds.view",
+    "cloudSheet.initial",
+    "cloudSheet.reduce",
+    "cloudSheet.view",
+    "cloudSheet.inputFromStatus",
     "share.initial",
     "share.reduce",
     "share.view",
@@ -296,6 +337,13 @@ pub const METHODS: &[&str] = &[
     "checklist.reduce",
     "checklist.view",
     "checklist.observeFrom",
+    "ciRunners.view",
+    "ciRunners.reduce",
+    "prepare.reduce",
+    "prepare.view",
+    "prepare.metrics",
+    "prepare.hidden",
+    "prepare.listed",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -305,12 +353,16 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "environment.tag",
     "relayUsage.planLimit",
     "resources.view",
     "resources.thisMac",
     "resources.space",
     "resources.computer",
     "resources.warning",
+    // Home's pool: the total, each computer's free room and where a job goes.
+    "pool.summary",
+    "pool.place",
     "upsell.prompt",
     "upsell.allows",
     "upsell.card",
@@ -321,8 +373,49 @@ pub const METHODS: &[&str] = &[
     "firstRun.leadAgent",
     "firstRun.cli",
     "telemetry.upsell",
+    "telemetry.planLimit",
+    "upgrade.link",
     "nudge.secondAgent",
     "nudge.riskyAction",
+    // The new Spaces page: menus, bulk delete and leave, tips, the Pro
+    // banner and the account menu (CUA-2204).
+    "spaces.menu",
+    "spaces.bulkConfirm",
+    "spaces.bulkProgress",
+    "spaces.bulkDone",
+    "tips.view",
+    "tips.reduce",
+    "githubConnection.view",
+    "threadCards.exportCard",
+    "threadCards.author",
+    "settings.choose",
+    "upsell.proBanner",
+    "account.menu",
+    // The phone's views and state machines (`phone`).
+    "startTask.view",
+    "startTask.plan",
+    "startTask.parseRepo",
+    "toolRows.group",
+    "toolRows.label",
+    "outbox.initial",
+    "outbox.reduce",
+    "outbox.view",
+    "outbox.found",
+    "cache.line",
+    "approvals.view",
+    "approvals.result",
+    "sendMode.view",
+    "voice.view",
+    "voice.insert",
+    "push.route",
+    "push.registration",
+    "push.settings",
+    "diff.labels",
+    "diff.changes",
+    "diff.file",
+    "diff.preview",
+    "directory.view",
+    "placement.offered",
 ];
 
 struct Args(Value);
@@ -331,6 +424,13 @@ impl Args {
     fn get<T: DeserializeOwned>(&self, name: &str) -> Result<T, CoreError> {
         let v = self.0.get(name).cloned().unwrap_or(Value::Null);
         serde_json::from_value(v).map_err(|e| CoreError::Invalid(format!("argument {name}: {e}")))
+    }
+
+    /// All the arguments as one record (methods whose arguments are its
+    /// fields: `spaces.menu`, `upsell.proBanner`, `account.menu`).
+    fn all<T: DeserializeOwned>(&self) -> Result<T, CoreError> {
+        serde_json::from_value(self.0.clone())
+            .map_err(|e| CoreError::Invalid(format!("arguments: {e}")))
     }
 }
 
@@ -430,32 +530,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             &a.get::<Option<String>>("selectedId")?.unwrap_or_default(),
         )),
-        // With `experiments`, what Settings, Experiments hides is left out;
-        // with `access` (this device is signed in but not enrolled), the
-        // detail as this device sees it (`detail_for`, as the SwiftUI app's
-        // `AppModel.detail`).
+        // The detail as this device sees it (`detail_for`, as the SwiftUI
+        // app's `AppModel.detail`); with `access` (this device is signed in
+        // but not enrolled), the machines on the relay say why they are off.
         "sidebar.detail" => {
             let space = a.get("space")?;
             let usage = a.get::<Option<sidebar::SpaceUsage>>("usage")?;
             let host_arch = a.get::<Option<String>>("hostArch")?;
             let access = a.get::<Option<devices::MachineAccessNotice>>("access")?;
-            out(
-                match (
-                    a.get::<Option<experiments::Experiments>>("experiments")?,
-                    access,
-                ) {
-                    (None, None) => {
-                        sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
-                    }
-                    (x, access) => sidebar::detail_for(
-                        &space,
-                        usage.as_ref(),
-                        host_arch.as_deref(),
-                        &x.unwrap_or_default(),
-                        access.as_ref(),
-                    ),
-                },
-            )
+            out(sidebar::detail_for(
+                &space,
+                usage.as_ref(),
+                host_arch.as_deref(),
+                access.as_ref(),
+            ))
         }
         "sidebar.detailCopy" => out(sidebar::detail_copy()),
         "sidebar.deleteFailedText" => out(sidebar::delete_failed_text(
@@ -472,6 +560,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "stream.pipReduce" => out(stream::pip_reduce(
             &a.get::<Option<Vec<String>>>("open")?.unwrap_or_default(),
             &a.get("event")?,
+        )),
+        // What a thread post made while the main view shows a window says
+        // the person was looking at, and the line a message with one shows.
+        "stream.viewContext" => out(stream::view_context(&a.get("row")?)),
+        "stream.viewLine" => out(stream::view_line(
+            &a.get::<String>("kind")?,
+            a.get::<Option<String>>("app")?.as_deref(),
+            a.get::<Option<String>>("title")?.as_deref(),
         )),
         "stream.pipClick" => out(stream::pip_click(
             &a.get::<Option<Vec<String>>>("open")?.unwrap_or_default(),
@@ -493,10 +589,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<String>>("keyvault")?.as_deref(),
         )),
         "wizard.initial" => out(wizard::initial(&a.get("env")?)),
-        "wizard.reduce" => out(wizard::reduce(
+        // `hostOs`: the shell's system, which decides whether Continue is
+        // allowed (macOS when absent).
+        "wizard.reduce" => out(wizard::reduce_on(
             &a.get("state")?,
             &a.get("action")?,
             &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         // `hostOs`: the shell's system, for its words (macOS when absent).
         "wizard.view" => out(wizard::view_on(
@@ -506,11 +606,28 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or(SpaceOs::Macos),
         )),
         "wizard.createArgs" => out(wizard::create_args(&a.get("plan")?)),
+        "wizard.firstSpaceOffers" => out(wizard::first_space_offers(
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "firstPrompts.choose" => out(crate::first_prompts::choose_for(
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "wizard.placementOptions" => out(wizard::placement_options_on(
             &a.get("state")?,
             &a.get("env")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+        )),
+        // The title bar's "Local · Staging" tag: the host resolves the
+        // channel and environment (`settings.get`'s `target`, from
+        // `app_target`); null for the released app on production.
+        "environment.tag" => out(environment_tag::view(
+            &a.get("target")?,
+            a.get("updateChannel")?,
         )),
         // The page's core has no environment: the host names its account app
         // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
@@ -534,11 +651,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
         "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
         "resources.space" => out(resources::space_view(&a.get("space")?)),
+        // A Space's resources dialog: its three cards and how it fits on
+        // its computer, each base image counted once.
+        "resources.spacePanel" => out(resources::space_panel(&a.get("input")?)),
         "resources.computer" => out(resources::computer_view(
             &a.get("computer")?,
             a.get("nowMs")?,
         )),
         "resources.warning" => out(resources::warning_view(&a.get("warning")?)),
+        // Your computers as one pool (`pool`): Home's total, and the
+        // computer with the most free room for a new job.
+        "pool.summary" => out(crate::pool::summary(
+            &a.get::<Vec<crate::pool::PoolComputer>>("computers")?,
+        )),
+        "pool.place" => out(crate::pool::place(&a.get("input")?)),
         // The Pro and Teams prompts: the rules and words are `upsell`'s.
         "upsell.prompt" => {
             let usage = a.get("usage")?;
@@ -586,9 +712,81 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 .unwrap_or_default(),
         )),
         "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
-        "telemetry.upsell" => out(telemetry::upsell(
+        // `kind` (the meter's cap past a limit) and `plan` are optional: a
+        // click is also `cua_upgrade_link_opened`, the meter past a limit
+        // also `cua_plan_limit_shown`.
+        "telemetry.upsell" => out(telemetry::upsell_with(
             &a.get::<String>("surface")?,
             &a.get::<String>("action")?,
+            a.get::<Option<String>>("kind")?.as_deref(),
+            a.get::<Option<String>>("plan")?.as_deref(),
+        )),
+        // A plan limit shown at `surface` (`action` `shown`) or its upgrade
+        // link opened (`opened`).
+        "telemetry.planLimit" => out(telemetry::plan_limit(
+            &a.get::<String>("action")?,
+            &a.get::<String>("surface")?,
+            &a.get::<Option<String>>("kind")?.unwrap_or_default(),
+            &a.get::<Option<String>>("plan")?.unwrap_or_default(),
+        )),
+        // An upgrade link with `?from=<surface>`, its other parameters kept.
+        // ---- The new Spaces page (CUA-2204) ----
+        "spaces.menu" => out(space_menu::menu(&a.all()?)),
+        "spaces.bulkConfirm" => out(bulk_confirm::confirm(
+            &a.get::<Vec<bulk_confirm::BulkItem>>("items")?,
+        )),
+        "spaces.bulkProgress" => out(bulk_confirm::progress(
+            &a.get::<Vec<bulk_confirm::BulkItem>>("items")?,
+            &a.get::<Option<Vec<String>>>("finished")?
+                .unwrap_or_default(),
+        )),
+        "spaces.bulkDone" => out(bulk_confirm::done(
+            &a.get::<Vec<bulk_confirm::BulkItem>>("items")?,
+            &a.get::<Vec<bulk_confirm::BulkResult>>("results")?,
+        )),
+        "tips.view" => out(tips::view(
+            a.get::<Option<tips::TipPlace>>("place")?
+                .unwrap_or_default(),
+            &a.get::<Option<tips::TipFacts>>("facts")?
+                .unwrap_or_default(),
+            &a.get::<Option<tips::TipsState>>("state")?
+                .unwrap_or_default(),
+        )),
+        "tips.reduce" => out(tips::reduce(
+            &a.get::<Option<tips::TipsState>>("state")?
+                .unwrap_or_default(),
+            &a.get::<tips::TipsEvent>("event")?,
+        )),
+        "githubConnection.view" => out(github_connection::view(
+            &a.get::<Option<github_connection::GithubInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "threadCards.exportCard" => out(thread_cards::export_card_view(
+            &a.get::<thread_cards::ExportCardInput>("input")?,
+        )),
+        "threadCards.author" => out(thread_cards::author_view(
+            &a.get::<thread_cards::AuthorInput>("author")?,
+        )),
+        "settings.choose" => out(settings::choose(
+            &a.get::<Option<settings::AppSettings>>("settings")?
+                .unwrap_or_default(),
+            &a.get::<String>("row")?,
+            &a.get::<Option<String>>("option")?.unwrap_or_default(),
+        )),
+        // With `usage` (the relay's answer): only near a limit, saying how close.
+        "upsell.proBanner" => match a.get::<Option<crate::relay_usage::RelayUsage>>("usage")? {
+            Some(usage) => out(upsell::pro_banner_near(
+                &upsell::ProBannerInput {
+                    plan: a.get::<Option<String>>("plan")?.unwrap_or_default(),
+                },
+                &usage,
+            )),
+            None => out(upsell::pro_banner(&a.all()?)),
+        },
+        "account.menu" => out(account::menu(&a.all()?)),
+        "upgrade.link" => out(telemetry::upgrade_link(
+            &a.get::<String>("url")?,
+            &a.get::<String>("from")?,
         )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
@@ -816,6 +1014,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
+        "onboarding.resetPlan" => out(crate::onboarding_reset::plan()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
             a.get::<Option<String>>("identity")?.as_deref(),
         )),
@@ -870,6 +1069,85 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("input")?,
             &a.get::<String>("env")?,
         )),
+        "connectors.view" => out(connectors::view_on(
+            &a.get("input")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "connectors.connectPlan" => out(connectors::connect_plan(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+        )),
+        "connectors.providerSheet" => out(connectors::provider_sheet_on(
+            &a.get("input")?,
+            &a.get::<String>("provider")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+            a.get::<Option<String>>("forApp")?.as_deref(),
+        )),
+        "connectors.providerPicker" => out(connectors::provider_picker(
+            &a.get("input")?,
+            a.get::<Option<String>>("forApp")?.as_deref(),
+            &a.get::<Option<String>>("query")?.unwrap_or_default(),
+            a.get::<Option<bool>>("expanded")?.unwrap_or(false),
+        )),
+        "connectors.models" => out(connectors::models_view(&a.get("input")?)),
+        "connectors.agents" => out(connectors::agents_view_with(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.view" => out(agent_menu::settings_view(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.sync" => out(agent_menu::sync(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.choose" => out(agent_menu::choose(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+            &a.get::<String>("app")?,
+            a.get::<Option<bool>>("on")?.unwrap_or(false),
+        )),
+        "connectors.importSheet" => out(connectors::import_sheet_on(
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "connectors.appDetail" => out(connectors::app_detail(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+        )),
+        "connectors.setupCard" => out(connectors::setup_card_for(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+            &a.get::<String>("name")?,
+            a.get::<Option<String>>("provider")?.as_deref(),
+        )),
+        "summon.candidates" => out(summon::candidates(&a.get("input")?)),
+        "summon.plan" => out(summon::plan(&a.get("input")?, &a.get::<String>("text")?)),
+        "summon.failed" => out(summon::failed(
+            &a.get("input")?,
+            &a.get::<String>("harness")?,
+            &a.get::<String>("handle")?,
+            &a.get::<String>("error")?,
+        )),
+        "summon.firstMessage" => out(summon::first_message(
+            &a.get("input")?,
+            &a.get::<String>("agent")?,
+            &a.get::<String>("prompt")?,
+        )),
+        "agentList.view" => out(agent_list::view(&a.get("input")?)),
+        "profileCard.person" => out(profile_card::person(&a.get("input")?)),
+        "profileCard.agent" => out(profile_card::agent(&a.get("input")?)),
+        "summon.queuedNote" => out(summon::queued_note(
+            a.get::<Option<bool>>("creating")?.unwrap_or(false),
+        )),
+        "summon.parseMentions" => out(summon::parse_mentions(&a.get::<String>("text")?)),
         "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
         "diagnostics.createReport" => out(diagnostics::create_report(&a.get("input")?)),
@@ -900,6 +1178,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<settings::SettingsInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "settings.runtimePathVerdict" => out(runtimes::path_verdict(&a.get("check")?)),
+        "settings.runtimeChoose" => out(runtimes::choose(
+            a.get::<Option<runtimes::RuntimesInput>>("input")?.as_ref(),
+            &a.get::<String>("row")?,
+            &a.get::<String>("option")?,
+        )),
         "settings.withStorage" => out(settings::with_storage(
             &a.get("page")?,
             &a.get("storage")?,
@@ -920,9 +1204,15 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("screen")?,
             a.get::<Option<bool>>("prompt")?.unwrap_or(false),
         )),
-        "notch.tiles" => out(notch::tiles(
+        "notch.tiles" => out(notch::tiles_pinned(
             &a.get::<Vec<Space>>("spaces")?,
             a.get::<Option<String>>("targeted")?.as_deref(),
+            "",
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+        )),
+        "notch.togglePin" => out(notch::toggle_pin(
+            &a.get::<Option<Vec<String>>>("pinned")?.unwrap_or_default(),
+            &a.get::<String>("id")?,
         )),
         "notch.initial" => out(notch::NotchState::default()),
         "notch.reduce" => out(notch::reduce(&a.get("state")?, &a.get("event")?)),
@@ -998,6 +1288,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "machines.view" => out(crate::machines_view::view(
             &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
                 .unwrap_or_default(),
+        )),
+        "machines.account" => out(crate::machines_account::view(
+            &a.get::<Option<devices::DevicesInput>>("input")?
+                .unwrap_or_default(),
+            a.get::<Option<u64>>("now")?.unwrap_or(0),
+            a.get::<Option<String>>("readError")?.as_deref(),
         )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?
@@ -1109,6 +1405,29 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Value>("status")?,
         )),
         "cloudConnect.isCloudWord" => out(cloud_connect::is_cloud_word(&a.get::<String>("on")?)),
+        "clouds.inputFromStatus" => out(cloud_page::input_from_status(
+            &a.get::<Value>("status")?,
+            a.get::<Option<u64>>("now")?.unwrap_or(0),
+            a.get::<Option<bool>>("canApprove")?.unwrap_or(false),
+        )),
+        "clouds.view" => out(cloud_page::view(&a.get("input")?)),
+        "cloudSheet.initial" => out(cloud_sheet::cloud_sheet_initial(
+            &a.get("input")?,
+            a.get::<Option<String>>("cloud")?.as_deref(),
+            a.get::<Option<bool>>("limits")?.unwrap_or(false),
+        )),
+        "cloudSheet.reduce" => out(cloud_sheet::cloud_sheet_reduce(
+            &a.get("input")?,
+            &a.get("state")?,
+            &a.get("action")?,
+        )),
+        "cloudSheet.view" => out(cloud_sheet::cloud_sheet_view(
+            &a.get("input")?,
+            &a.get("state")?,
+        )),
+        "cloudSheet.inputFromStatus" => {
+            out(cloud_sheet::input_from_status(&a.get::<Value>("status")?))
+        }
         "share.initial" => out(share::share_initial()),
         "share.reduce" => out(share::share_reduce(
             &a.get::<share::ShareInput>("input")?,
@@ -1178,6 +1497,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Vec<_>>("statuses")?,
             a.get("total")?,
         )),
+        "agents.connectionRows" => out(crate::connection::connection_rows(
+            &a.get::<Vec<_>>("rows")?,
+        )),
         "agents.setupSummary" => out(agents::agent_setup_summary(
             &a.get::<Vec<_>>("outcomes")?,
             &a.get::<String>("agent")?,
@@ -1229,6 +1551,39 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<checklist::ChecklistSeen>>("seen")?
                 .unwrap_or_default(),
         )),
+        "ciRunners.view" => out(ci_runners::view(
+            &a.get::<Option<ci_runners::Overview>>("overview")?
+                .unwrap_or_default(),
+            &a.get::<Option<ci_runners::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "ciRunners.reduce" => out(ci_runners::reduce(
+            &a.get::<Option<ci_runners::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<ci_runners::Action>("action")?,
+        )),
+        "prepare.reduce" => out(prepare::reduce(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<prepare::Action>("action")?,
+        )),
+        "prepare.view" => out(prepare::view(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.hidden" => out(prepare::hidden_spaces(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.listed" => out(prepare::listed(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<Vec<String>>("ids")?,
+        )),
+        "prepare.metrics" => out(prepare::metrics(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
         "palette.keybindings" => out(palette::keybindings()),
         "palette.rank" => out(palette::rank(
             &a.get::<Vec<palette::PaletteEntry>>("entries")?,
@@ -1244,7 +1599,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<experiments::Experiments>>("experiments")?
                 .unwrap_or_default(),
         )),
-        other => Err(CoreError::Invalid(format!("unknown method {other}"))),
+        other => match crate::phone::call(other, &a.0) {
+            Some(r) => r,
+            None => Err(CoreError::Invalid(format!("unknown method {other}"))),
+        },
     }
 }
 
@@ -1293,6 +1651,102 @@ mod tests {
             .unwrap(),
             json!([])
         );
+        assert_eq!(
+            call_value(
+                "telemetry.upsell",
+                json!({"surface": "meter", "action": "click", "kind": "hours", "plan": "free"})
+            )
+            .unwrap(),
+            json!([
+                {"type": "feature", "feature": "upsell_meter_click"},
+                {"type": "upgrade-link-opened", "surface": "app_meter", "kind": "hours", "plan": "free"}
+            ])
+        );
+        assert_eq!(
+            call_value(
+                "telemetry.planLimit",
+                json!({"action": "shown", "surface": "app_create", "kind": "sessions", "plan": "pro"})
+            )
+            .unwrap(),
+            json!([{"type": "plan-limit-shown", "surface": "app_create", "kind": "sessions", "plan": "pro"}])
+        );
+        assert_eq!(
+            call_value(
+                "upgrade.link",
+                json!({"url": "https://app.cua.ai/buy/pro?from=plan_limit", "from": "app_create"})
+            )
+            .unwrap(),
+            json!("https://app.cua.ai/buy/pro?from=app_create")
+        );
+    }
+
+    /// The new Spaces page's methods over JSON, as the web calls them.
+    #[test]
+    fn the_spaces_page_methods_answer_over_json() {
+        let menu = call_value(
+            "spaces.menu",
+            json!({"kind": "withMe", "power": "off", "canPower": true, "canLeave": true}),
+        )
+        .unwrap();
+        let labels: Vec<_> = menu
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(labels, ["Open", "Turn on", "Leave"]);
+        let item = json!({"id": "local:a", "name": "a", "os": "linux", "running": true, "bytes": 14_000_000_000u64, "mine": true, "place": "This Mac", "people": [{"who": "sam@x.com", "name": "Sam", "role": "editor"}]});
+        let v = call_value("spaces.bulkConfirm", json!({"items": [item.clone()]})).unwrap();
+        assert_eq!(v["title"], "Delete a?");
+        assert_eq!(v["frees"], "14 GB");
+        assert_eq!(v["deleteIds"], json!(["local:a"]));
+        assert_eq!(
+            call_value("spaces.bulkConfirm", json!({"items": []})).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            call_value("spaces.bulkProgress", json!({"items": [item.clone()]})).unwrap(),
+            "Deleting 1 of 1\u{2026}"
+        );
+        let done = call_value(
+            "spaces.bulkDone",
+            json!({"items": [item], "results": [{"id": "local:a", "ok": true}]}),
+        )
+        .unwrap();
+        assert_eq!(
+            done,
+            json!({"text": "Deleted a. 14 GB freed.", "tone": "ok"})
+        );
+        let tip = call_value(
+            "tips.view",
+            json!({"place": "spaces", "facts": {"newestRunning": "a", "agentsConnected": ["hermes"]}}),
+        )
+        .unwrap();
+        assert_eq!(tip["text"], "Try a in Hermes");
+        let state = call_value(
+            "tips.reduce",
+            json!({"event": {"type": "next", "id": "try-agent"}}),
+        )
+        .unwrap();
+        assert_eq!(state, json!({"off": false, "done": ["try-agent"]}));
+        let s = call_value("settings.choose", json!({"row": "tips", "option": "off"})).unwrap();
+        assert_eq!(s["tips"]["off"], true);
+        let b = call_value("upsell.proBanner", json!({"plan": "free"})).unwrap();
+        assert_eq!(
+            b,
+            json!({"visible": true, "text": "Use more computers at once with Pro", "button": "Upgrade"})
+        );
+        let b = call_value("upsell.proBanner", json!({"plan": "pro"})).unwrap();
+        assert_eq!(b["visible"], false);
+        let m = call_value(
+            "account.menu",
+            json!({"plan": "pro", "signedIn": true, "authMode": "user"}),
+        )
+        .unwrap();
+        assert_eq!(
+            m[1],
+            json!({"id": "plan", "label": "Plan", "value": "Pro", "separatorBefore": false})
+        );
     }
 
     #[test]
@@ -1310,6 +1764,29 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The title bar's tag over the wire: null for the released app on
+    /// production, words and a tint for Local.
+    #[test]
+    fn environment_tag_over_the_wire() {
+        let tag = |args: Value| call_value("environment.tag", args).unwrap();
+        assert_eq!(
+            tag(json!({"target": {"channel": "stable", "env": "prod"}})),
+            Value::Null
+        );
+        assert_eq!(
+            tag(
+                json!({"target": {"channel": "local", "env": "staging", "authHost": "auth.staging.cua.ai"}, "updateChannel": "nightly"})
+            ),
+            json!({"label": "Local · Staging", "env": "staging", "description": "This app uses Cua Staging (auth.staging.cua.ai)"})
+        );
+        assert_eq!(
+            tag(
+                json!({"target": {"channel": "stable", "env": "staging"}, "updateChannel": "nightly"})
+            )["label"],
+            "Nightly · Staging"
+        );
     }
 
     /// The page's core has no environment: Upgrade's checkout is on the
@@ -1579,7 +2056,7 @@ mod tests {
     /// out under the notice; one that keeps its desktop private says so,
     /// and Share follows Settings, Experiments.
     #[test]
-    fn the_detail_follows_access_and_experiments() {
+    fn the_detail_follows_access() {
         let space = |id: &str, features: &[&str]| {
             call_value(
                 "spaces.rowToSpace",
@@ -1608,22 +2085,9 @@ mod tests {
                 .collect()
         };
         let has = |d: &Value, id: &str| ids(d).iter().any(|(a, _)| a == id);
-        // No experiments, no access: every action, as before.
+        // No access: every action.
         let live = call_value("sidebar.detail", json!({ "space": shared })).unwrap();
         assert!(has(&live, "share"));
-        // Sharing off hides Share; on shows it.
-        let off = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": false } }),
-        )
-        .unwrap();
-        assert!(!has(&off, "share"));
-        let on = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true } }),
-        )
-        .unwrap();
-        assert!(has(&on, "share") && on.get("access").is_none());
         // Not enrolled: the notice, Status says why, connection actions off.
         let notice = serde_json::to_value(
             devices::machine_access_notice(devices::EnrollmentKind::NeedsEnrollment, None).unwrap(),
@@ -1631,7 +2095,7 @@ mod tests {
         .unwrap();
         let d = call_value(
             "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true }, "access": notice }),
+            json!({ "space": shared, "access": notice }),
         )
         .unwrap();
         assert_eq!(d["access"], notice);
@@ -1642,21 +2106,10 @@ mod tests {
                 assert!(!enabled, "{id} stays off while not enrolled");
             }
         }
-        // Without experiments, `access` still applies.
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "access": notice }),
-        )
-        .unwrap();
-        assert_eq!(d["access"], notice);
         // A machine that keeps its desktop private: its note, no New Space
         // button word in the note itself, its desktop actions gone.
         let private = space("relay:m1", &["host_spaces", "files"]);
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": private, "experiments": {} }),
-        )
-        .unwrap();
+        let d = call_value("sidebar.detail", json!({ "space": private })).unwrap();
         assert_eq!(
             d["desktopNote"],
             json!("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")

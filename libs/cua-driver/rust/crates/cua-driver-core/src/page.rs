@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform `page` tool: browser JS execution, text extraction, and DOM querying.
 //!
 //! The tool itself (name, schema, action dispatch) lives here so every platform
@@ -64,6 +67,8 @@ pub struct ClickElementResult {
     pub message: String,
 }
 
+pub type PageReadResult = ToolResult;
+
 /// Platform-specific backend for the `page` tool.
 ///
 /// All methods take `(pid, window_id)` for consistency across actions.
@@ -72,18 +77,18 @@ pub struct ClickElementResult {
 #[async_trait]
 pub trait PageBackend: Send + Sync {
     /// Returns the visible text of the page (rough analog of
-    /// `document.body.innerText`).
-    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String>;
+    /// `document.body.innerText`) plus optional backend provenance.
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult>;
 
-    /// Find elements matching `css_selector` and return a formatted-text
-    /// response (same human-readable shape macOS already emits).
+    /// Find elements matching `css_selector` and return the legacy formatted
+    /// text response plus optional backend provenance.
     async fn query_dom(
         &self,
         pid: i32,
         window_id: u64,
         css_selector: &str,
         attributes: &[String],
-    ) -> anyhow::Result<String>;
+    ) -> anyhow::Result<PageReadResult>;
 
     /// Evaluate `javascript` against the page and return the stringified
     /// result. Backends without a JS path should return an actionable error.
@@ -266,8 +271,11 @@ fn def() -> &'static ToolDef {
             --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.\n\n\
             Actions:\n\
             - execute_javascript: Run JS and return the result.\n\
-            - get_text: Extract visible text from the page.\n\
-            - query_dom: Find elements matching a CSS selector.\n\
+            - get_text: Extract visible text from the page. On macOS, structuredContent.source \
+              identifies javascript, cdp, or ax_fallback; a successful AX fallback preserves \
+              the triggering error and truncation state in structuredContent.\n\
+            - query_dom: Find elements matching a CSS selector, with the same macOS fallback \
+              metadata contract as get_text.\n\
             - click_element: Click a CSS-selected element AND animate the agent cursor \
               to its on-screen center first (so the user sees what the agent is doing). \
               Prefer over `execute_javascript('el.click()')` whenever you want visible \
@@ -459,7 +467,7 @@ impl Tool for PageTool {
             }
 
             "get_text" => match self.backend.get_text(pid, window_id).await {
-                Ok(text) => ToolResult::text(text),
+                Ok(result) => result,
                 Err(e) => ToolResult::error(format!("Page text extraction failed: {e}")),
             },
 
@@ -550,7 +558,7 @@ impl Tool for PageTool {
                     .query_dom(pid, window_id, &selector, &attributes)
                     .await
                 {
-                    Ok(text) => ToolResult::text(text),
+                    Ok(result) => result,
                     Err(e) => ToolResult::error(format!("DOM query failed: {e}")),
                 }
             }
@@ -588,8 +596,8 @@ mod tests {
 
     #[async_trait]
     impl PageBackend for RecordingBackend {
-        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<String> {
-            Ok(String::new())
+        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::text(String::new()))
         }
 
         async fn query_dom(
@@ -598,8 +606,8 @@ mod tests {
             _window_id: u64,
             _css_selector: &str,
             _attributes: &[String],
-        ) -> anyhow::Result<String> {
-            Ok(String::new())
+        ) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::text(String::new()))
         }
 
         async fn execute_javascript(
@@ -628,6 +636,65 @@ mod tests {
             ));
             Ok("targeted".to_owned())
         }
+    }
+
+    struct ProvenanceBackend;
+
+    #[async_trait]
+    impl PageBackend for ProvenanceBackend {
+        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<PageReadResult> {
+            Ok(
+                ToolResult::text("legacy payload".to_owned()).with_structured(serde_json::json!({
+                    "source": "ax_fallback",
+                    "fallback_error": "JavaScript from Apple Events is disabled",
+                    "truncated": true
+                })),
+            )
+        }
+
+        async fn query_dom(
+            &self,
+            _pid: i32,
+            _window_id: u64,
+            _css_selector: &str,
+            _attributes: &[String],
+        ) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::text(String::new()))
+        }
+
+        async fn execute_javascript(
+            &self,
+            _pid: i32,
+            _window_id: u64,
+            _javascript: &str,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("unused")
+        }
+    }
+
+    #[tokio::test]
+    async fn read_preserves_text_and_attaches_backend_provenance() {
+        let tool = PageTool::new(Arc::new(ProvenanceBackend));
+        let result = tool
+            .invoke(serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "action": "get_text"
+            }))
+            .await;
+
+        assert!(matches!(
+            &result.content[0],
+            crate::protocol::Content::Text { text, .. } if text == "legacy payload"
+        ));
+        assert_eq!(
+            result.structured_content,
+            Some(serde_json::json!({
+                "source": "ax_fallback",
+                "fallback_error": "JavaScript from Apple Events is disabled",
+                "truncated": true
+            }))
+        );
     }
 
     #[tokio::test]

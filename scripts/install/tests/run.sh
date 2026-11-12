@@ -57,9 +57,11 @@ if [ "\${1:-}" = --version ]; then echo "cua $version ($2)"; exit 0; fi
 if [ "\${1:-} \${2:-} \${3:-}" = "host setup --help" ]; then
     echo "Usage: cua host setup [OPTIONS]"
     [ -n "\${CUA_FAKE_NO_PAIR:-}" ] || echo "      --pair <CODE>  add this machine with a code"
+    [ -z "\${CUA_FAKE_HAS_NO_DESKTOP:-}" ] || echo "      --no-desktop  do not share this desktop"
     exit 0
 fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+if [ "\$*" = "host status --json" ] && [ -n "\${CUA_FAKE_CONFIGURED:-}" ]; then echo '{"configured":true}'; exit 0; fi
 if [ "\$*" = "runtime doctor" ]; then
     echo 'runtime doctor diagnostic'
     exit "\${CUA_FAKE_DOCTOR_STATUS:-0}"
@@ -80,10 +82,10 @@ for platform in linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
     # Apple silicon: the microVM monitor and guest init, and the static
     # cua-spacesd injected into OCI images, travel with `cua`.
     if [ "$platform" = darwin-arm64 ]; then
-        for f in cua-vz cua-microvm-init cua-spacesd-linux-aarch64; do
+        for f in cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64; do
             printf '#!/bin/sh\necho %s\n' "$f" >"$work/stage/$platform/$f"
         done
-        extra="cua-vz cua-microvm-init cua-spacesd-linux-aarch64"
+        extra="cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64"
     fi
     # shellcheck disable=SC2086
     tar -czf "$tag_dir/cua-cli-$version-$platform.tar.gz" -C "$work/stage/$platform" cua $extra
@@ -215,7 +217,7 @@ check "quiet default: the PATH hint comes last" sh -c "tail -4 '$work/out' | gre
 inst CUA_INSTALL_VERBOSE=1 -- --yes --no-onboarding --cli-only --prefix "$work/q2"
 check "CUA_INSTALL_VERBOSE=1 is --verbose" has_out "^cua-install: platform "
 inst -- --yes --no-onboarding --cli-only --prefix "$work/q3"
-check "--cli-only: summary points at sign-in, agents and hosting" sh -c "grep -q '^Installed the command-line tools (downloads checked)' '$work/out' && grep -q '^Next: run \"cua auth login\" to sign in, then \"cua agents setup\" to connect your AI agents.' '$work/out' && grep -q 'No web browser on this computer? Run \"cua auth login --remote\"' '$work/out' && grep -q 'To let your other devices use this computer, run \"cua host setup\".' '$work/out'"
+check "--cli-only: summary points at sign-in, agents and hosting" sh -c "grep -q '^Installed the command-line tools (downloads checked)' '$work/out' && grep -q '^Next: run \"cua auth login\" to sign in, then \"cua agents setup\" to connect your AI agents.' '$work/out' && grep -q 'No web browser on this computer? Run \"cua auth login --remote\"' '$work/out' && grep -q 'To add this computer to your account, run \"cua host setup\" after signing in.' '$work/out'"
 inst -- --yes --no-onboarding --app-only --prefix "$work/q4"
 check "--app-only: summary names the app, not the CLI" sh -c "grep -q '^Installed the Cua Spaces app (downloads checked)' '$work/out' && ! grep -q 'cua auth login' '$work/out'"
 inst -- --no-onboarding --cli-only --prefix "$work/q5"
@@ -291,6 +293,14 @@ fi
 inst CUA_INSTALL_DRIVER_URL="http://example.invalid/install.sh" -- --yes --only cua-driver --prefix "$work/d2"
 check "a plain-HTTP driver installer URL is refused before installing" sh -c "[ $status != 0 ] && grep -q 'non-HTTPS' '$work/out' && [ ! -e '$work/d2/bin/cua' ]"
 
+inst -- --yes --cli-only --no-host --pair K7QM-4XPB-2RHD --prefix "$work/nh1"
+check "--no-host with --pair: refused" sh -c "[ $status != 0 ] && grep -q -- '--no-host and --pair contradict' '$work/out'"
+inst -- --yes --no-host --only host --prefix "$work/nh2"
+check "--no-host with --only host: refused" sh -c "[ $status != 0 ] && grep -q -- '--no-host and --select host contradict' '$work/out'"
+inst -- --yes --cli-only --no-host --no-provide-spaces --prefix "$work/nh3"
+check "--no-provide-spaces with --no-host: refused" sh -c "[ $status != 0 ] && grep -q -- '--no-provide-spaces goes with adding this computer' '$work/out'"
+inst -- --yes --no-onboarding --only host --no-provide-spaces --prefix "$work/nh4"
+check "--select host --no-provide-spaces: passes it to cua host setup" sh -c "[ $status = 0 ] && grep -qx 'host setup --no-provide-spaces' '$home/cua.log' && grep -q 'This computer is added to your account.' '$work/out'"
 inst CUA_INSTALL_NONINTERACTIVE=1 -- --select host --no-onboarding --prefix "$work/h1"
 check "CUA_INSTALL_NONINTERACTIVE + --select host: runs 'cua host setup'" sh -c "[ $status = 0 ] && grep -qx 'host setup' '$home/cua.log'"
 
@@ -305,6 +315,8 @@ check "--pair: a CLI without 'host setup --pair' fails early with a clear messag
 
 inst -- --pair K7QM-4XPB-2RHD --relay https://relay.example.com --cli-only --prefix "$work/pr2"
 check "--pair --relay --cli-only: passes the relay on" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com' '$home/cua.log'"
+inst CUA_FAKE_HAS_NO_DESKTOP=1 -- --yes --cli-only --pair K7QM-4XPB-2RHD --prefix "$work/pnd"
+check "--pair: keeps the screen private when the CLI can (--no-desktop)" sh -c "[ $status = 0 ] && grep -qx 'host setup --pair K7QM-4XPB-2RHD --no-desktop --provide-spaces' '$home/cua.log'"
 
 inst -- --pair 'K7QM;rm -rf /' --prefix "$work/pr3"
 check "--pair: refuses a code with shell characters before installing" sh -c "[ $status != 0 ] && grep -q 'not a pairing code' '$work/out' && [ ! -e '$work/pr3/bin/cua' ]"
@@ -375,7 +387,7 @@ inst CUA_INSTALL_OS=MINGW64_NT-10.0 -- --yes
 check "Windows shells point at install.ps1" sh -c "[ $status != 0 ] && grep -q install.ps1 '$work/out'"
 
 inst CUA_INSTALL_OS=Darwin CUA_INSTALL_ARCH=arm64 -- --yes --no-onboarding --cli-only --prefix "$work/mvz"
-check "darwin arm64: cua-vz, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
+check "darwin arm64: cua-vz, its network gateway, the microVM guest init and the static cua-spacesd land next to cua" sh -c "[ $status = 0 ] && [ -x '$work/mvz/bin/cua' ] && [ -x '$work/mvz/bin/cua-vz' ] && [ -x '$work/mvz/bin/cua-netgw' ] && [ -x '$work/mvz/bin/cua-microvm-init' ] && [ -x '$work/mvz/bin/cua-spacesd-linux-aarch64' ]"
 inst -- --yes --no-onboarding --cli-only --prefix "$work/nvz"
 check "linux: no microVM monitor in the archive, none installed" sh -c "[ $status = 0 ] && [ -e '$work/nvz/bin/cua' ] && [ ! -e '$work/nvz/bin/cua-vz' ]"
 
@@ -566,6 +578,60 @@ inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-
 check "unverifiable signatures, default output: plain checksum line only" sh -c "[ $status = 0 ] && grep -q '(downloads checked)' '$work/out' && ! grep -qi 'cosign\|minisign\|signatures were not\|checksum' '$work/out'"
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
 check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
+
+# cosign, app: a release rebuilt by a dispatch from main is signed by
+# cd-cua-spaces.yml at refs/heads/main, which names no tag. The installer
+# accepts that identity only with the dispatch trigger, the main ref and a
+# signed rebuild-claim.txt naming this tag and the artifact's sha256.
+sig3="$release/sig3"
+mkdir -p "$sig3" "$work/fakebin-cosign3"
+cp "$tag_dir"/cua-cli-* "$tag_dir"/cua-spaces-"$version"-linux-x64.AppImage "$sig3/"
+for f in "$sig3"/cua-cli-*.tar.gz "$sig3"/*.AppImage; do printf '{}\n' >"$f.sigstore.json"; done
+python3 "$manifest_tool" --component cli --version "$version" --dir "$sig3" --out "$sig3/cli.json"
+python3 "$manifest_tool" --component app --version "$version" --dir "$sig3" --merge "$sig3/cli.json" --out "$sig3/release-artifacts.json"
+cli_identity="https://github.com/trycua/cua/.github/workflows/cd-cua-sdk.yml@refs/tags/cua-sdk-v$version"
+main_identity="https://github.com/trycua/cua/.github/workflows/cd-cua-spaces.yml@refs/heads/main"
+appimage="$(basename "$sig3"/*.AppImage)"
+appsum="$(sha256sum "$sig3/$appimage" | cut -d' ' -f1)"
+# The fake cosign knows only the CLI tag identity, and the app's main identity
+# when the call also pins the repository, the main ref and workflow_dispatch.
+cat >"$work/fakebin-cosign3/cosign" <<COSIGN
+#!/bin/sh
+printf '%s\n' "\$*" >>"$work/cosign3.log"
+id=""; repo=""; ref=""; trig=""; prev=""
+for a in "\$@"; do
+    case "\$prev" in
+    --certificate-identity) id="\$a" ;;
+    --certificate-github-workflow-repository) repo="\$a" ;;
+    --certificate-github-workflow-ref) ref="\$a" ;;
+    --certificate-github-workflow-trigger) trig="\$a" ;;
+    esac
+    prev="\$a"
+done
+[ "\$id" = "$cli_identity" ] && exit 0
+[ "\$id" = "$main_identity" ] && [ "\$repo" = trycua/cua ] && [ "\$ref" = refs/heads/main ] && [ "\$trig" = workflow_dispatch ] && exit 0
+exit 1
+COSIGN
+chmod +x "$work/fakebin-cosign3/cosign"
+# No claim: the main-branch signature alone is refused.
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg3"
+check "cosign: a main-branch app signature without a rebuild claim aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
+# A claim for this tag and this file, signed by the same identity.
+printf 'tag cua-spaces-v%s\nsha 0000000000000000000000000000000000000000\n%s  %s\n' "$version" "$appsum" "$appimage" >"$sig3/rebuild-claim.txt"
+printf '{}\n' >"$sig3/rebuild-claim.txt.sigstore.json"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg4"
+check "cosign accepts a rebuilt app: main identity, dispatch trigger and a claim for this tag" sh -c "[ $status = 0 ] && [ -x '$work/sg4/bin/cua-spaces' ] && grep -q -- '--certificate-github-workflow-trigger workflow_dispatch' '$work/cosign3.log'"
+# A claim for a different tag (a build of another release) is refused.
+printf 'tag cua-spaces-v0.0.1\n%s  %s\n' "$appsum" "$appimage" >"$sig3/rebuild-claim.txt"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg6"
+check "cosign: a rebuild claim for another tag aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
+# A claim that does not list this file's sha256 is refused.
+printf 'tag cua-spaces-v%s\n%s  %s\n' "$version" "0000000000000000000000000000000000000000000000000000000000000000" "$appimage" >"$sig3/rebuild-claim.txt"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg7"
+check "cosign: a rebuild claim without this artifact's sha256 aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
+printf '#!/bin/sh\nexit 1\n' >"$work/fakebin-cosign3/cosign"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg5"
+check "cosign: an app bundle from any other identity aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
 # Upgrade over a running older daemon: the new cua stops it (never a broad
 # kill) and starts the new one. A fake old cua reports a running 0.0.9 daemon.
 mkdir -p "$work/up/bin"
@@ -581,6 +647,7 @@ cat >"$work/stage/linux-x64/cua" <<EOF
 #!/bin/sh
 if [ "\${1:-}" = --version ]; then echo "cua $version (linux-x64)"; exit 0; fi
 echo "\$*" >>"\${CUA_FAKE_LOG:-/dev/null}"
+if [ "\$*" = "host status --json" ] && [ -n "\${CUA_FAKE_CONFIGURED:-}" ]; then echo '{"configured":true}'; fi
 EOF
 tar -czf "$tag_dir/cua-cli-$version-linux-x64.tar.gz" -C "$work/stage/linux-x64" cua
 python3 "$manifest_tool" --component cli --version "$version" --dir "$tag_dir" \
@@ -608,12 +675,26 @@ if script --version 2>/dev/null | grep -q util-linux; then
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
-    check "interactive: runs 'cua auth login'" sh -c "grep -qx 'auth login' '$home/cua.log'"
+    check "interactive: runs 'cua auth login' (a device code: no display here)" sh -c "grep -qx 'auth login --remote' '$home/cua.log'"
     check "interactive: after sign-in, the closing line points at agents setup" sh -c "grep -q 'Signing in to Cua' '$work/out' && grep -q 'Next: run \"cua agents setup\" to connect your AI agents.' '$work/out' && ! grep -q 'Next: run \"cua auth login\"' '$work/out'"
+    check "interactive: signing in adds this computer (cua host setup after auth login)" sh -c "grep -qx 'host setup --no-desktop --provide-spaces' '$home/cua.log' && [ \"\$(grep -n -x 'auth login --remote' '$home/cua.log' | cut -d: -f1)\" -lt \"\$(grep -n -x 'host setup --no-desktop --provide-spaces' '$home/cua.log' | cut -d: -f1)\" ] && grep -q 'This computer is added to your account.' '$work/out'"
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
-    check "interactive + --no-onboarding: no login" sh -c "! grep -qx 'auth login' '$home/cua2.log' 2>/dev/null"
+    check "interactive + --no-onboarding: no login" sh -c "! grep -q 'auth login' '$home/cua2.log' 2>/dev/null"
+    check "interactive + --no-onboarding: does not add this computer" sh -c "! grep -q 'host setup' '$home/cua2.log' 2>/dev/null"
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua3.log" \
+        script -qec "$sh_bin '$installer' --yes --cli-only --no-host --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive + --no-host: signs in, does not add this computer" sh -c "grep -q '^auth login' '$home/cua3.log' && ! grep -q 'host setup' '$home/cua3.log'"
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua4.log" \
+        script -qec "$sh_bin '$installer' --yes --cli-only --no-provide-spaces --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive + --no-provide-spaces: adds this computer without providing Spaces" sh -c "grep -qx 'host setup --no-provide-spaces' '$home/cua4.log'"
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua5.log" CUA_FAKE_CONFIGURED=1 \
+        script -qec "$sh_bin '$installer' --yes --cli-only --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive: a computer already set up keeps its settings (no second setup)" sh -c "grep -qx 'host status --json' '$home/cua5.log' && ! grep -q 'host setup' '$home/cua5.log' && grep -q 'This computer is added to your account.' '$work/out'"
 
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua3.log" CUA_INSTALL_DRIVER_URL="$driver_url" \

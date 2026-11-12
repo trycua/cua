@@ -20,22 +20,10 @@ export type SpaceOs = "macos" | "windows" | "linux" | "unknown";
  *  - `provisioning` : being created
  *  - `deleting`     : being deleted (the user confirmed)
  */
-export type SpaceStatus =
-  | "local"
-  | "running"
-  | "approval"
-  | "suspended"
-  | "provisioning"
-  | "deleting";
+export type SpaceStatus = "local" | "running" | "approval" | "suspended" | "provisioning" | "deleting";
 
 /** Visual scene used to draw a synthetic thumbnail (no real screen capture). */
-export type ThumbnailScene =
-  | "mac-desktop"
-  | "windows-desktop"
-  | "linux-terminal"
-  | "notes"
-  | "browser"
-  | "blank";
+export type ThumbnailScene = "mac-desktop" | "windows-desktop" | "linux-terminal" | "notes" | "browser" | "blank";
 
 /**
  * What the cua SDK reported about a registered Space (`list_spaces`). Present
@@ -67,7 +55,7 @@ export type SpaceProvider = "local" | "direct" | "relay";
 export type Location = "local" | "yours" | "host";
 
 /** What kind of machine a Space is. */
-export type SpaceKind = "container" | "vm";
+export type SpaceKind = "container" | "vm" | "microvm";
 
 /**
  * Which engine runs it. Local: `gvisor`, `runc` (containers), `qemu`, `lume`

@@ -6,7 +6,6 @@ import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { useBridge, useSavedOnboarding, useSession, useStartup } from "@/bridge";
 
-import { ChecklistTracker } from "@/components/getting-started";
 import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { DevicesBanner } from "@/components/shell/devices-banner";
@@ -22,15 +21,27 @@ import { ThisMacNudges } from "@/components/this-mac-nudges";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useAgentSync } from "@/hooks/use-connected-apps";
 import { useNotificationToasts } from "@/hooks/use-notification-toasts";
+import { useStreamIntent } from "@/hooks/use-stream-intent";
 import { useThemeHostSync, useThemeSync } from "@/lib/theme";
+import { PrepareRoot } from "@/lib/prepare/use-prepare";
 import { useUiStore } from "@/stores/ui";
 
 export const Route = createRootRoute({ component: RootLayout });
 
+/** The page, with the first Space's preparation running behind it from launch (onboarding, then the app). */
+function RootLayout() {
+  return (
+    <>
+      <PrepareRoot />
+      <RootBody />
+    </>
+  );
+}
+
 // Shown only while the native app is still starting, so it loads then.
 const StartupScreen = lazy(() => import("@/components/startup/StartupScreen").then((m) => ({ default: m.StartupScreen })));
 
-function RootLayout() {
+function RootBody() {
   useThemeSync();
   useThemeHostSync();
   const { mode } = useBridge();
@@ -41,6 +52,7 @@ function RootLayout() {
   useGlobalKeybindings();
   useFirstRun();
   useNotificationToasts();
+  useStreamIntent();
   useAgentSync();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const { pathname } = useLocation();
@@ -82,7 +94,6 @@ function RootLayout() {
       </div>
       <PlanLimitToastAction />
       <CommandPalette />
-      <ChecklistTracker />
       <NewSpace />
       <SpaceSheets />
       <ThisMacNudges />

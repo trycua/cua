@@ -45,6 +45,39 @@
       "metering": "cloud"
     },
     {
+      "tool": "network_show",
+      "sdk_symbol": "Spaces::network_info",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "network_log",
+      "sdk_symbol": "Spaces::network_events",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "network_set",
+      "sdk_symbol": "Spaces::set_network",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "delete_space",
       "sdk_symbol": "Space::delete",
       "providers": [
@@ -91,6 +124,17 @@
     {
       "tool": "space_bash",
       "sdk_symbol": "Space::bash",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "space_job",
+      "sdk_symbol": "Space::job",
       "providers": [
         "cloud",
         "local",
@@ -232,6 +276,17 @@
       "metering": "free"
     },
     {
+      "tool": "space_service",
+      "sdk_symbol": "Space::keep_service",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "agent_start",
       "sdk_symbol": "Space::start_agent",
       "providers": [
@@ -320,7 +375,7 @@
       "metering": "free"
     },
     {
-      "tool": "persistent_agent_create",
+      "tool": "agent_add",
       "sdk_symbol": "Connection::create_persistent_agent",
       "providers": [
         "cloud",
@@ -342,7 +397,7 @@
       "metering": "free"
     },
     {
-      "tool": "persistent_agent_remove",
+      "tool": "agent_remove",
       "sdk_symbol": "Connection::remove_persistent_agent",
       "providers": [
         "cloud",
@@ -353,7 +408,7 @@
       "metering": "free"
     },
     {
-      "tool": "persistent_agent_send",
+      "tool": "agent_send",
       "sdk_symbol": "Connection::send_to_persistent_agent",
       "providers": [
         "cloud",
@@ -397,7 +452,7 @@
       "metering": "cloud"
     },
     {
-      "tool": "routine_add",
+      "tool": "agent_schedule_add",
       "sdk_symbol": "Connection::add_routine",
       "providers": [
         "cloud",
@@ -408,7 +463,7 @@
       "metering": "free"
     },
     {
-      "tool": "routine_list",
+      "tool": "agent_schedule_list",
       "sdk_symbol": "Connection::routines",
       "providers": [
         "cloud",
@@ -419,7 +474,7 @@
       "metering": "free"
     },
     {
-      "tool": "routine_remove",
+      "tool": "agent_schedule_remove",
       "sdk_symbol": "Connection::remove_routine",
       "providers": [
         "cloud",
@@ -430,7 +485,7 @@
       "metering": "free"
     },
     {
-      "tool": "routine_set_enabled",
+      "tool": "agent_schedule_set_enabled",
       "sdk_symbol": "Connection::set_routine_enabled",
       "providers": [
         "cloud",
@@ -498,6 +553,171 @@
     {
       "tool": "computer_access_list",
       "sdk_symbol": "Connection::computer_access",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_read",
+      "sdk_symbol": "Connection::thread_read",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_post",
+      "sdk_symbol": "Connection::thread_post",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_inbox",
+      "sdk_symbol": "Connection::thread_inbox",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_claim",
+      "sdk_symbol": "Connection::thread_claim",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_reply",
+      "sdk_symbol": "Connection::thread_reply",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_import",
+      "sdk_symbol": "Connection::thread_import",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_members",
+      "sdk_symbol": "Connection::agent_members",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_set_rights",
+      "sdk_symbol": "Connection::agent_set_rights",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_join",
+      "sdk_symbol": "Connection::thread_join",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_join_code_create",
+      "sdk_symbol": "Connection::thread_join_code_create",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_join_code_list",
+      "sdk_symbol": "Connection::thread_join_code_list",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_join_code_cancel",
+      "sdk_symbol": "Connection::thread_join_code_cancel",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_join_redeem",
+      "sdk_symbol": "Connection::thread_join_redeem",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_settings",
+      "sdk_symbol": "Connection::thread_settings",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "thread_device_revoke",
+      "sdk_symbol": "Connection::thread_device_revoke",
       "providers": [
         "cloud",
         "local",
@@ -1059,6 +1279,17 @@
     {
       "tool": "cloud_audit",
       "sdk_symbol": "Connection::cloud_audit",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_cost",
+      "sdk_symbol": "Connection::cloud_cost",
       "providers": [
         "cloud",
         "local",

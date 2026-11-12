@@ -184,4 +184,3 @@ export function readHotkey(): string {
 export function writeHotkey(value: string): void {
   writeSetting(SETTINGS_KEYS.hotkey, value);
 }
-

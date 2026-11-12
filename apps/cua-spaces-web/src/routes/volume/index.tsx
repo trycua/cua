@@ -9,6 +9,7 @@ import { useExperimentFlags, useVolume, useVolumePins, type ConflictView, type D
 import { EmptyState, Page, PageHeader } from "@/components/page";
 import { StorageSection } from "@/components/settings/storage-section";
 import { Button } from "@/components/ui/button";
+import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
 import { cn } from "@/lib/utils";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
 
@@ -60,7 +61,11 @@ function VolumeBody() {
         {view.openLabel ? (
           <Section>
             <div className="flex items-center gap-4 px-4 py-3">
-              <p className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground" title={view.mountPath ?? view.mountLine ?? undefined} data-drive-mount-line="">
+              <p
+                className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground"
+                title={view.mountPath ?? view.mountLine ?? undefined}
+                data-drive-mount-line=""
+              >
                 {view.mountLine}
               </p>
               <Button
@@ -160,18 +165,26 @@ function VolumeBody() {
 function Section({ title, kind, children }: { title?: string; kind?: string; children: ReactNode }) {
   return (
     <section className="mb-6" data-drive-section={kind}>
-      {title ? (
-        <h2 className="mb-2 px-1 text-xs font-semibold text-muted-foreground" data-drive-section-title="">
-          {title}
-        </h2>
-      ) : null}
-      <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">{children}</div>
+      {title ? <SectionHeading data-drive-section-title="">{title}</SectionHeading> : null}
+      <GroupedSection>{children}</GroupedSection>
     </section>
   );
 }
 
 /** A `LineView`: its text, a muted trailing part, and up to two buttons. */
-function Line({ line, busy, onAction, onSecondary, primary }: { line: LineView; busy: boolean; onAction?: () => void; onSecondary?: () => void; primary?: boolean }) {
+function Line({
+  line,
+  busy,
+  onAction,
+  onSecondary,
+  primary,
+}: {
+  line: LineView;
+  busy: boolean;
+  onAction?: () => void;
+  onSecondary?: () => void;
+  primary?: boolean;
+}) {
   return (
     <div className="flex min-h-11 items-center gap-4 px-4 py-2" data-drive-line={line.id}>
       <span className="min-w-0 flex-1 truncate text-[13px]" title={line.text} data-line-text="">
@@ -188,7 +201,7 @@ function Line({ line, busy, onAction, onSecondary, primary }: { line: LineView; 
         </Button>
       ) : null}
       {line.actionLabel && onAction ? (
-        <Button variant={primary ? "default" : "outline"} size="sm" disabled={busy} onClick={onAction} data-line-action="">
+        <Button variant={primary ? "default" : "secondary"} size="sm" disabled={busy} onClick={onAction} data-line-action="">
           {line.actionLabel}
         </Button>
       ) : null}
@@ -210,7 +223,7 @@ function Conflict({ conflict: c, busy, onOpen, onResolve }: { conflict: Conflict
           {c.openLabel}
         </Button>
       ) : null}
-      <Button variant="outline" size="sm" disabled={busy} onClick={onResolve} data-conflict-resolve="">
+      <Button variant="secondary" size="sm" disabled={busy} onClick={onResolve} data-conflict-resolve="">
         {c.resolveLabel}
       </Button>
     </div>

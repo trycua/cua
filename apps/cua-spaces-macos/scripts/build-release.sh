@@ -17,12 +17,18 @@
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
 #   Contents/MacOS/cua-vz                  ai.cua.vz, libs/cua/vz/cua-vz.entitlements
 #                                          (the microVM monitor; arm64 builds)
+#   Contents/MacOS/cua-netgw               ai.cua.netgw (the network gateway of
+#                                          microVMs; universal, no entitlements)
 #   Contents/Resources/cua-microvm-init    the microVMs' Linux guest init (data)
 #   Contents/Helpers/cua-spacesd           com.trycua.cua-env-driver (the host service,
 #                                          which the app's own executable runs as its
 #                                          login item; never in Contents/MacOS, where
 #                                          it would register as the app)
-#   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
+#   Contents/Helpers/cua-cursor-theme      cua-cursor-theme (Cua Driver's cursor themes)
+#   Contents/Helpers/cua-driver            cua-driver, its own entitlements kept (Cua
+#                                          Driver, pinned in cua-driver.release.json;
+#                                          the host service runs it as its child)
+#   Cua Spaces.app                        com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix][+build] [--build-number N]
 #       [--bundle-version A.B.C.D[.E]] [--arch universal|arm64|x86_64]
@@ -142,6 +148,17 @@ if [[ " $archs " == *" arm64 "* ]]; then
   microvm_env=(CUA_VZ_BIN="$out/.vz/cua-vz" CUA_MICROVM_INIT_BIN="$init_bin")
 fi
 
+# The network gateway of microVMs (Go, universal; libs/cua/netgw). GitHub's
+# macOS runners do not ship Go: install it with Homebrew when it is missing.
+# Any recent Go will do; netgw/go.mod names the exact toolchain and Go fetches
+# it (checksum-verified by the Go module sum database) on first use.
+if ! command -v go >/dev/null 2>&1; then
+  command -v brew >/dev/null 2>&1 || { echo "Go is missing and so is Homebrew: install Go to build cua-netgw" >&2; exit 1; }
+  brew install go >&2
+fi
+"$cua/netgw/build.sh" "$out/.netgw" >/dev/null
+microvm_env+=(CUA_NETGW_BIN="$out/.netgw/cua-netgw")
+
 # One library and one CLI with every architecture, where stage-library.sh
 # and build-app.sh look for them.
 joined="$out/.joined"
@@ -175,8 +192,13 @@ if [ -n "$feed_url" ]; then
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
 fi
 [ -x "$app/Contents/Helpers/cua-spacesd" ] || { echo "$app has no Contents/Helpers/cua-spacesd" >&2; exit 1; }
+for f in cua-driver cua-cursor-theme; do
+  [ -x "$app/Contents/Helpers/$f" ] || { echo "$app has no Contents/Helpers/$f" >&2; exit 1; }
+done
 [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
   { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
+[ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.driver.plist" ] ||
+  { echo "$app has no com.trycua.spaces.driver.plist (Cua Driver's login item)" >&2; exit 1; }
 # The symbols build-app.sh took out of the binaries, for symbolicating crash
 # reports (the release workflow keeps it as an artifact; not shipped).
 if [ -d "$out/dSYMs" ]; then
@@ -216,16 +238,25 @@ done
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
 vz_parts=()
+if [ -e "$app/Contents/MacOS/cua-netgw" ]; then
+  "${sign[@]}" --identifier ai.cua.netgw "$app/Contents/MacOS/cua-netgw"
+  vz_parts+=("$app/Contents/MacOS/cua-netgw")
+fi
 if [ -e "$app/Contents/MacOS/cua-vz" ]; then
   # Virtualization.framework refuses a monitor without its entitlement.
   "${sign[@]}" --identifier ai.cua.vz \
     --entitlements "$cua/vz/cua-vz.entitlements" "$app/Contents/MacOS/cua-vz"
-  vz_parts=("$app/Contents/MacOS/cua-vz")
+  vz_parts+=("$app/Contents/MacOS/cua-vz")
 fi
 # The host service. The app's own executable runs it, so its permissions
 # are the app's (designated requirement: identifier and team, checked
 # below), and they stay granted across updates.
 "${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/Helpers/cua-spacesd"
+# Cua Driver, which the host service runs as its child. Same identifiers as
+# the standalone release, and the driver keeps its entitlements.
+driver_parts=("$app/Contents/Helpers/cua-cursor-theme" "$app/Contents/Helpers/cua-driver")
+"${sign[@]}" --identifier cua-cursor-theme "$app/Contents/Helpers/cua-cursor-theme"
+"${sign[@]}" --identifier cua-driver --preserve-metadata=entitlements "$app/Contents/Helpers/cua-driver"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -237,7 +268,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
 for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
-  "$app/Contents/Helpers/cua-spacesd" ${vz_parts[@]+"${vz_parts[@]}"}; do
+  "$app/Contents/Helpers/cua-spacesd" "${driver_parts[@]}" ${vz_parts[@]+"${vz_parts[@]}"}; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -280,7 +311,7 @@ fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}" "$app/Contents/Helpers/cua-spacesd"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/Helpers/cua-spacesd" "${driver_parts[@]}"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done

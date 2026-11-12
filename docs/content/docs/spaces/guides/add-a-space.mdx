@@ -19,6 +19,9 @@ whole computer first, see [Add a computer](/spaces/guides/add-a-computer).
 3. Press **Create Space**. The Space appears in your list with a progress bar and
    is ready when the bar finishes.
 
+**Advanced** in **Choose a system** picks the kind (container, virtual machine or
+microVM) and the runtime. See [Space kinds](/spaces/concepts/space-kinds).
+
 If the create fails, see [Troubleshoot](/spaces/guides/troubleshoot).
 
 ## Add an existing computer by address
@@ -93,7 +96,8 @@ space = await spaces.space(created.space.id)
 ```
 
 Runs `ghcr.io/trycua/linux:24.04` (or `image`) with a fresh env token. `on`,
-`kind` and `runtime` work as for [sandboxes](/cua-sdk/concepts/how-sandboxes-work#where-what-kind-which-engine);
+`kind` and `runtime` work as for [sandboxes](/cua-sdk/concepts/how-sandboxes-work#where-what-kind-which-engine)
+(see [Space kinds](/spaces/concepts/space-kinds));
 without `on`, the Space runs where `cua config get default.on` says (local
 unless you changed it; the Spaces app sets it in Settings, Default location).
 `cua runtime doctor` shows what this host has.

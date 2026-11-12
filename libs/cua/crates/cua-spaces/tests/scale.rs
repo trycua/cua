@@ -7,8 +7,8 @@
 //!
 //! Each scenario does what the apps do after a launch or a daemon restart:
 //! read this machine's Spaces, read the whole list (the relay directory),
-//! then reach every Space at once with the app's per-Space deadline. It
-//! asserts the budgets:
+//! then reach every Space (this machine's and the computers') at once with
+//! the app's per-Space deadline. It asserts the budgets:
 //!
 //! - this machine's Spaces list within [`LOCAL_BUDGET`], and the list is
 //!   never empty while they exist;
@@ -17,7 +17,8 @@
 //! - every Space on an offline or unresponsive computer is marked within
 //!   [`OFFLINE_BUDGET`], and never holds up the rest;
 //! - a computer that comes back is reachable within [`RECOVERY_BUDGET`];
-//! - a computer that keeps failing is not dialed again on every poll.
+//! - a computer that keeps failing is not dialed again on every poll;
+//! - a connect that changes no record reads `spaces.json` at most once.
 //!
 //! Sizes: `CUA_SCALE_HOSTS` (default 20) computers with `CUA_SCALE_SPACES`
 //! (default 10) Spaces each. Each scenario prints a `SCALE` line.
@@ -261,6 +262,10 @@ struct Run {
     offline_max: Duration,
     online_failed: Vec<String>,
     offline_answered: Vec<String>,
+    /// Spaces asked for in the connect phase.
+    connects: u64,
+    /// `spaces.json` reads in the connect phase.
+    registry_reads: u64,
 }
 
 /// What an app does after a launch: this machine's Spaces, the whole list,
@@ -284,24 +289,31 @@ async fn app_poll(w: &World, spaces: &Spaces, health: &[Health]) -> Run {
         _ => spaces.list().unwrap(),
     };
     run.listed = listed.len();
+    let reads_before = spaces.registry().spaces_reads();
     let start = Instant::now();
     let mut tasks = Vec::new();
-    for (c, h) in w.computers.iter().zip(health) {
-        for s in &c.spaces {
-            let id = format!("relay:{s}");
-            let spaces = spaces.clone();
-            let answers = h.answers();
-            tasks.push(tokio::spawn(async move {
-                let r = tokio::time::timeout(APP_PROBE, spaces.space(&id)).await;
-                let ok = matches!(r, Ok(Ok(_)));
-                let why = match r {
-                    Ok(Ok(_)) => String::new(),
-                    Ok(Err(e)) => e.to_string(),
-                    Err(_) => "the app's deadline".into(),
-                };
-                (format!("{id}: {why}"), answers, ok, start.elapsed())
+    // This machine's Spaces (registered) and every computer's (not).
+    let targets =
+        w.local
+            .iter()
+            .map(|id| (id.clone(), true))
+            .chain(w.computers.iter().zip(health).flat_map(|(c, h)| {
+                c.spaces
+                    .iter()
+                    .map(move |s| (format!("relay:{s}"), h.answers()))
             }));
-        }
+    for (id, answers) in targets {
+        let spaces = spaces.clone();
+        tasks.push(tokio::spawn(async move {
+            let r = tokio::time::timeout(APP_PROBE, spaces.space(&id)).await;
+            let ok = matches!(r, Ok(Ok(_)));
+            let why = match r {
+                Ok(Ok(_)) => String::new(),
+                Ok(Err(e)) => e.to_string(),
+                Err(_) => "the app's deadline".into(),
+            };
+            (format!("{id}: {why}"), answers, ok, start.elapsed())
+        }));
     }
     for t in tasks {
         let (id, answers, ok, took) = t.await.unwrap();
@@ -311,20 +323,24 @@ async fn app_poll(w: &World, spaces: &Spaces, health: &[Health]) -> Run {
             (false, true) => run.offline_answered.push(id),
             (false, false) => run.offline_max = run.offline_max.max(took),
         }
+        run.connects += 1;
     }
+    run.registry_reads = spaces.registry().spaces_reads() - reads_before;
     run
 }
 
 fn check(name: &str, run: &Run, expect_listed: usize) {
     eprintln!(
-        "SCALE {name}: local={:?} list={:?} listed={} online_max={:?} offline_max={:?} online_failed={} offline_answered={}",
+        "SCALE {name}: local={:?} list={:?} listed={} online_max={:?} offline_max={:?} online_failed={} offline_answered={} registry_reads={}/{}",
         run.local,
         run.list,
         run.listed,
         run.online_max,
         run.offline_max,
         run.online_failed.len(),
-        run.offline_answered.len()
+        run.offline_answered.len(),
+        run.registry_reads,
+        run.connects
     );
     assert!(
         run.local <= LOCAL_BUDGET,
@@ -360,6 +376,14 @@ fn check(name: &str, run: &Run, expect_listed: usize) {
         run.offline_max <= OFFLINE_BUDGET,
         "{name}: slowest unreachable Space was marked after {:?}",
         run.offline_max
+    );
+    // A connect still waiting out the app's deadline may read after the
+    // count is taken; it is never counted twice.
+    assert!(
+        run.registry_reads <= run.connects,
+        "{name}: {} spaces.json reads for {} connects",
+        run.registry_reads,
+        run.connects
     );
 }
 

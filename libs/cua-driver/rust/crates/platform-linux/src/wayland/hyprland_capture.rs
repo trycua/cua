@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wayland-native capture for Hyprland.
 //!
 //! Identified per-window capture using wayland-client (no grim subprocess).
@@ -178,12 +181,12 @@ delegate_noop!(CaptureState: HyprlandToplevelExportManagerV1); // no events
 /// Dispatch events until `done(state)` or the deadline expires. Equivalent to
 /// `blocking_dispatch` but with a hard timeout, so a compositor that never
 /// answers (or a damage-gated copy) cannot wedge the recording hook path.
-fn dispatch_until(
-    queue: &mut EventQueue<CaptureState>,
-    state: &mut CaptureState,
+pub(super) fn dispatch_until<S: 'static>(
+    queue: &mut EventQueue<S>,
+    state: &mut S,
     deadline: Instant,
     what: &str,
-    done: impl Fn(&CaptureState) -> bool,
+    done: impl Fn(&S) -> bool,
 ) -> Result<()> {
     loop {
         queue

@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import textwrap
+import tomllib
 import unittest
 
 
@@ -259,8 +260,8 @@ fi
         self.assertNotIn("NSMicrophoneUsageDescription", plist)
 
         cli = self.read("libs/cua-driver/rust/crates/cua-driver/src/cli.rs")
-        self.assertIn("missing from Screen & System Audio Recording", cli)
-        self.assertIn("add {app_path}", cli)
+        self.assertIn("isn't in the Screen & System Audio Recording list", cli)
+        self.assertIn("choose {app_path}", cli)
 
         limits = self.read("docs/content/docs/cua-driver/guides/troubleshoot.mdx")
         self.assertIn("without this grant it returns the tree only (no PNG)", limits)
@@ -300,18 +301,17 @@ fi
         self.assertIn("git rebase --abort", replay)
         self.assertIn('--force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD"', workflow)
         self.assertNotIn("git push --force ", workflow)
-        self.assertIn("sync_driver_release_docs.py", workflow)
+        self.assertNotIn("sync_driver_release_docs.py", workflow)
         self.assertIn(
             "chore(cua-driver-rs): synchronize generated release files",
             workflow,
         )
-        self.assertIn("sync_lume_release_docs.py", workflow)
-        self.assertIn("chore(lume): synchronize release documentation", workflow)
-        self.assertIn(
-            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
-            workflow,
-        )
-        self.assertIn("runner.ts --library sandbox", workflow)
+        self.assertNotIn("sync_lume_release_docs.py", workflow)
+        self.assertIn("chore(lume): synchronize release files", workflow)
+        # Generated reference pages carry no release version, so a release
+        # never regenerates or re-stamps them (docs-version-stamp.test.ts).
+        self.assertNotIn("runner.ts --library sandbox", workflow)
+        self.assertNotIn("sync_bench_release_docs.py", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
@@ -332,8 +332,10 @@ fi
         self.assertIn("resolve_release_please_request.py", workflow)
         self.assertIn('"--path=$RELEASE_PATH"', workflow)
         self.assertIn('ARGS+=("--release-as=$RELEASE_AS")', workflow)
-        self.assertIn("release-please@17.3.0", workflow)
-        self.assertIn("EXPECTED_INTEGRITY=", workflow)
+        self.assertIn('.github/scripts/release_please.sh "${ARGS[@]}"', workflow)
+        runner = self.read(".github/scripts/release_please.sh")
+        self.assertIn("ENGINE_VERSION=17.3.0", runner)
+        self.assertIn("EXPECTED_INTEGRITY=", runner)
 
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")
@@ -442,6 +444,16 @@ fi
                 workflow,
                 relative_path,
             )
+
+    def test_linux_unit_triggers_on_every_member_its_workspace_clippy_lints(self) -> None:
+        manifest = tomllib.loads(self.read("libs/cua-driver/rust/Cargo.toml"))
+        workflow = self.read(".github/workflows/ci-rust-linux.yml")
+        triggers = workflow.split("\n  workflow_dispatch:", 1)[0]
+        _, pull_request, push = re.split(r"\n  (?:pull_request|push):\n", triggers)
+        for member in manifest["workspace"]["members"]:
+            entry = f'      - "libs/cua-driver/rust/{member}/**"\n'
+            self.assertIn(entry, pull_request, member)
+            self.assertIn(entry, push, member)
 
     def test_release_please_keeps_release_version_sources_synced(self) -> None:
         config = self.read("release-please-config.json")
@@ -839,7 +851,9 @@ fi
 
         # Every candidate build checks out the tag (or the nightly source ref);
         # there is no dispatch path that retargets an older tag for publication.
-        self.assertEqual(workflow.count("ref: ${{ inputs.source_ref || github.ref }}"), 6)
+        self.assertEqual(
+            workflow.count("ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}"), 6
+        )
         self.assertNotIn("inputs.publish", workflow)
         self.assertNotIn("format('refs/tags/cua-driver-rs-v{0}', inputs.version)", workflow)
         self.assertIn(
@@ -951,8 +965,9 @@ fi
     def test_driver_tag_push_publishes_only_after_automatic_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
         tag_push = (
-            "github.event_name == 'push' && "
-            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
+            "((github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || "
+            "(github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))"
         )
 
         # No manual publish input or dispatch path exists.
@@ -964,7 +979,9 @@ fi
         # The Release Please tag push calls every canonical hosted E2E suite
         # against the exact tag SHA, after the attribution preflight. Nightly
         # builds call the same suites against their exact source_ref.
-        gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
+        gate_sha = (
+            "${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}"
+        )
         gates = {
             "e2e-linux": ("e2e-rust-linux.yml", f"ref: {gate_sha}"),
             "e2e-windows": ("e2e-rust-windows.yml", f"ref: {gate_sha}"),
@@ -977,7 +994,7 @@ fi
         for job, (called, sha_input) in gates.items():
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
             self.assertIn("    needs: release-attribution-preflight\n", block)
-            self.assertIn(f"    if: ({tag_push}) || inputs.channel == 'nightly'\n", block)
+            self.assertIn(f"    if: {tag_push} || inputs.channel == 'nightly'\n", block)
             self.assertIn(f"    uses: ./.github/workflows/{called}\n", block)
             self.assertIn(sha_input, block)
             self.assertIn("      actions: read\n", block)
@@ -1004,8 +1021,8 @@ fi
             self.assertIn(f"      - {job}\n", needs)
         self.assertIn(f"    if: {tag_push}\n", needs)
         self.assertNotIn("always()", needs)
-        self.assertIn("ref: ${{ github.ref }}", steps)
-        self.assertIn('if [[ "$SHA" != "$GITHUB_SHA" ]]; then', steps)
+        self.assertIn("ref: ${{ env.RELEASE_REF }}", steps)
+        self.assertIn('if [[ "$SHA" != "$CERTIFIED_SHA" ]]; then', steps)
 
         # E2E evidence shares the run, so release-bound downloads are scoped.
         self.assertIn('pattern: "{cua-driver-rs-*,cua-hyprland-plugin-source}"', steps)
@@ -1124,7 +1141,7 @@ fi
         self.assertEqual(
             package["dependencies"],
             {
-                "@anthropic-ai/claude-code": "2.1.224",
+                "@anthropic-ai/claude-code": "2.1.322",
                 "@modelcontextprotocol/sdk": "1.30.0",
                 "@openai/codex": "0.146.1",
             },

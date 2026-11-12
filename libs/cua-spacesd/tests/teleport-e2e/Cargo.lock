@@ -1332,8 +1332,9 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "cua-home",
  "hex",
@@ -1349,13 +1350,15 @@ dependencies = [
 
 [[package]]
 name = "cua-agents"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
+ "cua-connections",
  "cua-proto",
  "cua-spacesd-client",
  "flate2",
+ "futures-util",
  "hex",
  "rand 0.9.5",
  "serde",
@@ -1368,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1382,15 +1385,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-connections"
+version = "0.25.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
 name = "cua-cursor-motion"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "schemars",
  "serde",
@@ -1400,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1414,8 +1426,11 @@ dependencies = [
  "getrandom 0.4.3",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "icu_normalizer",
  "image",
+ "indexmap",
  "jsonschema",
+ "keyring",
  "libc",
  "regex",
  "regorus",
@@ -1439,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1461,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1469,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1477,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "cua-home",
  "hex",
@@ -1489,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -1503,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -1534,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
@@ -1547,14 +1562,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-push"
+version = "0.25.2"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "hex",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cua-relay"
-version = "0.8.0"
+version = "0.15.5"
 dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
  "clap",
  "cua-mesh",
+ "cua-push",
+ "cua-spacesd-html5",
  "futures-util",
  "hex",
  "http",
@@ -1573,6 +1606,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -1582,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -1603,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1640,7 +1674,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "axum",
  "http",
@@ -1648,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.8.0"
+version = "0.15.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1705,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.8.0"
+version = "0.15.5"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -1715,7 +1749,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.8.0"
+version = "0.15.5"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -1731,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1744,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "aes 0.8.4",
  "block2 0.6.2",
@@ -1783,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.9.0"
+version = "0.25.2"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -1817,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -2797,6 +2831,7 @@ dependencies = [
  "hyper-util",
  "log",
  "rustls",
+ "rustls-native-certs",
  "tokio",
  "tokio-rustls",
  "tower-service",
@@ -3268,6 +3303,16 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
+]
 
 [[package]]
 name = "libm"
@@ -4330,7 +4375,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "serde_json",
 ]
@@ -4360,7 +4405,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -4377,10 +4422,9 @@ dependencies = [
  "dirs",
  "evdev",
  "futures-util",
- "getrandom 0.4.3",
  "image",
- "keyring",
  "libc",
+ "libloading",
  "memmap2",
  "meval",
  "pip-preview",
@@ -4396,17 +4440,18 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-plasma",
  "wayland-protocols-wlr",
  "wayland-scanner",
  "x11",
  "x11rb",
+ "xkbcommon",
  "zbus",
- "zeroize",
 ]
 
 [[package]]
 name = "platform-macos"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4444,7 +4489,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.38.0"
+version = "0.47.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4455,7 +4500,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.3",
  "image",
- "keyring",
  "pip-preview",
  "serde",
  "serde_json",
@@ -5093,6 +5137,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -5105,6 +5150,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -5499,9 +5545,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "1.1.1"
+version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
 dependencies = [
  "serde_core",
 ]
@@ -5822,7 +5868,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -6094,6 +6140,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "1.1.8+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 1.1.2+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.4",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6104,9 +6165,9 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "1.1.1+spec-1.1.0"
+version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
 dependencies = [
  "serde_core",
 ]
@@ -6118,7 +6179,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
  "indexmap",
- "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 1.0.4",
@@ -6126,18 +6187,18 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.3+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow 1.0.4",
 ]
 
 [[package]]
 name = "toml_writer"
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tonic"
@@ -6489,7 +6550,7 @@ dependencies = [
  "serde",
  "tempfile",
  "textwrap",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "uniffi_internal_macros",
  "uniffi_meta",
  "uniffi_pipeline",
@@ -6535,7 +6596,7 @@ dependencies = [
  "quote",
  "serde",
  "syn 2.0.119",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "uniffi_meta",
 ]
 
@@ -6845,6 +6906,19 @@ dependencies = [
  "bitflags 2.13.1",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-plasma"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b6d8cf1eb2c1c31ed1f5643c88a6e53538129d4af80030c8cabd1f9fa884d91"
+dependencies = [
+ "bitflags 2.13.1",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -7542,6 +7616,23 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "xkbcommon"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
+dependencies = [
+ "libc",
+ "memmap2",
+ "xkeysym",
+]
+
+[[package]]
+name = "xkeysym"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "yamux"

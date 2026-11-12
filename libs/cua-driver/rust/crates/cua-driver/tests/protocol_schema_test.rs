@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure `tools/list` schema-shape assertions.
 //!
 //! These never invoke a tool — they only inspect the advertised schemas: that
@@ -233,6 +236,8 @@ fn assert_tools_list_schema_shape(mut d: RawDriver) {
         "press_key",
         "hotkey",
         "scroll",
+        // Foreground may activate the window and open menus (Linux).
+        "invoke_menu",
         "browser_dialog",
         // Trusted browser input may activate the browser window (Linux
         // Chromium); foreground accepts that.
@@ -443,7 +448,7 @@ fn cursor_motion_knobs_are_applied() {
     // macOS serves cursor-overlay controls only when the daemon hosts the
     // overlay; Linux applies the knobs without one.
     #[cfg(target_os = "macos")]
-    let driver = RawDriver::spawn_with_overlay();
+    let driver = RawDriver::spawn_with_overlay_and_env(&[]);
     #[cfg(not(target_os = "macos"))]
     let driver = RawDriver::spawn();
     let mut driver = driver.expect("spawn source-built driver");

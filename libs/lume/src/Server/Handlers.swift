@@ -15,9 +15,11 @@ extension Server {
             let vms = try vmController.list(storage: storage)
             return try .json(vms)
         } catch {
-            print(
-                "ERROR: Failed to list VMs: \(error.localizedDescription), storage=\(String(describing: storage))"
-            )
+            Logger.error(
+                "Failed to list VMs",
+                metadata: [
+                    "error": error.localizedDescription, "storage": String(describing: storage),
+                ])
             return .badRequest(message: error.localizedDescription)
         }
     }
@@ -629,7 +631,8 @@ extension Server {
                 nvramPath: request.nvramPath.map { Path($0) },
                 networkMode: networkMode,
                 clipboard: request.clipboard ?? false,
-                vncPolicy: vncPolicy
+                vncPolicy: vncPolicy,
+                forwards: request.forwards ?? []
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -784,7 +787,7 @@ extension Server {
                     reassemble: false,  // Default API behavior is likely non-reassemble
                     singleLayer: request.singleLayer
                 )
-                print(
+                Logger.info(
                     "Background push completed successfully for image: \(request.imageName):\(request.tags.joined(separator: ","))"
                 )
                 TelemetryClient.shared.recordOperationCompleted(
@@ -795,7 +798,7 @@ extension Server {
                     elapsed: Date().timeIntervalSince(pushStartedAt)
                 )
             } catch {
-                print(
+                Logger.error(
                     "Background push failed for image: \(request.imageName):\(request.tags.joined(separator: ",")) - Error: \(error.localizedDescription)"
                 )
                 TelemetryClient.shared.recordOperationCompleted(
@@ -1106,7 +1109,8 @@ extension Server {
         nvramPath: Path? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
-        vncPolicy: VNCPolicy = .enabled
+        vncPolicy: VNCPolicy = .enabled,
+        forwards: [UInt16] = []
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -1142,6 +1146,7 @@ extension Server {
                     networkMode: networkMode,
                     clipboard: clipboard,
                     vncPolicy: vncPolicy,
+                    forwards: forwards,
                     telemetryTransport: .http
                 )
                 Logger.info("VM run ended in background task", metadata: ["name": name])

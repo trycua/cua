@@ -225,8 +225,17 @@ pub fn teleport_app(id: &str) -> String {
     }
 }
 
-/// A cua-agents harness id, else `other`.
+/// A cua-agents harness id, else `other`. The short names a person or an
+/// agent types (`codex`, `claude`: `cua_agents::harness::harness` accepts
+/// them) and ids in another case count as the harness they name; before,
+/// they all reported `other`.
 pub fn harness(id: &str) -> &'static str {
+    let id = id.trim().to_ascii_lowercase();
+    let id = match id.as_str() {
+        "codex" => "openai-codex",
+        "claude" => "claude-code",
+        other => other,
+    };
     pick(schema::HARNESSES, id, "other")
 }
 
@@ -649,7 +658,26 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
             .s("outcome", outcome.as_str())
             .s("onboarding_eligible", "unknown")
             .s("error_kind", "none")
+            .s("failed_step", "none")
     })
+}
+
+/// The step a failed sign-in stopped at (`schema::SIGN_IN_STEPS`), from its
+/// fixed kind only (`schema::ERROR_KINDS`, as `cua-spaces-app-core`
+/// `sign_in::error_kind` gives it), never from text: reaching Cua's
+/// sign-in service, confirming in the browser (it never came back, or was
+/// declined), the code exchange the service refused, saving the session on
+/// this computer, or stopped by the person. `unknown` when the kind says
+/// nothing about the step.
+pub fn sign_in_failed_step(error_kind: &str) -> &'static str {
+    match error_kind {
+        "transport" | "http" => "reach_service",
+        "timeout" | "permission_denied" => "confirm_in_browser",
+        "unauthenticated" => "exchange_code",
+        "internal" => "save_session",
+        "cancelled" => "cancelled",
+        _ => "unknown",
+    }
 }
 
 /// `cua_onboarding_step` `signed_in` with outcome `error`: a sign-in that
@@ -661,6 +689,7 @@ pub fn sign_in_failed(error_kind: &str) -> Event {
         .s("outcome", Outcome::Error.as_str())
         .s("onboarding_eligible", "unknown")
         .s("error_kind", pick(schema::ERROR_KINDS, error_kind, "other"))
+        .s("failed_step", sign_in_failed_step(error_kind))
 }
 
 /// `cua_onboarding_step` `app_launched`: the app started, with whether its
@@ -679,6 +708,7 @@ pub fn app_launched(onboarding_eligible: Option<bool>) -> Event {
             },
         )
         .s("error_kind", "none")
+        .s("failed_step", "none")
 }
 
 /// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else
@@ -708,6 +738,36 @@ pub fn agent_run_started(
         )
 }
 
+/// `cua_agent_join_phase`: an agent joining a Space reached `phase`
+/// (one of [`schema::JOIN_PHASES`]) `ms_since_post` after the message that
+/// woke it. `run` is the salted hash of the run (see
+/// [`crate::Telemetry::agent_join_phase`]); `tool` is the installed tool for
+/// `install_done`; `failure` a fixed word for a `failed` phase.
+#[allow(clippy::too_many_arguments)]
+pub fn agent_join_phase(
+    phase: &str,
+    harness_id: &str,
+    runtime_id: &str,
+    cold: bool,
+    ms_since_post: u64,
+    run: &str,
+    tool: &str,
+    failure: &str,
+) -> Option<Event> {
+    let phase = schema::JOIN_PHASES.iter().copied().find(|p| *p == phase)?;
+    Some(
+        Event::new(event::AGENT_JOIN_PHASE)
+            .s("phase", phase)
+            .s("harness", harness(harness_id))
+            .s("runtime", pick(schema::JOIN_RUNTIMES, runtime_id, "other"))
+            .b("cold", cold)
+            .n("ms_since_post", ms_since_post.min(3_600_000))
+            .owned("run", run.to_string())
+            .s("tool", pick(schema::JOIN_TOOLS, tool, "other"))
+            .s("failure", pick(schema::JOIN_FAILURES, failure, "other")),
+    )
+}
+
 /// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
 /// crashed or was stopped first).
 pub fn agent_run_completed(
@@ -728,6 +788,72 @@ pub fn agent_run_completed(
             error_variant.map(error_kind).unwrap_or("none"),
         )
         .s("duration_bucket", duration_bucket(elapsed))
+}
+
+/// What `cua_durable_agent` is built from. Every text field is a fixed word
+/// chosen from its vocabulary (anything else becomes the fallback), every
+/// number is bounded; no name, path, address or message is ever taken.
+#[derive(Debug, Clone, Default)]
+pub struct DurableAgent<'a> {
+    /// One of [`schema::DURABLE_PHASES`].
+    pub phase: &'a str,
+    /// A cua-agents harness id.
+    pub harness: &'a str,
+    /// The session's placement word (`auto`, anything else is `host`).
+    pub on: &'a str,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    /// One of [`schema::DURABLE_REASONS`].
+    pub reason: &'a str,
+    /// One of [`schema::DURABLE_ENDS`].
+    pub end: &'a str,
+    /// One of [`schema::DURABLE_FAILURES`].
+    pub failure: &'a str,
+    pub failover: bool,
+    pub machines: u32,
+    pub recovery_time_ms: u64,
+    pub interrupted_calls: u32,
+    /// The salted hash of the session (see [`crate::Telemetry::salted_hash`]).
+    pub session: &'a str,
+}
+
+/// `cua_durable_agent`; None for a phase outside the vocabulary or a
+/// session id that is not a salted hash.
+pub fn durable_agent(d: &DurableAgent<'_>) -> Option<Event> {
+    let phase = schema::DURABLE_PHASES
+        .iter()
+        .copied()
+        .find(|p| *p == d.phase)?;
+    schema::is_salted_hash(d.session).then_some(())?;
+    Some(
+        Event::new(event::DURABLE_AGENT)
+            .s("phase", phase)
+            .s("harness", harness(d.harness))
+            .s(
+                "placement",
+                if matches!(d.on.trim(), "" | "auto") {
+                    "auto"
+                } else {
+                    "host"
+                },
+            )
+            .n("attempt", u64::from(d.attempt.min(100)))
+            .n("max_attempts", u64::from(d.max_attempts.min(100)))
+            .s("reason", pick(schema::DURABLE_REASONS, d.reason, "other"))
+            .s("end", pick(schema::DURABLE_ENDS, d.end, "none"))
+            .s(
+                "failure",
+                pick(schema::DURABLE_FAILURES, d.failure, "other"),
+            )
+            .b("failover", d.failover)
+            .n("machines", u64::from(d.machines.min(1000)))
+            .n("recovery_time_ms", d.recovery_time_ms.min(86_400_000))
+            .n(
+                "interrupted_calls",
+                u64::from(d.interrupted_calls.min(10_000)),
+            )
+            .owned("session", d.session.to_string()),
+    )
 }
 
 /// A fixed cause word for a failed agent run, chosen from its recorded
@@ -925,7 +1051,9 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
 
 /// One of the first-run funnel events: `step_viewed`, `step_completed`,
 /// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
-/// last argument). None for a step, action or
+/// last argument). On the `ready` step the last argument is the picked
+/// agent, and `step_command_copied` and `step_chat_picked_up` are its two
+/// extra events. None for a step, action or
 /// reason outside the vocabulary. `step_index` and `onboarding_version`
 /// come from the step, so a caller cannot send a wrong one.
 pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
@@ -935,13 +1063,29 @@ pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
         "step_completed" => event::ONBOARDING_STEP_COMPLETED,
         "step_failed" => event::ONBOARDING_STEP_FAILED,
         "step_skipped" => event::ONBOARDING_SKIPPED,
+        // Only the Ready screen has a command to copy and chats to continue.
+        "step_command_copied" if step == "ready" => event::ONBOARDING_COMMAND_COPIED,
+        "step_chat_picked_up" if step == "ready" => event::ONBOARDING_CHAT_PICKED_UP,
         _ => return None,
     };
     let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
-    let e = Event::new(name)
+    let mut e = Event::new(name)
         .s("step", step)
         .n("step_index", index as u64 + 1)
         .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    // Viewed, completed, copied and picked up carry the Ready screen's agent
+    // (the last argument); every other screen sends `none`.
+    if !matches!(
+        name,
+        event::ONBOARDING_STEP_FAILED | event::ONBOARDING_SKIPPED
+    ) {
+        let agent = if step == "ready" {
+            pick(schema::FIRST_RUN_AGENTS, reason, "other")
+        } else {
+            "none"
+        };
+        e = e.s("agent", agent);
+    }
     Some(match name {
         event::ONBOARDING_STEP_FAILED => e.s(
             "reason",
@@ -980,6 +1124,63 @@ pub struct SpaceCreate<'a> {
     pub error_subclass: &'a str,
 }
 
+/// The step a failed create stopped at (`schema::FAILED_STEPS`), read from
+/// the failure's fixed words only: the specific cause (`error_subclass`,
+/// `error_kind`) first, since it names the step, then the phase. `unknown`
+/// when nothing narrows the phase down (a failure in `preparing` that no
+/// word explains), so reports can rank what still needs a name.
+pub fn failed_step(
+    phase: &str,
+    kind: &str,
+    subclass: &str,
+    guest_os: &str,
+    create_kind: &str,
+) -> &'static str {
+    // A download that failed stays a download, whatever the runtime said.
+    if kind.starts_with("image_pull") {
+        return "pull_image";
+    }
+    // The cause's own step, where one word names it.
+    let by_cause = match subclass {
+        "runtime_start"
+        | "runtime_install_failed"
+        | "runtime_not_signed"
+        | "runtime_unresponsive"
+        | "runtime_too_old"
+        | "runtime_api_error" => Some("start_runtime"),
+        "daemon_unresponsive" => Some("reach_daemon"),
+        "pull_interrupted" => Some("pull_image"),
+        "vm_never_started" => Some("start_vm"),
+        "vm_config_invalid" => Some("configure_vm"),
+        _ => match kind {
+            "runtime_missing"
+            | "vm_runtime_missing"
+            | "runtime_not_running"
+            | "runtime_permission" => Some("start_runtime"),
+            "virtualization_unavailable" | "host_capacity" => Some("check_host"),
+            // The checks before anything starts refuse these in `preparing`.
+            "local_network" | "insufficient_disk" if phase == "preparing" => Some("check_host"),
+            "vm_boot_timeout" => Some("start_vm"),
+            "services_unreachable" | "env" => Some("connect_services"),
+            "invalid_argument" | "invalid_placement" | "unsupported" => Some("configure_vm"),
+            "not_found" => Some("resolve_image"),
+            _ => None,
+        },
+    };
+    if let Some(step) = by_cause {
+        return step;
+    }
+    let vm = create_kind == "vm" || matches!(guest_os, "macos" | "windows");
+    match phase {
+        "pulling" => "pull_image",
+        "creating" if vm => "clone_disk",
+        "creating" => "create_container",
+        "booting" => "start_vm",
+        "waiting_for_services" | "connecting" => "connect_services",
+        _ => "unknown",
+    }
+}
+
 /// `cua_space_create`.
 pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) -> Event {
     let failed_phase = match outcome {
@@ -1003,24 +1204,29 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         },
         _ => "none",
     };
+    let error_subclass = match outcome {
+        Outcome::Cancelled => "none",
+        _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+    };
+    let guest = guest_os(s.guest_os);
+    let create_kind = sandbox_kind(s.kind);
+    let step = match outcome {
+        Outcome::Error => failed_step(failed_phase, error_kind, error_subclass, guest, create_kind),
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
-        .s("guest_os", guest_os(s.guest_os))
-        .s("kind", sandbox_kind(s.kind))
+        .s("guest_os", guest)
+        .s("kind", create_kind)
         .s("outcome", outcome.as_str())
         .s("error_kind", error_kind)
         .s("failed_phase", failed_phase)
+        .s("failed_step", step)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
         .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
-        .s(
-            "error_subclass",
-            match outcome {
-                Outcome::Cancelled => "none",
-                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
-            },
-        )
+        .s("error_subclass", error_subclass)
 }
 
 /// `cua_space_create_started`.
@@ -1293,6 +1499,77 @@ pub fn device_enroll(method: &str, outcome: Outcome) -> Option<Event> {
     })
 }
 
+/// `cua_cloud_link`: `action` on `cloud` linked by `auth`, ending at
+/// `status` (`cloud_connect`'s word; `-` becomes `_`). Words outside the
+/// vocabularies become `other` (cloud), `none` (auth) or `error` (status),
+/// so no identifier can travel in them.
+pub fn cloud_link(
+    action: &str,
+    cloud: &str,
+    auth: &str,
+    status: &str,
+    outcome: Outcome,
+) -> Option<Event> {
+    let action = pick(schema::CLOUD_LINK_ACTIONS, action, "");
+    (!action.is_empty()).then(|| {
+        Event::new(event::CLOUD_LINK)
+            .s("action", action)
+            .s("cloud", pick(schema::CLOUD_LINK_CLOUDS, cloud, "other"))
+            .s("auth", pick(schema::CLOUD_LINK_AUTHS, auth, "none"))
+            .s(
+                "status",
+                pick(
+                    schema::CLOUD_LINK_STATUSES,
+                    &status.replace('-', "_"),
+                    "error",
+                ),
+            )
+            .s("outcome", outcome.as_str())
+    })
+}
+
+/// A plan name as [`schema::PLANS`] has it: `team` is `teams`; anything
+/// else the client does not know (an empty plan, a new one) is `unknown`.
+pub fn plan(plan: &str) -> &'static str {
+    match plan.trim().to_ascii_lowercase().as_str() {
+        "team" => "teams",
+        p => pick(schema::PLANS, p, "unknown"),
+    }
+}
+
+/// `cua_plan_limit_shown`: a plan limit was shown to the person at
+/// `surface` (a [`schema::PLAN_SURFACES`] word, else `other`), for cap
+/// `kind` (else `other`) on `plan` (classified with [`plan`]).
+pub fn plan_limit_shown(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::PLAN_LIMIT_SHOWN)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            match pick(schema::LIMIT_KINDS, kind, "other") {
+                "none" => "other",
+                k => k,
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
+/// `cua_upgrade_link_opened`: the person opened the upgrade or account link
+/// of a limit notice or an upgrade prompt at `surface`; `kind` is the cap
+/// when it came from a limit, `none` otherwise.
+pub fn upgrade_link_opened(surface: &str, kind: &str, plan_name: &str) -> Event {
+    Event::new(event::UPGRADE_LINK_OPENED)
+        .s("surface", pick(schema::PLAN_SURFACES, surface, "other"))
+        .s(
+            "kind",
+            if kind.trim().is_empty() {
+                "none"
+            } else {
+                pick(schema::LIMIT_KINDS, kind, "other")
+            },
+        )
+        .s("plan", plan(plan_name))
+}
+
 /// `cua_installer_step`, as `install.sh` and `install.ps1` send it (they
 /// build the same payload themselves; this builder is the reference the
 /// tests hold them to). None for a step outside [`schema::INSTALLER_STEPS`].
@@ -1368,6 +1645,76 @@ pub fn space_tool_group(tool: &str) -> Option<&'static str> {
         t if t.starts_with("computer_") && !t.starts_with("computer_access_") => "computer",
         _ => return None,
     })
+}
+
+/// `cua_agent_signin_imported`: Connect copied `harness`'s sign-in into
+/// Keyvault on This Mac (only that it happened, for which agent, and how:
+/// `origin` is the copy's origin, `claude-login-keychain` and so on).
+pub fn agent_signin_imported(harness: &str, origin: Option<&str>) -> Event {
+    let via = match origin {
+        Some("claude-login-keychain") => "claude_login_keychain",
+        Some("claude-login-file") => "claude_login_file",
+        Some("device-code") => "device_code",
+        Some("token") => "token",
+        _ => "other",
+    };
+    Event::new(event::AGENT_SIGNIN_IMPORTED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("via", via)
+}
+
+/// `cua_agent_signin_refused`: Connect could not copy `harness`'s sign-in;
+/// `kind` is the refusal kind (`not_signed_in`, `cancelled`, `not_yet`,
+/// `failed`). Never the line, the error or the account.
+pub fn agent_signin_refused(harness: &str, kind: &str) -> Event {
+    Event::new(event::AGENT_SIGNIN_REFUSED)
+        .s("harness", pick(schema::SIGNIN_HARNESSES, harness, "other"))
+        .s("reason", pick(schema::SIGNIN_REFUSALS, kind, "other"))
+}
+
+/// `cua_repo_cache`: what the repo cache did for one clone. Only fixed words
+/// and numbers: `outcome` is `hit`, `miss` or `fallback`, `source` `local` or
+/// `network`, `reason` one of [`schema::REPO_CACHE_REASONS`].
+pub fn repo_cache(
+    outcome: &str,
+    source: &str,
+    bytes_saved: u64,
+    seconds_saved: u64,
+    reason: &str,
+) -> Option<Event> {
+    let outcome = schema::REPO_CACHE_OUTCOMES
+        .iter()
+        .copied()
+        .find(|o| *o == outcome)?;
+    Some(
+        Event::new(event::REPO_CACHE)
+            .s("outcome", outcome)
+            .s(
+                "source",
+                pick(schema::REPO_CACHE_SOURCES, source, "network"),
+            )
+            .n("bytes_saved", bytes_saved.min(1_000_000_000_000))
+            .n("seconds_saved", seconds_saved.min(86_400))
+            .s("reason", pick(schema::REPO_CACHE_REASONS, reason, "other")),
+    )
+}
+
+/// `cua_connection_changed`: a provider was connected, reconnected, removed or
+/// checked. Only fixed words leave: the registry's provider id, the kind of
+/// method, the action and the outcome; never a key, a URL, an account or an
+/// error text.
+pub fn connection_changed(provider: &str, method: &str, action: &str, outcome: &str) -> Event {
+    Event::new(event::CONNECTION_CHANGED)
+        .s(
+            "provider",
+            pick(schema::CONNECTION_PROVIDERS, provider, "other"),
+        )
+        .s("method", pick(schema::CONNECTION_METHODS, method, "other"))
+        .s("action", pick(schema::CONNECTION_ACTIONS, action, "check"))
+        .s(
+            "outcome",
+            pick(schema::CONNECTION_OUTCOMES, outcome, "failed"),
+        )
 }
 
 /// `cua_agent_used_space`: an agent's tool call reached a Space and worked.

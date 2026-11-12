@@ -13,10 +13,11 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
@@ -37,8 +38,8 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -58,10 +59,11 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
@@ -82,8 +84,8 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
@@ -692,11 +694,11 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
-          "connect-by-address"
+          "connect-cloud"
         ],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -720,12 +722,12 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -737,7 +739,8 @@
         "cloud": "aws",
         "fields": [],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -761,12 +764,12 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -781,7 +784,8 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -805,12 +809,12 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -822,7 +826,8 @@
         "cloud": "aws",
         "fields": [],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -846,12 +851,12 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -866,7 +871,8 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+          "vm | Virtual machine | VM Spaces need a nested-virtualization machine; not offered yet. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -891,12 +897,12 @@
           "Runtime: Container on t4g.medium",
           "Cost: About $0.04/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -911,7 +917,8 @@
           "open-when-ready"
         ],
         "kindsOff": [
-          "vm | Virtual machine | Modal does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on Modal and add it with cua spaces add. | off"
+          "vm | Virtual machine | Modal does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on Modal and add it with cua spaces add. | off",
+          "microvm | MicroVM |  | off"
         ],
         "placement": "yours",
         "placementError": null,
@@ -936,12 +943,12 @@
           "Runtime: Container on 2 CPU, 4 GiB",
           "Cost: About $0.10/hour",
           "Deletes itself: After 2 hours",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [
-          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off",
-          "macos | macOS | Modal does not run this image. Ask your agent to deploy the macOS Tahoe 26 image on Modal and add it with cua spaces add. | off"
+          "macos | macOS | Modal does not run this image. Ask your agent to deploy the macOS Tahoe 26 image on Modal and add it with cua spaces add. | off",
+          "windows | Windows (coming soon) | Windows Spaces are coming soon on Mac. | off"
         ]
       }
     },
@@ -955,7 +962,9 @@
           "name",
           "open-when-ready"
         ],
-        "kindsOff": [],
+        "kindsOff": [
+          "microvm | MicroVM |  | off"
+        ],
         "placement": "local",
         "placementError": null,
         "placements": [
@@ -979,8 +988,8 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Disk: About 3–7 GB",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ],
         "systemsOff": [

@@ -85,6 +85,25 @@ pub const DEFAULT_STALE_WINDOW: Duration = Duration::from_secs(15 * 60);
 const MAX_ENTRIES: usize = 50_000;
 /// How often the clean-up of outside shares runs.
 pub const SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
+/// Start of the error for a 401 the Spaces API gave a freshly minted
+/// service token: a configuration problem, never worth asking again.
+pub const TOKEN_REFUSED: &str = "Spaces API refused the relay's service token";
+
+/// How long a service token is used before a new one is minted: half its
+/// lifetime (`expires_in`, 60 s when absent), at least one second.
+///
+/// The relay cannot see the issuer's or the API's clock, only the
+/// lifetime. Keycloak stamps `exp` from its own clock and the API checks it
+/// against its own (30 s leeway), so a token used until shortly before its
+/// nominal end is refused whenever the issuer runs behind the API by more
+/// than the remaining margin plus the leeway (CUA-2959: a node 60 s slow,
+/// refusals in the last second of every 270 s token). Half the lifetime
+/// (150 s for the relay's 300 s tokens) leaves room for minutes of skew,
+/// the usual OAuth client practice; a refusal past that is still
+/// recovered by [`OrgAccess::send_authed`].
+pub fn token_refresh_after(expires_in: Option<u64>) -> Duration {
+    Duration::from_millis(expires_in.unwrap_or(60).saturating_mul(500).max(1000))
+}
 
 /// The clock cache expiry reads (see [`crate::clock::Clock`]).
 pub use crate::clock::Clock;
@@ -245,6 +264,13 @@ pub struct OrgCounters {
     /// Answers served from the last-known-good cache during an outage.
     pub stale_served: AtomicU64,
     pub membership_pushes: AtomicU64,
+    /// Service tokens minted at the token endpoint.
+    pub token_fetches: AtomicU64,
+    /// Mints that failed (token endpoint down, secret refused).
+    pub token_errors: AtomicU64,
+    /// 401s to a cached service token, answered by minting a new one and
+    /// asking again (not API errors; see [`OrgAccess::send_authed`]).
+    pub token_refused: AtomicU64,
 }
 
 /// The organization access path: API client plus caches.
@@ -362,40 +388,105 @@ impl OrgAccess {
         None
     }
 
-    /// The relay's service token (client credentials), cached until shortly
-    /// before it expires. `None` without a token endpoint or secret (a test
-    /// API without auth).
+    /// The relay's service token (client credentials), cached and minted
+    /// again at half its lifetime (see [`token_refresh_after`]). `None`
+    /// without a token endpoint or secret (a test API without auth).
     async fn service_token(&self) -> Result<Option<String>, String> {
+        self.service_token_replacing(None).await
+    }
+
+    /// Like [`Self::service_token`], but when the cached token is
+    /// `refused` (the API just answered 401 to it), mints a new one. Callers
+    /// that were refused together mint once: whoever comes second finds a
+    /// different, fresh token already cached and uses it.
+    async fn service_token_replacing(
+        &self,
+        refused: Option<&str>,
+    ) -> Result<Option<String>, String> {
         let (Some(url), Some(secret)) = (&self.config.token_url, &self.config.client_secret) else {
             return Ok(None);
         };
         let mut cached = self.token.lock().await;
-        if let Some((token, until)) = cached.as_ref() {
-            if Instant::now() < *until {
+        if let Some((token, refresh_at)) = cached.as_ref() {
+            if Instant::now() < *refresh_at && refused != Some(token.as_str()) {
                 return Ok(Some(token.clone()));
             }
         }
-        let reply = self
-            .http
-            .post(url)
-            .form(&[
-                ("grant_type", "client_credentials"),
-                ("client_id", self.config.client_id.as_str()),
-                ("client_secret", secret.as_str()),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("service token: {}", error_chain(&e.without_url())))?;
-        if !reply.status().is_success() {
-            return Err(format!("service token: HTTP {}", reply.status()));
+        *cached = None;
+        self.counters.token_fetches.fetch_add(1, Ordering::Relaxed);
+        let minted = async {
+            let reply = self
+                .http
+                .post(url)
+                .form(&[
+                    ("grant_type", "client_credentials"),
+                    ("client_id", self.config.client_id.as_str()),
+                    ("client_secret", secret.as_str()),
+                ])
+                .send()
+                .await
+                .map_err(|e| format!("service token: {}", error_chain(&e.without_url())))?;
+            if !reply.status().is_success() {
+                return Err(format!("service token: HTTP {}", reply.status()));
+            }
+            reply
+                .json::<TokenReply>()
+                .await
+                .map_err(|e| format!("service token: {}", e.without_url()))
         }
-        let t: TokenReply = reply
-            .json()
-            .await
-            .map_err(|e| format!("service token: {e}"))?;
-        let life = Duration::from_secs(t.expires_in.unwrap_or(60).saturating_sub(30).max(5));
-        *cached = Some((t.access_token.clone(), Instant::now() + life));
+        .await;
+        let t = minted.inspect_err(|_| {
+            self.counters.token_errors.fetch_add(1, Ordering::Relaxed);
+        })?;
+        *cached = Some((
+            t.access_token.clone(),
+            Instant::now() + token_refresh_after(t.expires_in),
+        ));
         Ok(Some(t.access_token))
+    }
+
+    /// Sends the request `build` makes with the service token. A 401 means
+    /// the API refused that token: it is minted again and the request sent
+    /// once more, so a token the API considers expired before the relay
+    /// does (the issuer's clock behind the API's, CUA-2959) costs one extra
+    /// round trip, not an error. Only a 401 to a freshly minted token is
+    /// returned as such ([`TOKEN_REFUSED`]): that is a configuration
+    /// problem (client secret, `SPACES_CP_SERVICE_CLIENTS`), not something
+    /// to retry.
+    async fn send_authed(
+        &self,
+        build: impl Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, String> {
+        let mut token = self.service_token().await?;
+        let mut refreshed = false;
+        loop {
+            let mut req = build(&self.http);
+            if let Some(t) = &token {
+                req = req.bearer_auth(t);
+            }
+            self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
+            let r = req.send().await.map_err(|e| {
+                self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
+                format!("Spaces API: {}", error_chain(&e.without_url()))
+            })?;
+            if r.status() != reqwest::StatusCode::UNAUTHORIZED {
+                return Ok(r);
+            }
+            let Some(used) = token.as_deref() else {
+                // No service token configured: nothing to refresh.
+                self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
+                return Err(format!(
+                    "{TOKEN_REFUSED} (HTTP 401, no service token configured)"
+                ));
+            };
+            if refreshed {
+                self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
+                return Err(format!("{TOKEN_REFUSED} (HTTP 401 to a fresh token)"));
+            }
+            self.counters.token_refused.fetch_add(1, Ordering::Relaxed);
+            token = self.service_token_replacing(Some(used)).await?;
+            refreshed = true;
+        }
     }
 
     pub(crate) async fn get(
@@ -408,22 +499,17 @@ impl OrgAccess {
             .api_url
             .as_deref()
             .ok_or_else(|| "no Spaces API configured".to_owned())?;
-        let token = self.service_token().await?;
-        let mut req = self
-            .http
-            .get(format!("{}{path}", base.trim_end_matches('/')));
-        if let Some(t) = token {
-            req = req.bearer_auth(t);
-        }
-        if let Some(e) = etag {
-            req = req.header(reqwest::header::IF_NONE_MATCH, e);
-        }
-        self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
-        let r = req.send().await.map_err(|e| {
-            self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {}", error_chain(&e.without_url()))
-        })?;
-        if r.status().is_server_error() || r.status() == reqwest::StatusCode::UNAUTHORIZED {
+        let url = format!("{}{path}", base.trim_end_matches('/'));
+        let r = self
+            .send_authed(|http| {
+                let req = http.get(&url);
+                match etag {
+                    Some(e) => req.header(reqwest::header::IF_NONE_MATCH, e),
+                    None => req,
+                }
+            })
+            .await?;
+        if r.status().is_server_error() {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
             return Err(format!("Spaces API: HTTP {}", r.status()));
         }
@@ -446,19 +532,8 @@ impl OrgAccess {
             .api_url
             .as_deref()
             .ok_or_else(|| "no Spaces API configured".to_owned())?;
-        let token = self.service_token().await?;
-        let mut req = self
-            .http
-            .post(format!("{}{path}", base.trim_end_matches('/')))
-            .json(body);
-        if let Some(t) = token {
-            req = req.bearer_auth(t);
-        }
-        self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
-        let r = req.send().await.map_err(|e| {
-            self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {}", e.without_url())
-        })?;
+        let url = format!("{}{path}", base.trim_end_matches('/'));
+        let r = self.send_authed(|http| http.post(&url).json(body)).await?;
         if !r.status().is_success() {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
         }
@@ -477,21 +552,10 @@ impl OrgAccess {
             .api_url
             .as_deref()
             .ok_or_else(|| "no Spaces API configured".to_owned())?;
-        let token = self.service_token().await?;
-        let mut req = self
-            .http
-            .post(format!("{}{path}", base.trim_end_matches('/')))
-            .json(body);
-        if let Some(t) = token {
-            req = req.bearer_auth(t);
-        }
-        self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
-        let r = req.send().await.map_err(|e| {
-            self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {}", e.without_url())
-        })?;
+        let url = format!("{}{path}", base.trim_end_matches('/'));
+        let r = self.send_authed(|http| http.post(&url).json(body)).await?;
         let status = r.status();
-        if status.is_server_error() || status == reqwest::StatusCode::UNAUTHORIZED {
+        if status.is_server_error() {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
             return Err(format!("Spaces API: HTTP {status}"));
         }
@@ -799,7 +863,7 @@ impl OrgAccess {
                         message: match device {
                             None => "team machines need an enrolled device: run `cua devices enroll` (or sign in again)".into(),
                             Some(d) => format!(
-                                "this device ({d}) is waiting for a team admin's approval before it can open {}'s machines: ask an owner or admin to approve it at app.cua.ai/team/devices",
+                                "this device ({d}) is waiting for a team admin's approval before it can open {}'s computers. An owner or admin can approve it under Computers at app.cua.ai/machines",
                                 org.alias
                             ),
                         },
@@ -1012,7 +1076,10 @@ impl OrgAccess {
              # TYPE cua_relay_org_stale_served_total counter\ncua_relay_org_stale_served_total {}\n\
              # TYPE cua_relay_teams_shadow_checks_total counter\ncua_relay_teams_shadow_checks_total {}\n\
              # TYPE cua_relay_teams_shadow_mismatches_total counter\ncua_relay_teams_shadow_mismatches_total {}\n\
-             # TYPE cua_relay_org_membership_pushes_total counter\ncua_relay_org_membership_pushes_total {}\n",
+             # TYPE cua_relay_org_membership_pushes_total counter\ncua_relay_org_membership_pushes_total {}\n\
+             # TYPE cua_relay_org_service_token_fetches_total counter\ncua_relay_org_service_token_fetches_total {}\n\
+             # TYPE cua_relay_org_service_token_errors_total counter\ncua_relay_org_service_token_errors_total {}\n\
+             # TYPE cua_relay_org_service_token_refused_total counter\ncua_relay_org_service_token_refused_total {}\n",
             self.config.source.as_str(),
             get(&c.api_calls),
             get(&c.api_errors),
@@ -1022,6 +1089,9 @@ impl OrgAccess {
             get(&c.shadow_checks),
             get(&c.shadow_mismatches),
             get(&c.membership_pushes),
+            get(&c.token_fetches),
+            get(&c.token_errors),
+            get(&c.token_refused),
         )
     }
 }
@@ -1062,6 +1132,7 @@ fn error_chain(e: &dyn std::error::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn parses_sources() {
@@ -1076,6 +1147,141 @@ mod tests {
         let v = serde_json::json!({"machines": [{"machine_id": "a"}, {"id": "b"}, "c"]});
         assert_eq!(machine_ids(&v), vec!["a", "b", "c"]);
         assert!(machine_ids(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn service_tokens_are_replaced_at_half_their_lifetime() {
+        assert_eq!(token_refresh_after(Some(300)), Duration::from_secs(150));
+        assert_eq!(token_refresh_after(None), Duration::from_secs(30));
+        assert_eq!(token_refresh_after(Some(0)), Duration::from_secs(1));
+        // The CUA-2959 case: Keycloak 60 s behind the API, 30 s leeway. The
+        // token must be replaced before the API (true clock) sees it as
+        // expired: at 300 - 60 + 30 = 270 s of real age.
+        assert!(token_refresh_after(Some(300)) < Duration::from_secs(270 - 60));
+    }
+
+    /// A fake token endpoint minting `t1`, `t2`, ... and a fake Spaces API
+    /// answering `/internal/v1/entitlements/x` 200 only to the tokens in
+    /// `accepted` (401 otherwise). Returns (base URL, mints, API hits).
+    async fn fake_auth_api(
+        accepted: &'static [&'static str],
+    ) -> (String, Arc<AtomicU64>, Arc<AtomicU64>) {
+        let mints = Arc::new(AtomicU64::new(0));
+        let hits = Arc::new(AtomicU64::new(0));
+        let (m, h) = (mints.clone(), hits.clone());
+        let app = axum::Router::new()
+            .route(
+                "/token",
+                axum::routing::post(move || {
+                    let n = m.fetch_add(1, Ordering::Relaxed) + 1;
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "access_token": format!("t{n}"), "expires_in": 300
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/internal/v1/entitlements/x",
+                axum::routing::get(move |headers: axum::http::HeaderMap| {
+                    h.fetch_add(1, Ordering::Relaxed);
+                    async move {
+                        let auth = headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("");
+                        if accepted.iter().any(|t| auth == format!("Bearer {t}")) {
+                            (axum::http::StatusCode::OK, r#"{"plan":"pro"}"#)
+                        } else {
+                            (
+                                axum::http::StatusCode::UNAUTHORIZED,
+                                r#"{"error":"unauthorized"}"#,
+                            )
+                        }
+                    }
+                }),
+            );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        (url, mints, hits)
+    }
+
+    fn authed_org(url: &str) -> OrgAccess {
+        OrgAccess::new(OrgAccessConfig {
+            api_url: Some(url.to_owned()),
+            token_url: Some(format!("{url}/token")),
+            client_id: "cua-relay-svc".into(),
+            client_secret: Some("test-secret".into()),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn a_refused_cached_token_is_replaced_and_not_an_api_error() {
+        // The API refuses t1 (it thinks it expired), accepts t2.
+        let (url, mints, hits) = fake_auth_api(&["t2"]).await;
+        let org = authed_org(&url);
+        let r = org.get("/internal/v1/entitlements/x", None).await.unwrap();
+        assert_eq!(r.status(), reqwest::StatusCode::OK);
+        assert_eq!(mints.load(Ordering::Relaxed), 2);
+        assert_eq!(hits.load(Ordering::Relaxed), 2);
+        assert_eq!(org.counters.api_errors.load(Ordering::Relaxed), 0);
+        assert_eq!(org.counters.token_refused.load(Ordering::Relaxed), 1);
+        // The new token is cached: the next call mints nothing.
+        org.get("/internal/v1/entitlements/x", None).await.unwrap();
+        assert_eq!(mints.load(Ordering::Relaxed), 2);
+        let m = org.metrics();
+        assert!(m.contains("cua_relay_org_api_errors_total 0\n"), "{m}");
+        assert!(
+            m.contains("cua_relay_org_service_token_refused_total 1\n"),
+            "{m}"
+        );
+        assert!(
+            m.contains("cua_relay_org_service_token_fetches_total 2\n"),
+            "{m}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_fresh_token_is_one_api_error_and_final() {
+        // A misconfigured client: every token is refused.
+        let (url, mints, hits) = fake_auth_api(&[]).await;
+        let org = Arc::new(authed_org(&url));
+        let err = org
+            .get("/internal/v1/entitlements/x", None)
+            .await
+            .unwrap_err();
+        assert!(err.starts_with(TOKEN_REFUSED), "{err}");
+        // One retry with a fresh token, never more.
+        assert_eq!(mints.load(Ordering::Relaxed), 2);
+        assert_eq!(hits.load(Ordering::Relaxed), 2);
+        assert_eq!(org.counters.api_errors.load(Ordering::Relaxed), 1);
+
+        // The plan lookup does not ask again on top (no 6x fan-out).
+        let plans = crate::plan_source::EntitlementPlans::new(org.clone(), None);
+        hits.store(0, Ordering::Relaxed);
+        plans.warm("x", Duration::from_secs(5)).await;
+        assert_eq!(hits.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refusals_mint_one_new_token() {
+        let (url, mints, _) = fake_auth_api(&["t2"]).await;
+        let org = Arc::new(authed_org(&url));
+        // Cache t1 first.
+        let _ = org.service_token().await.unwrap();
+        let calls: Vec<_> = (0..4)
+            .map(|_| {
+                let org = org.clone();
+                tokio::spawn(async move { org.get("/internal/v1/entitlements/x", None).await })
+            })
+            .collect();
+        for c in calls {
+            assert!(c.await.unwrap().is_ok());
+        }
+        assert_eq!(mints.load(Ordering::Relaxed), 2);
+        assert_eq!(org.counters.api_errors.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

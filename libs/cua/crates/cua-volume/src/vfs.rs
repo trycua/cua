@@ -48,6 +48,46 @@ pub const PIN_TTL: Duration = Duration::from_secs(30);
 /// Quiet time after the last write before a spool uploads (mounts without
 /// a close signal).
 pub const UPLOAD_IDLE: Duration = Duration::from_millis(1500);
+/// How long one file operation served to a mount (a Space's NFS or FUSE
+/// mount, this machine's own) may take before it is answered with an I/O
+/// error. Most operations wait on the store, and with replication on, on
+/// the other computer: while sync has stalled they would wait for as long
+/// as it does. A guest's NFS client gives up on a request after its
+/// `timeo` (5 s), retransmits it and keeps the folder busy meanwhile, and
+/// declares the whole mount dead after `deadtimeout` (30 s): a `mkdir`
+/// behind a busy listing then waits past every caller's timeout, and the
+/// mount goes away. Answering each request within this keeps the mount
+/// alive; the call fails fast with EIO and works again once sync does.
+pub const OP_DEADLINE: Duration = Duration::from_secs(4);
+/// [`OP_DEADLINE`] for a request that uploads a file (FUSE's close and
+/// fsync): an upload of a large file takes longer, and nothing in a FUSE
+/// client gives up on its own.
+pub const FLUSH_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Runs `op` as a task of its own and answers within `limit`. On time out
+/// the caller gets an I/O error naming `what`; the operation itself is not
+/// cancelled (its state changes happen whole), and ends when the store
+/// answers or gives up.
+pub async fn bounded<T, F>(limit: Duration, what: &str, op: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T>> + Send + 'static,
+{
+    let task = tokio::spawn(op);
+    match tokio::time::timeout(limit, task).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(Error::Backend(format!("{what}: {e}"))),
+        Err(_) => Err(Error::Backend(not_answering(what, limit))),
+    }
+}
+
+/// What a file operation that ran out of time says.
+pub fn not_answering(what: &str, limit: Duration) -> String {
+    format!(
+        "Cua Volume did not answer {what} within {} s: sync with your other computers is stalled or slow",
+        limit.as_secs()
+    )
+}
 
 /// One file or folder's attributes.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -461,6 +501,23 @@ impl Vfs {
             },
         );
         ino
+    }
+
+    /// Numbers inodes from here on above `floor` (never lower than they
+    /// already are). The macOS mount's server keeps its file handle
+    /// generation across daemon restarts, so a restarted daemon can serve
+    /// the mount it left behind: its inodes must then never reuse a number
+    /// the previous daemon handed out for another file, or the kernel's
+    /// cached handles would reach the wrong file. See
+    /// [`crate::nfs::ino_floor`].
+    pub fn start_inos_above(&self, floor: u64) {
+        let mut ix = self.inodes.lock().unwrap();
+        ix.next = ix.next.max(floor);
+    }
+
+    /// Whether `ino` is an inode this view handed out.
+    pub fn knows(&self, ino: u64) -> bool {
+        self.inodes.lock().unwrap().by_ino.contains_key(&ino)
     }
 
     fn node(&self, ino: u64) -> Result<Node> {
@@ -1321,6 +1378,8 @@ mod tests {
             Arc::new(FsBackend::new(dir.path().join("data"))),
             dir.path().join("state"),
         );
+        d.grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let v = Vfs::new(
             &d,
             Context::space("local:lab"),
@@ -1377,6 +1436,8 @@ mod tests {
             Arc::new(FsBackend::new(dir.path().join("data"))),
             dir.path().join("state"),
         );
+        d.grant_migrated("space:local-lab", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let user = d.session(Context::user());
         for k in [
             "volumes/rw/a.txt",
@@ -1508,6 +1569,8 @@ mod tests {
     async fn agents_see_their_rules_and_secrets_are_refused_at_upload() {
         let dir = tempfile::tempdir().unwrap();
         let d = Drive::open_local(dir.path());
+        d.grant_migrated("agent:ada", "public/", crate::acl::Mode::Read, "test")
+            .unwrap();
         let v = Vfs::new(
             &d,
             Context::agent("ada", None),

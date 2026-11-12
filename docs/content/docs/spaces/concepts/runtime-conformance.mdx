@@ -1,0 +1,130 @@
+---
+title: 'One Space on every runtime'
+description: 'What every runtime owes a Space (network policy, DNS, registry sign-in, child Spaces, downloads, readiness), what each one refuses and why, and how Cua checks it.'
+---
+
+A Space behaves the same wherever it runs. The same default network holds,
+names resolve, a private image pulls with your registry sign-in, a home makes
+and deletes child Spaces, the guest can download what it needs, and a Space is
+ready when it answers. This page lists those promises, says what each runtime
+does with them, and shows how Cua checks them.
+
+## What every runtime owes a Space
+
+- **The default network holds.** The Space reaches the internet and its own
+  tree. It does not reach this computer, your local network, cloud metadata
+  or the Spaces of other trees. The host enforces it, outside the guest, so
+  nothing inside the Space (root included) can change it.
+  What it refuses is in `cua network log` with the destination (or the rule's
+  network, for a container) and when, and a destination it allows is never
+  logged as blocked.
+- **Names resolve.** A public name resolves and an install-style https
+  download works in the guest, on the secure network and on the default
+  one. A Space with no network fails the lookup at once.
+- **The guest can download.** The coding app's package (about 100 MB)
+  downloads inside the Space under the default network.
+- **A private image pulls.** Cua pulls with the registry credential the
+  daemon holds (`CUA_REGISTRY_USERNAME` and `CUA_REGISTRY_PASSWORD` in its
+  environment, `GITHUB_TOKEN` for ghcr.io, or `docker login`), the same way
+  for every runtime. Cua never writes it outside its own home.
+- **A home makes child Spaces.** Inside a home, `cua spaces create`, `ls` and
+  `delete` work through the daemon's channel, within the tree's budget, and
+  every request is audited.
+- **A coding agent session starts.** The app installs and the agent answers.
+- **Ready means answering.** Time to ready is measured from the create call
+  to a Space that answers.
+- **A warm claim is an ordinary Space.** A Space made from a member Cua kept
+  ready answers with its own token and nothing else opens it, not even the
+  member's own secret, and it behaves as one that started cold. A runtime
+  that cannot claim a member refuses a pool in plain words and starts cold.
+- **A running Space is on your account.** While the computer is signed in
+  and sharing, the Space is listed on your cua.ai account, so your phone and
+  your other computers see and open it, and it leaves the account when it
+  stops or is deleted. This is the same for a macOS VM, a QEMU VM, a
+  container and a microVM, and it needs no step of yours.
+- **Delete leaves nothing.** No Space, process, container or network remains.
+
+A runtime that cannot keep a promise refuses it at once, in plain words that
+say what to use instead. A refusal that comes late, or a Space that starts
+without the promise, is a bug.
+
+## What each runtime says
+
+| Runtime | Guest | Default network | Pause | Checkpoint and fork | KVM | Warm start |
+|---|---|---|---|---|---|---|
+| `builtin-gvisor` | linux | enforced on macos, enforced on windows | yes | yes | no | claim, apps ready ahead |
+| `builtin-runc` | linux | enforced on macos, enforced on windows | yes | yes | no | claim, apps ready ahead |
+| `engine-gvisor` | linux | enforced on linux | yes | yes | no | claim, apps ready ahead |
+| `engine-runc` | linux | enforced on linux | yes | yes | no | claim, apps ready ahead |
+| `firecracker-microvm` | linux | enforced on linux | yes | yes | yes | claim |
+| `vz-microvm` | linux | enforced on macos | yes | yes | no | claim |
+| `containerization-microvm` | linux | refused on macos | no | no | no | claim |
+| `qemu-vm` | linux | enforced on linux, enforced on macos, enforced on windows | yes | yes | no | claim |
+| `lume-macos-vm` | macos | enforced on macos | no | no | no | claim |
+
+Pause, checkpoint and fork are what the runtime can do with a running Space.
+Where a runtime cannot, asking for one is refused with a reason. Warm start is
+whether a member kept ready can be claimed for a new Space; on a container the
+member also answers before it is claimed, so [warm start](/spaces/guides/warm-start)
+can install the coding apps in it ahead. The other runtimes install
+them after the claim, as they do without a pool. The built-in
+runtimes run on this computer's built-in Linux runtime; `engine-` runtimes run
+on a container engine you run on a Linux host.
+
+### Where the default network is not enforced yet
+
+The default network is Secure Spaces, always on; this page describes a Space
+with it. A runtime that cannot enforce it never starts a Space open by accident.
+Apple's Containerization puts every guest on Apple's vmnet network. Only `pf`
+can filter that network, and `pf` needs root. A firewall inside the guest
+would not hold against the Space's own root, so Cua does not offer one as the
+default network: a Space there starts only with No protection, and a request
+for the default network is refused with that reason. A `vz` microVM, QEMU on
+macOS and Windows, and a macOS VM are the same for now.
+
+Images still pull the same way on Apple's Containerization. Cua pulls the
+image itself, with your registry credential and its shared layer cache, and
+loads it into Apple's image store, because Apple's `container image pull` can
+only use a login kept in your keychain and refuses a private package. The
+first start on a Mac downloads Apple's `container` and its guest kernel before
+an image could begin, so the image's layers download at the same time; on a
+slow link that download is most of the wait, and every start after it takes
+about a second. Guests use your computer's resolvers, then public ones: the resolver
+that `container` sets up answers every IPv6 lookup as truncated and serves no
+TCP, so lookups for both families used to fail.
+
+## How Cua keeps the promises the same
+
+The promises live in shared layers, and a runtime supplies only how the guest
+is reached.
+
+- The default network is compiled once from the Space's settings
+  (`cua_vmm::network`) and enforced where the runtime allows: the container
+  engine's own network namespace or the namespace around a Linux VM.
+- Registry sign-in and the layer cache live in `cua-image`. A runtime that
+  pulls with its own credentials receives the image as an archive instead.
+- Child Spaces use a channel the host opens into the guest's `cua-spacesd`:
+  the guest never holds the daemon's token and nothing new listens on the
+  host.
+- Readiness is a probe on the guest's `cua-spacesd` at the address the
+  runtime gives.
+
+## Check it yourself
+
+Every runtime is listed in one roster (`cua_vmm::conformance`), and a test
+fails the build when a backend is added without an entry. The same cases run
+against each entry. The hermetic tests run the ones that need no machine
+(Apple's `container` has a fake). The live run is opt-in, uses an isolated
+Cua home and its own daemon, deletes what it makes, and writes a matrix:
+
+```bash skip="no-runner"
+CUA=/path/to/cua libs/cua/scripts/conformance/run.py --entry vz-microvm --out results/
+```
+
+The children case needs the `cua` CLI in the guest. When the Space under
+test does not ship it, the run makes a home Space from the slim Linux image
+(`ghcr.io/trycua/linux:24.04-slim`, which carries the CLI) on the same runtime and runs the case
+there; `--home-image` and `--entry-home-image ID=IMAGE` name another build.
+
+The roster and what each entry must do is `libs/cua/scripts/conformance/entries.json`,
+generated from the registry.

@@ -102,8 +102,16 @@ export interface AgentStartRequest {
   repo?: string;
   branch?: string;
   model?: string;
+  /** Reasoning level (`low`, `medium`, `high`, `xhigh`, `max`) for the agents that take one. */
+  effort?: string;
   /** Provider key names to forward (values never cross the bridge). Saved keys the harness reads go without being named. */
   envFromHost?: string[];
+  /** The run's folder (a continued chat's own, with `resumeSession`). */
+  cwd?: string;
+  /** Continue this session of the agent's own (a chat from `agents.recentThreads`) instead of a new one. */
+  resumeSession?: string;
+  /** With `resumeSession`: the earlier conversation, for when the agent can't reload its session. */
+  resumeContext?: string;
 }
 
 /** `agent_start`'s answer (snake_case, as the tool answers). */
@@ -334,7 +342,7 @@ export interface AgentDetailView {
   addRoutineLabel: string;
   access: AgentLineView[];
   accessEmpty: string;
-  /** `Allow on this computer` when this machine is set up and not granted. */
+  /** `Allow on this machine` when this machine is set up and not granted. */
   allowThisMachineLabel?: string | null;
   audit: AgentLineView[];
   error?: string | null;
@@ -347,4 +355,76 @@ export interface AgentsPageView {
   busy: boolean;
   error?: string | null;
   requestText?: string | null;
+}
+
+/**
+ * Whether each agent on This Mac is really connected (`agents.status`;
+ * `cua_agent_setup::connection::ConnectionRow`, CONTRACT §4). snake_case, as
+ * the status serializes it; the same JSON `cua connect status --json` prints
+ * and the `connect_status` MCP tool answers.
+ */
+export interface ConnectionRow {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string | null;
+  previous_version: string | null;
+  signed_in: "yes" | "no" | "unknown" | "expired";
+  sign_in: string | null;
+  mcp: "ok" | "missing" | "broken" | "stale" | "unsupported";
+  mcp_config: string | null;
+  signin_imported: boolean;
+  signin_import: "ok" | "expired" | "missing" | "unsupported";
+  state: "connected" | "attention" | "not_connected" | "not_installed";
+  problem: { line: string; action: "reconnect" | "sign_in" | "install" | "disconnect" | "none" } | null;
+  checked_at_ms: number;
+}
+
+export interface ConnectionReport {
+  agents: ConnectionRow[];
+  checked_at_ms: number;
+}
+
+/** A row as drawn (`agents.connectionRows`, `cua-spaces-app-core/src/connection.rs`). */
+export interface ConnectionRowView {
+  id: string;
+  name: string;
+  state: "connected" | "attention" | "not_connected";
+  label: string;
+  problem: boolean;
+  detail: string | null;
+  signIn: string | null;
+  /** `connect`, `reconnect`, `sign-in`, `disconnect`, `install`. */
+  action: { id: string; label: string } | null;
+}
+
+/** One part of Connect (`cua_agent_setup::connection::Part`): setup shows a row for each, per agent. */
+export type ConnectPart = "mcp" | "skills" | "driver" | "sign_in";
+
+/** How one part ended (`PartStatus`). */
+export type ConnectPartStatus = "done" | "needs_permission" | "skipped" | "failed";
+
+/** What one part did (`cua_agent_setup::connection::PartResult`). */
+export interface ConnectPartResult {
+  part: ConnectPart;
+  status: ConnectPartStatus;
+  /** Where it was written, as the person reads it (`~/.claude.json`, `Keyvault`); null when nothing was. */
+  where: string | null;
+  /** Why, when it failed, needs a permission or was skipped. */
+  line: string | null;
+}
+
+/** What Connect did for one agent (`cua_agent_setup::connection::ConnectResult`). */
+export interface ConnectResult {
+  agent: string;
+  tools_ok: boolean;
+  tools_line: string | null;
+  sign_in: {
+    imported: { source: string; env: string; label: string; expires_ms: number | null; added_ms: number } | null;
+    /** `not_signed_in`, `cancelled`, `not_yet`, `failed`. */
+    refused: string | null;
+    line: string | null;
+  } | null;
+  /** One result per part asked for, in the order they ran. Absent from hosts older than CUA-4067. */
+  parts?: ConnectPartResult[];
 }

@@ -83,6 +83,11 @@ pub struct MachineRecord {
     /// characters. Shown to everyone who can see the machine.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub meta: BTreeMap<String, String>,
+    /// Account ids of team members who left this team machine
+    /// (`POST /v1/machines/{id}/leave`): the listing no longer shows it to
+    /// them through the team. A direct share still shows it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_for: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -112,6 +117,27 @@ impl Role {
 }
 
 impl MachineRecord {
+    /// The `allow` and `viewers` entries that name `who` (its account id,
+    /// user id or email in any case), as written.
+    pub fn entries_of(&self, who: &Identity) -> Vec<String> {
+        let email = who.email.as_deref().unwrap_or("");
+        self.allow
+            .iter()
+            .chain(&self.viewers)
+            .filter(|a| {
+                *a == &who.account
+                    || *a == &who.user
+                    || (!email.is_empty() && a.eq_ignore_ascii_case(email))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Whether `account` left this machine as a team member.
+    pub fn hidden_from(&self, account: &str) -> bool {
+        self.hidden_for.iter().any(|a| a == account)
+    }
+
     /// The caller's role, if any.
     pub fn role_of(&self, who: &Identity) -> Option<Role> {
         if who.account == self.owner.id {
@@ -193,7 +219,7 @@ pub struct Directory {
     storage: std::sync::Arc<Storage>,
 }
 
-fn hash_token(token: &str) -> String {
+pub(crate) fn hash_token(token: &str) -> String {
     hex::encode(ring::digest::digest(&ring::digest::SHA256, token.as_bytes()).as_ref())
 }
 
@@ -402,6 +428,7 @@ impl Directory {
                     host: None,
                     confirmed,
                     meta: BTreeMap::new(),
+                    hidden_for: Vec::new(),
                 }
             }
         };
@@ -492,6 +519,28 @@ impl Directory {
             .collect()
     }
 
+    /// Whether `record` is a Space whose computer (its `host`) has no record:
+    /// the computer was removed from the account but its Spaces were kept.
+    /// A detached Space is not listed and cannot be reached; registering
+    /// the computer again with the same id brings it back unchanged.
+    pub fn is_detached(&self, record: &MachineRecord) -> bool {
+        match record.host.as_deref() {
+            Some(host) => !self.records.lock().expect("directory").contains_key(host),
+            None => false,
+        }
+    }
+
+    /// The records that name `host` as their computer.
+    pub fn children_of(&self, host: &str) -> Vec<MachineRecord> {
+        self.records
+            .lock()
+            .expect("directory")
+            .values()
+            .filter(|r| r.host.as_deref() == Some(host))
+            .cloned()
+            .collect()
+    }
+
     /// Every record `who` owns or is allowlisted on, with the role.
     pub fn visible_to(&self, who: &Identity) -> Vec<(MachineRecord, Role)> {
         self.records
@@ -572,6 +621,19 @@ impl Directory {
         Ok(Some(updated))
     }
 
+    /// Hides team machine `id` from `account`'s listing (it left it). A
+    /// repeat changes nothing.
+    pub fn hide_for(&self, id: &str, account: &str) -> Result<MachineRecord, DirectoryError> {
+        let mut records = self.records.lock().expect("directory");
+        let mut changed = records.get(id).cloned().ok_or(DirectoryError::NotFound)?;
+        if !changed.hidden_from(account) {
+            changed.hidden_for.push(account.to_owned());
+        }
+        let updated = changed.clone();
+        self.commit(&mut records, id, Some(changed))?;
+        Ok(updated)
+    }
+
     /// Turns sharing on or off; `by` (`machine` or `owner`) is remembered
     /// while it is off.
     pub fn set_sharing(
@@ -641,6 +703,7 @@ mod tests {
             name: None,
             auth_time: None,
             mfa: false,
+            azp: None,
             orgs: Vec::new(),
         }
     }

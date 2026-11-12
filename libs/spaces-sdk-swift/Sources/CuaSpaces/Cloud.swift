@@ -15,7 +15,9 @@ public struct CloudTarget: Sendable, Hashable, CustomStringConvertible, CustomDe
     public var zone: String?
     public var project: String?
     public var environment: String?
-    /// Hetzner only: the project's Read & Write API token. Secret.
+    /// Hetzner: the project's Read & Write API token; Modal:
+    /// `<token id>:<token secret>`. Secret: sealed to your devices on
+    /// connect, never returned.
     public var token: String?
 
     public init(_ provider: String, profile: String? = nil, region: String? = nil,
@@ -84,6 +86,37 @@ public struct CloudProviderInfo: Sendable, Hashable {
     public let label: String
     public let ttlHours: Int
     public let offers: [CloudOffer]
+    /// `cli` (the cloud CLI's sign-in), `oidc` (no stored key) or `sealed`;
+    /// empty when not connected.
+    public let auth: String
+    /// `connected`, `waiting-for-approval`, `not-connected`; from `connect`
+    /// also `needs-trust`, `checking` or `failed`.
+    public let status: String
+    /// The monthly budget in US dollars, when set.
+    public let budgetUsdMonth: Double?
+    /// The largest machine (`4x16`: vCPUs x GB), empty: no limit.
+    public let maxSize: String
+    /// Estimated US dollars this calendar month.
+    public let spentMonth: Double
+    /// Machines Cua runs there now.
+    public let running: Int
+    /// `connection` or `limits` while a person's approval is pending.
+    public let approval: String
+    /// The agent whose request waits for approval.
+    public let approvalAgent: String
+    /// The monthly budget an agent asked for, waiting for approval.
+    public let pendingBudgetUsdMonth: Double?
+    /// The largest machine an agent asked for (`4x16`), waiting.
+    public let pendingMaxSize: String
+    /// Whether this caller (a person) can approve or deny what waits.
+    public let canApprove: Bool
+    /// `oidc` when this link could switch to linking without a stored key.
+    public let suggestAuth: String
+    /// What is wrong with the link and what to do, one sentence, or empty.
+    public let issue: String
+    /// `sealed`: the devices that can open the account's API token
+    /// ("Can open it").
+    public let holders: [String]
 
     init(_ d: [String: JSONValue]) {
         name = d["name"]?.stringValue ?? ""
@@ -101,6 +134,124 @@ public struct CloudProviderInfo: Sendable, Hashable {
         label = d["label"]?.stringValue ?? ""
         ttlHours = d["ttl_hours"]?.intValue ?? 0
         offers = (d["kinds"]?.arrayValue ?? []).compactMap { $0.objectValue }.map(CloudOffer.init)
+        auth = d["auth"]?.stringValue ?? ""
+        status = d["status"]?.stringValue ?? ""
+        budgetUsdMonth = d["budget_usd_month"]?.doubleValue
+        maxSize = d["max_size"]?.stringValue ?? ""
+        spentMonth = d["spent_month"]?.doubleValue ?? 0
+        running = d["running"]?.intValue ?? 0
+        approval = d["approval"]?.stringValue ?? ""
+        approvalAgent = d["approval_agent"]?.stringValue ?? ""
+        pendingBudgetUsdMonth = d["pending_budget_usd_month"]?.doubleValue
+        pendingMaxSize = d["pending_max_size"]?.stringValue ?? ""
+        canApprove = d["can_approve"]?.boolValue ?? false
+        suggestAuth = d["suggest_auth"]?.stringValue ?? ""
+        issue = d["issue"]?.stringValue ?? ""
+        holders = (d["holders"]?.arrayValue ?? []).compactMap { $0.stringValue }
+    }
+}
+
+/// How `connect` links a cloud, beyond where.
+public struct CloudConnectOptions: Sendable, Hashable {
+    /// `cli`, `oidc` (AWS, Google Cloud, Azure: no stored key;
+    /// Azure always) or `sealed` (Hetzner, Modal: the
+    /// API token sealed to your devices; the default for them on a device
+    /// with the account's pool keys when a budget is given).
+    public var auth: String?
+    /// The monthly budget, US dollars.
+    public var budgetUsdMonth: Double?
+    /// The largest machine, `4x16`.
+    public var maxSize: String?
+    /// AWS `oidc`: the 12-digit account id.
+    public var accountId: String?
+    /// AWS `oidc`: the role ARN when it is not `cua-spaces`.
+    public var roleArn: String?
+    /// `oidc`: prove the link (nothing is created) and save it.
+    public var check: Bool
+    /// The agent making the change; its changes wait for a person.
+    public var agent: String?
+    /// Google Cloud `oidc`: the project number (implies `oidc`).
+    public var projectNumber: String?
+    /// Google Cloud `oidc`: a service account to act as.
+    public var serviceAccount: String?
+    /// Azure: the subscription id.
+    public var subscriptionId: String?
+    /// Azure: the Microsoft Entra tenant id.
+    public var tenantId: String?
+    /// Azure: the `cua-spaces` managed identity's client id.
+    public var clientId: String?
+    /// Azure: the resource group (default `cua-spaces`).
+    public var resourceGroup: String?
+
+    public init(auth: String? = nil, budgetUsdMonth: Double? = nil, maxSize: String? = nil,
+                accountId: String? = nil, roleArn: String? = nil, check: Bool = false,
+                agent: String? = nil, projectNumber: String? = nil,
+                serviceAccount: String? = nil, subscriptionId: String? = nil,
+                tenantId: String? = nil, clientId: String? = nil, resourceGroup: String? = nil) {
+        self.auth = auth
+        self.budgetUsdMonth = budgetUsdMonth
+        self.maxSize = maxSize
+        self.accountId = accountId
+        self.roleArn = roleArn
+        self.check = check
+        self.agent = agent
+        self.projectNumber = projectNumber
+        self.serviceAccount = serviceAccount
+        self.subscriptionId = subscriptionId
+        self.tenantId = tenantId
+        self.clientId = clientId
+        self.resourceGroup = resourceGroup
+    }
+
+    var arguments: [String: JSONValue] {
+        var a: [String: JSONValue] = [:]
+        if let auth { a["auth"] = .string(auth) }
+        if let budgetUsdMonth { a["budget_usd_month"] = .number(budgetUsdMonth) }
+        if let maxSize { a["max_size"] = .string(maxSize) }
+        if let accountId { a["account_id"] = .string(accountId) }
+        if let roleArn { a["role_arn"] = .string(roleArn) }
+        if check { a["check"] = .bool(true) }
+        if let agent { a["agent"] = .string(agent) }
+        if let projectNumber { a["project_number"] = .string(projectNumber) }
+        if let serviceAccount { a["service_account"] = .string(serviceAccount) }
+        if let subscriptionId { a["subscription_id"] = .string(subscriptionId) }
+        if let tenantId { a["tenant_id"] = .string(tenantId) }
+        if let clientId { a["client_id"] = .string(clientId) }
+        if let resourceGroup { a["resource_group"] = .string(resourceGroup) }
+        return a
+    }
+}
+
+/// The next step of a `connect`: a command for the agent, or a page for a
+/// person (and what to paste there), and why.
+public struct CloudNext: Sendable, Hashable {
+    public let run: String?
+    public let open: String?
+    public let paste: String?
+    public let why: String
+
+    init(_ d: [String: JSONValue]) {
+        run = d["run"]?.stringValue
+        open = d["open"]?.stringValue
+        paste = d["paste"]?.stringValue
+        why = d["why"]?.stringValue ?? ""
+    }
+}
+
+/// What `connect(_:options:)` did: the cloud (its `status` is the outcome),
+/// the checks it ran, the next step and the command that verifies it.
+public struct CloudConnectResult: Sendable, Hashable {
+    public let provider: CloudProviderInfo
+    public let checks: [CloudCheck]
+    /// `nil`: nothing left to do.
+    public let next: CloudNext?
+    public let verify: String
+
+    init(_ d: [String: JSONValue]) {
+        provider = CloudProviderInfo(d)
+        checks = CloudTestReport(d).checks
+        next = d["next"]?.objectValue.map(CloudNext.init)
+        verify = d["verify"]?.stringValue ?? ""
     }
 }
 
@@ -116,6 +267,10 @@ public struct CloudResource: Sendable, Hashable {
     public let state: String
     public let expires: String
     public let expired: Bool
+    /// Who started it: an agent's name, or `user`.
+    public let startedBy: String
+    /// Estimated US dollars it cost so far.
+    public let costUsd: Double
 
     init(_ d: [String: JSONValue]) {
         provider = d["provider"]?.stringValue ?? ""
@@ -126,6 +281,8 @@ public struct CloudResource: Sendable, Hashable {
         state = d["state"]?.stringValue ?? ""
         expires = d["expires"]?.stringValue ?? ""
         expired = d["expired"]?.boolValue ?? false
+        startedBy = d["started_by"]?.stringValue ?? ""
+        costUsd = d["cost_usd"]?.doubleValue ?? 0
     }
 }
 
@@ -208,6 +365,9 @@ public struct CloudAuditEntry: Sendable, Hashable {
     public let actor: String
     public let outcome: String
     public let detail: String
+    /// `device` (this cua home's log) or `account` (Cua's issuer, for clouds
+    /// linked to the account). Empty from an older daemon: this device.
+    public let source: String
 
     init(_ d: [String: JSONValue]) {
         ts = d["ts"]?.stringValue ?? ""
@@ -219,6 +379,46 @@ public struct CloudAuditEntry: Sendable, Hashable {
         actor = d["actor"]?.stringValue ?? ""
         outcome = d["outcome"]?.stringValue ?? ""
         detail = d["detail"]?.stringValue ?? ""
+        source = d["source"]?.stringValue ?? ""
+    }
+}
+
+/// One row of `cloud_cost`.
+public struct CloudCostRow: Sendable, Hashable {
+    /// The Space, agent, day (`YYYY-MM-DD`) or cloud.
+    public let key: String
+    /// Estimated US dollars.
+    public let usd: Double
+    /// Machine hours.
+    public let hours: Double
+    /// How many machines ran.
+    public let machines: Int
+
+    init(_ d: [String: JSONValue]) {
+        key = d["key"]?.stringValue ?? ""
+        usd = d["usd"]?.doubleValue ?? 0
+        hours = d["hours"]?.doubleValue ?? 0
+        machines = Int(d["machines"]?.doubleValue ?? 0)
+    }
+}
+
+/// `cloud_cost`: an estimate from list price times runtime.
+public struct CloudCost: Sendable, Hashable {
+    /// `space`, `agent`, `day` or `cloud`.
+    public let by: String
+    /// The first day counted (`YYYY-MM-DD`).
+    public let since: String
+    /// Up to when (RFC 3339).
+    public let until: String
+    public let rows: [CloudCostRow]
+    public let totalUsd: Double
+
+    init(_ d: [String: JSONValue]) {
+        by = d["by"]?.stringValue ?? ""
+        since = d["since"]?.stringValue ?? ""
+        until = d["until"]?.stringValue ?? ""
+        rows = (d["rows"]?.arrayValue ?? []).compactMap { $0.objectValue }.map(CloudCostRow.init)
+        totalUsd = d["total_usd"]?.doubleValue ?? 0
     }
 }
 
@@ -245,6 +445,20 @@ public struct Cloud: Sendable {
         return (CloudProviderInfo(d), CloudTestReport(d))
     }
 
+    /// `cloud_connect` with `options`: links without a stored key
+    /// (`auth: "oidc"`), sets the cloud's own budget and largest machine.
+    /// Never prompts; call it again until `provider.status` is `connected`,
+    /// following `next`.
+    @discardableResult
+    public func connect(_ target: CloudTarget, options: CloudConnectOptions,
+                        makeDefault: Bool = false, ttlHours: Int? = nil) async throws -> CloudConnectResult {
+        var a = target.arguments
+        a["make_default"] = .bool(makeDefault)
+        if let ttlHours { a["ttl_hours"] = .number(Double(ttlHours)) }
+        a.merge(options.arguments) { _, new in new }
+        return CloudConnectResult(try await connection.object("cloud_connect", a))
+    }
+
     /// `cloud_test`: creates nothing.
     public func test(_ target: CloudTarget) async throws -> CloudTestReport {
         CloudTestReport(try await connection.object("cloud_test", target.arguments))
@@ -259,12 +473,34 @@ public struct Cloud: Sendable {
         return CloudDisconnectReceipt(try await connection.object("cloud_disconnect", a))
     }
 
+    /// `cloud_approve`: a person approves what an agent asked for on
+    /// `provider` (its link or its raised limits), or with `deny` declines
+    /// it. For a person only: no MCP server serves it, so it needs the cua
+    /// SDK transport (`SpacesConnection(cua:)`).
+    @discardableResult
+    public func approve(_ provider: String, deny: Bool = false) async throws -> CloudProviderInfo {
+        var a: [String: JSONValue] = ["provider": .string(provider)]
+        if deny { a["deny"] = .bool(true) }
+        return CloudProviderInfo(try await connection.object("cloud_approve", a))
+    }
+
     /// `cloud_audit`: the newest entries of what Cua did in your clouds.
     public func audit(limit: Int? = nil) async throws -> [CloudAuditEntry] {
         var a: [String: JSONValue] = [:]
         if let limit { a["limit"] = .number(Double(limit)) }
         return try await connection.array("cloud_audit", a).compactMap { $0.objectValue }
             .map(CloudAuditEntry.init)
+    }
+
+    /// `cloud_cost`: what the machines Cua created cost, by `space`,
+    /// `agent`, `day` or `cloud`, since `since` (`YYYY-MM-DD`; default the
+    /// first of this month).
+    public func cost(by: String = "space", since: String? = nil,
+                     provider: String? = nil) async throws -> CloudCost {
+        var a: [String: JSONValue] = ["by": .string(by)]
+        if let since { a["since"] = .string(since) }
+        if let provider { a["provider"] = .string(provider) }
+        return CloudCost(try await connection.object("cloud_cost", a))
     }
 
     /// `cloud_sweep`: dry run by default.

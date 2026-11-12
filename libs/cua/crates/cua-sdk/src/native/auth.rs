@@ -91,6 +91,41 @@ pub struct LoginAttempt {
     note: Option<String>,
     session: Arc<cua_auth::Session>,
     pending: tokio::sync::Mutex<Option<cua_auth::PendingLogin>>,
+    /// Stops this attempt's listener (or its code polling).
+    stop: cua_auth::LoginCanceller,
+    /// Every attempt this `Auth` started that may still be waiting.
+    open: Arc<OpenAttempts>,
+}
+
+/// The sign-ins an [`Auth`] started that may still be waiting. A retry
+/// leaves the attempt before it waiting (its tab may still finish), and
+/// stops any older one; the first to sign in stops the rest. So no loopback
+/// listener outlives its use (CUA-3144).
+#[derive(Default)]
+struct OpenAttempts(std::sync::Mutex<Vec<cua_auth::LoginCanceller>>);
+
+/// How many started sign-ins may wait at once: the newest, and the one a
+/// retry replaced (its browser tab may still be the one finished).
+const OPEN_ATTEMPTS: usize = 2;
+
+impl OpenAttempts {
+    fn add(&self, stop: cua_auth::LoginCanceller) {
+        let mut open = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        open.retain(|c| !c.is_cancelled());
+        open.push(stop);
+        let extra = open.len().saturating_sub(OPEN_ATTEMPTS);
+        for old in open.drain(..extra) {
+            old.cancel();
+        }
+    }
+
+    /// One attempt signed in: the others stop.
+    fn stop_all(&self) {
+        let mut open = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        for c in open.drain(..) {
+            c.cancel();
+        }
+    }
 }
 
 #[uniffi::export]
@@ -131,8 +166,20 @@ impl LoginAttempt {
                 .await
                 .take()
                 .ok_or_else(|| CuaError::Closed("this sign-in already finished".into()))?;
-            let creds = pending.complete().await?;
-            let who = self.session.install(creds).await?;
+            // Saved before the browser's page says "You're signed in".
+            let who = match self.session.finish_login(pending).await {
+                Ok(who) => {
+                    self.open.stop_all();
+                    who
+                }
+                // Another attempt signed in first and stopped this one:
+                // this one ends signed in too, never as a failure.
+                Err(e) if self.stop.is_cancelled() => match self.session.identity() {
+                    Some(who) => return Ok(who.into()),
+                    None => return Err(e.into()),
+                },
+                Err(e) => return Err(e.into()),
+            };
             enroll_after_sign_in(&self.session).await;
             #[cfg(feature = "host")]
             super::telemetry::sync_account(&self.session).await;
@@ -146,7 +193,7 @@ impl LoginAttempt {
 /// [`LoginAttempt::wait`]).
 #[cfg(feature = "host")]
 async fn enroll_after_sign_in(session: &Arc<cua_auth::Session>) {
-    let home = cua_daemon::cua_home();
+    let home = cua_daemon_core::cua_home();
     let Ok(auth) = cua_host::DeviceAuth::new(
         &cua_host::relay_url_for(None, &home),
         Arc::new(super::host::SessionTokens(session.clone())),
@@ -197,6 +244,7 @@ async fn enroll_after_sign_in(_session: &Arc<cua_auth::Session>) {}
 #[derive(uniffi::Object)]
 pub struct Auth {
     session: Arc<cua_auth::Session>,
+    open: Arc<OpenAttempts>,
 }
 
 impl Auth {
@@ -207,7 +255,10 @@ impl Auth {
         // Refresh ahead of expiry in long-lived hosts (the app, the daemon)
         // instead of only when a call finds the token expired.
         session.spawn_keep_alive();
-        Arc::new(Auth { session })
+        Arc::new(Auth {
+            session,
+            open: Arc::default(),
+        })
     }
 
     /// The underlying session (Rust hosts).
@@ -242,9 +293,12 @@ impl Auth {
     /// code), `browser` or `device`.
     pub async fn begin_login(&self, flow: Option<String>) -> Result<Arc<LoginAttempt>> {
         let session = self.session.clone();
+        let open = self.open.clone();
         run(async move {
             let flow = cua_auth::Flow::parse(flow.as_deref().unwrap_or("auto"))?;
             let p = session.begin_login(flow).await?;
+            let stop = p.canceller();
+            open.add(stop.clone());
             Ok(Arc::new(LoginAttempt {
                 method: match p.method {
                     cua_auth::Method::Browser => LoginMethod::Browser,
@@ -255,6 +309,8 @@ impl Auth {
                 note: p.note.clone(),
                 session,
                 pending: tokio::sync::Mutex::new(Some(p)),
+                stop,
+                open,
             }))
         })
         .await
@@ -270,6 +326,12 @@ impl Auth {
     /// Revokes (best effort) and removes the session, and unlinks usage
     /// data from the account. Returns whether one existed.
     pub async fn logout(&self) -> Result<bool> {
+        // The agents this computer connected to Spaces stop at once.
+        run(async move {
+            revoke_connected_agents(this_device_ids()).await;
+            Ok(())
+        })
+        .await?;
         let session = self.session.clone();
         let existed = run(async move { Ok(session.logout().await?.0) }).await?;
         // Signed out: usage data goes back to a new anonymous install id.
@@ -278,9 +340,73 @@ impl Auth {
     }
 }
 
+/// The ids this computer joins Spaces under (`cua join`): its device key's,
+/// and the one from its machine when it has no device key.
+pub(crate) fn this_device_ids() -> Vec<String> {
+    #[cfg(feature = "host")]
+    {
+        let mut ids = vec![];
+        if let Some(k) = cua_auth::Store::from_env()
+            .load_secret(cua_host::device::DEVICE_KEY_SECRET)
+            .ok()
+            .flatten()
+            .and_then(|p| cua_host::device::DeviceKey::from_pkcs8(&p).ok())
+        {
+            ids.push(k.id());
+        }
+        if let Some(m) = cua_host::machine::machine_id() {
+            ids.push(format!("host_{}", &m[..m.len().min(24)]));
+        }
+        ids
+    }
+    #[cfg(not(feature = "host"))]
+    {
+        vec![]
+    }
+}
+
+/// Removes the Space members connected from `devices` on this computer's
+/// daemon (when one runs): their member keys stop at once.
+pub(crate) async fn revoke_connected_agents(devices: Vec<String>) {
+    if devices.is_empty() {
+        return;
+    }
+    let Ok(d) = cua_daemon_core::client::existing_daemon().await else {
+        return;
+    };
+    for device in devices {
+        let req = cua_proto::daemon::v1::CallSpaceToolRequest {
+            name: "thread_device_revoke".into(),
+            arguments_json: serde_json::json!({"device": device}).to_string(),
+        };
+        let _ = d.spaces().call_space_tool(req).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retry_keeps_one_earlier_attempt_and_a_sign_in_stops_the_rest() {
+        let open = OpenAttempts::default();
+        let (a, b, c) = (
+            cua_auth::LoginCanceller::default(),
+            cua_auth::LoginCanceller::default(),
+            cua_auth::LoginCanceller::default(),
+        );
+        open.add(a.clone());
+        open.add(b.clone());
+        // The earlier tab may still be the one finished.
+        assert!(!a.is_cancelled() && !b.is_cancelled());
+        // A third start stops the oldest: its listener closes.
+        open.add(c.clone());
+        assert!(a.is_cancelled() && !b.is_cancelled() && !c.is_cancelled());
+        // One of them signed in: nothing is left listening.
+        open.stop_all();
+        assert!(b.is_cancelled() && c.is_cancelled());
+        assert!(open.0.lock().unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn status_and_errors_map_without_touching_the_keychain() {

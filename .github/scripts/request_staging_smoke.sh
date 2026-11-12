@@ -6,8 +6,11 @@
 #
 #   GH_TOKEN=<contents:write on trycua/cloud> request_staging_smoke.sh <component> <sha>
 #
-# Never fails the release run: if the dispatch cannot be sent it warns, and the
-# gate then waits until someone starts the smoke by hand
+# Fails (its job, not the release: publishing waits on the staging gate,
+# not on this job) when the dispatch cannot be sent, so a release app that
+# cannot reach trycua/cloud shows as a red job instead of a warning nobody
+# reads. The gate then waits for the smoke trycua/cloud's own tag poller
+# starts, or one started by hand
 # (gh workflow run spaces-staging-smoke.yml -R trycua/cloud ...).
 set -uo pipefail
 
@@ -16,8 +19,8 @@ sha="${2:?sha}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 if [ -z "${GH_TOKEN:-}" ]; then
-  echo "::warning title=Staging smoke::no token for trycua/cloud; start the smoke by hand: gh workflow run spaces-staging-smoke.yml -R trycua/cloud -f component=$component -f sha=$sha"
-  exit 0
+  echo "::error title=Staging smoke::no token for trycua/cloud (the release app could not mint one: is it installed on trycua/cloud with contents:write?); start the smoke by hand: gh workflow run spaces-staging-smoke.yml -R trycua/cloud -f component=$component -f sha=$sha"
+  exit 1
 fi
 if gh api repos/trycua/cloud/dispatches \
     -f event_type=cua-release-candidate \
@@ -25,6 +28,6 @@ if gh api repos/trycua/cloud/dispatches \
     -f "client_payload[sha]=$sha" >/dev/null; then
   echo "Requested the staging smoke for $component at $sha" | tee -a "$summary"
 else
-  echo "::warning title=Staging smoke::could not send the dispatch to trycua/cloud; start the smoke by hand: gh workflow run spaces-staging-smoke.yml -R trycua/cloud -f component=$component -f sha=$sha"
+  echo "::error title=Staging smoke::could not send the cua-release-candidate dispatch to trycua/cloud (the release app needs contents:write there); start the smoke by hand: gh workflow run spaces-staging-smoke.yml -R trycua/cloud -f component=$component -f sha=$sha"
+  exit 1
 fi
-exit 0

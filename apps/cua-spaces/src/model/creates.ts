@@ -25,7 +25,7 @@ export interface PendingCreate {
   error?: string | null;
   spaceId?: string | null;
   image?: string | null;
-  kind?: "container" | "vm" | null;
+  kind?: "container" | "vm" | "microvm" | null;
   arch?: string | null;
   emulated?: boolean;
   phaseAt?: number | null;
@@ -75,7 +75,7 @@ export type CreateAction =
       /** The image (its catalog entry names the distribution, kind and
        * platforms), the kind asked for, and this Mac's CPU architecture. */
       image?: string | null;
-      kind?: "container" | "vm" | null;
+      kind?: "container" | "vm" | "microvm" | null;
       hostArch?: string | null;
       /** GPU acceleration was asked for (the create's `gpu` option). */
       gpu?: boolean;

@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Cua Spaces",
+    "slug": "cua-spaces-mobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.cua.spaces.mobile",
+      "infoPlist": {
+        "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"],
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "Cua Spaces reads a photo only if you choose to attach one to a message for your agent.",
+        "NSMicrophoneUsageDescription": "Cua Spaces uses the microphone only while you hold the microphone button to dictate a message.",
+        "NSSpeechRecognitionUsageDescription": "Cua Spaces uses speech recognition on your phone to turn what you say into the message you are writing."
+      },
+      "appleTeamId": "YCK386LBJ7",
+      "buildNumber": "1"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "ai.cua.spaces.mobile"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-web-browser",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Cua Spaces asks for Face ID so that someone who picks up your unlocked phone cannot open your computers."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "enableBackgroundRemoteNotifications": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ]
+    ],
+    "scheme": ["cua-spaces", "ai.cua.spaces"],
+    "newArchEnabled": true,
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

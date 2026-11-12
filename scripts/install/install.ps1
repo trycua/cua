@@ -15,10 +15,11 @@ except with -AppOnly). Items:
     cua-driver  Cua Driver, which lets AI agents use apps while you keep
                 working: installs it and adds its skill and MCP server to
                 your agents (off by default)
-The list does not offer hosting. The app's first run asks how to use this
-computer (-Mode host|client preselects the answer). For scripts, `-Select host`
-and `-Only host` still run `cua host setup`, which lets your other devices use
-this computer through the relay.
+Signing in adds this computer to your account: after `cua auth login`
+succeeds, the installer runs `cua host setup`, so your other devices can use
+it through the relay (a computer set up before keeps its settings). -NoHost
+signs in only. `-Select host` and `-Only host` run `cua host setup` even
+without a sign-in here (kept for scripts).
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt. Add -Verbose to see every
 step (manifest, downloads, signature checks).
 
@@ -44,7 +45,7 @@ Install only the Cua Spaces app (no CLI).
 Preselect the app's first-run choice: host or client (implies spaces).
 .PARAMETER Pair
 Add this machine to your account with a one-time code from the Cua Spaces app
-(Add a machine): installs the CLI and runs `cua host setup --pair <code>`, with
+(Add a computer): installs the CLI and runs `cua host setup --pair <code>`, with
 no sign-in and no checklist. A computer that already has a cua with
 `host setup --pair` uses it instead of downloading again; -Prefix, -Version or
 CUA_INSTALL_REINSTALL=1 install anyway.
@@ -59,7 +60,12 @@ Kept for older commands: the CLI directory is added to the user PATH by default.
 .PARAMETER NoModifyPath
 Do not add the CLI directory to the user PATH.
 .PARAMETER NoOnboarding
-Do not run `cua auth login` afterwards.
+Do not run `cua auth login` afterwards (nor add this computer).
+.PARAMETER NoHost
+Sign in only: do not add this computer to your account.
+.PARAMETER NoProvideSpaces
+Add this computer without creating Spaces for your other devices on it
+(`cua host setup --no-provide-spaces`).
 .PARAMETER NoSkills
 With cua-driver, add only its MCP server to your agents, not its skill (by default both are added).
 .PARAMETER RequireSignature
@@ -85,6 +91,8 @@ param(
     [switch]$ModifyPath,
     [switch]$NoModifyPath,
     [switch]$NoOnboarding,
+    [switch]$NoHost,
+    [switch]$NoProvideSpaces,
     [switch]$NoSkills,
     [switch]$RequireSignature,
     [ValidateSet('msi', 'nsis')][string]$Installer = 'nsis',
@@ -121,6 +129,7 @@ $script:DidCli = $null
 $script:DidApp = $false
 $script:DidDriver = $false
 $script:SignedIn = $false
+$script:DidHost = $false
 $script:PathHint = $null
 
 function Get-Sha256Hex([string]$Path) {
@@ -354,6 +363,11 @@ function Get-CuaSelection {
         if ($App) { Stop-Install '-Pair needs the CLI; drop -AppOnly' }
         $sel.host = $true
     }
+    if ($NoHost) {
+        if ($Pair) { Stop-Install '-NoHost and -Pair contradict each other: -Pair adds this computer' }
+        if ($sel.host) { Stop-Install '-NoHost and -Select host contradict each other' }
+        if ($NoProvideSpaces) { Stop-Install '-NoProvideSpaces goes with adding this computer; drop -NoHost' }
+    }
     # Legacy: -AppOnly and -Mode mean the app, as they always did.
     if ($App -or ($InstallMode -and -not $Cli)) { $sel.spaces = $true }
     return $sel
@@ -476,6 +490,41 @@ function Get-CosignIdentity($Entry) {
     }
 }
 
+# The app's identity for a release rebuilt from an existing tag (rebuild_tag):
+# cd-cua-spaces.yml at refs/heads/main. That ref says nothing about which tag
+# was built, so it is only accepted with a signed claim for this tag and file
+# (Test-RebuildClaim) and the workflow_dispatch trigger.
+function Get-RebuiltIdentity { return "https://github.com/$Repo/.github/workflows/cd-cua-spaces.yml@refs/heads/main" }
+
+function Test-CosignBundle([string]$Cosign, [string]$File, [string]$Bundle, [string]$Identity, [bool]$Rebuilt) {
+    $cosignArgs = @('verify-blob', '--bundle', $Bundle, '--certificate-identity', $Identity,
+        '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com')
+    if ($Rebuilt) {
+        # A push, schedule or pull_request run of the same workflow never passes.
+        $cosignArgs += @('--certificate-github-workflow-repository', $Repo,
+            '--certificate-github-workflow-ref', 'refs/heads/main',
+            '--certificate-github-workflow-trigger', 'workflow_dispatch')
+    }
+    & $Cosign @cosignArgs $File *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# rebuild-claim.txt, next to the artifact and signed by the same run, ties a
+# main-branch signature to a tag: a "tag cua-spaces-v<version>" line and
+# "<sha256>  <name>" for every asset. It must verify under the rebuilt
+# identity, name this tag and list this file's sha256 under its name.
+function Test-RebuildClaim([string]$Cosign, [string]$File, [string]$BundleUrl, [string]$Version, [string]$ManifestUrl) {
+    $claim = "$File.rebuild-claim.txt"
+    $dir = $BundleUrl.Substring(0, $BundleUrl.LastIndexOf('/'))
+    Get-Remote "$dir/rebuild-claim.txt" $claim $ManifestUrl
+    Get-Remote "$dir/rebuild-claim.txt.sigstore.json" "$claim.sigstore.json" $ManifestUrl
+    if (-not (Test-CosignBundle $Cosign $claim "$claim.sigstore.json" (Get-RebuiltIdentity) $true)) { return $false }
+    $lines = @(Get-Content -LiteralPath $claim)
+    if ($lines -cnotcontains "tag cua-spaces-v$Version") { return $false }
+    $sha = (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()
+    return ($lines -ccontains "$sha  $(Split-Path -Leaf $File)")
+}
+
 function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
     $ok = $false
     $minisign = Get-Command minisign -ErrorAction SilentlyContinue
@@ -490,10 +539,14 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
         Get-Remote (Resolve-ArtifactUrl $Entry.cosign_bundle $ManifestUrl) "$File.sigstore.json" $ManifestUrl
         $identity = Get-CosignIdentity $Entry
         if (-not $identity) { Stop-Install "no release identity for $(Split-Path -Leaf $File) in the manifest" }
-        & $cosign.Source verify-blob --bundle "$File.sigstore.json" `
-            --certificate-identity $identity `
-            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $File *> $null
-        if ($LASTEXITCODE -ne 0) { Stop-Install "cosign signature check failed for $(Split-Path -Leaf $File)" }
+        $bundlePath = "$File.sigstore.json"
+        $verified = Test-CosignBundle $cosign.Source $File $bundlePath $identity $false
+        if (-not $verified -and [string]$Entry.component -eq 'app' -and
+            (Test-CosignBundle $cosign.Source $File $bundlePath (Get-RebuiltIdentity) $true)) {
+            $bundleUrl = Resolve-ArtifactUrl $Entry.cosign_bundle $ManifestUrl
+            $verified = Test-RebuildClaim $cosign.Source $File $bundleUrl ([string]$Entry.version) $ManifestUrl
+        }
+        if (-not $verified) { Stop-Install "cosign signature check failed for $(Split-Path -Leaf $File)" }
         $ok = $true
     }
     if (-not $ok -and $RequireSignature) {
@@ -611,8 +664,11 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
         if (-not $exe) { Stop-Install "no cua.exe inside $(Split-Path -Leaf $zip)" }
         New-Item -ItemType Directory -Force -Path $bin | Out-Null
         Copy-Item -LiteralPath $exe.FullName -Destination $target -Force
-        # The static cua-spacesd injected into OCI images that carry none is
-        # found next to the CLI.
+        # QEMU VMs' network gateway, and the static cua-spacesd injected into
+        # OCI images that carry none, are found next to the CLI.
+        Get-ChildItem -LiteralPath $out -Recurse -Filter 'cua-netgw.exe' | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $bin $_.Name) -Force
+        }
         Get-ChildItem -LiteralPath $out -Recurse -Filter 'cua-spacesd-linux-*' | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $bin $_.Name) -Force
         }
@@ -755,20 +811,36 @@ function Invoke-HostPair([string]$Cua) {
         $have = (& $Cua --version 2>&1 | Out-String).Trim()
         Stop-Install "the installed cua CLI ($have) cannot add a machine with a code (no 'cua host setup --pair'); install a newer release (-Version) or sign in instead: cua auth login; cua host setup"
     }
+    # It provides Spaces and keeps its screen private, as a computer added
+    # by signing in does; sharing its desktop is a choice on its page.
+    if ($setupHelp -match '--no-desktop') { $pairArgs += @('--no-desktop', '--provide-spaces') }
     Write-Step 'Adding this computer to your account (cua host setup --pair)'
     $null | & $Cua @pairArgs
-    if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>' }
+    if ($LASTEXITCODE -ne 0) { Stop-Install 'adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a computer) and run: cua host setup --pair <code>' }
     Write-Host ''
     Write-Host 'This machine is added. It shows up in Cua Spaces on your other devices in a few seconds.'
 }
 
 # Host this machine: joins the relay as the signed-in account.
-function Invoke-HostSetup([string]$Cua) {
+function Invoke-HostSetup([string]$Cua, $Sel) {
     if ($Pair) { Invoke-HostPair $Cua; return }
-    if ($DryRun) { Write-Host "[dry-run] $Cua host setup"; return }
-    Write-Step 'Letting your other devices use this computer (cua host setup)'
-    if (Test-Interactive) { & $Cua host setup } else { $null | & $Cua host setup }
-    if ($LASTEXITCODE -ne 0) { Write-Warning "host setup did not finish; run 'cua host setup' after 'cua auth login'" }
+    $setupArgs = @('host', 'setup')
+    if (-not $Sel.host) {
+        # Added by signing in: a computer already set up keeps its settings,
+        # and a new one provides Spaces with its screen kept private (sharing
+        # its desktop is a choice on its page in Cua Spaces).
+        if (-not $DryRun) {
+            $status = (& $Cua host status --json 2>$null | Out-String)
+            if ($status -match '"configured"\s*:\s*true') { $script:DidHost = $true; return }
+        }
+        if (-not $NoProvideSpaces) { $setupArgs += @('--no-desktop', '--provide-spaces') }
+    }
+    if ($NoProvideSpaces) { $setupArgs += '--no-provide-spaces' }
+    if ($DryRun) { Write-Host "[dry-run] $Cua $($setupArgs -join ' ')"; return }
+    Write-Step 'Adding this computer to your account (cua host setup)'
+    if (Test-Interactive) { & $Cua @setupArgs } else { $null | & $Cua @setupArgs }
+    if ($LASTEXITCODE -ne 0) { Write-Warning "adding this computer did not finish; run 'cua host setup' to try again (sign in first with 'cua auth login')" }
+    else { $script:DidHost = $true }
 }
 
 # -Pair on a computer that already has Cua: the `cua` that is there (it must
@@ -807,9 +879,10 @@ function Write-CuaSummary($Sel) {
         $checked = if ($script:DidCli -or $script:DidApp) { ' (downloads checked)' } else { '' }
         Write-Host "Installed $(Join-And $did)$checked."
     }
+    if ($script:DidHost) { Write-Host 'This computer is added to your account. It shows up in Cua Spaces on your other devices.' }
     if ($script:DidApp) {
-        if ($script:SignedIn) { Write-Host 'Next: open Cua Spaces from the Start menu. There you can also let your other devices use this computer.' }
-        else { Write-Host 'Next: open Cua Spaces from the Start menu. It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer.' }
+        if ($script:SignedIn) { Write-Host 'Next: open Cua Spaces from the Start menu.' }
+        else { Write-Host 'Next: open Cua Spaces from the Start menu. It guides you through signing in and connecting your AI agents. Signing in adds this computer to your account.' }
         if ($Sel.cli) {
             if ($script:SignedIn) { Write-Host 'To connect more AI agents later, run "cua agents setup" in a terminal.' }
             else { Write-Host 'Prefer a terminal? Run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.' }
@@ -820,7 +893,7 @@ function Write-CuaSummary($Sel) {
             Write-Host 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
             Write-Host '(No web browser on this computer? Run "cua auth login --remote" instead.)'
         }
-        if (-not $Sel.host) { Write-Host 'To let your other devices use this computer, run "cua host setup".' }
+        if (-not $script:DidHost -and -not $NoHost) { Write-Host 'To add this computer to your account, run "cua host setup" after signing in.' }
     }
 }
 
@@ -922,7 +995,9 @@ function Invoke-CuaInstallSteps($sel) {
             if ($LASTEXITCODE -ne 0) { Write-Warning 'Sign-in did not finish. Run "cua auth login" later (add --remote if this computer has no web browser).' } else { $script:SignedIn = $true }
         }
         $script:TelStage = 'host'
-        if ($sel.host) { Invoke-HostSetup $cua }
+        # Signing in adds this computer (unless -NoHost); -Select host adds it
+        # even without a sign-in here.
+        if ($sel.host -or ($script:SignedIn -and -not $NoHost)) { Invoke-HostSetup $cua $sel }
         Write-CuaSummary $sel
         if ($script:PathHint) {
             Write-Host ''

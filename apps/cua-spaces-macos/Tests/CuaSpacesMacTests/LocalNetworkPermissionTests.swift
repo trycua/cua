@@ -174,3 +174,121 @@ struct LocalNetworkPermissionTests {
         #expect(Mirror(reflecting: error).children.first?.label == "InsufficientDisk")
     }
 }
+
+/// A Mac that accepts Spaces from your other computers asks for Local
+/// Network when it starts to (the switch, a setup, a join code), while
+/// someone is here, so a macOS Space another device creates here does not
+/// meet macOS's bare prompt first. Never during the first run or a sign-in,
+/// nor as it finishes: its permissions step asks, with the reason.
+@MainActor
+@Suite("Local Network access when providing Spaces")
+struct LocalNetworkWhenProvidingTests {
+    func model(_ host: FixtureHost, probe: LocalNetworkPermissionTests.FakeProbe,
+               shown: LocalNetworkPermissionTests.Shown) -> AppModel {
+        let m = ViewModelTests().makeModel(host: host)
+        m.localNetworkGate = LocalNetworkPermissionTests().gate(probe, shown: shown)
+        return m
+    }
+
+    func request(_ provide: Bool?) -> AppHostSetupRequest {
+        AppHostSetupRequest(mode: "relay", relayUrl: nil, direct: nil, name: "Studio", allow: nil,
+                            profile: "desktop", shareDesktop: nil, provideSpaces: provide)
+    }
+
+    @Test func theFirstRunNeverAsksFromTheHost() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let m = model(host, probe: probe, shown: shown)
+        // The sign-in's setup, and the first run's own (the page's), in the
+        // first run: nothing asked.
+        await m.host.addAfterSignIn()
+        #expect(host.current.provideSpaces)
+        await m.host.run(.stopProvidingSpaces)
+        try await m.host.setUp(request(true), on: host)
+        #expect(host.current.provideSpaces)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.isEmpty && probe.connects == 0)
+
+        // Done: Home opens with no dialog and no prompt (device test, 10 Nov:
+        // the explanation popped up as Home opened). The permissions step asked.
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        _ = try bridge.completeOnboarding(["mode": "host"])
+        await m.hostingLocalNetworkCheck?.value
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.isEmpty && probe.connects == 0)
+    }
+
+    /// The switch asks, also before the first run is done ("Skip for now").
+    @Test func turningProvidingOnAsksOnce() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let m = model(host, probe: probe, shown: shown)
+        try await m.host.setUp(request(false), on: host)
+        #expect(!host.current.provideSpaces)
+        #expect(m.hostingLocalNetworkCheck == nil, "not providing Spaces: nothing asked")
+
+        await m.host.run(.provideSpaces)
+        #expect(host.current.provideSpaces)
+        await m.hostingLocalNetworkCheck?.value
+        #expect(shown.steps.map(\.kind) == [.explain])
+        #expect(m.host.actionFailure == nil)
+
+        // Set up again while providing: nothing asked again.
+        try await m.host.setUp(request(nil), on: host)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.count == 1)
+    }
+
+    /// A local macOS create and the hosting ask at once, in either order:
+    /// one explanation, not two.
+    @Test func aCreateDuringTheHostingAskExplainsOnce() async throws {
+        let host = FixtureHost()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let defaults = UserDefaults(suiteName: "cua-ln-\(UUID().uuidString)")!
+        var explained = 0
+        let gate = LocalNetworkGate(probe: probe, present: { _ in
+            explained += 1
+            try? await Task.sleep(for: .milliseconds(100))
+            return true
+        }, open: { _ in }, defaults: defaults)
+        gate.poll = .milliseconds(1)
+        gate.promptAppears = 0.05
+        let backend = FixtureSpacesBackend(rows: [])
+        let m = ViewModelTests().makeModel(backend, host: host)
+        m.localNetworkGate = gate
+        m.onboarding.finish()
+        try await m.host.setUp(request(nil), on: host)
+        #expect(m.hostingLocalNetworkCheck != nil)
+        let args = AppCreateSpaceArgs(image: "ghcr.io/trycua/macos:26", on: "local", kind: .vm, runtime: .auto,
+                                      name: nil, cpus: nil, memoryMb: nil, diskGb: nil, spacesd: true, gpu: nil)
+        _ = try? await m.runCreate(args, os: .macos, pendingId: "pending:mac")
+        #expect(explained == 1)
+
+        // The create first, then the switch while its explanation shows.
+        gate.asked = false
+        explained = 0
+        try await m.host.setUp(request(false), on: host)
+        async let created: String? = try? m.runCreate(args, os: .macos, pendingId: "pending:mac2")
+        try? await Task.sleep(for: .milliseconds(20))
+        await m.host.run(.provideSpaces)
+        _ = await created
+        await m.hostingLocalNetworkCheck?.value
+        #expect(explained == 1)
+    }
+
+    /// A sign-in after the first run (Settings) that sets this Mac up asks
+    /// nothing either.
+    @Test func aLaterSignInsSetupAsksNothing() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked])
+        let m = model(host, probe: probe, shown: shown)
+        m.onboarding.finish()
+        await m.host.addAfterSignIn()
+        #expect(host.current.provideSpaces)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.isEmpty && probe.connects == 0)
+    }
+}

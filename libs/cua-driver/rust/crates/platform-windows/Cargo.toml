@@ -26,7 +26,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 clipboard-rs = "0.3.5"
-keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
+cua-driver-core = { path = "../cua-driver-core", features = ["keyring"] }
 image = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",

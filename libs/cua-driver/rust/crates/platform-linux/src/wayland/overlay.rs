@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-Wayland agent-cursor overlay via `zwlr_layer_shell_v1`.
 //!
 //! Replaces the X11-only `overlay.rs` render loop on wlroots compositors
@@ -1724,10 +1727,14 @@ mod tests {
     }
 
     // Before the shared predicate, a settled Wayland cursor slept until its
-    // idle-fade deadline and its resting bob froze mid-swing.
+    // idle-fade deadline and its resting bob froze mid-swing. The bob is
+    // `cursor.float` (on by default); with it off the cursor rests still.
     #[test]
     fn stable_visible_overlay_keeps_frame_cadence_for_resting_motion() {
         let mut core = positioned_core();
+        core.options_override = Some(cursor_overlay::CursorOptions::NONE);
+        assert!(!core.has_resting_motion());
+        core.options_override = Some(cursor_overlay::CursorOptions::default());
         core.idle_secs = 0.25;
         core.pos = (-1.0e9, -1.0e9);
         assert!(needs_frame_tick(&core));

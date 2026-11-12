@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! `GET /internal/v1/devices/{id}` (CUA-2339): the read-only device lookup
-//! in-cluster services call. It needs the internal token, is
+//! `GET /internal/v1/devices/{id}` (CUA-2046): the read-only device lookup
+//! the Cua OIDC issuer calls in-cluster. It needs the internal token, is
 //! absent when none is configured, refuses proxied requests, and reports
 //! the device's account, key and enrollment state.
 // The hosted relay's optional features (Cargo feature `hosted`).

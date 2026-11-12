@@ -1,0 +1,89 @@
+{
+  "flow": "spaces-menu",
+  "frames": [
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn off",
+        "share: Share…",
+        "teleport: Teleport an app…",
+        "rename: Rename",
+        "--- delete: Delete Space (red)"
+      ],
+      "step": "yours, running, not shared"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn off",
+        "manageSharing: Manage sharing…",
+        "teleport: Teleport an app…",
+        "rename: Rename",
+        "--- delete: Delete Space (red)"
+      ],
+      "step": "yours, shared with three people"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn on",
+        "share: Share…",
+        "teleport: Teleport an app… (disabled)",
+        "rename: Rename",
+        "--- delete: Delete Space (red)"
+      ],
+      "step": "yours, stopped"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn off (disabled)",
+        "share: Share…",
+        "teleport: Teleport an app… (disabled)",
+        "rename: Rename",
+        "--- delete: Delete Space (red)"
+      ],
+      "step": "yours, turning on"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn on",
+        "--- leave: Leave"
+      ],
+      "step": "Sam's Space, Turn on allowed"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "--- leave: Leave"
+      ],
+      "step": "Sam's Space as a viewer"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn on",
+        "teleport: Teleport an app… (disabled)",
+        "--- leave: Leave"
+      ],
+      "step": "a team Space, off"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "power: Turn off",
+        "teleport: Teleport an app…",
+        "--- delete: Delete Space (red)"
+      ],
+      "step": "a team Space you made, running"
+    },
+    {
+      "menu": [
+        "open: Open",
+        "--- leave: Leave"
+      ],
+      "step": "a team Space without power"
+    }
+  ]
+}

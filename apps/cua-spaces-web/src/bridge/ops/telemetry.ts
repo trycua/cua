@@ -62,7 +62,11 @@ export type TelemetrySignal =
   | { type: "app-update"; action: string; channel: string; trigger: string }
   | { type: "device-enroll"; method: string; outcome: string }
   | { type: "experiment"; action: string; experiment: string }
-  | { type: "experiments-on"; experiments: string[] };
+  | { type: "experiments-on"; experiments: string[] }
+  /** A plan limit shown (`cua_plan_limit_shown`). */
+  | { type: "plan-limit-shown"; surface: string; kind: string; plan: string }
+  /** An upgrade or plan link opened (`cua_upgrade_link_opened`). */
+  | { type: "upgrade-link-opened"; surface: string; kind: string; plan: string };
 
 /** The one-time linking notice: the host's words, and whether it is due now. */
 export interface TelemetryLinkNotice {
@@ -117,8 +121,7 @@ export function linkNoticeFromHost(raw: unknown): TelemetryLinkNotice | null {
   };
 }
 
-
-const OFF: CrashReportingConfig = { allowed: false, dsn: "", release: "", environment: "", shell: "", };
+const OFF: CrashReportingConfig = { allowed: false, dsn: "", release: "", environment: "", shell: "" };
 
 /** A host's answer as crash settings; anything malformed, or without a DSN, reads as off. */
 export function crashConfigFromHost(raw: unknown): CrashReportingConfig {
@@ -172,6 +175,8 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
   "device-enroll": { method: "word", outcome: "word" },
   experiment: { action: "word", experiment: "word" },
   "experiments-on": { experiments: "words" },
+  "plan-limit-shown": { surface: "word", kind: "word", plan: "word" },
+  "upgrade-link-opened": { surface: "word", kind: "word", plan: "word" },
 };
 
 /** A fixed word from the schema (`space_create_local`, `this_mac`). Names,

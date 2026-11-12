@@ -125,13 +125,24 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
 @Suite(.serialized) struct SpacesTests {
     @Test func everyContractToolMapsToAGeneratedMethod() {
         let rows = spacesToolMethods()
-        #expect(rows.count == 97)
+        // One source of truth for the tool set: the generated contract manifest.
+        let manifestURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("spaces-contract/manifest.json")
+        let manifest = try? JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        let expectedTools = Set(((manifest?["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String })
+        let gotTools = Set(rows.map { $0.tool })
+        #expect(!expectedTools.isEmpty, "could not read \(manifestURL.path)")
+        #expect(
+            gotTools == expectedTools && rows.count == expectedTools.count,
+            "binding tools differ from spaces-contract/manifest.json: missing \(expectedTools.subtracting(gotTools).sorted()), extra \(gotTools.subtracting(expectedTools).sorted()), rows \(rows.count) vs manifest \(expectedTools.count)")
         // Swift spells `Class.method_name` as `methodName` on the generated
         // protocol; check each against the protocol's requirement list.
         let spaceMethods: Set<String> = [
             "add", "list", "resolve", "remove", "create", "delete",
             "stop", "start", "resize", "space", "agentCapabilities", "listToolsJson", "callToolJson",
-            "cloudStatus", "cloudConnect", "cloudTest", "cloudDisconnect", "cloudSweep", "cloudAudit",
+            "cloudStatus", "cloudConnect", "cloudTest", "cloudDisconnect", "cloudApprove", "cloudSweep", "cloudAudit", "cloudCost",
             "cloudAddHost", "cloudBudget", "cloudHosts", "cloudPlan", "cloudReconcile",
             "cloudRemoveHost", "prewarm", "prewarms", "removePrewarm",
             "persistentAgentCreate", "persistentAgents", "persistentAgentRemove",
@@ -144,14 +155,14 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             "volumeRequestAccess", "volumeRequests", "volumeApprove", "volumeDeny", "volumeAudit",
             "volumeStorage", "volumeStorageSet", "volumeMountStatus", "volumeMount", "volumeUnmount",
             "volumeSyncStatus", "volumeSyncEvents", "volumeSyncResolve", "volumeCacheStats",
-            "volumeCacheSet", "volumeCacheClear",
+            "volumeCacheSet", "volumeCacheClear", "network", "setNetwork", "networkLog",
         ]
         let spaceHandle: Set<String> = [
             "bash", "write", "home", "upload", "download", "sendFile", "listTools", "callTool",
             "windows", "openStream", "closeStream", "streamSession", "joinPresence",
             "teleportManifest", "teleport", "startHotspot", "stopHotspot", "hotspotStatus",
             "agentStart", "agentStatus", "agentMessage", "agentStop", "agentList",
-            "agentEvents", "agentInterrupt", "requestSiteLogin", "share", "unshare", "shares",
+            "agentEvents", "agentInterrupt", "requestSiteLogin", "share", "unshare", "shares", "putService",
         ]
         for row in rows {
             let parts = row.method.split(separator: ".").map(String.init)
@@ -167,8 +178,8 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             { $0.delete }, { $0.stop }, { $0.start }, { $0.resize }, { $0.suspend }, { $0.space },
             { $0.agentCapabilities },
             { $0.listToolsJson }, { $0.callToolJson },
-            { $0.cloudStatus }, { $0.cloudConnect }, { $0.cloudTest }, { $0.cloudDisconnect },
-            { $0.cloudSweep }, { $0.cloudAudit },
+            { $0.cloudStatus }, { $0.cloudConnect }, { $0.cloudTest }, { $0.cloudDisconnect }, { $0.cloudApprove },
+            { $0.cloudSweep }, { $0.cloudAudit }, { $0.cloudCost },
             { $0.persistentAgentCreate }, { $0.persistentAgents }, { $0.persistentAgentRemove },
             { $0.persistentAgentSend }, { $0.persistentAgentSave }, { $0.agentPause },
             { $0.agentResume }, { $0.routineAdd }, { $0.routines }, { $0.routineRemove },
@@ -182,7 +193,7 @@ func exerciseSpaces(_ cua: Cua, _ fx: Fixtures, tmp: URL, teleport: Bool = false
             { $0.volumeStorage }, { $0.volumeStorageSet }, { $0.volumeMountStatus },
             { $0.volumeMount }, { $0.volumeUnmount }, { $0.volumeSyncStatus },
             { $0.volumeSyncEvents }, { $0.volumeSyncResolve }, { $0.volumeCacheStats },
-            { $0.volumeCacheSet }, { $0.volumeCacheClear },
+            { $0.volumeCacheSet }, { $0.volumeCacheClear }, { $0.networkLog },
         ]
         let _: [(any SpaceProtocol) -> Any] = [
             { $0.bash }, { $0.write }, { $0.home }, { $0.upload }, { $0.download }, { $0.sendFile },

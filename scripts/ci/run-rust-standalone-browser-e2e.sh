@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run the cross-platform external Chromium browser matrix in the caller's desktop session.
 set -euo pipefail
+# macOS shells default to 256 open files, too few for the cua-spaces test binaries (see scripts/ci/tests/test_nofile_limit.py).
+[ "$(ulimit -Sn)" = unlimited ] || [ "$(ulimit -Sn)" -ge 10240 ] || ulimit -Sn 10240 2>/dev/null || ulimit -Sn "$(ulimit -Hn)" 2>/dev/null || true # nofile-limit
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -115,6 +117,7 @@ else
     tests+=(
       standalone_browser_dialog_background_refusal
       standalone_browser_capture_bound_pixel_click_background_refusal
+      standalone_browser_capture_bound_pixel_click_background_control
     )
   fi
   tests+=(

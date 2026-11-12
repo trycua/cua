@@ -25,7 +25,7 @@ use crate::storage::Storage;
 /// The hosted relay's command-line settings (flattened into `cua-relay`'s).
 #[derive(clap::Args, Debug)]
 pub struct HostedArgs {
-    /// Account mode: meter live sessions and relay hours against the plan
+    /// Account mode: meter computers in use at once and relay hours against the plan
     /// allowances (`on` / `off`). Measure and prompt only, never refuses.
     #[arg(long, env = "CUA_RELAY_METERING", default_value = "on")]
     pub metering: String,
@@ -33,7 +33,7 @@ pub struct HostedArgs {
     /// time, relay hours a month; per seat, pooled, for a team plan).
     #[arg(long, env = "CUA_RELAY_ALLOWANCES", default_value = crate::meter::DEFAULT_ALLOWANCES)]
     pub allowances: String,
-    /// Plans whose live-session limit is enforced: a session past it is
+    /// Plans whose computers-in-use limit is enforced: a session past it is
     /// refused (429). Other plans stay measure and prompt only.
     #[arg(long, env = "CUA_RELAY_ENFORCE_PLANS", default_value = crate::meter::DEFAULT_ENFORCE_PLANS)]
     pub enforce_plans: String,
@@ -451,8 +451,8 @@ async fn internal_record(
 }
 
 /// `GET /internal/v1/devices/{id}`: one client device, read-only, for the
-/// in-cluster services that must know whether a device is enrolled and
-/// not revoked. 200 `{id, account,
+/// Cua OIDC issuer (`cua-oidc`), which mints cloud tokens only for an
+/// enrolled, non-revoked device of the caller's account. 200 `{id, account,
 /// public_jwk: {kty: "EC", crv: "P-256", x, y}, state:
 /// pending|enrolled|expired|revoked, enrolled, revoked}`; 404
 /// `device_not_found`. Needs the internal token, like every
@@ -552,10 +552,14 @@ pub(crate) fn shared_with(
         auth_time: None,
         mfa: false,
         orgs: Vec::new(),
+        azp: None,
     };
     let mut shared = Vec::new();
     for (record, role) in relay.directory.visible_to(&who) {
-        if role == crate::directory::Role::Owner || !record.sharing {
+        if role == crate::directory::Role::Owner
+            || !record.sharing
+            || relay.directory.is_detached(&record)
+        {
             continue;
         }
         let host = record.host.as_deref().and_then(|h| relay.directory.get(h));

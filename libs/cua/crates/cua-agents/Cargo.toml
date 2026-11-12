@@ -12,10 +12,13 @@ repository.workspace = true
 cua-spacesd-client.workspace = true
 cua-proto = { workspace = true, features = ["client"] }
 cua-agent-setup.workspace = true
+# What each app reads from saved connections (the generated provider tables).
+cua-connections.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
+futures-util.workspace = true
 rand.workspace = true
 sha2.workspace = true
 hex.workspace = true

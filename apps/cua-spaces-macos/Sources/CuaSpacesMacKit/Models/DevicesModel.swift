@@ -34,6 +34,14 @@ public protocol DevicesRunning: AnyObject, Sendable {
     /// The account's relay allowance this month; nil from a relay that
     /// meters nothing.
     func relayUsage() async throws -> AppRelayUsage?
+    /// The account's default Space and the order to try when it is offline
+    /// (`Devices.spaces_settings`).
+    func spacesSettings() async throws -> SpacesSettings
+    /// Replaces them (the whole setting); what the relay saved.
+    func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings
+    /// Where the default Space resolves now, with this Mac as the last
+    /// resort (`Devices.resolve_default_space`). Creates nothing.
+    func resolveDefaultSpace() async throws -> DefaultSpace
 }
 
 /// The SDK's `Devices` for the signed-in session (key in the session's vault,
@@ -51,7 +59,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     /// This Mac on the default relay (`CUA_RELAY_URL`, else relay.cua.ai),
     /// named as Sharing names it ("Dana's MacBook Pro").
     public static func make(auth: CuaSDK.Auth) -> LiveDevices? {
-        (try? auth.devices(relayUrl: nil, name: Foundation.Host.current().localizedName))
+        (try? auth.devices(relayUrl: nil, name: ComputerName.current))
             .map { LiveDevices(inner: $0, auth: auth) }
     }
 
@@ -68,8 +76,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     static func requireEnrolled(_ device: RelayDevice) throws {
         guard device.state == "enrolled" else {
             throw CuaError.Runtime(
-                message: "The relay did not enroll \(device.name) (\(device.id)): it is \(device.state). "
-                    + "Ask that device for a new code and try again.")
+                message: "Couldn\u{2019}t add \(device.name). Ask that computer for a new code.")
         }
     }
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
@@ -88,6 +95,11 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
         guard let auth else { return nil }
         return try await appRelayUsage(devices: inner, accountToken: try await auth.accessToken(force: false))
     }
+    public func spacesSettings() async throws -> SpacesSettings { try await inner.spacesSettings() }
+    public func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings {
+        try await inner.setSpacesSettings(settings: settings)
+    }
+    public func resolveDefaultSpace() async throws -> DefaultSpace { try await inner.resolveDefaultSpace() }
 }
 
 /// An in-memory account on a relay (fixtures, tests): this Mac enrolled,
@@ -235,6 +247,46 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
         return usage
     }
 
+    /// The account's default Space as the relay keeps it (unset unless set).
+    public var spaces = SpacesSettings(defaultSpace: nil, fallback: [], fallbackOn: true, updatedAt: 0)
+
+    public func spacesSettings() async throws -> SpacesSettings {
+        calls.append("spaces-settings")
+        return spaces
+    }
+
+    public func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings {
+        calls.append("set-spaces-settings:\(settings.defaultSpace ?? "")")
+        spaces = SpacesSettings(defaultSpace: settings.defaultSpace, fallback: settings.fallback,
+                                fallbackOn: settings.fallbackOn, updatedAt: UInt64(Date().timeIntervalSince1970))
+        return spaces
+    }
+
+    /// The relay's resolution over the fixture account's machines: the
+    /// default, the order to try (or every other machine), then this Mac.
+    public func resolveDefaultSpace() async throws -> DefaultSpace {
+        calls.append("resolve-default-space")
+        let machines = current.machines.map { ("relay:\($0.id)", $0.name, $0.online) }
+        var order: [DefaultSpaceStep] = []
+        if let d = spaces.defaultSpace, let m = machines.first(where: { $0.0 == d }) {
+            order.append(DefaultSpaceStep(space: m.0, name: m.1, online: m.2, role: "default"))
+        }
+        if spaces.fallbackOn {
+            let listed = spaces.fallback.isEmpty ? machines.map(\.0) : spaces.fallback
+            for id in listed where id != spaces.defaultSpace {
+                if let m = machines.first(where: { $0.0 == id }) {
+                    order.append(DefaultSpaceStep(space: m.0, name: m.1, online: m.2, role: "fallback"))
+                }
+            }
+        }
+        order.append(DefaultSpaceStep(space: "relay:this-mac", name: "This Mac", online: true, role: "here"))
+        let first = order.first(where: { $0.online && $0.role != "here" })
+        let online = spaces.defaultSpace.map { d in machines.first(where: { $0.0 == d })?.2 ?? false }
+        let reason = first.map { $0.role == "default" ? "default" : (spaces.defaultSpace == nil ? "unset" : "fallback") } ?? "here"
+        return DefaultSpace(space: first?.space, reason: reason, defaultSpace: spaces.defaultSpace,
+                            defaultOnline: online, order: order)
+    }
+
     /// A relay allowance by name: `reached` (past it: the notice shows),
     /// `team` (a pooled team allowance, within it), `none` (a relay that
     /// meters nothing), else the free plan partway through the month.
@@ -378,6 +430,10 @@ public final class DevicesModel {
     /// The relay just refused a new session over the plan's cap: the sentence
     /// with Upgrade, shown until dismissed or a session starts.
     public private(set) var refusal: AppRelayAllowanceNotice?
+    /// Where the refusal came from, for usage data and the upgrade link's
+    /// `?from=`: `app_create` (a Space create) or `app_connect` (opening or
+    /// starting one).
+    public private(set) var refusalSurface = "app_connect"
 
     public init(devices: DevicesRunning?, presence: PresenceChecking = LivePresence(),
                 defaults: UserDefaults = .standard) {
@@ -445,7 +501,7 @@ public final class DevicesModel {
     /// A row's second line: platform and state, then when it was last seen.
     public func rowDetail(_ r: AppDeviceRow) -> String {
         guard let seen = r.lastSeen else { return r.detail }
-        return "\(r.detail) \u{b7} \(view.labels.lastSeen) \(relativeText(seen))"
+        return "\(r.detail), \(view.labels.lastSeen.lowercased()) \(relativeText(seen))"
     }
 
     // MARK: - Refresh
@@ -522,10 +578,46 @@ public final class DevicesModel {
 
     /// Keeps an error's text when it is the relay refusing a session over
     /// the plan's cap (the core's `appPlanLimitNotice`); any other error is
-    /// not a refusal and leaves the notice alone.
-    public func noteRefusal(_ error: String) {
+    /// not a refusal and leaves the notice alone. `surface`: `app_create`
+    /// for a Space create, `app_connect` for opening or starting one.
+    public func noteRefusal(_ error: String, surface: String = "app_connect") {
         guard let notice = appPlanLimitNotice(error: error, accountApp: appAccountAppUrl()) else { return }
         refusal = notice
+        refusalSurface = surface
+    }
+
+    /// The notice is on screen: a refusal is `cua_plan_limit_shown` at its
+    /// surface; the meter is `upsell_meter_shown`, and past a limit also
+    /// `cua_plan_limit_shown` at `app_meter` (CUA-1881).
+    public func recordNoticeShown(_ notice: AppRelayAllowanceNotice) {
+        if notice == refusal {
+            telemetry?.record(appTelemetryPlanLimit(action: "shown", surface: refusalSurface, kind: notice.kind, plan: notice.plan))
+        } else {
+            telemetry?.record(appTelemetryUpsell(surface: "meter", action: "shown", kind: notice.kind, plan: notice.plan))
+        }
+    }
+
+    /// Upgrade on the notice: records `cua_upgrade_link_opened` (and the
+    /// meter's `upsell_meter_click`) and answers the link to open, saying
+    /// where it was opened from (`?from=`).
+    public func openUpgrade(_ notice: AppRelayAllowanceNotice) -> URL? {
+        guard let link = notice.upgradeUrl else { return nil }
+        let surface: String
+        if notice == refusal {
+            surface = refusalSurface
+            telemetry?.record(appTelemetryPlanLimit(action: "opened", surface: surface, kind: notice.kind, plan: notice.plan))
+        } else {
+            surface = "app_meter"
+            telemetry?.record(appTelemetryUpsell(surface: "meter", action: "click", kind: notice.kind, plan: notice.plan))
+        }
+        return URL(string: appUpgradeLink(url: link, surface: surface))
+    }
+
+    /// A plan card link in Settings: `upsell_plan_card_click` and
+    /// `cua_upgrade_link_opened`; the link says it came from there.
+    public func openPlanLink(_ link: String) -> URL? {
+        telemetry?.record(appTelemetryUpsell(surface: "plan_card", action: "click", kind: nil, plan: relayUsage?.plan))
+        return URL(string: appUpgradeLink(url: link, surface: "app_plan_card"))
     }
 
     public func dismissRelayNotice() {

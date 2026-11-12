@@ -1,6 +1,6 @@
 name: "Nightly: RL-rollout Spaces perf guard"
 
-# Headless gVisor Spaces for RL rollouts (libs/cua/bench/e2b-rollouts):
+# Headless gVisor Spaces for RL rollouts (libs/cua/bench/rollouts):
 # cold start (headless vs desktop), warm-pool claims, an idle Space's
 # cua-spacesd CPU and a rollout-shaped load, checked by check.py against
 # invariants and baseline/linux-arm64-ci.json (1.5x threshold).
@@ -17,7 +17,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
-      - "libs/cua/bench/e2b-rollouts/**"
+      - "libs/cua/bench/rollouts/**"
       - "libs/cua/crates/cua-sdk/examples/rollout_bench.rs"
       - ".github/workflows/nightly-e2b-rollouts.yml"
   schedule:
@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Test check.py
-        working-directory: libs/cua/bench/e2b-rollouts
+        working-directory: libs/cua/bench/rollouts
         run: |
           python3 -m pip install --quiet pytest
           python3 -m pytest -q test_check.py
@@ -78,7 +78,7 @@ jobs:
           OUT: ${{ runner.temp }}/e2b-rollouts
           BENCH_HOST: linux-arm64-ci
           CUA_DISK_MIN_FREE: 2GiB
-        run: bash libs/cua/bench/e2b-rollouts/guard.sh
+        run: bash libs/cua/bench/rollouts/guard.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

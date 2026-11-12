@@ -9,12 +9,14 @@
 //! [`crate::disk::set_probe`] apply here too.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "container")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use cua_home::channel::CuaChannel;
 
+#[cfg(feature = "container")]
 use crate::container::engine::{self, EngineKind};
 use crate::host;
 
@@ -162,6 +164,7 @@ pub fn lume_default_location(yaml: &str) -> Option<String> {
 /// disk), Docker Desktop (the volume its `Docker.raw` grows on), OrbStack
 /// (its data directory's volume) and dockerd on Linux (`/var/lib/docker`).
 /// `None` for anything else.
+#[cfg(feature = "container")]
 pub async fn container_volume() -> Option<Volume> {
     let ep = engine::discover()?;
     let home = host::home_dir();
@@ -209,7 +212,14 @@ pub async fn container_volume() -> Option<Volume> {
     }
 }
 
+/// Without the `container` feature there is no engine to ask.
+#[cfg(not(feature = "container"))]
+pub async fn container_volume() -> Option<Volume> {
+    None
+}
+
 /// The engine's own disk, unless the host volume under it has less room.
+#[cfg(any(feature = "container", test))]
 fn tighter(engine: Volume, host: Option<Volume>) -> Volume {
     match host {
         Some(h) if h.available < engine.available => h,
@@ -236,7 +246,28 @@ pub fn volume_name(path: &Path) -> String {
     if p.as_os_str().is_empty() {
         p = PathBuf::from("/");
     }
-    platform::volume_name(&p).unwrap_or_else(|| "this Mac".into())
+    platform::volume_name(&p).unwrap_or_else(|| fallback_volume_name(&p))
+}
+
+/// What to call a volume the platform cannot name: the drive on Windows
+/// (`C:`), else the machine, in the person's words ("this Mac" was shown on
+/// a Windows PC).
+fn fallback_volume_name(path: &Path) -> String {
+    if cfg!(windows) {
+        if let Some(std::path::Component::Prefix(prefix)) = path.components().next() {
+            let drive = prefix.as_os_str().to_string_lossy();
+            // `\?\C:` (extended) or `C:`: keep the drive letter.
+            if let Some(i) = drive.find(':') {
+                return drive[i - 1..=i].to_string();
+            }
+        }
+        return "this PC".into();
+    }
+    if cfg!(target_os = "macos") {
+        "this Mac".into()
+    } else {
+        "this computer".into()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -339,6 +370,22 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unnamed_volume_is_called_by_the_hosts_own_words() {
+        let name = fallback_volume_name(Path::new(if cfg!(windows) {
+            r"C:\Users\a"
+        } else {
+            "/home/a"
+        }));
+        if cfg!(windows) {
+            assert_eq!(name, "C:");
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(name, "this Mac");
+        } else {
+            assert_eq!(name, "this computer");
+        }
+    }
 
     #[test]
     fn stable_keeps_lume_s_own_vm_directory_rules() {

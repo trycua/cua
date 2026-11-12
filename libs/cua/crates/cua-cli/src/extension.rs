@@ -16,6 +16,8 @@ use std::sync::{Arc, OnceLock};
 
 use cua_sdk::{Cua, CuaError, MediaEvent, MediaOpenOptions, MediaSession, SpacesdClient};
 
+use cua_compat_cmd::CompatCmd;
+
 use crate::drive_cmd::ConfigCmd;
 use crate::keyvault_cmd::KeyvaultCmd;
 use crate::teleport::TeleportCmd;
@@ -68,6 +70,35 @@ pub trait CliExtension: Send + Sync {
         out: &mut dyn Write,
     ) -> Result<i32, CuaError>;
 
+    /// `cua compat <cmd>`, when this build of `cua` does not carry the
+    /// gateway itself (the `compat` feature is off).
+    async fn compat(
+        &self,
+        cmd: CompatCmd,
+        json: bool,
+        out: &mut dyn Write,
+    ) -> Result<i32, CuaError> {
+        let _ = (cmd, json, out);
+        Err(CuaError::Unsupported(
+            "this `cua` does not include `cua compat`".to_string(),
+        ))
+    }
+
+    /// Registers the job services `cua run --compat` needs in this daemon
+    /// (see [`Self::compat`]).
+    fn register_compat_job_services(&self) {}
+
+    /// What a provider's template, snapshot or image `reference` starts from,
+    /// as a Cua image (`cua run --compat P --prewarm`; see [`Self::compat`]).
+    fn compat_prewarm_image(
+        &self,
+        provider: &str,
+        reference: &str,
+    ) -> Result<Option<String>, String> {
+        let _ = (provider, reference);
+        Err("--prewarm needs `cua compat`, which this `cua` does not include".to_string())
+    }
+
     /// Opens a media session whose video `frames` receives decoded (packed
     /// BGRA) frames (`cua sb stream-probe`).
     async fn open_media_decoded(
@@ -118,6 +149,54 @@ pub(crate) async fn keyvault(
     match get() {
         Some(e) => e.keyvault(cmd, json, out).await,
         None => forward("the Keyvault"),
+    }
+}
+
+/// `cua compat <cmd>`: served here when the `compat` feature is on, else by the
+/// registered extension.
+pub(crate) async fn compat(
+    cmd: CompatCmd,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    #[cfg(feature = "compat")]
+    {
+        cua_compat::cli::run(cmd, json, out, crate::util::hint).await
+    }
+    #[cfg(not(feature = "compat"))]
+    {
+        match get() {
+            Some(e) => e.compat(cmd, json, out).await,
+            None => forward("`cua compat`"),
+        }
+    }
+}
+
+/// Registers the job services of `cua run --compat` in this daemon.
+pub(crate) fn register_compat_job_services() {
+    #[cfg(feature = "compat")]
+    cua_compat::cli::register_job_services();
+    #[cfg(not(feature = "compat"))]
+    if let Some(e) = get() {
+        e.register_compat_job_services();
+    }
+}
+
+/// See [`CliExtension::compat_prewarm_image`].
+pub(crate) fn compat_prewarm_image(
+    provider: &str,
+    reference: &str,
+) -> Result<Option<String>, String> {
+    #[cfg(feature = "compat")]
+    {
+        cua_compat::cli::resolve_prewarm_image(provider, reference)
+    }
+    #[cfg(not(feature = "compat"))]
+    {
+        match get() {
+            Some(e) => e.compat_prewarm_image(provider, reference),
+            None => Err("--prewarm needs `cua compat`; run the Cua Spaces `cua`".to_string()),
+        }
     }
 }
 
@@ -186,6 +265,12 @@ pub fn spaces_cli() -> Option<PathBuf> {
     if std::env::var_os("CUA_ENV_TEST_SANDBOX").is_some() {
         return None;
     }
+    // A `cua` inside an app bundle is that app's: it runs its own daemon and
+    // never borrows another install's (a copy of the app outside
+    // /Applications, beside an installed one, keeps to its own build).
+    if me.as_deref().is_some_and(in_app_bundle) {
+        return None;
+    }
     app_bundle_candidates()
         .into_iter()
         .find_map(not_me)
@@ -247,6 +332,19 @@ pub fn spaces_cli_not_older() -> Result<Option<PathBuf>, String> {
         }
         _ => Some(helper),
     })
+}
+
+/// Whether `exe` is an app bundle's executable (`<X>.app/Contents/MacOS/<exe>`).
+fn in_app_bundle(exe: &Path) -> bool {
+    let mut parts = exe
+        .components()
+        .rev()
+        .skip(1)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    matches!(
+        (parts.next().as_deref(), parts.next().as_deref(), parts.next()),
+        (Some("MacOS"), Some("Contents"), Some(app)) if app.ends_with(".app")
+    )
 }
 
 fn app_bundle_candidates() -> Vec<PathBuf> {
@@ -460,5 +558,24 @@ mod tests {
         assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
         // SAFETY: as above.
         unsafe { std::env::remove_var(ENV_SPACES_CLI) };
+    }
+}
+
+#[cfg(test)]
+mod app_bundle_tests {
+    use super::in_app_bundle;
+    use std::path::Path;
+
+    #[test]
+    fn a_cua_inside_any_app_bundle_is_that_apps() {
+        assert!(in_app_bundle(Path::new(
+            "/Applications/Cua Spaces.app/Contents/MacOS/cua"
+        )));
+        assert!(in_app_bundle(Path::new(
+            "/Users/ada/Downloads/Cua Spaces Copy.app/Contents/MacOS/cua"
+        )));
+        assert!(!in_app_bundle(Path::new("/Users/ada/.local/bin/cua")));
+        assert!(!in_app_bundle(Path::new("/usr/local/bin/cua")));
+        assert!(!in_app_bundle(Path::new("/opt/Contents/MacOS/cua")));
     }
 }

@@ -316,6 +316,24 @@ actor FakeSpacesBackend: SpacesTransport {
             // own desktop, not a structured result. Nothing to render.
             return .string("Pinned \(arguments["space"]?.stringValue ?? "") on your desktop.")
 
+        case "space_service":
+            return .object(["services": .array([])])
+
+        case "space_job":
+            if arguments["action"]?.stringValue == "list" { return .object(["jobs": .array([])]) }
+            return .object(["job": "j-1", "state": "running"])
+
+        case "network_show":
+            return .object(["settings": .object(["preset": "internet"]), "enforcement": "enforced"])
+
+        case "network_log":
+            return .array([.object(["reason": "platform:metadata", "dst": "169.254.169.254:80",
+                                    "proto": "tcp", "count": 2, "last_unix": 1])])
+
+        case "network_set":
+            return .object(["applied": "now",
+                            "network": .object(["settings": .object(["preset": arguments["network"] ?? "internet"])])])
+
         case "space_write":
             let path = arguments["path"]?.stringValue ?? ""
             files.insert(Self.expand(path))
@@ -593,6 +611,21 @@ actor FakeSpacesBackend: SpacesTransport {
             if name == "cloud_connect" {
                 var row = aws
                 row["checks"] = .array([.object(["name": "credentials", "ok": true, "detail": "account 1"])])
+                if arguments["auth"] == .string("oidc") {
+                    row["auth"] = "oidc"
+                    row["status"] = "checking"
+                    row["budget_usd_month"] = arguments["budget_usd_month"] ?? .null
+                    row["max_size"] = arguments["max_size"] ?? .null
+                    row["next"] = .object(["run": "cua cloud connect aws --oidc --check",
+                                           "why": "Run the check."])
+                    row["verify"] = "cua cloud status aws"
+                } else if arguments["auth"] == .string("sealed") {
+                    row["auth"] = "sealed"
+                    row["status"] = "connected"
+                    row["holders"] = .array(["laptop", "studio"])
+                } else {
+                    row["status"] = "connected"
+                }
                 return .object(row)
             }
             return .object(["default_on": "aws", "providers": .array([.object(aws)]),
@@ -604,10 +637,20 @@ actor FakeSpacesBackend: SpacesTransport {
                             "checks": .array([.object(["name": "credentials", "ok": true, "detail": "account 1"])])])
         case "cloud_disconnect":
             return .object(["provider": arguments["provider"] ?? "aws", "disconnected": true, "left": .array([])])
+        case "cloud_approve":
+            return .object(["name": arguments["provider"] ?? "aws", "title": "AWS", "tier": "vm",
+                            "connected": true, "auth": "oidc", "status": "connected",
+                            "budget_usd_month": .number(arguments["deny"] == .bool(true) ? 50 : 500),
+                            "can_approve": false])
         case "cloud_audit":
             return .array([.object(["ts": "2026-10-21T00:00:00Z", "action": "resource_deleted",
                                     "provider": "aws", "kind": "instance", "id": "i-9", "space": "space-1",
                                     "actor": "sweep", "outcome": "ok", "detail": "expired"])])
+        case "cloud_cost":
+            return .object(["by": arguments["by"] ?? "space", "since": "2026-10-01",
+                            "until": "2026-10-24T12:00:00Z", "total_usd": .number(4.5),
+                            "rows": .array([.object(["key": "research", "usd": .number(4.5),
+                                                     "hours": .number(9), "machines": .number(2)])])])
         case "cloud_sweep":
             return .object(["dry_run": arguments["dry_run"] ?? true,
                             "resources": .array([.object(["provider": "aws", "id": "i-9", "type": "instance",

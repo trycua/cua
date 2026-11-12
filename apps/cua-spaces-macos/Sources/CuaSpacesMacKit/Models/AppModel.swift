@@ -54,6 +54,19 @@ public final class AppModel {
     public private(set) var roster: AppRosterState
     public var query = ""
     public var selection: MainSelection?
+    /// Several Spaces picked in the sidebar (⌘- or ⇧-click, ⌘A): the
+    /// detail says how many and offers what they can do together. Empty
+    /// while one item (`selection`) is selected.
+    public var pickedSpaceIds: Set<String> = []
+    /// The delete-and-leave confirm on screen (the core's
+    /// `spaces.bulkConfirm`), with the Spaces it asks about.
+    public var bulkAsk: BulkAsk?
+    /// The Spaces a confirmed bulk delete or leave is working through.
+    public internal(set) var bulkRunItems: [AppBulkItem]?
+    /// The ids of that run with their result in, so far.
+    public internal(set) var bulkFinished: [String] = []
+    /// The bulk delete or leave's done toast ("Deleted 3 Spaces.").
+    public var bulkToast: AppBulkDone?
     public var rosterError: String?
     /// Another app keeps its own daemon running and this app uses it (the
     /// supervisor yields to it after replacing it once): one line above
@@ -64,9 +77,9 @@ public final class AppModel {
     public var showingNewSpace = false
     /// The command palette (⌘K).
     public var showingPalette = false
-    /// Run by the Space's detail when it shows (`DetailRequest`).
-    public var detailRequest: DetailRequest?
     public var confirmDeleteId: String?
+    /// A Space menu's action, run by that Space's detail when it shows.
+    public var detailRequest: DetailRequest?
     /// A teleport the notch started: the Space and the dropped app.
     public var pendingTeleport: PendingTeleport?
     public private(set) var loaded = false
@@ -78,6 +91,15 @@ public final class AppModel {
     /// Your other computers' rows are the last known ones (kept across a
     /// daemon restart), not yet confirmed.
     public private(set) var listStale = false
+    /// What your other computers are creating now (CUA-2349), as the last list read said.
+    public private(set) var listCreating: [SpaceCreatingElsewhere] = []
+    /// `listCreating` less what the list already has a row for (the same
+    /// name on that computer), like the Electron host.
+    public var creatingElsewhere: [SpaceCreatingElsewhere] {
+        listCreating.filter { c in
+            !spaces.contains { $0.name == c.name && $0.id.hasPrefix("relay:\(c.machineId)") }
+        }
+    }
     /// The Spaces page's empty state and "Reaching N computers…" line, as
     /// the core decides them: the first-run page only for a complete list.
     public var listView: AppListView {
@@ -99,7 +121,7 @@ public final class AppModel {
     public let checklist: ChecklistModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.
     public internal(set) var storage: StorageModel
-    /// Settings, Agents: the provider keys agents get (kept by the daemon).
+    /// Settings, Connections: the provider keys agents get (kept by the daemon).
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel
@@ -161,10 +183,6 @@ public final class AppModel {
     public let pageDropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
-    /// The running app's version: with it, the New UI's default follows
-    /// the update channel and the version (`appSettingsResolveNewUi`);
-    /// without it (tests, fixtures), the New UI is on only by choice.
-    let appVersion: String?
     /// Settings → About and the updater (none until `AppEnvironment`
     /// starts one).
     public var updates = UpdatesModel(updater: nil)
@@ -175,7 +193,7 @@ public final class AppModel {
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
                 devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
-                startup: StartupModel? = nil, appVersion: String? = nil) {
+                startup: StartupModel? = nil) {
         self.backend = backend
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
@@ -198,9 +216,7 @@ public final class AppModel {
         self.keyvault = keyvault
         self.onboarding = onboarding
         self.settingsPath = settingsPath
-        self.appVersion = appVersion
-        var settings = appSettingsLoad(path: settingsPath)
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
+        let settings = appSettingsLoad(path: settingsPath)
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
             defaultLocation: settings.defaultLocation,
@@ -209,6 +225,8 @@ public final class AppModel {
             hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
+        // Pinned Spaces and desktops come first in the notch, across restarts.
+        notch.setPinned(settings.notchPinned)
         // The notch tiles and the preview cover read one thumbnail store,
         // filled from the SDK's shared cache.
         notch.thumbnails.fetch = { [backend] id, maxAgeMs in await backend.thumbnail(id: id, maxAgeMs: maxAgeMs) }
@@ -229,6 +247,10 @@ public final class AppModel {
             self.saveSettings()
         }
         self.host.onChange = { [weak self] in self?.recompose() }
+        // This Mac started accepting Spaces from your other computers: ask
+        // for Local Network now, while someone is here to answer, not when a
+        // peer's macOS create later meets macOS's bare prompt.
+        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting(bySetup: $0) }
         followChecklist()
         // No notification prompt before the first run is done.
         PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
@@ -344,13 +366,12 @@ public final class AppModel {
             access: detail.access))
     }
 
-    /// The detail without what Settings, Experiments hides (Share while
-    /// Sharing is off), as this Mac sees it: a machine reached through the
+    /// The detail as this Mac sees it: a machine reached through the
     /// relay has its Connect greyed out while this Mac is not enrolled, and
     /// one that does not share its desktop shows why in its place.
     public func detail(_ space: AppSpace) -> AppSpaceDetail {
         appSpaceDetailFor(space: space, usage: usage[space.id], hostArch: Self.hostArch,
-                          experiments: settings.experiments, access: devices.accessNotice)
+                          access: devices.accessNotice)
     }
 
     /// The Spaces one of your machines provides (its detail lists them).
@@ -393,7 +414,8 @@ public final class AppModel {
         return appMachinesView(input: AppMachinesViewInput(
             page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
             health: machineHealth.keys.sorted().compactMap { machineHealth[$0] },
-            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded))
+            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded,
+            clouds: cloud.cloudsInput))
     }
 
     /// What each machine's own daemon last reported of its health, by
@@ -458,6 +480,19 @@ public final class AppModel {
             }
             for (id, h) in results where wanted.contains(id) { machineHealth[id] = h }
         }
+        // This Mac's daemon blocked while this app is allowed: started again,
+        // then checked again, so the issue the person just fixed goes.
+        if let this = targets.first(where: { $0.target.isEmpty }),
+           let h = machineHealth[this.id], Self.localNetworkFails(h),
+           await restartDaemonIfLocalNetworkStale() {
+            let r = await withTimeout(seconds: Self.healthTimeout) { [backend = self.backend] in
+                try await backend.machineHealth(machine: nil)
+            }
+            if case .success(var fresh) = r {
+                fresh.id = this.id
+                machineHealth[this.id] = fresh
+            }
+        }
     }
 
     /// This Mac as the Machines page names it: its name, the app's
@@ -468,7 +503,7 @@ public final class AppModel {
         let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
             : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
         return AppMachinesViewAbout(
-            computerName: Foundation.Host.current().localizedName ?? "",
+            computerName: ComputerName.current ?? "",
             appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
             osVersion: os)
     }()
@@ -491,17 +526,34 @@ public final class AppModel {
 
     /// Remove from account: `machine` leaves the relay directory, then
     /// `device` is revoked. This Mac's own host setup is the host's
-    /// `remove` instead.
-    public func removeMachine(machine: String?, device: String?) async throws {
-        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+    /// `remove` instead. The Spaces made on the machine are detached (they
+    /// come back when it is added again), or with `deleteSpaces` deleted too.
+    public func removeMachine(machine: String?, device: String?, deleteSpaces: Bool = false) async throws {
+        if let machine {
+            if deleteSpaces {
+                try await backend.relayUnregisterComputer(id: "relay:\(machine)", deleteSpaces: true)
+            } else {
+                try await backend.relayUnregister(id: "relay:\(machine)")
+            }
+        }
         if let device {
             guard let relay = devices.devices else {
-                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+                throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
             }
             try await relay.revoke(id: device)
         }
         await devices.refresh()
         await refresh(fresh: true)
+    }
+
+    /// Forgets a cloud (`cloud_disconnect`); with `deleteResources`, deletes what Cua created there first.
+    public func disconnectCloud(_ provider: String, deleteResources: Bool) async throws {
+        try await cloud.disconnect(provider, deleteResources: deleteResources)
+    }
+
+    /// Approves or denies what an agent set up in a cloud (`cloud_approve`).
+    public func approveCloud(_ provider: String, approve: Bool) async throws {
+        try await cloud.approve(provider, approve: approve)
     }
 
     /// What each machine sharing its desktop (`relay:<machine>`) reported
@@ -517,9 +569,12 @@ public final class AppModel {
 
     /// Your Spaces: neither This machine nor one of your machines.
     var realSpaces: [AppSpace] {
-        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost && !$0.hidden }
     }
 
+    /// Where "Add a computer" opens: the New UI's sheet (one row per way to
+    /// add a computer, and Have a code? Enter it).
+    public static let addComputerRoute = MainUIRoute.path("/spaces?add=1")
     /// Agent runs seen in any Space (a Space's detail, the web UI's
     /// Agents page): the checklist's "Run an agent".
     public private(set) var agentRunsSeen = 0
@@ -529,6 +584,7 @@ public final class AppModel {
         if count > agentRunsSeen { agentRunsSeen = count }
     }
 
+    /// "Add a computer": the New UI's sheet, whichever UI is up.
     /// Whether the persistent agents were read for the checklist.
     private var checklistReadAgents = false
 
@@ -551,8 +607,7 @@ public final class AppModel {
 
     /// "Add a machine": New Space's "Connect by address".
     public func openAddMachine() async {
-        await openNativeNewSpace()
-        wizard.send(.showAddress)
+        openWebRoute?(Self.addComputerRoute)
     }
 
     /// Getting started (the palette, Help): opens the checklist again.
@@ -738,6 +793,24 @@ public final class AppModel {
         }
     }
 
+    /// Keeps the notch's hotspot indicator on while a Space exits through
+    /// this computer ("Exit through: This computer"), as the hotspot's own
+    /// indicator is. Read every 15 seconds, as the Electron notch does.
+    public func startExitsPoll(every interval: Duration = .seconds(15)) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.syncNotchExits()
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    /// Reads the exits once and shows them on the notch.
+    func syncNotchExits() async {
+        notch.setExits(await backend.exitsThroughThisMachine())
+    }
+
     /// The daemon's push of list changes (`watchList`), while it is kept.
     private var listWatch: AnyObject?
     /// The read a push started, and whether another push came meanwhile.
@@ -876,15 +949,17 @@ public final class AppModel {
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: list.rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
+            reconcileAgentCreates()
             recompose()
             loaded = true
             listIncomplete = list.incomplete
             listReaching = list.reaching
             listStale = list.stale
+            listCreating = list.creating
             // Your other computers could not be read: their rows are the
             // last known ones (this Mac's are current).
             rosterError = list.notice.isEmpty ? nil
-                : "Could not reach your other computers. Their Spaces may be out of date."
+                : "Could not reach your other machines. Their Spaces may be out of date."
             await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).
@@ -946,6 +1021,7 @@ public final class AppModel {
     static let incompleteFollowMs = 500
 
     public func select(_ id: String) {
+        pickedSpaceIds = []
         selection = .space(id)
         send(.select(id: id, now: Int64(Date().timeIntervalSince1970 * 1000)))
     }
@@ -959,6 +1035,9 @@ public final class AppModel {
     /// window (the web onboarding), which nothing else would while only
     /// Settings is up.
     public var openOnboarding: (() -> Void)?
+    /// Opens the New UI window at a route (set at launch). "Add a computer"
+    /// uses it: the sheet lives in the New UI, whichever UI is up.
+    public var openWebRoute: ((MainUIRoute) -> Void)?
 
     /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
     /// "New Space on <name>…".
@@ -1207,7 +1286,7 @@ public final class AppModel {
                           provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
-                          host: machine, hostName: machine.flatMap(machineName(of:))))
+                          host: machine, hostName: machine.flatMap(machineName(of:)), parent: nil))
         // The detail shows the live desktop inline: selecting the new Space
         // opens it (`plan.openDesktop`), starting with its progress.
         if open { select(pendingId) }
@@ -1224,6 +1303,26 @@ public final class AppModel {
     /// on this Mac (the core's steps; nil in fixtures and tests that do not
     /// set one).
     public var localNetworkGate: LocalNetworkGate?
+
+    /// The Local Network steps run for hosting (tests await it).
+    @ObservationIgnored var hostingLocalNetworkCheck: Task<Void, Never>?
+
+    /// The Local Network steps for a Mac that accepts Spaces from your other
+    /// computers: the explanation, then macOS's prompt, or the fix when access
+    /// was turned off. Never for a sign-in's setup, nor a setup during the
+    /// first run (its page sets this Mac up as it signs in): the first run's
+    /// permissions step asks instead, and finishing the first run asks
+    /// nothing (no dialog as Home opens). The switch and a join code always
+    /// ask. Cancel or a refusal changes nothing else; a local macOS create
+    /// asks again.
+    func askLocalNetworkForHosting(bySetup: Bool = false) {
+        guard onboarding.completed || !bySetup, hostingLocalNetworkCheck == nil, let gate = localNetworkGate,
+              appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }
+        hostingLocalNetworkCheck = Task { @MainActor [weak self] in
+            try? await gate.check()
+            self?.hostingLocalNetworkCheck = nil
+        }
+    }
 
     /// What the daemon found when it last tried this Mac's local network:
     /// true allowed, false blocked, nil not known yet. The daemon is the
@@ -1245,8 +1344,10 @@ public final class AppModel {
             daemonLocalNetworkBusy = false
             daemonLocalNetworkAt = Date()
         }
-        let backend = self.backend
-        let answer = await withTimeout(seconds: 20) { try await backend.machineHealth(machine: nil) }
+        var answer = await withTimeout(seconds: 20) { [backend] in try await backend.machineHealth(machine: nil) }
+        if case .success(let health) = answer, Self.localNetworkFails(health), await restartDaemonIfLocalNetworkStale() {
+            answer = await withTimeout(seconds: 20) { [backend] in try await backend.machineHealth(machine: nil) }
+        }
         guard case .success(let health) = answer,
               let check = health.checks.first(where: { $0.id == "machine.local_network" }) else { return }
         switch check.status {
@@ -1254,6 +1355,33 @@ public final class AppModel {
         case "fail": daemonLocalNetworkAllowed = false
         default: break
         }
+    }
+
+    /// Starts this app's daemon again (the supervisor's restart, then a new
+    /// connection); true when it runs afterwards. Set with the live services.
+    public var restartDaemon: (@MainActor () async -> Bool)?
+    @ObservationIgnored private var localNetworkRestartedAt: Date?
+    /// At most one restart for Local Network in this long.
+    static let localNetworkRestartEvery: TimeInterval = 600
+
+    static func localNetworkFails(_ health: AppMachinesViewHealth) -> Bool {
+        health.checks.contains { $0.id == "machine.local_network" && $0.status == "fail" }
+    }
+
+    /// The daemon says Local Network is off, but this app's own connect gets
+    /// out: macOS allows the app, and the daemon still runs with what macOS
+    /// decided for it before (access turned on while it ran, or a daemon an
+    /// earlier launch of the app started). It is started again, at most once
+    /// every `localNetworkRestartEvery`, so the issue clears once access is
+    /// on. True when it was started again.
+    func restartDaemonIfLocalNetworkStale() async -> Bool {
+        guard let restartDaemon, let gate = localNetworkGate else { return false }
+        let now = listClock()
+        if let at = localNetworkRestartedAt, now.timeIntervalSince(at) < Self.localNetworkRestartEvery { return false }
+        guard await gate.probe.access() == .allowed else { return false }
+        localNetworkRestartedAt = now
+        NSLog("Cua Spaces: Local Network is allowed for this app but the cua daemon is blocked; starting the daemon again")
+        return await restartDaemon()
     }
 
     /// How long the daemon may take to take a create (its first progress
@@ -1359,7 +1487,7 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
-            devices.noteRefusal(LiveSpacesBackend.words(error))
+            devices.noteRefusal(LiveSpacesBackend.words(error), surface: "app_create")
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
                              errorVariant: Self.errorVariant(error), now: Self.nowMs()))
             throw error
@@ -1395,6 +1523,22 @@ public final class AppModel {
         }
     }
 
+    /// The Spaces agents asked this computer to make show as the same pending rows a New Space made
+    /// here has (its page with progress, Cancel, Try again, Remove): the daemon records each create
+    /// and the core turns the record into row actions, the same for every poll.
+    func reconcileAgentCreates() {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        for action in appAgentCreatesActions(state: creates, nowMs: now) {
+            creates = appCreatesReduce(state: creates, action: action)
+        }
+    }
+
+    /// The row goes; for an agent's create, its record is hidden too so the next poll does not draw it again.
+    func dismissPending(_ id: String) {
+        sendCreate(.dismiss(id: id))
+        if appAgentCreateIsAgents(id: id) { appAgentCreateRemove(pendingId: id) }
+    }
+
     /// Cancel on a Space still being created: the row shows Cancelling
     /// until the SDK stopped the create and removed what it made, then goes;
     /// a cancel that fails says why on the row.
@@ -1404,7 +1548,10 @@ public final class AppModel {
         sendCreate(.cancelStart(id: pendingId))
         Task {
             do {
-                try await backend.cancelCreate(createId: pendingId)
+                // An agent's create is cancelled by the name it is made under.
+                let createId = appAgentCreateIsAgents(id: pendingId)
+                    ? (creates.pending.first { $0.id == pendingId }?.name ?? pendingId) : pendingId
+                try await backend.cancelCreate(createId: createId)
                 sendCreate(.cancelDone(id: pendingId))
             } catch {
                 sendCreate(.cancelFail(id: pendingId, error: LiveSpacesBackend.words(error)))
@@ -1432,7 +1579,12 @@ public final class AppModel {
         confirmDeleteId = nil
         // A failed create is only removed from the list.
         if appCreatesIsPending(id: space.id) {
-            sendCreate(.dismiss(id: space.id))
+            // A create still going is stopped (and what it made removed); a failed one only leaves the list.
+            if creates.pending.contains(where: { $0.id == space.id && $0.error == nil && $0.spaceId == nil }) {
+                cancelCreate(space.id)
+            } else {
+                dismissPending(space.id)
+            }
             return
         }
         guard !isDeleting(space.id) else { return }
@@ -1451,6 +1603,69 @@ public final class AppModel {
                 show(error: appDeleteFailedText(name: space.name, error: LiveSpacesBackend.words(error)))
             }
         }
+    }
+
+    /// Bulk delete or leave (after the page's confirmation): every row says
+    /// Deleting at once and goes when its own result comes back, at most
+    /// three at a time; one failure never stops the rest. One result per
+    /// id, in order; an id that is not listed answers not found.
+    public func bulk(ids: [String], leave: Bool,
+                     onResult: ((SpaceBulkResult) -> Void)? = nil) async -> [SpaceBulkResult] {
+        confirmDeleteId = nil
+        var results: [String: SpaceBulkResult] = [:]
+        var todo: [AppSpace] = []
+        for id in ids {
+            guard let space = spaces.first(where: { $0.id == id }) else {
+                results[id] = SpaceBulkResult(id: id, ok: false, error: "No Space \(id).")
+                continue
+            }
+            if isDeleting(id) {
+                results[id] = SpaceBulkResult(id: id, ok: false, error: "\(space.name) is already going.")
+                continue
+            }
+            todo.append(space)
+        }
+        if !todo.isEmpty, !leave { recordFeature("space_delete") }
+        for space in todo {
+            sendCreate(.deleteStart(id: space.id, now: Self.nowMs()))
+            usage[space.id] = nil
+            notch.thumbnails[space.id] = nil
+        }
+        let backend = backend
+        var queue = todo.map(\.id)
+        await withTaskGroup(of: SpaceBulkResult.self) { group in
+            func next() {
+                guard !queue.isEmpty else { return }
+                let id = queue.removeFirst()
+                group.addTask {
+                    let r = leave ? await backend.leave(ids: [id]) : await backend.deleteMany(ids: [id])
+                    return r.first ?? SpaceBulkResult(id: id, ok: false, error: "No answer.")
+                }
+            }
+            for _ in 0..<min(3, queue.count) { next() }
+            for await r in group {
+                results[r.id] = r
+                sendCreate(r.ok ? .deleteDone(id: r.id) : .deleteFail(id: r.id))
+                onResult?(r)
+                next()
+            }
+        }
+        if !todo.isEmpty { await refresh(fresh: true) }
+        return ids.map { results[$0] ?? SpaceBulkResult(id: $0, ok: false, error: "No answer.") }
+    }
+
+    /// Gives a Space a new name (its id stays the same), then reads the list
+    /// again so every view shows it. A refusal (a Space shared with you, a
+    /// name taken or against the rule) throws in plain words; nothing
+    /// changes.
+    public func rename(_ space: AppSpace, to name: String) async throws {
+        do {
+            try await backend.rename(id: space.id, name: name)
+        } catch {
+            // The SDK's sentence without its kind ("permission denied: ...").
+            throw FixtureError(message: KeyvaultModel.words(error))
+        }
+        await refresh(fresh: true)
     }
 
     /// The power button next to Delete: turns the Space off (`on` false:
@@ -1480,8 +1695,47 @@ public final class AppModel {
 
     // MARK: - Settings and banners
 
+    /// Pin to notch / Unpin from notch: the Spaces and machine desktops the
+    /// notch lists first (`AppSettings.notchPinned`, in pin order). Saved
+    /// with the settings, so a pin survives a restart; it grants nothing.
+    public func setNotchPinned(_ ids: [String]) {
+        guard ids != settings.notchPinned else { return }
+        settings.notchPinned = ids
+        saveSettings()
+        notch.setPinned(ids)
+    }
+
+    /// Pins `id` to the notch, or unpins it when it is pinned.
+    public func togglePin(_ id: String) {
+        setNotchPinned(appNotchTogglePin(pinned: settings.notchPinned, id: id))
+    }
+
     public func saveSettings() {
         try? appSettingsSave(path: settingsPath, settings: settings)
+    }
+
+    // MARK: - Tips
+
+    /// Applies a tips event (the core's `tips::reduce`) and saves the tips.
+    public func sendTips(_ event: AppTipsEvent) {
+        let next = appTipsReduce(state: settings.tips, event: event)
+        guard next != settings.tips else { return }
+        settings.tips = next
+        saveSettings()
+    }
+
+    /// The tip at the sidebar's foot (the core's `tips::view`, place
+    /// sidebar): it belongs to no page of this UI, so nothing suppresses it.
+    public var sidebarTip: AppTip? {
+        Self.sidebarTip(machinesOnline: machinePageRows.filter(\.online).count, tips: settings.tips)
+    }
+
+    /// The sidebar's tip for `machinesOnline` of your computers online.
+    public static func sidebarTip(machinesOnline: Int, tips: AppTipsState) -> AppTip? {
+        appTipsView(place: .sidebar, facts: AppTipFacts(
+            newestRunning: nil, spacePage: nil, agentsConnected: [], agentsInstalled: [],
+            hasStopped: false, deletableStopped: 0, diskNearlyFull: false,
+            secondComputerOnline: machinesOnline >= 2, sharedAny: false, pageTipShown: false), state: tips)
     }
 
     public func show(error: String) {
@@ -1585,6 +1839,8 @@ public final class AppModel {
             // Relay sharing paused while signed out comes back for its
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
+            // Signing in adds this computer (a computer set up before keeps its settings).
+            await host.addAfterSignIn()
             await reloadTeams()
             await reloadShareRemovals()
         } catch {
@@ -1655,8 +1911,74 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
-            overflow: placementOverflow))
+            autoConnect: settings.autoConnect,
+            overflow: placementOverflow,
+            runtimes: runtimesInput,
+            showTips: !settings.tips.off,
+            closeWindowKeepsRunning: settings.closeWindowKeepsRunning,
+            closeNotice: !settings.closeNoticeOff))
+    }
+
+    // MARK: - Runtimes (Settings, Advanced)
+
+    /// Each kind of Space's runtime setting and what is installed for it,
+    /// once read (`runtime_kinds`).
+    public private(set) var runtimeKinds: [AppRuntimeKindInput]?
+    /// The runtime doctor's answer for Settings (ready backends, why not),
+    /// once read.
+    public private(set) var runtimeDoctor: (ready: [String], details: [String: String])?
+    /// When the runtimes were last read.
+    @ObservationIgnored private var runtimesReadAt: Date?
+    @ObservationIgnored private var runtimesReading = false
+    /// How long a read of the runtimes stands before the page's next
+    /// `settings.get` reads them again.
+    static let runtimesRefreshInterval: TimeInterval = 15
+
+    /// What Settings, Advanced's runtime rows are laid out from
+    /// (`runtimes::section`): every kind, "Checking…" until read.
+    public var runtimesInput: AppRuntimesInput {
+        AppRuntimesInput(os: .macos, hostArch: Self.hostArch,
+                         localBackends: runtimeDoctor?.ready, localDetails: runtimeDoctor?.details,
+                         kinds: runtimeKinds)
+    }
+
+    /// Reads the runtimes again when the last read is older than
+    /// `runtimesRefreshInterval` (or `force`), in the background: the page
+    /// hears `settings.changed` when they come in.
+    public func refreshRuntimesIfStale(force: Bool = false) {
+        guard servicesIn, !runtimesReading else { return }
+        if !force, let at = runtimesReadAt, Date().timeIntervalSince(at) < Self.runtimesRefreshInterval { return }
+        runtimesReading = true
+        Task { @MainActor in
+            await readRuntimes()
+            runtimesReading = false
+        }
+    }
+
+    /// Reads each kind's setting, what is installed and the doctor.
+    public func readRuntimes() async {
+        async let doctor = backend.localRuntimes()
+        async let kinds = backend.runtimeKinds()
+        let (d, k) = await (doctor, kinds)
+        runtimesReadAt = Date()
+        if let d, runtimeDoctor.map({ $0.ready != d.ready || $0.details != d.details }) ?? true { runtimeDoctor = d }
+        if let k, k != runtimeKinds { runtimeKinds = k }
+    }
+
+    /// A runtime row's choice (`runtime:<kind>`, `runtime-detected:<kind>`,
+    /// `runtime-path:<kind>`): the setting the core names, written; the
+    /// runtimes read again. Whether `row` was one.
+    func chooseRuntime(row: String, option: String) async -> Bool {
+        guard let change = appRuntimesChoose(input: runtimesInput, row: row, option: option) else { return false }
+        do {
+            try await backend.setRuntimeSetting(key: change.key, value: change.value)
+        } catch {
+            show(error: LiveSpacesBackend.words(error))
+        }
+        await readRuntimes()
+        // New Space's "Use built-in" switches read the same settings.
+        await loadRuntimeSettings()
+        return true
     }
 
     /// Teams for Settings: the account's organizations with their people
@@ -1716,6 +2038,19 @@ public final class AppModel {
 
     // MARK: - Experiments
 
+    /// The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as
+    /// the cua home keeps them: what `cua experiments enable` set shows here
+    /// the next time Settings is read.
+    public func refreshDaemonExperiments() {
+        let kept = appSettingsLoad(path: settingsPath).experiments
+        guard kept.ciRunners != settings.experiments.ciRunners
+            || kept.tcpShares != settings.experiments.tcpShares
+            || kept.mobile != settings.experiments.mobile else { return }
+        settings.experiments.ciRunners = kept.ciRunners
+        settings.experiments.tcpShares = kept.tcpShares
+        settings.experiments.mobile = kept.mobile
+    }
+
     /// Settings, Experiments: a switch and one line per experiment.
     public var experimentsPage: AppSettingsPage { appExperimentsPage(experiments: settings.experiments) }
 
@@ -1734,14 +2069,10 @@ public final class AppModel {
         applyExperiments(before: before, after: after)
     }
 
-    /// Settings → About's channel, saved; with no choice of the user's, the
-    /// New UI follows the channel's default at once.
+    /// Settings → About's channel, saved.
     public func setUpdateChannel(_ channel: AppUpdateChannel) {
         settings.updateChannel = channel
-        let before = settings.experiments
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         saveSettings()
-        if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
     /// What follows a change of the switches: an open New Space.
@@ -1822,15 +2153,28 @@ public final class AppModel {
 
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
-        lumeSource = await backend.lumeSource()
-        linuxSource = await backend.linuxSource()
-        placementOverflow = await backend.placementOverflow()
+        await loadRuntimeSettings()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
         await reloadTeams()
         await reloadAgents()
         await keyvault.refresh()
+    }
+
+    /// Reads the settings Settings, Advanced shows from the config file
+    /// (`runtime.lume`, `runtime.linux`, `placement.overflow`). The page's
+    /// `settings.get` asks for them each time: without this read the
+    /// runtime choices were missing from the page (only New Space's probe
+    /// read them). Each one changes only when its value does, so the
+    /// `settings.changed` it causes never loops.
+    public func loadRuntimeSettings() async {
+        let lume = await backend.lumeSource()
+        let linux = await backend.linuxSource()
+        let overflow = await backend.placementOverflow()
+        if lume != lumeSource { lumeSource = lume }
+        if linux != linuxSource { linuxSource = linux }
+        if overflow != placementOverflow { placementOverflow = overflow }
     }
 
     /// Opens a website page (the account app's Teams page and billing).
@@ -1864,20 +2208,8 @@ public final class AppModel {
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()
-        case "macos-runtime":
-            do {
-                try await backend.setLumeSource(option)
-                lumeSource = await backend.lumeSource() ?? option
-            } catch {
-                show(error: LiveSpacesBackend.words(error))
-            }
-        case "linux-runtime":
-            do {
-                try await backend.setLinuxSource(option)
-                linuxSource = await backend.linuxSource() ?? option
-            } catch {
-                show(error: LiveSpacesBackend.words(error))
-            }
+        case _ where row.hasPrefix("runtime"):
+            _ = await chooseRuntime(row: row, option: option)
         case "placement-overflow":
             do {
                 try await backend.setPlacementOverflow(option == "on")
@@ -1903,6 +2235,10 @@ public final class AppModel {
             // "Never ask again".
             await keyvault.setSkipUnlockPrompt(option != "on")
             if let error = keyvault.error { show(error: error) }
+        case "tips", "reset-tips", "close-window", "close-notice":
+            // General's Show tips, Reset tips and "When I close the window": the core's rule (`settings::choose`).
+            settings = appSettingsChoose(settings: settings, row: row, option: option)
+            saveSettings()
         case "telemetry":
             do {
                 telemetryInput = try telemetry?.setEnabled(option == "on")
@@ -1926,6 +2262,8 @@ public final class AppModel {
         case "account": await signOut()
         case "sign-in": await beginSignIn()
         case "sign-in-code": cancelSignIn()
+        case "reset-tips":
+            await choose(row: row, option: "press")
         case "welcome":
             onboarding.restart()
             openOnboarding?()

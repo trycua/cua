@@ -90,11 +90,31 @@ async fn http_get(addr: std::net::SocketAddr, path: &str) -> (String, String) {
     )
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn any_oci_image_is_a_full_space() {
+#[test]
+fn any_oci_image_is_a_full_space() {
     if !gated("CUA_E2E_OCI_ANY") {
         return;
     }
+    // The create path's futures are large in a debug build: run the test on
+    // a thread with a stack sized for them rather than the test thread's.
+    std::thread::Builder::new()
+        .name("oci_any".into())
+        .stack_size(64 << 20)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
+                .thread_stack_size(16 << 20)
+                .enable_all()
+                .build()
+                .expect("tokio runtime")
+                .block_on(Box::pin(any_oci_image_body()))
+        })
+        .expect("spawn the e2e thread")
+        .join()
+        .unwrap_or_else(|p| std::panic::resume_unwind(p));
+}
+
+async fn any_oci_image_body() {
     init_tracing();
     let home = std::env::var("CUA_HOME").expect("set CUA_HOME to a temporary directory");
     assert!(

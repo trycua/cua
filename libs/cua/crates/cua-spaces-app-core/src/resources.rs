@@ -125,10 +125,27 @@ pub struct GuestUsage {
     pub memory_limited: bool,
     /// Disk in use, bytes.
     pub disk_used: u64,
-    /// Disk size, bytes.
-    pub disk_total: u64,
+    /// Disk size, bytes; none when the guest's file system has no size of
+    /// its own. A sentinel (`i64::MAX`, `u64::MAX`, -1) or 0 reads as none
+    /// ([`known_size`]), so no shell ever shows one.
+    #[serde(deserialize_with = "de_known_size")]
+    pub disk_total: Option<u64>,
     /// `disk_total` is the guest's own disk.
     pub disk_limited: bool,
+}
+
+/// Sizes at or above this are "unlimited" or "unknown" sentinels, never
+/// sizes (no volume holds an exbibyte).
+pub const SIZE_SENTINEL_FLOOR: u64 = 1 << 60;
+
+/// A size, or none when it is 0 or a sentinel.
+pub fn known_size(bytes: u64) -> Option<u64> {
+    (bytes > 0 && bytes < SIZE_SENTINEL_FLOOR).then_some(bytes)
+}
+
+fn de_known_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    let v = Option::<serde_json::Number>::deserialize(d)?;
+    Ok(v.and_then(|n| n.as_u64()).and_then(known_size))
 }
 
 /// What a Space costs this Mac's disk.
@@ -159,8 +176,25 @@ pub struct SpaceResources {
     pub disk_allocated: u64,
     /// The guest's own numbers; none while it is off or unreachable.
     pub usage: Option<GuestUsage>,
-    /// What it costs this Mac; none for a container.
+    /// What it costs this Mac: its own data only, never the base it shares.
     pub disk_on_host: Option<DiskOnHost>,
+    /// The base image it is a copy-on-write copy of, counted once.
+    pub base: Option<SharedBase>,
+}
+
+/// A base image several Spaces share copy-on-write.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SharedBase {
+    /// Spaces with the same key share the same blocks.
+    pub key: String,
+    /// The image reference it came from (`ghcr.io/trycua/linux:24.04`).
+    pub image: String,
+    /// What it takes on this Mac, once; none when the runtime cannot tell
+    /// it apart from the Spaces' own data.
+    pub bytes: Option<u64>,
+    /// Local Spaces that use it, this one included.
+    pub shared_with: u32,
 }
 
 /// One sample of everything (`Spaces.resources`).
@@ -463,23 +497,39 @@ pub fn space_view(s: &SpaceResources) -> SpaceResourcesView {
             None => row(MEMORY, format_size(memory), None, ResourceTone::Normal),
         });
     }
-    let disk = if s.disk_allocated > 0 {
-        s.disk_allocated
-    } else {
+    // Space for files: what the Space itself holds on this Mac (never the
+    // base image it shares) of the size it was given. A file system with
+    // no size of its own has no total: only what it holds.
+    let disk = known_size(s.disk_allocated).or_else(|| {
         usage
             .filter(|u| u.disk_limited)
-            .map(|u| u.disk_total)
-            .unwrap_or(0)
-    };
-    if disk > 0 {
-        rows.push(row(
+            .and_then(|u| u.disk_total)
+            .and_then(known_size)
+    });
+    let own = s.disk_on_host.and_then(|d| d.bytes).or_else(|| {
+        // Not measured on this Mac: what the guest says it holds, only when
+        // that is its own data alone (an overlay with no size of its own; a
+        // VM's guest counts its base system too).
+        usage
+            .filter(|u| !u.disk_limited && u.disk_total.is_none())
+            .map(|u| u.disk_used)
+            .filter(|b| *b < SIZE_SENTINEL_FLOOR)
+    });
+    match (own, disk) {
+        (Some(b), Some(d)) => rows.push(row(
             FILES,
-            format!("up to {}", format_size(disk)),
-            usage
-                .filter(|u| u.disk_limited)
-                .and_then(|u| fraction(u.disk_used, u.disk_total)),
+            of_text(b, d),
+            fraction(b, d),
             ResourceTone::Normal,
-        ));
+        )),
+        (Some(b), None) => rows.push(row(FILES, format_size(b), None, ResourceTone::Normal)),
+        (None, Some(d)) => rows.push(row(
+            FILES,
+            format!("up to {}", format_size(d)),
+            None,
+            ResourceTone::Normal,
+        )),
+        (None, None) => {}
     }
 
     let on_this_mac = s.disk_on_host.as_ref().and_then(on_this_mac_text);
@@ -500,6 +550,322 @@ pub fn space_view(s: &SpaceResources) -> SpaceResourcesView {
         on_this_mac,
         off_line,
         live,
+    }
+}
+
+/// What one piece of "How it fits on this Mac" is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DiskFitKind {
+    /// Everything on the volume that is not a Space: your own files and apps.
+    Yours,
+    /// This Space's own data.
+    ThisSpace,
+    /// Every other Space's own data, together.
+    OtherSpaces,
+    /// A base image Spaces share, counted once.
+    Base,
+    /// Free space.
+    Free,
+}
+
+/// One piece of the bar and its legend entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskFitPart {
+    /// Stable key (`yours`, `space`, `others`, `free`, a base's key).
+    pub key: String,
+    /// What it is.
+    pub kind: DiskFitKind,
+    /// "Your own files and apps", the Space's name, "Ubuntu 24.04 image".
+    pub label: String,
+    /// Its size in words ("4.4 GB").
+    pub value: String,
+    /// More words, for a base: "shared by 3 Spaces", "only this Space uses
+    /// it".
+    pub detail: Option<String>,
+    /// Bytes, for the bar.
+    pub bytes: u64,
+    /// Its share of the bar, 0 to 1; the parts add up to 1.
+    pub fraction: f64,
+}
+
+/// "How it fits on this Mac": the volume's pieces, each counted once.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskFitView {
+    /// The volume's size in words ("2 TB").
+    pub total: String,
+    /// Your own files and apps, this Space, other Spaces, shared bases,
+    /// free: they add up to the volume.
+    pub parts: Vec<DiskFitPart>,
+    /// What could not be told apart, in plain words; none when everything
+    /// was measured.
+    pub note: Option<String>,
+    /// The low-disk warning, when it is true.
+    pub warning: Option<WarningView>,
+}
+
+/// An image reference as a name: `ghcr.io/trycua/linux:24.04` is
+/// "linux 24.04".
+pub fn image_name(reference: &str) -> String {
+    let r = reference.split('@').next().unwrap_or(reference);
+    let last = r.rsplit('/').next().unwrap_or(r);
+    last.replacen(':', " ", 1)
+}
+
+/// "How it fits on this Mac" for Space `this` (named `name`) among the
+/// computer's `spaces` (this one included or not). `base_name` names this
+/// Space's base ("Ubuntu 24.04"); other bases are named from their image.
+pub fn disk_fit(
+    host: &ComputerResources,
+    this: &SpaceResources,
+    name: &str,
+    spaces: &[SpaceResources],
+    base_name: Option<&str>,
+) -> DiskFitView {
+    let total = host.disk_total;
+    let free = host.disk_free.min(total);
+    let used = total - free;
+    let own = |s: &SpaceResources| s.disk_on_host.and_then(|d| d.bytes);
+    let this_own = own(this);
+    let others: u64 = spaces
+        .iter()
+        .filter(|s| s.id != this.id)
+        .filter_map(own)
+        .sum();
+    // Each base once, in the order the Spaces come (this Space's first).
+    let mut bases: Vec<&SharedBase> = Vec::new();
+    for b in std::iter::once(this)
+        .chain(spaces.iter().filter(|s| s.id != this.id))
+        .filter_map(|s| s.base.as_ref())
+    {
+        if !bases.iter().any(|o| o.key == b.key) {
+            bases.push(b);
+        }
+    }
+    let known_bases: u64 = bases.iter().filter_map(|b| b.bytes).sum();
+    let counted = this_own
+        .unwrap_or(0)
+        .saturating_add(others)
+        .saturating_add(known_bases);
+    let yours = used.saturating_sub(counted);
+    // Measurements a little off never make the parts overflow the bar.
+    let whole = total
+        .max(counted.saturating_add(yours).saturating_add(free))
+        .max(1);
+    let part = |key: &str, kind, label: String, detail: Option<String>, bytes: u64| DiskFitPart {
+        key: key.into(),
+        kind,
+        label,
+        value: format_size(bytes),
+        detail,
+        bytes,
+        fraction: bytes as f64 / whole as f64,
+    };
+    let mut parts = vec![part(
+        "yours",
+        DiskFitKind::Yours,
+        "Your own files and apps".into(),
+        None,
+        yours,
+    )];
+    if let Some(b) = this_own {
+        parts.push(part("space", DiskFitKind::ThisSpace, name.into(), None, b));
+    }
+    if others > 0 {
+        parts.push(part(
+            "others",
+            DiskFitKind::OtherSpaces,
+            "Other Spaces".into(),
+            None,
+            others,
+        ));
+    }
+    let mut note = this_own
+        .is_none()
+        .then(|| format!("Can't tell {name}'s own data apart from the image it shares."));
+    for b in &bases {
+        let label = match base_name.filter(|_| this.base.as_ref().is_some_and(|t| t.key == b.key)) {
+            Some(n) => format!("{n} image"),
+            None => format!("{} image", image_name(&b.image)),
+        };
+        let mine = this.base.as_ref().is_some_and(|t| t.key == b.key);
+        let detail = match (b.shared_with, mine) {
+            (0 | 1, true) => "only this Space uses it".to_string(),
+            (n, true) => format!("shared by {n} Spaces"),
+            (n, false) => format!("used by {n} Space{}", if n == 1 { "" } else { "s" }),
+        };
+        match b.bytes {
+            Some(bytes) => parts.push(part(&b.key, DiskFitKind::Base, label, Some(detail), bytes)),
+            None if mine && note.is_none() => {
+                note = Some(format!("Can't tell how much the shared {label} takes."));
+            }
+            None => {}
+        }
+    }
+    parts.push(part("free", DiskFitKind::Free, "Free".into(), None, free));
+    DiskFitView {
+        total: format_size(total),
+        parts,
+        note,
+        warning: warning_view(&host.warning),
+    }
+}
+
+/// One card of a Space's resources dialog: the label, the main number,
+/// the one "Given ..." line and the bar. No explanatory sentences.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpacePanelCard {
+    /// "Processor", "Memory" or "Space for files".
+    pub label: String,
+    /// The main number: "13% busy", "717 MB of 4 GB", "244 KB".
+    pub value: String,
+    /// "Given 2 of this Mac's 18 cores"; none when there is nothing given
+    /// to say.
+    pub given: Option<String>,
+    /// The bar, 0 to 1; none for a card with nothing to fill it against.
+    pub fraction: Option<f64>,
+}
+
+/// A Space's resources dialog: the three cards and how it fits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpacePanelView {
+    /// Processor, Memory, Space for files.
+    pub cards: Vec<SpacePanelCard>,
+    /// "How it fits on this Mac"; none without the computer's numbers.
+    pub fit: Option<DiskFitView>,
+}
+
+/// What a Space's resources dialog reads.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SpacePanelInput {
+    /// The Space's numbers.
+    pub space: SpaceResources,
+    /// Its name ("pipbox").
+    pub name: String,
+    /// Its computer's numbers, when it sent them.
+    pub host: Option<ComputerResources>,
+    /// "this Mac", or the other computer's name.
+    pub computer: String,
+    /// Every Space on that computer, for how it fits.
+    pub spaces: Vec<SpaceResources>,
+    /// The name of its base image's system ("Ubuntu 24.04"), when known.
+    pub base_name: Option<String>,
+}
+
+/// "this Mac's" / "Studio's".
+fn whose(computer: &str) -> String {
+    format!(
+        "{}\u{2019}s",
+        if computer.is_empty() {
+            "this Mac"
+        } else {
+            computer
+        }
+    )
+}
+
+/// A Space's resources dialog.
+pub fn space_panel(i: &SpacePanelInput) -> SpacePanelView {
+    let s = &i.space;
+    let usage = s.usage.filter(|_| s.power_state == "running");
+    let host = i.host.as_ref();
+    let whose = whose(&i.computer);
+    let cores = |n: u32| format!("{n} core{}", if n == 1 { "" } else { "s" });
+
+    let cpu_given = (s.cpu_allocated > 0).then(|| match host.filter(|h| h.cpu_count > 0) {
+        Some(h) => format!(
+            "Given {} of {whose} {}",
+            s.cpu_allocated,
+            cores(h.cpu_count)
+        ),
+        None => format!("Given {}", cores(s.cpu_allocated)),
+    });
+    let processor = SpacePanelCard {
+        label: PROCESSOR.into(),
+        value: match usage {
+            Some(u) => format!("{}% busy", u.cpu_percent.round().clamp(0.0, 100.0)),
+            None => "Stopped".into(),
+        },
+        given: cpu_given,
+        fraction: Some(
+            usage
+                .map(|u| (u.cpu_percent / 100.0).clamp(0.0, 1.0))
+                .unwrap_or(0.0),
+        ),
+    };
+
+    let mem_total = if s.memory_allocated > 0 {
+        s.memory_allocated
+    } else {
+        usage
+            .filter(|u| u.memory_limited)
+            .map(|u| u.memory_total)
+            .unwrap_or(0)
+    };
+    let mem_given = (s.memory_allocated > 0).then(|| match host.filter(|h| h.memory_total > 0) {
+        Some(h) => format!(
+            "Given {} of {whose} {}",
+            format_size(s.memory_allocated),
+            format_size(h.memory_total)
+        ),
+        None => format!("Given {}", format_size(s.memory_allocated)),
+    });
+    let memory = SpacePanelCard {
+        label: MEMORY.into(),
+        value: match usage {
+            Some(u) if mem_total > 0 => of_text(u.memory_used, mem_total),
+            Some(u) => format_size(u.memory_used),
+            None => "Off".into(),
+        },
+        given: mem_given,
+        fraction: Some(
+            usage
+                .and_then(|u| fraction(u.memory_used, mem_total))
+                .unwrap_or(0.0),
+        ),
+    };
+
+    // Space for files: what the Space itself holds on its computer (never
+    // the base image it shares, which "How it fits" counts once), of the
+    // size it was given. With no size of its own, only what it holds.
+    let size = known_size(s.disk_allocated).or_else(|| {
+        usage
+            .filter(|u| u.disk_limited)
+            .and_then(|u| u.disk_total)
+            .and_then(known_size)
+    });
+    let own = s.disk_on_host.and_then(|d| d.bytes).or_else(|| {
+        usage
+            .filter(|u| !u.disk_limited && u.disk_total.is_none())
+            .map(|u| u.disk_used)
+            .filter(|b| *b < SIZE_SENTINEL_FLOOR)
+    });
+    let files = SpacePanelCard {
+        label: FILES.into(),
+        value: match (own, size) {
+            (Some(b), Some(d)) => of_text(b, d),
+            (Some(b), None) => format_size(b),
+            (None, Some(d)) => format!("Up to {}", format_size(d)),
+            (None, None) => "\u{2014}".into(),
+        },
+        // The size it was given is already in the main number.
+        given: None,
+        fraction: match (own, size) {
+            (Some(b), Some(d)) => fraction(b, d),
+            _ => None,
+        },
+    };
+
+    SpacePanelView {
+        cards: vec![processor, memory, files],
+        fit: host
+            .filter(|h| h.disk_total > 0)
+            .map(|h| disk_fit(h, s, &i.name, &i.spaces, i.base_name.as_deref())),
     }
 }
 
@@ -603,7 +969,7 @@ mod tests {
                 memory_total: 8 * GIB,
                 memory_limited: true,
                 disk_used: 20 * GIB,
-                disk_total: 80 * GIB,
+                disk_total: Some(80 * GIB),
                 disk_limited: true,
                 ..Default::default()
             }),
@@ -612,6 +978,7 @@ mod tests {
                 allocated: 87 * GIB,
                 shares_space: true,
             }),
+            base: None,
         }
     }
 
@@ -685,11 +1052,12 @@ mod tests {
                     "4 cores \u{b7} 22% busy".to_string()
                 ),
                 ("Memory".to_string(), "3.1 of 8 GB".to_string()),
-                ("Space for files".to_string(), "up to 80 GB".to_string()),
+                // Its own data on this Mac, of the size it was given.
+                ("Space for files".to_string(), "31 of 80 GB".to_string()),
             ]
         );
         assert_eq!(v.rows[0].fraction, Some(0.22));
-        assert_eq!(v.rows[2].fraction, Some(0.25));
+        assert_eq!(v.rows[2].fraction, Some(31.0 / 80.0));
         assert_eq!(
             v.on_this_mac.as_deref(),
             Some("Uses about 31 GB on this Mac (shares space with other copies)")
@@ -716,10 +1084,11 @@ mod tests {
             [
                 ("Processor".to_string(), "4 cores".to_string()),
                 ("Memory".to_string(), "8 GB".to_string()),
-                ("Space for files".to_string(), "up to 80 GB".to_string()),
+                ("Space for files".to_string(), "6 of 80 GB".to_string()),
             ]
         );
-        assert!(v.rows.iter().all(|r| r.fraction.is_none()));
+        assert!(v.rows[..2].iter().all(|r| r.fraction.is_none()));
+        assert_eq!(v.rows[2].fraction, Some(6.0 / 80.0));
         assert_eq!(
             v.on_this_mac.as_deref(),
             Some("Uses about 6 GB on this Mac")
@@ -783,7 +1152,7 @@ mod tests {
         let v = space_view(&s);
         assert_eq!(v.rows[0].value, "4 cores \u{b7} 22% busy");
         assert_eq!(v.rows[1].value, "3.1 of 8 GB");
-        assert_eq!(v.rows[2].value, "up to 80 GB");
+        assert_eq!(v.rows[2].value, "31 of 80 GB");
     }
 
     #[test]
@@ -862,6 +1231,388 @@ mod tests {
             "vcpu", "rss", "apfs", "sparse", "qcow", "cgroup", "clone", "host",
         ] {
             assert!(!text.contains(jargon), "{jargon} in {text}");
+        }
+    }
+
+    /// A running Ubuntu container under gVisor: no size of its own.
+    fn container(json_disk_total: &str) -> SpaceResources {
+        serde_json::from_str(&format!(
+            r#"{{"id":"local:pipbox","powerState":"running","cpuAllocated":2,"memoryAllocated":{mem},
+                "diskAllocated":0,
+                "usage":{{"cpuCount":2,"cpuPercent":13,"memoryUsed":751619276,"memoryTotal":{mem},
+                         "memoryLimited":true,"diskUsed":249856,"diskTotal":{json_disk_total},"diskLimited":false}},
+                "diskOnHost":{{"bytes":249856,"allocated":249856,"sharesSpace":false}},
+                "base":{{"key":"sha256:9ac0","image":"ghcr.io/trycua/linux:24.04","bytes":4410000000,"sharedWith":1}}}}"#,
+            mem = 4 * GIB
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_sentinel_size_never_reaches_a_row() {
+        for sentinel in [
+            "9223372036854775807",  // i64::MAX
+            "9223372036854771712",  // gVisor: i64::MAX to a page
+            "18446744073709551615", // u64::MAX
+            "-1",
+            "0",
+            "null",
+        ] {
+            let s = container(sentinel);
+            assert_eq!(s.usage.unwrap().disk_total, None, "{sentinel}");
+            let v = space_view(&s);
+            let files = v.rows.iter().find(|r| r.label == FILES).unwrap();
+            // Only what it holds: no fake total, never "0 GB".
+            assert_eq!(files.value, "244 KB", "{sentinel}");
+            assert_eq!(files.fraction, None);
+            for r in &v.rows {
+                assert!(!r.value.contains("PB") && !r.value.contains("TB"), "{r:?}");
+            }
+        }
+        assert_eq!(known_size(i64::MAX as u64), None);
+        assert_eq!(known_size(u64::MAX), None);
+        assert_eq!(known_size(0), None);
+        assert_eq!(known_size(80 * GIB), Some(80 * GIB));
+    }
+
+    #[test]
+    fn memory_reads_the_way_macos_shows_it() {
+        // Given 4 GiB of a 36 GiB Mac: "4 GB" and "36 GB", never 4.3 and 39.
+        let s = container("0");
+        let v = space_view(&s);
+        assert_eq!(
+            v.rows.iter().find(|r| r.label == MEMORY).unwrap().value,
+            "717 MB of 4 GB"
+        );
+        assert_eq!(format_size(36 * GIB), "36 GB");
+        assert_eq!(format_size(500 * (1 << 20)), "500 MB");
+    }
+
+    fn host(free: u64) -> ComputerResources {
+        ComputerResources {
+            disk_total: 2 * TB,
+            disk_free: free,
+            ..mac()
+        }
+    }
+
+    fn total(v: &DiskFitView) -> f64 {
+        v.parts.iter().map(|p| p.fraction).sum()
+    }
+
+    #[test]
+    fn the_fit_counts_a_copy_on_write_base_once() {
+        let this = container("0");
+        let twin = SpaceResources {
+            id: "local:twin".into(),
+            disk_on_host: Some(DiskOnHost {
+                bytes: Some(2 * GIB),
+                allocated: 2 * GIB,
+                shares_space: false,
+            }),
+            base: this.base.clone().map(|b| SharedBase {
+                shared_with: 2,
+                ..b
+            }),
+            ..this.clone()
+        };
+        let this = SpaceResources {
+            base: twin.base.clone(),
+            ..this
+        };
+        let free = 6 * GIB;
+        let v = disk_fit(
+            &host(free),
+            &this,
+            "pipbox",
+            &[this.clone(), twin],
+            Some("Ubuntu 24.04"),
+        );
+        let kinds: Vec<_> = v.parts.iter().map(|p| (p.kind, p.label.as_str())).collect();
+        assert_eq!(
+            kinds,
+            [
+                (DiskFitKind::Yours, "Your own files and apps"),
+                (DiskFitKind::ThisSpace, "pipbox"),
+                (DiskFitKind::OtherSpaces, "Other Spaces"),
+                (DiskFitKind::Base, "Ubuntu 24.04 image"),
+                (DiskFitKind::Free, "Free"),
+            ]
+        );
+        let base = &v.parts[3];
+        assert_eq!(base.detail.as_deref(), Some("shared by 2 Spaces"));
+        assert_eq!(base.bytes, 4_410_000_000);
+        assert_eq!(v.parts[1].value, "244 KB");
+        // Used + this Space + others + the base once + free = the volume.
+        let sum: u64 = v.parts.iter().map(|p| p.bytes).sum();
+        assert_eq!(sum, 2 * TB);
+        assert!((total(&v) - 1.0).abs() < 1e-9);
+        assert_eq!(v.total, "2 TB");
+        assert_eq!(v.note, None);
+        assert!(v.warning.is_some(), "this Mac is low: the warning stays");
+    }
+
+    #[test]
+    fn the_last_user_of_a_base_says_so() {
+        let this = container("0");
+        let v = disk_fit(
+            &host(100 * GIB),
+            &this,
+            "pipbox",
+            std::slice::from_ref(&this),
+            None,
+        );
+        let base = v
+            .parts
+            .iter()
+            .find(|p| p.kind == DiskFitKind::Base)
+            .unwrap();
+        assert_eq!(base.label, "linux 24.04 image");
+        assert_eq!(base.detail.as_deref(), Some("only this Space uses it"));
+        assert!(v.parts.iter().all(|p| p.kind != DiskFitKind::OtherSpaces));
+    }
+
+    #[test]
+    fn a_space_with_no_base_is_its_own_data_only() {
+        let this = SpaceResources {
+            base: None,
+            ..space()
+        };
+        let v = disk_fit(
+            &host(100 * GIB),
+            &this,
+            "aurora",
+            std::slice::from_ref(&this),
+            None,
+        );
+        assert!(v.parts.iter().all(|p| p.kind != DiskFitKind::Base));
+        assert_eq!(v.parts[1].bytes, 31 * GIB);
+        let sum: u64 = v.parts.iter().map(|p| p.bytes).sum();
+        assert_eq!(sum, 2 * TB);
+    }
+
+    #[test]
+    fn what_cannot_be_told_apart_is_said_plainly() {
+        let this = SpaceResources {
+            disk_on_host: Some(DiskOnHost {
+                bytes: None,
+                allocated: 40 * GIB,
+                shares_space: true,
+            }),
+            base: Some(SharedBase {
+                key: "macos".into(),
+                image: "ghcr.io/trycua/macos:26".into(),
+                bytes: None,
+                shared_with: 1,
+            }),
+            ..space()
+        };
+        let v = disk_fit(
+            &host(100 * GIB),
+            &this,
+            "aurora",
+            std::slice::from_ref(&this),
+            None,
+        );
+        assert_eq!(
+            v.note.as_deref(),
+            Some("Can't tell aurora's own data apart from the image it shares.")
+        );
+        // Nothing guessed: no part for it.
+        assert!(
+            v.parts
+                .iter()
+                .all(|p| p.kind != DiskFitKind::ThisSpace && p.kind != DiskFitKind::Base)
+        );
+        let base_only = SpaceResources {
+            disk_on_host: Some(DiskOnHost {
+                bytes: Some(GIB),
+                allocated: 40 * GIB,
+                shares_space: true,
+            }),
+            ..this
+        };
+        let v = disk_fit(
+            &host(100 * GIB),
+            &base_only,
+            "aurora",
+            std::slice::from_ref(&base_only),
+            None,
+        );
+        assert_eq!(
+            v.note.as_deref(),
+            Some("Can't tell how much the shared macos 26 image takes.")
+        );
+    }
+
+    #[test]
+    fn measurements_a_little_off_never_overflow_the_bar() {
+        let mut this = container("0");
+        this.disk_on_host = Some(DiskOnHost {
+            bytes: Some(3 * TB),
+            allocated: 3 * TB,
+            shares_space: false,
+        });
+        let v = disk_fit(
+            &host(GIB),
+            &this,
+            "pipbox",
+            std::slice::from_ref(&this),
+            None,
+        );
+        assert_eq!(v.parts[0].bytes, 0);
+        assert!((total(&v) - 1.0).abs() < 1e-9);
+    }
+
+    /// The owner's Mac: 18 cores, 36 GiB, a 2 TB disk with 5.6 GB free.
+    fn owners_mac() -> ComputerResources {
+        ComputerResources {
+            cpu_count: 18,
+            memory_total: 36 * GIB,
+            disk_total: 2_000_000_000_000,
+            disk_free: 5_600_000_000,
+            warning: DiskWarning {
+                level: DiskLevel::Critical,
+                free: 5_600_000_000,
+                total: 2_000_000_000_000,
+                threshold: 5 * GIB,
+            },
+            ..mac()
+        }
+    }
+
+    fn panel(s: SpaceResources) -> SpacePanelView {
+        space_panel(&SpacePanelInput {
+            spaces: vec![s.clone()],
+            space: s,
+            name: "pipbox".into(),
+            host: Some(owners_mac()),
+            computer: "this Mac".into(),
+            base_name: Some("Ubuntu 24.04".into()),
+        })
+    }
+
+    fn cards(v: &SpacePanelView) -> Vec<(String, String, Option<String>)> {
+        v.cards
+            .iter()
+            .map(|c| (c.label.clone(), c.value.clone(), c.given.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn the_resources_dialog_of_a_gvisor_container() {
+        for sentinel in [
+            "9223372036854771712",
+            "9223372036854775807",
+            "18446744073709551615",
+            "-1",
+            "0",
+        ] {
+            let v = panel(container(sentinel));
+            assert_eq!(
+                cards(&v),
+                [
+                    (
+                        "Processor".to_string(),
+                        "13% busy".to_string(),
+                        Some("Given 2 of this Mac\u{2019}s 18 cores".to_string())
+                    ),
+                    (
+                        "Memory".to_string(),
+                        "717 MB of 4 GB".to_string(),
+                        // GiB both sides, labelled the way macOS does.
+                        Some("Given 4 GB of this Mac\u{2019}s 36 GB".to_string())
+                    ),
+                    // Its own data, no fake total, never "0 GB".
+                    ("Space for files".to_string(), "244 KB".to_string(), None),
+                ],
+                "{sentinel}"
+            );
+            assert_eq!(v.cards[2].fraction, None);
+            let fit = v.fit.unwrap();
+            assert_eq!(fit.total, "1.8 TB");
+            let legend: Vec<_> = fit
+                .parts
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{} \u{b7} {}{}",
+                        p.label,
+                        p.value,
+                        p.detail
+                            .as_ref()
+                            .map(|d| format!(", {d}"))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect();
+            assert_eq!(
+                legend,
+                [
+                    "Your own files and apps \u{b7} 1.8 TB",
+                    "pipbox \u{b7} 244 KB",
+                    "Ubuntu 24.04 image \u{b7} 4.1 GB, only this Space uses it",
+                    "Free \u{b7} 5.2 GB",
+                ]
+            );
+            let sum: u64 = fit.parts.iter().map(|p| p.bytes).sum();
+            assert_eq!(sum, 2_000_000_000_000);
+            // This Mac really is nearly full: the warning stays.
+            assert!(fit.warning.unwrap().critical);
+        }
+    }
+
+    #[test]
+    fn the_resources_dialog_of_a_stopped_vm() {
+        let s = SpaceResources {
+            power_state: "stopped".into(),
+            usage: None,
+            ..space()
+        };
+        let v = space_panel(&SpacePanelInput {
+            spaces: vec![s.clone()],
+            space: s,
+            name: "aurora".into(),
+            host: None,
+            computer: "this Mac".into(),
+            base_name: None,
+        });
+        assert_eq!(
+            cards(&v),
+            [
+                (
+                    "Processor".to_string(),
+                    "Stopped".to_string(),
+                    Some("Given 4 cores".to_string())
+                ),
+                (
+                    "Memory".to_string(),
+                    "Off".to_string(),
+                    Some("Given 8 GB".to_string())
+                ),
+                (
+                    "Space for files".to_string(),
+                    "31 of 80 GB".to_string(),
+                    None
+                ),
+            ]
+        );
+        assert_eq!(v.fit, None);
+    }
+
+    #[test]
+    fn the_dialog_never_says_more_than_the_numbers() {
+        let v = panel(container("0"));
+        let all = serde_json::to_string(&v).unwrap();
+        for banned in [
+            "Busy means",
+            "free for its apps",
+            "Uses about",
+            "Updates every",
+            "file names",
+            "9223372",
+        ] {
+            assert!(!all.contains(banned), "{banned}: {all}");
         }
     }
 }

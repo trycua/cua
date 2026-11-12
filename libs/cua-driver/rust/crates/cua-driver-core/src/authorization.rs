@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable daemon permission-mode configuration.
 //!
 //! Capability policy answers whether an operation is inside the configured
@@ -378,6 +381,25 @@ const PROCESS_CONTROL_SCOPE_KEYS: &[&str] = &[
 ];
 
 const OS_PERMISSION_PROMPT_OPERATIONS: &[&str] = &["check_permissions[prompt=true]"];
+/// Input tools whose events could answer an operating-system security or
+/// consent prompt. Pointer moves and window placement answer nothing.
+const OS_SECURITY_PROMPT_OPERATIONS: &[&str] = &[
+    "click",
+    "double_click",
+    "right_click",
+    "drag",
+    "scroll",
+    "mouse_button_down",
+    "mouse_button_up",
+    "mouse_drag",
+    "parallel_mouse_drag",
+    "type_text",
+    "type_text_chars",
+    "press_key",
+    "hotkey",
+    "set_value",
+    "invoke_menu",
+];
 const DRIVER_CONFIGURATION_OPERATIONS: &[&str] = &["set_config"];
 
 const SESSION_REVOCATION: &[&str] = &[
@@ -579,6 +601,23 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         profile_behavior: AdapterProfileBehavior::Denied,
     },
     EnforcementAdapterDescriptor {
+        id: crate::security_prompt::ADAPTER_ID,
+        operations: OS_SECURITY_PROMPT_OPERATIONS,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R4,
+        resource_kind: "operating_system_security_or_consent_prompt",
+        scope_keys: &["daemon_generation", "permission_mode"],
+        grant_type: Some("trusted_launch_mode_gate"),
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        authorization_requirement: "not_grantable_in_standard_or_bounded",
+        revocation_triggers: &[],
+        refusal_code: Some(crate::security_prompt::SECURITY_PROMPT_PROTECTED),
+        authorization_source: "unrestricted_mode_with_trusted_launch_time_risk_acknowledgement",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        profile_behavior: AdapterProfileBehavior::UnrestrictedOnly,
+    },
+    EnforcementAdapterDescriptor {
         id: "driver_configuration",
         operations: DRIVER_CONFIGURATION_OPERATIONS,
         state: RiskEnforcement::Active,
@@ -767,6 +806,10 @@ pub fn enforcement_adapters_for_call(
         add("desktop_input");
     }
 
+    if OS_SECURITY_PROMPT_OPERATIONS.contains(&tool) {
+        add(crate::security_prompt::ADAPTER_ID);
+    }
+
     if matches!(tool, "clipboard_read" | "clipboard_write") {
         add("clipboard");
     }
@@ -934,6 +977,13 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "parse_visual_regions" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
+        // A Space's own child-Space tools (cua-spacesd, spawn channel): the host answers them for
+        // the Space's subtree only, inside its budget and network rules. Reading the list is
+        // R2; making, changing, deleting, running commands in or sharing from a child is R3.
+        "list_spaces" | "list_tcp_shares" => RiskClass::R2,
+        "create_space" | "fork_space" | "delete_space" | "stop_space" | "start_space"
+        | "space_bash" | "share_tcp_port" | "stop_tcp_share" => RiskClass::R3,
+
         "get_desktop_state"
         | "get_window_state"
         | "kill_app"
@@ -1432,6 +1482,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_spaces_child_tools_have_a_reviewed_classification() {
+        // Without one the call is refused before it runs ("no reviewed risk classification"), and
+        // an agent in a Space cannot make a child Space through its MCP tools.
+        for tool in [
+            "create_space",
+            "fork_space",
+            "delete_space",
+            "stop_space",
+            "start_space",
+            "space_bash",
+            "share_tcp_port",
+            "stop_tcp_share",
+        ] {
+            assert_eq!(advertised_risk_for(tool).class, RiskClass::R3, "{tool}");
+        }
+        for tool in ["list_spaces", "list_tcp_shares"] {
+            assert_eq!(advertised_risk_for(tool).class, RiskClass::R2, "{tool}");
+        }
+        assert_eq!(
+            advertised_risk_for("create_a_computer").class,
+            RiskClass::Unclassified
+        );
+    }
+
+    #[test]
     fn standard_is_the_default() {
         assert_eq!(
             parse_permission_mode(None, false).unwrap(),
@@ -1566,7 +1641,8 @@ mod tests {
     fn native_menu_invocation_matches_local_gui_action_risk() {
         let risk = advertised_risk_for("invoke_menu");
         assert_eq!(risk.class, RiskClass::R1);
-        assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
+        // A menu of a security prompt owner is refused by os_security_prompt.
+        assert_eq!(risk.enforcement, RiskEnforcement::Active);
         assert!(!risk.operation_sensitive);
     }
 
@@ -1686,6 +1762,7 @@ mod tests {
                 "browser_bound_input",
                 "process_control",
                 "os_permission_prompt",
+                "os_security_prompt",
                 "driver_configuration",
                 "clipboard",
             ]
@@ -1712,6 +1789,7 @@ mod tests {
                 "browser_bound_input",
                 "process_control",
                 "os_permission_prompt",
+                "os_security_prompt",
                 "driver_configuration",
                 "clipboard",
             ]
@@ -1773,6 +1851,46 @@ mod tests {
             behavior("os_permission_prompt", PermissionMode::Unrestricted),
             ModeBehavior::Deny
         );
+        for (mode, expected) in [
+            (PermissionMode::Standard, ModeBehavior::Deny),
+            (PermissionMode::Bounded, ModeBehavior::Deny),
+            (PermissionMode::Unrestricted, ModeBehavior::Allow),
+        ] {
+            assert_eq!(behavior("os_security_prompt", mode), expected, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn input_that_could_answer_an_os_prompt_composes_the_prompt_adapter() {
+        let ids = |tool| {
+            enforcement_adapters_for_call(tool, &serde_json::json!({}))
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>()
+        };
+        for tool in [
+            "click",
+            "type_text",
+            "press_key",
+            "hotkey",
+            "drag",
+            "scroll",
+        ] {
+            assert_eq!(
+                ids(tool),
+                vec!["desktop_input", "os_security_prompt"],
+                "{tool}"
+            );
+        }
+        assert_eq!(ids("invoke_menu"), vec!["os_security_prompt"]);
+        for tool in [
+            "move_cursor",
+            "bring_to_front",
+            "set_window_frame",
+            "get_window_state",
+        ] {
+            assert!(!ids(tool).contains(&"os_security_prompt"), "{tool}");
+        }
     }
 
     #[test]
@@ -1814,6 +1932,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[test]
     fn standard_manifest_scope_is_checked_before_existing_profile_approval() {
         use std::io::Write as _;
@@ -1906,7 +2025,7 @@ mod tests {
         );
         assert_eq!(
             ids("type_text_chars", serde_json::json!({})),
-            vec!["desktop_input"]
+            vec!["desktop_input", "os_security_prompt"]
         );
         assert_eq!(
             ids("set_window_frame", serde_json::json!({})),
@@ -2003,6 +2122,7 @@ mod tests {
                 "browser_bound_input",
                 "process_control",
                 "os_permission_prompt",
+                "os_security_prompt",
                 "driver_configuration",
                 "clipboard"
             ])
@@ -2029,6 +2149,7 @@ mod tests {
                 "browser_bound_input",
                 "process_control",
                 "os_permission_prompt",
+                "os_security_prompt",
                 "driver_configuration",
                 "clipboard"
             ])

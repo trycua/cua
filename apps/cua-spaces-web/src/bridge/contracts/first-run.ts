@@ -72,6 +72,8 @@ export interface FirstRunAgent {
   signedIn?: boolean;
   /** The settings file Cua adds itself to. */
   mcpConfig?: string | null;
+  /** Its row of the connection status (`agents.status`), when the host answers it. */
+  connection?: import("./agents").ConnectionRow | null;
 }
 
 export interface FirstRunPermission {
@@ -136,10 +138,16 @@ export interface FirstRunInput {
   /** The agent being connected. */
   connectingAgent?: string | null;
   connectError: string | null;
+  /** Advanced setup on Pick your agent (CUA-2267); Simple by default. */
+  advanced?: boolean;
   agentOpenBeforeSetup: boolean | null;
   agentUsedAt: string | null;
   signedIn: boolean;
   signingIn: boolean;
+  /** While signing in by a code: the code to enter (null: the browser flow). */
+  signInCode?: string | null;
+  /** The last sign-in didn't finish, for this reason (null: it did, or it is running). */
+  signInFailure?: import("./host").SignInFailure | null;
   host: FirstRunHost | null;
   hostSettingUp: boolean;
   offers: FirstRunOffer[];
@@ -149,6 +157,8 @@ export interface FirstRunInput {
   cli?: FirstRunCli;
   /** The CLI's name (`SettingsSnapshot.cli`); null: the plan's file name, else `cua`. */
   cliName?: string | null;
+  /** Ask first is on: no Try it screen, and the last screen's button opens the ask-first Space. */
+  askFirst?: boolean;
 }
 
 export interface FirstRunButton {
@@ -213,6 +223,12 @@ export interface FirstRunConnectView {
   /** "Skip", until an agent is connected. */
   secondary: FirstRunButton | null;
   error: string | null;
+  /** The one line under the agents: what Connect does (Simple), or that ticked sign-ins are copied (Advanced). */
+  consent?: string;
+  /** The quiet link at the right of the buttons: "Advanced" (`advanced`) or "Simple" (`simple`). */
+  mode?: FirstRunButton | null;
+  /** Advanced: paths shown and sign-ins ticked per agent (CUA-2267). */
+  advanced?: boolean;
 }
 
 export interface FirstRunDevicesView {

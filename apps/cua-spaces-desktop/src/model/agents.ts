@@ -130,13 +130,24 @@ export class PersistentAgents {
     space: string,
     agent: string,
     prompt: string,
-    o: { repo: string | null; branch: string | null; model: string | null; envFromHost: string[] },
+    o: {
+      repo: string | null;
+      branch: string | null;
+      model: string | null;
+      envFromHost: string[];
+      cwd?: string | null;
+      resumeSession?: string | null;
+      resumeContext?: string | null;
+    },
   ): Promise<Json> {
     const args: Record<string, unknown> = { space, agent, prompt };
     if (o.repo) args.repo = o.repo;
     if (o.branch) args.branch = o.branch;
     if (o.model) args.model = o.model;
     if (o.envFromHost.length) args.env_from_host = o.envFromHost;
+    if (o.cwd) args.cwd = o.cwd;
+    if (o.resumeSession) args.resume_session = o.resumeSession;
+    if (o.resumeContext) args.resume_context = o.resumeContext;
     return this.call("agent_start", args);
   }
 
@@ -173,7 +184,13 @@ export class PersistentAgents {
       home: files,
       routines,
       grants: arr(access, "grants").map((g) => ({ agent: g.agent ?? "", machine: g.machine ?? "", revoked: g.revoked ?? false })),
-      audit: arr(access, "audit").map((a) => ({ tsMs: a.ts_ms ?? 0, action: a.action ?? "", principal: a.principal ?? "", path: a.path ?? "", detail: a.detail ?? "" })),
+      audit: arr(access, "audit").map((a) => ({
+        tsMs: a.ts_ms ?? 0,
+        action: a.action ?? "",
+        principal: a.principal ?? "",
+        path: a.path ?? "",
+        detail: a.detail ?? "",
+      })),
     };
   }
 
@@ -189,7 +206,12 @@ export class PersistentAgents {
       path,
       text: binary ? "" : (file.content ?? ""),
       binary,
-      versions: arr(history, "versions").map((v) => ({ version: v.version ?? "", modifiedMs: v.modified_ms ?? 0, deleted: v.deleted ?? false, latest: v.latest ?? false })),
+      versions: arr(history, "versions").map((v) => ({
+        version: v.version ?? "",
+        modifiedMs: v.modified_ms ?? 0,
+        deleted: v.deleted ?? false,
+        latest: v.latest ?? false,
+      })),
     };
   }
 
@@ -307,7 +329,7 @@ export class AgentRunsModel {
 
 // MARK: Provider keys
 
-/** Settings → Agents: the provider keys agents get. The cua daemon keeps them in the system's credential store (`agent_keys.list/set/remove`, its app methods; no MCP tool reaches them) and answers only the provider, the variable, the last four characters and when each was added. A key passes through here once, in `save`, and is never kept. */
+/** Settings → Connectors: the provider keys agents get. The cua daemon keeps them in the system's credential store (`agent_keys.list/set/remove`, its app methods; no MCP tool reaches them) and answers only the provider, the variable, the last four characters and when each was added. A key passes through here once, in `save`, and is never kept. */
 export class AgentKeysModel {
   /** The daemon's last answer, as it came. */
   report: Json | null = null;
@@ -328,7 +350,8 @@ export class AgentKeysModel {
   async call(method: string, args: Record<string, unknown> = {}): Promise<unknown> {
     if (!this.tools) throw new ToolError("Agent keys need the cua daemon");
     const r = await this.tools(method, args);
-    if (r && typeof r === "object" && !Array.isArray(r)) {
+    // Every method answers the list after it, except agent_keys.shell (the names your shell has).
+    if (method !== "agent_keys.shell" && r && typeof r === "object" && !Array.isArray(r)) {
       this.report = r as Json;
       this.error = null;
     }
@@ -372,18 +395,31 @@ export class AgentKeysModel {
   }
 }
 
+/** A record of strings (a connection's non-secret fields), else empty. */
+function stringMap(v: unknown): Map<string, string> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return new Map();
+  return new Map(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+}
+
 /** The core's input for `agent_keys.list`'s answer (never a value). */
 export function agentKeysInput(report: Json | null, error: string | null): AppAgentKeysInput {
+  // Keys saved beside the first one for a variable (they have a slot) are the web page's; a native row is the first.
   const keys = arr(report ?? {}, "keys")
+    .filter((k) => k.slot === undefined || k.slot === null)
     .map((k) => ({
       provider: typeof k.provider === "string" ? k.provider : "other",
       env: typeof k.env === "string" ? k.env : "",
       last4: typeof k.last4 === "string" ? k.last4 : "",
       addedMs: BigInt(typeof k.added_ms === "number" && k.added_ms >= 0 ? Math.floor(k.added_ms) : 0),
+      expired: k.expired === true,
+      label: typeof k.label === "string" && k.label ? k.label : undefined,
+      region: typeof k.region === "string" && k.region ? k.region : undefined,
+      fields: stringMap(k.fields),
     }))
     .filter((k) => k.env !== "");
-  const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this computer can't keep keys") : undefined;
-  return { keys, unavailable, error: error ?? undefined };
+  const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this machine can't keep keys") : undefined;
+  const warning = report?.available !== false && typeof report?.insecure === "string" && report.insecure ? report.insecure : undefined;
+  return { keys, unavailable, warning, error: error ?? undefined };
 }
 
 // MARK: Coding agents on this machine
@@ -402,6 +438,18 @@ export interface AgentSetupRunning {
   remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
   /** Starts `agent`'s own sign-in on this computer (`codex login`); returns once it runs. */
   signIn(agent: string): Promise<void>;
+  /** Whether each agent is really connected (CONTRACT §4), as `cua connect status --json` prints it. */
+  connectionStatusJson(refresh: boolean): Promise<string>;
+  /** Connect and Reconnect: Cua's tools and, with `signIn`, the agent's sign-in copied to Keyvault. */
+  connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string>;
+  /** Disconnect: both undone. */
+  disconnectJson(agents: string[], signIn: boolean): Promise<string>;
+  /** Disconnect of some parts only (an app's page's switches). */
+  disconnectPartsJson(agents: string[], skills: boolean, mcp: boolean, signIn: boolean): Promise<string>;
+  /** An agent's device-code sign-in made for Cua: `{id, url, code}`. */
+  deviceSignInStartJson(agent: string): Promise<string>;
+  /** Waits for it and saves it in Keyvault: Connect's `sign_in`. */
+  deviceSignInWaitJson(id: string): Promise<string>;
   /** Deletes the config copies (`.cua-backup-*`) earlier versions left, once per install. */
   sweepLeftovers?(): void;
 }
@@ -466,6 +514,31 @@ export class LiveAgentSetup implements AgentSetupRunning {
     this.inner.signIn(agent);
   }
 
+  async connectionStatusJson(refresh: boolean): Promise<string> {
+    return this.inner.connectionStatusJson(this.server, refresh);
+  }
+
+  async connectJson(agents: string[], signIn: boolean, skills: boolean, mcp: boolean): Promise<string> {
+    // This app carries no Cua Driver: Connect has no driver part here (`agents.connect`'s `driver` is ignored).
+    return this.inner.connectJson(agents, this.server, skills, mcp, signIn, undefined, undefined);
+  }
+
+  async disconnectPartsJson(agents: string[], skills: boolean, mcp: boolean, signIn: boolean): Promise<string> {
+    return this.inner.disconnectPartsJson(agents, skills, mcp, signIn);
+  }
+
+  async deviceSignInStartJson(agent: string): Promise<string> {
+    return this.inner.deviceSignInStartJson(agent);
+  }
+
+  async deviceSignInWaitJson(id: string): Promise<string> {
+    return this.inner.deviceSignInWaitJson(id);
+  }
+
+  async disconnectJson(agents: string[], signIn: boolean): Promise<string> {
+    return this.inner.disconnectJson(agents, signIn);
+  }
+
   sweepLeftovers(): void {
     sweepBackupsOnce(this.configsOf());
   }
@@ -493,6 +566,13 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
   signIn = async (agent: string) => (await this.s()).signIn(agent);
+  connectionStatusJson = async (refresh: boolean) => (await this.gate.wait()).agentSetup?.connectionStatusJson(refresh) ?? '{"agents":[],"checked_at_ms":0}';
+  connectJson = async (agents: string[], signIn: boolean, skills: boolean, mcp: boolean) => (await this.s()).connectJson(agents, signIn, skills, mcp);
+  disconnectJson = async (agents: string[], signIn: boolean) => (await this.s()).disconnectJson(agents, signIn);
+  disconnectPartsJson = async (agents: string[], skills: boolean, mcp: boolean, signIn: boolean) =>
+    (await this.s()).disconnectPartsJson(agents, skills, mcp, signIn);
+  deviceSignInStartJson = async (agent: string) => (await this.s()).deviceSignInStartJson(agent);
+  deviceSignInWaitJson = async (id: string) => (await this.s()).deviceSignInWaitJson(id);
   sweepLeftovers = () => this.gate.current?.agentSetup?.sweepLeftovers?.();
 }
 

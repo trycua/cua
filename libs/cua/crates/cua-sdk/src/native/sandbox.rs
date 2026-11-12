@@ -4,7 +4,7 @@
 use super::{Backend, SpacesdClient, ms, run};
 use crate::types::{ExitInfo, ImageFormat, ProcessOutput, Screenshot};
 use crate::{CuaError, Result};
-use cua_daemon::{CreateRequest, SandboxRecord};
+use cua_daemon_core::{CreateRequest, SandboxRecord};
 use cua_sandbox_core::{Probe, ProviderKind as CoreProvider, Status};
 use std::{collections::HashMap, sync::Arc};
 
@@ -91,7 +91,7 @@ impl From<cua_sandbox_core::ImageInfo> for ImageInfo {
 pub struct SandboxInfo {
     /// Name.
     pub name: String,
-    /// What kind of machine: `container` or `vm` (empty when not known:
+    /// What kind of machine: `container`, `vm` or `microvm` (empty when not known:
     /// an existing machine).
     pub kind: String,
     /// The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
@@ -507,7 +507,7 @@ impl ImageBuild {
 }
 
 /// Options for [`Sandboxes::create`].
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SandboxCreateOptions {
     /// Where it runs: `local`, `direct:<addr>` (an existing machine running
     /// cua-spacesd) or a registered provider. `None` (the default): the
@@ -516,7 +516,7 @@ pub struct SandboxCreateOptions {
     /// ended" error.
     #[uniffi(default = None)]
     pub on: Option<String>,
-    /// What kind of machine: `auto`, `container` or `vm`. `None`: the user
+    /// What kind of machine: `auto`, `container`, `vm` or `microvm`. `None`: the user
     /// default (`default.kind`, else `auto`: macOS and Windows images are
     /// VMs, an image with a container rootfs is a container, a disk-only
     /// image is a VM).
@@ -642,6 +642,44 @@ pub struct SandboxCreateOptions {
     /// Other kinds ignore it. `None` (the default): not one.
     #[uniffi(default = None)]
     pub forkable: Option<bool>,
+}
+
+impl std::fmt::Debug for SandboxCreateOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxCreateOptions")
+            .field("on", &self.on)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("image", &self.image)
+            .field("name", &self.name)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("pool", &self.pool)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout_ms", &self.ready_timeout_ms)
+            .field("env", &self.env)
+            .field("ttl_seconds", &self.ttl_seconds)
+            .field("command", &self.command)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_secret",
+                &self.registry_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("network", &self.network)
+            .field("overlays", &self.overlays)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("profile", &self.profile)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 impl Default for SandboxCreateOptions {
@@ -888,8 +926,8 @@ pub struct PublicUrl {
     pub provider_details: HashMap<String, String>,
 }
 
-impl From<cua_daemon::shares::PublicUrl> for PublicUrl {
-    fn from(u: cua_daemon::shares::PublicUrl) -> Self {
+impl From<cua_daemon_core::shares::PublicUrl> for PublicUrl {
+    fn from(u: cua_daemon_core::shares::PublicUrl) -> Self {
         PublicUrl {
             id: u.id,
             url: u.url,
@@ -1555,8 +1593,8 @@ pub struct SandboxPool {
     pub status: String,
 }
 
-impl From<cua_daemon::PoolInfo> for SandboxPool {
-    fn from(p: cua_daemon::PoolInfo) -> Self {
+impl From<cua_daemon_core::PoolInfo> for SandboxPool {
+    fn from(p: cua_daemon_core::PoolInfo) -> Self {
         Self {
             name: p.name,
             image: p.image,
@@ -1647,7 +1685,7 @@ impl Sandbox {
         self.info.location.clone()
     }
 
-    /// What kind of machine: `container` or `vm` (empty when not known).
+    /// What kind of machine: `container`, `vm` or `microvm` (empty when not known).
     pub fn kind(&self) -> String {
         self.info.kind.clone()
     }
@@ -2138,13 +2176,13 @@ impl GuestDisplay {
 }
 
 fn core_err(e: cua_sandbox_core::Error) -> CuaError {
-    cua_daemon::Error::from(e).into()
+    cua_daemon_core::Error::from(e).into()
 }
 
 /// The agentless fallback in the daemon topology: the daemon runs on this
 /// machine, and Lume's `lume ssh` and VNC endpoint are host facilities, so
 /// the client reaches them itself for a local sandbox.
-fn daemon_local(info: &SandboxInfo, op: &str) -> Result<cua_daemon::local::VmmLocal> {
+fn daemon_local(info: &SandboxInfo, op: &str) -> Result<cua_daemon_core::local::VmmLocal> {
     if info.location != "local" {
         return Err(CuaError::Unsupported(format!(
             "{op} without cua-spacesd is only available for local Lume sandboxes \
@@ -2152,7 +2190,7 @@ fn daemon_local(info: &SandboxInfo, op: &str) -> Result<cua_daemon::local::VmmLo
             info.name, info.location
         )));
     }
-    Ok(cua_daemon::local::VmmLocal::default())
+    Ok(cua_daemon_core::local::VmmLocal::default())
 }
 
 /// Agentless access for sandboxes without cua-spacesd (Rust hosts; the
@@ -2456,7 +2494,7 @@ impl Service {
 #[derive(uniffi::Object)]
 pub struct PortForward {
     backend: Option<Backend>,
-    info: cua_daemon::ForwardInfo,
+    info: cua_daemon_core::ForwardInfo,
     /// A forward over a Space's own connection ([`super::Space::forward`]),
     /// relayed by this process.
     tunnel: std::sync::Mutex<Option<cua_spacesd_client::TcpForward>>,
@@ -2469,7 +2507,7 @@ impl PortForward {
         let local = fwd.local_addr().to_string();
         Self {
             backend: None,
-            info: cua_daemon::ForwardInfo {
+            info: cua_daemon_core::ForwardInfo {
                 id: String::new(),
                 guest_port: fwd.guest_port(),
                 url: Some(format!("http://{local}")),
@@ -2745,7 +2783,7 @@ pub fn sandbox_locations() -> Vec<String> {
 /// `contrib` feature).
 #[uniffi::export]
 pub fn contrib_providers_built() -> Vec<String> {
-    cua_daemon::contrib_provider_names()
+    cua_daemon_core::contrib_provider_names()
 }
 
 /// Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
@@ -3054,7 +3092,7 @@ enum BatchStream {
     #[cfg(feature = "spaces")]
     Embedded(
         tokio::sync::mpsc::Receiver<
-            cua_daemon::Result<cua_proto::daemon::v1::ForkSandboxBatchResponse>,
+            cua_daemon_core::Result<cua_proto::daemon::v1::ForkSandboxBatchResponse>,
         >,
     ),
     Daemon(Box<tonic::Streaming<cua_proto::daemon::v1::ForkSandboxBatchResponse>>),

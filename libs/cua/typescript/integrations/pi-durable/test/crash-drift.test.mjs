@@ -15,7 +15,7 @@ import { FAULTS_BY_MODE, MODES, PROGRESS_MARKS, RECOVERY_POINTS } from "./crash/
 const here = dirname(fileURLToPath(import.meta.url))
 const pkgDir = join(here, "..")
 const read = (...p) => readFileSync(join(pkgDir, ...p), "utf8")
-const GUIDE = join(pkgDir, "../../../../../docs/content/docs/spaces/guides/pi-durable.mdx")
+const GUIDE = join(pkgDir, "../../../../../docs/content/docs/cua-sdk/guides/durable-agent-guarantees.mdx")
 
 const emitted = (source, fn) => new Set([...source.matchAll(new RegExp(`\\b${fn}\\("([a-z-]+)"\\)`, "g"))].map((m) => m[1]))
 const durable = emitted(read("src/durable.ts"), "trace")

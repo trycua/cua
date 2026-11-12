@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::collections::VecDeque;
 
 use crate::{manifest::DetectorOutputLayout, preprocess::Letterbox};

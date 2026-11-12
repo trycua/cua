@@ -20,7 +20,7 @@
 //
 //   durable: { epoch, resume, stateDir, session, attempt, space,
 //              maxAgentRestarts = 3, policy = "ask-model" | "rerun-safe",
-//              guard = true }
+//              guard = true, ship = null | {ackFile, ackTimeoutMs} }
 //   env:     CUA_SESSION, CUA_SESSION_EPOCH, CUA_SESSION_ATTEMPT,
 //            CUA_SESSION_RESUME (0|1), CUA_SESSION_SPACE (the durable Space's
 //            name), CUA_SESSION_STATE_DIR (empty: $CUA_JOB_DATA/session),
@@ -44,6 +44,11 @@
 //   session/load; a harness with neither gets a new session and the run is
 //   flagged `degraded`) and sends a RECOVERY NOTE as the first prompt of the
 //   resumed turn. A turn that already has `turn_ended` is never replayed.
+// - With `ship`, the host mirrors the journal to the Cua Volume
+//   (cua_volume::journal) and acknowledges it in <stateDir>/<ackFile>
+//   ({epoch, end: {"tools.jsonl": bytes}}). An intent is answered only once
+//   the ack covers it, so a re-drive on any host sees it; no ack within
+//   ackTimeoutMs refuses the call (journaled as a denied outcome).
 // - Exit codes: 0 finished, 78 permanent (authentication, bad config, agent
 //   not found), 75 fenced, anything else crashed.
 //
@@ -81,8 +86,8 @@ const expandVars = (s) =>
   typeof s !== "string"
     ? s
     : s
-        .replace(/^~(?=\/|$)/, os.homedir())
-        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => process.env[k] ?? cfg.env?.[k] ?? m);
+        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (m, k) => process.env[k] ?? cfg.env?.[k] ?? m)
+        .replace(/^~(?=\/|$)/, os.homedir());
 
 function loadDurable() {
   if (!cfg.durable) return null;
@@ -102,6 +107,13 @@ function loadDurable() {
     // Keep the harness asking permission (so every tool call is guarded):
     // no switch to its full-access mode, and "allow once", never "always".
     guard: d.guard !== false,
+    // Journal shipping to the Cua Volume: the host that drives the run
+    // mirrors the journal and writes `ackFile` ({epoch, end: {file: bytes}})
+    // once bytes are on the Volume. An intent is answered only after its ack.
+    ship:
+      d.ship && typeof d.ship === "object"
+        ? { ackFile: String(d.ship.ackFile || "ship.ack"), ackTimeoutMs: Number(d.ship.ackTimeoutMs ?? 30_000) }
+        : null,
   };
   if (!Number.isSafeInteger(epoch) || epoch < 1) {
     console.error(`durable: CUA_SESSION_EPOCH must be a positive integer (got ${e.CUA_SESSION_EPOCH ?? d.epoch})`);
@@ -121,7 +133,9 @@ if (durable) fs.mkdirSync(durable.stateDir, { recursive: true, mode: 0o700 });
 
 if (durable) {
   process.env.CUA_RUN_DIR ??= path.resolve(dir);
-  process.env.CUA_SESSION_STATE_DIR ||= durable.stateDir;
+  // The expanded directory, never the `~/...` the session was given: `${CUA_SESSION_STATE_DIR}/work`
+  // is the harness's cwd, and a harness refuses a cwd that is not absolute.
+  process.env.CUA_SESSION_STATE_DIR = durable.stateDir;
   cfg.cwd = expandVars(cfg.cwd);
   cfg.agent = { ...cfg.agent, command: expandVars(cfg.agent.command), args: (cfg.agent.args ?? []).map(expandVars) };
   cfg.env = Object.fromEntries(Object.entries(cfg.env ?? {}).map(([k, v]) => [k, expandVars(v)]));
@@ -230,13 +244,15 @@ if (durable && heartbeatSecs > 0) {
   setInterval(beat, heartbeatSecs * 1000).unref();
 }
 
-// One fenced, optionally fsynced append.
+// One fenced, optionally fsynced append. Returns the file's size after it
+// (the byte offset a ship ack must reach).
 function appendJournal(file, line, sync) {
   checkFence();
   const fd = fs.openSync(J(file), "a", 0o600);
   try {
     fs.writeSync(fd, line + "\n");
     if (sync) fs.fsyncSync(fd);
+    return fs.fstatSync(fd).size;
   } finally {
     fs.closeSync(fd);
   }
@@ -273,7 +289,9 @@ try {
 const state = {
   status: "starting",
   turn: prev.turn ?? 0,
-  sessionId: prev.sessionId ?? null,
+  // A run that continues the agent's own earlier session (`resume`, from agent_start's
+  // resume_session) reloads it like a restarted run reloads its own.
+  sessionId: prev.sessionId ?? (!cfg.durable && typeof cfg.resume?.sessionId === "string" ? cfg.resume.sessionId : null),
   runnerPid: process.pid,
   agentPid: null,
   stopReason: prev.stopReason ?? null,
@@ -291,14 +309,90 @@ function redact(s) {
   return out;
 }
 
+// A journal line stays small. A tool that reads an image returns it as base64 (hundreds of
+// KB, twice in one event); a command can print megabytes. The transcript keeps what the
+// person and a resumed turn read: the text, cut at JOURNAL_STRING_MAX with a note of how
+// much was left out, and a short note in place of image data. The full output is the
+// tool's own (its file or the Space), not the journal's (Pi Durable keeps the retained
+// tail of a tool's output in the transcript and the whole of it in a file the same way).
+export const JOURNAL_STRING_MAX = 32 * 1024;
+const BASE64_RUN = /^[A-Za-z0-9+/=\r\n]{2048,}$/;
+export function shrink(v, depth = 0) {
+  if (typeof v === "string") {
+    if (v.length > 2048 && BASE64_RUN.test(v)) return `[image or binary data, ${v.length} characters, not kept in the log]`;
+    if (v.length > JOURNAL_STRING_MAX) return `${v.slice(0, JOURNAL_STRING_MAX)}
+[${v.length - JOURNAL_STRING_MAX} more characters not kept in the log]`;
+    return v;
+  }
+  if (depth > 12 || v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => shrink(x, depth + 1));
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = shrink(x, depth + 1);
+  return out;
+}
+
 const SYNC_EVENTS = new Set(["turn_started", "turn_ended", "session", "run_exited", "driver_start", "degraded"]);
 function emit(type, fields = {}) {
   checkFence();
   seq += 1;
   const line = redact(
-    JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...fields }),
+    JSON.stringify({ seq, ts: Date.now(), turn: state.turn, ...(durable ? { epoch: durable.epoch } : {}), type, ...shrink(fields) }),
   );
   appendJournal("events.jsonl", line, Boolean(durable) && SYNC_EVENTS.has(type));
+  if (durable) logActivity({ turn: state.turn, epoch: durable.epoch, type, ...fields });
+}
+
+// A short readable line on stdout for what happens in a durable run, so
+// `cua agent logs session:NAME` shows the agent's progress and not only the
+// heartbeat. Only the kind of a tool (execute, read, edit, ...) and short
+// notices: never the prompt, a tool's input or output, or the agent's text.
+// (stdout growing also tells the coordinator the driver is alive.)
+const toolSeen = new Map();
+export function activityLine(ev, toolStatusSeen = toolSeen) {
+  const c = (x, n) => clip(String(x ?? "").replace(/\s+/g, " ").trim(), n);
+  switch (ev.type) {
+    case "driver_start":
+      return `driver: epoch ${ev.epoch} started${ev.journal ? ", continuing the journal of this session" : ""}`;
+    case "session":
+      return ev.resumed ? "agent: reloaded its session" : "agent: opened a session";
+    case "degraded":
+      return "agent: could not reload its conversation; the recovery note carries the journal's summary";
+    case "turn_started":
+      if (ev.recovery) return `turn ${ev.resumesTurn ?? ev.turn} resumed with a recovery note listing what already ran`;
+      return `turn ${ev.turn} started${ev.noteAttached ? " (with a recovery note)" : ""}`;
+    case "turn_ended":
+      return `turn ${ev.turn} ended (${c(ev.stopReason ?? "no reason", 40)})`;
+    case "update": {
+      const u = ev.update ?? {};
+      if (u.sessionUpdate !== "tool_call" && u.sessionUpdate !== "tool_call_update") return null;
+      const id = u.toolCallId;
+      const status = u.status ?? (u.sessionUpdate === "tool_call" ? "pending" : null);
+      if (!status || status === "pending" || toolStatusSeen.get(id) === status) return null;
+      toolStatusSeen.set(id, status);
+      const kind = c(u.kind ?? toolInfo.get(id)?.toolKind ?? "tool", 20);
+      return `tool ${kind} ${status === "in_progress" ? "started" : status}`;
+    }
+    case "permission":
+      return ev.action === "deny" ? "tool call refused: it was already asked for and may have run" : null;
+    case "agent_restart":
+      return `agent restarted (${ev.n} of ${ev.of}): ${c(ev.reason, 100)}`;
+    case "notice":
+      return `notice: ${c(ev.message, 120)}`;
+    case "error":
+      return `error: ${c(String(ev.message ?? "").split("\n")[0], 160)}`;
+    case "cancel_requested":
+      return "cancel requested";
+    case "run_exited":
+      return `driver exiting (code ${ev.code}${ev.reason ? `, ${c(ev.reason, 100)}` : ""})`;
+    default:
+      return null;
+  }
+}
+function logActivity(ev) {
+  try {
+    const line = activityLine(ev);
+    if (line) process.stdout.write(`${new Date().toISOString().slice(11, 19)} ${redact(line)}\n`);
+  } catch {}
 }
 
 function save(patch = {}) {
@@ -374,9 +468,35 @@ for (const r of readLines("tools.jsonl")) {
 function ledger(kind, toolCallId, fields = {}) {
   lseq += 1;
   const rec = { seq: lseq, ts: Date.now(), epoch: durable.epoch, turn: state.turn, kind, toolCallId, ...fields };
-  appendJournal("tools.jsonl", redact(JSON.stringify(rec)), true);
+  const end = appendJournal("tools.jsonl", redact(JSON.stringify(rec)), true);
   applyRecord(rec);
-  return rec;
+  return { rec, end };
+}
+
+// ---- shipping (durable.ship) ------------------------------------------------------
+//
+// The journal is mirrored to the Cua Volume by the host (the runner has no
+// Volume access inside the Space). For an intent the runner waits until the
+// host acknowledges that tools.jsonl is on the Volume up to the intent's end:
+// then a re-drive on any host sees the intent, and at-most-once holds across
+// hosts. No ack in time: the call is refused and journaled as denied.
+function shipAck() {
+  try {
+    return JSON.parse(fs.readFileSync(J(durable.ship.ackFile), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function waitShipped(end) {
+  const deadline = Date.now() + durable.ship.ackTimeoutMs;
+  for (;;) {
+    checkFence();
+    const a = shipAck();
+    if (a && Number(a.epoch) === durable.epoch && Number(a.end?.["tools.jsonl"] ?? 0) >= end) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 // Some harnesses title a permission request with a generic label ("Run command") and put the command in the
@@ -553,8 +673,10 @@ function onUpdate(update) {
   }
   flush();
   if (durable) ledgerUpdate(update);
+  if (Array.isArray(update.configOptions)) onConfigOptions?.(update.configOptions);
   emit("update", { update });
 }
+let onConfigOptions = null;
 
 // ---- the agent -------------------------------------------------------------
 
@@ -567,8 +689,7 @@ const env = { ...process.env, ...(cfg.env ?? {}), ...secrets };
 // (cfg.keyCheck: url, headers with ${NAME} references into the run's env,
 // keyEnv), ask the provider once, in parallel with the agent's start. Only
 // a definitive "this key is invalid" (HTTP 401, or a 403 that says so, with
-// the provider's JSON error body) counts: no key, a base-URL or sign-in
-// override, a network error, a timeout, a 429 or a 5xx all resolve to null
+// the provider's JSON error body) counts: no key, a sign-in override, a network error, a timeout, a 429 or a 5xx all resolve to null
 // and the run goes on exactly as before, so the check can never block one.
 const KEY_CHECK_TIMEOUT_MS = 3000;
 
@@ -600,7 +721,12 @@ async function checkKey(spec) {
     if (res.status !== 401 && res.status !== 403) return null;
     const error = JSON.parse(await res.text())?.error;
     if (!error || typeof error !== "object") return null;
-    const invalid = error.type === "authentication_error" || error.code === "invalid_api_key";
+    // A custom endpoint (a gateway) words its 401 in its own shape: any 401
+    // with a JSON error is a rejection there.
+    const invalid =
+      error.type === "authentication_error" ||
+      error.code === "invalid_api_key" ||
+      (spec.anyAuthError === true && res.status === 401);
     if (res.status === 403 && !invalid) return null;
     const why = providerMessage(error) || "the API key was rejected.";
     return { status: res.status, message: `Failed to authenticate. ${spec.provider ?? "Provider"} API Error: ${res.status} ${why}` };
@@ -613,6 +739,41 @@ const keyCheck = checkKey(cfg.keyCheck).catch(() => null);
 const agentLog = fs.openSync(P("agent.log"), "a");
 const logStart = fs.fstatSync(agentLog).size;
 
+// Node reports a missing working folder, a missing program and a missing
+// shebang interpreter all as `spawn <program> ENOENT`. Say which it is, in
+// words a person can act on (the surfaces show this line first).
+function spawnProblem(error) {
+  if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return "";
+  let isDir = false;
+  try {
+    isDir = fs.statSync(cfg.cwd).isDirectory();
+  } catch {}
+  if (!isDir) {
+    return `The working folder ${cfg.cwd} is not available in this Space (a folder on the Cua Volume is missing until the Volume is attached again).`;
+  }
+  let head = "";
+  try {
+    const fd = fs.openSync(command, "r");
+    try {
+      const b = Buffer.alloc(256);
+      head = b.toString("utf8", 0, fs.readSync(fd, b, 0, 256, 0));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return `${cfg.agent.command} is not installed in this Space.`;
+  }
+  const m = /^#!\s*(\S+)(?:\s+(\S+))?/.exec(head);
+  if (m) {
+    const prog = path.basename(m[1]) === "env" && m[2] ? m[2] : m[1];
+    const found = prog.includes("/")
+      ? fs.existsSync(prog)
+      : (env.PATH ?? "").split(path.delimiter).some((d) => d && fs.existsSync(path.join(d, prog)));
+    if (!found) return `${prog === "node" ? "Node" : prog} is not installed in this Space.`;
+  }
+  return "";
+}
+
 function diagnostic(error, phase) {
   const size = fs.fstatSync(agentLog).size;
   const tail = Buffer.alloc(Math.min(4096, size - logStart));
@@ -622,7 +783,10 @@ function diagnostic(error, phase) {
   } finally {
     fs.closeSync(fd);
   }
-  return redact(`${error?.message ?? error}`
+  // macOS reports a missing shebang interpreter as exit 127 from env, not ENOENT.
+  const why = phase === "spawn" ? spawnProblem(error) : error?.exit127 ? spawnProblem({ code: "ENOENT" }) : "";
+  return redact((why ? `${why}\n` : "")
+    + `${error?.message ?? error}`
     + (error?.code != null ? ` (code ${error.code})` : "")
     + (error?.data != null ? ` ${JSON.stringify(error.data)}` : "")
     + ` (${phase}: ${cfg.agent.command})`
@@ -646,6 +810,11 @@ let restarts = 0;
 // start, or closes its stdout (the ACP transport) while still alive.
 function startAgent() {
   const myGen = ++gen;
+  // The working folder can be gone when a run starts again (it was on a
+  // Volume that is not attached yet): make it, or say it is not there.
+  try {
+    fs.mkdirSync(cfg.cwd, { recursive: true });
+  } catch {}
   const c = spawn(command, cfg.agent.args ?? [], {
     cwd: cfg.cwd,
     env,
@@ -653,6 +822,7 @@ function startAgent() {
   });
   child = c;
   save({ agentPid: c.pid ?? null });
+  emit("agent_spawned", { pid: c.pid ?? null });
   const gone = new Promise((resolve) => {
     let done = false;
     const fin = (v) => {
@@ -675,7 +845,7 @@ function startAgent() {
 function goneDiagnostic(g) {
   if (g.error) return diagnostic(g.error, "spawn");
   if (g.stdoutClosed) return diagnostic(new Error("agent stdout closed"), "transport");
-  return diagnostic(new Error(`the agent exited unexpectedly (code ${g.code}, signal ${g.signal})`), "transport");
+  return diagnostic(Object.assign(new Error(`the agent exited unexpectedly (code ${g.code}, signal ${g.signal})`), { exit127: g.code === 127 }), "transport");
 }
 
 // End this run's cua-driver session on the guest MCP (cua-spacesd keys it by
@@ -714,7 +884,7 @@ function finish(code, why, message = null) {
   process.exitCode = code; // even if the loop is gone and the event loop drains first
   const failed = code !== 0;
   emit("run_exited", { code, reason: why, resumable: Boolean(state.sessionId && state.loadSession) });
-  save({ status: failed ? "failed" : "exited", error: failed ? redact(message ?? why) : null });
+  save({ status: failed ? "failed" : "exited", error: failed ? redact(message ?? why) : null, exitCode: code });
   try {
     child?.kill("SIGTERM");
   } catch {}
@@ -744,7 +914,7 @@ function rejectOption(options) {
 
 let replaying = false;
 
-function answerPermission(params) {
+async function answerPermission(params) {
   const opts = params.options ?? [];
   const tc = params.toolCall ?? {};
   const allow = allowOption(opts);
@@ -760,7 +930,13 @@ function answerPermission(params) {
   const e = byId.get(id);
   let action = "approve";
   let why = "";
-  if (e && e.decision === "approve" && !e.outcome) {
+  if (e && e.decision === "approve" && !e.outcome && e.approvedGen === gen) {
+    // The same agent process asks again for a call it has not finished: one
+    // call, a second permission (OpenCode asks for an external directory, then
+    // for the command, both under one call id). Nothing ran between the two
+    // requests and nothing restarted, so it is the same approval, not a repeat.
+    action = "again";
+  } else if (e && e.decision === "approve" && !e.outcome) {
     // The tool may be running, or may have half-run before a restart: never
     // approve it blindly a second time.
     if (durable.policy === "rerun-safe" && READ_ONLY_KINDS.has(info.toolKind)) {
@@ -776,16 +952,26 @@ function answerPermission(params) {
     why = "repeat request for a tool call that already completed";
     ledger("duplicate", id, { name: info.name, action: "deny" });
   }
-  if (action === "approve" || action === "rerun") {
+  if (action === "approve" || action === "rerun" || action === "again") {
     if (action === "rerun") ledger("rerun", id, { name: info.name, policy: "rerun-safe" });
-    else {
-      ledger("intent", id, {
+    else if (action === "again") {
+      // Already journaled (the intent of its first request): nothing to add.
+    } else {
+      const { end } = ledger("intent", id, {
         name: info.name,
         toolKind: info.toolKind,
         digest: info.digest,
         input: clip(JSON.stringify(info.input ?? null) ?? "null", 400),
         decision: "approve",
       });
+      // Only this agent process may be asked again for it (see above).
+      byId.get(id).approvedGen = gen;
+      if (durable.ship && !(await waitShipped(end))) {
+        why = "the journal did not reach the Cua Volume in time; the call was not run";
+        ledger("outcome", id, { name: info.name, status: "failed", summary: why, denied: true });
+        emit("permission", { toolCall: tc, chosen: reject?.optionId ?? null, kind: reject?.kind ?? null, action: "deny", reason: why });
+        return choose(reject);
+      }
     }
     emit("permission", { toolCall: tc, chosen: allow?.optionId ?? null, kind: allow?.kind ?? null, action });
     return choose(allow);
@@ -819,7 +1005,13 @@ if (durable) {
   for (const q of plan.unstarted) first.push({ op: "prompt", text: q.text, files: q.files ?? [], msgId: q.msgId });
   queue.push(...first);
 } else if (cfg.prompt && !prev.sessionId) {
-  queue.push({ op: "prompt", text: cfg.prompt, files: cfg.files ?? [] });
+  queue.push({ op: "prompt", text: cfg.prompt, files: cfg.files ?? [], first: true });
+}
+
+/** The first prompt of a run whose earlier session could not be reloaded: the earlier conversation goes first. */
+export function withResumeContext(text, context) {
+  if (typeof context !== "string" || !context.trim()) return text;
+  return `[cua] The agent could not reload this chat's earlier session, so here is what was said in it so far. This note is automatic; it is not from the user.\n\n${context.trim()}\n\n[cua] The user's next message:\n\n${text}`;
 }
 
 function drainInbox() {
@@ -947,10 +1139,29 @@ async function drive(a) {
       }
     }
     const request = { cwd: cfg.cwd, mcpServers };
+    const openNewSession = async () => {
+      try {
+        return await requestStartup(acp.methods.agent.session.new, request, "session");
+      } catch (e) {
+        // Some agents reject session MCP servers they cannot start; keep
+        // the run and say so rather than failing it.
+        if (fatal(e) || !request.mcpServers.length) throw e;
+        emit("notice", {
+          message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
+        });
+        request.mcpServers = [];
+        return await requestStartup(acp.methods.agent.session.new, request, "session");
+      }
+    };
     const wantSession = state.sessionId;
     let sessionId = null;
     let resumed = false;
     let modes = null;
+    // The agent's session options (the model among them), kept current from its responses and updates.
+    let configOptions = null;
+    onConfigOptions = (o) => {
+      configOptions = o;
+    };
     let degraded = false;
     if (wantSession && loadSession) {
       try {
@@ -966,6 +1177,7 @@ async function drive(a) {
         // The agent's mode comes back to its default on a resume (measured on codex-acp: "Approve for me",
         // whatever the first drive selected), so the runner picks the mode again from this response.
         modes = res?.modes ?? null;
+        configOptions = res?.configOptions ?? null;
       } catch (e) {
         if (fatal(e)) throw e;
         emit("notice", { message: `could not resume session ${wantSession}: ${e?.message ?? e}; starting a new one` });
@@ -982,23 +1194,17 @@ async function drive(a) {
           lostSessionId: wantSession,
         });
       }
-      let res;
-      try {
-        res = await requestStartup(acp.methods.agent.session.new, request, "session");
-      } catch (e) {
-        // Some agents reject session MCP servers they cannot start; keep
-        // the run and say so rather than failing it.
-        if (fatal(e) || !request.mcpServers.length) throw e;
-        emit("notice", {
-          message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
-        });
-        request.mcpServers = [];
-        res = await requestStartup(acp.methods.agent.session.new, request, "session");
-      }
+      const res = await openNewSession();
       sessionId = res.sessionId;
       modes = res.modes ?? null;
+      configOptions = res.configOptions ?? null;
     }
     if (stale()) return;
+    // The earlier session of a `resume` run is gone: the first prompt carries the earlier conversation instead.
+    if (!resumed && !durable && cfg.resume?.sessionId && wantSession === cfg.resume.sessionId) {
+      const first = queue.find((q) => q.first);
+      if (first) first.text = withResumeContext(first.text, cfg.resume.context);
+    }
     save({ sessionId, status: "idle", ...(durable ? { degraded: state.degraded || degraded } : {}) });
     emit("session", { sessionId, resumed, modes });
 
@@ -1022,16 +1228,49 @@ async function drive(a) {
     // Guard mode keeps the harness asking: it selects the harness's own
     // ask-for-approval mode when its default does not ask (Codex), else none.
     const want = (durable?.guard ? cfg.guardModeKinds : cfg.modeKinds) ?? [];
-    const mode = (modes?.availableModes ?? []).find((m) => want.includes(m?._meta?.kind) || want.includes(m.id));
-    // A resume response without modes: select the mode the first drive chose (kept in state.json).
-    const modeId = mode?.id ?? (resumed && !modes?.availableModes ? state.modeId : undefined);
-    if (modeId && modeId !== modes?.currentModeId) {
+    const applyMode = async () => {
+      const mode = (modes?.availableModes ?? []).find((m) => want.includes(m?._meta?.kind) || want.includes(m.id));
+      // A resume response without modes: select the mode the first drive chose (kept in state.json).
+      const modeId = mode?.id ?? (resumed && !modes?.availableModes ? state.modeId : undefined);
+      if (modeId && modeId !== modes?.currentModeId) {
+        try {
+          await ctx.request(acp.methods.agent.session.setMode, { sessionId, modeId });
+          save({ modeId });
+          emit("mode", { modeId, ...(resumed ? { resumed: true } : {}) });
+        } catch (e) {
+          emit("notice", { message: `could not switch to mode ${modeId}: ${e?.message ?? e}` });
+        }
+      }
+    };
+    await applyMode();
+    // Set once the agent has answered a prompt of this session with anything but a refusal.
+    let sessionProven = false;
+
+    // The model a message asks for, applied to the open session just before its turn (no restart):
+    // the agent's own `model` option, set through ACP's `session/set_config_option`. A harness with
+    // no such option, or one that does not list the model, keeps the one it has (said once).
+    const modelOption = () => (configOptions ?? []).find((o) => o?.category === "model" || o?.id === "model");
+    const optionValues = (o) => (o?.options ?? []).flatMap((v) => (Array.isArray(v?.options) ? v.options : [v])).map((v) => v?.value ?? v?.id);
+    let modelNoticed = false;
+    async function applyModel(want) {
+      if (!want) return;
+      const opt = modelOption();
+      if (!opt) {
+        if (!modelNoticed) emit("notice", { message: `this agent has no model option; keeping its model (asked for ${want})` });
+        modelNoticed = true;
+        return;
+      }
+      if (opt.currentValue === want) return;
+      if (!optionValues(opt).includes(want)) {
+        emit("notice", { message: `this agent does not offer the model ${want}; keeping ${opt.currentValue}` });
+        return;
+      }
       try {
-        await ctx.request(acp.methods.agent.session.setMode, { sessionId, modeId });
-        save({ modeId });
-        emit("mode", { modeId, ...(resumed ? { resumed: true } : {}) });
+        const res = await ctx.request(acp.methods.agent.session.setConfigOption, { sessionId, configId: opt.id, value: want });
+        configOptions = res?.configOptions ?? configOptions.map((o) => (o === opt ? { ...o, currentValue: want } : o));
+        emit("model", { modelId: want });
       } catch (e) {
-        emit("notice", { message: `could not switch to mode ${modeId}: ${e?.message ?? e}` });
+        emit("notice", { message: `could not switch to the model ${want}: ${e?.message ?? e}` });
       }
     }
 
@@ -1054,6 +1293,8 @@ async function drive(a) {
       }
       save({ status: "running", queued: queue.length });
       emit("turn_started", { prompt: text, files: msg.files ?? [], ...(msg.msgId ? { msgId: msg.msgId } : {}), ...extra });
+      await applyModel(msg.model);
+      if (stale()) return;
       const rejected = await keyCheck;
       if (stale()) return;
       if (rejected) {
@@ -1061,7 +1302,9 @@ async function drive(a) {
         // retries: one error, the turn ends, the supervisor notifies once.
         emit("error", { message: rejected.message, data: { errorKind: "authentication_failed", status: rejected.status, source: "key_check" } });
         endTurn("error");
-        if (durable) finish(EXIT_PERMANENT, "authentication failed");
+        // A run whose credential is rejected is over: the next message starts
+        // a fresh run with whatever credential the person has connected by then.
+        finish(durable ? EXIT_PERMANENT : 1, withAuthHint(rejected.message, null));
         return;
       }
       let res;
@@ -1077,9 +1320,56 @@ async function drive(a) {
           throw new AgentFailure(`prompt failed: ${e?.message ?? e}`, isAuthError(e));
         }
         endTurn("error");
+        // Same for a credential the agent says it could not authenticate: the
+        // run ends as failed (its error kept) instead of idling for up to
+        // 30 minutes with a credential that does not work.
+        if (isAuthError(e)) finish(1, redact(withAuthHint(e?.message ?? String(e), e)));
         return;
       }
       if (stale()) return;
+      if (durable && resumed && !sessionProven && res?.stopReason === "refusal") {
+        // The first prompt of a session the agent "resumed" came back refused
+        // at once: the agent does not have it. (Hermes answers session/resume
+        // for an id it lost, for example with the Space its database lived
+        // in, by making another session, and then refuses the old id.) Open
+        // a new session and send the recovery note again, as when the agent
+        // could not reload the session at all.
+        resumed = false;
+        degraded = true;
+        emit("degraded", { reason: "the agent refused the resumed session; it no longer has it", lostSessionId: sessionId });
+        try {
+          const ns = await openNewSession();
+          sessionId = ns.sessionId;
+          modes = ns.modes ?? null;
+        } catch (e) {
+          if (stale()) return;
+          emit("error", { message: withAuthHint(e?.message ?? String(e), e), code: e?.code ?? null, data: e?.data ?? null });
+          throw new AgentFailure(`prompt failed: could not open a new session: ${e?.message ?? e}`, isAuthError(e));
+        }
+        save({ sessionId, degraded: true });
+        emit("session", { sessionId, resumed: false, modes });
+        await applyMode();
+        const p = planFromJournal();
+        const note = buildRecoveryNote({
+          epoch: durable.epoch,
+          prevEpoch: p.prevEpoch,
+          entries: entries.slice(),
+          degraded: true,
+          history: p.history,
+          interrupted: extra.recovery ? p.open : null,
+        });
+        const again = extra.recovery ? note : `${note}\n\n${msg.text}`;
+        try {
+          res = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: blocks(again, msg.files) });
+        } catch (e) {
+          if (stale()) return;
+          flush();
+          emit("error", { message: withAuthHint(e?.message ?? String(e), e), code: e?.code ?? null, data: e?.data ?? null });
+          throw new AgentFailure(`prompt failed: ${e?.message ?? e}`, isAuthError(e));
+        }
+        if (stale()) return;
+      }
+      if (res?.stopReason !== "refusal") sessionProven = true;
       endTurn(res?.stopReason ?? null, res?.usage ?? null);
     };
 
@@ -1135,6 +1425,7 @@ async function drive(a) {
 }
 
 async function main() {
+  emit("runner_started", {});
   if (durable) {
     emit("driver_start", {
       session: durable.session,

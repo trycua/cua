@@ -8,36 +8,46 @@
 //!
 //! What a create makes, and nothing else:
 //!
-//! - one security group per cua home, `cua-sandboxes-<owner>`, in the
-//!   account's default VPC: no ingress rule at all, the default egress (the
-//!   guest dials out to the relay). Found by its tags and reused; no other
-//!   group is ever read for write or changed;
+//! - a VPC of its own per cua home and region (`cua-sb-<owner>`, see
+//!   [`crate::awsnet`]): public subnets, an internet gateway, no peering and
+//!   no endpoints. The account's default VPC is never used;
+//! - one security group per cua home, `cua-sandboxes-<owner>`, in that VPC:
+//!   no ingress rule at all, the default egress (the guest dials out to the
+//!   relay). Found by its tags and reused; no other group is ever read for
+//!   write or changed;
 //! - one instance (Canonical Ubuntu 24.04 for the image's architecture)
 //!   with its gp3 root volume, tagged in the create call itself; no key
-//!   pair, no instance profile, IMDSv2 only with a hop limit of 1 (the
-//!   sandbox's containers cannot reach the metadata service), and
+//!   pair, no instance profile, IMDSv2 only with a hop limit of 1 and
+//!   instance tags off in the metadata service (the sandbox's containers
+//!   cannot reach it), and
 //!   `InstanceInitiatedShutdownBehavior=terminate`, so the first boot's
 //!   `shutdown -h +<ttl>` and the expiry timer end it for good.
 //!
 //! No IAM user, role, key or policy is created or used.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use aws_sdk_ec2::error::ProvideErrorMetadata;
 use aws_sdk_ec2::types::{
-    BlockDeviceMapping, EbsBlockDevice, Filter, HttpTokensState, InstanceMetadataEndpointState,
-    InstanceMetadataOptionsRequest, InstanceType, LocationType, ResourceType, ShutdownBehavior,
-    Tag, TagSpecification, VolumeType,
+    BlockDeviceMapping, CpuOptionsRequest, EbsBlockDevice, Filter, HttpTokensState,
+    InstanceMetadataEndpointState, InstanceMetadataOptionsRequest, InstanceMetadataTagsState,
+    InstanceNetworkInterfaceSpecification, InstanceType, LocationType,
+    NestedVirtualizationSpecification, ResourceType, ShutdownBehavior, Tag, TagSpecification,
+    VolumeType,
 };
 use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 
 use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
+use crate::federation::{IssuerClient, Purpose};
+use crate::model::Auth;
 use crate::model::{
     self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier, tag,
 };
+
+use crate::model::DEFAULT_VPC as DEFAULT_VPC_MARK;
 
 /// The region when neither the target nor the profile names one.
 pub const DEFAULT_REGION: &str = "us-west-2";
@@ -91,7 +101,7 @@ pub const HOST_DISK_GB: u32 = 60;
 
 /// Machine types offered to the elastic pool: name, arch, vCPUs, GiB,
 /// on-demand Linux USD per hour in us-west-2 (AWS Price List, 2026-10-21),
-/// whether it has `/dev/kvm` (bare metal), and its GPU (empty: none).
+/// whether it has `/dev/kvm` directly (bare metal), and its GPU (empty: none).
 pub const HOST_TYPES: &[(&str, &str, u32, u64, f64, bool, &str)] = &[
     ("t3.medium", "amd64", 2, 4, 0.0416, false, ""),
     ("t3.large", "amd64", 2, 8, 0.0832, false, ""),
@@ -187,12 +197,20 @@ enum Mode {
 /// EC2 as a [`CloudApi`].
 pub struct Aws {
     mode: Mode,
-    clients: Mutex<HashMap<(String, String), Clients>>,
+    clients: Mutex<HashMap<String, Clients>>,
+    /// Cua's issuer for OIDC connections (`None`: built from the
+    /// environment on first use).
+    issuer: Mutex<Option<Arc<dyn IssuerClient>>>,
+    /// Held while this home's shared security group is found or created,
+    /// so concurrent first launches make it once.
+    group_lock: tokio::sync::Mutex<()>,
+    /// Held while this home's VPC and subnets are found or created.
+    net_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone)]
-struct Clients {
-    ec2: aws_sdk_ec2::Client,
+pub(crate) struct Clients {
+    pub(crate) ec2: aws_sdk_ec2::Client,
     sts: aws_sdk_sts::Client,
 }
 
@@ -308,14 +326,14 @@ async fn open_to_group(ec2: &aws_sdk_ec2::Client, id: &str, ports: (u16, u16)) -
     Ok(())
 }
 
-fn filter(name: &str, values: &[&str]) -> Filter {
+pub(crate) fn filter(name: &str, values: &[&str]) -> Filter {
     Filter::builder()
         .name(name)
         .set_values(Some(values.iter().map(|v| v.to_string()).collect()))
         .build()
 }
 
-fn owner_filters(owner: &str) -> Vec<Filter> {
+pub(crate) fn owner_filters(owner: &str) -> Vec<Filter> {
     vec![
         filter(&format!("tag:{}", tag::MANAGED), &["true"]),
         filter(
@@ -370,6 +388,9 @@ impl Aws {
         Aws {
             mode: Mode::Cli,
             clients: Mutex::new(HashMap::new()),
+            issuer: Mutex::new(None),
+            group_lock: tokio::sync::Mutex::new(()),
+            net_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -383,17 +404,104 @@ impl Aws {
                 secret: secret.into(),
             },
             clients: Mutex::new(HashMap::new()),
+            issuer: Mutex::new(None),
+            group_lock: tokio::sync::Mutex::new(()),
+            net_lock: tokio::sync::Mutex::new(()),
         }
     }
 
-    async fn clients(&self, conn: &Connection) -> Clients {
-        let key = (conn.profile.clone(), conn.region.clone());
+    /// Gets OIDC connections' tokens from `issuer` instead of the one the
+    /// environment names ([`crate::federation::issuer_url`]).
+    pub fn with_issuer(self, issuer: Arc<dyn IssuerClient>) -> Self {
+        *self.issuer.lock().expect("aws issuer") = Some(issuer);
+        self
+    }
+
+    fn issuer(&self) -> Result<Arc<dyn IssuerClient>> {
+        let mut slot = self.issuer.lock().expect("aws issuer");
+        if let Some(i) = slot.as_ref() {
+            return Ok(i.clone());
+        }
+        let i: Arc<dyn IssuerClient> =
+            Arc::new(crate::federation::HttpIssuer::from_env().ok_or_else(|| {
+                Error::Cloud(
+                    "aws: this AWS link signs in through Cua, and this device has no Cua \
+                     sign-in yet (run `cua auth login`)"
+                        .into(),
+                )
+            })?);
+        *slot = Some(i.clone());
+        Ok(i)
+    }
+
+    /// The clients of `conn` for `purpose`: the AWS CLI's sign-in, or (an
+    /// OIDC connection) credentials from Cua's issuer through STS, one set
+    /// per purpose and agent so CloudTrail names each.
+    pub(crate) async fn clients(&self, conn: &Connection, purpose: Purpose) -> Result<Clients> {
+        let agent = crate::federation::caller_agent();
+        let key = match &conn.auth {
+            Auth::Cli => format!("cli|{}|{}", conn.profile, conn.region),
+            Auth::Oidc {
+                conn_id, role_arn, ..
+            } => format!(
+                "oidc|{conn_id}|{role_arn}|{}|{}|{}",
+                conn.region,
+                purpose.as_str(),
+                agent.as_deref().unwrap_or_default()
+            ),
+            Auth::Sealed { .. } => {
+                return Err(Error::InvalidArgument(
+                    "aws: a sealed token is not a way to link AWS (use OIDC or the AWS CLI)".into(),
+                ));
+            }
+        };
         if let Some(c) = self.clients.lock().expect("aws clients").get(&key) {
-            return c.clone();
+            return Ok(c.clone());
         }
         let region = aws_sdk_ec2::config::Region::new(conn.region.clone());
-        let clients = match &self.mode {
-            Mode::Cli => {
+        let endpoint = match &self.mode {
+            Mode::Cli => None,
+            Mode::Endpoint { url, .. } => Some(url.clone()),
+        };
+        let clients = match (&conn.auth, &self.mode) {
+            (
+                Auth::Oidc {
+                    conn_id, role_arn, ..
+                },
+                _,
+            ) => {
+                let role_arn = if role_arn.is_empty() {
+                    crate::federation::aws::role_arn(&conn.account)
+                } else {
+                    role_arn.clone()
+                };
+                let creds = aws_credential_types::provider::SharedCredentialsProvider::new(
+                    crate::federation::aws::WebIdentityProvider::new(
+                        self.issuer()?,
+                        crate::federation::aws::anonymous_sts(&conn.region, endpoint.as_deref()),
+                        conn_id,
+                        &role_arn,
+                        purpose,
+                        agent,
+                    ),
+                );
+                let mut ec2_conf = aws_sdk_ec2::Config::builder()
+                    .behavior_version_latest()
+                    .region(region.clone())
+                    .credentials_provider(creds.clone());
+                ec2_conf.set_endpoint_url(endpoint.clone());
+                let mut sts_conf = aws_sdk_sts::Config::builder()
+                    .behavior_version_latest()
+                    .region(aws_sdk_sts::config::Region::new(conn.region.clone()))
+                    .credentials_provider(creds);
+                sts_conf.set_endpoint_url(endpoint);
+                let (ec2, sts) = (ec2_conf.build(), sts_conf.build());
+                Clients {
+                    ec2: aws_sdk_ec2::Client::from_conf(ec2),
+                    sts: aws_sdk_sts::Client::from_conf(sts),
+                }
+            }
+            (_, Mode::Cli) => {
                 let mut loader =
                     aws_config::defaults(aws_config::BehaviorVersion::latest()).region(region);
                 if !conn.profile.is_empty() {
@@ -405,7 +513,7 @@ impl Aws {
                     sts: aws_sdk_sts::Client::new(&sdk),
                 }
             }
-            Mode::Endpoint { url, key, secret } => {
+            (_, Mode::Endpoint { url, key, secret }) => {
                 let creds = aws_sdk_ec2::config::Credentials::new(
                     key.clone(),
                     secret.clone(),
@@ -435,12 +543,16 @@ impl Aws {
             .lock()
             .expect("aws clients")
             .insert(key, clients.clone());
-        clients
+        Ok(clients)
     }
 
     /// The newest Canonical Ubuntu 24.04 image for `arch`, and its root
     /// device name.
-    async fn ubuntu(&self, ec2: &aws_sdk_ec2::Client, arch: &str) -> Result<(String, String)> {
+    pub(crate) async fn ubuntu(
+        &self,
+        ec2: &aws_sdk_ec2::Client,
+        arch: &str,
+    ) -> Result<(String, String)> {
         let (name_arch, ec2_arch) = ec2_arch(arch);
         let out = ec2
             .describe_images()
@@ -472,7 +584,25 @@ impl Aws {
         ))
     }
 
-    async fn default_vpc(&self, ec2: &aws_sdk_ec2::Client) -> Result<String> {
+    /// The account's default VPC in this region, if it has one. Under
+    /// Secure Spaces Cua never creates anything in it; only the sweep reads
+    /// it, to say which of our older instances still live there.
+    async fn default_vpc(&self, ec2: &aws_sdk_ec2::Client) -> Option<String> {
+        let out = ec2
+            .describe_vpcs()
+            .filters(filter("is-default", &["true"]))
+            .send()
+            .await
+            .ok()?;
+        out.vpcs()
+            .first()
+            .and_then(|v| v.vpc_id())
+            .map(str::to_string)
+    }
+
+    /// The default VPC, or why there is none (without the experiment the
+    /// sandboxes are made in it, as they always were).
+    async fn default_vpc_required(&self, ec2: &aws_sdk_ec2::Client) -> Result<String> {
         let out = ec2
             .describe_vpcs()
             .filters(filter("is-default", &["true"]))
@@ -495,7 +625,7 @@ impl Aws {
     /// The default subnets (one per zone) of the default VPC, as (zone,
     /// subnet id) in zone order.
     async fn default_subnets(&self, ec2: &aws_sdk_ec2::Client) -> Result<Vec<(String, String)>> {
-        let vpc = self.default_vpc(ec2).await?;
+        let vpc = self.default_vpc_required(ec2).await?;
         let out = ec2
             .describe_subnets()
             .filters(filter("vpc-id", &[&vpc]))
@@ -559,10 +689,13 @@ impl Aws {
         conn: &Connection,
         owner: &str,
         peer_ports: Option<(u16, u16)>,
+        vpc: &str,
     ) -> Result<(String, Option<Resource>)> {
-        let vpc = self.default_vpc(ec2).await?;
+        // One caller at a time per provider: a cold burst of first launches
+        // finds the group the first one made instead of racing to create it.
+        let _one = self.group_lock.lock().await;
         let pool = peer_ports.is_some();
-        if let Some(g) = self.find_group(ec2, &vpc, owner, pool).await? {
+        if let Some(g) = self.find_group(ec2, vpc, owner, pool).await? {
             let id = g.group_id().unwrap_or_default().to_string();
             if let Some(ports) = peer_ports {
                 open_to_group(ec2, &id, ports).await?;
@@ -590,11 +723,35 @@ impl Aws {
             } else {
                 "Cua sandboxes: no inbound; the guest dials out to the cua.ai relay"
             })
-            .vpc_id(&vpc)
+            .vpc_id(vpc)
             .tag_specifications(spec.build())
             .send()
-            .await
-            .map_err(|e| aws_err("create the Cua security group", e))?;
+            .await;
+        let out = match out {
+            Ok(out) => out,
+            // Another process (or an older run) made it between the look
+            // and the create: it is the same group, use it.
+            Err(e)
+                if e.as_service_error()
+                    .and_then(aws_sdk_ec2::error::ProvideErrorMetadata::code)
+                    == Some("InvalidGroup.Duplicate") =>
+            {
+                // EC2 lists are eventually consistent: the group another
+                // process just made may take a moment to show.
+                for wait in [0u64, 500, 1000, 2000, 4000] {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                    if let Some(g) = self.find_group(ec2, vpc, owner, pool).await? {
+                        let id = g.group_id().unwrap_or_default().to_string();
+                        if let Some(ports) = peer_ports {
+                            open_to_group(ec2, &id, ports).await?;
+                        }
+                        return Ok((id, None));
+                    }
+                }
+                return Err(aws_err("create the Cua security group", e));
+            }
+            Err(e) => return Err(aws_err("create the Cua security group", e)),
+        };
         let id = out.group_id().unwrap_or_default().to_string();
         let record = Resource {
             provider: "aws".into(),
@@ -605,6 +762,7 @@ impl Aws {
             created: model::now(),
             tags,
             state: "available".into(),
+            extra: BTreeMap::from([("vpc".to_string(), vpc.to_string())]),
             ..Default::default()
         };
         if let Some(ports) = peer_ports
@@ -626,6 +784,7 @@ impl Aws {
         image: &str,
         root: &str,
         group: Option<&str>,
+        subnet: Option<&str>,
         instance_type: &str,
     ) -> aws_sdk_ec2::operation::run_instances::builders::RunInstancesFluentBuilder {
         let mut tags: Vec<Tag> = spec
@@ -653,6 +812,9 @@ impl Aws {
                     .http_tokens(HttpTokensState::Required)
                     .http_put_response_hop_limit(1)
                     .http_endpoint(InstanceMetadataEndpointState::Enabled)
+                    .set_instance_metadata_tags(
+                        crate::awsnet::enabled().then_some(InstanceMetadataTagsState::Disabled),
+                    )
                     .build(),
             )
             .block_device_mappings(
@@ -670,8 +832,34 @@ impl Aws {
             .tag_specifications(spec_for(ResourceType::Instance))
             .tag_specifications(spec_for(ResourceType::Volume))
             .user_data(base64::engine::general_purpose::STANDARD.encode(&spec.user_data));
-        if let Some(g) = group {
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
+        }
+        if let Some(subnet) = subnet {
+            // A public address on the one interface, in a subnet of Cua's
+            // VPC: the computer dials out through the internet gateway.
+            let mut nic = InstanceNetworkInterfaceSpecification::builder()
+                .device_index(0)
+                .subnet_id(subnet)
+                .associate_public_ip_address(true)
+                .delete_on_termination(true);
+            if let Some(g) = group {
+                nic = nic.groups(g);
+            }
+            req = req.network_interfaces(nic.build());
+        } else if let Some(g) = group {
             req = req.security_group_ids(g);
+        }
+        if spec.nested_virtualization {
+            req = req.cpu_options(
+                CpuOptionsRequest::builder()
+                    .nested_virtualization(NestedVirtualizationSpecification::Enabled)
+                    .build(),
+            );
         }
         req
     }
@@ -748,7 +936,7 @@ where
     }
 }
 
-fn aws_err<E, R>(what: &str, e: aws_sdk_ec2::error::SdkError<E, R>) -> Error
+pub(crate) fn aws_err<E, R>(what: &str, e: aws_sdk_ec2::error::SdkError<E, R>) -> Error
 where
     E: std::error::Error + Send + Sync + 'static,
     R: std::fmt::Debug,
@@ -779,6 +967,220 @@ where
 /// Whether a dry-run error says the call would have succeeded.
 fn dry_run_ok(code: Option<&str>) -> bool {
     code == Some("DryRunOperation")
+}
+
+impl Aws {
+    /// The permission check of `test` under Secure Spaces: a dry run of
+    /// CreateVpc and of RunInstances into Cua's own VPC.
+    async fn test_in_own_vpc(
+        &self,
+        c: &Clients,
+        t: &mut Tested,
+        image: &str,
+        root: &str,
+        itype: &str,
+    ) {
+        // Cua makes its own VPC on the first launch and never uses the
+        // account's default one.
+        t.check(
+            "network",
+            true,
+            "Cua uses its own VPC (cua-sb-<owner>), never the default one".to_string(),
+        );
+        // The exact create, as a dry run: nothing is made.
+        let owner = "cua-test-dry-run";
+        let spec = ProvisionSpec {
+            name: "cua-aws-dry-run".into(),
+            disk_gb: 30,
+            user_data: "#cloud-config\n".into(),
+            tags: model::tags(owner, "dry-run", "", 0),
+            ..Default::default()
+        };
+        // Tagged like the real create: the least-privilege policy only
+        // allows a VPC created with the managed tag.
+        let mut vpc_tags = TagSpecification::builder().resource_type(ResourceType::Vpc);
+        for (k, v) in &spec.tags {
+            vpc_tags = vpc_tags.tags(Tag::builder().key(k).value(v).build());
+        }
+        let vpc_dry = c
+            .ec2
+            .create_vpc()
+            .cidr_block(crate::awsnet::VPC_CIDR)
+            .tag_specifications(vpc_tags.build())
+            .dry_run(true)
+            .send()
+            .await;
+        // RunInstances is checked into a subnet Cua already made (any
+        // home's: nothing is created); with none yet, the first launch
+        // is the first time it runs.
+        let subnet = c
+            .ec2
+            .describe_subnets()
+            .filters(filter(&format!("tag:{}", tag::MANAGED), &["true"]))
+            .filters(filter(
+                &format!("tag:{}", tag::GROUP),
+                &[crate::awsnet::VPC_GROUP],
+            ))
+            .send()
+            .await
+            .ok()
+            .and_then(|o| {
+                o.subnets()
+                    .first()
+                    .and_then(|s| s.subnet_id().map(str::to_string))
+            });
+        let run_dry = match &subnet {
+            Some(sn) => Some(
+                self.run_request(&c.ec2, &spec, image, root, None, Some(sn.as_str()), itype)
+                    .dry_run(true)
+                    .send()
+                    .await,
+            ),
+            None => None,
+        };
+        let vpc_failed = match &vpc_dry {
+            Err(e) if dry_run_ok(e.code()) => None,
+            Err(e) => Some(format!("CreateVpc: {}", e.code().unwrap_or("error"))),
+            Ok(_) => None,
+        };
+        let run_failed = match &run_dry {
+            Some(Err(e)) if !dry_run_ok(e.code()) => Some(format!(
+                "RunInstances: {}: {}",
+                e.code().unwrap_or("error"),
+                e.message().unwrap_or_default()
+            )),
+            _ => None,
+        };
+        let ok = vpc_failed.is_none() && run_failed.is_none();
+        t.check(
+            "permissions",
+            ok,
+            if ok {
+                if run_dry.is_some() {
+                    "CreateVpc and RunInstances would succeed (dry run)".to_string()
+                } else {
+                    "CreateVpc would succeed (dry run); RunInstances is checked on the first \
+                     launch, once Cua's VPC has a subnet"
+                        .to_string()
+                }
+            } else {
+                let mut why = [vpc_failed, run_failed]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let denied = |code: Option<&str>| code.is_some_and(|c| c.contains("Unauthorized"));
+                if vpc_dry.as_ref().err().is_some_and(|e| denied(e.code()))
+                    || matches!(&run_dry, Some(Err(e)) if denied(e.code()))
+                {
+                    why.push_str(&format!(
+                        "; attach Cua's least-privilege policy to this identity: {}",
+                        crate::policy::DOCS_URL
+                    ));
+                }
+                why
+            },
+        );
+    }
+
+    /// The permission check of `test` without the experiment: a dry run of
+    /// CreateSecurityGroup and of RunInstances in the account's default VPC.
+    async fn test_in_default_vpc(
+        &self,
+        c: &Clients,
+        t: &mut Tested,
+        image: &str,
+        root: &str,
+        itype: &str,
+    ) {
+        let vpc = match self.default_vpc_required(&c.ec2).await {
+            Ok(v) => {
+                t.check("network", true, format!("default VPC {v}"));
+                v
+            }
+            Err(e) => {
+                t.check("network", false, e.to_string());
+                return;
+            }
+        };
+        // The exact create, as a dry run: nothing is made.
+        let owner = "cua-test-dry-run";
+        let spec = ProvisionSpec {
+            name: "cua-aws-dry-run".into(),
+            disk_gb: 30,
+            user_data: "#cloud-config\n".into(),
+            tags: model::tags(owner, "dry-run", "", 0),
+            ..Default::default()
+        };
+        let group = match self.find_group(&c.ec2, &vpc, owner, false).await {
+            Ok(Some(g)) => g.group_id().map(str::to_string),
+            _ => None,
+        };
+        // Tagged like the real create: the least-privilege policy only
+        // allows a security group created with the managed tag.
+        let mut sg_tags = TagSpecification::builder().resource_type(ResourceType::SecurityGroup);
+        for (k, v) in &spec.tags {
+            sg_tags = sg_tags.tags(Tag::builder().key(k).value(v).build());
+        }
+        let sg_dry = c
+            .ec2
+            .create_security_group()
+            .group_name("cua-sandboxes-dry-run")
+            .description("dry run")
+            .vpc_id(&vpc)
+            .tag_specifications(sg_tags.build())
+            .dry_run(true)
+            .send()
+            .await;
+        let run_dry = self
+            .run_request(&c.ec2, &spec, image, root, group.as_deref(), None, itype)
+            .dry_run(true)
+            .send()
+            .await;
+        let (sg_ok, sg_detail) = match &sg_dry {
+            Err(e) if dry_run_ok(e.code()) => (true, String::new()),
+            Err(e) => (
+                false,
+                format!("CreateSecurityGroup: {}", e.code().unwrap_or("error")),
+            ),
+            Ok(_) => (true, String::new()),
+        };
+        let (run_ok, run_detail) = match &run_dry {
+            Err(e) if dry_run_ok(e.code()) => (true, String::new()),
+            Err(e) => (
+                false,
+                format!(
+                    "RunInstances: {}: {}",
+                    e.code().unwrap_or("error"),
+                    e.message().unwrap_or_default()
+                ),
+            ),
+            Ok(_) => (true, String::new()),
+        };
+        t.check(
+            "permissions",
+            sg_ok && run_ok,
+            if sg_ok && run_ok {
+                "RunInstances and CreateSecurityGroup would succeed (dry run)".to_string()
+            } else {
+                let mut why = [sg_detail, run_detail]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let denied = |code: Option<&str>| code.is_some_and(|c| c.contains("Unauthorized"));
+                if sg_dry.as_ref().err().is_some_and(|e| denied(e.code()))
+                    || run_dry.as_ref().err().is_some_and(|e| denied(e.code()))
+                {
+                    why.push_str(&format!(
+                        "; attach Cua's least-privilege policy to this identity: {}",
+                        crate::policy::DOCS_URL
+                    ));
+                }
+                why
+            },
+        );
+    }
 }
 
 #[async_trait]
@@ -883,7 +1285,13 @@ impl CloudApi for Aws {
 
     async fn test(&self, conn: &Connection) -> Tested {
         let mut t = Tested::default();
-        let c = self.clients(conn).await;
+        let c = match self.clients(conn, Purpose::Check).await {
+            Ok(c) => c,
+            Err(e) => {
+                t.check("credentials", false, e.to_string());
+                return t;
+            }
+        };
         match c.sts.get_caller_identity().send().await {
             Ok(me) => {
                 t.account = me.account().unwrap_or_default().to_string();
@@ -902,14 +1310,17 @@ impl CloudApi for Aws {
                 );
             }
             Err(e) => {
+                let hint = match &conn.auth {
+                    Auth::Cli => format!(
+                        " (sign in with `aws sso login --profile {}` or `aws configure`)",
+                        conn.profile
+                    ),
+                    _ => String::new(),
+                };
                 t.check(
                     "credentials",
                     false,
-                    format!(
-                        "{} (sign in with `aws sso login --profile {}` or `aws configure`)",
-                        sts_err("identify the account", e),
-                        conn.profile
-                    ),
+                    format!("{}{hint}", sts_err("identify the account", e)),
                 );
                 return t;
             }
@@ -951,93 +1362,12 @@ impl CloudApi for Aws {
                 return t;
             }
         };
-        let vpc = match self.default_vpc(&c.ec2).await {
-            Ok(v) => {
-                t.check("network", true, format!("default VPC {v}"));
-                v
-            }
-            Err(e) => {
-                t.check("network", false, e.to_string());
-                return t;
-            }
-        };
-        // The exact create, as a dry run: nothing is made.
-        let owner = "cua-test-dry-run";
-        let spec = ProvisionSpec {
-            name: "cua-aws-dry-run".into(),
-            disk_gb: 30,
-            user_data: "#cloud-config\n".into(),
-            tags: model::tags(owner, "dry-run", "", 0),
-            ..Default::default()
-        };
-        let group = match self.find_group(&c.ec2, &vpc, owner, false).await {
-            Ok(Some(g)) => g.group_id().map(str::to_string),
-            _ => None,
-        };
-        // Tagged like the real create: the least-privilege policy only
-        // allows a security group created with the managed tag.
-        let mut sg_tags = TagSpecification::builder().resource_type(ResourceType::SecurityGroup);
-        for (k, v) in &spec.tags {
-            sg_tags = sg_tags.tags(Tag::builder().key(k).value(v).build());
+        if crate::awsnet::enabled() {
+            self.test_in_own_vpc(&c, &mut t, &image, &root, itype).await;
+        } else {
+            self.test_in_default_vpc(&c, &mut t, &image, &root, itype)
+                .await;
         }
-        let sg_dry = c
-            .ec2
-            .create_security_group()
-            .group_name("cua-sandboxes-dry-run")
-            .description("dry run")
-            .vpc_id(&vpc)
-            .tag_specifications(sg_tags.build())
-            .dry_run(true)
-            .send()
-            .await;
-        let run_dry = self
-            .run_request(&c.ec2, &spec, &image, &root, group.as_deref(), itype)
-            .dry_run(true)
-            .send()
-            .await;
-        let (sg_ok, sg_detail) = match &sg_dry {
-            Err(e) if dry_run_ok(e.code()) => (true, String::new()),
-            Err(e) => (
-                false,
-                format!("CreateSecurityGroup: {}", e.code().unwrap_or("error")),
-            ),
-            Ok(_) => (true, String::new()),
-        };
-        let (run_ok, run_detail) = match &run_dry {
-            Err(e) if dry_run_ok(e.code()) => (true, String::new()),
-            Err(e) => (
-                false,
-                format!(
-                    "RunInstances: {}: {}",
-                    e.code().unwrap_or("error"),
-                    e.message().unwrap_or_default()
-                ),
-            ),
-            Ok(_) => (true, String::new()),
-        };
-        t.check(
-            "permissions",
-            sg_ok && run_ok,
-            if sg_ok && run_ok {
-                "RunInstances and CreateSecurityGroup would succeed (dry run)".to_string()
-            } else {
-                let mut why = [sg_detail, run_detail]
-                    .into_iter()
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                let denied = |code: Option<&str>| code.is_some_and(|c| c.contains("Unauthorized"));
-                if sg_dry.as_ref().err().is_some_and(|e| denied(e.code()))
-                    || run_dry.as_ref().err().is_some_and(|e| denied(e.code()))
-                {
-                    why.push_str(&format!(
-                        "; attach Cua's least-privilege policy to this identity: {}",
-                        crate::policy::DOCS_URL
-                    ));
-                }
-                why
-            },
-        );
         t
     }
 
@@ -1053,7 +1383,7 @@ impl CloudApi for Aws {
             };
             &in_region
         };
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Create).await?;
         let owner = spec
             .tags
             .get(tag::OWNER)
@@ -1089,50 +1419,128 @@ impl CloudApi for Aws {
                 "/dev/sda1".to_string(),
             )
         };
+        // Under Secure Spaces the computer goes into Cua's own VPC (and the
+        // zone's subnet); without the experiment it goes where it always
+        // went, the account's default VPC.
+        let own_vpc = crate::awsnet::enabled();
+        let (net, zone_list) = if own_vpc {
+            let _one = self.net_lock.lock().await;
+            let net = crate::awsnet::ensure_vpc(&c.ec2, &conn.region, &owner).await?;
+            let zones = crate::awsnet::zones(&c.ec2).await?;
+            (Some(net), zones)
+        } else {
+            (None, Vec::new())
+        };
+        let vpc_id = match &net {
+            Some(n) => n.id.clone(),
+            None => self.default_vpc_required(&c.ec2).await?,
+        };
         let (group, made_group) = self
-            .ensure_group(&c.ec2, conn, &owner, spec.peer_ports)
+            .ensure_group(&c.ec2, conn, &owner, spec.peer_ports, &vpc_id)
             .await?;
-        let mut sent = self
-            .run_request(&c.ec2, spec, &image, &root, Some(&group), &itype)
-            .client_token(&spec.name)
-            .send()
-            .await;
-        // No capacity for this type where EC2 put it (or the type is not
-        // offered there): try each zone of the default VPC (GPU types often
-        // have room in another one). Every attempt and why it failed goes
-        // into the error, so nobody has to guess which zones were tried.
+        let mut made_net = net.as_ref().map(|n| n.made.clone()).unwrap_or_default();
+        // No capacity for this type in a zone (or the type is not offered
+        // there): try each zone in turn (GPU types often have room in
+        // another one). Every attempt and why it failed goes into the
+        // error, so nobody has to guess which zones were tried.
         let mut tried = Vec::new();
-        if let Err(e) = &sent
-            && zone_bound(e.code())
-        {
-            tried.push(format!("EC2's pick of zone: {}", err_detail(e)));
-            for (i, (zone, subnet)) in self.default_subnets(&c.ec2).await?.iter().enumerate() {
-                sent = self
-                    .run_request(&c.ec2, spec, &image, &root, Some(&group), &itype)
-                    .subnet_id(subnet)
-                    .client_token(format!("{}-z{i}", spec.name))
+        let (out, subnet_used): (_, Option<String>) = if let Some(net) = &net {
+            let mut sent = None;
+            for (i, zone) in zone_list.iter().enumerate() {
+                let (subnet, made) = {
+                    let _one = self.net_lock.lock().await;
+                    crate::awsnet::ensure_subnet(&c.ec2, &conn.region, &owner, net, zone, i).await?
+                };
+                made_net.extend(made);
+                let token = if i == 0 {
+                    spec.name.clone()
+                } else {
+                    format!("{}-z{i}", spec.name)
+                };
+                match self
+                    .run_request(
+                        &c.ec2,
+                        spec,
+                        &image,
+                        &root,
+                        Some(&group),
+                        Some(&subnet),
+                        &itype,
+                    )
+                    .client_token(token)
                     .send()
-                    .await;
-                match &sent {
+                    .await
+                {
+                    Ok(o) => {
+                        sent = Some((o, Some(subnet)));
+                        break;
+                    }
                     Err(e) => {
-                        tried.push(format!("{zone} ({subnet}): {}", err_detail(e)));
+                        tried.push(format!("{zone} ({subnet}): {}", err_detail(&e)));
                         if !zone_bound(e.code()) {
+                            if tried.len() == 1 {
+                                return Err(aws_err("start the instance", e));
+                            }
                             break;
                         }
                     }
-                    Ok(_) => break,
                 }
             }
-        }
-        let out = match sent {
-            Ok(out) => out,
-            Err(e) if tried.is_empty() => return Err(aws_err("start the instance", e)),
-            Err(_) => {
-                return Err(cloud_err(
-                    "aws",
-                    &format!("start a {itype} in {}", conn.region),
-                    format!("tried {} placements: {}", tried.len(), tried.join("; ")),
-                ));
+            match sent {
+                Some(s) => s,
+                None if zone_list.is_empty() => {
+                    return Err(Error::Cloud(format!(
+                        "aws: {} has no availability zone Cua can use",
+                        conn.region
+                    )));
+                }
+                None => {
+                    return Err(cloud_err(
+                        "aws",
+                        &format!("start a {itype} in {}", conn.region),
+                        format!("tried {} placements: {}", tried.len(), tried.join("; ")),
+                    ));
+                }
+            }
+        } else {
+            let mut sent = self
+                .run_request(&c.ec2, spec, &image, &root, Some(&group), None, &itype)
+                .client_token(&spec.name)
+                .send()
+                .await;
+            // No capacity where EC2 put it: try each zone of the default VPC.
+            if let Err(e) = &sent
+                && zone_bound(e.code())
+            {
+                tried.push(format!("EC2's pick of zone: {}", err_detail(e)));
+                for (i, (zone, subnet)) in self.default_subnets(&c.ec2).await?.iter().enumerate() {
+                    sent = self
+                        .run_request(&c.ec2, spec, &image, &root, Some(&group), None, &itype)
+                        .subnet_id(subnet)
+                        .client_token(format!("{}-z{i}", spec.name))
+                        .send()
+                        .await;
+                    match &sent {
+                        Err(e) => {
+                            tried.push(format!("{zone} ({subnet}): {}", err_detail(e)));
+                            if !zone_bound(e.code()) {
+                                break;
+                            }
+                        }
+                        Ok(_) => break,
+                    }
+                }
+            }
+            match sent {
+                Ok(out) => (out, None),
+                Err(e) if tried.is_empty() => return Err(aws_err("start the instance", e)),
+                Err(_) => {
+                    return Err(cloud_err(
+                        "aws",
+                        &format!("start a {itype} in {}", conn.region),
+                        format!("tried {} placements: {}", tried.len(), tried.join("; ")),
+                    ));
+                }
             }
         };
         let inst = out
@@ -1157,8 +1565,13 @@ impl CloudApi for Aws {
             inst.image_id().map(str::to_string).unwrap_or(image),
         );
         r.extra.insert("security_group".into(), group);
+        r.extra.insert("vpc".into(), vpc_id.clone());
+        if let Some(subnet) = subnet_used {
+            r.extra.insert("subnet".into(), subnet);
+        }
         let mut all = vec![r];
         all.extend(made_group);
+        all.extend(made_net);
         Ok(all)
     }
 
@@ -1167,7 +1580,7 @@ impl CloudApi for Aws {
         conn: &Connection,
         r: &Resource,
     ) -> Result<Option<(String, BTreeMap<String, String>)>> {
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         match r.resource_type.as_str() {
             "security_group" => {
                 match c
@@ -1185,6 +1598,11 @@ impl CloudApi for Aws {
                     Err(e) => Err(aws_err("describe the security group", e)),
                 }
             }
+            t if crate::awsnet::is_network_type(t) => {
+                Ok(crate::awsnet::describe_part(&c.ec2, t, &r.id)
+                    .await?
+                    .map(|tags| ("available".to_string(), tags)))
+            }
             _ => Ok(self
                 .find_instance(&c.ec2, r)
                 .await?
@@ -1196,7 +1614,7 @@ impl CloudApi for Aws {
         if self.guard(conn, r, owner, "stop").await?.is_none() {
             return Err(Error::NotFound(format!("aws instance {}", r.id)));
         }
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         c.ec2
             .stop_instances()
             .instance_ids(&r.id)
@@ -1210,7 +1628,7 @@ impl CloudApi for Aws {
         if self.guard(conn, r, owner, "start").await?.is_none() {
             return Err(Error::NotFound(format!("aws instance {}", r.id)));
         }
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         // A stop still under way refuses a start: wait for it (bounded).
         for _ in 0..60 {
             match self.describe(conn, r).await?.map(|(s, _)| s).as_deref() {
@@ -1231,7 +1649,7 @@ impl CloudApi for Aws {
         let Some(state) = self.guard(conn, r, owner, "delete").await? else {
             return Ok(());
         };
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         match r.resource_type.as_str() {
             "security_group" => {
                 // An instance terminated a moment ago still holds the group
@@ -1249,6 +1667,9 @@ impl CloudApi for Aws {
                     }
                 }
             }
+            t if crate::awsnet::is_network_type(t) => {
+                crate::awsnet::delete_part(&c.ec2, t, &r.id).await
+            }
             _ => {
                 if state == "terminated" {
                     return Ok(());
@@ -1263,10 +1684,10 @@ impl CloudApi for Aws {
     }
 
     async fn boot_log(&self, conn: &Connection, r: &Resource) -> Result<Option<String>> {
-        if r.id.is_empty() || r.resource_type == "security_group" {
+        if r.id.is_empty() || r.resource_type != "instance" {
             return Ok(None);
         }
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         // `latest` returns the newest output (Nitro instances only); the
         // plain call returns the last 64 KiB and works everywhere.
         let out = match c
@@ -1298,7 +1719,7 @@ impl CloudApi for Aws {
     }
 
     async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>> {
-        let c = self.clients(conn).await;
+        let c = self.clients(conn, Purpose::Manage).await?;
         let mut out = Vec::new();
         let mut req = c.ec2.describe_instances().filters(filter(
             "instance-state-name",
@@ -1311,10 +1732,21 @@ impl CloudApi for Aws {
             .send()
             .await
             .map_err(|e| aws_err("list Cua instances", e))?;
+        // Our machines placed before Cua had its own VPC live in the
+        // account's default one; they are marked so the sweep can say so
+        // (each leaves on its next replacement).
+        let default_vpc = self.default_vpc(&c.ec2).await;
         for i in listed.reservations().iter().flat_map(|x| x.instances()) {
             let tags = tags_of(i.tags());
             if !model::is_ours(&tags, owner) {
                 continue;
+            }
+            let mut extra = BTreeMap::new();
+            if let Some(v) = i.vpc_id() {
+                extra.insert("vpc".to_string(), v.to_string());
+                if default_vpc.as_deref() == Some(v) {
+                    extra.insert(DEFAULT_VPC_MARK.to_string(), "true".to_string());
+                }
             }
             out.push(Resource {
                 provider: "aws".into(),
@@ -1326,6 +1758,7 @@ impl CloudApi for Aws {
                 expires: model::tag_expires(&tags),
                 tags,
                 state: state_name(i),
+                extra,
                 ..Default::default()
             });
         }
@@ -1353,6 +1786,7 @@ impl CloudApi for Aws {
                 ..Default::default()
             });
         }
+        out.extend(crate::awsnet::list_parts(&c.ec2, &conn.region, owner).await?);
         Ok(out)
     }
 
@@ -1383,24 +1817,32 @@ impl CloudApi for Aws {
         let regions = self.capabilities(conn).regions;
         let mut v: Vec<HostType> = HOST_TYPES
             .iter()
-            .map(|(name, arch, cpus, gb, usd, kvm, gpu)| HostType {
-                name: (*name).into(),
-                arch: (*arch).into(),
-                vcpus: *cpus,
-                memory_mb: gb * 1024,
-                disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
-                kvm: *kvm,
-                gpu: (*gpu).into(),
-                usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round() / 10_000.0,
-                regions: regions.clone(),
-                boot_secs: if *kvm { 300 } else { 90 },
-                // EC2's on-demand vCPU quotas: standard families, G, P.
-                quota_pool: match name.chars().next() {
-                    Some('g') if !gpu.is_empty() => "g",
-                    Some('p') if !gpu.is_empty() => "p",
-                    _ => "standard",
+            .map(|(name, arch, cpus, gb, usd, bare_metal_kvm, gpu)| {
+                // Nested-KVM instances receive /dev/kvm only when Hosts::add
+                // enables it in the EC2 launch request. Advertise that
+                // capability here as well, or the elastic planner will never
+                // choose these cheaper x86 hosts for VM/microVM Spaces.
+                let kvm = *bare_metal_kvm || crate::hosts::nested_kvm("aws", name);
+                HostType {
+                    name: (*name).into(),
+                    arch: (*arch).into(),
+                    vcpus: *cpus,
+                    memory_mb: gb * 1024,
+                    disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
+                    kvm,
+                    gpu: (*gpu).into(),
+                    usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round()
+                        / 10_000.0,
+                    regions: regions.clone(),
+                    boot_secs: if kvm { 300 } else { 90 },
+                    // EC2's on-demand vCPU quotas: standard families, G, P.
+                    quota_pool: match name.chars().next() {
+                        Some('g') if !gpu.is_empty() => "g",
+                        Some('p') if !gpu.is_empty() => "p",
+                        _ => "standard",
+                    }
+                    .into(),
                 }
-                .into(),
             })
             .collect();
         v.sort_by(|a, b| {

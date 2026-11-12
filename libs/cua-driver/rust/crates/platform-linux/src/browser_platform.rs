@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -19,10 +22,9 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
-    parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
+    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct LinuxBrowserPlatform {
     cursor_registry: Arc<cursor_overlay::CursorRegistry>,
@@ -460,47 +462,8 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
-    tokio::time::timeout(Duration::from_secs(2), async move {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut chunk).await.ok()?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes.len() > 256 * 1024 {
-                return None;
-            }
-            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..header_end]);
-                if let Some(length) = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }) {
-                    if bytes.len() >= header_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-        }
-        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
-        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
-        (loopback_websocket_port(&url) == Some(port)).then_some(url)
-    })
-    .await
-    .ok()
-    .flatten()
+    let url = fetch_json_version_ws_url(port).await?;
+    (loopback_websocket_port(&url) == Some(port)).then_some(url)
 }
 
 #[async_trait]
@@ -656,7 +619,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
                 let window = tokio::task::spawn_blocking(move || {
                     crate::wayland::hyprland::window_for_address(window_id)
@@ -804,7 +767,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
             if crate::wayland::hyprland::is_session() {
                 let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
                     .await

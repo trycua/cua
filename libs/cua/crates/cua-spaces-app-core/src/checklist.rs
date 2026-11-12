@@ -213,7 +213,7 @@ pub struct ChecklistTransition {
 pub struct ChecklistRow {
     /// The step.
     pub step: ChecklistStep,
-    /// "Add a machine".
+    /// "Add a computer".
     pub title: String,
     /// One line under the title.
     pub detail: String,

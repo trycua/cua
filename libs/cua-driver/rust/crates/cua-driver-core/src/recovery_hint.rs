@@ -310,7 +310,7 @@ static RULES: &[Rule] = &[
         },
     },
     Rule {
-        codes: &["target_changed", "stale_target", "stale_geometry"],
+        codes: &["target_changed", "stale_target", "stale_observation"],
         build: |c| {
             RecoveryHint::new(
                 "The window changed since your last read, so nothing was sent. Read it again and aim from \
@@ -430,6 +430,15 @@ static RULES: &[Rule] = &[
             RecoveryHint::new(
                 "This session's permission rules, or the user, refused the call. Do not retry it or work \
                  around it. Tell the user what was refused and ask them to allow it if the task needs it.",
+            )
+        },
+    },
+    Rule {
+        codes: &[crate::security_prompt::SECURITY_PROMPT_PROTECTED],
+        build: |_| {
+            RecoveryHint::new(
+                "That is a system security or consent prompt, and answering it is the user's call. Do \
+                 not click, type into or work around it: tell the user what it asks and wait.",
             )
         },
     },

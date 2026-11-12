@@ -210,6 +210,8 @@ fn scaled(r: NotchRadii, s: f64) -> NotchRadii {
 
 fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -> Space {
     Space {
+        hidden: false,
+        parent: None,
         id: format!("local:{name}"),
         name: name.into(),
         os,
@@ -235,6 +237,7 @@ fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -
         cloud: None,
         cloud_place: None,
         cloud_delete: None,
+        access: None,
     }
 }
 

@@ -4,254 +4,21 @@
 //! The EC2 provider against a fake EC2 and STS Query endpoint: the calls a
 //! create makes (tags in the create call, IMDSv2 with a hop limit of 1,
 //! terminate on shutdown, no key pair or instance profile, one outbound-only
-//! security group reused), the dry-run test that creates nothing, the tag
-//! guards, and a sweep that leaves everything the account already had
-//! untouched.
+//! security group reused, a VPC of Cua's own and never the default one), the
+//! dry-run test that creates nothing, the tag guards, and a sweep that leaves
+//! everything the account already had untouched.
 #![cfg(feature = "aws")]
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use cua_byoc::aws::Aws;
 use cua_byoc::model::{self, ProvisionSpec, Resource};
 use cua_byoc::{CloudApi, Connection};
 
-#[derive(Default)]
-struct Acct {
-    /// id -> (state, tags)
-    instances: BTreeMap<String, (String, BTreeMap<String, String>)>,
-    /// id -> (name, vpc, tags)
-    groups: BTreeMap<String, (String, String, BTreeMap<String, String>)>,
-    /// Every call: its Action and parameters.
-    calls: Vec<BTreeMap<String, String>>,
-    next: u32,
-    /// Refuse dry runs as unauthorized.
-    deny: bool,
-    /// Where RunInstances has no capacity: "" (EC2's own pick) and subnet ids.
-    full: Vec<String>,
-    /// Where the type is not offered (`Unsupported`): subnet ids.
-    unsupported: Vec<String>,
-    /// What the console shows (base64 on the wire), per instance.
-    console: Option<String>,
-    /// Ingress rules authorized: `group protocol from-to source-group`.
-    rules: std::collections::BTreeSet<String>,
-}
-
-type S = Arc<Mutex<Acct>>;
-
-fn xml(body: String) -> axum::response::Response {
-    (StatusCode::OK, [("content-type", "text/xml")], body).into_response()
-}
-
-fn ec2(action: &str, inner: &str) -> axum::response::Response {
-    xml(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><{action}Response xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><requestId>r-1</requestId>{inner}</{action}Response>"
-    ))
-}
-
-fn error(status: StatusCode, code: &str) -> axum::response::Response {
-    (
-        status,
-        [("content-type", "text/xml")],
-        format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Errors><Error><Code>{code}</Code><Message>{code}</Message></Error></Errors><RequestID>r-1</RequestID></Response>"),
-    )
-        .into_response()
-}
-
-fn tag_set(tags: &BTreeMap<String, String>) -> String {
-    let items: String = tags
-        .iter()
-        .map(|(k, v)| format!("<item><key>{k}</key><value>{v}</value></item>"))
-        .collect();
-    format!("<tagSet>{items}</tagSet>")
-}
-
-/// `Filter.N.Name` / `Filter.N.Value.M` as (name, values).
-fn filters(p: &BTreeMap<String, String>) -> Vec<(String, Vec<String>)> {
-    let mut out = Vec::new();
-    for n in 1.. {
-        let Some(name) = p.get(&format!("Filter.{n}.Name")) else {
-            break;
-        };
-        let values = (1..)
-            .map_while(|m| p.get(&format!("Filter.{n}.Value.{m}")).cloned())
-            .collect();
-        out.push((name.clone(), values));
-    }
-    out
-}
-
-fn matches(f: &[(String, Vec<String>)], state: &str, tags: &BTreeMap<String, String>) -> bool {
-    f.iter().all(|(name, values)| {
-        if let Some(k) = name.strip_prefix("tag:") {
-            tags.get(k).is_some_and(|v| values.contains(v))
-        } else if name == "instance-state-name" {
-            values.iter().any(|v| v == state)
-        } else {
-            true
-        }
-    })
-}
-
-/// `TagSpecification.N.*` of `resource` as tags.
-fn spec_tags(p: &BTreeMap<String, String>, resource: &str) -> BTreeMap<String, String> {
-    for n in 1.. {
-        let Some(ty) = p.get(&format!("TagSpecification.{n}.ResourceType")) else {
-            break;
-        };
-        if ty == resource {
-            return (1..)
-                .map_while(|m| {
-                    let k = p.get(&format!("TagSpecification.{n}.Tag.{m}.Key"))?;
-                    Some((
-                        k.clone(),
-                        p.get(&format!("TagSpecification.{n}.Tag.{m}.Value"))
-                            .cloned()
-                            .unwrap_or_default(),
-                    ))
-                })
-                .collect();
-        }
-    }
-    BTreeMap::new()
-}
-
-fn instance_xml(id: &str, state: &str, tags: &BTreeMap<String, String>) -> String {
-    format!(
-        "<item><instanceId>{id}</instanceId><instanceState><code>16</code><name>{state}</name></instanceState><launchTime>2026-09-30T00:00:00.000Z</launchTime>{}</item>",
-        tag_set(tags)
-    )
-}
-
-async fn handle(State(s): State<S>, body: Bytes) -> axum::response::Response {
-    let p: BTreeMap<String, String> = url::form_urlencoded::parse(&body).into_owned().collect();
-    let action = p.get("Action").cloned().unwrap_or_default();
-    let mut a = s.lock().unwrap();
-    a.calls.push(p.clone());
-    if p.get("DryRun").map(String::as_str) == Some("true") {
-        return if a.deny {
-            error(StatusCode::FORBIDDEN, "UnauthorizedOperation")
-        } else {
-            error(StatusCode::PRECONDITION_FAILED, "DryRunOperation")
-        };
-    }
-    match action.as_str() {
-        "GetCallerIdentity" => xml("<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><GetCallerIdentityResult><Arn>arn:aws:sts::111122223333:assumed-role/Admin/ada</Arn><UserId>X</UserId><Account>111122223333</Account></GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></GetCallerIdentityResponse>".into()),
-        "DescribeInstanceTypeOfferings" => ec2(&action, "<instanceTypeOfferingSet><item><instanceType>t4g.medium</instanceType><locationType>region</locationType><location>us-west-2</location></item></instanceTypeOfferingSet>"),
-        "DescribeImages" => ec2(&action, "<imagesSet><item><imageId>ami-old</imageId><name>ubuntu-noble-old</name><creationDate>2026-01-01T00:00:00.000Z</creationDate><rootDeviceName>/dev/sda1</rootDeviceName></item><item><imageId>ami-new</imageId><name>ubuntu-noble-new</name><creationDate>2026-09-01T00:00:00.000Z</creationDate><rootDeviceName>/dev/sda1</rootDeviceName></item></imagesSet>"),
-        "DescribeVpcs" => ec2(&action, "<vpcSet><item><vpcId>vpc-default</vpcId><isDefault>true</isDefault></item></vpcSet>"),
-        "DescribeSecurityGroups" => {
-            let f = filters(&p);
-            let ids: Vec<String> = (1..).map_while(|n| p.get(&format!("GroupId.{n}")).cloned()).collect();
-            if !ids.is_empty() && !ids.iter().all(|i| a.groups.contains_key(i)) {
-                return error(StatusCode::BAD_REQUEST, "InvalidGroup.NotFound");
-            }
-            let items: String = a
-                .groups
-                .iter()
-                .filter(|(id, (_, _, tags))| (ids.is_empty() || ids.contains(id)) && matches(&f, "", tags))
-                .map(|(id, (name, vpc, tags))| format!("<item><groupId>{id}</groupId><groupName>{name}</groupName><vpcId>{vpc}</vpcId>{}</item>", tag_set(tags)))
-                .collect();
-            ec2(&action, &format!("<securityGroupInfo>{items}</securityGroupInfo>"))
-        }
-        "CreateSecurityGroup" => {
-            a.next += 1;
-            let id = format!("sg-{}", a.next);
-            let tags = spec_tags(&p, "security-group");
-            a.groups.insert(id.clone(), (p["GroupName"].clone(), p["VpcId"].clone(), tags));
-            ec2(&action, &format!("<return>true</return><groupId>{id}</groupId>"))
-        }
-        "AuthorizeSecurityGroupIngress" => {
-            let get = |k: &str| p.get(&format!("IpPermissions.1.{k}")).cloned().unwrap_or_default();
-            let rule = format!(
-                "{} {} {}-{} {}",
-                p["GroupId"],
-                get("IpProtocol"),
-                get("FromPort"),
-                get("ToPort"),
-                get("Groups.1.GroupId")
-            );
-            if !a.rules.insert(rule) {
-                return error(StatusCode::BAD_REQUEST, "InvalidPermission.Duplicate");
-            }
-            ec2(&action, "<return>true</return>")
-        }
-        "DeleteSecurityGroup" => {
-            a.groups.remove(&p["GroupId"]);
-            ec2(&action, "<return>true</return>")
-        }
-        "GetConsoleOutput" => {
-            use base64::Engine as _;
-            let out = a
-                .console
-                .as_ref()
-                .map(|c| base64::engine::general_purpose::STANDARD.encode(c))
-                .unwrap_or_default();
-            ec2(&action, &format!("<instanceId>{}</instanceId><output>{out}</output>", p["InstanceId"]))
-        }
-        "DescribeSubnets" => ec2(&action, "<subnetSet><item><subnetId>subnet-b</subnetId><availabilityZone>us-west-2b</availabilityZone></item><item><subnetId>subnet-a</subnetId><availabilityZone>us-west-2a</availabilityZone></item></subnetSet>"),
-        "RunInstances" if a.full.contains(&p.get("SubnetId").cloned().unwrap_or_default()) => {
-            error(StatusCode::BAD_REQUEST, "InsufficientInstanceCapacity")
-        }
-        "RunInstances" if a.unsupported.contains(&p.get("SubnetId").cloned().unwrap_or_default()) => {
-            error(StatusCode::BAD_REQUEST, "Unsupported")
-        }
-        "RunInstances" => {
-            a.next += 1;
-            let id = format!("i-{}", a.next);
-            let tags = spec_tags(&p, "instance");
-            a.instances.insert(id.clone(), ("pending".into(), tags.clone()));
-            ec2(&action, &format!("<reservationId>r-1</reservationId><instancesSet>{}</instancesSet>", instance_xml(&id, "pending", &tags)))
-        }
-        "DescribeInstances" => {
-            let f = filters(&p);
-            let ids: Vec<String> = (1..).map_while(|n| p.get(&format!("InstanceId.{n}")).cloned()).collect();
-            if !ids.is_empty() && !ids.iter().all(|i| a.instances.contains_key(i)) {
-                return error(StatusCode::BAD_REQUEST, "InvalidInstanceID.NotFound");
-            }
-            let items: String = a
-                .instances
-                .iter()
-                .filter(|(id, (state, tags))| (ids.is_empty() || ids.contains(id)) && matches(&f, state, tags))
-                .map(|(id, (state, tags))| instance_xml(id, state, tags))
-                .collect();
-            ec2(&action, &format!("<reservationSet><item><reservationId>r-1</reservationId><instancesSet>{items}</instancesSet></item></reservationSet>"))
-        }
-        "StopInstances" | "StartInstances" | "TerminateInstances" => {
-            let id = p["InstanceId.1"].clone();
-            let to = match action.as_str() {
-                "StopInstances" => "stopped",
-                "StartInstances" => "running",
-                _ => "terminated",
-            };
-            if let Some(i) = a.instances.get_mut(&id) {
-                i.0 = to.into();
-            }
-            let set = match action.as_str() {
-                "StopInstances" => "instancesSet",
-                "StartInstances" => "instancesSet",
-                _ => "instancesSet",
-            };
-            ec2(&action, &format!("<{set}><item><instanceId>{id}</instanceId><currentState><code>0</code><name>{to}</name></currentState></item></{set}>"))
-        }
-        _ => error(StatusCode::BAD_REQUEST, "InvalidAction"),
-    }
-}
-
-async fn fake() -> (String, S) {
-    let s: S = Arc::default();
-    let app = axum::Router::new().fallback(handle).with_state(s.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
-    (url, s)
-}
+#[path = "support/fake_aws.rs"]
+mod fake_aws;
+use fake_aws::{S, fake, filters, spec_tags};
 
 fn conn() -> Connection {
     Connection {
@@ -285,11 +52,16 @@ async fn test_is_a_dry_run_that_creates_nothing() {
     );
     // Only dry runs of what creates; nothing exists afterwards.
     for c in &s.lock().unwrap().calls {
-        if ["RunInstances", "CreateSecurityGroup"].contains(&c["Action"].as_str()) {
+        if ["RunInstances", "CreateVpc"].contains(&c["Action"].as_str()) {
             assert_eq!(c.get("DryRun").map(String::as_str), Some("true"), "{c:?}");
         }
     }
     assert!(s.lock().unwrap().instances.is_empty() && s.lock().unwrap().groups.is_empty());
+    assert_eq!(
+        s.lock().unwrap().vpcs.len(),
+        1,
+        "only the default VPC the account had"
+    );
 
     // A dry run AWS refuses fails `permissions`, saying which call.
     s.lock().unwrap().deny = true;
@@ -297,7 +69,7 @@ async fn test_is_a_dry_run_that_creates_nothing() {
     assert!(!t.ok());
     let p = t.checks.iter().find(|c| c.name == "permissions").unwrap();
     assert!(
-        p.detail.contains("RunInstances: UnauthorizedOperation"),
+        p.detail.contains("CreateVpc: UnauthorizedOperation"),
         "{}",
         p.detail
     );
@@ -310,19 +82,44 @@ async fn test_is_a_dry_run_that_creates_nothing() {
 }
 
 #[tokio::test]
-async fn the_dry_run_security_group_carries_the_managed_tag() {
-    // The least-privilege policy only allows a security group created with
-    // the cua-managed tag, so the test's dry run must send it.
+async fn the_dry_run_vpc_carries_the_managed_tag() {
+    // The least-privilege policy only allows a VPC created with the
+    // cua-managed tag, so the test's dry run must send it.
     let (url, s) = fake().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     assert!(aws.test(&conn()).await.ok());
     let calls = s.lock().unwrap().calls.clone();
-    let sg = calls
+    let vpc = calls
         .iter()
-        .find(|c| c["Action"] == "CreateSecurityGroup")
+        .find(|c| c["Action"] == "CreateVpc")
         .expect("a dry run");
-    assert_eq!(sg["DryRun"], "true");
-    assert_eq!(spec_tags(sg, "security-group")["cua-managed"], "true");
+    assert_eq!(vpc["DryRun"], "true");
+    assert_eq!(spec_tags(vpc, "vpc")["cua-managed"], "true");
+    // No subnet of Cua's yet: RunInstances is not dry-run into one.
+    assert!(calls.iter().all(|c| c["Action"] != "RunInstances"));
+}
+
+#[tokio::test]
+async fn once_cua_has_a_subnet_the_dry_run_checks_run_instances_into_it() {
+    let (url, s) = fake().await;
+    let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+    aws.provision(&conn(), &spec("owner1")).await.unwrap();
+    s.lock().unwrap().calls.clear();
+    assert!(aws.test(&conn()).await.ok());
+    let run = calls_to(&s, "RunInstances");
+    assert_eq!(run.len(), 1);
+    assert_eq!(run[0]["DryRun"], "true");
+    let subnet = s.lock().unwrap().subnets.keys().next().unwrap().clone();
+    assert_eq!(run[0]["NetworkInterface.1.SubnetId"], subnet);
+    // Refused, it names the call.
+    s.lock().unwrap().deny = true;
+    let t = aws.test(&conn()).await;
+    let p = t.checks.iter().find(|c| c.name == "permissions").unwrap();
+    assert!(
+        p.detail.contains("RunInstances: UnauthorizedOperation"),
+        "{}",
+        p.detail
+    );
 }
 
 #[tokio::test]
@@ -367,9 +164,23 @@ async fn a_create_is_tagged_locked_down_and_reuses_one_outbound_only_group() {
     let (url, s) = fake().await;
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let made = aws.provision(&conn(), &spec("owner1")).await.unwrap();
-    assert_eq!(made.len(), 2, "the instance and the new security group");
-    assert_eq!(made[0].resource_type, "instance");
-    assert_eq!(made[1].resource_type, "security_group");
+    let types: Vec<_> = made.iter().map(|r| r.resource_type.as_str()).collect();
+    assert_eq!(
+        types,
+        [
+            "instance",
+            "security_group",
+            "vpc",
+            "internet_gateway",
+            "route_table",
+            "subnet"
+        ],
+        "the instance, its group and the VPC parts made now, all recorded"
+    );
+    for r in &made[1..] {
+        assert!(model::is_ours(&r.tags, "owner1"), "{r:?}");
+        assert!(!r.id.is_empty());
+    }
     let run = s
         .lock()
         .unwrap()
@@ -383,9 +194,12 @@ async fn a_create_is_tagged_locked_down_and_reuses_one_outbound_only_group() {
     assert_eq!(run["InstanceInitiatedShutdownBehavior"], "terminate");
     assert_eq!(run["MetadataOptions.HttpTokens"], "required");
     assert_eq!(run["MetadataOptions.HttpPutResponseHopLimit"], "1");
+    assert_eq!(run["MetadataOptions.InstanceMetadataTags"], "disabled");
     assert_eq!(run["ClientToken"], "cua-aws-0123456789ab");
     assert_eq!(run["BlockDeviceMapping.1.Ebs.VolumeType"], "gp3");
-    assert_eq!(run["SecurityGroupId.1"], made[1].id);
+    assert_eq!(run["NetworkInterface.1.SecurityGroupId.1"], made[1].id);
+    assert_eq!(run["NetworkInterface.1.SubnetId"], made[5].id);
+    assert_eq!(run["NetworkInterface.1.AssociatePublicIpAddress"], "true");
     assert!(
         !run.contains_key("KeyName") && !run.keys().any(|k| k.starts_with("IamInstanceProfile"))
     );
@@ -396,27 +210,220 @@ async fn a_create_is_tagged_locked_down_and_reuses_one_outbound_only_group() {
     assert_eq!(inst["cua-owner"], "owner1");
     assert_eq!(inst["cua-expires"], "1900000000");
     assert_eq!(inst, vol);
-    // The group: tagged in its create call, in the default VPC, no ingress
-    // rule was ever added.
+    // The group: tagged in its create call, in Cua's VPC (never the default
+    // one), no ingress rule was ever added.
     let a = actions(&s);
     assert!(
         !a.iter()
             .any(|x| x.starts_with("AuthorizeSecurityGroup") || x.starts_with("Revoke"))
     );
     let (_, vpc, gtags) = s.lock().unwrap().groups[&made[1].id].clone();
-    assert_eq!(vpc, "vpc-default");
+    assert_eq!(vpc, made[2].id);
+    assert_ne!(vpc, "vpc-default");
     assert!(model::is_ours(&gtags, "owner1"));
 
-    // A second create reuses the group.
+    // The network: a /16 of ours, a gateway attached to it, one route table
+    // with the way out, and a /20 subnet routed through it. No peering, no
+    // endpoint, nothing else.
+    {
+        let a = s.lock().unwrap();
+        let (cidr, default, vtags) = a.vpcs[&made[2].id].clone();
+        assert_eq!((cidr.as_str(), default), ("10.77.0.0/16", false));
+        assert!(model::is_ours(&vtags, "owner1"));
+        assert_eq!(vtags["Name"], "cua-sb-owner1");
+        let (attached, gtags) = a.igws[&made[3].id].clone();
+        assert_eq!(attached.as_deref(), Some(made[2].id.as_str()));
+        assert!(model::is_ours(&gtags, "owner1"));
+        let rt = &a.rts[&made[4].id];
+        assert_eq!(rt.vpc, made[2].id);
+        assert_eq!(rt.routes, [("0.0.0.0/0".to_string(), made[3].id.clone())]);
+        assert_eq!(rt.assocs.len(), 1);
+        assert_eq!(rt.assocs[0].1, made[5].id);
+        let (svpc, zone, scidr, stags) = a.subnets[&made[5].id].clone();
+        assert_eq!(
+            (svpc.as_str(), zone.as_str()),
+            (made[2].id.as_str(), "us-west-2a")
+        );
+        assert_eq!(scidr, "10.77.0.0/20");
+        assert!(model::is_ours(&stags, "owner1"));
+        // The account's default VPC was never touched.
+        assert!(a.subnets.values().all(|s| s.0 != "vpc-default"));
+        assert!(a.groups.values().all(|g| g.1 != "vpc-default"));
+        assert_eq!(a.vpcs.len(), 2);
+    }
+    for banned in [
+        "CreateVpcPeeringConnection",
+        "CreateVpcEndpoint",
+        "CreateNatGateway",
+        "ModifyVpcAttribute",
+        "CreateDefaultVpc",
+    ] {
+        assert!(!a.iter().any(|x| x == banned), "{banned}");
+    }
+
+    // A second create reuses all of it.
     let again = aws.provision(&conn(), &spec("owner1")).await.unwrap();
     assert_eq!(again.len(), 1);
-    assert_eq!(
-        actions(&s)
+    for once in [
+        "CreateSecurityGroup",
+        "CreateVpc",
+        "CreateInternetGateway",
+        "CreateRouteTable",
+        "CreateSubnet",
+    ] {
+        assert_eq!(
+            actions(&s).iter().filter(|x| *x == once).count(),
+            1,
+            "{once}"
+        );
+    }
+    // Another owner gets a VPC of their own.
+    let other = aws.provision(&conn(), &spec("owner2")).await.unwrap();
+    assert!(other.iter().any(|r| r.resource_type == "vpc"));
+    assert_eq!(s.lock().unwrap().vpcs.len(), 3);
+}
+
+/// An interrupted create (a VPC with no gateway, no route table) is
+/// finished by the next one, and what was made is not made again.
+#[tokio::test]
+async fn an_interrupted_vpc_create_is_finished_not_duplicated() {
+    let (url, s) = fake().await;
+    let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+    let tags = {
+        let mut t = model::tags("owner1", "", "", 0);
+        t.insert("cua-group".into(), "sandbox-vpc".into());
+        t
+    };
+    s.lock()
+        .unwrap()
+        .vpcs
+        .insert("vpc-half".into(), ("10.77.0.0/16".into(), false, tags));
+    let made = aws.provision(&conn(), &spec("owner1")).await.unwrap();
+    let types: Vec<_> = made.iter().map(|r| r.resource_type.as_str()).collect();
+    assert!(!types.contains(&"vpc"), "{types:?}");
+    assert!(types.contains(&"internet_gateway") && types.contains(&"route_table"));
+    assert_eq!(calls_to(&s, "CreateVpc").len(), 0);
+    let a = s.lock().unwrap();
+    assert_eq!(a.vpcs.len(), 2);
+    assert!(a.subnets.values().all(|s| s.0 == "vpc-half"));
+}
+
+/// Our VPC parts go in the order AWS needs (the group, subnets, route
+/// table, gateway, then the VPC), the guard refuses what is not ours, and
+/// the default VPC is never deleted.
+#[tokio::test]
+async fn the_vpc_goes_away_part_by_part_and_only_ours() {
+    let (url, s) = fake().await;
+    let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+    let made = aws.provision(&conn(), &spec("owner1")).await.unwrap();
+    // Instance terminated first, as a sweep does.
+    aws.delete(&conn(), &made[0], "owner1").await.unwrap();
+    // The listing carries every part.
+    let listed = aws.list_owned(&conn(), "owner1").await.unwrap();
+    for t in cua_byoc::awsnet::DELETE_ORDER {
+        assert!(listed.iter().any(|r| r.resource_type == *t), "{t}");
+    }
+    // Deleted in the order EC2 needs: the group, subnets, route table,
+    // gateway, VPC.
+    let mut parts: Vec<&Resource> = made[1..].iter().collect();
+    parts.sort_by_key(|r| {
+        cua_byoc::awsnet::DELETE_ORDER
             .iter()
-            .filter(|x| *x == "CreateSecurityGroup")
-            .count(),
-        1
+            .position(|t| *t == r.resource_type)
+    });
+    for r in parts {
+        aws.delete(&conn(), r, "owner1")
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", r.resource_type));
+    }
+    let a = s.lock().unwrap();
+    assert!(a.subnets.is_empty() && a.igws.is_empty() && a.rts.is_empty() && a.groups.is_empty());
+    assert_eq!(a.vpcs.keys().collect::<Vec<_>>(), ["vpc-default"]);
+}
+
+/// Parts that are not ours (the default VPC, a VPC without our tags, another
+/// home's) are never listed, described for write or deleted.
+#[tokio::test]
+async fn a_vpc_part_that_is_not_ours_is_never_touched() {
+    let (url, s) = fake().await;
+    let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+    {
+        let mut a = s.lock().unwrap();
+        a.vpcs.insert(
+            "vpc-theirs".into(),
+            ("10.0.0.0/16".into(), false, BTreeMap::new()),
+        );
+        a.vpcs.insert(
+            "vpc-other-home".into(),
+            ("10.77.0.0/16".into(), false, {
+                let mut t = model::tags("someone-else", "", "", 0);
+                t.insert("cua-group".into(), "sandbox-vpc".into());
+                t
+            }),
+        );
+        a.subnets.insert(
+            "subnet-theirs".into(),
+            (
+                "vpc-theirs".into(),
+                "us-west-2a".into(),
+                "10.0.0.0/20".into(),
+                BTreeMap::new(),
+            ),
+        );
+        a.igws.insert(
+            "igw-theirs".into(),
+            (Some("vpc-theirs".into()), BTreeMap::new()),
+        );
+        a.rts.insert("rtb-theirs".into(), Default::default());
+    }
+    assert!(aws.list_owned(&conn(), "me").await.unwrap().is_empty());
+    for (ty, id) in [
+        ("vpc", "vpc-default"),
+        ("vpc", "vpc-theirs"),
+        ("vpc", "vpc-other-home"),
+        ("subnet", "subnet-theirs"),
+        ("internet_gateway", "igw-theirs"),
+        ("route_table", "rtb-theirs"),
+    ] {
+        let r = Resource {
+            provider: "aws".into(),
+            id: id.into(),
+            resource_type: ty.into(),
+            ..Default::default()
+        };
+        let e = aws.delete(&conn(), &r, "me").await.unwrap_err().to_string();
+        assert!(e.contains("refusing"), "{id}: {e}");
+    }
+    let a = actions(&s);
+    for verb in [
+        "DeleteVpc",
+        "DeleteSubnet",
+        "DeleteInternetGateway",
+        "DeleteRouteTable",
+        "DetachInternetGateway",
+        "DisassociateRouteTable",
+    ] {
+        assert!(!a.iter().any(|x| x == verb), "{verb} was called");
+    }
+}
+
+/// Our machines placed before Cua had a VPC of its own are in the default
+/// VPC: the listing marks them so the sweep says so.
+#[tokio::test]
+async fn our_older_machines_in_the_default_vpc_are_marked() {
+    let (url, s) = fake().await;
+    let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+    put(&s, "i-old", model::tags("me", "s", "c", 0));
+    let new = aws.provision(&conn(), &spec("me")).await.unwrap();
+    let listed = aws.list_owned(&conn(), "me").await.unwrap();
+    let old = listed.iter().find(|r| r.id == "i-old").unwrap();
+    assert_eq!(
+        old.extra.get(model::DEFAULT_VPC).map(String::as_str),
+        Some("true")
     );
+    let fresh = listed.iter().find(|r| r.id == new[0].id).unwrap();
+    assert!(!fresh.extra.contains_key(model::DEFAULT_VPC));
+    assert_eq!(fresh.extra["vpc"], new[2].id);
 }
 
 #[tokio::test]
@@ -514,7 +521,7 @@ async fn pool_hosts_reach_each_other_and_nothing_else() {
         .iter()
         .rfind(|c| c["Action"] == "RunInstances")
         .unwrap();
-    assert_eq!(run["SecurityGroupId.1"], pool_group);
+    assert_eq!(run["NetworkInterface.1.SecurityGroupId.1"], pool_group);
     let (_, _, gtags) = s.lock().unwrap().groups[&pool_group].clone();
     assert_eq!(gtags["cua-group"], "pool-hosts");
     // A second host reuses it (its rules are there: asking again is
@@ -532,7 +539,7 @@ async fn pool_hosts_reach_each_other_and_nothing_else() {
         .rfind(|c| c["Action"] == "RunInstances")
         .cloned()
         .unwrap();
-    assert_eq!(last["SecurityGroupId.1"], sandbox_group);
+    assert_eq!(last["NetworkInterface.1.SecurityGroupId.1"], sandbox_group);
     assert!(
         calls_to(&s, "AuthorizeSecurityGroupIngress")
             .iter()
@@ -551,15 +558,25 @@ fn calls_to(s: &S, action: &str) -> Vec<BTreeMap<String, String>> {
         .collect()
 }
 
-/// No capacity where EC2 puts an instance: the create tries each zone of the
-/// default VPC in order, with its own client token, until one has room.
+/// No capacity in a zone: the create tries each zone of Cua's VPC in order
+/// (a subnet made for each as it is tried), with its own client token, until
+/// one has room.
 #[tokio::test]
 async fn a_create_without_capacity_tries_the_other_zones() {
     let (url, s) = fake().await;
-    s.lock().unwrap().full = vec!["".into(), "subnet-a".into()];
+    s.lock().unwrap().full = vec!["us-west-2a".into()];
     let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
     let made = aws.provision(&conn(), &spec("owner1")).await.unwrap();
     assert_eq!(made[0].resource_type, "instance");
+    let subnet_in = |zone: &str| -> String {
+        s.lock()
+            .unwrap()
+            .subnets
+            .iter()
+            .find(|(_, v)| v.1 == zone)
+            .map(|(k, _)| k.clone())
+            .unwrap()
+    };
     let runs: Vec<(String, String)> = s
         .lock()
         .unwrap()
@@ -568,7 +585,7 @@ async fn a_create_without_capacity_tries_the_other_zones() {
         .filter(|c| c["Action"] == "RunInstances")
         .map(|c| {
             (
-                c.get("SubnetId").cloned().unwrap_or_default(),
+                c["NetworkInterface.1.SubnetId"].clone(),
                 c["ClientToken"].clone(),
             )
         })
@@ -576,17 +593,28 @@ async fn a_create_without_capacity_tries_the_other_zones() {
     assert_eq!(
         runs,
         vec![
-            ("".into(), "cua-aws-0123456789ab".into()),
-            ("subnet-a".into(), "cua-aws-0123456789ab-z0".into()),
-            ("subnet-b".into(), "cua-aws-0123456789ab-z1".into()),
+            (subnet_in("us-west-2a"), "cua-aws-0123456789ab".into()),
+            (subnet_in("us-west-2b"), "cua-aws-0123456789ab-z1".into()),
         ]
+    );
+    // Both zones have their own range of the /16.
+    let cidrs: Vec<String> = s
+        .lock()
+        .unwrap()
+        .subnets
+        .values()
+        .map(|v| v.2.clone())
+        .collect();
+    assert_eq!(cidrs.len(), 2);
+    assert!(
+        cidrs.contains(&"10.77.0.0/20".to_string()) && cidrs.contains(&"10.77.16.0/20".to_string())
     );
     // Nowhere with room (or the type is not offered in a zone): the error
     // names every placement tried and why each failed, and nothing is left.
     {
         let mut a = s.lock().unwrap();
-        a.full = vec!["".into(), "subnet-a".into()];
-        a.unsupported = vec!["subnet-b".into()];
+        a.full = vec!["us-west-2a".into()];
+        a.unsupported = vec!["us-west-2b".into()];
     }
     let before = s.lock().unwrap().instances.len();
     let e = aws
@@ -594,16 +622,21 @@ async fn a_create_without_capacity_tries_the_other_zones() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(e.contains("in us-west-2: tried 3 placements"), "{e}");
+    assert!(e.contains("in us-west-2: tried 2 placements"), "{e}");
     assert!(
-        e.contains("EC2's pick of zone: InsufficientInstanceCapacity"),
+        e.contains(&format!(
+            "us-west-2a ({}): InsufficientInstanceCapacity",
+            subnet_in("us-west-2a")
+        )),
         "{e}"
     );
     assert!(
-        e.contains("us-west-2a (subnet-a): InsufficientInstanceCapacity"),
+        e.contains(&format!(
+            "us-west-2b ({}): Unsupported",
+            subnet_in("us-west-2b")
+        )),
         "{e}"
     );
-    assert!(e.contains("us-west-2b (subnet-b): Unsupported"), "{e}");
     assert_eq!(s.lock().unwrap().instances.len(), before);
 }
 
@@ -735,4 +768,100 @@ async fn aws_conforms_to_the_elastic_contract() {
     };
     let bad = lifecycle_checks(&aws, &c, "owner1", &seen).await;
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A cold burst of first launches on one account: every caller looks for
+/// the shared group before any made it. One makes it; the rest use it.
+#[tokio::test]
+async fn sixteen_concurrent_first_launches_share_one_security_group() {
+    let (url, s) = fake().await;
+    s.lock().unwrap().describe_delay_ms = 40;
+    let aws = Arc::new(Aws::with_endpoint(&url, "AKIDTEST", "secret"));
+    let mut tasks = vec![];
+    for i in 0..16 {
+        let aws = aws.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut sp = spec("owner1");
+            sp.name = format!("cua-aws-{i:012}");
+            aws.provision(&conn(), &sp).await
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap().expect("a launch of the burst");
+    }
+    for once in ["CreateSecurityGroup", "CreateVpc", "CreateSubnet"] {
+        assert_eq!(
+            actions(&s).iter().filter(|x| *x == once).count(),
+            1,
+            "{once}"
+        );
+    }
+}
+
+/// Another process (a second daemon, an older run) makes the group between
+/// the look and the create: `InvalidGroup.Duplicate` means it is there.
+#[tokio::test]
+async fn a_duplicate_security_group_is_the_one_to_use() {
+    let (url, s) = fake().await;
+    // The VPC and its subnet exist (a pool host made them with its own
+    // group); only the outbound-only group is raced for.
+    let host = ProvisionSpec {
+        name: "cua-host-0".into(),
+        machine_type: "t4g.medium".into(),
+        user_data: "#!/bin/bash\n".into(),
+        tags: model::tags("owner1", "host:aws-0", "", 1_900_000_000),
+        arch: "arm64".into(),
+        peer_ports: Some((0, 65535)),
+        ..Default::default()
+    };
+    Aws::with_endpoint(&url, "AKIDTEST", "secret")
+        .provision(&conn(), &host)
+        .await
+        .unwrap();
+    s.lock().unwrap().describe_delay_ms = 40;
+    let mut tasks = vec![];
+    for i in 0..8 {
+        let url = url.clone();
+        tasks.push(tokio::spawn(async move {
+            // Each with its own provider: no shared lock.
+            let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+            let mut sp = spec("owner1");
+            sp.name = format!("cua-aws-{i:012}");
+            aws.provision(&conn(), &sp).await
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap().expect("a launch of the burst");
+    }
+    // The pool group and one outbound-only group, in the one VPC.
+    let a = s.lock().unwrap();
+    let ours: Vec<_> = a
+        .vpcs
+        .iter()
+        .filter(|(_, v)| !v.1)
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(ours.len(), 1);
+    assert_eq!(a.groups.len(), 2);
+}
+
+/// Two processes make a VPC at the same moment: both keep the lowest id; the
+/// other one (empty, ours) is deleted, and its parts are never recorded.
+#[tokio::test]
+async fn a_vpc_made_twice_at_once_keeps_the_lowest_and_deletes_the_other() {
+    let (url, s) = fake().await;
+    s.lock().unwrap().race_vpc = true;
+    let aws = Aws::with_endpoint(&url, "AKIDTEST", "secret");
+    let made = aws.provision(&conn(), &spec("owner1")).await.unwrap();
+    assert!(
+        made.iter().all(|r| r.resource_type != "vpc"),
+        "not ours to record"
+    );
+    let a = s.lock().unwrap();
+    let mut ids: Vec<&String> = a.vpcs.keys().collect();
+    ids.sort();
+    assert_eq!(ids, ["vpc-0", "vpc-default"]);
+    assert!(a.subnets.values().all(|v| v.0 == "vpc-0"));
+    drop(a);
+    assert_eq!(calls_to(&s, "DeleteVpc").len(), 1);
 }

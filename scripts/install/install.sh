@@ -13,10 +13,12 @@
 #   cua-driver  Cua Driver, which lets AI agents use apps while you keep
 #               working: installs it and adds its skill and MCP server to
 #               your agents (default off)
-# The checklist does not offer hosting. The app's first run asks how to use
-# this computer (--mode host|client preselects the answer). For scripts,
-# `--select host` / `--only host` still runs `cua host setup`, which lets
-# your other devices use this computer through the relay.
+# Signing in adds this computer to your account: after `cua auth login`
+# succeeds, the installer runs `cua host setup`, so your other devices can
+# use it through the relay (a computer set up before keeps its settings).
+# --no-host signs in only. Without a terminal there is no sign-in here; the
+# closing lines say how to finish. `--select host` / `--only host` run
+# `cua host setup` even without a sign-in here (kept for scripts).
 #
 # Options:
 #   --select LIST       install these items plus the CLI, not the app unless
@@ -26,9 +28,12 @@
 #   --app-only          install only the Cua Spaces app (no CLI)
 #   --mode host|client  preselect the app's first-run choice (implies spaces)
 #   --pair CODE         add this machine to your account with a one-time code
-#                       from the Cua Spaces app (Add a machine): installs and
+#                       from the Cua Spaces app (Add a computer): installs and
 #                       runs `cua host setup --pair CODE`, no sign-in, no checklist
 #   --relay URL         relay for --pair (default https://relay.cua.ai)
+#   --no-host           sign in only: do not add this computer to your account
+#   --no-provide-spaces add this computer without creating Spaces for your
+#                       other devices on it (cua host setup --no-provide-spaces)
 #                       A computer that already has a cua with `host setup --pair`
 #                       (and the app) uses them instead of downloading again;
 #                       --version, --prefix or CUA_INSTALL_REINSTALL=1 install anyway
@@ -36,7 +41,7 @@
 #   --prefix DIR        install under DIR (DIR/bin, DIR/Applications)
 #   --modify-path       add the bin dir to your shell profile without asking
 #   --no-modify-path    never edit your shell profile (print the one-line command)
-#   --no-onboarding     do not run `cua auth login` afterwards
+#   --no-onboarding     do not run `cua auth login` afterwards (nor add this computer)
 #   --no-skills         with cua-driver, add only its MCP server to your agents,
 #                       not its skill (by default both are added)
 #   -v, --verbose       print every step (manifest, downloads, signature checks)
@@ -74,7 +79,9 @@ LATEST_TAG="cua-install-latest"
 MINISIGN_PUBKEY="${CUA_INSTALL_MINISIGN_PUBKEY:-}"
 # Only the release workflows may sign, each at its own release tag: the CLI
 # by cd-cua-sdk.yml at refs/tags/cua-sdk-v<version>, the app by
-# cd-cua-spaces.yml at refs/tags/cua-spaces-v<version> (cosign_identity).
+# cd-cua-spaces.yml at refs/tags/cua-spaces-v<version>; a release rebuilt from
+# main (rebuild_tag) is accepted only with a signed claim for its tag
+# (verify_rebuild_claim).
 COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 
 want_cli=1
@@ -101,6 +108,9 @@ verbose=0
 no_tty_noted=0
 signed_in=0
 onboarding=1
+no_host=0
+no_provide_spaces=0
+did_host=""
 driver_skills=1
 require_sig=0
 dry_run=0
@@ -131,6 +141,19 @@ usage() {
     sed -n '2,/^set -eu/p' "$0" 2>/dev/null | sed -e '$d' -e 's/^# \{0,1\}//' || true
 }
 
+# Detaches the disk image at "$1". Right after a copy, macOS may still hold
+# the volume (Spotlight or fseventsd indexing it) and a plain detach says
+# "resource busy": try a few times, then force it.
+detach_dmg() {
+    n=0
+    while [ "$n" -lt 5 ]; do
+        hdiutil detach -quiet "$1" >/dev/null 2>&1 && return 0
+        n=$((n + 1))
+        sleep 1
+    done
+    hdiutil detach -quiet -force "$1" >/dev/null 2>&1 || true
+}
+
 cleanup() {
     rc=$?
     if [ "$rc" != 0 ] && [ "$tel_on" = 1 ] && [ "$tel_ended" = 0 ]; then
@@ -142,7 +165,7 @@ cleanup() {
         tty_saved=""
     fi
     if [ -n "$mounted" ]; then
-        hdiutil detach -quiet "$mounted" >/dev/null 2>&1 || true
+        detach_dmg "$mounted"
     fi
     if [ -n "$tmp" ] && [ -d "$tmp" ]; then
         rm -rf "$tmp"
@@ -403,6 +426,8 @@ parse_args() {
         --modify-path) modify_path=1 ;;
         --no-modify-path) no_modify_path=1 ;;
         --no-onboarding) onboarding=0 ;;
+        --no-host) no_host=1 ;;
+        --no-provide-spaces) no_provide_spaces=1 ;;
         --no-skills) driver_skills=0 ;;
         -v | --verbose) verbose=1 ;;
         --require-signature) require_sig=1 ;;
@@ -443,6 +468,13 @@ parse_args() {
         if [ "$only_set" = 1 ]; then only_list="$only_list,host"; fi
         # The code stands in for the account: no sign-in here.
         onboarding=0
+    fi
+    if [ "$no_host" = 1 ]; then
+        [ -z "$pair_code" ] || die "--no-host and --pair contradict each other: --pair adds this computer"
+        case " $(items_in "$select_list$only_list") " in
+        *" host "*) die "--no-host and --select host contradict each other" ;;
+        esac
+        [ "$no_provide_spaces" = 0 ] || die "--no-provide-spaces goes with adding this computer; drop --no-host"
     fi
     if [ -n "$relay_url" ]; then
         [ -n "$pair_code" ] || die "--relay goes with --pair"
@@ -865,8 +897,8 @@ resolve_url() {
     esac
 }
 
-# cosign_identity ENTRY: the exact Sigstore certificate identity (workflow
-# at its release tag) that must have signed this manifest entry's artifact.
+# cosign_identity ENTRY: the Sigstore certificate identity (workflow at its
+# release tag) that must have signed this manifest entry's artifact.
 cosign_identity() {
     c="$(json_field "$1" component)"
     v="$(json_field "$1" version)"
@@ -878,6 +910,49 @@ cosign_identity() {
     app) printf 'https://github.com/%s/.github/workflows/cd-cua-spaces.yml@refs/tags/cua-spaces-v%s\n' "$REPO" "$v" ;;
     *) return 1 ;;
     esac
+}
+
+# rebuilt_identity: the app's identity for a release rebuilt from an
+# existing tag (rebuild_tag): cd-cua-spaces.yml at refs/heads/main. That ref
+# alone says nothing about which tag was built, so it is only ever accepted
+# together with a signed claim naming this tag and this file's sha256
+# (verify_rebuild_claim) and the workflow_dispatch trigger.
+rebuilt_identity() {
+    printf 'https://github.com/%s/.github/workflows/cd-cua-spaces.yml@refs/heads/main\n' "$REPO"
+}
+
+# cosign_verify FILE BUNDLE IDENTITY [REBUILT]: one cosign check. A rebuilt
+# identity also pins the repository, the main ref and the dispatch trigger,
+# so a push, schedule or pull_request run of the same workflow never passes.
+cosign_verify() {
+    if [ "${4:-}" = rebuilt ]; then
+        cosign verify-blob --bundle "$2" \
+            --certificate-identity "$3" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" \
+            --certificate-github-workflow-repository "$REPO" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-trigger workflow_dispatch "$1" >/dev/null 2>&1
+    else
+        cosign verify-blob --bundle "$2" \
+            --certificate-identity "$3" \
+            --certificate-oidc-issuer "$COSIGN_ISSUER" "$1" >/dev/null 2>&1
+    fi
+}
+
+# verify_rebuild_claim FILE BUNDLE_URL VERSION: a rebuild's main-branch
+# signature proves "the release workflow signed this", not "for this tag".
+# The tie to the tag is rebuild-claim.txt next to the artifact, signed by the
+# same run: a "tag cua-spaces-v<version>" line and "<sha256>  <name>" for
+# every asset. It must verify under the rebuilt identity, name this tag and
+# list this file's sha256 under its name.
+verify_rebuild_claim() {
+    claim="$1.rebuild-claim.txt"
+    # fetch dies on a missing file; a release without a claim is a failed check.
+    (fetch "$(dirname "$2")/rebuild-claim.txt" "$claim") >/dev/null 2>&1 || return 1
+    (fetch "$(dirname "$2")/rebuild-claim.txt.sigstore.json" "$claim.sigstore.json") >/dev/null 2>&1 || return 1
+    cosign_verify "$claim" "$claim.sigstore.json" "$(rebuilt_identity)" rebuilt || return 1
+    grep -Fx "tag cua-spaces-v$3" "$claim" >/dev/null || return 1
+    grep -Fx "$(sha256_of "$1")  ${1##*/}" "$claim" >/dev/null || return 1
 }
 
 verify_signature() { # file entry
@@ -894,10 +969,15 @@ verify_signature() { # file entry
         fetch "$(resolve_url "$bundle")" "$1.sigstore.json"
         identity="$(cosign_identity "$2")" ||
             die "no release identity for ${1##*/} in the manifest"
-        cosign verify-blob --bundle "$1.sigstore.json" \
-            --certificate-identity "$identity" \
-            --certificate-oidc-issuer "$COSIGN_ISSUER" "$1" >/dev/null 2>&1 ||
-            die "cosign signature check failed for ${1##*/}"
+        cosign_ok=0
+        if cosign_verify "$1" "$1.sigstore.json" "$identity"; then
+            cosign_ok=1
+        elif [ "$(json_field "$2" component)" = app ] &&
+            cosign_verify "$1" "$1.sigstore.json" "$(rebuilt_identity)" rebuilt &&
+            verify_rebuild_claim "$1" "$(resolve_url "$bundle")" "$(json_field "$2" version)"; then
+            cosign_ok=1
+        fi
+        [ "$cosign_ok" = 1 ] || die "cosign signature check failed for ${1##*/}"
         sig_ok=1
     fi
     if [ "$sig_ok" = 0 ] && [ "$require_sig" = 1 ]; then
@@ -1122,10 +1202,10 @@ install_cli() {
         chmod 0755 "$bindir/.cua.tmp.$$"
         mv -f "$bindir/.cua.tmp.$$" "$target"
         info "installed $target"
-        # macOS microVMs: the monitor and the guest init ship with the CLI
-        # and are found next to it, as is the static cua-spacesd injected
-        # into OCI images that carry none.
-        for extra in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+        # macOS microVMs: the monitor, its network gateway and the guest
+        # init ship with the CLI and are found next to it, as is the static
+        # cua-spacesd injected into OCI images that carry none.
+        for extra in cua-vz cua-netgw cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
             xsrc="$(find "$tmp/cli" -type f -name "$extra" | head -n 1)"
             [ -n "$xsrc" ] || continue
             cp "$xsrc" "$bindir/.$extra.tmp.$$"
@@ -1194,7 +1274,7 @@ install_app_darwin() {
     ditto "$src" "$app_path.cua-new" 2>/dev/null || cp -R "$src" "$app_path.cua-new"
     rm -rf "$app_path"
     mv "$app_path.cua-new" "$app_path"
-    hdiutil detach -quiet "$mounted" >/dev/null 2>&1 || true
+    detach_dmg "$mounted"
     mounted=""
     did_app="$app_path"
 }
@@ -1362,26 +1442,40 @@ host_setup() {
         host_pair
         return
     fi
+    set -- "$cua_bin" host setup
+    if [ "$sel_host" = 0 ]; then
+        # Added by signing in: a computer already set up keeps its settings,
+        # and a new one provides Spaces with its screen kept private (sharing
+        # its desktop is a choice on its page in Cua Spaces).
+        if [ "$dry_run" = 0 ] && "$cua_bin" host status --json </dev/null 2>/dev/null | grep -q '"configured":true'; then
+            did_host=1
+            return
+        fi
+        if [ "$no_provide_spaces" = 0 ]; then set -- "$@" --no-desktop --provide-spaces; fi
+    fi
+    if [ "$no_provide_spaces" = 1 ]; then set -- "$@" --no-provide-spaces; fi
     if [ "$dry_run" = 1 ]; then
-        say "[dry-run] $cua_bin host setup"
+        say "[dry-run] $*"
         return
     fi
-    step "Letting your other devices use this computer (cua host setup)"
+    step "Adding this computer to your account (cua host setup)"
     if tty_ok; then
-        if "$cua_bin" host setup </dev/tty; then
-            say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
-            return
+        if "$@" </dev/tty; then
+            did_host=1
         fi
     else
-        if "$cua_bin" host setup </dev/null; then
-            say "  cua runtime setup lume  # also needed to provide macOS VM Spaces (cua host setup --profile spare --provide-spaces)"
-            return
+        if "$@" </dev/null; then
+            did_host=1
         fi
     fi
-    warn "host setup did not finish; run 'cua auth login --remote' (over ssh) or 'cua auth login', then 'cua host setup' again"
+    if [ -n "$did_host" ]; then
+        say "  cua runtime setup lume  # also needed to provide macOS VM Spaces"
+        return
+    fi
+    warn "adding this computer did not finish; run 'cua host setup' to try again (sign in first with 'cua auth login', or 'cua auth login --remote' over ssh)"
 }
 
-# Add this machine with a pairing code (Add a machine in the app): joins
+# Add this machine with a pairing code (Add a computer in the app): joins
 # the account (or team) that made the code, with no sign-in here.
 host_pair() {
     set -- "$cua_bin" host setup --pair "$pair_code"
@@ -1392,16 +1486,20 @@ host_pair() {
     fi
     # A CLI released before pairing exists would fail with a bare
     # "unexpected argument '--pair'"; say what to do instead.
-    if ! "$cua_bin" host setup --help 2>&1 </dev/null | grep -q -e '--pair'; then
+    setup_help="$("$cua_bin" host setup --help 2>&1 </dev/null)"
+    if ! printf '%s\n' "$setup_help" | grep -q -e '--pair'; then
         die "the installed cua CLI ($("$cua_bin" --version 2>/dev/null || echo unknown)) cannot add a machine with a code (no 'cua host setup --pair'); update the CLI (cua update, or install a newer release: --version) or sign in instead: cua auth login && cua host setup"
     fi
+    # It provides Spaces and keeps its screen private, as a computer added
+    # by signing in does; sharing its desktop is a choice on its page.
+    if printf '%s\n' "$setup_help" | grep -q -e '--no-desktop'; then set -- "$@" --no-desktop --provide-spaces; fi
     step "Adding this computer to your account (cua host setup --pair)"
     if "$@" </dev/null; then
         say ""
         say "This machine is added. It shows up in Cua Spaces on your other devices in a few seconds."
         return
     fi
-    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a machine) and run: cua host setup --pair <code>"
+    die "adding this machine did not finish; if the code expired or was used, make a new one in Cua Spaces (Add a computer) and run: cua host setup --pair <code>"
 }
 
 # ---------------------------------------------------------------- onboarding
@@ -1442,11 +1540,14 @@ summary() {
         [ -z "$did_cli$did_app" ] || checked=" (downloads checked)"
         say "Installed $(join_and "$@")$checked."
     fi
+    if [ -n "$did_host" ]; then
+        say "This computer is added to your account. It shows up in Cua Spaces on your other devices."
+    fi
     if [ -n "$did_app" ]; then
         if [ "$signed_in" = 1 ]; then
-            say "Next: $(app_where). There you can also let your other devices use this computer."
+            say "Next: $(app_where)."
         else
-            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. You can also let your other devices use this computer."
+            say "Next: $(app_where). It guides you through signing in and connecting your AI agents. Signing in adds this computer to your account."
         fi
         if [ "$want_cli" = 1 ]; then
             if [ "$signed_in" = 1 ]; then
@@ -1462,8 +1563,8 @@ summary() {
             say 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents.'
             say '(No web browser on this computer? Run "cua auth login --remote" instead.)'
         fi
-        if [ "$sel_host" = 0 ]; then
-            say 'To let your other devices use this computer, run "cua host setup".'
+        if [ -z "$did_host" ] && [ "$no_host" = 0 ]; then
+            say 'To add this computer to your account, run "cua host setup" after signing in.'
         fi
     fi
 }
@@ -1497,7 +1598,13 @@ run_onboarding() {
     say ""
     step "Signing in to Cua"
     # `cua auth login` runs agent onboarding after a successful sign-in.
-    if "$cua_bin" auth login </dev/tty; then
+    # No browser here (over ssh, or Linux without a display): a device code
+    # to approve in a browser on another device.
+    set -- auth login
+    if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ] || { [ "$os" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; }; then
+        set -- "$@" --remote
+    fi
+    if "$cua_bin" "$@" </dev/tty; then
         signed_in=1
     else
         warn "sign-in did not finish. Run \"cua auth login\" later (add --remote if this computer has no web browser)"
@@ -1564,7 +1671,9 @@ main() {
     fi
     tel_stage=sign_in
     run_onboarding
-    if [ "$sel_host" = 1 ]; then
+    # Signing in adds this computer (unless --no-host); --select host adds
+    # it even without a sign-in here.
+    if [ "$sel_host" = 1 ] || { [ "$signed_in" = 1 ] && [ "$no_host" = 0 ]; }; then
         tel_stage=host
         host_setup
     fi

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stable C ABI below the public typed SDK.
 //!
 //! The exported functions in this module are deliberately smaller and more
@@ -1320,6 +1323,24 @@ impl NativeAbiDriver {
                 .as_ref()
                 .is_some_and(|handle| handle.runtime.is_known_tool(name))
         }
+    }
+
+    pub(crate) fn set_awaiting_permissions(&self, awaiting: bool) {
+        unsafe {
+            if let Some(handle) = self.raw_handle().cast::<CuaDriverHandle>().as_ref() {
+                handle.runtime.set_awaiting_permissions(awaiting);
+            }
+        }
+    }
+
+    pub(crate) fn permissions_pending_result(&self) -> Option<Value> {
+        let refusal = unsafe {
+            self.raw_handle()
+                .cast::<CuaDriverHandle>()
+                .as_ref()
+                .and_then(|handle| handle.runtime.permissions_pending_refusal())
+        }?;
+        serde_json::to_value(refusal).ok()
     }
 
     pub(crate) fn is_available(&self) -> bool {

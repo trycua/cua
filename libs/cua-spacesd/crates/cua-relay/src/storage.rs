@@ -4,7 +4,7 @@
 //! The health of the relay's state volume (CUA-1297).
 //!
 //! Every state store (devices, audit log, device sessions, machine
-//! directory, mesh registry, pool, usage, teams, pairing codes, grants)
+//! directory, mesh registry, pool, usage, teams, pairing codes, grants, Space settings, pending deletions)
 //! reports each write here. A failed write
 //! is counted, logged with a stable line (`state persist failed`, field
 //! `alert = "state_persist_failed"`) and remembered as the store's last
@@ -69,9 +69,25 @@ pub mod store {
     /// `<state>.grants.json`: who reached each machine and whose access was
     /// revoked (old tickets refused).
     pub const GRANTS: &str = "grants";
+    /// `<state>.spaces.json`: each account's default Space settings.
+    pub const SPACES: &str = "spaces";
+    /// `<state>.pending-deletions.json`: removed computers' Spaces still to
+    /// delete on them.
+    pub const PENDING_DELETIONS: &str = "pending_deletions";
     /// Every store, in report order.
-    pub const ALL: [&str; 10] = [
-        DEVICES, AUDIT, SESSIONS, DIRECTORY, MESH, POOL, USAGE, TEAMS, PAIRING, GRANTS,
+    pub const ALL: [&str; 12] = [
+        DEVICES,
+        AUDIT,
+        SESSIONS,
+        DIRECTORY,
+        MESH,
+        POOL,
+        USAGE,
+        TEAMS,
+        PAIRING,
+        GRANTS,
+        SPACES,
+        PENDING_DELETIONS,
     ];
 }
 
@@ -177,7 +193,7 @@ pub fn sweep_temps(dir: &Path, depth: usize) -> std::io::Result<(u64, u64)> {
         // what the sweep wants, so it is not an error.
         let meta = match entry.metadata() {
             Ok(m) => m,
-            Err(e) if temp_vanished(&e, &entry.path()) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(e),
         };
         if meta.is_dir() {
@@ -189,13 +205,11 @@ pub fn sweep_temps(dir: &Path, depth: usize) -> std::io::Result<(u64, u64)> {
             continue;
         }
         if meta.is_file() && is_write_temp(&entry.file_name().to_string_lossy()) {
-            match std::fs::remove_file(entry.path()) {
-                Ok(()) => {
-                    files += 1;
-                    bytes += meta.len();
-                }
-                Err(e) if temp_vanished(&e, &entry.path()) => {}
-                Err(e) => return Err(e),
+            // Another sweep may be deleting it too (Windows reports that
+            // as access denied until it finishes): gone either way.
+            if crate::assertion::remove_if_present(&entry.path())? {
+                files += 1;
+                bytes += meta.len();
             }
         }
     }
@@ -728,34 +742,6 @@ fn probe_dir(dir: &Path) -> Result<Duration, String> {
     result.map_err(|e| format!("write probe: {e}"))?;
     removed.map_err(|e| format!("write probe cleanup: {e}"))?;
     Ok(start.elapsed())
-}
-
-/// Whether a temp-file stat or remove failed only because the file is gone.
-///
-/// The sweep races the writers that rename or remove their own temps, and a
-/// file that vanished is what the sweep wants. On Windows a file whose last
-/// handle has not closed yet is "delete pending": opening or removing it
-/// fails with `PermissionDenied` (os error 5) until it disappears. There it
-/// counts as gone once the path stops resolving within a short wait; a
-/// `PermissionDenied` on a file that stays is still an error.
-pub(crate) fn temp_vanished(err: &std::io::Error, path: &std::path::Path) -> bool {
-    match err.kind() {
-        std::io::ErrorKind::NotFound => true,
-        #[cfg(windows)]
-        std::io::ErrorKind::PermissionDenied => {
-            for _ in 0..50 {
-                match std::fs::symlink_metadata(path) {
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
-                    Ok(_) | Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
-                }
-            }
-            false
-        }
-        _ => {
-            let _ = path;
-            false
-        }
-    }
 }
 
 #[cfg(test)]

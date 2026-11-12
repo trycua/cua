@@ -1,9 +1,9 @@
 //! The relay's plan-limit refusal, in plain words, for every client.
 //!
-//! The relay answers a NEW live session over the plan's cap with HTTP 429
+//! The relay answers a NEW computer in use over the plan's cap with HTTP 429
 //! and `x-cua-relay-error: plan_limit_sessions` (or `plan_limit_hours`),
 //! plus `x-cua-relay-plan`, `x-cua-relay-used` and `x-cua-relay-limit`.
-//! Live sessions are never cut. The host client turns those headers into
+//! Computers already in use are never cut. The host client turns those headers into
 //! one sentence ([`PlanLimit::sentence`]); the apps read the same sentence
 //! back ([`PlanLimit::parse`]) to show it with an Upgrade button. No
 //! dependencies, so the wasm build can use it.
@@ -20,10 +20,57 @@ pub const LIMIT_HEADER: &str = "x-cua-relay-limit";
 /// Which cap was hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Live sessions at once.
+    /// Computers in use at once.
     Sessions,
     /// Remote hours this month.
     Hours,
+}
+
+impl Kind {
+    /// `sessions` or `hours` (the usage-data word, `cua_plan_limit_shown`'s
+    /// `kind`).
+    pub fn word(self) -> &'static str {
+        match self {
+            Kind::Sessions => "sessions",
+            Kind::Hours => "hours",
+        }
+    }
+}
+
+/// Whether `from` is a word the account app reads as `?from=`: 1 to 32 of
+/// `a-z`, `0-9` and `_`.
+pub fn valid_from(from: &str) -> bool {
+    (1..=32).contains(&from.len())
+        && from
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// `url` with `from=<from>` in its query, so the account app's purchase
+/// funnel knows which surface the person came from. Every other query
+/// parameter and the fragment stay as they are; an earlier `from` is
+/// replaced. A `from` that is not a [`valid_from`] word leaves `url` alone.
+pub fn with_from(url: &str, from: &str) -> String {
+    if !valid_from(from) || url.is_empty() {
+        return url.to_owned();
+    }
+    let (rest, fragment) = match url.split_once('#') {
+        Some((r, f)) => (r, Some(f)),
+        None => (url, None),
+    };
+    let (base, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut params: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.is_empty() && p.split('=').next() != Some("from"))
+        .collect();
+    let from = format!("from={from}");
+    params.push(&from);
+    let mut out = format!("{base}?{}", params.join("&"));
+    if let Some(f) = fragment {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
 }
 
 /// A refused new session.
@@ -112,13 +159,13 @@ impl PlanLimit {
         }
     }
 
-    /// "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+    /// "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
     pub fn sentence(&self) -> String {
         let plan = plan_name(&self.plan);
         let (used, limit) = (number(self.used), number(self.limit));
         match self.kind {
             Kind::Sessions => format!(
-                "You're using {used} of {limit} live sessions on {plan}. {}",
+                "You have {used} of {limit} computers in use at once on {plan}. {}",
                 self.next_step()
             ),
             Kind::Hours => format!(
@@ -131,7 +178,11 @@ impl PlanLimit {
     /// Reads [`PlanLimit::sentence`] back out of an error's text (which may
     /// wrap it). None for any other text.
     pub fn parse(text: &str) -> Option<Self> {
+        // The sessions sentence has two wordings: the current one, and the
+        // old "live sessions" one that older relays, daemons and SDKs still
+        // send. Both are read.
         for (marker, kind, tail) in [
+            ("You have ", Kind::Sessions, " computers in use at once on "),
             ("You're using ", Kind::Sessions, " live sessions on "),
             ("You've used ", Kind::Hours, " remote hours this month on "),
         ] {
@@ -169,11 +220,57 @@ impl PlanLimit {
             _ => format!("{base}/billing"),
         }
     }
+
+    /// [`PlanLimit::upgrade_url`] saying which surface showed the limit
+    /// (`?from=cli_limit`, `?from=app_create`, ...), billing page included.
+    pub fn upgrade_url_from(&self, account_app: &str, from: &str) -> String {
+        with_from(&self.upgrade_url(account_app), from)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_is_added_replaced_and_keeps_the_rest() {
+        assert_eq!(
+            with_from("https://app.cua.ai/buy/pro", "app_meter"),
+            "https://app.cua.ai/buy/pro?from=app_meter"
+        );
+        assert_eq!(
+            with_from("https://app.cua.ai/buy/pro?from=plan_limit", "cli_limit"),
+            "https://app.cua.ai/buy/pro?from=cli_limit"
+        );
+        assert_eq!(
+            with_from(
+                "https://app.cua.ai/billing?team=t1&from=x&a=b#seats",
+                "app_team"
+            ),
+            "https://app.cua.ai/billing?team=t1&a=b&from=app_team#seats"
+        );
+        // A `from`-like key is not `from`.
+        assert_eq!(
+            with_from("https://app.cua.ai/b?fromage=1", "cli_usage"),
+            "https://app.cua.ai/b?fromage=1&from=cli_usage"
+        );
+        // Not a word the account app reads: the link is left alone.
+        for bad in ["", "App", "a-b", "x".repeat(33).as_str(), "a@b"] {
+            assert_eq!(
+                with_from("https://app.cua.ai/b", bad),
+                "https://app.cua.ai/b"
+            );
+        }
+        let l = PlanLimit::parse(
+            "You have 5 of 5 computers in use at once on Teams. Close one or add seats.",
+        )
+        .unwrap();
+        assert_eq!(
+            l.upgrade_url_from("https://app.cua.ai", "app_connect"),
+            "https://app.cua.ai/billing?from=app_connect"
+        );
+        assert_eq!(l.kind.word(), "sessions");
+    }
 
     fn h(e: &str, plan: &str, used: &str, limit: &str) -> Option<PlanLimit> {
         PlanLimit::from_headers(Some(e), Some(plan), Some(used), Some(limit))
@@ -184,7 +281,7 @@ mod tests {
         let l = h("plan_limit_sessions", "pro", "5", "5").unwrap();
         assert_eq!(
             l.sentence(),
-            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
         );
         assert_eq!(
             l.upgrade_url("https://app.cua.ai/"),
@@ -197,7 +294,7 @@ mod tests {
         let l = h("plan_limit_sessions", "free", "2", "2").unwrap();
         assert_eq!(
             l.sentence(),
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
         );
         let l = h("plan_limit_hours", "free", "20.04", "20").unwrap();
         assert_eq!(
@@ -224,6 +321,36 @@ mod tests {
             assert_eq!(PlanLimit::parse(&wrapped), Some(l));
         }
         assert_eq!(PlanLimit::parse("no machine image is configured"), None);
+    }
+
+    #[test]
+    fn the_old_live_sessions_sentence_still_reads() {
+        // Older relays, daemons and SDKs send this wording; newer clients
+        // must still read it, and read it as the same limit.
+        let old = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.";
+        let l = PlanLimit::parse(old).unwrap();
+        assert_eq!(l, h("plan_limit_sessions", "pro", "5", "5").unwrap());
+        assert_eq!(
+            PlanLimit::parse(&format!("relay: HTTP 429: {old}")),
+            Some(l)
+        );
+        let free = PlanLimit::parse(
+            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.",
+        )
+        .unwrap();
+        assert_eq!(free.plan, "free");
+        assert_eq!((free.used, free.limit), (2.0, 2.0));
+    }
+
+    #[test]
+    fn the_new_sentence_has_none_of_the_old_words() {
+        for plan in ["free", "pro", "team"] {
+            let s = h("plan_limit_sessions", plan, "2", "2").unwrap().sentence();
+            assert!(s.contains("computers in use at once"), "{s}");
+            for old in ["live sessions", "machines at once", "connections at once"] {
+                assert!(!s.to_lowercase().contains(old), "{s}");
+            }
+        }
     }
 
     #[test]

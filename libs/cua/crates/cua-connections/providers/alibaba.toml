@@ -1,0 +1,22 @@
+id = "alibaba"
+name = "Qwen Cloud (Alibaba)"
+icon = "alibaba"
+tier = "more"
+rank = 280
+kind = "hosted"
+aliases = ["qwen", "dashscope", "alibaba cloud"]
+wire = "openai-chat"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+base_url_env = "DASHSCOPE_BASE_URL"
+default_model = ""
+hermes_id = "alibaba"
+key_help = "Create a key in Alibaba Cloud Model Studio (DashScope, international)."
+placeholder = "sk-…"
+
+[[method]]
+id = "key"
+kind = "api_key"
+env = "DASHSCOPE_API_KEY"
+
+[delivery]
+hermes = ["DASHSCOPE_API_KEY"]

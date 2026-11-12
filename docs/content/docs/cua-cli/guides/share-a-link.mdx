@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 A `localhost` link only works on the machine that printed it. `cua share` gives
-you a Cua link that opens on any of your signed-in devices, your phone
+you a Cua link that opens on any of your signed-in machines, your phone
 included. Coding agents use it when they start a preview, a dashboard or write a
 report: they hand you the link, not a port number.
 
@@ -26,7 +26,7 @@ prints the share instead: `id`, `url`, `access`, `target`, `owner`,
 
 | Flag | Who | Ends |
 | --- | --- | --- |
-| none (private) | Only your cua.ai account, on any of your devices | Until you stop it |
+| none (private) | Only your cua.ai account, on any of your machines | Until you stop it |
 | `--team` | Members of your team, signed in | Until you stop it |
 | `--public --ttl 1h` | Anyone with the link | After the TTL (60 s to 24 h, default 1 h) |
 
@@ -61,6 +61,11 @@ label like `s<id>-<machine>.<domain>` for private and team links, `p<token>-<mac
 for public ones), so a shared app sees its own root, its links work, and one
 share's cookies never reach another. The sign-in cookie is limited to that one
 share and lasts at most 12 hours. Public links need no sign-in.
+
+On cua.ai the domain is `m.cua.sh`, kept apart from `cua.ai` so a shared page
+can never set cookies for your account's sites. Links made before the move
+(`https://relay.cua.ai/m/<machine>/share/…`) still work: a browser that opens
+one is sent to the same share on `m.cua.sh`.
 
 <Callout type="warn">
   The browser sign-in needs the relay's web client configured by the relay
@@ -130,4 +135,4 @@ Add this line to the instructions your coding agents read:
 Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.
 ```
 
-`cua agents setup` installs the same rule in the Cua skills.
+`cua connect setup` installs the same rule in the Cua skills.

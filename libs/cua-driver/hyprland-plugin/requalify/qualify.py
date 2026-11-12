@@ -34,8 +34,18 @@ BUILD_OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "
 BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binutils", "python", "openssl",
                   "libxkbcommon", "xkeyboard-config")
 # The headless session's native Wayland clients and font.
-SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa")
+# The released cua-driver links the X libraries and reads the AT-SPI bus.
+SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa", "at-spi2-core", "libx11", "libxcb", "libxext", "libxi")
+DRIVER_BINARY = Path("/driver/cua-driver")
 USER, UID = "cua", 1000
+# Omarchy's packaging key, full fingerprint. Verified 11 Nov 2026 against Omarchy's own scripts at
+# https://github.com/basecamp/omarchy/blob/0e7530fb7c23fbf496d44f072ad64efaa7713d14/bin/omarchy-update-keyring (pacman-key --recv-keys
+# <fingerprint> --keyserver keys.openpgp.org, then --lsign-key). Omarchy fetches the key from a keyserver
+# and does not ship the key bytes outside the package, so this does too; gpg checks the downloaded key
+# against the full fingerprint, so a keyserver cannot substitute a different key.
+OMARCHY_KEY = "40DFB630FF42BCFFB047046CF0134EE680CAC571"
+# Driver releases before #6495 refuse input builds on any Hyprland but the one they pinned.
+SOURCE_PIN = re.compile(r"Input is pinned to Hyprland (\S+)")
 
 
 def sha256_file(path):
@@ -82,14 +92,30 @@ def setup_pacman(job, log):
         url = channels.repo_url(server, "omarchy")
         database = channels.parse_db(channels.fetch(url + "/omarchy.db"))
         keyring = database["omarchy-keyring"]["filename"]
+        # The keyring package is signed by Omarchy's maintainer key. Import it from a keyserver first,
+        # as Omarchy's own installer does, and retry: pacman's implicit lookup during -U is a single
+        # attempt against one keyserver, and fails the whole job when that server is slow.
+        for attempt in range(6):
+            server = ("keys.openpgp.org", "keyserver.ubuntu.com")[attempt % 2]  # the first is the one Omarchy uses
+            code, _ = run(["pacman-key", "--keyserver", server, "--recv-keys", OMARCHY_KEY], log, check=False)
+            if code == 0:
+                run(["pacman-key", "--lsign-key", OMARCHY_KEY], log)
+                break
+            time.sleep(5 * (attempt + 1))
         run(["pacman", "-U", "--noconfirm", f"{url}/{keyring}"], log)
         run(["pacman-key", "--populate", "omarchy"], log)
     for attempt in range(3):
         # -yy forces fresh databases; -uu lets an older channel downgrade the bootstrap.
-        code, _ = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
-                      log, check=False)
+        code, output = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
+                           log, check=False)
         if code == 0:
             return
+        # An older channel can downgrade a package whose files a newer bootstrap package (the base
+        # image's openssl-3 against the channel's openssl 3.x) already owns. The container is
+        # disposable, so drop the owner and retry; a network failure retries unchanged.
+        owners = sorted(set(re.findall(r"exists in filesystem \(owned by ([^)\s]+)\)", output)))
+        if owners:
+            run(["pacman", "-Rdd", "--noconfirm", *owners], log, check=False)
         time.sleep(10 * (attempt + 1))
     raise RuntimeError("pacman could not install the channel's packages")
 
@@ -126,13 +152,18 @@ def measure(job):
     }
 
 
-def build(source, out, header_version):
+def build(source, out, header_version, released=False):
     build_dir = out / "build"
     log = out / "build.log"
     options = [f"-D{key}={value}" for key, value in BUILD_OPTIONS.items()]
-    code, _ = run(["cmake", "-S", str(source), "-B", str(build_dir), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                   "-DCMAKE_CXX_COMPILER=/usr/bin/g++", "-DBUILD_TESTING=ON",
-                   f"-DCUA_HYPRLAND_EXPECTED_VERSION={header_version}", *options], log, check=False)
+    code, output = run(["cmake", "-S", str(source), "-B", str(build_dir), "-G", "Ninja",
+                        "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CXX_COMPILER=/usr/bin/g++", "-DBUILD_TESTING=ON",
+                        f"-DCUA_HYPRLAND_EXPECTED_VERSION={header_version}", *options], log, check=False)
+    pin = SOURCE_PIN.search(output) if code and released else None
+    if pin and pin[1] != header_version:
+        # The released source declines these headers by design; only a new release can change that.
+        reason = f"this release pins input to Hyprland {pin[1]}"
+        return {"status": "unsupported", "step": "configure", "reason": reason, "log": log.name}, None
     if code:
         return {"status": "fail", "step": "configure", "log": log.name}, None
     code, _ = run(["cmake", "--build", str(build_dir), "--parallel", str(os.cpu_count() or 2)], log, check=False)
@@ -183,6 +214,8 @@ def session(module, out):
            "LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": cards[0], "LANG": "C.UTF-8"}
     command = ["runuser", "-u", USER, "--", "env", *[f"{k}={v}" for k, v in env.items()],
                sys.executable, str(HERE / "headless.py"), "--module", str(plugin), "--out", str(session_dir)]
+    if DRIVER_BINARY.is_file():
+        command += ["--driver", str(DRIVER_BINARY)]
     code, _ = run(command, out / "session.log", check=False, timeout=600)
     result_path = session_dir / "result.json"
     if not result_path.is_file():
@@ -193,6 +226,8 @@ def session(module, out):
 
 
 def overall(record):
+    if record["build"]["status"] == "unsupported":
+        return "unsupported"
     build_ok = record["build"]["status"] == "pass" and record.get("ctest", {}).get("status") == "pass"
     if not build_ok or "fail" in (record["load"]["status"], record["smoke"]["status"]):
         return "fail"
@@ -216,7 +251,8 @@ def main():
     try:
         setup_pacman(job, args.out / "pacman.log")
         record["measured"] = measure(job)
-        record["build"], module = build(args.source, args.out, record["measured"]["hyprland"]["header_version"])
+        record["build"], module = build(args.source, args.out, record["measured"]["hyprland"]["header_version"],
+                                        released=bool(job.get("driver_version")))
         if module:
             record["ctest"] = ctest(args.out)
             if args.skip_session:

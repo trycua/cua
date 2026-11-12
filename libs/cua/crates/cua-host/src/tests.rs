@@ -871,6 +871,16 @@ async fn a_spare_machine_provides_spaces_without_its_desktop() {
             spec.args
         );
     }
+    // Keeping the screen private never turns off the Cua Driver this Mac's
+    // own coding agents use (cua-spacesd runs it whatever the flags say).
+    assert!(
+        !spec
+            .env
+            .iter()
+            .any(|(k, _)| k == "CUA_SPACESD_EMBEDDED_DRIVER"),
+        "{:?}",
+        spec.env
+    );
     let policy = host.policy().unwrap().unwrap();
     assert!(!policy.share_desktop && policy.provide_spaces);
     let daemon = policy.spaces_daemon.clone().unwrap();
@@ -1513,6 +1523,9 @@ impl ServiceManager for AsLaunchd {
     fn state(&self) -> ServiceState {
         self.0.state()
     }
+    fn port_free(&self, addr: std::net::SocketAddr, t: crate::ports::Transport) -> bool {
+        self.0.port_free(addr, t)
+    }
 }
 
 /// A [`SessionProbe`] that just answers whether a GUI session exists.
@@ -1805,6 +1818,51 @@ fn jwt(user: &str) -> String {
     format!("{}.{}.sig", b("{}"), b(&format!(r#"{{"sub":"{user}"}}"#)))
 }
 
+/// A computer paused for another account joins the account that made a
+/// pairing code (the app's "Use a code from another computer"): it is
+/// registered again for that account, keeping its setup. A computer that
+/// is not paused like that is left to a plain setup.
+#[tokio::test]
+async fn a_pairing_code_moves_a_paused_computer_to_the_codes_account() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    // Made on a computer already in user-2's account.
+    let minted = RelayClient::new(&relay.url)
+        .unwrap()
+        .create_pairing_code(
+            &jwt("user-2"),
+            &crate::pairing::PairingCodeRequest::default(),
+        )
+        .await
+        .unwrap()
+        .code
+        .unwrap();
+    let code = crate::pairing::PairingCodeToken::parse(&minted).unwrap();
+    let f = fixture();
+    let host = f.host();
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    let old_id = before.machine_id.clone().unwrap();
+
+    // Sharing (not paused): nothing to move, a plain setup applies.
+    assert!(host.rejoin_with_code(&code).await.unwrap().is_none());
+
+    host.pause_signed_out().await.unwrap();
+    let moved = host.rejoin_with_code(&code).await.unwrap().expect("moved");
+    assert!(!moved.paused_signed_out);
+    assert!(moved.service.installed && moved.service.running);
+    assert_eq!(moved.owner.as_deref(), Some("user-2"));
+    assert_ne!(moved.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(moved.name.as_deref(), Some("mini"));
+    let on_relay = relay
+        .machine(moved.machine_id.as_deref().unwrap())
+        .expect("registered");
+    assert_eq!(on_relay.owner.id, "user-2");
+}
+
 /// Signing in as another account re-registers this computer for it: a new
 /// machine id and mesh key, while the name and the Provide Spaces setting
 /// stay.
@@ -1816,7 +1874,7 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     let f = fixture();
     let host = f.host();
     let mut opts = f.relay_opts(&relay.url);
-    opts.provide_spaces = true;
+    opts.provide_spaces = Some(true);
     let before = host.setup(opts, &StaticToken(jwt("user-1"))).await.unwrap();
     let old_id = before.machine_id.clone().unwrap();
     let old_token = std::fs::read_to_string(host.paths().machine_token()).unwrap();
@@ -2412,4 +2470,693 @@ async fn a_rename_on_the_relay_is_adopted_only_by_that_machine() {
     // Not set up: nothing to take the name.
     let other = fixture();
     assert!(!other.host().adopt_name(&id, "x").unwrap());
+}
+
+/// "Provide Spaces" is on by default for a new setup, and setting up again
+/// never flips what the machine already has: an explicit off, or an
+/// earlier version's default (off), stays off.
+#[tokio::test]
+async fn a_new_setup_provides_spaces_and_a_set_up_machine_keeps_its_setting() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let token = StaticToken("acct-token".into());
+
+    // New setup, default (desktop) profile: shares the desktop and
+    // provides Spaces, and says so to the relay.
+    let f = fixture();
+    let host = f.host();
+    let opts = f.relay_opts(&relay.url).profile(HostProfile::Desktop);
+    assert_eq!(opts.provide_spaces, None);
+    let status = host.setup(opts, &token).await.unwrap();
+    assert!(status.share_desktop && status.provide_spaces);
+    assert!(host.policy().unwrap().unwrap().provide_spaces);
+    assert!(host.config().unwrap().unwrap().provide_spaces);
+    let id = status.machine_id.clone().unwrap();
+    assert_eq!(relay.machine(&id).unwrap().meta[META_PROVIDES_SPACES], "on");
+
+    // Turned off in its settings, then set up again with the defaults:
+    // still off.
+    let status = host
+        .configure(HostSettingsChange {
+            provide_spaces: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!status.provide_spaces);
+    let status = host
+        .setup(
+            f.relay_opts(&relay.url).profile(HostProfile::Desktop),
+            &token,
+        )
+        .await
+        .unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+    assert!(!host.policy().unwrap().unwrap().provide_spaces);
+    assert_eq!(
+        relay.machine(&id).unwrap().meta[META_PROVIDES_SPACES],
+        "off"
+    );
+
+    // An explicit choice on a new setup wins over the default.
+    let g = fixture();
+    let mut opts = g.relay_opts(&relay.url);
+    opts.provide_spaces = Some(false);
+    let status = g.host().setup(opts, &token).await.unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+
+    // A new direct setup does not provide Spaces unless asked (its
+    // listener is plaintext).
+    let d = fixture();
+    let mut opts = SetupOptions::direct("10.1.2.3:3211".parse().unwrap());
+    opts.driver_bin = Some(d.driver.clone());
+    let status = d.host().setup(opts, &NoAccount).await.unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+}
+
+/// An upgrade from a version that wrote no `provide_spaces` (or wrote it
+/// off, its default) sets up again with Spaces still off: no migration
+/// turns them on.
+#[tokio::test]
+async fn an_upgrade_from_an_older_version_does_not_turn_spaces_on() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let token = StaticToken("acct-token".into());
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &token).await.unwrap();
+    // What an older version left: the same files without the setting.
+    for path in [host.paths().config(), host.paths().policy()] {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        v.as_object_mut().unwrap().remove("provide_spaces");
+        std::fs::write(&path, serde_json::to_string(&v).unwrap()).unwrap();
+    }
+    assert!(!host.config().unwrap().unwrap().provide_spaces);
+    assert!(!host.status().await.unwrap().provide_spaces);
+    let status = host.setup(f.relay_opts(&relay.url), &token).await.unwrap();
+    assert!(status.share_desktop && !status.provide_spaces);
+    assert!(!host.policy().unwrap().unwrap().provide_spaces);
+
+    // Only the policy left (no config.json): its setting is kept too, and
+    // one that cannot be read counts as off.
+    std::fs::remove_file(host.paths().config()).unwrap();
+    assert!(!host.resolve_provide_spaces(&f.relay_opts(&relay.url)));
+    std::fs::write(host.paths().policy(), b"{not json").unwrap();
+    assert!(!host.resolve_provide_spaces(&f.relay_opts(&relay.url)));
+    std::fs::remove_file(host.paths().policy()).unwrap();
+    assert!(host.resolve_provide_spaces(&f.relay_opts(&relay.url)));
+}
+
+#[test]
+fn the_default_for_providing_spaces() {
+    let relay = HostMode::Relay {
+        url: "https://relay.example".into(),
+    };
+    let direct = HostMode::Direct {
+        listen: "10.1.2.3:3211".parse().unwrap(),
+    };
+    assert!(default_provide_spaces(&relay, None));
+    assert!(!default_provide_spaces(&direct, None));
+    assert!(!default_provide_spaces(&relay, Some(Ok(false))));
+    assert!(default_provide_spaces(&direct, Some(Ok(true))));
+    assert!(!default_provide_spaces(
+        &relay,
+        Some(Err(Error::NotFound("x".into())))
+    ));
+}
+
+/// The ports setup chose (another macOS user's host held the channel's)
+/// reach the service on the command line and in its environment, so it and
+/// everything it starts listen there and find each other.
+#[test]
+fn a_host_moved_off_the_channels_ports_is_told_its_own() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        port: Some(3231),
+        quic_port: Some(3232),
+        ..Default::default()
+    };
+    let spec = host.service_spec_for(&config, cua_home::channel::CuaChannel::Stable);
+    let flag = |name: &str| {
+        spec.args
+            .iter()
+            .position(|a| a == name)
+            .map(|i| spec.args[i + 1].clone())
+    };
+    assert_eq!(flag("--port").as_deref(), Some("3231"));
+    assert_eq!(flag("--quic-port").as_deref(), Some("3232"));
+    let var = |k: &str, v: &str| (k.to_string(), v.to_string());
+    assert!(spec.env.contains(&var("CUA_ENV_PORT", "3231")));
+    assert!(spec.env.contains(&var("CUA_ENV_QUIC_PORT", "3232")));
+    assert!(spec.env.iter().all(|(k, _)| k != "CUA_CHANNEL"));
+    let plist = crate::service::launchd_plist(&spec, "com.trycua.spacesd.host");
+    assert!(
+        plist.contains("<key>CUA_ENV_PORT</key>\n    <string>3231</string>"),
+        "{plist}"
+    );
+    assert!(
+        plist.contains("<key>CUA_ENV_QUIC_PORT</key>\n    <string>3232</string>"),
+        "{plist}"
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!((back.port, back.quic_port), (Some(3231), Some(3232)));
+    // Unset, nothing is written: a config from before reads the same.
+    let json = serde_json::to_string(&crate::HostConfig::default()).unwrap();
+    assert!(!json.contains("port"), "{json}");
+}
+
+/// The credential store and home `cua host setup` ran with reach the
+/// service (LaunchAgent, systemd unit), so the service and the daemon it
+/// starts read the session the CLI signed in with (`file` over SSH, where
+/// the keychain cannot be used). Without them, nothing is added.
+#[test]
+fn the_service_keeps_the_credential_store_and_home_setup_ran_with() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        ..Default::default()
+    };
+    let spec = host.service_spec(&config);
+    assert!(
+        spec.env
+            .iter()
+            .all(|(k, _)| k != "CUA_CREDENTIAL_STORE" && k != "CUA_HOME"),
+        "{:?}",
+        spec.env
+    );
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(
+        !json.contains("credential_store") && !json.contains("cua_home"),
+        "{json}"
+    );
+
+    let config = crate::HostConfig {
+        credential_store: Some("file".into()),
+        cua_home: Some("/Users/ada/.cua-spare".into()),
+        ..config
+    };
+    let spec = host.service_spec(&config);
+    let var = |k: &str, v: &str| (k.to_string(), v.to_string());
+    assert!(spec.env.contains(&var("CUA_CREDENTIAL_STORE", "file")));
+    assert!(spec.env.contains(&var("CUA_HOME", "/Users/ada/.cua-spare")));
+    let plist = crate::service::launchd_plist(&spec, "com.trycua.spacesd.host");
+    assert!(
+        plist.contains("<key>CUA_CREDENTIAL_STORE</key>\n    <string>file</string>"),
+        "{plist}"
+    );
+    assert!(
+        plist.contains("<key>CUA_HOME</key>\n    <string>/Users/ada/.cua-spare</string>"),
+        "{plist}"
+    );
+    let unit = crate::service::systemd_unit(&spec, false);
+    assert!(
+        unit.contains("Environment=CUA_CREDENTIAL_STORE=file\n"),
+        "{unit}"
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(back.credential_store.as_deref(), Some("file"));
+    assert_eq!(back.cua_home.as_deref(), Some("/Users/ada/.cua-spare"));
+}
+
+/// The ports a setup in relay mode left in the config.
+fn chosen_ports(host: &Host) -> (Option<u16>, Option<u16>) {
+    let c = host.config().unwrap().unwrap();
+    (c.port, c.quic_port)
+}
+
+/// Another program (another macOS user's host service) holds the channel's
+/// ports: setup moves this user's service to a per-user pair, tells it, and
+/// keeps that pair on every later setup, even once the channel's are free.
+#[tokio::test]
+async fn setup_moves_off_ports_another_user_holds_and_keeps_its_own() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let ch = cua_home::channel::CuaChannel::current().ports();
+    *f.manager.held_by_others.lock().unwrap() = vec![ch.tcp, ch.quic];
+
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let (tcp, quic) = chosen_ports(&host);
+    let (tcp, quic) = (tcp.unwrap(), quic.unwrap());
+    assert_eq!(quic, tcp + 1);
+    assert!((3231..=3991).contains(&tcp) && tcp % 10 == 1, "{tcp}");
+    let spec = f.manager.spec.lock().unwrap().clone().unwrap();
+    let port = tcp.to_string();
+    assert!(
+        spec.args
+            .windows(2)
+            .any(|w| w[0] == "--port" && w[1] == port),
+        "{:?}",
+        spec.args
+    );
+    assert!(
+        spec.env
+            .contains(&("CUA_ENV_QUIC_PORT".to_string(), quic.to_string()))
+    );
+
+    // Again, with the service running on its pair: it stays there.
+    *f.manager.held_while_running.lock().unwrap() = vec![tcp, quic];
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (Some(tcp), Some(quic)));
+
+    // The other user leaves: still this pair (nothing moves under the
+    // clients that know it).
+    f.manager.held_by_others.lock().unwrap().clear();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (Some(tcp), Some(quic)));
+}
+
+/// This user's own running service holding the channel's ports is not
+/// another program: setup again stops it and keeps them (nothing is passed,
+/// as for every single-user host).
+#[tokio::test]
+async fn setup_again_keeps_the_ports_its_own_service_holds() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let ch = cua_home::channel::CuaChannel::current().ports();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (None, None));
+    assert_eq!(
+        f.manager.calls.lock().unwrap().clone(),
+        vec!["install".to_string(), "start".to_string()],
+        "free ports: the service is not stopped first"
+    );
+
+    *f.manager.held_while_running.lock().unwrap() = vec![ch.tcp, ch.quic];
+    f.manager.calls.lock().unwrap().clear();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    assert_eq!(chosen_ports(&host), (None, None));
+    assert_eq!(
+        f.manager.calls.lock().unwrap().first().map(String::as_str),
+        Some("stop")
+    );
+    let spec = f.manager.spec.lock().unwrap().clone().unwrap();
+    assert!(
+        spec.args
+            .iter()
+            .all(|a| a != "--port" && a != "--quic-port"),
+        "{:?}",
+        spec.args
+    );
+}
+
+/// With the channel's ports and every per-user pair held, setup fails at
+/// the service stage, says so in plain words, and installs nothing.
+#[tokio::test]
+async fn setup_says_so_when_no_port_is_free() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let ch = cua_home::channel::CuaChannel::current().ports();
+    *f.manager.held_by_others.lock().unwrap() = std::iter::once(ch.tcp)
+        .chain((2..=78).map(|k| 3211 + 10 * k))
+        .collect();
+
+    let (stage, err) = host
+        .setup_staged(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap_err();
+    assert_eq!(stage, SetupStage::Service);
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&format!(
+            "no free port for the host service: {}/{} (TCP/UDP) and the per-user ports 3231-3992 are all in use",
+            ch.tcp, ch.quic
+        )),
+        "{msg}"
+    );
+    assert!(f.manager.calls.lock().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------
+// One id per computer: turning remote access off and on, removal that the
+// relay missed, and signing in as another account and back.
+
+/// A JWT-shaped token with a `sub` and an `email` claim.
+fn jwt_with_email(sub: &str, email: &str) -> String {
+    use base64::Engine as _;
+    let b = |v: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v);
+    format!(
+        "{}.{}.sig",
+        b("{}"),
+        b(&format!(r#"{{"sub":"{sub}","email":"{email}"}}"#))
+    )
+}
+
+/// The ids of the computers `token`'s account has on the relay.
+async fn listed(relay: &FakeRelay, token: &str) -> Vec<String> {
+    let mut ids: Vec<String> = RelayClient::new(&relay.url)
+        .unwrap()
+        .machines(token)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// Off and on again (remove the host setup, set it up again) is the same
+/// computer: the same id, one row on the relay, however often it is done.
+#[tokio::test]
+async fn turning_remote_access_off_and_on_keeps_one_computer() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let first = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    let id = first.machine_id.clone().unwrap();
+    for _ in 0..3 {
+        host.remove().await.unwrap();
+        assert!(listed(&relay, "acct").await.is_empty(), "off: gone");
+        let again = host
+            .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+            .await
+            .unwrap();
+        assert_eq!(again.machine_id.as_deref(), Some(id.as_str()));
+        assert_eq!(listed(&relay, "acct").await, vec![id.clone()], "on: one");
+    }
+}
+
+/// A removal the relay could not take (it was mid-deploy) is remembered
+/// outside the directory a removal deletes, and finished once the relay
+/// answers: the computer does not stay listed with nothing left here to
+/// retry it from.
+#[tokio::test]
+async fn a_removal_the_relay_missed_is_remembered_and_finished() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+
+    relay.fail_deletes(&[503]);
+    let err = host.remove().await.unwrap_err().to_string();
+    assert!(err.contains("removed locally"), "{err}");
+    assert!(
+        err.contains("next time"),
+        "it says it will be retried: {err}"
+    );
+    assert!(relay.machine(&id).is_some(), "still listed for now");
+    assert_eq!(
+        host.pending_removals(),
+        vec![(relay.url.clone(), id.clone())]
+    );
+
+    // The next time the relay answers it goes: a status asks (at most once
+    // a minute), and so does anything that finishes removals.
+    assert!(!host.status().await.unwrap().configured);
+    assert!(relay.machine(&id).is_none(), "the status finished it");
+    assert!(host.pending_removals().is_empty());
+}
+
+/// A relay that refuses the computer's own token (rotated, or lost) still
+/// lets the owner take it off, so removing never needs the computer to
+/// prove itself.
+#[tokio::test]
+async fn a_refused_computer_token_falls_back_to_the_owner_on_remove() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+
+    // Without the account the refusal is reported and remembered.
+    relay.fail_deletes(&[403]);
+    assert!(host.remove().await.is_err());
+    assert!(relay.machine(&id).is_some());
+    // The owner finishes it.
+    let tokens = StaticToken("acct".into());
+    let left = host
+        .finish_removals(Some(&RemovalAccount {
+            tokens: &tokens,
+            device_session: None,
+        }))
+        .await;
+    assert!(left.is_empty(), "{left:?}");
+    assert!(relay.machine(&id).is_none());
+
+    // And at once, when the account is there for the removal itself.
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    relay.fail_deletes(&[401]);
+    host.remove_with_account(&RemovalAccount {
+        tokens: &tokens,
+        device_session: None,
+    })
+    .await
+    .unwrap();
+    assert!(listed(&relay, "acct").await.is_empty());
+    assert!(host.pending_removals().is_empty());
+}
+
+/// Setting up again after a removal the relay missed registers the same id
+/// (so it is one row), and the pending removal never deletes the live
+/// registration.
+#[tokio::test]
+async fn setting_up_again_after_a_missed_removal_reuses_the_row() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    relay.fail_deletes(&[503]);
+    assert!(host.remove().await.is_err());
+    assert_eq!(host.pending_removals().len(), 1);
+
+    let again = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    assert_eq!(again.machine_id.as_deref(), Some(id.as_str()));
+    assert!(host.pending_removals().is_empty(), "nothing left to retry");
+    assert_eq!(listed(&relay, "acct").await, vec![id.clone()]);
+    assert!(relay.machine(&id).is_some(), "the live row was not deleted");
+}
+
+/// Signing in as another account and back is the same two computers every
+/// time, and a relay that refuses the saved registration is an error that
+/// says why, never a third, new computer.
+#[tokio::test]
+async fn switching_accounts_reuses_each_registration_and_never_mints_a_new_id() {
+    let relay = FakeRelay::start().await;
+    let (a, b) = (jwt("user-1"), jwt("user-2"));
+    relay.add_account(&a, "user-1", Some("ada@example.com"));
+    relay.add_account(&b, "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id_a = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(a.clone()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    let id_b = host
+        .resume_or_switch_account("user-2", &StaticToken(b.clone()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    assert_ne!(id_a, id_b, "another account has its own computer id");
+    for _ in 0..2 {
+        let s = host
+            .resume_or_switch_account("user-1", &StaticToken(a.clone()))
+            .await
+            .unwrap();
+        assert_eq!(s.machine_id.as_deref(), Some(id_a.as_str()));
+        let s = host
+            .resume_or_switch_account("user-2", &StaticToken(b.clone()))
+            .await
+            .unwrap();
+        assert_eq!(s.machine_id.as_deref(), Some(id_b.as_str()));
+    }
+    assert_eq!(listed(&relay, &a).await, vec![id_a.clone()]);
+    assert_eq!(listed(&relay, &b).await, vec![id_b.clone()]);
+
+    // The relay refuses the saved registration of the first account.
+    let registered = relay.register_calls();
+    relay.fail_registrations(&[403]);
+    let err = host
+        .resume_or_switch_account("user-1", &StaticToken(a.clone()))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::PermissionDenied(_)), "{err}");
+    assert!(err.to_string().contains("saved registration"), "{err}");
+    assert_eq!(relay.register_calls(), registered + 1, "asked once");
+    assert_eq!(listed(&relay, &a).await, vec![id_a.clone()], "no new row");
+    // Next time it goes through with the same id.
+    let s = host
+        .resume_or_switch_account("user-1", &StaticToken(a.clone()))
+        .await
+        .unwrap();
+    assert_eq!(s.machine_id.as_deref(), Some(id_a.as_str()));
+}
+
+/// A relay whose account id is not the token's `sub` (it takes another
+/// claim) still finds the saved registration, by the token's email.
+#[tokio::test]
+async fn the_saved_registration_is_found_by_email_when_the_account_id_is_not_the_subject() {
+    let relay = FakeRelay::start().await;
+    let a = jwt_with_email("sub-a", "ada@example.com");
+    let b = jwt_with_email("sub-b", "bob@example.com");
+    // The relay's account ids are not the subjects.
+    relay.add_account(&a, "acct-ada", Some("ada@example.com"));
+    relay.add_account(&b, "acct-bob", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id_a = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(a.clone()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    host.resume_or_switch_account("acct-bob", &StaticToken(b.clone()))
+        .await
+        .unwrap();
+    let back = host
+        .resume_or_switch_account("acct-ada", &StaticToken(a.clone()))
+        .await
+        .unwrap();
+    assert_eq!(back.machine_id.as_deref(), Some(id_a.as_str()));
+    assert_eq!(listed(&relay, &a).await, vec![id_a]);
+}
+
+fn quick_verify() -> VerifyTiming {
+    VerifyTiming {
+        timeout: std::time::Duration::from_millis(1500),
+        stable: std::time::Duration::from_millis(10),
+        offline_grace: std::time::Duration::from_millis(10),
+        poll: std::time::Duration::from_millis(20),
+    }
+}
+
+/// CUA-3513: "Added" means online. Setup waits until the relay sees the
+/// machine's session before it reports success.
+#[tokio::test]
+async fn setup_waits_until_the_relay_sees_the_machine_online() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f
+        .host()
+        .with_online_check(true)
+        .with_verify_timing(VerifyTiming {
+            timeout: std::time::Duration::from_secs(20),
+            ..quick_verify()
+        });
+    let id_file = host.paths().machine_id.clone();
+    let joined = async {
+        // The driver joins a moment after it starts.
+        let id = loop {
+            if let Ok(id) = std::fs::read_to_string(&id_file)
+                && relay.machine(id.trim()).is_some()
+            {
+                break id.trim().to_string();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        relay.set_online(&id, true, "test");
+        std::time::Instant::now()
+    };
+    let token = StaticToken("acct-token".into());
+    let (status, online_at) = tokio::join!(host.setup(f.relay_opts(&relay.url), &token), joined);
+    let status = status.unwrap();
+    assert!(online_at.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(status.online, Some(true));
+}
+
+/// CUA-3513: a service that runs but never reaches the relay fails setup
+/// with the reason, so the app never says "Added" for a computer that
+/// stays offline.
+#[tokio::test]
+async fn setup_fails_when_the_machine_never_comes_online() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f
+        .host()
+        .with_online_check(true)
+        .with_verify_timing(quick_verify());
+    std::fs::create_dir_all(host.paths().dir.clone()).unwrap();
+    std::fs::write(host.paths().log(), "joining relay\nrelay refused: 503\n").unwrap();
+    let err = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("did not come online"), "{err}");
+    assert!(err.contains("the relay does not see it yet"), "{err}");
+    assert!(err.contains("relay refused: 503"), "{err}");
+}
+
+/// CUA-3512: a service an older build left under another home's names
+/// moves to this home's own on the next setup, even when nothing else
+/// changes (`migrate_service_names`), and not at all when there is none.
+#[tokio::test]
+async fn an_old_service_name_moves_to_the_home_own_one() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    f.manager.calls.lock().unwrap().clear();
+    assert!(host.migrate_service_names().unwrap().is_empty());
+    assert!(f.manager.calls.lock().unwrap().is_empty());
+
+    *f.manager.legacy_names.lock().unwrap() = vec!["cua-spacesd-host-e9140ee2".into()];
+    assert_eq!(
+        host.migrate_service_names().unwrap(),
+        vec!["cua-spacesd-host-e9140ee2".to_string()]
+    );
+    assert_eq!(
+        *f.manager.calls.lock().unwrap(),
+        ["retire", "install", "start"]
+    );
 }

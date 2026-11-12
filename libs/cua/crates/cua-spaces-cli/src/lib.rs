@@ -28,6 +28,7 @@ use cua_cli::teleport::TeleportCmd;
 use cua_cli::teleport_session::Broker;
 use cua_sdk::{Cua, CuaError, MediaEvent, MediaOpenOptions, MediaSession, SpacesdClient};
 
+pub mod cloud_tokens;
 pub mod drive_config;
 pub mod keyvault_cmd;
 pub mod pool_ext;
@@ -78,6 +79,27 @@ impl CliExtension for CuaSpacesCli {
         {
             None
         }
+    }
+
+    async fn compat(
+        &self,
+        cmd: cua_compat_cmd::CompatCmd,
+        json: bool,
+        out: &mut dyn Write,
+    ) -> Result<i32, CuaError> {
+        cua_compat::cli::run(cmd, json, out, cua_cli::util::hint).await
+    }
+
+    fn register_compat_job_services(&self) {
+        cua_compat::cli::register_job_services();
+    }
+
+    fn compat_prewarm_image(
+        &self,
+        provider: &str,
+        reference: &str,
+    ) -> Result<Option<String>, String> {
+        cua_compat::cli::resolve_prewarm_image(provider, reference)
     }
 
     async fn viewer(

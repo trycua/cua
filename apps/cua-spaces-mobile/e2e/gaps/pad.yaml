@@ -1,0 +1,54 @@
+# Real screenshots of the new screens on an iPad Simulator (the list beside the chat). See phone.yaml.
+appId: ai.cua.spaces.mobile
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Sample data. Not your account."
+- extendedWaitUntil:
+    visible: ".*Needs you.*"
+    timeout: 10000
+- tapOn: "Start a task"
+- assertVisible: "What do you want to do?"
+- takeScreenshot: task-empty-${NAME}
+- tapOn:
+    id: "task-input"
+- inputText: "Fix the flaky websocket reconnect test"
+- tapOn:
+    id: "task-repo"
+- tapOn:
+    id: "task-repo-input"
+- inputText: "acme/checkout-api"
+- tapOn:
+    id: "task-where"
+- takeScreenshot: task-where-${NAME}
+- tapOn:
+    text: "Let Cua decide"
+- tapOn:
+    id: "task-start"
+- assertVisible: "Starting your task"
+- takeScreenshot: task-starting-${NAME}
+- extendedWaitUntil:
+    visible:
+      id: "tool-group"
+    timeout: 20000
+- tapOn:
+    id: "tool-group"
+- takeScreenshot: toolrows-running-${NAME}
+- tapOn: "Search Spaces, apps or agents"
+- inputText: "checkout-api"
+- tapOn:
+    text: "Claude Code.*"
+    index: 0
+- assertVisible: ".*1 of 2.*"
+- takeScreenshot: approvals-nofm-${NAME}
+- tapOn:
+    id: "card-expander"
+- tapOn:
+    id: "card-open-diff"
+- assertVisible: ".*5 files.*"
+- takeScreenshot: diff-files-${NAME}
+- tapOn:
+    id: "diff-file-ws_reconnect.py"
+- tapOn:
+    id: "mode-words"
+- takeScreenshot: diff-words-${NAME}

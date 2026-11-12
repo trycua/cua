@@ -12,10 +12,11 @@ members = [
     "crates/cua-spacesd-server",
     "crates/cua-spacesd-supervise",
     "crates/cua-relay",
+    "crates/cua-oidc",
 ]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.15.5"
 edition = "2021"
 authors = ["TryCua"]
 license = "FSL-1.1-MIT"
@@ -79,3 +80,17 @@ opt-level = "s"
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# --- dev-fast: fast rebuilds for the Cua Spaces Local dev loop ----------------
+# apps/cua-spaces-macos/scripts/install-local.sh --development builds with this
+# profile (cargo build --profile dev-fast, output in target/dev-fast). Lightly
+# optimised, incremental and with no LTO: a one-file change relinks in seconds,
+# where `--release` rebuilds everything. Not for anything that ships.
+[profile.dev-fast]
+inherits = "release"
+opt-level = 1
+incremental = true
+codegen-units = 256
+lto = false
+debug = 0
+strip = "none"

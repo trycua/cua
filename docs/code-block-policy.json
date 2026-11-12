@@ -122,6 +122,11 @@
       "owner": "sandbox",
       "why": "boots a local QEMU VM (bare-metal acceleration); the nightly qemu lane covers local VMs through the local-qemu scenario tests"
     },
+    "unreleased-cli": {
+      "owner": "agents",
+      "why": "a cua command whose PR has not landed on main (cua join, cua thread); re-verify against the CLI definition and retag test=\"cli-shape\" when it lands",
+      "expires": "2026-12-31"
+    },
     "your-cloud": {
       "owner": "docs",
       "why": "creates billable resources in the reader's own cloud account (AWS, Google Cloud, Hetzner, Modal); cua-byoc's hermetic tests (a scripted cloud and the fake relay) and the manual cloud conformance suite (apps/cua-spaces-macos/scripts/reliability/cloud_suite.py) cover these calls"

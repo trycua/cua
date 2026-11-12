@@ -50,7 +50,9 @@ enum JoinWithCode {
         let code = normalizeCode(text) ?? text
         var args = ["host", "setup", "--pair", code]
         if let relay { args += ["--relay", relay] }
-        return args
+        // It provides Spaces and keeps its screen private, as a computer
+        // added by signing in does; sharing its desktop is a choice on its page.
+        return args + ["--no-desktop", "--provide-spaces"]
     }
 
     /// The last non-empty line of the CLI's stderr, for the error message.
@@ -80,7 +82,7 @@ enum JoinWithCode {
         let items = parts.queryItems ?? []
         let raw = segments.count > 1 ? segments[1] : items.first { $0.name == "code" }?.value
         guard segments.count <= 2, let raw, let code = normalizeCode(raw) else { return nil }
-        var route = "/machines?join=\(code)"
+        var route = "/spaces?join=\(code)"
         if let relay = items.first(where: { $0.name == "relay" })?.value, !relay.isEmpty {
             route += "&relay=\(MainUIRoute.encodeComponent(relay))"
         }

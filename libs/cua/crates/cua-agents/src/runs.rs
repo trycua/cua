@@ -44,6 +44,8 @@ pub const HOMES_DIR: &str = "cua-volume/agents";
 pub const BRIDGE_DIR: &str = "bridge";
 /// The MCP server name of the host bridge.
 pub const BRIDGE_SERVER: &str = "cua";
+/// The variable a copied Codex ChatGPT sign-in (`auth.json`) travels as.
+pub const CODEX_AUTH_ENV: &str = "CODEX_AUTH_JSON";
 /// Largest events page read at once.
 pub const PAGE_BYTES: u64 = 512 * 1024;
 const RS: &str = "\x1e--cua--\x1e";
@@ -76,6 +78,10 @@ pub struct Attachment {
     pub bytes: Vec<u8>,
 }
 
+/// How long a run waits for its next prompt before it exits, unless the
+/// caller says otherwise.
+pub const DEFAULT_IDLE_EXIT_SECS: u32 = 1800;
+
 /// Options for [`Agents::start`]. Everything is optional.
 #[derive(Clone, Debug, Default)]
 pub struct RunOptions {
@@ -101,11 +107,14 @@ pub struct RunOptions {
     pub endpoint: Option<Endpoint>,
     /// Model id (also applied without an endpoint where the harness allows).
     pub model: Option<String>,
+    /// Reasoning level (`low`, `medium`, `high`, `xhigh`, `max`) for the harnesses that take one;
+    /// see [`harness::apply_effort`].
+    pub effort: Option<String>,
     /// Install what the harness needs. Default true.
     pub install: Option<bool>,
     /// Exit (resumably) once the queue is empty: fire-and-forget batch runs.
     pub exit_when_idle: bool,
-    /// Exit after this long without a prompt. Default 1800.
+    /// Exit after this long without a prompt. Default `DEFAULT_IDLE_EXIT_SECS` (30 minutes).
     pub idle_exit_secs: Option<u32>,
     /// A label for listings.
     pub label: Option<String>,
@@ -125,6 +134,55 @@ pub struct RunOptions {
     /// journal, a tool ledger, resume with a recovery note. Implies
     /// `exit_when_idle`.
     pub durable: Option<crate::durable::DurableOptions>,
+    /// Hermes's `config.yaml`, generated from the person's connections
+    /// (names the provider and model, no secrets): Hermes starts from it, not
+    /// from the guest's own setup. Ignored for other harnesses and with an
+    /// endpoint.
+    pub hermes_config: Option<String>,
+    /// Continue this session of the harness's own (Claude Code, Codex or
+    /// Hermes keep it on the computer the run is on) instead of opening a
+    /// new one: the runner asks the agent to reload it (ACP `session/resume`
+    /// or `session/load`). Not with `durable`, which keeps its own session.
+    pub resume_session: Option<String>,
+    /// With `resume_session`: the earlier conversation as text, put before
+    /// the first prompt only when the agent cannot reload the session.
+    pub resume_context: Option<String>,
+}
+
+/// The most of `resume_context` a run takes.
+pub const RESUME_CONTEXT_MAX: usize = 32 * 1024;
+
+/// `run.json`'s `resume`: the agent's own session to reload, and the
+/// context for when it can't be.
+fn resume_section(opts: &RunOptions) -> Result<Value> {
+    let Some(id) = opts.resume_session.as_deref() else {
+        return Ok(Value::Null);
+    };
+    let valid = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !valid {
+        return Err(Error::Invalid(format!(
+            "resume_session: {id:?} is not a session id"
+        )));
+    }
+    if opts.durable.is_some() {
+        return Err(Error::Invalid(
+            "resume_session: a durable run keeps its own session".into(),
+        ));
+    }
+    let context = opts
+        .resume_context
+        .as_deref()
+        .filter(|c| !c.trim().is_empty());
+    if context.is_some_and(|c| c.len() > RESUME_CONTEXT_MAX) {
+        return Err(Error::Invalid(format!(
+            "resume_context: at most {RESUME_CONTEXT_MAX} bytes"
+        )));
+    }
+    Ok(json!({"sessionId": id, "context": context}))
 }
 
 /// `meta.json`.
@@ -143,6 +201,57 @@ pub struct RunMeta {
     /// The persistent agent this run belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// A hash of the credentials this run was started with
+    /// ([`credential_hash`]; never the values). A caller that would start
+    /// the run with different ones restarts it instead of reusing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cred_hash: Option<String>,
+}
+
+/// Whether the forwarded Codex `auth.json` should replace the guest's: the
+/// guest has none, or its own copy is older (`last_refresh`, UTC) or
+/// unreadable. A guest copy that is as new, or newer (Codex refreshed it in
+/// the Space), is kept.
+fn codex_auth_replaces(forwarded: &str, existing: &[u8]) -> bool {
+    if existing.iter().all(u8::is_ascii_whitespace) {
+        return true;
+    }
+    let stamp = |v: &Value| {
+        v.get("last_refresh")
+            .and_then(Value::as_str)
+            .map(|t| t.chars().take(19).collect::<String>())
+            .filter(|t| t.len() == 19)
+    };
+    let new = serde_json::from_str::<Value>(forwarded)
+        .ok()
+        .and_then(|v| stamp(&v));
+    let old = serde_json::from_slice::<Value>(existing)
+        .ok()
+        .and_then(|v| stamp(&v));
+    match (new, old) {
+        (Some(n), Some(o)) => n > o,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
+/// A hash of the credentials in `env` (the names and values of the keys
+/// `harness` reads, nothing else). Equal when the same credentials would be
+/// forwarded, so a run started with older ones can be told from a fresh
+/// start. Reveals nothing about the values.
+pub fn credential_hash(harness: &str, env: &BTreeMap<String, String>) -> String {
+    use sha2::{Digest, Sha256};
+    let keys: &[&str] = harness::harness(harness).map(|h| h.keys).unwrap_or(&[]);
+    let mut h = Sha256::new();
+    for (k, v) in env {
+        if keys.contains(&k.as_str()) || k == CODEX_AUTH_ENV {
+            h.update(k.as_bytes());
+            h.update([0]);
+            h.update(v.as_bytes());
+            h.update([0]);
+        }
+    }
+    hex::encode(&h.finalize()[..12])
 }
 
 /// One status vocabulary for every harness. `idle` means "no turn is
@@ -254,10 +363,19 @@ pub struct Started {
 }
 
 /// The guest's own MCP endpoint (cua-spacesd `/mcp`, cua-driver tools).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SpacesdMcp {
     pub url: String,
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for SpacesdMcp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpacesdMcp")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Header naming the agent run on the guest MCP: cua-spacesd keys the
@@ -309,6 +427,58 @@ fn valid_run_id(run_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// A command on the computer that did not succeed, in plain words. One
+/// stopped at its `timeout` has no exit code, which used to reach the
+/// person as "guest command failed (None)".
+pub fn guest_command_failed(
+    status: &cua_spacesd_client::ExitStatus,
+    stderr: &str,
+    timeout: Duration,
+) -> String {
+    let stderr = stderr.trim();
+    let error = status.error.as_deref().filter(|e| !e.trim().is_empty());
+    let mut msg = match (status.code, error, status.signal_name.as_deref()) {
+        (Some(c), _, _) => format!("a step on the computer failed (exit code {c})"),
+        (None, _, _) if status.timed_out => format!(
+            "a step on the computer didn't finish within {} s, so it was stopped",
+            timeout.as_secs()
+        ),
+        (None, Some(e), _) => format!("a step on the computer couldn't run ({})", e.trim()),
+        (None, None, Some(sig)) => format!("a step on the computer was stopped (SIG{sig})"),
+        (None, None, None) => format!(
+            "a step on the computer was stopped before it finished (it had {} s)",
+            timeout.as_secs()
+        ),
+    };
+    if !stderr.is_empty() {
+        msg.push_str(": ");
+        msg.push_str(stderr);
+    }
+    msg
+}
+
+/// Whether `path` is on the Cua Volume mount (`/volume` in a Linux Space,
+/// `~/Cua Volume` on a Mac).
+pub fn on_volume(path: &str) -> bool {
+    path == "/volume" || path.starts_with("/volume/") || path.contains("/Cua Volume")
+}
+
+/// The agent's folders could not be made at start: `home` is its home (or
+/// working folder) and `e` what the computer said.
+fn folders_failed(home: &str, e: Error) -> Error {
+    let why = e.to_string();
+    if on_volume(home) {
+        return Error::Step(format!(
+            "Couldn't open the agent's folder on Cua Volume ({home}). Cua Volume isn't answering \
+             on this computer, usually because sync with your other computers is stalled. \
+             Try again in a minute. Details: {why}"
+        ));
+    }
+    Error::Step(format!(
+        "Couldn't create the agent's folders on this computer ({home}). Details: {why}"
+    ))
+}
+
 /// A persistent agent name (the Cua Volume rule): 1 to 63 of `[a-z0-9._-]`,
 /// starting with a letter or digit.
 pub fn valid_home_name(name: &str) -> bool {
@@ -333,20 +503,22 @@ fn needs_probe(h: &Harness, opts: &RunOptions) -> bool {
 }
 
 /// Decides on the guest probe's output ([`Harness::auth_probe`]; `None`
-/// when it could not run): refused when no credential was found and cua
-/// knows every source, a note when it does not, nothing otherwise.
+/// when it could not run): refused when no credential was found, nothing
+/// otherwise. The refusal is typed (`needs_connect`, see [`crate::failure`]).
 fn credential_check(h: &Harness, probe: Option<&str>) -> Result<Option<String>> {
     if probe.map(str::trim) != Some(harness::PROBE_NONE) {
         return Ok(None);
     }
-    if h.logins.is_some() {
-        return Err(Error::NoCredential(h.missing_credential()));
+    match h.logins {
+        // Every harness lists the files of its own setup now; `None` stays
+        // for one added without them, which only gets a note.
+        None => Ok(Some(format!(
+            "no provider key reached this run; unless {} is configured inside the Space it fails with \"Authentication required\": {}",
+            h.name,
+            h.auth_hint()
+        ))),
+        Some(_) => Err(Error::NoCredential(h.missing_credential())),
     }
-    Ok(Some(format!(
-        "no provider key reached this run; unless {} is configured inside the Space it fails with \"Authentication required\": {}",
-        h.name,
-        h.auth_hint()
-    )))
 }
 
 pub(crate) fn valid_env_name(k: &str) -> Result<()> {
@@ -498,10 +670,10 @@ impl Agents {
             .run(Command::shell(script).timeout(timeout))
             .await?;
         if !out.status.success() {
-            return Err(Error::Guest(format!(
-                "guest command failed ({:?}): {}",
-                out.status.code,
-                String::from_utf8_lossy(&out.stderr).trim()
+            return Err(Error::Step(guest_command_failed(
+                &out.status,
+                &String::from_utf8_lossy(&out.stderr),
+                timeout,
             )));
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -563,6 +735,71 @@ impl Agents {
     ) -> Result<Vec<installables::Progress>> {
         self.run_install(installables::deps_script(ids)?, progress)
             .await
+    }
+
+    /// The agent's own sign-in on this computer ([`crate::remote_login`]):
+    /// where it stands, or start it, hand it the pasted code, or stop it.
+    /// `after_refusal`: the agent's last run here was refused its sign-in.
+    /// Starting installs the agent first when it is missing, then waits up to
+    /// 20 seconds for the link; a pasted code waits up to 20 seconds for the
+    /// answer.
+    pub async fn sign_in(
+        &self,
+        harness: &str,
+        action: crate::remote_login::Action,
+        after_refusal: bool,
+    ) -> Result<crate::remote_login::LoginState> {
+        use crate::remote_login::{self as rl, Action, LoginState};
+        let h = harness::harness(harness)
+            .filter(|h| rl::supported(h.id))
+            .ok_or_else(|| {
+                Error::Invalid(format!(
+                    "{harness} has no sign-in Cua can start on the computer (claude-code, openai-codex do)"
+                ))
+            })?;
+        let status = || async {
+            let out = self
+                .sh(&rl::status_script(h), Duration::from_secs(30))
+                .await?;
+            Ok::<_, Error>(rl::decide(h.id, &rl::parse_probe(&out), after_refusal))
+        };
+        let wait_for = |done: fn(&LoginState) -> bool| async move {
+            let mut last = status().await?;
+            for _ in 0..40 {
+                if done(&last) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                last = status().await?;
+            }
+            Ok::<_, Error>(last)
+        };
+        match action {
+            Action::Status => status().await,
+            Action::Start => {
+                if !self.tools_in_place(h).await {
+                    self.ensure(h.installs, |_| {}).await?;
+                }
+                let script = rl::start_script(h).expect("supported");
+                self.sh(&script, Duration::from_secs(30)).await?;
+                wait_for(|s| !matches!(s, LoginState::SigningIn { url: None, .. })).await
+            }
+            Action::Code(code) => {
+                if code.trim().is_empty() || code.len() > 4096 {
+                    return Err(Error::Invalid(
+                        "paste the code the sign-in page shows".into(),
+                    ));
+                }
+                self.sh(&rl::code_script(h, &code), Duration::from_secs(30))
+                    .await?;
+                wait_for(|s| !matches!(s, LoginState::SigningIn { .. })).await
+            }
+            Action::Cancel => {
+                self.sh(&rl::cancel_script(h), Duration::from_secs(30))
+                    .await?;
+                status().await
+            }
+        }
     }
 
     /// The guest's spacesd client.
@@ -642,18 +879,98 @@ impl Agents {
         };
         let dir = loc.resolve(&env).to_string_lossy().replace('\\', "/");
         let mut done = vec![];
+        let mut writes: Vec<(String, Vec<u8>)> = vec![];
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
         for skill in cua_agent_setup::skills::bundled() {
             for (rel, bytes) in cua_agent_setup::skills::files(&skill.name)? {
-                self.write(
-                    &format!("{dir}/{}/{rel}", skill.name),
-                    bytes.to_vec(),
-                    0o644,
-                )
-                .await?;
+                hasher.update(skill.name.as_bytes());
+                hasher.update(rel.as_bytes());
+                hasher.update((bytes.len() as u64).to_le_bytes());
+                hasher.update(bytes);
+                writes.push((format!("{dir}/{}/{rel}", skill.name), bytes.to_vec()));
             }
             done.push(format!("{dir}/{}", skill.name));
         }
+        // One marker names the bundle that is in place: a start finds it
+        // current and writes nothing, instead of one call per file.
+        let marker = format!("{dir}/.cua-skills-{}", hex::encode(&hasher.finalize()[..8]));
+        if self.read(&marker, 0, 1).await?.is_some() {
+            return Ok(done);
+        }
+        futures_util::future::try_join_all(
+            writes
+                .into_iter()
+                .map(|(path, bytes)| async move { self.write(&path, bytes, 0o644).await }),
+        )
+        .await?;
+        self.write(&marker, b"1".to_vec(), 0o644).await?;
         Ok(done)
+    }
+
+    /// Whether a start of `h` must run the install script: asked for, and
+    /// something is missing. With every tool in place the script only prints
+    /// that it found them, and each of its steps writes an event (a process
+    /// or two in the guest, a quarter of a second each on a sandboxed
+    /// kernel), so a start with the tools there skips it.
+    async fn install_wanted(&self, h: &Harness, asked: bool) -> bool {
+        asked && !self.tools_in_place(h).await
+    }
+
+    /// Whether the tools of `h` (and the runner's own) are installed under
+    /// the guest user's home by this crate, in one guest call. A tool baked
+    /// into the image, or one with operating system packages, always takes
+    /// the script.
+    async fn tools_in_place(&self, h: &Harness) -> bool {
+        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+        ids.extend(h.installs.iter().copied());
+        let Ok(order) = installables::resolve(&ids) else {
+            return false;
+        };
+        let mut tests = vec![];
+        for id in &order {
+            let Some(it) = installables::get(id) else {
+                return false;
+            };
+            if !it.apt.is_empty() {
+                return false;
+            }
+            tests.push(format!(
+                "[ -f {} ]",
+                quote(&format!(
+                    "{}/{}/{id}/{}/.cua-installed",
+                    self.home.trim_end_matches('/'),
+                    installables::TOOLS_DIR,
+                    it.version
+                ))
+            ));
+        }
+        let script = format!("{} && echo in-place", tests.join(" && "));
+        matches!(
+            self.sh(&script, Duration::from_secs(30)).await,
+            Ok(out) if out.trim() == "in-place"
+        )
+    }
+
+    /// Puts what every start of `h` needs in the guest, once and in
+    /// parallel: the bridge pipe, the runner and the cua skills, each skipped
+    /// when it is already there. Safe to run ahead of a start (when an agent
+    /// is added to a Space) and again at the start.
+    pub async fn prewarm(&self, h: &Harness, skills: bool) -> Result<()> {
+        let (bridge, runner, skills) =
+            futures_util::future::join3(self.bridge_path(), self.runner_dir(), async {
+                if skills {
+                    self.install_skills(h).await.map(|_| ())
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+        bridge?;
+        runner?;
+        // Skills are a nicety: a start notes the failure and goes on.
+        let _ = skills;
+        Ok(())
     }
 
     /// Uploads the bridge pipe once per version and returns its path.
@@ -819,15 +1136,6 @@ impl Agents {
             None => format!("{rdir}/work"),
         });
         let mut notes = vec![];
-        // A run without a credential fails with "Authentication required"
-        // only after the install; refuse it before anything is installed.
-        if needs_probe(h, &opts) {
-            // A probe that cannot run decides nothing.
-            let probe = self.sh(&h.auth_probe(), Duration::from_secs(30)).await.ok();
-            if let Some(note) = credential_check(h, probe.as_deref())? {
-                notes.push(note);
-            }
-        }
         // The run directory is private to the guest user. With a repo, the
         // clone creates the working directory.
         let mk_cwd = if opts.repo.is_some() {
@@ -836,41 +1144,100 @@ impl Agents {
             quote(&cwd)
         };
         let mk_home = home_dir.as_deref().map(quote).unwrap_or_default();
-        self.sh(
-            &format!(
-                "umask 077; mkdir -p {mk_cwd} {mk_home} {r}/inbox/done {r}/attachments {r}/{BRIDGE_DIR}",
-                r = quote(&rdir)
-            ),
-            Duration::from_secs(30),
-        )
-        .await?;
+        // These guest calls do not depend on each other, so they run
+        // together (they used to run one after the other): the credential
+        // probe (a run without a credential fails with "Authentication
+        // required" only after the install; refuse it before anything is
+        // installed), the run directory, and the files every start shares
+        // (bridge, runner, skills: each skipped when already in place).
+        let probe = async {
+            if needs_probe(h, &opts) {
+                // A probe that cannot run decides nothing.
+                self.sh(&h.auth_probe(), Duration::from_secs(30)).await.ok()
+            } else {
+                None
+            }
+        };
+        let mkdir_script = format!(
+            "umask 077; mkdir -p {mk_cwd} {mk_home} {r}/inbox/done {r}/attachments {r}/{BRIDGE_DIR}",
+            r = quote(&rdir)
+        );
+        let mkdirs = self.sh(&mkdir_script, Duration::from_secs(30));
+        let shared = async {
+            let (bridge, runner, skills) = futures_util::future::join3(
+                async {
+                    if opts.bridge {
+                        self.bridge_path().await.map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                },
+                self.runner_dir(),
+                async {
+                    if opts.skills.unwrap_or(true) {
+                        Some(self.install_skills(h).await)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .await;
+            Ok::<_, Error>((bridge?, runner?, skills))
+        };
+        let (probe, mkdirs, shared) = futures_util::future::join3(probe, mkdirs, shared).await;
+        if needs_probe(h, &opts)
+            && let Some(note) = credential_check(h, probe.as_deref())?
+        {
+            notes.push(note);
+        }
+        mkdirs.map_err(|e| folders_failed(home_dir.as_deref().unwrap_or(&cwd), e))?;
+        let (bridge_file, runner_dir, skills_done) = shared?;
+        if let Some(Err(e)) = skills_done {
+            notes.push(format!("cua skills were not installed: {e}"));
+        }
         let endpoint = opts.endpoint.clone().map(|mut e| {
             if e.model.is_none() {
                 e.model = opts.model.clone();
             }
             e
         });
-        let mut launch = harness::launch_with_home(
+        let mut launch = harness::launch_with_config(
             h,
             endpoint.as_ref(),
             opts.model.as_deref(),
             &rdir,
             &cwd,
             home_dir.as_deref(),
+            opts.hermes_config.as_deref(),
         )?;
+        harness::apply_effort(h, &mut launch, opts.effort.as_deref());
         if opts.durable.as_ref().is_some_and(|d| d.guard) {
             launch.env.extend(crate::durable::guard_env(h));
         }
-        for f in &launch.files {
+        futures_util::future::try_join_all(launch.files.iter().map(|f| {
             let path = if f.rel.starts_with('/') {
                 f.rel.clone()
             } else {
                 format!("{rdir}/{}", f.rel)
             };
-            self.write(&path, f.body.clone(), 0o600).await?;
-        }
+            async move { self.write(&path, f.body.clone(), 0o600).await }
+        }))
+        .await?;
         // Secrets: the caller's env, plus MCP header values.
         let mut secrets: BTreeMap<String, String> = opts.env.clone();
+        // A ChatGPT sign-in copied from the person's Mac becomes the guest's
+        // own `~/.codex/auth.json` (0600) when it has none; it never reaches
+        // the agent's environment.
+        if let Some(auth) = secrets.remove(CODEX_AUTH_ENV)
+            && h.id == "openai-codex"
+            && !auth.trim().is_empty()
+        {
+            let file = format!("{}/.codex/auth.json", self.home.trim_end_matches('/'));
+            let existing = self.read(&file, 0, 0).await?.unwrap_or_default();
+            if codex_auth_replaces(&auth, &existing) {
+                self.write(&file, auth.into_bytes(), 0o600).await?;
+            }
+        }
         let mut mcp: Vec<Value> = vec![];
         let mut servers = opts.mcp_servers.clone();
         if opts.sandbox_mcp.unwrap_or(h.sandbox_mcp)
@@ -878,8 +1245,7 @@ impl Agents {
         {
             servers.insert(0, g.server_for(&run_id));
         }
-        if opts.bridge {
-            let bridge = self.bridge_path().await?;
+        if let Some(bridge) = bridge_file {
             servers.push(McpServer {
                 name: BRIDGE_SERVER.into(),
                 command: Some(format!("{}/.cua/bin/node", self.home.trim_end_matches('/'))),
@@ -931,16 +1297,11 @@ impl Agents {
             self.write(&path, a.bytes.clone(), 0o600).await?;
             files.push(path);
         }
-        if opts.skills.unwrap_or(true) {
-            match self.install_skills(h).await {
-                Ok(_) => {}
-                Err(e) => notes.push(format!("cua skills were not installed: {e}")),
-            }
-        }
+        // The run's files are uploaded together, once they are all known.
+        let mut uploads: Vec<(String, Vec<u8>, u32)> = vec![];
         let (command, args) = match &launch.wrapper {
             Some(w) => {
-                self.write(&format!("{rdir}/agent.sh"), w.clone(), 0o700)
-                    .await?;
+                uploads.push((format!("{rdir}/agent.sh"), w.clone().into(), 0o700));
                 ("/bin/sh".to_string(), vec![format!("{rdir}/agent.sh")])
             }
             None => {
@@ -966,28 +1327,27 @@ impl Agents {
             "files": files,
             "mcpServers": mcp,
             "exitWhenIdle": opts.exit_when_idle || opts.durable.is_some(),
-            "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
+            "idleExitSecs": opts.idle_exit_secs.unwrap_or(DEFAULT_IDLE_EXIT_SECS),
             "authMethod": h.auth_method,
             "authHint": h.auth_hint(),
-            "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
+            "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
             "guardModeKinds": crate::durable::guard_mode_kinds(h),
             "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
             "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
+            "resume": resume_section(&opts)?,
         });
-        self.write(
-            &format!("{rdir}/run.json"),
+        uploads.push((
+            format!("{rdir}/run.json"),
             serde_json::to_vec_pretty(&run)?,
             0o600,
-        )
-        .await?;
-        self.write(
-            &format!("{rdir}/secrets.json"),
+        ));
+        uploads.push((
+            format!("{rdir}/secrets.json"),
             serde_json::to_vec(&secrets)?,
             0o600,
-        )
-        .await?;
+        ));
         let meta = RunMeta {
             run_id: run_id.clone(),
             harness: h.id.into(),
@@ -997,27 +1357,45 @@ impl Agents {
             label: opts.label.clone(),
             repo: opts.repo.clone(),
             home: opts.home.clone(),
+            cred_hash: Some(credential_hash(h.id, &opts.env)),
         };
-        self.write(
-            &format!("{rdir}/meta.json"),
+        uploads.push((
+            format!("{rdir}/meta.json"),
             serde_json::to_vec(&meta)?,
             0o600,
-        )
-        .await?;
-        let runner_dir = self.runner_dir().await?;
+        ));
+        if let Some(d) = &opts.durable {
+            // A journal restored from the Cua Volume goes in before the
+            // runner starts (its fence and plan read it at start).
+            let state_dir = d.state_dir.clone().unwrap_or_else(|| rdir.clone());
+            for (name, body) in &d.restore {
+                if !crate::durable::JOURNAL_FILES.contains(&name.as_str()) {
+                    return Err(Error::Invalid(format!(
+                        "{name} is not a journal file ({})",
+                        crate::durable::JOURNAL_FILES.join(", ")
+                    )));
+                }
+                uploads.push((format!("{state_dir}/{name}"), body.clone(), 0o600));
+            }
+        }
         let script = Self::launch_script(
             &self.home,
             h,
             &rdir,
             &runner_dir,
-            opts.install.unwrap_or(true),
+            self.install_wanted(h, opts.install.unwrap_or(true)).await,
             opts.repo
                 .as_deref()
                 .map(|r| (r, opts.branch.as_deref(), cwd.as_str())),
             &launch.prelude,
         )?;
-        self.write(&format!("{rdir}/launch.sh"), script, 0o700)
-            .await?;
+        uploads.push((format!("{rdir}/launch.sh"), script.into(), 0o700));
+        futures_util::future::try_join_all(
+            uploads
+                .into_iter()
+                .map(|(path, bytes, mode)| async move { self.write(&path, bytes, mode).await }),
+        )
+        .await?;
         let tag = self.spawn_run(&run_id).await?;
         Ok(Started {
             run_id,
@@ -1072,11 +1450,19 @@ impl Agents {
             .and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
-    /// One run's status. Never disturbs the run.
+    /// One run's status. Never disturbs the run. The three guest reads it
+    /// takes (meta, state, whether the process lives) go out together, so it
+    /// costs one round trip.
     pub async fn status(&self, run_id: &str) -> Result<RunInfo> {
         valid_run_id(run_id)?;
         let rdir = self.run_dir(run_id);
-        let meta: Option<RunMeta> = match self.json_file(&format!("{rdir}/meta.json")).await {
+        let (meta_path, state_path) = (format!("{rdir}/meta.json"), format!("{rdir}/state.json"));
+        let (meta, state, alive) = tokio::join!(
+            self.json_file(&meta_path),
+            self.json_file(&state_path),
+            self.alive(run_id)
+        );
+        let meta: Option<RunMeta> = match meta {
             Ok(m) => m.and_then(|v| serde_json::from_value(v).ok()),
             Err(e) => {
                 return Ok(RunInfo {
@@ -1098,13 +1484,7 @@ impl Agents {
         let Some(meta) = meta else {
             return Err(Error::NotFound(format!("no run {run_id} in this sandbox")));
         };
-        let state = self
-            .json_file(&format!("{rdir}/state.json"))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(Value::Null);
-        let alive = self.alive(run_id).await;
+        let state = state.ok().flatten().unwrap_or(Value::Null);
         Ok(info(run_id, meta, &state, alive))
     }
 
@@ -1148,11 +1528,15 @@ impl Agents {
     pub async fn events(&self, run_id: &str, cursor: u64, max: usize) -> Result<EventPage> {
         valid_run_id(run_id)?;
         let path = format!("{}/events.jsonl", self.run_dir(run_id));
-        let bytes = self
-            .read(&path, cursor, PAGE_BYTES)
-            .await?
-            .unwrap_or_default();
-        Ok(events::page(&bytes, cursor, max.max(1)))
+        // A line (an event with an image in it) can be bigger than a page: the
+        // window grows until it holds one, so the reader never stops at it.
+        events::read_page(
+            |offset, length| self.read(&path, offset, length),
+            cursor,
+            max.max(1),
+            PAGE_BYTES,
+        )
+        .await
     }
 
     /// Every event (bounded to the last 8 MiB).
@@ -1182,9 +1566,36 @@ impl Agents {
     /// Sends a follow-up. A running turn finishes first (the prompt is
     /// queued); a runner that exited is restarted and resumes the session.
     pub async fn send(&self, run_id: &str, text: &str, files: Vec<Attachment>) -> Result<RunInfo> {
+        self.send_with_model(run_id, text, files, None).await
+    }
+
+    /// [`Self::send`] with the model the turn should use: an open session
+    /// switches to it before the turn when the agent offers it (no restart).
+    pub async fn send_with_model(
+        &self,
+        run_id: &str,
+        text: &str,
+        files: Vec<Attachment>,
+        model: Option<&str>,
+    ) -> Result<RunInfo> {
         let before = self.status(run_id).await?;
+        self.send_after(run_id, text, files, &before, model).await?;
+        self.status(run_id).await
+    }
+
+    /// [`Self::send_with_model`] for a caller that read the run's status
+    /// just now (`before`): with a live runner it is one guest write, no
+    /// status reads around it. The events say what the turn it starts did.
+    pub async fn send_after(
+        &self,
+        run_id: &str,
+        text: &str,
+        files: Vec<Attachment>,
+        before: &RunInfo,
+        model: Option<&str>,
+    ) -> Result<()> {
         if matches!(before.status, RunStatus::Unknown) {
-            return Err(Error::Guest(before.reason));
+            return Err(Error::Guest(before.reason.clone()));
         }
         let rdir = self.run_dir(run_id);
         let mut paths = vec![];
@@ -1199,7 +1610,10 @@ impl Agents {
         }
         self.post(
             run_id,
-            json!({"op": "prompt", "text": text, "files": paths}),
+            match model {
+                Some(m) => json!({"op": "prompt", "text": text, "files": paths, "model": m}),
+                None => json!({"op": "prompt", "text": text, "files": paths}),
+            },
         )
         .await?;
         if before.alive == Some(false) {
@@ -1220,7 +1634,7 @@ impl Agents {
             }
             self.spawn_run(run_id).await?;
         }
-        self.status(run_id).await
+        Ok(())
     }
 
     /// Interrupts the turn in flight (ACP `session/cancel`); the session
@@ -1409,6 +1823,72 @@ pub fn summarize(run_id: &str, status: RunStatus, evs: &[AgentEvent]) -> RunResu
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_newer_forwarded_codex_sign_in_replaces_the_guests() {
+        let new = r#"{"last_refresh":"2026-10-27T10:00:00.5Z","tokens":{}}"#;
+        let old = r#"{"last_refresh":"2026-10-26T10:00:00Z","tokens":{}}"#;
+        assert!(codex_auth_replaces(new, b""));
+        assert!(codex_auth_replaces(new, old.as_bytes()));
+        assert!(!codex_auth_replaces(old, new.as_bytes()));
+        assert!(!codex_auth_replaces(old, old.as_bytes()));
+        assert!(codex_auth_replaces(new, b"not json"));
+        assert!(!codex_auth_replaces(r#"{"tokens":{}}"#, old.as_bytes()));
+    }
+
+    #[test]
+    fn the_credential_hash_changes_with_the_credentials_only() {
+        let env = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let a = credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")]));
+        assert_eq!(
+            a,
+            credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one")]))
+        );
+        assert_ne!(
+            a,
+            credential_hash("claude-code", &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "two")]))
+        );
+        // A variable the harness does not read does not count.
+        assert_eq!(
+            a,
+            credential_hash(
+                "claude-code",
+                &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "one"), ("HOME_X", "y")])
+            )
+        );
+        assert!(!a.contains("one"));
+    }
+
+    #[test]
+    fn a_resume_names_the_agents_own_session() {
+        let opts = |id: &str, ctx: Option<&str>| RunOptions {
+            resume_session: Some(id.into()),
+            resume_context: ctx.map(String::from),
+            ..Default::default()
+        };
+        assert_eq!(resume_section(&RunOptions::default()).unwrap(), Value::Null);
+        assert_eq!(
+            resume_section(&opts("0b1e5c2a-1111", Some("earlier"))).unwrap(),
+            json!({"sessionId": "0b1e5c2a-1111", "context": "earlier"})
+        );
+        assert_eq!(
+            resume_section(&opts("abc", Some("  "))).unwrap()["context"],
+            Value::Null
+        );
+        assert!(resume_section(&opts("../x", None)).is_err());
+        let big = "x".repeat(RESUME_CONTEXT_MAX + 1);
+        assert!(resume_section(&opts("abc", Some(&big))).is_err());
+        let durable = RunOptions {
+            durable: Some(Default::default()),
+            ..opts("abc", None)
+        };
+        assert!(resume_section(&durable).is_err());
+    }
+
     fn probe(h: &Harness, home: &std::path::Path, env: &[(&str, &str)]) -> String {
         let out = std::process::Command::new("/bin/sh")
             .arg("-c")
@@ -1445,7 +1925,7 @@ mod tests {
                 "{e}"
             );
             assert!(
-                e.contains("Add an Anthropic API key in Cua Spaces → Settings → Agents"),
+                e.contains("Connect Anthropic in Cua Spaces → Settings → Connections"),
                 "{e}"
             );
         }
@@ -1457,7 +1937,7 @@ mod tests {
             "{e}"
         );
         assert!(
-            e.contains("Add an OpenAI API key in Cua Spaces → Settings → Agents"),
+            e.contains("Connect OpenAI in Cua Spaces → Settings → Connections"),
             "{e}"
         );
         // A key in the guest environment, or a sign-in file: allowed.
@@ -1475,9 +1955,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
         // A probe that could not run decides nothing.
         assert_eq!(credential_check(codex, None).unwrap(), None);
-        // A harness configurable through its own files: a note, not a refusal.
-        let goose = harness::harness("goose").unwrap();
-        let note = credential_check(goose, Some("none")).unwrap().unwrap();
+        // Every harness lists the files of its own setup, so each is refused
+        // before the install when it has neither a key nor one of them.
+        for h in harness::HARNESSES.iter().filter(|h| h.logins.is_some()) {
+            let e = credential_check(h, Some("none")).unwrap_err();
+            assert!(matches!(e, Error::NoCredential(_)), "{}", h.id);
+            let typed = crate::failure::classify(h.id, &e.to_string());
+            assert_eq!(
+                typed.class,
+                crate::failure::FailureClass::NeedsConnect,
+                "{}",
+                h.id
+            );
+        }
+        // The subscription sign-ins stay with Claude Code and Codex.
+        let hermes = harness::harness("hermes").unwrap();
+        assert!(!hermes.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"));
+        assert!(!hermes.keys.contains(&"CODEX_AUTH_JSON"));
+        for h in harness::HARNESSES.iter().filter(|h| h.id != "claude-code") {
+            assert!(!h.keys.contains(&"CLAUDE_CODE_OAUTH_TOKEN"), "{}", h.id);
+        }
+        // A harness added without a list of its own files only gets a note.
+        let open = Harness {
+            logins: None,
+            ..*harness::harness("goose").unwrap()
+        };
+        let note = credential_check(&open, Some("none")).unwrap().unwrap();
         assert!(note.contains("OPENAI_API_KEY"), "{note}");
     }
 
@@ -1634,5 +2137,68 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
         }
+    }
+
+    /// CUA-4002: a step stopped at its timeout said "guest command failed
+    /// (None)". It says what happened, and an agent folder on a Cua Volume
+    /// that does not answer says that.
+    #[test]
+    fn a_failed_step_says_what_happened_in_plain_words() {
+        use cua_spacesd_client::ExitStatus;
+        let t = Duration::from_secs(30);
+        let timed_out = ExitStatus {
+            timed_out: true,
+            ..Default::default()
+        };
+        let stopped = guest_command_failed(&timed_out, "", t);
+        assert_eq!(
+            stopped,
+            "a step on the computer didn't finish within 30 s, so it was stopped"
+        );
+        assert!(!stopped.contains("None"));
+        let exit1 = ExitStatus {
+            code: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            guest_command_failed(&exit1, "mkdir: x: Input/output error\n", t),
+            "a step on the computer failed (exit code 1): mkdir: x: Input/output error"
+        );
+        let missing = ExitStatus {
+            error: Some("executable not found: umask".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            guest_command_failed(&missing, "", t),
+            "a step on the computer couldn't run (executable not found: umask)"
+        );
+        let killed = ExitStatus {
+            signal_name: Some("KILL".into()),
+            ..Default::default()
+        };
+        assert!(guest_command_failed(&killed, "", t).ends_with("was stopped (SIGKILL)"));
+        assert!(!guest_command_failed(&ExitStatus::default(), "", t).contains("None"));
+        let mac = folders_failed(
+            "/Users/ada/Cua Volume/agents/claude",
+            Error::Step(stopped.clone()),
+        )
+        .to_string();
+        assert!(
+            mac.starts_with("Couldn't open the agent's folder on Cua Volume"),
+            "{mac}"
+        );
+        assert!(
+            mac.contains("sync with your other computers is stalled"),
+            "{mac}"
+        );
+        assert!(!mac.contains("guest command failed"), "{mac}");
+        let linux = folders_failed("/volume/agents/claude", Error::Step(stopped.clone()));
+        assert!(linux.to_string().contains("Cua Volume isn't answering"));
+        let local = folders_failed("/home/cua/.cua/runs/run-1/work", Error::Step(stopped));
+        assert!(
+            local
+                .to_string()
+                .starts_with("Couldn't create the agent's folders on this computer")
+        );
     }
 }

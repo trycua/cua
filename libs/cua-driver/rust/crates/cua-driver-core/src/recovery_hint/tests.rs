@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::*;
 
 const WINDOW: &Value = &Value::Null;
@@ -144,7 +147,7 @@ fn the_table_covers_every_code_agents_hit_most() {
         "element_bounds_unavailable",
         "target_changed",
         "stale_target",
-        "stale_geometry",
+        "stale_observation",
         "desktop_changed",
         "point_outside_window",
         "px_frame_mismatch",
@@ -156,6 +159,7 @@ fn the_table_covers_every_code_agents_hit_most() {
         "permission_required",
         "permission_denied",
         "os_permission_prompt_requires_trusted_host",
+        "security_prompt_protected",
         "session_not_started",
         "session_ended",
         "session_required",
@@ -301,7 +305,7 @@ fn a_window_target_comes_from_the_typed_target_when_the_call_has_no_top_level_id
         "click",
         &seed(json!({"target": {"kind": "window", "pid": 9, "window_id": 4}, "x": 1, "y": 2})),
         true,
-        json!({"code": "stale_geometry"}),
+        json!({"code": "stale_observation"}),
     );
     assert_eq!(
         call_value(&hint),
@@ -365,6 +369,19 @@ fn a_point_outside_the_window_asks_for_the_screenshot_only() {
             },
         })
     );
+}
+
+#[test]
+fn a_security_prompt_refusal_tells_the_agent_to_leave_it_to_the_user() {
+    let result = crate::security_prompt::refusal("SecurityAgent");
+    let hint = hint_for(
+        "click",
+        &window_seed(),
+        true,
+        result.structured_content.unwrap(),
+    );
+    assert!(hint.hint.contains("the user's call"), "{}", hint.hint);
+    assert!(hint.next_call.is_none(), "no tool call answers a prompt");
 }
 
 #[test]

@@ -12,6 +12,9 @@ use std::time::Duration;
 
 /// The most Spaces one `create_space` call makes.
 const MAX_CREATE_COUNT: u32 = 8;
+/// How long a tool that takes an app name waits for that app's window: `launch_app` answers when
+/// the process starts, a moment before its window exists.
+const APP_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(super) fn args<T: DeserializeOwned>(tool: &str, value: Value) -> Result<T> {
     let value = if value.is_null() { json!({}) } else { value };
@@ -85,7 +88,19 @@ pub(super) async fn call(
             // A call cut because the Space's mesh connection went away
             // says why, not just "broken pipe".
             let e = match &space {
-                Some(space) => spaces.explain_mesh_cut(space, e).await,
+                Some(space) => {
+                    let e = spaces.explain_mesh_cut(space, e).await;
+                    // The connection itself failed: the next call dials
+                    // again rather than reuse it (its cua-spacesd may have
+                    // restarted, and nothing resets a connection over the
+                    // mesh).
+                    if matches!(e, Error::Env(cua_spacesd_client::Error::Transport(_)))
+                        && let Ok(id) = spaces.resolve(space)
+                    {
+                        spaces.forget_stale_connection(&id.to_string()).await;
+                    }
+                    e
+                }
                 None => e,
             };
             tracing::debug!(tool, error = %e, "tool failed");
@@ -129,9 +144,35 @@ pub const PHASE_OFFLINE: &str = "offline";
 async fn dispatch(
     spaces: &Spaces,
     tool: &str,
-    a: Value,
+    mut a: Value,
     broker: Option<&std::sync::Arc<dyn crate::teleport_broker::SessionBroker>>,
 ) -> Result<ToolOutcome> {
+    // A thread or agent member call for a Space whose thread lives on
+    // another machine (one that provides it) runs there, as this device's
+    // signed-in account. Only this machine's own user is forwarded: a
+    // caller someone else's machine vouched for never is.
+    if crate::thread_route::routed(tool, &a)
+        && PINNED.try_with(|_| ()).is_err()
+        && matches!(
+            crate::extension::Caller::current(),
+            crate::extension::Caller::Owner
+        )
+        && let Some(space) = a.get("space").and_then(Value::as_str).map(str::to_owned)
+    {
+        match spaces.thread_home(&space).await? {
+            crate::thread_route::ThreadHome::Owner {
+                host,
+                space,
+                granted,
+            } => {
+                return spaces
+                    .call_thread_owner(&host, &space, tool, granted, a)
+                    .await;
+            }
+            crate::thread_route::ThreadHome::Here(Some(here)) => a["space"] = json!(here),
+            crate::thread_route::ThreadHome::Here(None) => {}
+        }
+    }
     // Tools a registered extension serves (teleport, the Cua Volume,
     // persistent agents): see `crate::extension`.
     if let Some(ext) = spaces.extension_for(tool) {
@@ -143,6 +184,7 @@ async fn dispatch(
                 args: if a.is_null() { json!({}) } else { a },
                 broker,
                 pinned: pinned.as_ref(),
+                caller: crate::extension::Caller::current(),
             })
             .await;
     }
@@ -181,6 +223,7 @@ async fn dispatch(
                 .into_iter()
                 .map(|h| h.space)
                 .collect();
+            let default = spaces.default_space_id().await;
             let rows: Vec<Value> = spaces
                 .list_all()
                 .await?
@@ -195,7 +238,10 @@ async fn dispatch(
                     } else {
                         PHASE_READY
                     };
-                    with(info, row_extra(info, &direct_hosts, phase))
+                    with(
+                        info,
+                        row_extra(info, &direct_hosts, phase, default.as_deref()),
+                    )
                 })
                 .collect();
             Ok(ToolOutcome::json(&rows))
@@ -227,12 +273,30 @@ async fn dispatch(
                     "count {count}: create 1 to {MAX_CREATE_COUNT} Spaces at a time"
                 )));
             }
+            // The network: tightening only (anything opening more than
+            // Internet only is the user's to choose).
+            let network_settings = match (&a.network, &a.allow, &a.deny) {
+                (None, None, None) => None,
+                _ => {
+                    let s = crate::network::parse_network(
+                        a.network.as_deref().unwrap_or("internet"),
+                        a.allow.as_deref().unwrap_or_default(),
+                        a.deny.as_deref().unwrap_or_default(),
+                    )?;
+                    crate::network::refuse_widening_by_agent(&s, None)?;
+                    Some(s)
+                }
+            };
             let one = |name: Option<String>| SpaceCreate {
+                network_settings: network_settings.clone(),
+                parent: a.parent.clone(),
                 image: a.image.clone(),
                 on: on.clone(),
                 kind,
                 runtime: runtime.clone(),
                 name,
+                cpus: a.cpus,
+                memory_mb: a.memory_mb,
                 timeout: a.timeout.map(Duration::from_secs),
                 wait: a.wait,
                 reuse: a.reuse.unwrap_or(false),
@@ -248,7 +312,7 @@ async fn dispatch(
             };
             let row = |created: SpaceCreated| match created {
                 SpaceCreated::Ready { info, reused } => {
-                    let mut extra = row_extra(&info, &[], PHASE_READY);
+                    let mut extra = row_extra(&info, &[], PHASE_READY, None);
                     extra["reused"] = json!(reused);
                     with(&info, extra)
                 }
@@ -299,6 +363,16 @@ async fn dispatch(
             let a: i::SpaceOnly = args(tool, a)?;
             Ok(ToolOutcome::text(spaces.delete(&a.space).await?))
         }
+        "network_show" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_info(&a.space).await?))
+        }
+        "network_log" => {
+            let a: i::SpaceOnly = args(tool, a)?;
+            Ok(ToolOutcome::json(&spaces.network_events(&a.space).await?))
+        }
+        // Boxed: its locals stay out of this function's frame.
+        "network_set" => Box::pin(network_set(spaces, tool, a)).await,
         "stop_space" => {
             let a: i::StopSpace = args(tool, a)?;
             if a.suspend.unwrap_or(false) {
@@ -333,13 +407,35 @@ async fn dispatch(
         "cloud_connect" => {
             let a: i::CloudConnect = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
+            let req = cua_sandbox_core::byoc::ConnectRequest {
+                target: cloud_target(a.target),
+                make_default: a.make_default.unwrap_or(false),
+                ttl_hours: a.ttl_hours,
+                auth: a.auth,
+                budget_usd_month: a.budget_usd_month,
+                max_size: a.max_size,
+                account_id: a.account_id,
+                role_arn: a.role_arn,
+                project_number: a.project_number,
+                service_account: a.service_account,
+                subscription_id: a.subscription_id,
+                tenant_id: a.tenant_id,
+                client_id: a.client_id,
+                resource_group: a.resource_group,
+                check: a.check.unwrap_or(false),
+                // The caller's word, else the agent this daemon runs for.
+                agent: a
+                    .agent
+                    .filter(|x| !x.trim().is_empty())
+                    .or_else(cua_sandbox_core::byoc::cua_agent),
+            };
+            Ok(json_of(&c.connect_with(&req).await?))
+        }
+        "cloud_approve" => {
+            let a: i::CloudApprove = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
             Ok(json_of(
-                &c.connect(
-                    &cloud_target(a.target),
-                    a.make_default.unwrap_or(false),
-                    a.ttl_hours,
-                )
-                .await?,
+                &c.approve(&a.provider, a.deny.unwrap_or(false)).await?,
             ))
         }
         "cloud_disconnect" => {
@@ -576,7 +672,19 @@ async fn dispatch(
             let a: i::CloudAudit = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
             let limit = a.limit.unwrap_or(50).clamp(1, 1000) as usize;
-            Ok(json_of(&c.audit(limit).await?))
+            Ok(json_of(&c.audit_for(a.provider.as_deref(), limit).await?))
+        }
+        "cloud_cost" => {
+            let a: i::CloudCost = args(tool, a)?;
+            let c = spaces.sandboxes().clouds()?;
+            Ok(json_of(
+                &c.cost(
+                    a.provider.as_deref(),
+                    a.by.as_deref().unwrap_or("space"),
+                    a.since.as_deref(),
+                )
+                .await?,
+            ))
         }
         // --- execution --------------------------------------------------------
         "space_bash" => {
@@ -584,6 +692,20 @@ async fn dispatch(
             let s = space_for(spaces, tool, &a.space).await?;
             let t = Duration::from_secs(a.timeout.unwrap_or(60).clamp(1, 24 * 3600));
             Ok(ToolOutcome::text(s.bash(&a.command, t).await?.render()))
+        }
+        "space_service" => {
+            let a: i::SpaceService = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            Ok(ToolOutcome::json(&space_service(&s, a).await?))
+        }
+        "space_job" => {
+            let a: i::SpaceJob = args(tool, a)?;
+            let s = space_for(spaces, tool, &a.space).await?;
+            let mut out = s.job(&a).await?;
+            if a.action == "start" && a.notify.unwrap_or(false) {
+                out["notify"] = crate::space_jobs::watch(spaces, &s, &out, &a).await;
+            }
+            Ok(json_of(&out))
         }
         "space_write" => {
             let a: i::SpaceWrite = args(tool, a)?;
@@ -644,86 +766,11 @@ async fn dispatch(
         "upload" | "send_file" | "download" => Err(unavailable("spaces-files")),
         // --- streams ----------------------------------------------------------
         #[cfg(feature = "spaces-stream")]
-        "stream_endpoint" => {
-            use crate::stream::{StreamOptions, StreamTarget};
-            let a: i::StreamEndpoint = args(tool, a)?;
-            let s = space_for(spaces, tool, &a.space).await?;
-            let target = match (a.window_id, a.app_name) {
-                (Some(w), _) if !w.is_empty() => StreamTarget::Window(w),
-                (_, Some(app)) if !app.is_empty() => {
-                    StreamTarget::Window(s.find_window(&app).await?.window_id)
-                }
-                _ => StreamTarget::Display(a.display),
-            };
-            let ticket = s
-                .open_stream(
-                    target,
-                    StreamOptions {
-                        max_fps: a.max_fps.unwrap_or(0),
-                        ticket_ttl: a.ticket_ttl.map(Duration::from_secs),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(ToolOutcome::json(&ticket))
-        }
+        "stream_endpoint" => Box::pin(tool_stream_endpoint(spaces, tool, a)).await,
         #[cfg(feature = "spaces-stream")]
-        "list_space_windows" => {
-            let a: i::ListSpaceWindows = args(tool, a)?;
-            let s = space_for(spaces, tool, &a.space).await?;
-            Ok(ToolOutcome::json(&s.windows(a.app_name.as_deref()).await?))
-        }
+        "list_space_windows" => Box::pin(tool_list_space_windows(spaces, tool, a)).await,
         #[cfg(feature = "spaces-stream")]
-        "stream_space_window" => {
-            use crate::stream::{StreamOptions, StreamTarget};
-            let a: i::StreamSpaceWindow = args(tool, a)?;
-            let s = space_for(spaces, tool, &a.space).await?;
-            let window = match (a.window_id.filter(|w| !w.is_empty()), a.app_name.as_deref()) {
-                (Some(id), _) => s
-                    .windows(None)
-                    .await?
-                    .into_iter()
-                    .find(|w| w.window_id == id)
-                    .ok_or_else(|| Error::NotFound(format!("window {id} in {}", s.id())))?,
-                (None, Some(app)) if !app.is_empty() => s.find_window(app).await?,
-                _ => {
-                    return Err(Error::invalid(
-                        "stream_space_window needs a window_id or an app_name",
-                    ));
-                }
-            };
-            let ticket = s
-                .open_stream(
-                    StreamTarget::Window(window.window_id.clone()),
-                    StreamOptions {
-                        policy: Some(cua_spacesd_client::pb::SessionPolicy::BackgroundOnly),
-                        ticket_ttl: Some(Duration::from_secs(120)),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            let label = if window.app_name.is_empty() {
-                format!("window {}", window.window_id)
-            } else {
-                format!("{} window", window.app_name)
-            };
-            spaces
-                .operator_display()
-                .stream_window(crate::operator::WindowStreamRequest {
-                    space_id: s.id().to_string(),
-                    window_id: window.window_id.clone(),
-                    app_name: window.app_name.clone(),
-                    title: a.title.unwrap_or(window.title),
-                    media_url: ticket.ws_url,
-                    media_session_id: ticket.media_session_id,
-                })
-                .await?;
-            Ok(ToolOutcome::text(format!(
-                "Streaming {label} ({}) of {} to your desktop (bidirectional).",
-                window.window_id,
-                s.id()
-            )))
-        }
+        "stream_space_window" => Box::pin(tool_stream_space_window(spaces, tool, a)).await,
         #[cfg(not(feature = "spaces-stream"))]
         "stream_endpoint" | "list_space_windows" | "stream_space_window" => {
             Err(unavailable("spaces-stream"))
@@ -815,7 +862,7 @@ async fn dispatch(
         // --- agents -----------------------------------------------------------
         #[cfg(feature = "spaces-agents")]
         "agent_start" | "agent_message" | "agent_status" | "agent_events" | "agent_interrupt"
-        | "agent_stop" | "agent_list" => agents(spaces, tool, a).await,
+        | "agent_stop" | "agent_list" | "agent_sign_in" => agents(spaces, tool, a).await,
         #[cfg(feature = "spaces-agents")]
         "agent_capabilities" => {
             let _: i::AgentCapabilities = args(tool, a)?;
@@ -823,7 +870,9 @@ async fn dispatch(
         }
         #[cfg(not(feature = "spaces-agents"))]
         "agent_start" | "agent_message" | "agent_status" | "agent_events" | "agent_interrupt"
-        | "agent_stop" | "agent_list" | "agent_capabilities" => Err(unavailable("spaces-agents")),
+        | "agent_stop" | "agent_list" | "agent_capabilities" | "agent_sign_in" => {
+            Err(unavailable("spaces-agents"))
+        }
         // --- keyvault ---------------------------------------------------------
         "request_site_login" => {
             let a: i::RequestSiteLogin = args(tool, a)?;
@@ -834,21 +883,7 @@ async fn dispatch(
         }
         // --- hotspot ----------------------------------------------------------
         #[cfg(feature = "spaces-hotspot")]
-        "hotspot_start" => {
-            let a: i::HotspotStart = args(tool, a)?;
-            space_for(spaces, tool, &a.space).await?;
-            let status = spaces
-                .hotspot_start(
-                    &a.space,
-                    crate::hotspot::HotspotOptions {
-                        set_system_proxy: a.set_system_proxy.unwrap_or(true),
-                        bypass: a.bypass.unwrap_or_default(),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(ToolOutcome::json(&status))
-        }
+        "hotspot_start" => Box::pin(hotspot_start(spaces, tool, a)).await,
         #[cfg(feature = "spaces-hotspot")]
         "hotspot_stop" => {
             let a: i::HotspotTarget = args(tool, a)?;
@@ -896,8 +931,10 @@ async fn dispatch(
         }
         #[cfg(feature = "spaces-agents")]
         "relay_unregister_space" => {
-            let a: i::SpaceOnly = args(tool, a)?;
-            let unregistered = spaces.relay_unregister(&a.space).await?;
+            let a: i::RelayUnregisterSpace = args(tool, a)?;
+            let unregistered = spaces
+                .remove_computer(&a.space, a.delete_spaces.unwrap_or(false))
+                .await?;
             let space = spaces.resolve(&a.space)?.to_string();
             Ok(ToolOutcome::json(
                 &json!({"space": space, "unregistered": unregistered}),
@@ -916,8 +953,83 @@ async fn dispatch(
 /// `phase`, and for a host added by its direct address or a Space on a
 /// host, `via`: `direct` (its Tailscale or LAN address, no relay) or
 /// `relay`.
-fn row_extra(info: &crate::SpaceInfo, direct_hosts: &[String], phase: &str) -> Value {
-    let mut extra = json!({ "phase": phase });
+async fn network_set(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::NetworkSet = args(tool, a)?;
+    let current = spaces.network_info(&a.space).await?.settings;
+    let mut s = crate::network::parse_network(
+        &a.network,
+        a.allow.as_deref().unwrap_or_default(),
+        a.deny.as_deref().unwrap_or_default(),
+    )?;
+    // The exit: as asked, else the one it has.
+    s = match a.via.as_deref() {
+        Some(word) => crate::network::with_via(s, word)?,
+        None => crate::network::with_via(
+            s,
+            &current
+                .via
+                .as_ref()
+                .map(|v| v.as_word())
+                .unwrap_or_default(),
+        )?,
+    };
+    crate::network::refuse_widening_by_agent(&s, Some(&current))?;
+    crate::network::refuse_exit_by_agent(&s, Some(&current))?;
+    let tree = a.tree.unwrap_or(false);
+    let applied = spaces.set_network(&a.space, &s, false, tree).await?;
+    Ok(ToolOutcome::json(&json!({
+        "applied": match applied {
+            crate::network::Applied::Now => "now",
+            crate::network::Applied::NextStart => "next_start",
+        },
+        "network": spaces.network_info(&a.space).await?,
+    })))
+}
+
+#[cfg(feature = "spaces-hotspot")]
+async fn hotspot_start(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::HotspotStart = args(tool, a)?;
+    space_for(spaces, tool, &a.space).await?;
+    crate::hotspot::require_confirmed(a.confirm)?;
+    let secure = cua_vmm::network::Mode::from_env() == cua_vmm::network::Mode::Secure;
+    // Under Secure Spaces, "this computer" is the exit for this run:
+    // the Space's own rules apply first (the internet only unless
+    // they allow more). Without the experiment it is as it was.
+    let dialer = if secure {
+        let rules = match spaces.network_info(&a.space).await {
+            Ok(info) => crate::exit::ExitPolicy::of(&info.settings)?,
+            Err(_) => crate::exit::ExitPolicy::default_internet(),
+        };
+        crate::exit::this_machine(std::sync::Arc::new(rules))
+    } else {
+        crate::hotspot::direct_dialer()
+    };
+    let status = spaces
+        .hotspot_start(
+            &a.space,
+            crate::hotspot::HotspotOptions {
+                set_system_proxy: a.set_system_proxy.unwrap_or(!secure),
+                bypass: a.bypass.unwrap_or_default(),
+                dialer,
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(ToolOutcome::json(&status))
+}
+
+fn row_extra(
+    info: &crate::SpaceInfo,
+    direct_hosts: &[String],
+    phase: &str,
+    default: Option<&str>,
+) -> Value {
+    let mut extra = json!({
+        "phase": phase,
+        "clipboard": info.clipboard.as_str(),
+        "parent": info.parent_space_id(),
+        "default": default == Some(info.id.as_str()),
+    });
     let via = if direct_hosts.contains(&info.id) || info.host.starts_with("direct:") {
         Some("direct")
     } else if !info.host.is_empty() {
@@ -967,6 +1079,7 @@ fn extension_capability(tool: &str) -> Option<&'static str> {
         Category::Teleport => Some("teleport"),
         Category::Volume => Some("Cua Volume"),
         Category::PersistentAgents => Some("persistent agents"),
+        Category::Thread => Some("the Space thread and agent members"),
         _ => None,
     }
 }
@@ -980,6 +1093,64 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
         .ok_or_else(|| Error::invalid(format!("{tool}: `space` is required")))?
         .to_string();
     let s = space_for(spaces, tool, &space_arg).await?;
+    // Starting an agent or sending it a message is not safe to send twice,
+    // so it is never sent down a dead connection: a cached one is checked
+    // first (This Mac's cua-spacesd restarts when Set up shares its desktop,
+    // and the first job right after waited out the keepalive and failed
+    // with "http2 error (operation timed out)", CUA-3974). A Space pinned
+    // by the caller stays the one it gave.
+    let s = if matches!(tool, "agent_start" | "agent_message") && PINNED.try_with(|_| ()).is_err() {
+        spaces.checked(s).await?
+    } else {
+        s
+    };
+    // `name`: an agent member of this Space in place of a run id.
+    let mut a = a;
+    if ag::MEMBER_RUN_TOOLS.contains(&tool) {
+        let name = a.get("name").and_then(Value::as_str).map(str::to_owned);
+        let run_id = a
+            .get("run_id")
+            .and_then(Value::as_str)
+            .filter(|r| !r.is_empty())
+            .map(str::to_owned);
+        match (name, run_id) {
+            (Some(_), Some(_)) => {
+                return Err(Error::invalid(format!(
+                    "{tool}: give `run_id` or `name`, not both"
+                )));
+            }
+            (None, None) => {
+                return Err(Error::invalid(format!(
+                    "{tool}: `run_id` (or an agent member's `name`) is required"
+                )));
+            }
+            (Some(name), None) => {
+                let ext = spaces
+                    .extension_for(ag::MEMBER_OP)
+                    .ok_or_else(|| Error::needs_cua_spaces("agent members"))?;
+                let mut op = a.clone();
+                op["tool"] = json!(tool);
+                op["space"] = json!(s.id().to_string());
+                op["name"] = json!(name);
+                let out = ext
+                    .call_tool(crate::extension::ToolCall {
+                        spaces,
+                        tool: ag::MEMBER_OP,
+                        args: op,
+                        broker: None,
+                        pinned: Some(&s),
+                        caller: crate::extension::Caller::current(),
+                    })
+                    .await?;
+                if tool == "agent_message" {
+                    return Ok(out);
+                }
+                let v = crate::extension::outcome_json(out)?;
+                a["run_id"] = v["run_id"].clone();
+            }
+            (None, Some(_)) => {}
+        }
+    }
     let agents = match s.agents().await {
         Ok(agents) => agents,
         Err(e) => {
@@ -1015,6 +1186,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                             args: a,
                             broker: None,
                             pinned: Some(&s),
+                            caller: crate::extension::Caller::current(),
                         })
                         .await
                     }
@@ -1025,6 +1197,16 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             // The caller's env, the env_from_host keys, and the keys saved
             // in Cua Spaces that this harness reads.
             let (opts, missing) = ag::start_options(&a)?;
+            // An agent run may make child Spaces of its own Space: this
+            // machine keeps the Space's spawn channel while that is on
+            // (only for a Space this computer runs).
+            let id = s.id().to_string();
+            if id.starts_with("local:")
+                && spaces.registry().get(&id).ok().flatten().is_some()
+                && let Err(e) = spaces.set_children(&id, true)
+            {
+                tracing::warn!(space = %id, error = %e, "could not turn on child Spaces");
+            }
             let started = agents.start(&a.agent, &a.prompt, opts).await;
             // The MCP `agent_start`, the SDKs' `Space.agent_start` and the
             // Spaces app all arrive here.
@@ -1062,6 +1244,7 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                                  "agent": started.harness}),
                     broker: None,
                     pinned: Some(&s),
+                    caller: crate::extension::Caller::current(),
                 };
                 if let Err(e) = ext.call_tool(call).await {
                     tracing::warn!(run = %started.run_id, error = %e, "agent run not watched");
@@ -1084,9 +1267,13 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
             if a.force.unwrap_or(false) {
                 agents.interrupt(&a.run_id).await?;
             }
+            let steered = a.force.unwrap_or(false);
             let st = agents.send(&a.run_id, &a.text, vec![]).await?;
             Ok(ToolOutcome::json(&json!({
                 "delivered": true, "run_id": a.run_id, "status": st.status, "phase": st.phase,
+                // `queued` behind the running turn, `steered` (the running turn
+                // was interrupted first) or `started` (a turn of its own).
+                "mode": if steered { "steered" } else if st.phase == "working" { "queued" } else { "started" },
                 "reason": if st.phase == "working" { "queued after the running turn" } else { "a new turn in the same session" },
             })))
         }
@@ -1107,6 +1294,21 @@ async fn agents(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
                 "events": page.events.iter().map(|e| compact(e, raw)).collect::<Vec<_>>(),
                 "cursor": page.cursor, "caught_up": page.caught_up,
             })))
+        }
+        "agent_sign_in" => {
+            let a: i::AgentSignIn = args(tool, a)?;
+            let action = ag::remote_login::Action::parse(
+                a.action.as_deref().unwrap_or("status"),
+                a.code.clone(),
+            )
+            .ok_or_else(|| {
+                Error::invalid("agent_sign_in: action is status, start, code (with code) or cancel")
+            })?;
+            let state = agents.sign_in(&a.agent, action, a.after_refusal).await?;
+            let mut out = serde_json::to_value(&state)?;
+            out["space"] = json!(s.id().to_string());
+            out["agent"] = json!(a.agent);
+            Ok(ToolOutcome::json(&out))
         }
         "agent_status" => {
             let a: i::AgentStatus = args(tool, a)?;
@@ -1231,4 +1433,227 @@ async fn show(s: &crate::Space, run_dir: &str, run_id: &str) {
     {
         h.detach();
     }
+}
+
+/// `space_service`.
+async fn space_service(s: &crate::Space, a: i::SpaceService) -> Result<Value> {
+    use crate::keep::{Probe, Restart, ServiceControl, ServiceDef};
+    let name = || {
+        a.name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .ok_or_else(|| Error::InvalidArgument(format!("{} needs `name`", a.action)))
+    };
+    Ok(match a.action.as_str() {
+        "add" => {
+            let restart = match a.restart.as_deref() {
+                None => Restart::Always,
+                Some(r) => Restart::parse(r).ok_or_else(|| {
+                    Error::InvalidArgument(format!(
+                        "restart {r:?}: use always, on-failure or never"
+                    ))
+                })?,
+            };
+            let probe = (a.http.is_some() || a.tcp.is_some() || a.check.is_some()).then(|| Probe {
+                http: a.http.clone(),
+                tcp: a.tcp.clone(),
+                command: a.check.clone(),
+                ..Default::default()
+            });
+            let def = ServiceDef {
+                name: name()?,
+                command: a
+                    .command
+                    .clone()
+                    .ok_or_else(|| Error::InvalidArgument("add needs `command`".into()))?,
+                restart,
+                probe,
+                start_on_boot: a.start_on_boot.unwrap_or(true),
+                ..Default::default()
+            };
+            serde_json::to_value(s.put_service(&def).await?).unwrap_or(Value::Null)
+        }
+        "list" => json!({ "services": s.kept_services().await? }),
+        "start" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Start).await?)
+            .unwrap_or(Value::Null),
+        "stop" => serde_json::to_value(s.control_service(&name()?, ServiceControl::Stop).await?)
+            .unwrap_or(Value::Null),
+        "restart" => {
+            serde_json::to_value(s.control_service(&name()?, ServiceControl::Restart).await?)
+                .unwrap_or(Value::Null)
+        }
+        "remove" => {
+            let n = name()?;
+            s.delete_service(&n).await?;
+            json!({ "removed": n })
+        }
+        "logs" => json!({ "logs": s.service_logs(&name()?, a.tail_bytes.unwrap_or(0)).await? }),
+        other => {
+            return Err(Error::InvalidArgument(format!(
+                "action {other:?}: use add, list, start, stop, restart, remove or logs"
+            )));
+        }
+    })
+}
+
+/// Out of line (and boxed by the caller) so `dispatch`'s own future stays small: every tool arm that
+/// lives in it adds to the stack a call needs, and a debug build of a test thread has 2 MiB.
+#[cfg(feature = "spaces-stream")]
+async fn tool_stream_endpoint(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    use crate::stream::{StreamOptions, StreamTarget};
+    let a: i::StreamEndpoint = args(tool, a)?;
+    // A window another Space shows here: decided at open time, straight
+    // from its origin when the viewer may reach it.
+    if let Some(w) = a
+        .window_id
+        .as_deref()
+        .filter(|w| crate::stream_registry::entry_of_window_id(w).is_some())
+    {
+        let opened = spaces
+            .open_stream_entry(
+                w,
+                StreamOptions {
+                    max_fps: a.max_fps.unwrap_or(0),
+                    ticket_ttl: a.ticket_ttl.map(Duration::from_secs),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        return Ok(ToolOutcome::json(&json!({
+            "route": opened.route,
+            "origin_space": opened.entry.origin_space,
+            "minted_by": opened.minted_by,
+            "access": opened.access,
+            "ticket": opened.ticket,
+        })));
+    }
+    let s = space_for(spaces, tool, &a.space).await?;
+    let target = match (a.window_id, a.app_name) {
+        (Some(w), _) if !w.is_empty() => StreamTarget::Window(w),
+        (_, Some(app)) if !app.is_empty() => {
+            StreamTarget::Window(s.find_window_within(&app, APP_WINDOW_WAIT).await?.window_id)
+        }
+        _ => StreamTarget::Display(a.display),
+    };
+    let ticket = s
+        .open_stream(
+            target,
+            StreamOptions {
+                max_fps: a.max_fps.unwrap_or(0),
+                ticket_ttl: a.ticket_ttl.map(Duration::from_secs),
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(ToolOutcome::json(&ticket))
+}
+
+/// Out of line (and boxed by the caller) so `dispatch`'s own future stays small: every tool arm that
+/// lives in it adds to the stack a call needs, and a debug build of a test thread has 2 MiB.
+#[cfg(feature = "spaces-stream")]
+async fn tool_list_space_windows(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    let a: i::ListSpaceWindows = args(tool, a)?;
+    let s = space_for(spaces, tool, &a.space).await?;
+    let mut windows = s.windows(a.app_name.as_deref()).await?;
+    windows.extend(
+        spaces
+            .stream_windows(s.id().to_string().as_str())
+            .await
+            .into_iter()
+            .filter(|w| {
+                a.app_name
+                    .as_deref()
+                    .is_none_or(|n| w.app_name.to_lowercase().contains(&n.to_lowercase()))
+            }),
+    );
+    Ok(ToolOutcome::json(&windows))
+}
+
+/// Out of line (and boxed by the caller) so `dispatch`'s own future stays small: every tool arm that
+/// lives in it adds to the stack a call needs, and a debug build of a test thread has 2 MiB.
+#[cfg(feature = "spaces-stream")]
+async fn tool_stream_space_window(spaces: &Spaces, tool: &str, a: Value) -> Result<ToolOutcome> {
+    use crate::stream::{StreamOptions, StreamTarget};
+    let a: i::StreamSpaceWindow = args(tool, a)?;
+    let s = space_for(spaces, tool, &a.space).await?;
+    let window = match (a.window_id.filter(|w| !w.is_empty()), a.app_name.as_deref()) {
+        (Some(id), _) => s
+            .windows(None)
+            .await?
+            .into_iter()
+            .find(|w| w.window_id == id)
+            .ok_or_else(|| Error::NotFound(format!("window {id} in {}", s.id())))?,
+        (None, Some(app)) if !app.is_empty() => s.find_window_within(app, APP_WINDOW_WAIT).await?,
+        _ => {
+            return Err(Error::invalid(
+                "stream_space_window needs a window_id or an app_name",
+            ));
+        }
+    };
+    // Into a Space: the explicit `into`, else the Space that made this
+    // one. `desktop` (or no parent) is the operator's desktop.
+    let into = match a.into.as_deref().map(str::trim).filter(|x| !x.is_empty()) {
+        Some("desktop") => None,
+        Some(x) => Some(x.to_string()),
+        None => spaces
+            .tree_link(&s.id().to_string())
+            .ok()
+            .and_then(|l| l.parent),
+    };
+    if let Some(parent) = into {
+        let entry = spaces
+            .register_stream(&parent, &s, &window, a.title.clone())
+            .await?;
+        let parent_name = spaces
+            .find(&entry.parent)
+            .await
+            .map(|i| i.shown_name().to_string())
+            .unwrap_or_else(|_| entry.parent.clone());
+        return Ok(ToolOutcome::json(&json!({
+            "shown": true,
+            "message": format!(
+                "Showing {} window ({}) of {} in {}'s Stream section.",
+                if window.app_name.is_empty() { "a" } else { &window.app_name },
+                window.window_id, entry.origin_name, parent_name
+            ),
+            "entry": entry.id,
+            "window_id": crate::stream_registry::entry_window_id(&entry.id),
+            "into": entry.parent,
+            "origin_space": entry.origin_space,
+            "origin_name": entry.origin_name,
+            "app_name": entry.app_name,
+            "title": entry.title,
+        })));
+    }
+    let ticket = s
+        .open_stream(
+            StreamTarget::Window(window.window_id.clone()),
+            StreamOptions {
+                policy: Some(cua_spacesd_client::pb::SessionPolicy::BackgroundOnly),
+                ticket_ttl: Some(Duration::from_secs(120)),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let label = if window.app_name.is_empty() {
+        format!("window {}", window.window_id)
+    } else {
+        format!("{} window", window.app_name)
+    };
+    spaces
+        .operator_display()
+        .stream_window(crate::operator::WindowStreamRequest {
+            space_id: s.id().to_string(),
+            window_id: window.window_id.clone(),
+            app_name: window.app_name.clone(),
+            title: a.title.unwrap_or(window.title),
+            media_url: ticket.ws_url,
+            media_session_id: ticket.media_session_id,
+        })
+        .await?;
+    Ok(ToolOutcome::text(format!(
+        "Streaming {label} ({}) of {} to your desktop (bidirectional).",
+        window.window_id,
+        s.id()
+    )))
 }

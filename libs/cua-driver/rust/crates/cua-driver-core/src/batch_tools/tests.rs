@@ -42,6 +42,21 @@ impl Tool for Probe {
         }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
+        } else if let Some(effect) = args["effect"].as_str() {
+            let mut structured = json!({ "effect": effect, "verified": effect == "confirmed" });
+            if effect == "confirmed" {
+                structured["evidence"] =
+                    json!([{"kind": "window_change", "detail": "a window opened"}]);
+            }
+            let record = crate::action_record::ActionExecutionRecord::from_legacy(
+                &self.def.name,
+                &args,
+                &structured,
+            )
+            .expect("the probe's result normalizes");
+            ToolResult::text(format!("{} sent", self.def.name))
+                .with_structured(structured)
+                .with_action_record(record)
         } else {
             ToolResult::text(format!("{} done", self.def.name))
         }
@@ -78,6 +93,7 @@ impl Harness {
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
                             "fail_message": {"type": "string"},
+                            "effect": {"type": "string"},
                             "element_token": {"type": "string"},
                             "value": {"type": "string"},
                             "key": {"type": "string"},
@@ -264,10 +280,56 @@ async fn every_step_reports_how_long_it_took() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|step| step["ms"].as_u64().expect("every step, a failed one too, has ms"))
+        .map(|step| {
+            step["ms"]
+                .as_u64()
+                .expect("every step, a failed one too, has ms")
+        })
         .collect();
     assert_eq!(ms.len(), 3);
     assert!(ms.iter().sum::<u64>() <= batch_ms, "{ms:?} > {batch_ms}");
+}
+
+#[tokio::test]
+async fn a_step_that_ran_unconfirmed_says_so_instead_of_ok() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 47, "window_id": 7, "effect": "confirmed"}},
+            {"tool": "click", "args": {"pid": 47, "window_id": 7, "effect": "unverifiable"}},
+            {"tool": "press_key", "args": {"pid": 47, "effect": "confirmed"}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let lines: Vec<String> = text(&result).lines().map(str::to_owned).collect();
+    assert_eq!(lines[0], "run_steps: 3/3 steps ran");
+    assert_eq!(lines[1], "1. click ok: click sent.");
+    assert_eq!(
+        lines[2],
+        "2. click UNCONFIRMED: click sent; nothing read back. Look first: get_window_state \
+         {\"pid\":47,\"since\":\"latest\",\"window_id\":7}"
+    );
+    assert_eq!(lines[3], "3. press_key ok: press_key sent.");
+    assert_eq!(
+        lines[4],
+        "1 of 3 steps unconfirmed: look before relying on them"
+    );
+    let structured = result.structured_content.unwrap();
+    assert_eq!(
+        structured["ok"], true,
+        "an unconfirmed step is not a failure"
+    );
+
+    // All confirmed: the plain header and no footer.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 47, "window_id": 7, "effect": "confirmed"}},
+        ]}))
+        .await;
+    assert_eq!(
+        text(&result),
+        "run_steps: 1/1 steps ok\n1. click ok: click sent."
+    );
 }
 
 #[tokio::test]

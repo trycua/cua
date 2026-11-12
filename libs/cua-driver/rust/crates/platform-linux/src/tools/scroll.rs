@@ -838,8 +838,7 @@ impl Tool for ScrollTool {
         };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "Sent {amount} wheel detent(s) {direction} (delivery_mode={mode_label}); the \
-                 scroll position is not verified, so confirm it from fresh state."
+                "Sent {amount} wheel detent(s) {direction} (delivery_mode={mode_label})."
             ))
             .with_structured(json!({
                 "verified": false,

@@ -201,7 +201,7 @@ impl Tool for SetValueTool {
         .await;
         match result {
             Ok(Ok(SetValueRoute::Pattern(pattern_name))) => {
-                ToolResult::text(format!("✅ Set AXValue on [{idx}] (UIA {pattern_name})."))
+                ToolResult::text(format!("Set AXValue on [{idx}] (UIA {pattern_name})."))
             }
             Ok(Ok(SetValueRoute::ComboValuePattern)) => ToolResult::text(format!(
                 "Set the UIA value of combo box [{idx}] to '{value}'. This combo box is not a \
@@ -284,9 +284,9 @@ fn win32_combo_set_value_result(
         (true, None) => "typed into its edit field (the app gets CBN_EDITCHANGE)",
     };
     let text = if unchanged {
-        format!("✅ The {kind} [{idx}] already reads '{seen}'; nothing was sent.")
+        format!("The {kind} [{idx}] already reads '{seen}'; nothing was sent.")
     } else if verified {
-        format!("✅ Set the {kind} [{idx}] to '{seen}' ({how}); read back '{seen}'.")
+        format!("Set the {kind} [{idx}] to '{seen}' ({how}); read back '{seen}'.")
     } else {
         format!(
             "Sent '{value}' to the {kind} [{idx}] ({how}), but it reads back '{seen}' \

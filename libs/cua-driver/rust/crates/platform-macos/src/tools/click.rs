@@ -518,7 +518,7 @@ impl ClickTool {
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute {button_label} at desktop-pixel \
+                    "Sent screen-absolute {button_label} at desktop-pixel \
                      ({sx_shot:.0},{sy_shot:.0}) → screen-point ({sx:.0},{sy:.0}) \
                      (desktop scope; not driver-verified)."
                 ))
@@ -801,7 +801,7 @@ impl ClickTool {
                 .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted middle-click to pid {pid} at element [{idx}] center \
+                        "Posted middle-click to pid {pid} at element [{idx}] center \
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
@@ -1326,7 +1326,7 @@ impl ClickTool {
                         );
                         let label = if focus_only { "focused" } else { "pressed" };
                         return ToolResult::text(format!(
-                            "✅ PX hit-test {label} the background element via AX."
+                            "PX hit-test {label} the background element via AX."
                         ))
                         .with_structured(serde_json::json!({
                             "path": "ax",
@@ -1577,7 +1577,7 @@ impl ClickTool {
                     });
                     changes.add_window_identity(&mut structured);
                     ToolResult::text(format!(
-                        "✅ Posted {button_label} {target} ({}).{}",
+                        "Posted {button_label} {target} ({}).{}",
                         super::pixel_route::delivery_note(route),
                         changes.result_suffix()
                     ))
@@ -1806,7 +1806,7 @@ fn perform_ax_click(
             {
                 return Ok((
                     format!(
-                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
+                        "Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
                          confirmed AXSelected=true."
                     ),
                     false,
@@ -1879,7 +1879,7 @@ fn perform_ax_click(
                             {
                                 return Ok((
                                     format!(
-                                        "✅ Selected nearest {selected_role} for [{idx}] {role} \
+                                        "Selected nearest {selected_role} for [{idx}] {role} \
                                          \"{title}\"; AX selection write was unavailable, so a \
                                          coordinate click was delivered and confirmed by stable \
                                          AXSelected read-back."
@@ -1936,7 +1936,7 @@ fn perform_ax_click(
             ) {
                 return Ok((
                     format!(
-                        "✅ Performed {ax_action} on [{idx}] {role} \"{title}\"; AXValue is now \
+                        "Performed {ax_action} on [{idx}] {role} \"{title}\"; AXValue is now \
                          {now} (was {before}) on two reads, although the app returned AX error \
                          {err}."
                     ),
@@ -1956,7 +1956,7 @@ fn perform_ax_click(
             {
                 return Ok((
                     format!(
-                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
+                        "Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
                          after AXPress returned {err}; confirmed AXSelected=true."
                     ),
                     false,
@@ -1969,7 +1969,7 @@ fn perform_ax_click(
         anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
     }
 
-    let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
+    let mut summary = format!("Performed {ax_action} on [{idx}] {role} \"{title}\".");
 
     // AXPopUpButton: list available options, redirect to set_value.
     if role == "AXPopUpButton" {

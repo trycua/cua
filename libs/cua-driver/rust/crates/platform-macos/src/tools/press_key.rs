@@ -536,7 +536,7 @@ impl Tool for PressKeyTool {
                 });
                 changes.add_window_identity(&mut structured);
                 ToolResult::text(format!(
-                    "✅ Pressed {display_key} on pid {pid}{label}.{}",
+                    "Pressed {display_key} on pid {pid}{label}.{}",
                     changes.result_suffix()
                 ))
                 .with_structured(structured)

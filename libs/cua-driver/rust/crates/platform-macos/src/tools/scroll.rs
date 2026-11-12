@@ -282,13 +282,13 @@ impl Tool for ScrollTool {
                 match ax_result {
                     Ok(Ok((true, fronted))) => {
                         return ToolResult::text(format!(
-                        "✅ Scrolled native macOS control {direction} by {by} × {amount} through AX."
+                        "Scrolled native macOS control {direction} by {by} × {amount} through AX."
                     ))
-                    .with_structured(serde_json::json!({
-                        "path": if fronted { "ax_fg" } else { "ax" },
-                        "verified": false,
-                        "effect": "unverifiable"
-                    }));
+                        .with_structured(serde_json::json!({
+                            "path": if fronted { "ax_fg" } else { "ax" },
+                            "verified": false,
+                            "effect": "unverifiable"
+                        }));
                     }
                     Ok(Ok((false, _))) => {}
                     Ok(Err(error)) => {
@@ -591,7 +591,7 @@ impl Tool for ScrollTool {
             };
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
+                    "Sent {direction} scroll by {by} × {amount} via pixel wheel at \
                      ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
                      driver-verified — confirm via screenshot).{}",
                     changes.result_suffix()
@@ -686,7 +686,7 @@ impl Tool for ScrollTool {
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
+                "Sent {direction} scroll by {by} × {amount} via keystroke \
                  (background; not driver-verified — confirm via screenshot).{}",
                 changes.result_suffix()
             ))
@@ -758,7 +758,7 @@ async fn electron_reveal_scroll(
     .await;
     match outcome {
         Ok(Some(outcome)) => ToolResult::text(format!(
-            "✅ Scrolled {direction} about {:.0} pt in the background through accessibility \
+            "Scrolled {direction} about {:.0} pt in the background through accessibility \
              (revealed the content just past the {}'s edge; this Electron/Chromium window drops \
              background wheel events).",
             outcome.moved, outcome.container_role

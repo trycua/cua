@@ -578,7 +578,7 @@ impl ClickTool {
                             if confirmed {
                                 format!("; {}.", report.window_change.as_deref().unwrap_or(""))
                             } else {
-                                "; not verified — confirm with a screenshot.".to_owned()
+                                ".".to_owned()
                             },
                             redirect_note
                                 .as_deref()
@@ -684,7 +684,7 @@ impl ClickTool {
                             report.focus_after.as_str(),
                             match &report.window_change {
                                 Some(change) => format!(" {change}."),
-                                None => " Not verified — confirm with a screenshot.".to_owned(),
+                                None => String::new(),
                             },
                             report.focus_note()
                         ))
@@ -977,7 +977,7 @@ impl Tool for ClickTool {
                 // Screen-absolute click — never driver-verifiable (no
                 // read-back); the caller confirms via screenshot.
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
+                    "Sent screen-absolute click at ({sx},{sy}) (desktop scope)."
                 ))
                 .with_structured(
                     json!({ "path": if crate::wayland::is_wayland() { "wayland_desktop" } else { "xtest_desktop" }, "verified": false, "effect": "unverifiable" }),
@@ -1856,10 +1856,7 @@ impl Tool for ClickTool {
                 }
                 let mut suffix = match &route {
                     Some(route) => route.text_suffix(mode_label),
-                    None => format!(
-                        "(delivery_mode={mode_label}, path={path}); not verified — confirm \
-                         with a screenshot."
-                    ),
+                    None => format!("(delivery_mode={mode_label}, path={path})."),
                 };
                 if let Some(report) = &report {
                     suffix.push_str(&report.focus_note());

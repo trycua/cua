@@ -68,10 +68,9 @@ const STACK_BYTES: usize = 1024 * 1024;
 const THREAD_STACK_BYTES: usize = 16 * 1024 * 1024;
 const RETURN_TEXT_LIMIT: usize = 8_000;
 const CALL_TEXT_LIMIT: usize = 12_000;
-/// A tool's first line ends with its verification clause ("not verified —
-/// confirm with a screenshot."), so the call log keeps whole first lines.
-const SUMMARY_TEXT_LIMIT: usize = 240;
-const CALL_LINE_LIMIT: usize = 300;
+/// An action's first line is its verdict headline, which ends with the read
+/// to make ([`crate::verdict`]), so the call log keeps whole first lines.
+const SUMMARY_TEXT_LIMIT: usize = 300;
 const IMAGES_KEPT: usize = 2;
 /// Extra time the engine thread gets to notice a deadline or cancel.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(1_500);
@@ -443,10 +442,16 @@ struct CallRecord {
     op: String,
     line: u32,
     ok: bool,
-    /// The tool said it could not confirm the action took effect.
-    unverified: bool,
+    /// The call's verdict, for an action result.
+    verdict: Option<crate::verdict::Verdict>,
     elapsed: Duration,
     detail: String,
+}
+
+impl CallRecord {
+    fn unconfirmed(&self) -> bool {
+        self.ok && self.verdict.is_some_and(|verdict| verdict.needs_a_look())
+    }
 }
 
 async fn run(registry: &ToolRegistry, request: Request) -> ToolResult {
@@ -493,7 +498,10 @@ async fn run(registry: &ToolRegistry, request: Request) -> ToolResult {
                         op: call.op.clone(),
                         line: call.line,
                         ok: result.is_ok(),
-                        unverified: result.as_ref().is_ok_and(unverified),
+                        verdict: result
+                            .as_ref()
+                            .ok()
+                            .and_then(|value| crate::verdict::Verdict::of_structured(Some(value))),
                         elapsed: call_started.elapsed(),
                         detail: match &result {
                             Ok(value) => summarize(value),
@@ -875,34 +883,24 @@ impl<'a> Api<'a> {
     }
 }
 
-/// Whether a successful call's own result says the action is unconfirmed.
-fn unverified(value: &Value) -> bool {
-    value.get("verified").and_then(Value::as_bool) == Some(false)
-        || matches!(
-            value.get("effect").and_then(Value::as_str),
-            Some("unverifiable" | "suspected_noop")
-        )
-}
-
-/// Short, model-facing summary of a successful call. The tool's own first
-/// line stays, so its verification warnings reach the model.
+/// Short, model-facing summary of a successful call: the tool's own first
+/// line, which for an action is its verdict headline.
 fn summarize(value: &Value) -> String {
     let text = value
         .get("text")
         .and_then(Value::as_str)
-        .map(|text| clip(text.lines().next().unwrap_or(""), SUMMARY_TEXT_LIMIT));
-    if let Some(target) = value
+        .map(|text| crate::verdict::strip(text.lines().next().unwrap_or("")));
+    let target = value
         .get("target")
         .and_then(|target| target.get("element"))
-        .and_then(Value::as_str)
-    {
-        return match text {
-            Some(text) if !text.is_empty() => format!("on {target}: {text}"),
-            _ => format!("on {target}"),
-        };
-    }
-    if let Some(text) = text {
-        return text;
+        .and_then(Value::as_str);
+    match (target, text) {
+        (Some(target), Some(text)) if !text.is_empty() => {
+            return clip(&format!("on {target}: {text}"), SUMMARY_TEXT_LIMIT)
+        }
+        (Some(target), _) => return format!("on {target}"),
+        (None, Some(text)) => return clip(text, SUMMARY_TEXT_LIMIT),
+        (None, None) => {}
     }
     match value {
         Value::Array(items) => format!("{} item(s)", items.len()),
@@ -947,13 +945,13 @@ fn render(
                 "ms": record.elapsed.as_millis() as u64,
                 "detail": record.detail,
             });
-            if record.unverified {
+            if record.unconfirmed() {
                 entry["verified"] = json!(false);
             }
             entry
         })
         .collect();
-    let unverified_calls = log.iter().filter(|record| record.unverified).count();
+    let unconfirmed_calls = log.iter().filter(|record| record.unconfirmed()).count();
     let mut lines = Vec::new();
     let mut structured = json!({
         "elapsed_ms": elapsed_ms,
@@ -1020,9 +1018,10 @@ fn render(
             true
         }
     };
-    if unverified_calls > 0 {
+    if unconfirmed_calls > 0 {
         lines.push(format!(
-            "{unverified_calls} call(s) unverified — look before reporting done"
+            "{unconfirmed_calls} of {} calls unconfirmed: look before relying on them",
+            log.len()
         ));
     }
     if !outcome.console.is_empty() {
@@ -1049,16 +1048,16 @@ fn render(
                     String::new()
                 },
                 record.op,
-                match (record.ok, record.unverified) {
+                match (record.ok, record.verdict) {
                     (false, _) => "ERROR",
-                    (true, true) => "ok (unverified)",
-                    (true, false) => "ok",
+                    (true, Some(verdict)) if verdict.needs_a_look() => verdict.word(),
+                    (true, _) => "ok",
                 },
                 record.elapsed.as_millis(),
                 if record.detail.is_empty() {
                     String::new()
                 } else {
-                    format!(": {}", clip(&record.detail, CALL_LINE_LIMIT))
+                    format!(": {}", clip(&record.detail, SUMMARY_TEXT_LIMIT))
                 }
             ));
         }

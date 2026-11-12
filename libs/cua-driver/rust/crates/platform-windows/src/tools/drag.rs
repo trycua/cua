@@ -296,7 +296,7 @@ impl Tool for DragTool {
             let (inj, ()) = tokio::join!(inj, visual_drag);
             return match inj {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent drag via synthetic-pen injection on pid {raw_pid} \
+                    "Sent drag via synthetic-pen injection on pid {raw_pid} \
                          from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
                          (delivery_mode:background, PostMessage would have been dropped)."
                 )),
@@ -350,7 +350,7 @@ impl Tool for DragTool {
             };
             return match send_result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "✅ Sent drag{button_suffix} via SendInput on pid {raw_pid} \
+                    "Sent drag{button_suffix} via SendInput on pid {raw_pid} \
                      from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
                      in {duration_ms}ms / {steps} steps (delivery_mode:foreground)."
                 )),
@@ -452,7 +452,7 @@ impl Tool for DragTool {
                     format!(" ({} button)", button)
                 };
                 ToolResult::text(format!(
-                    "✅ Posted drag{button_suffix} to pid {raw_pid} \
+                    "Posted drag{button_suffix} to pid {raw_pid} \
                      from window-pixel ({}, {}) → ({}, {}), \
                      screen ({sx_from}, {sy_from}) → ({sx_to}, {sy_to}) \
                      in {duration_ms}ms / {steps} steps.",

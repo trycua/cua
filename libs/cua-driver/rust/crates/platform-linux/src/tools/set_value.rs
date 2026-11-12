@@ -445,7 +445,7 @@ fn set_value_result(
         }
         None => {
             structured["readback"] = Value::Null;
-            text.push_str("; not verified — confirm with get_window_state.");
+            text.push('.');
         }
     }
     attach_focus_guard(ToolResult::text(text).with_structured(structured), guard)

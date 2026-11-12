@@ -216,7 +216,7 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
     );
     let resp_text = resp.text();
     assert!(
-        resp_text.starts_with("✅"),
+        !resp.is_error(),
         "click(action:expand) failed: {resp_text:?}"
     );
     assert!(

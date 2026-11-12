@@ -1747,10 +1747,7 @@ fn harness_wpf_slider_drag() {
             );
             let msg = resp.text();
             println!("drag slider (foreground): {msg}");
-            assert!(
-                msg.starts_with("✅"),
-                "drag tool returned non-success: {msg}"
-            );
+            assert!(!resp.is_error(), "drag tool returned non-success: {msg}");
             std::thread::sleep(Duration::from_millis(500));
 
             let post = snapshot(driver, pid, wid);

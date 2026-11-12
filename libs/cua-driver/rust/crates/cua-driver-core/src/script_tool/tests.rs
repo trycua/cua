@@ -65,7 +65,7 @@ impl Tool for Fake {
             // The Linux driver's real-pointer click: dispatched, not confirmed.
             _ if args["unconfirmed"] == true => ToolResult::text(
                 "Clicked element [2] (pid 42) with a real pointer click (delivery_mode=foreground, \
-                 focus_after=target); not verified — confirm with a screenshot.",
+                 focus_after=target).",
             )
             .with_structured(json!({"verified": false, "effect": "unverifiable"})),
             _ if args["confirmed"] == true => {
@@ -211,7 +211,7 @@ return {value: field.value, platform: cua.computer.target};"#,
         "{log:?}"
     );
     assert!(
-        text(&result).contains("3. line 4 click ok"),
+        text(&result).contains("3. line 4 click UNCONFIRMED (") && text(&result).contains("on [2] AXButton \"Save\": click done; nothing read back. Look first: get_window_state"),
         "{}",
         text(&result)
     );
@@ -866,20 +866,21 @@ async fn a_role_name_call_keeps_the_tools_verification_warning_in_the_call_log()
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
     let message = text(&result);
     assert!(
-        message.contains(
-            "1. line 1 click ok (unverified) ("
-        ) && message.contains(
-            "on [2] AXButton \"Save\": Clicked element [2] (pid 42) with a real pointer click \
-             (delivery_mode=foreground, focus_after=target); not verified — confirm with a screenshot."
-        ),
+        message.contains("1. line 1 click UNCONFIRMED (")
+            && message.contains(
+                "on [2] AXButton \"Save\": Clicked element [2] (pid 42) with a real pointer click \
+                 (delivery_mode=foreground, focus_after=target); nothing read back. Look first: \
+                 get_window_state {\"pid\":42,\"since\":\"latest\",\"window_id\":7}"
+            ),
         "{message}"
     );
     assert!(
-        message.contains("1 call(s) unverified — look before reporting done"),
+        message.contains("1 of 2 calls unconfirmed: look before relying on them"),
         "{message}"
     );
     // A confirmed call stays plain `ok` and keeps its own text too.
     assert!(message.contains("2. line 2 click ok ("), "{message}");
+    assert!(!message.contains("CONFIRMED: Clicked"), "{message}");
     assert!(
         message.contains("via AT-SPI action 'click'; window opened."),
         "{message}"

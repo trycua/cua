@@ -1909,7 +1909,8 @@ impl ToolRegistry {
 
     /// The canonical native dispatch boundary. Every refusal and every
     /// unconfirmed action leaves it with a `hint` (and a `next_call` when one
-    /// exists); see [`crate::recovery_hint`].
+    /// exists), see [`crate::recovery_hint`], and every action result's text
+    /// starts with its verdict, see [`crate::verdict`].
     async fn invoke_authorized(
         &self,
         name: &str,
@@ -1965,6 +1966,7 @@ impl ToolRegistry {
             crate::fast_path::wire::attach_delta(&mut result, delta);
         }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::verdict::annotate(tool, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &nudge_args, &mut result);
         result
     }

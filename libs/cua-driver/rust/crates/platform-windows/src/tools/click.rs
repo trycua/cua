@@ -42,7 +42,7 @@ fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
 // ── click ─────────────────────────────────────────────────────────────────────
 
 fn posted_pixel_click_result(pid: u32, click_word: &str) -> ToolResult {
-    ToolResult::text(format!("✅ Posted {click_word} to pid {pid}.")).with_structured(json!({
+    ToolResult::text(format!("Posted {click_word} to pid {pid}.")).with_structured(json!({
         "path": "post_message",
         "verified": false,
         "effect": "unverifiable"
@@ -63,7 +63,7 @@ fn finish_pixel_uia_attempt(
         PointInvokeOutcome::Invoked => {
             return Some(
                 ToolResult::text(format!(
-                    "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
+                    "Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
                 ))
                 .with_structured(json!({
                     "path": "ax", "verified": false, "effect": "unverifiable"
@@ -346,7 +346,7 @@ impl Tool for ClickTool {
                         _ => "click",
                     };
                     ToolResult::text(format!(
-                        "✅ Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope)."
+                        "Sent {click_word} via SendInput at screen ({sx},{sy}) on HWND 0x{hwnd_u:x} (desktop scope)."
                     ))
                     // SendInput dispatched but is not driver-verifiable (no read-back).
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
@@ -595,7 +595,7 @@ impl Tool for ClickTool {
                 let half = if want_expand { "dropdown" } else { "press" };
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Performed SendInput click on MSAA [{idx}] {half} half at ({tx},{ty})."
+                        "Performed SendInput click on MSAA [{idx}] {half} half at ({tx},{ty})."
                     ))
                     .with_structured(
                         json!({ "path": "msaa", "verified": false, "effect": "unverifiable" }),
@@ -686,7 +686,7 @@ impl Tool for ClickTool {
                 .await;
                 return match expand {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Expanded UIA element [{idx}] via ExpandCollapsePattern."
+                        "Expanded UIA element [{idx}] via ExpandCollapsePattern."
                     ))
                     .with_structured(json!({ "path": "uia_expand_collapse", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(error)) => ToolResult::error(error.to_string()),
@@ -757,7 +757,7 @@ impl Tool for ClickTool {
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
+                        "Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(e)) => ToolResult::error(e.to_string()),
@@ -825,7 +825,7 @@ impl Tool for ClickTool {
                 return match posted {
                     Ok(Ok(())) => background_element_click_result(
                         format!(
-                            "✅ Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
+                            "Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
                          (background, no foreground swap)."
                         ),
                         ActionTransport::WindowsPostMessage,
@@ -903,7 +903,7 @@ impl Tool for ClickTool {
                                     Ok(()) => {
                                         std::mem::forget(elem);
                                         return Ok(BackgroundElementClick::Semantic { message: format!(
-                                            "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
+                                            "Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
                                         ), transport: ActionTransport::WindowsUiaInvoke, failed_calls });
                                     }
                                     Err(e) => tracing::debug!(target: "click",
@@ -920,7 +920,7 @@ impl Tool for ClickTool {
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
                                     return Ok(BackgroundElementClick::Semantic { message: format!(
-                                        "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
+                                        "Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
                                     ), transport: ActionTransport::WindowsUiaToggle, failed_calls });
                                 }
                                 failed_calls.push(ActionTransport::WindowsUiaToggle);
@@ -934,7 +934,7 @@ impl Tool for ClickTool {
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
                                     return Ok(BackgroundElementClick::Semantic { message: format!(
-                                        "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
+                                        "Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
                                     ), transport: ActionTransport::WindowsUiaSelection, failed_calls });
                                 }
                                 failed_calls.push(ActionTransport::WindowsUiaSelection);
@@ -948,7 +948,7 @@ impl Tool for ClickTool {
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
                                     return Ok(BackgroundElementClick::Semantic { message: format!(
-                                        "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
+                                        "Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
                                     ), transport: ActionTransport::WindowsUiaExpandCollapse, failed_calls });
                                 }
                                 failed_calls.push(ActionTransport::WindowsUiaExpandCollapse);
@@ -1024,11 +1024,11 @@ impl Tool for ClickTool {
             match sent {
                 Ok(Ok(())) => {
                     let (message, transport) = if inject {
-                        (format!("✅ Injected click on [{idx}] (screen ({x},{y}), background, no foreground swap)."),
+                        (format!("Injected click on [{idx}] (screen ({x},{y}), background, no foreground swap)."),
                             ActionTransport::WindowsTargetedInjection)
                     } else {
                         (
-                            format!("✅ Performed {action_name} on [{idx}] (screen ({x},{y}))."),
+                            format!("Performed {action_name} on [{idx}] (screen ({x},{y}))."),
                             ActionTransport::WindowsPostMessage,
                         )
                     };
@@ -1142,7 +1142,7 @@ impl Tool for ClickTool {
                             _ => "click",
                         };
                         ToolResult::text(format!(
-                            "✅ Sent {click_word} via SendInput to pid {pid} at ({sx},{sy}) (delivery_mode:foreground)."
+                            "Sent {click_word} via SendInput to pid {pid} at ({sx},{sy}) (delivery_mode:foreground)."
                         ))
                         .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" }))
                     }
@@ -1182,7 +1182,7 @@ impl Tool for ClickTool {
                 .await;
                 return match posted {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted click to Chromium pid {pid} at ({sx},{sy}) \
+                        "Posted click to Chromium pid {pid} at ({sx},{sy}) \
                          (background, no foreground swap)."
                     ))
                     .with_structured(json!({
@@ -1211,7 +1211,7 @@ impl Tool for ClickTool {
                 .await;
                 return match inj {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
+                        "Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
@@ -1258,7 +1258,7 @@ impl Tool for ClickTool {
                 .await;
                 return match inj {
                     Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
+                        "Injected click to pid {pid} at ({sx},{sy}) (background, no foreground swap)."
                     ))
                     .with_structured(json!({ "path": "pixel", "verified": false, "effect": "unverifiable" })),
                     Ok(Err(error)) => crate::input::delivery::background_unavailable_error_with_cause(
@@ -1289,7 +1289,7 @@ impl Tool for ClickTool {
             .await;
             match result {
                 Ok(Ok(())) => {
-                    // Match Swift text format: "✅ Posted click/double-click/triple-click to pid X."
+                    // Match Swift text format: "Posted click/double-click/triple-click to pid X."
                     let click_word = match count {
                         2 => "double-click",
                         3 => "triple-click",

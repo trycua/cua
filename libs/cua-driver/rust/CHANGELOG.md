@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.21](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.20...cua-driver-rs-v0.47.21) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-driver:** retry release downloads for two minutes past a CDN outage ([#7490](https://github.com/trycua/cua/issues/7490)) ([f14e6cc](https://github.com/trycua/cua/commit/f14e6cc2a137c65376eb10565cedca28083c17ed))
+
 ## [0.47.20](https://github.com/trycua/cua/compare/cua-driver-rs-v0.47.19...cua-driver-rs-v0.47.20) (2026-11-12)
 
 

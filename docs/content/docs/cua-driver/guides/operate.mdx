@@ -486,6 +486,10 @@ and `--no-zoom` gives a plain render. All options:
 
 ## Computer History
 
+<Callout type="warn">
+  Computer History is deprecated. It is off by default, agents are no longer told to call `history_status` or `history_query`, and both tools will be removed in the release after 26 Nov 2026. To remove stored data, run `cua-driver history delete --yes`.
+</Callout>
+
 Computer History keeps an encrypted local record of actions performed through
 Cua Driver, so an agent can pick up where a previous run stopped. It is an
 opt-in preview in nightly builds (see [Channels](#channels)) on macOS, Windows, and Linux, and

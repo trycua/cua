@@ -1,8 +1,9 @@
 //! Visible recording indicator drawn around the target window.
 //!
-//! The Windows implementation uses a click-through layered tool window and
-//! reports successful frame submissions to the private render-health gate. It
-//! is a user notification, not proof that the border is unobscured.
+//! Windows uses a click-through layered tool window and macOS uses AppKit
+//! border windows. Both report successful frame submissions to the private
+//! render-health gate. It is a user notification, not proof that the border is
+//! unobscured.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -518,7 +519,7 @@ mod platform {
         _started_at: Instant,
         _stop: Arc<AtomicBool>,
     ) -> anyhow::Result<std::thread::JoinHandle<()>> {
-        // No indicator on non-Windows yet; capture is Unsupported there so the
+        // No indicator on this platform; capture is Unsupported here so the
         // gate never opens regardless.
         anyhow::bail!("recording indicator not supported on this platform")
     }

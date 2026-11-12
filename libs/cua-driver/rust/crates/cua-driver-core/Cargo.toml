@@ -67,8 +67,8 @@ jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"
 rquickjs = { version = "0.14", default-features = false, features = ["std"], optional = true }
 
-# Window-scoped human input capture. The Windows backend is implemented;
-# other platforms return Unsupported.
+# Window-scoped human input capture. The Windows and macOS backends are
+# implemented; other platforms return Unsupported.
 input-capture = { path = "../input-capture" }
 
 [target.'cfg(unix)'.dependencies]

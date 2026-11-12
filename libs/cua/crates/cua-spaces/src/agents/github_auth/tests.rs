@@ -273,10 +273,11 @@ exit 2
         let s = a.set_account(DEFAULT_HOST, Some("bob")).unwrap();
         let h = &s.hosts[0];
         assert_eq!(h.line, "Signed in as bob with gh");
-        assert!(h
-            .accounts
-            .iter()
-            .any(|x| x.login == "bob" && x.selected && x.chosen));
+        assert!(
+            h.accounts
+                .iter()
+                .any(|x| x.login == "bob" && x.selected && x.chosen)
+        );
         let r = a.token(DEFAULT_HOST).unwrap();
         assert_eq!(r.token.expose(), "gho_FAKE_github.com_bob_SECRET");
         assert!(f.calls().contains("--user bob"));
@@ -354,10 +355,11 @@ exit 2
         );
         // The Enterprise host is on the page even though only an environment token knows it.
         let s = a.status();
-        assert!(s
-            .hosts
-            .iter()
-            .any(|h| h.host == "ghe.example.com" && h.source == Some(Source::Env)));
+        assert!(
+            s.hosts
+                .iter()
+                .any(|h| h.host == "ghe.example.com" && h.source == Some(Source::Env))
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -373,11 +375,13 @@ exit 2
             s.hosts[0].accounts[0].scopes,
             ["gist", "read:org", "repo", "workflow"]
         );
-        assert!(s.hosts[0]
-            .warning
-            .as_deref()
-            .unwrap()
-            .contains("change GitHub Actions workflows"));
+        assert!(
+            s.hosts[0]
+                .warning
+                .as_deref()
+                .unwrap()
+                .contains("change GitHub Actions workflows")
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -478,13 +482,15 @@ exit 2
         .unwrap()
         .unwrap();
         assert_eq!(r["hosts"][0]["enabled"], false);
-        assert!(app_call(
-            &a,
-            "github.enable",
-            serde_json::json!({"host": "no/slash", "enabled": false})
-        )
-        .unwrap()
-        .is_err());
+        assert!(
+            app_call(
+                &a,
+                "github.enable",
+                serde_json::json!({"host": "no/slash", "enabled": false})
+            )
+            .unwrap()
+            .is_err()
+        );
         assert!(
             app_call(&a, "github.use", serde_json::json!({"token": "x"}))
                 .unwrap()
@@ -507,9 +513,9 @@ exit 2
                 let _ = c.read(&mut buf).await;
                 let body = format!(r#"{{"login":"{login}"}}"#);
                 let resp = format!(
-                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\nx-oauth-scopes: {scopes}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\nx-oauth-scopes: {scopes}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
                 let _ = c.write_all(resp.as_bytes()).await;
             }
         });

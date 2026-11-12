@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! UI Automation (UIA) tree walking for Windows.
 //!
 //! Produces the same Markdown format as the macOS AX tree:
@@ -9,39 +12,38 @@
 //! (avoids per-property cross-process calls that make Chrome's 5000-node tree
 //!  take >4s when reading each property individually).
 
-use windows::core::{Interface, BSTR};
+use cua_driver_core::walk_budget::WalkBudget;
+use windows::core::{Interface, BSTR, HRESULT};
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    TreeScope_Children, TreeScope_Subtree, UIA_AutomationIdPropertyId,
-    UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
-    UIA_HelpTextPropertyId, UIA_InvokePatternId, UIA_IsEnabledPropertyId,
-    UIA_IsOffscreenPropertyId, UIA_NamePropertyId, UIA_ProcessIdPropertyId,
-    UIA_RangeValuePatternId, UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_TextPatternId,
-    UIA_TogglePatternId, UIA_ValuePatternId, UIA_ValueValuePropertyId,
+    IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
+    TreeScope, TreeScope_Children, TreeScope_Element, TreeScope_Subtree,
+    UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
+    UIA_ExpandCollapsePatternId, UIA_HelpTextPropertyId, UIA_InvokePatternId,
+    UIA_IsEnabledPropertyId, UIA_IsOffscreenPropertyId, UIA_NamePropertyId,
+    UIA_ProcessIdPropertyId, UIA_RangeValuePatternId, UIA_ScrollPatternId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_TextPatternId,
+    UIA_TogglePatternId, UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId,
+    UIA_ValueValuePropertyId,
 };
 
-pub mod cache;
 pub mod fg_bypass;
+pub(crate) mod focused_document;
 pub mod scroll;
+pub mod snapshot;
 pub mod windows_enum;
-pub use cache::ElementCache;
+pub use snapshot::Snapshots;
 pub use windows_enum::enumerate_top_level_windows;
 
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_TOTAL_ELEMENTS: usize = 5000;
-
-// Historical aliases — referenced by the thin `walk_cached` shim that
-// keeps the pre-#22865 call signature compiling. `walk_tree_bounded`
-// reads from the caller-supplied caps instead.
-#[allow(dead_code)]
-const MAX_DEPTH: usize = DEFAULT_MAX_DEPTH;
-#[allow(dead_code)]
-const MAX_TOTAL_ELEMENTS: usize = DEFAULT_MAX_TOTAL_ELEMENTS;
 
 /// A single node in the accessibility tree.
 ///
@@ -57,8 +59,13 @@ pub struct UiaNode {
     pub automation_id: Option<String>,
     pub help_text: Option<String>,
     pub actions: Vec<String>,
+    /// Enabled state reported by UIA. `None` is reserved for fallback
+    /// backends that cannot establish it.
+    pub enabled: Option<bool>,
+    /// Toggle/selection state when the element exposes one of those patterns.
+    pub selected: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
-    /// MSAA path) as usize. Retained — `ElementCache` Drop releases it via
+    /// MSAA path) as usize. Retained — `Snapshots` Drop releases it via
     /// the `kind`-appropriate vtable.
     pub element_ptr: usize,
     /// Screen-coordinate center, captured at walk time to avoid later COM calls.
@@ -88,6 +95,43 @@ pub struct UiaNode {
 pub struct UiaTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<UiaNode>,
+    /// True when the unprojected native walk visited every node exposed by
+    /// the selected root without a bound or enumeration failure skipping a
+    /// node/subtree. A `query` only projects the response and does not change
+    /// this underlying snapshot property.
+    pub elements_complete: bool,
+}
+
+#[derive(Debug)]
+struct WalkState<'a> {
+    budget: &'a mut WalkBudget,
+    max_depth: usize,
+    complete: bool,
+}
+
+impl<'a> WalkState<'a> {
+    fn new(budget: &'a mut WalkBudget, max_depth: usize) -> Self {
+        Self {
+            budget,
+            max_depth,
+            complete: true,
+        }
+    }
+
+    /// Admit one node to the walk. Reaching a bound exactly is not itself
+    /// truncation; completeness changes only when a node beyond that bound is
+    /// actually encountered and skipped.
+    fn enter(&mut self, depth: usize) -> bool {
+        if depth > self.max_depth || !self.budget.admit() {
+            self.complete = false;
+            return false;
+        }
+        true
+    }
+
+    fn mark_incomplete(&mut self) {
+        self.complete = false;
+    }
 }
 
 /// Walk the UIA tree for the window with the given HWND.
@@ -95,9 +139,135 @@ pub fn walk_tree(hwnd: u64, query: Option<&str>) -> UiaTreeResult {
     walk_tree_bounded(hwnd, query, DEFAULT_MAX_TOTAL_ELEMENTS, DEFAULT_MAX_DEPTH)
 }
 
+fn is_menu_control(control_type: &str) -> bool {
+    matches!(control_type, "Menu" | "MenuBar" | "MenuItem")
+}
+
+fn exact_menu_path_matches(nodes: &[UiaNode], path: &[String]) -> Vec<usize> {
+    let by_element_index: std::collections::HashMap<usize, usize> = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node_index, node)| node.element_index.map(|index| (index, node_index)))
+        .collect();
+
+    nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(node_index, node)| {
+            if !is_menu_control(&node.control_type)
+                || node.enabled == Some(false)
+                || node.name.as_deref().map(str::trim) != path.last().map(String::as_str)
+            {
+                return None;
+            }
+            let mut lineage = Vec::new();
+            let mut cursor = Some(node_index);
+            while let Some(current) = cursor {
+                let ancestor = &nodes[current];
+                if is_menu_control(&ancestor.control_type) {
+                    if let Some(name) = ancestor.name.as_deref().map(str::trim) {
+                        if !name.is_empty() {
+                            lineage.push(name);
+                        }
+                    }
+                }
+                cursor = ancestor
+                    .parent_element_index
+                    .and_then(|index| by_element_index.get(&index).copied());
+            }
+            lineage.reverse();
+            lineage.dedup();
+            (lineage == path.iter().map(String::as_str).collect::<Vec<_>>()).then_some(node_index)
+        })
+        .collect()
+}
+
+unsafe fn release_walk_nodes(nodes: Vec<UiaNode>) {
+    use windows::Win32::UI::Accessibility::IAccessible;
+    for node in nodes {
+        if node.element_ptr == 0 {
+            continue;
+        }
+        if node.msaa_role.is_some() {
+            drop(IAccessible::from_raw(node.element_ptr as *mut _));
+        } else {
+            drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _));
+        }
+    }
+}
+
+unsafe fn invoke_menu_element(element_ptr: usize, final_segment: bool) -> Result<(), String> {
+    let element =
+        std::mem::ManuallyDrop::new(IUIAutomationElement::from_raw(element_ptr as *mut _));
+    if !final_segment {
+        if let Ok(pattern) = element.GetCurrentPattern(UIA_ExpandCollapsePatternId) {
+            if let Ok(expand) = pattern.cast::<IUIAutomationExpandCollapsePattern>() {
+                return expand
+                    .Expand()
+                    .map_err(|error| format!("ExpandCollapse.Expand failed: {error}"));
+            }
+        }
+    }
+    if let Ok(pattern) = element.GetCurrentPattern(UIA_InvokePatternId) {
+        if let Ok(invoke) = pattern.cast::<IUIAutomationInvokePattern>() {
+            return invoke
+                .Invoke()
+                .map_err(|error| format!("InvokePattern.Invoke failed: {error}"));
+        }
+    }
+    if final_segment {
+        if let Ok(pattern) = element.GetCurrentPattern(UIA_SelectionItemPatternId) {
+            if let Ok(selection) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+                return selection
+                    .Select()
+                    .map_err(|error| format!("SelectionItem.Select failed: {error}"));
+            }
+        }
+    }
+    Err("element exposes no usable native menu pattern".into())
+}
+
+/// Resolve and invoke an exact application menu path from fresh UIA state at
+/// every hop. No cached element index survives a menu mutation.
+pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
+    for depth in 0..path.len() {
+        let result = walk_tree(hwnd, None);
+        let matches = exact_menu_path_matches(&result.nodes, &path[..=depth]);
+        let target_index = match matches.as_slice() {
+            [index] => *index,
+            [] => {
+                unsafe { release_walk_nodes(result.nodes) };
+                return Err(format!("menu path segment {depth} was not found"));
+            }
+            _ => {
+                unsafe { release_walk_nodes(result.nodes) };
+                return Err(format!("menu path segment {depth} is ambiguous"));
+            }
+        };
+        let target = &result.nodes[target_index];
+        let error = if target.enabled == Some(false) {
+            Some(format!("menu path segment {depth} is disabled"))
+        } else if target.msaa_role.is_some() {
+            Some(format!(
+                "menu path segment {depth} is exposed only through MSAA, not UI Automation"
+            ))
+        } else {
+            unsafe { invoke_menu_element(target.element_ptr, depth + 1 == path.len()) }.err()
+        };
+        unsafe { release_walk_nodes(result.nodes) };
+        if let Some(error) = error {
+            return Err(format!("menu path segment {depth}: {error}"));
+        }
+        if depth + 1 != path.len() {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+    }
+    Ok(())
+}
+
 /// Walk the UIA tree with caller-supplied caps. `max_elements`/`max_depth`
-/// truncate the walk and the rendered markdown identically. Issue #22865:
-/// caps protect against Electron / large web apps that produce 10k+
+/// truncate the walk and the rendered markdown identically. These caps
+/// protect against Electron / large web apps that produce 10k+
 /// element trees and blow context windows.
 pub fn walk_tree_bounded(
     hwnd: u64,
@@ -105,16 +275,55 @@ pub fn walk_tree_bounded(
     max_elements: usize,
     max_depth: usize,
 ) -> UiaTreeResult {
-    unsafe { walk_tree_unsafe(hwnd, query, max_elements, max_depth) }
+    let mut budget = WalkBudget::nodes_only(max_elements);
+    walk_tree_budgeted(hwnd, query, max_depth, &mut budget)
+}
+
+/// [`walk_tree_bounded`] under a caller's [`WalkBudget`], checked per node of
+/// the cached (and MSAA) walk. The bulk `BuildUpdatedCache` fetch before it is
+/// setup the budget does not cover; the caller's backstop bounds it. Read the
+/// outcome from `budget` afterwards.
+pub fn walk_tree_budgeted(
+    hwnd: u64,
+    query: Option<&str>,
+    max_depth: usize,
+    budget: &mut WalkBudget,
+) -> UiaTreeResult {
+    unsafe { walk_tree_unsafe(hwnd, query, max_depth, budget) }
+}
+
+/// Join this thread to the MTA unless COM is already up on it. The init is
+/// never paired with `CoUninitialize`: retained element pointers in the walk
+/// result outlive the call. `RPC_E_CHANGED_MODE` means the thread is already
+/// an STA, where UIA works and the init took no reference to release.
+unsafe fn ensure_com() -> Result<(), String> {
+    com_init_result(CoInitializeEx(None, COINIT_MULTITHREADED))
+}
+
+fn com_init_result(hr: HRESULT) -> Result<(), String> {
+    if hr.is_ok() || hr == RPC_E_CHANGED_MODE {
+        Ok(())
+    } else {
+        Err(format!(
+            "COM init failed: {}",
+            windows::core::Error::from(hr)
+        ))
+    }
 }
 
 unsafe fn walk_tree_unsafe(
     hwnd: u64,
     query: Option<&str>,
-    max_elements: usize,
     max_depth: usize,
+    budget: &mut WalkBudget,
 ) -> UiaTreeResult {
-    let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    if let Err(e) = ensure_com() {
+        return UiaTreeResult {
+            tree_markdown: e,
+            nodes: Vec::new(),
+            elements_complete: false,
+        };
+    }
 
     let automation: IUIAutomation =
         match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
@@ -123,56 +332,31 @@ unsafe fn walk_tree_unsafe(
                 return UiaTreeResult {
                     tree_markdown: format!("UIA init failed: {e}"),
                     nodes: Vec::new(),
+                    elements_complete: false,
                 }
             }
         };
 
     // Build a cache request that fetches everything we need in ONE bulk RPC.
-    let cache_req: IUIAutomationCacheRequest = match automation.CreateCacheRequest() {
+    let (cache_req, mut cache_request_complete) = match node_cache_request(&automation) {
         Ok(r) => r,
         Err(e) => {
             return UiaTreeResult {
                 tree_markdown: format!("CreateCacheRequest failed: {e}"),
                 nodes: Vec::new(),
+                elements_complete: false,
             }
         }
     };
 
-    // Properties to pre-fetch.
-    for prop in &[
-        UIA_ControlTypePropertyId,
-        UIA_NamePropertyId,
-        UIA_ValueValuePropertyId,
-        UIA_AutomationIdPropertyId,
-        UIA_HelpTextPropertyId,
-        UIA_IsEnabledPropertyId,
-        UIA_IsOffscreenPropertyId,
-        UIA_BoundingRectanglePropertyId,
-    ] {
-        let _ = cache_req.AddProperty(*prop);
-    }
-
-    // Patterns to pre-fetch (for action detection).
-    for pat in &[
-        UIA_InvokePatternId,
-        UIA_TogglePatternId,
-        UIA_SelectionItemPatternId,
-        UIA_ExpandCollapsePatternId,
-        UIA_ValuePatternId,
-        UIA_RangeValuePatternId,
-        UIA_TextPatternId,
-        UIA_ScrollPatternId,
-    ] {
-        let _ = cache_req.AddPattern(*pat);
-    }
-
     // Fetch entire subtree in one call.
-    let _ = cache_req.SetTreeScope(TreeScope_Subtree);
+    cache_request_complete &= cache_req.SetTreeScope(TreeScope_Subtree).is_ok();
 
     // Apply control-view filter (same as ControlViewWalker).
-    if let Ok(ctrl_cond) = automation.ControlViewCondition() {
-        let _ = cache_req.SetTreeFilter(&ctrl_cond);
-    }
+    cache_request_complete &= automation
+        .ControlViewCondition()
+        .and_then(|condition| cache_req.SetTreeFilter(&condition))
+        .is_ok();
 
     let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
 
@@ -182,7 +366,7 @@ unsafe fn walk_tree_unsafe(
     // Two reasons:
     //   1. **Hang avoidance** for SALSUBFRAME / SALMENU / SALTMPSUBFRAME —
     //      VCL's UIA provider hangs on `BuildUpdatedCache(TreeScope.Subtree)`
-    //      under the daemon's MTA pool, wasting the 4 s outer timeout.
+    //      under the daemon's MTA pool, wasting the timeout_ms walk budget.
     //   2. **Role fidelity** for SALFRAME (main document window, Recovery
     //      dialog) — UIA technically walks fine, but the built-in
     //      MSAA→UIA proxy collapses `ROLE_SYSTEM_BUTTONDROPDOWN` (0x38) to
@@ -202,7 +386,7 @@ unsafe fn walk_tree_unsafe(
         n > 0 && String::from_utf16_lossy(&buf[..n as usize]).starts_with("SAL")
     };
     if sal_class {
-        return crate::msaa::walk_msaa_tree(hwnd);
+        return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
     }
 
     // Two-call sequence (ElementFromHandle + BuildUpdatedCache) instead of
@@ -216,6 +400,7 @@ unsafe fn walk_tree_unsafe(
             return UiaTreeResult {
                 tree_markdown: format!("ElementFromHandle failed: {e}"),
                 nodes: Vec::new(),
+                elements_complete: false,
             }
         }
     };
@@ -240,6 +425,7 @@ unsafe fn walk_tree_unsafe(
                                 "BuildUpdatedCache failed after {attempt} attempts: {e}"
                             ),
                             nodes: Vec::new(),
+                            elements_complete: false,
                         };
                     }
                     std::thread::sleep(std::time::Duration::from_millis(40));
@@ -251,7 +437,10 @@ unsafe fn walk_tree_unsafe(
     let mut nodes: Vec<UiaNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new();
     let mut counter = 0usize;
-    let mut total = 0usize;
+    let mut walk_state = WalkState::new(budget, max_depth);
+    if !cache_request_complete {
+        walk_state.mark_incomplete();
+    }
 
     walk_cached_bounded(
         &root_elem,
@@ -261,9 +450,7 @@ unsafe fn walk_tree_unsafe(
         &mut nodes,
         &mut lines,
         &mut counter,
-        &mut total,
-        max_elements,
-        max_depth,
+        &mut walk_state,
     );
 
     // Fallback for CoreWindow-class apps (Calculator, Settings, older UWPs).
@@ -279,42 +466,19 @@ unsafe fn walk_tree_unsafe(
     //
     // Stage the fallback walk into fresh accumulators and only swap them in
     // if the fallback actually finds actionable elements. Otherwise the
-    // wrapper-only node from the primary walk stays the result — better than
-    // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
-    // for the fallback (which would then truncate large trees prematurely).
+    // wrapper-only node from the primary walk stays the result. Both paths
+    // share the caller's time and node budget.
     if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
-        // Skip the desktop-root walk-by-pid fallback for VCL / SAL
-        // targets (LibreOffice, OpenOffice). The fallback does its own
-        // `BuildUpdatedCache(TreeScope.Subtree)` per matched top-level
-        // window — which is exactly the bulk-cache RPC shape that SAL
-        // hangs on. The primary two-call path (ElementFromHandle +
-        // BuildUpdatedCache on the dialog's own HWND) ALREADY dodged the
-        // hang on that one specific call, but the fallback re-introduces
-        // it. Returning the empty tree here lets the outer
-        // get_window_state timeout fire its structured diagnostic
-        // promptly instead of stalling 4 s on the fallback's hang.
-        //
-        // The diagnostic tells callers exactly how to drive the SAL
-        // dialog without the tree: pixel click off the screenshot
-        // get_window_state always returns, or press_key with
-        // delivery_mode:"foreground" for accelerator-style dismissal. That's enough for the
-        // common modal-dismissal case (Yes/No/Esc on a Confirmation),
-        // which is what SAL dialogs almost always need.
-        let is_sal = {
-            use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
-            let mut buf = [0u16; 64];
-            let n = GetClassNameW(hwnd_win, &mut buf);
-            n > 0 && {
-                let class = String::from_utf16_lossy(&buf[..n as usize]);
-                class.starts_with("SAL")
-            }
-        };
-        if !is_sal {
+        // An empty HWND wrapper cannot prove a complete window snapshot. The
+        // fallback may discover controls in other windows of the process, so
+        // it remains discovery evidence rather than an exact-window proof.
+        walk_state.mark_incomplete();
+        // SAL windows already returned through the MSAA path above.
+        if !walk_state.budget.expired() {
             if let Some(target_pid) = pid_from_hwnd(hwnd_win) {
                 let mut fallback_nodes: Vec<UiaNode> = Vec::new();
                 let mut fallback_lines: Vec<(usize, String)> = Vec::new();
                 let mut fallback_counter = 0usize;
-                let mut fallback_total = 0usize;
 
                 tracing::debug!(
                     target: "uia",
@@ -328,46 +492,14 @@ unsafe fn walk_tree_unsafe(
                     &mut fallback_nodes,
                     &mut fallback_lines,
                     &mut fallback_counter,
-                    &mut fallback_total,
-                    max_elements,
-                    max_depth,
+                    &mut walk_state,
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
                     nodes = fallback_nodes;
                     lines = fallback_lines;
-                    // counter/total aren't read after this point — they're
-                    // only used by walk_cached's &mut params for element
-                    // indexing inside that call.
                 }
             }
-        } else {
-            tracing::debug!(
-                target: "uia",
-                "SAL target hwnd 0x{hwnd:x} returned empty primary tree; \
-                 skipping walk_root_by_pid fallback (known to re-hang on SAL Subtree fetch). \
-                 Caller should use press_key/screenshot fallbacks per the get_window_state diagnostic."
-            );
-            // Return a tree_markdown that mirrors the get_window_state
-            // timeout diagnostic so callers get the same actionable
-            // fallback options even though the walk itself didn't hit
-            // the 4 s outer timeout (because we skipped the hang-prone
-            // fallback). Without this the caller sees an empty tree
-            // and no error, which is less actionable.
-            let stub = format!(
-                "- Window <SAL class — empty primary UIA tree>\n\
-                 (SAL providers don't expose modal-dialog children via \
-                 ElementFromHandle, and the desktop-root fallback walk that \
-                 would normally find them is known to hang on SAL Subtree \
-                 BuildUpdatedCache. Use one of: \
-                 (a) pixel `click(x, y)` off the screenshot `get_window_state` \
-                 returns alongside this tree; \
-                 (b) `press_key` with `delivery_mode:\"foreground\"` (Esc / Enter / Y / N).)\n"
-            );
-            return UiaTreeResult {
-                tree_markdown: stub,
-                nodes: Vec::new(),
-            };
         }
     }
 
@@ -381,6 +513,7 @@ unsafe fn walk_tree_unsafe(
     UiaTreeResult {
         tree_markdown,
         nodes,
+        elements_complete: walk_state.complete,
     }
 }
 
@@ -414,14 +547,13 @@ unsafe fn walk_root_by_pid(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
-    max_elements: usize,
-    max_depth: usize,
+    walk_state: &mut WalkState<'_>,
 ) {
     let root = match automation.GetRootElement() {
         Ok(r) => r,
         Err(e) => {
             tracing::debug!(target: "uia", "GetRootElement failed: {e}");
+            walk_state.mark_incomplete();
             return;
         }
     };
@@ -429,6 +561,7 @@ unsafe fn walk_root_by_pid(
         Ok(c) => c,
         Err(e) => {
             tracing::debug!(target: "uia", "CreateTrueCondition failed: {e}");
+            walk_state.mark_incomplete();
             return;
         }
     };
@@ -436,14 +569,26 @@ unsafe fn walk_root_by_pid(
         Ok(a) => a,
         Err(e) => {
             tracing::debug!(target: "uia", "root.FindAll(Children) failed: {e}");
+            walk_state.mark_incomplete();
             return;
         }
     };
-    let count = kids.Length().unwrap_or(0);
+    let count = match kids.Length() {
+        Ok(count) => count,
+        Err(e) => {
+            tracing::debug!(target: "uia", "root child count failed: {e}");
+            walk_state.mark_incomplete();
+            return;
+        }
+    };
     for i in 0..count {
         let elem = match kids.GetElement(i) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(target: "uia", "root child {i} fetch failed: {e}");
+                walk_state.mark_incomplete();
+                continue;
+            }
         };
         // Read ProcessId without a cache — root.FindAll didn't use one.
         // VARIANT for VT_I4 (UIA's ProcessId type) puts the int at
@@ -455,61 +600,33 @@ unsafe fn walk_root_by_pid(
                 if raw.Anonymous.Anonymous.vt != 3
                 /* VT_I4 */
                 {
+                    walk_state.mark_incomplete();
                     continue;
                 }
                 raw.Anonymous.Anonymous.Anonymous.lVal as u32
             }
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(target: "uia", "root child {i} ProcessId read failed: {e}");
+                walk_state.mark_incomplete();
+                continue;
+            }
         };
         if pid != target_pid {
             continue;
         }
         // Match — pull a cached subtree from this element using the same
-        // cache_req shape as the primary path so walk_cached sees the same
+        // cache_req shape as the primary path so walk_cached_bounded sees the same
         // properties + patterns.
         let cached = match elem.BuildUpdatedCache(cache_req) {
             Ok(e) => e,
             Err(e) => {
                 tracing::debug!(target: "uia", "BuildUpdatedCache on pid={target_pid} match failed: {e}");
+                walk_state.mark_incomplete();
                 continue;
             }
         };
-        walk_cached_bounded(
-            &cached,
-            0,
-            None,
-            false,
-            nodes,
-            lines,
-            counter,
-            total,
-            max_elements,
-            max_depth,
-        );
+        walk_cached_bounded(&cached, 0, None, false, nodes, lines, counter, walk_state);
     }
-}
-
-#[allow(dead_code)]
-unsafe fn walk_cached(
-    element: &IUIAutomationElement,
-    depth: usize,
-    nodes: &mut Vec<UiaNode>,
-    lines: &mut Vec<(usize, String)>,
-    counter: &mut usize,
-    total: &mut usize,
-) {
-    walk_cached_bounded(
-        element,
-        depth,
-        None,
-        false,
-        nodes,
-        lines,
-        counter,
-        total,
-        MAX_TOTAL_ELEMENTS,
-        MAX_DEPTH,
-    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -521,21 +638,223 @@ unsafe fn walk_cached_bounded(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
-    max_elements: usize,
-    max_depth: usize,
+    walk_state: &mut WalkState<'_>,
 ) {
-    if depth > max_depth || *total >= max_elements {
+    if !walk_state.enter(depth) {
         return;
     }
-    *total += 1;
 
+    let (control_type, emitted_parent) = emit_cached_node(
+        element,
+        depth,
+        parent_index,
+        in_web_content,
+        nodes,
+        lines,
+        counter,
+    );
+
+    let children = match cached_children(element) {
+        Ok(Some(children)) => children,
+        Ok(None) => return,
+        Err(_) => {
+            walk_state.mark_incomplete();
+            return;
+        }
+    };
+    let len = match children.Length() {
+        Ok(len) => len,
+        Err(_) => {
+            walk_state.mark_incomplete();
+            return;
+        }
+    };
+    for i in 0..len {
+        match children.GetElement(i) {
+            Ok(child) => walk_cached_bounded(
+                &child,
+                depth + 1,
+                emitted_parent,
+                in_web_content || control_type.eq_ignore_ascii_case("Document"),
+                nodes,
+                lines,
+                counter,
+                walk_state,
+            ),
+            Err(_) => walk_state.mark_incomplete(),
+        }
+    }
+}
+
+unsafe fn cached_children(
+    element: &IUIAutomationElement,
+) -> windows::core::Result<Option<IUIAutomationElementArray>> {
+    let mut raw = std::ptr::null_mut();
+    let result =
+        (Interface::vtable(element).GetCachedChildren)(Interface::as_raw(element), &mut raw);
+    result.ok()?;
+    if raw.is_null() {
+        Ok(None)
+    } else {
+        Ok(Some(IUIAutomationElementArray::from_raw(raw)))
+    }
+}
+
+/// Cache request carrying every property and pattern the node projection
+/// reads. Callers choose the tree scope and filter.
+unsafe fn node_cache_request(
+    automation: &IUIAutomation,
+) -> windows::core::Result<(IUIAutomationCacheRequest, bool)> {
+    let cache_req = automation.CreateCacheRequest()?;
+    let mut complete = true;
+    for prop in &[
+        UIA_ControlTypePropertyId,
+        UIA_NamePropertyId,
+        UIA_ValueValuePropertyId,
+        UIA_AutomationIdPropertyId,
+        UIA_HelpTextPropertyId,
+        UIA_IsEnabledPropertyId,
+        UIA_IsOffscreenPropertyId,
+        UIA_BoundingRectanglePropertyId,
+        UIA_ToggleToggleStatePropertyId,
+        UIA_SelectionItemIsSelectedPropertyId,
+    ] {
+        complete &= cache_req.AddProperty(*prop).is_ok();
+    }
+    for pat in &[
+        UIA_InvokePatternId,
+        UIA_TogglePatternId,
+        UIA_SelectionItemPatternId,
+        UIA_ExpandCollapsePatternId,
+        UIA_ValuePatternId,
+        UIA_RangeValuePatternId,
+        UIA_TextPatternId,
+        UIA_ScrollPatternId,
+    ] {
+        complete &= cache_req.AddPattern(*pat).is_ok();
+    }
+    Ok((cache_req, complete))
+}
+
+/// Walk only a window's native (non-renderer) accessibility tree.
+///
+/// [`walk_tree`] fetches the whole subtree in one `BuildUpdatedCache` call,
+/// which includes the active tab's web document. When a Chromium renderer
+/// stops answering UIA, that one call times out and the walk returns no
+/// nodes at all, even though the browser's own tab strip, toolbar and
+/// omnibox are still live (#4121: Edge 153 after a CDP session, about 10 s
+/// per walk). This walker fetches one level per call and never descends
+/// below a `Document`, so browser chrome stays observable. The `Document`
+/// node itself is still reported, so callers can prove which page is
+/// committed without trusting any renderer-owned descendant.
+///
+/// Returns `Err` when any native level cannot be read. A partial native tree
+/// would misstate tab topology, so callers must treat it as unavailable.
+pub fn walk_native_tree(hwnd: u64) -> Result<Vec<UiaNode>, String> {
+    unsafe {
+        ensure_com()?;
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| format!("UIA init failed: {e}"))?;
+        let (cache_req, _) = node_cache_request(&automation)
+            .map_err(|e| format!("CreateCacheRequest failed: {e}"))?;
+        let _ = cache_req.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0));
+        if let Ok(ctrl_cond) = automation.ControlViewCondition() {
+            let _ = cache_req.SetTreeFilter(&ctrl_cond);
+        }
+        let root = automation
+            .ElementFromHandle(windows::Win32::Foundation::HWND(hwnd as *mut _))
+            .and_then(|element| element.BuildUpdatedCache(&cache_req))
+            .map_err(|e| format!("native UIA root could not be read: {e}"))?;
+        let mut nodes = Vec::new();
+        let mut lines = Vec::new();
+        let mut counter = 0usize;
+        let mut budget = WalkBudget::nodes_only(DEFAULT_MAX_TOTAL_ELEMENTS);
+        let walked = walk_native_level(
+            &root,
+            &cache_req,
+            0,
+            None,
+            &mut nodes,
+            &mut lines,
+            &mut counter,
+            &mut budget,
+        );
+        match walked {
+            Ok(()) => Ok(nodes),
+            Err(error) => {
+                release_walk_nodes(nodes);
+                Err(error)
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn walk_native_level(
+    element: &IUIAutomationElement,
+    cache_req: &IUIAutomationCacheRequest,
+    depth: usize,
+    parent_index: Option<usize>,
+    nodes: &mut Vec<UiaNode>,
+    lines: &mut Vec<(usize, String)>,
+    counter: &mut usize,
+    budget: &mut WalkBudget,
+) -> Result<(), String> {
+    if depth > DEFAULT_MAX_DEPTH {
+        return Ok(());
+    }
+    if !budget.admit() {
+        return Err("the native UIA tree exceeded the element budget".to_owned());
+    }
+    let (control_type, emitted_parent) =
+        emit_cached_node(element, depth, parent_index, false, nodes, lines, counter);
+    if control_type.eq_ignore_ascii_case("Document") {
+        return Ok(());
+    }
+    let Ok(children) = element.GetCachedChildren() else {
+        return Ok(());
+    };
+    for i in 0..children.Length().unwrap_or(0) {
+        let child = children
+            .GetElement(i)
+            .and_then(|child| child.BuildUpdatedCache(cache_req))
+            .map_err(|e| format!("a native UIA level could not be read: {e}"))?;
+        walk_native_level(
+            &child,
+            cache_req,
+            depth + 1,
+            emitted_parent,
+            nodes,
+            lines,
+            counter,
+            budget,
+        )?;
+    }
+    Ok(())
+}
+
+/// Project one cached element into `nodes`/`lines`. Returns its control type
+/// and the parent index its descendants should inherit.
+fn emit_cached_node(
+    element: &IUIAutomationElement,
+    depth: usize,
+    parent_index: Option<usize>,
+    in_web_content: bool,
+    nodes: &mut Vec<UiaNode>,
+    lines: &mut Vec<(usize, String)>,
+    counter: &mut usize,
+) -> (String, Option<usize>) {
     let control_type = read_cached_control_type(element);
     let name = read_cached_bstr_name(element);
     let value = read_cached_bstr_value(element);
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
-    let is_enabled = read_cached_bool(element, UIA_IsEnabledPropertyId).unwrap_or(true);
+    let enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
+    // Missing UIA state must remain unknown on the structured observation
+    // surface. Action discovery keeps its historical best-effort assumption.
+    let is_enabled = enabled.unwrap_or(true);
+    let selected = read_cached_selected(element);
     let actions = detect_cached_actions(element, &control_type, is_enabled);
     let is_actionable = !actions.is_empty() && is_enabled;
     let has_content = name
@@ -566,6 +885,8 @@ unsafe fn walk_cached_bounded(
                 automation_id: automation_id.clone(),
                 help_text: help_text.clone(),
                 actions: actions.clone(),
+                enabled,
+                selected,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -584,6 +905,8 @@ unsafe fn walk_cached_bounded(
                 automation_id: automation_id.clone(),
                 help_text: help_text.clone(),
                 actions: vec![],
+                enabled,
+                selected,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
@@ -598,27 +921,7 @@ unsafe fn walk_cached_bounded(
         lines.push((depth, format_node_line(&node)));
         nodes.push(node);
     }
-
-    // Recurse using cached children (no additional RPC).
-    if let Ok(children) = element.GetCachedChildren() {
-        let len = children.Length().unwrap_or(0);
-        for i in 0..len {
-            if let Ok(child) = children.GetElement(i) {
-                walk_cached_bounded(
-                    &child,
-                    depth + 1,
-                    emitted_parent,
-                    in_web_content || control_type.eq_ignore_ascii_case("Document"),
-                    nodes,
-                    lines,
-                    counter,
-                    total,
-                    max_elements,
-                    max_depth,
-                );
-            }
-        }
-    }
+    (control_type, emitted_parent)
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {
@@ -685,9 +988,11 @@ fn read_cached_bool(
 /// Read bounding rect as (center_x, center_y, Some((l,t,r,b))). Returns
 /// rect=None when the element has no meaningful BoundingRectangle (offscreen
 /// containers, structure-only elements).
+type BoundingRect = (i32, i32, i32, i32);
+
 fn read_cached_bounding_rect_full(
     element: &IUIAutomationElement,
-) -> (i32, i32, Option<(i32, i32, i32, i32)>) {
+) -> (i32, i32, Option<BoundingRect>) {
     unsafe {
         match element.CachedBoundingRectangle() {
             Ok(r) if r.right > r.left && r.bottom > r.top => (
@@ -750,6 +1055,29 @@ fn detect_cached_actions(
         actions.push("invoke".into());
     }
     actions
+}
+
+fn read_cached_selected(element: &IUIAutomationElement) -> Option<bool> {
+    unsafe {
+        if let Ok(pattern) = element.GetCachedPattern(UIA_TogglePatternId) {
+            if let Ok(toggle) = pattern.cast::<IUIAutomationTogglePattern>() {
+                return match toggle.CachedToggleState() {
+                    Ok(state) if state == ToggleState_On => Some(true),
+                    Ok(state) if state == ToggleState_Off => Some(false),
+                    _ => None,
+                };
+            }
+        }
+        if let Ok(pattern) = element.GetCachedPattern(UIA_SelectionItemPatternId) {
+            if let Ok(selection) = pattern.cast::<IUIAutomationSelectionItemPattern>() {
+                return selection
+                    .CachedIsSelected()
+                    .ok()
+                    .map(|selected| selected.as_bool());
+            }
+        }
+    }
+    None
 }
 
 fn control_type_name(id: i32) -> String {
@@ -860,8 +1188,12 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             ancestors.push("");
             last_emitted.push(None);
         }
-        for d in (depth + 1)..ancestors.len() {
-            last_emitted[d] = None;
+        for slot in last_emitted
+            .iter_mut()
+            .take(ancestors.len())
+            .skip(depth + 1)
+        {
+            *slot = None;
         }
         ancestors[depth] = line;
 
@@ -887,4 +1219,167 @@ fn filter_tree(markdown: &str, query: &str) -> String {
     let mut r = output.join("\n");
     r.push('\n');
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn com_init_accepts_an_existing_apartment_of_either_mode() {
+        use windows::Win32::Foundation::{E_OUTOFMEMORY, S_FALSE, S_OK};
+        assert!(com_init_result(S_OK).is_ok());
+        assert!(com_init_result(S_FALSE).is_ok());
+        assert!(com_init_result(RPC_E_CHANGED_MODE).is_ok());
+        assert!(com_init_result(E_OUTOFMEMORY)
+            .unwrap_err()
+            .starts_with("COM init failed"));
+    }
+
+    #[test]
+    fn uia_is_usable_on_a_thread_already_in_an_sta() {
+        use windows::Win32::System::Com::{CoUninitialize, COINIT_APARTMENTTHREADED};
+        std::thread::spawn(|| unsafe {
+            assert!(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
+            assert_eq!(
+                CoInitializeEx(None, COINIT_MULTITHREADED),
+                RPC_E_CHANGED_MODE
+            );
+            assert_eq!(ensure_com(), Ok(()));
+            let automation: windows::core::Result<IUIAutomation> =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER);
+            assert!(automation.is_ok());
+            drop(automation);
+            CoUninitialize();
+        })
+        .join()
+        .unwrap();
+    }
+
+    fn star(child_count: usize) -> Vec<Vec<usize>> {
+        let mut children = vec![Vec::new(); child_count + 1];
+        children[0] = (1..=child_count).collect();
+        children
+    }
+
+    fn chain(len: usize) -> Vec<Vec<usize>> {
+        let mut children = vec![Vec::new(); len];
+        for (i, slot) in children.iter_mut().enumerate().take(len.saturating_sub(1)) {
+            *slot = vec![i + 1];
+        }
+        children
+    }
+
+    fn walk_synthetic_tree(
+        children: &[Vec<usize>],
+        node: usize,
+        depth: usize,
+        state: &mut WalkState<'_>,
+    ) {
+        if !state.enter(depth) {
+            return;
+        }
+        for child in &children[node] {
+            walk_synthetic_tree(children, *child, depth + 1, state);
+        }
+    }
+
+    #[test]
+    fn walk_state_is_complete_only_when_no_bound_skips_a_node() {
+        struct Case {
+            name: &'static str,
+            children: Vec<Vec<usize>>,
+            max_elements: usize,
+            max_depth: usize,
+            expected_visited: usize,
+            expected_complete: bool,
+        }
+
+        let cases = [
+            Case {
+                name: "default bounds admit a 55-node tree",
+                children: star(54),
+                max_elements: DEFAULT_MAX_TOTAL_ELEMENTS,
+                max_depth: DEFAULT_MAX_DEPTH,
+                expected_visited: 55,
+                expected_complete: true,
+            },
+            Case {
+                name: "visiting exactly max_elements is still complete",
+                children: star(54),
+                max_elements: 55,
+                max_depth: DEFAULT_MAX_DEPTH,
+                expected_visited: 55,
+                expected_complete: true,
+            },
+            Case {
+                name: "skipping a node past max_elements is incomplete",
+                children: star(54),
+                max_elements: 54,
+                max_depth: DEFAULT_MAX_DEPTH,
+                expected_visited: 54,
+                expected_complete: false,
+            },
+            Case {
+                name: "a leaf at exactly max_depth is still complete",
+                children: chain(3),
+                max_elements: 10,
+                max_depth: 2,
+                expected_visited: 3,
+                expected_complete: true,
+            },
+            Case {
+                name: "skipping a descendant past max_depth is incomplete",
+                children: chain(3),
+                max_elements: 10,
+                max_depth: 1,
+                expected_visited: 2,
+                expected_complete: false,
+            },
+        ];
+
+        for case in cases {
+            let mut budget = WalkBudget::nodes_only(case.max_elements);
+            let mut state = WalkState::new(&mut budget, case.max_depth);
+            walk_synthetic_tree(&case.children, 0, 0, &mut state);
+            assert_eq!(
+                state.budget.outcome().nodes_visited,
+                case.expected_visited,
+                "{}: visited",
+                case.name
+            );
+            assert_eq!(
+                state.complete, case.expected_complete,
+                "{}: complete",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn walk_state_keeps_the_callers_budget_across_walks() {
+        let mut budget = WalkBudget::nodes_only(2);
+        assert!(budget.admit());
+        let mut state = WalkState::new(&mut budget, DEFAULT_MAX_DEPTH);
+
+        walk_synthetic_tree(&star(1), 0, 0, &mut state);
+
+        assert!(!state.complete);
+        let outcome = state.budget.outcome();
+        assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (2, 1));
+        assert_eq!(outcome.reason(), Some("node_budget"));
+    }
+
+    #[test]
+    fn timed_out_walk_cannot_report_complete() {
+        let mut budget = WalkBudget::new(100, 10);
+        budget.stop_for_timeout();
+        let mut state = WalkState::new(&mut budget, DEFAULT_MAX_DEPTH);
+
+        walk_synthetic_tree(&star(0), 0, 0, &mut state);
+
+        assert!(!state.complete);
+        assert_eq!(state.budget.outcome().reason(), Some("timeout"));
+        assert_eq!(state.budget.outcome().nodes_visited, 0);
+    }
 }

@@ -120,8 +120,10 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 $tests = @(
     "standalone_browser_background_type",
     "standalone_browser_type_replace",
+    "standalone_browser_owned_permission_prompt",
     "standalone_browser_dialogs",
     "standalone_browser_download",
+    "standalone_browser_existing_profile_standard_refusal",
     "standalone_browser_existing_profile",
     "standalone_browser_existing_profile_setup",
     "standalone_browser_frames",
@@ -129,8 +131,10 @@ $tests = @(
     "standalone_browser_pointer_actions",
     "standalone_browser_prepare_isolated",
     "standalone_browser_roundtrip",
+    "standalone_browser_same_title_tabs",
     "standalone_browser_semantic_state",
     "standalone_browser_stale_ref",
+    "standalone_browser_trust_gated_dom_click",
     "standalone_browser_trusted_click",
     "standalone_browser_upload",
     "standalone_browser_window_collision"
@@ -138,7 +142,7 @@ $tests = @(
 $failureCount = 0
 foreach ($testName in $tests) {
     $testExit = Invoke-CargoStep -Name $testName -Arguments @(
-        "test", "--release", "-p", "cua-driver",
+        "test", "--release", "-p", "cua-driver-e2e",
         "--test", "standalone_browser_behavior_test", $testName, "--",
         "--ignored", "--exact", "--nocapture", "--test-threads=1"
     ) -LogPath (Join-Path $artifactDir "$testName.log")

@@ -65,7 +65,7 @@ artifacts/cua-driver/<platform>/
         |-- after.png
         |-- app_state.json
         |-- screenshot.png
-        `-- click.png (click-family turns)
+        `-- click.png (dispatched click-family turns)
 ```
 
 `cases.jsonl` is the executed catalog. `results.jsonl` contains one result for
@@ -84,6 +84,13 @@ the before image may be `target_minimized`, and the after image may be
 accessibility data was captured, and the required trajectory and finalized MP4
 remain present. Any
 other missing image still fails closed.
+
+A click-family call refused before its target can be resolved is the other
+explicit non-capture case: `action.json` records `result_error: true` without a
+`click_point`, and `evidence.json` records the click phase as
+`not_applicable/action_refused_before_target_resolution`. No input was aimed or
+dispatched, so that turn must not invent a `click.png`; successful and
+target-resolved click-family turns still require it.
 
 The testkit prepares each cell's artifact directory before fixture setup but
 does not start `recording.mp4` yet. On Windows GitHub-hosted runners it obtains

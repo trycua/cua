@@ -1,0 +1,92 @@
+[package]
+name = "cua-spaces-cli"
+description = "The Cua Spaces build of the `cua` command: the MIT `cua` plus teleport, the Keyvault, the Cua Volume and persistent agents in its daemon. The Spaces apps ship it as their `cua`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+# The Spaces apps bundle it as `cua` (the name `cua` belongs to cua-cli in
+# this workspace).
+name = "cua-spaces-cli"
+path = "src/main.rs"
+
+[features]
+default = ["aws"]
+# AWS (`--on aws`, `cua cloud add aws`, the S3 Cua Volume and checkpoint
+# fallback): the AWS SDK crates. Release builds keep it; local development
+# builds (`install-local.sh`) build with `--no-default-features`. Without it
+# every AWS feature fails with "this build doesn't include AWS support".
+aws = [
+    "cua-cli/aws",
+    "cua-sdk/aws",
+    "cua-daemon/aws",
+    "cua-spaces/s3",
+    "cua-spaces-ext/s3",
+    "cua-spaces-ffi/aws",
+]
+# Modal as overflow capacity of your machines (needs the cua-modal-helper binary).
+contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
+
+[dependencies]
+# The gateway of `cua compat` is built beside the CLI, not before it: the CLI
+# comes without it and `CuaSpacesCli` registers it (`CliExtension::compat`).
+cua-cli = { path = "../cua-cli", default-features = false, features = ["byoc"] }
+cua-compat.workspace = true
+cua-compat-cmd.workspace = true
+# Hetzner and Modal tokens sealed with the pool keys (cloud_tokens).
+cua-byoc = { workspace = true, features = ["federation"] }
+zeroize = "1"
+cua-spaces-ext = { workspace = true, features = ["mount"] }
+cua-spaces-ffi = { path = "../cua-spaces-ffi", default-features = false }
+cua-spacesd-html5 = { path = "../cua-spacesd-html5", features = ["standalone"] }
+cua-sdk = { workspace = true, features = ["local", "spaces", "media", "byoc"] }
+cua-keyvault.workspace = true
+cua-teleport.workspace = true
+cua-volume.workspace = true
+cua-auth.workspace = true
+cua-home.workspace = true
+# The pool agent `cua daemon` runs (batch runs on all your machines).
+cua-spaces-cluster.workspace = true
+cua-daemon.workspace = true
+cua-spaces = { path = "../cua-spaces" }
+cua-cluster.workspace = true
+cua-host.workspace = true
+humantime.workspace = true
+rand.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+# Modal as overflow capacity of your machines (feature `contrib-modal`, off
+# by default like the MIT `cua`'s contrib providers).
+cua-contrib = { workspace = true, optional = true }
+cua-sandbox-core.workspace = true
+# Host Spaces requests (the pool's link to your machines).
+cua-proto.workspace = true
+futures-util.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+url.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+cua-media-protocol.workspace = true
+cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-host = { workspace = true, features = ["testing"] }
+cua-sandbox-core = { workspace = true, features = ["testing"] }
+clap.workspace = true
+tempfile.workspace = true
+base64.workspace = true
+url.workspace = true

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `check_for_update` MCP tool — programmatic mirror of
 //! `cua-driver check-update`.
 //!
@@ -30,10 +33,11 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "check_for_update".into(),
-        description: "Check whether a newer cua-driver-rs release is available on GitHub. \
-             Returns the current and latest versions, an `update_available` boolean, \
+        description: "Check the saved stable/nightly Cua Driver channel for a release on GitHub. \
+             Returns current and selected channels, current and latest versions, an `update_available` boolean, \
              the install one-liner, and the release notes URL. Read-only — never \
-             installs. Mirror of `cua-driver check-update --json`."
+             installs. Pacman-owned Linux executables return package-manager guidance \
+             without checking GitHub. Mirror of `cua-driver check-update --json`."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -69,7 +73,7 @@ impl Tool for CheckForUpdateTool {
         );
 
         let summary = if let Some(err) = &state.error {
-            format!("Update check failed: {err}")
+            format!("Update check unavailable: {err}")
         } else if state.update_available {
             let latest = state.latest_version.as_deref().unwrap_or("?");
             format!(

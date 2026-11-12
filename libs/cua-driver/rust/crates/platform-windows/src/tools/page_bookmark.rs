@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bookmark-URL-field JavaScript-execution bypass for Chromium-family
 //! browsers on Windows.
 //!
@@ -58,6 +61,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
+
+use super::page_title_marker::extract_marker;
 use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
@@ -152,7 +157,7 @@ pub fn wrap_javascript(user_js: &str) -> String {
     //     needed. (Previously the wrapper used `(function(){ ... })()`
     //     which silently returned undefined for any caller that didn't
     //     write `return X` themselves — wrong for CDP-style callers.)
-    let safe_user_js = user_js.replace('\r', " ").replace('\n', " ");
+    let safe_user_js = user_js.replace(['\r', '\n'], " ");
     // Escape for inclusion inside a single-quoted JS string literal.
     let escaped = safe_user_js.replace('\\', "\\\\").replace('\'', "\\'");
     format!(
@@ -536,11 +541,9 @@ unsafe fn wait_for_menu_item(
                 // Edge labels its context-menu items literally ("Edit");
                 // Chrome adds ellipses ("Edit..."). Accept exact match,
                 // ellipsis-stripped match, and prefix-up-to-ellipsis match.
-                let trimmed = elem_name
-                    .trim_end_matches(|c: char| c == '.' || c == '…')
-                    .trim();
+                let trimmed = elem_name.trim_end_matches(['.', '…']).trim();
                 if accepted_names.iter().any(|n| {
-                    let n_trimmed = n.trim_end_matches(|c: char| c == '.' || c == '…').trim();
+                    let n_trimmed = n.trim_end_matches(['.', '…']).trim();
                     elem_name.eq_ignore_ascii_case(n) || trimmed.eq_ignore_ascii_case(n_trimmed)
                 }) {
                     return Ok(elem);
@@ -863,34 +866,6 @@ unsafe fn poll_for_marker(
     ))
 }
 
-/// Split `s` at the prefix and strip Chromium's trailing
-/// ` - <browser name>` only — must not corrupt payloads that
-/// legitimately contain ` - ` in their JSON content (e.g.
-/// `CUA:"a - b"`).
-///
-/// We rsplit from the END (so only the last `" - "` is a candidate
-/// separator) and only strip the suffix when it looks like one of the
-/// known Chromium-family browser names. Anything else stays in the
-/// payload verbatim.
-fn extract_marker(s: &str, prefix: &str) -> String {
-    let start = s.find(prefix).unwrap_or(0);
-    let after = &s[start..];
-    if let Some((left, right)) = after.rsplit_once(" - ") {
-        let right_lc = right.to_ascii_lowercase();
-        let looks_like_browser = right_lc.contains("edge")
-            || right_lc.contains("chrome")
-            || right_lc.contains("chromium")
-            || right_lc.contains("brave")
-            || right_lc.contains("arc")
-            || right_lc.contains("vivaldi")
-            || right_lc.contains("opera");
-        if looks_like_browser {
-            return left.to_owned();
-        }
-    }
-    after.to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -945,40 +920,5 @@ mod tests {
         assert!(!wrapped.contains('\r'));
         // Replacement keeps the statements parseable as ASI-friendly JS.
         assert!(wrapped.contains("eval('var x = 1; var y = 2;  x + y')"));
-    }
-
-    #[test]
-    fn extract_marker_strips_chromium_suffix() {
-        assert_eq!(extract_marker("CUA:42", "CUA:"), "CUA:42");
-        assert_eq!(extract_marker("CUA:42 - Microsoft Edge", "CUA:"), "CUA:42");
-        assert_eq!(extract_marker("CUA:42 - Google Chrome", "CUA:"), "CUA:42");
-        assert_eq!(extract_marker("Foo CUA:42 - Edge", "CUA:"), "CUA:42");
-        assert_eq!(
-            extract_marker("CUA_ERR:not defined - Edge", "CUA_ERR:"),
-            "CUA_ERR:not defined"
-        );
-    }
-
-    #[test]
-    fn extract_marker_preserves_dash_in_payload() {
-        // Payload "a - b" must NOT be truncated at the embedded " - ".
-        // (The previous `find(" - ")` implementation would return
-        // `CUA:"a` here — wrong.)
-        assert_eq!(
-            extract_marker("CUA:\"a - b\" - Microsoft Edge", "CUA:"),
-            "CUA:\"a - b\""
-        );
-        // No browser suffix present → keep the whole payload, even with
-        // a stray " - " in the middle.
-        assert_eq!(
-            extract_marker("CUA:\"foo - bar\"", "CUA:"),
-            "CUA:\"foo - bar\""
-        );
-        // The suffix must look like a known browser to be stripped —
-        // an arbitrary trailing " - X" stays in the payload.
-        assert_eq!(
-            extract_marker("CUA:result - notabrowser", "CUA:"),
-            "CUA:result - notabrowser"
-        );
     }
 }

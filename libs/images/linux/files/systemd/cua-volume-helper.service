@@ -1,0 +1,15 @@
+[Unit]
+Description=Cua Volume mount helper (FUSE at /volume for cua-spacesd)
+# cua-spacesd runs as the desktop user; this root service makes its Cua
+# Volume mount, only for uid 1000 and only on mount points that user owns.
+Before=cua-spacesd.service
+ConditionPathExists=/usr/local/bin/cua-spacesd
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cua-spacesd volume-helper --allow-uid 1000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

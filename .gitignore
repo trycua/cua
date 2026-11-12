@@ -96,8 +96,15 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+# The cua.env.v1 protobuf TypeScript the HTML5 viewer imports is generated
+# and committed (its drift gate is `pnpm check`).
+!/libs/cua/crates/cua-spacesd-html5/web/src/gen/cua/env/
+# The phone app's copy of those files (apps/cua-spaces-mobile `pnpm proto`;
+# the drift gate is `pnpm proto:check`) sits under an `env` folder too.
+!/apps/cua-spaces-mobile/src/data/live/gen/cua/env/
 # Git worktrees
 .worktrees/
+.pi/
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -218,3 +225,15 @@ docs/scripts/check-all-links.py
 docs/scripts/check-mdx-links.py
 # Local Windows RE scratch (downloaded PDBs, disassembly scripts)
 .re-windows/
+
+# Cua Driver Bench: raw run output stays out of git
+libs/cua-driver-bench/**/runs/
+libs/cua-driver-bench/**/results/
+# The bench task pack keeps its tasks in tasks/shared/ (the "shared" rule above would hide them)
+!libs/cua-driver-bench/taskpack/tasks/shared/
+
+# Source module of cua-spaces (Spaces.build), not build output.
+!libs/cua/crates/cua-spaces/src/build/
+# Agent worktrees: never commit them (git add -A would add them as gitlinks)
+.claude/worktrees/
+.bin-ci-target*/

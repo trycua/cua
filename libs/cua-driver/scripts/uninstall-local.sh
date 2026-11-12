@@ -3,17 +3,19 @@
 # cua-driver installation has different names and paths and is never touched.
 set -euo pipefail
 
-RESET_TCC=1
+# Opt in with --reset-permissions; the grant belongs to the signed app identity
+# and is kept by default.
+RESET_TCC=0
 FORCE=0
 VALIDATE_ONLY=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --keep-tcc) RESET_TCC=0 ;;
-        --reset-tcc) RESET_TCC=1 ;;
+        --reset-permissions|--reset-tcc) RESET_TCC=1 ;;
         --force) FORCE=1 ;;
         --validate-only) VALIDATE_ONLY=1 ;;
         --help|-h)
-            echo "Usage: $0 [--force] [--keep-tcc] [--validate-only]"
+            echo "Usage: $0 [--force] [--reset-permissions] [--validate-only]"
             exit 0
             ;;
         *) echo "error: unknown option: $1" >&2; exit 2 ;;
@@ -94,7 +96,15 @@ elif [[ "$OS" == "Linux" && -f "$SYSTEMD_UNIT" ]]; then
     rm -f "$SYSTEMD_UNIT"
     log "removed systemd user unit $SYSTEMD_UNIT"
 fi
-pkill -x cua-driver-local >/dev/null 2>&1 || true
+# See the note in _install-local-rust.sh: `pkill -x cua-driver-local` never
+# matches on Linux, because `-x` compares against the 15-char truncated
+# `comm` and the name is 16. Match argv[0], anchored so the launcher shells
+# that merely mention the path in their script text are left alone.
+for _daemon_bin in "$CLI_LINK" "$HOME_DIR/packages/current/cua-driver-local"; do
+    [ -n "$_daemon_bin" ] || continue
+    pkill -f "^${_daemon_bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+done
+unset _daemon_bin
 
 # Revoke only the local bundle's TCC rows, while LaunchServices can resolve it.
 if [[ "$OS" == "Darwin" && "$RESET_TCC" == "1" ]] && command -v tccutil >/dev/null 2>&1; then
@@ -127,6 +137,9 @@ for skill_link in \
     "$HOME/.agents/skills/cua-driver" \
     "$HOME/.openclaw/skills/cua-driver" \
     "$HOME/.config/opencode/skills/cua-driver" \
+    "$HOME/.gemini/config/skills/cua-driver" \
+    "$HOME/.gemini/antigravity/skills/cua-driver" \
+    "$HOME/.gemini/antigravity-cli/skills/cua-driver" \
     "$HOME/.gemini/skills/cua-driver" \
     "$HOME/.hermes/skills/cua-driver"; do
     if [[ -L "$skill_link" ]]; then

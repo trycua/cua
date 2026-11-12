@@ -1,0 +1,1256 @@
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "cua/daemon/v1/builds.proto";
+import "cua/daemon/v1/egress.proto";
+import "cua/daemon/v1/resources.proto";
+import "cua/env/v1/volume.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Spaces: sandboxes with Spaces features (cua-spacesd, streams, agents,
+// teleport) that the user works in interactively. The daemon hosts one
+// `cua_spaces::Spaces` runtime: the registry in `~/.cua/spaces.json`
+// (tokens in the 0600 `spaces-credentials.json`), Space creation in every
+// location, hotspots, and the Spaces MCP server (`CallSpaceTool`,
+// `cua daemon mcp`, `/mcp`).
+//
+// Verbs: `CreateSpace` / `DeleteSpace` create and delete the sandbox;
+// `AddSpace` / `RemoveSpace` register an existing machine and forget it
+// without touching it.
+service SpaceService {
+  // Adds an existing machine as a Space by address (`host:port`, a direct
+  // `http(s)://host:port`, or a sandbox ref such as `local:<name>`) after a
+  // `GetCapabilities` handshake.
+  rpc AddSpace(AddSpaceRequest) returns (AddSpaceResponse);
+  // Lists registered Spaces.
+  rpc ListSpaces(ListSpacesRequest) returns (ListSpacesResponse);
+  // Forgets a Space. Does not delete the underlying sandbox.
+  rpc RemoveSpace(RemoveSpaceRequest) returns (RemoveSpaceResponse);
+  // Lists the named volumes of Cua Volume (needs Cua Spaces).
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+  // Creates a named volume.
+  rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeResponse);
+  // Deletes a named volume and its files (history stays).
+  rpc DeleteVolume(DeleteVolumeRequest) returns (DeleteVolumeResponse);
+  // Resolves any accepted spelling (id, legacy id, URL, name) to a Space.
+  rpc ResolveSpace(ResolveSpaceRequest) returns (ResolveSpaceResponse);
+  // Deprecated: use `CreateSpace` with location "local".
+  rpc ProvisionLocalSpace(ProvisionLocalSpaceRequest) returns (ProvisionLocalSpaceResponse) {
+    option deprecated = true;
+  }
+  // Deprecated: use `DeleteSpace`.
+  rpc ReleaseSpace(ReleaseSpaceRequest) returns (ReleaseSpaceResponse) {
+    option deprecated = true;
+  }
+  // Creates a Space (a sandbox, registered as a Space) where `location`
+  // says, with the same location / kind / runtime model as
+  // `SandboxService.CreateSandbox`.
+  rpc CreateSpace(CreateSpaceRequest) returns (CreateSpaceResponse);
+  // `CreateSpace`, streaming what the create is doing: progress events
+  // (pulling the image, booting, waiting for cua-spacesd, connecting) in
+  // order, then exactly one `result`. A failed create ends the stream with
+  // its status after the progress it made.
+  rpc CreateSpaceStream(CreateSpaceStreamRequest) returns (stream CreateSpaceStreamResponse);
+  // Cancels a create that is still running, found by the caller's
+  // `create_id`, the id the Space will have (every progress event carries
+  // it in `space`) or its name: the work in flight stops (an image
+  // download, a boot, a relay registration) and what the create
+  // made is removed (its VM or container and disks, its
+  // relay machine, its registry entry). Nothing that existed before is
+  // touched; finished image downloads stay cached so the next create
+  // resumes. Returns once the clean-up is done; the create itself ends with
+  // DAEMON_ERROR_REASON_CANCELLED. Idempotent, and works for a create
+  // another process runs or one a daemon restart cut off.
+  rpc CancelCreateSpace(CancelCreateSpaceRequest) returns (CancelCreateSpaceResponse);
+  // The GPU options each runtime of a location offers on this host (the
+  // wizard's GPU row; `gpu` of `CreateSpace`).
+  rpc GetGpuSupport(GetGpuSupportRequest) returns (GetGpuSupportResponse);
+  // Deletes a Space's sandbox and forgets it. A Space added by address
+  // (`direct:`, `relay:`) is only forgotten: cua did not create it. Its
+  // child Spaces are deleted first, unless `keep_children`.
+  rpc DeleteSpace(DeleteSpaceRequest) returns (DeleteSpaceResponse);
+  // Deletes several Spaces (at most 3 at a time), turning running ones off
+  // first. One result per Space, in order; one failure never stops the
+  // rest.
+  rpc DeleteSpaces(DeleteSpacesRequest) returns (DeleteSpacesResponse);
+  // Takes this account off Spaces shared with it (through the relay): a
+  // direct share ends, a team's Space leaves this account's list. One
+  // result per Space, in order.
+  rpc LeaveSpaces(LeaveSpacesRequest) returns (LeaveSpacesResponse);
+  // Gives a Space a new name; its id stays the same. Only its owner can:
+  // a Space shared with you is refused. A Space that is a machine on the
+  // relay (shared, or one of your computers provides it) is renamed there
+  // too, so your other devices and the people it is shared with see the
+  // new name.
+  rpc RenameSpace(RenameSpaceRequest) returns (RenameSpaceResponse);
+  // Starts Space `name`, a fork of local sandbox or checkpoint `source`
+  // (with its memory when it is running; a QEMU checkpoint's forks share
+  // its RAM copy-on-write), once its cua-spacesd answers. The one fork path:
+  // `Space.fork`, `Spaces.fork` and batched forks all end here.
+  rpc ForkSpace(ForkSpaceRequest) returns (ForkSpaceResponse);
+  // Builds a Dockerfile or steps into pinned checkpoints, streaming progress
+  // then one `result`. Fork it with `ForkSpace`.
+  rpc BuildSpace(BuildSpaceRequest) returns (stream BuildSpaceResponse);
+  // The builds.
+  rpc ListBuilds(ListBuildsRequest) returns (ListBuildsResponse);
+  // Deletes a build.
+  rpc DeleteBuild(DeleteBuildRequest) returns (DeleteBuildResponse);
+  // Gives a Space a lifetime of `duration` from now (replacing an earlier
+  // one). When it passes, this daemon deletes the Space (or turns it off,
+  // `on_expire` "suspend"), whether or not the client is still running.
+  rpc SetSpaceLifetime(SetSpaceLifetimeRequest) returns (SetSpaceLifetimeResponse);
+  // Replaces a Space's egress policy (empty removes it).
+  rpc SetSpaceEgress(SetSpaceEgressRequest) returns (SetSpaceEgressResponse);
+  // A Space's network: its settings, what they open, where they are
+  // enforced (or why its network is cut), and what is always blocked.
+  rpc GetSpaceNetwork(GetSpaceNetworkRequest) returns (GetSpaceNetworkResponse);
+  // Replaces a Space's network settings (a child's stay within its
+  // parent's unless `widen`).
+  rpc SetSpaceNetwork(SetSpaceNetworkRequest) returns (SetSpaceNetworkResponse);
+  // What a Space tried to reach and its network refused, most recent first.
+  rpc GetSpaceNetworkLog(GetSpaceNetworkLogRequest) returns (GetSpaceNetworkLogResponse);
+  // Sets when the Space's viewers may move the clipboard between this
+  // computer and the Space ("viewing", "ask" or "off").
+  rpc SetSpaceClipboard(SetSpaceClipboardRequest) returns (SetSpaceClipboardResponse);
+  // Sets what the Space sees of the Cua Volume ("own" or "off"), now.
+  rpc SetSpaceVolume(SetSpaceVolumeRequest) returns (SetSpaceVolumeResponse);
+  // Lets a Space make child Spaces of its own, or stops it. Turning it off
+  // ends the Space's spawn capability at once; children it already made
+  // keep running until they are deleted or their lifetime ends.
+  rpc SetSpaceChildren(SetSpaceChildrenRequest) returns (SetSpaceChildrenResponse);
+  // A tree's budget (kept on its top-level Space) and what its children
+  // use now. `space` may be any Space of the tree.
+  rpc GetTreeBudget(GetTreeBudgetRequest) returns (GetTreeBudgetResponse);
+  // Sets a tree's budget: how many child Spaces, vCPUs and memory its
+  // children may hold at once, and what they may cost. Unset limits take
+  // the defaults; all unset removes the budget.
+  rpc SetTreeBudget(SetTreeBudgetRequest) returns (SetTreeBudgetResponse);
+  // The windows other Spaces show in `space`'s Stream section
+  // (`stream_space_window` with `into`), as window rows with an `origin`.
+  // Entries whose window closed or whose origin Space stopped are dropped.
+  rpc ListStreamWindows(ListStreamWindowsRequest) returns (ListStreamWindowsResponse);
+  // Opens one of those windows (its `window_id` from ListStreamWindows) and
+  // decides the route at open time: straight from the origin Space when the
+  // caller owns it or holds a grant on it, else through this daemon's media
+  // bridge. The ticket is scoped to the origin and the window.
+  rpc OpenStreamEntry(OpenStreamEntryRequest) returns (OpenStreamEntryResponse);
+  // Child Spaces whose parent is gone, or not this machine's to judge: the
+  // ones it ends after a grace period (only on proof the parent is gone)
+  // and the ones it only lists.
+  rpc ListOrphans(ListOrphansRequest) returns (ListOrphansResponse);
+  // Connects to a registered Space and returns a loopback env passthrough
+  // (`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
+  // so a client runs every `cua.env.v1` call and media WebSocket through the
+  // daemon without seeing the Space's token.
+  rpc ConnectSpace(ConnectSpaceRequest) returns (ConnectSpaceResponse);
+  // Lists the Spaces MCP tools (`tools/list` result as JSON).
+  rpc ListSpaceTools(ListSpaceToolsRequest) returns (ListSpaceToolsResponse);
+  // Calls one Spaces MCP tool (the same implementation `cua daemon mcp` and
+  // `/mcp` serve).
+  rpc CallSpaceTool(CallSpaceToolRequest) returns (CallSpaceToolResponse);
+  // Your machines that provide Spaces (the account's relay hosts and the
+  // hosts added by their Tailscale or LAN address), each asked for its
+  // limits: what `CreateSpace` takes as `on="host:<id>"` (the New Space
+  // wizard's Run on menu). One that does not answer is listed offline when
+  // it provided a Space before.
+  rpc ListHosts(ListHostsRequest) returns (ListHostsResponse);
+  // The Space's latest thumbnail (a small JPEG of its primary display)
+  // from the daemon's cache, which every client on this machine shares:
+  // the cached image when it is younger than `max_age`, else a fresh
+  // capture through cua-spacesd (the cached one again, with its older
+  // `captured_at`, when the capture fails). Asking keeps the daemon
+  // refreshing running Spaces' thumbnails in the background for a while.
+  rpc GetSpaceThumbnail(GetSpaceThumbnailRequest) returns (GetSpaceThumbnailResponse);
+  // Batch runs on your machines (`cua sb run`): one request to this
+  // machine's own coordinator (`target` `local`: work that never leaves
+  // this machine) or to whichever of the account's machines coordinates
+  // them (`pool`). `method`, the JSON params and the JSON answer are the
+  // Cua Spaces pool requests (`submit`, `run`, `runs`, `jobs`, `job`,
+  // `cancel_run`, `cancel_job`, `status`); a daemon without them answers
+  // UNIMPLEMENTED.
+  rpc PoolRequest(PoolRequestRequest) returns (PoolRequestResponse);
+  // Which way the daemon's connection to a Space goes now (see
+  // `GetSpaceRouteResponse`). Connects first when the daemon has no
+  // connection to it yet.
+  rpc GetSpaceRoute(GetSpaceRouteRequest) returns (GetSpaceRouteResponse);
+  // What this computer, its extra Spaces and your other computers use now:
+  // processor, memory and disk, as one snapshot. The daemon's single
+  // sampler measures it; a snapshot a few seconds old is returned as it is.
+  // With `visible`, the call also says a window shows the numbers for the
+  // next 30 seconds, so the sampler runs every 10 seconds (every 5 minutes
+  // otherwise). Numbers only: no names, paths or processes.
+  rpc GetResources(GetResourcesRequest) returns (GetResourcesResponse);
+  // The same numbers as a stream: one snapshot first, then an update with
+  // only the entries that changed by more than 1 point or 256 MB, and a
+  // `low_disk` event whenever the free-disk warning level changes
+  // (including back to `ok`). A hidden watcher (`visible` false) is
+  // sampled every 5 minutes and still hears `low_disk`, for the menu bar.
+  // Cancel the stream to stop; call again with the other `visible` to
+  // switch.
+  rpc WatchResources(WatchResourcesRequest) returns (stream WatchResourcesResponse);
+  // Says when the Space list changed, so a client reads it again
+  // (`ListSpaces`) when something happened instead of on a timer: one
+  // message at once (the generation now), then one per change. This
+  // computer's Spaces are announced within a second; your other computers
+  // on the mesh within about a second of connecting or going away (the mesh
+  // coordinator pushes it); computers not on the mesh within 10 seconds.
+  // Cancel the stream to stop.
+  rpc WatchSpaces(WatchSpacesRequest) returns (stream WatchSpacesResponse);
+}
+
+// `SpaceService.WatchSpaces` takes no arguments.
+message WatchSpacesRequest {}
+
+// One event of `SpaceService.WatchSpaces`.
+message WatchSpacesResponse {
+  // Moves on every change of the list (only increases while the daemon
+  // runs; a new daemon starts again from 0).
+  uint64 generation = 1;
+}
+
+// A registered Space.
+message Space {
+  // Space id, for example "space://direct/10.0.0.5:3211".
+  string id = 1;
+  // Display name.
+  string name = 2;
+  // spacesd version reported at the last handshake.
+  string spacesd_version = 3;
+  // Supported feature names reported at the last handshake.
+  repeated string features = 4;
+  // When it was added.
+  google.protobuf.Timestamp added_at = 5;
+  // Guest OS family at the last handshake (GetCapabilities): "linux",
+  // "macos" or "windows"; empty when not reported.
+  string os = 6;
+  // Services the Space declares (never "env"), for example "mcp". A Space
+  // without cua-spacesd has an empty feature list and reaches these
+  // through generic MCP (`list_tools` / `call_tool` with `service`).
+  repeated string services = 7;
+  // Guest OS product or distribution at the last handshake
+  // (GetCapabilities `os.name`), for example "Ubuntu" or "macOS"; empty
+  // when not reported. The Spaces app picks the OS icon from it.
+  string os_name = 8;
+  // The guest's full OS string at the last handshake (GetCapabilities
+  // `os.pretty_name`), for example "Ubuntu 24.04.3 LTS"; empty when the
+  // driver does not report one.
+  string os_pretty_name = 9;
+  // The image the sandbox runs, as requested (local Spaces), for
+  // example "ghcr.io/trycua/linux:24.04"; empty when unknown (a Space added
+  // by address).
+  string image = 10;
+  // The digest of the variant that runs ("sha256:..."), when known.
+  string image_digest = 11;
+  // Container or virtual machine: "container" or "vm" (the guest's runtime
+  // at the last handshake, else the local sandbox's record); empty when
+  // unknown.
+  string kind = 12;
+  // The guest's CPU architecture: "arm64" or "amd64" (GetCapabilities
+  // `arch` at the last handshake, else the local sandbox's record); empty
+  // when unknown.
+  string arch = 13;
+  // For a Space a host provides (`relay:<machine>` created with
+  // `on="host:<machine>"`): the relay machine id of that host; for one a
+  // host added by its direct address created (`direct:<addr>:<port>`):
+  // that host's Space id (`direct:<addr>:<port>`); empty otherwise. Lists
+  // group these Spaces under their host.
+  string host = 14;
+  // The display name of `host`, when known.
+  string host_name = 15;
+  // How the Space turns off and on again (`stop_space` / `start_space`):
+  // "suspend" (its memory is kept), "stop" (its disk is kept), or empty
+  // when it cannot. Filled in when listed, not stored.
+  string power = 16;
+  // "running", "suspended" or "stopped" as cua last recorded it; empty when
+  // unknown. Filled in when listed, not stored.
+  string power_state = 17;
+  // A Space in the owner's own cloud: the provider ("aws", "gcp", "hetzner",
+  // "modal"); empty otherwise.
+  string cloud = 18;
+  // Where it runs, for people ("AWS · us-west-2"); empty otherwise.
+  string cloud_place = 19;
+  // How this device would delete it permanently: "here" (this cua home
+  // created it and records it), "host:<machine>" (ask the device that
+  // created it, through the relay) or "elsewhere" (only from the device
+  // that created it). Empty for other Spaces.
+  string cloud_delete = 20;
+  // Why a local Space stopped without being asked to, in plain words: "out
+  // of memory", "killed", "exited" or "exited with code N". Empty
+  // otherwise, and once it is started again. Filled in when listed, not
+  // stored.
+  string stop_reason = 21;
+  // A durable Space (`CreateSpaceRequest.durable`): its name. It is
+  // created again on another of your machines when its machine goes away,
+  // and keeps this name. Empty for other Spaces.
+  // 21 is stop_reason (public); durable moved to 27 in the sync.
+  string durable = 27;
+  // Labels set at create (`CreateSpaceRequest.labels`), kept by the device
+  // that created it.
+  map<string, string> labels = 22;
+  // When the Space ends (Unix seconds); 0 without a lifetime.
+  int64 expires_at_unix = 23;
+  // What happens then: "delete" or "suspend"; empty without a lifetime.
+  string on_expire = 24;
+  // When it was created (Unix seconds; when added, for a Space added by
+  // address); 0 when unknown.
+  int64 created_at_unix = 25;
+  // The egress policy last set on the Space; unset when it has none.
+  EgressPolicy egress = 26;
+  // Where `egress` is enforced: "host"; empty without one.
+  string egress_enforced = 31;
+  // Named volumes mounted in the Space (`CreateSpaceRequest.volumes`).
+  repeated cua.env.v1.VolumeMount volumes = 30;
+  // JSON image configuration of a Space made from a build.
+  string image_config = 28;
+  // A Space that is a machine on the relay: who owns it and who else has
+  // it, as this account sees it. Unset for other Spaces. Filled in when
+  // listed, not stored.
+  SpaceSharing sharing = 32;
+  // The name it was given with `RenameSpace`; empty when it keeps the one
+  // it was created with (`name`). Apps show this one when it is set. A
+  // Space that is a machine on the relay is renamed there, so its `name`
+  // changes instead.
+  string display_name = 33;
+  // Its network settings. Unset for a Space created before they existed
+  // (it gets them on its next start).
+  NetworkSettings network_settings = 34;
+  // Why its network is not what was asked, in plain words (a runtime that
+  // can't protect it yet started it without network). Empty otherwise.
+  string network_note = 35;
+  // The Space it was created from (a child), by id; empty for a top-level
+  // Space.
+  string parent = 36;
+  // The top-level Space of its tree, by id; empty for a top-level Space.
+  string root = 37;
+  // Its network settings changed by an update (an old Space moved to the
+  // new defaults); apps and the CLI say so once.
+  bool network_notice_pending = 38;
+  // How far below its tree's top-level Space it is: 0 for a top-level
+  // Space, 1 for its children, ...
+  uint32 depth = 39;
+  // How it was made: "user", "child" or "fork-batch:<id>".
+  string origin = 40;
+  // When viewers may move the clipboard between this computer and the
+  // Space: "viewing" (only while you're viewing, the default), "ask" or
+  // "off". Empty from a daemon that predates the setting, which means
+  // "viewing".
+  string clipboard = 41;
+  // What the Space sees of the Cua Volume: "own" (its own folder, the
+  // default) or "off". Empty means "own".
+  string volume = 42;
+  // The Space may make child Spaces of its own (`SetSpaceChildren`): `cua`,
+  // the SDKs and the agent's tools in it create, list and delete Spaces
+  // that belong to it, on a channel only it can reach.
+  bool children = 43;
+  // A VM's address in its tree (198.19.0.0/16), where the other members of
+  // its tree reach it; empty otherwise.
+  string tree_address = 44;
+}
+
+// Request for `SpaceService.SetSpaceClipboard`.
+message SetSpaceClipboardRequest {
+  // Space.
+  string space = 1;
+  // "viewing", "ask" or "off".
+  string clipboard = 2;
+}
+
+// Response for `SpaceService.SetSpaceClipboard`.
+message SetSpaceClipboardResponse {}
+
+// Request for `SpaceService.SetSpaceVolume`.
+message SetSpaceVolumeRequest {
+  // Space.
+  string space = 1;
+  // "own" (its own folder) or "off".
+  string volume = 2;
+}
+
+// Response for `SpaceService.SetSpaceVolume`.
+message SetSpaceVolumeResponse {}
+
+// Who a Space belongs to and who else has it (`Space.sharing`).
+message SpaceSharing {
+  // The owner's account id.
+  string owner_id = 1;
+  // The owner's email, when known.
+  string owner_email = 2;
+  // The owner's display name, when known.
+  string owner_name = 3;
+  // What this account may do: "owner", "editor" or "viewer".
+  string role = 4;
+  // The team this account reaches it through (its key), when it is a
+  // team's and not shared with this account directly.
+  string team = 5;
+  // That team's display name (its key when the name is not known).
+  string team_name = 6;
+  // Owner view: accounts (emails or ids) that may use it.
+  repeated string editors = 7;
+  // Owner view: accounts that may only watch.
+  repeated string viewers = 8;
+  // Owner view: the teams it is a machine of.
+  repeated SpaceTeamShare teams = 9;
+}
+
+// A team a Space is shared with.
+message SpaceTeamShare {
+  // The team's key (org id).
+  string key = 1;
+  // Its display name.
+  string name = 2;
+  // "editor" or "viewer".
+  string role = 3;
+}
+
+// Request for `SpaceService.AddSpace`.
+message AddSpaceRequest {
+  // Space URL.
+  string url = 1;
+  // spacesd token (direct Spaces).
+  string token = 2;
+  // Display name. Empty derives one.
+  string name = 3;
+  // When `url` is not a cua-spacesd but an MCP endpoint: the service
+  // name it is registered under. Empty means "mcp".
+  string service = 4;
+}
+
+// Response for `SpaceService.AddSpace`.
+message AddSpaceResponse {
+  // The Space.
+  Space space = 1;
+}
+
+// Request for `SpaceService.ListSpaces`.
+message ListSpacesRequest {
+  // Answer with what is known now: this machine's Spaces at once, the
+  // account's other computers as far as they answered within a moment
+  // (the response says how far it got). Without it the daemon waits for
+  // the relay and fails when it cannot be read.
+  bool known_now = 1;
+}
+
+// Response for `SpaceService.ListSpaces`.
+message ListSpacesResponse {
+  // Spaces.
+  repeated Space spaces = 1;
+  // `known_now` only: some of the account's computers have not answered
+  // yet, so the list may grow (an empty one is not "no Spaces").
+  bool incomplete = 2;
+  // `known_now` only: how many computers are still being reached (0 when
+  // unknown).
+  uint32 reaching = 3;
+  // `known_now` only: the other computers' rows are the last known ones,
+  // not yet confirmed by the relay.
+  bool stale = 4;
+  // `known_now` only: why the account's computers could not be read, when
+  // they could not.
+  string notice = 5;
+  // `known_now` only: Spaces your other computers are creating now, from
+  // what each published in its relay machine record (CUA-2349).
+  repeated CreatingSpace creating = 6;
+}
+
+// A Space another of your computers is creating.
+message CreatingSpace {
+  // The computer's relay machine id.
+  string machine_id = 1;
+  // The computer's name.
+  string machine_name = 2;
+  // The Space's name.
+  string name = 3;
+  // `macos`, `linux`, `windows`, or empty when unknown.
+  string os = 4;
+  // The create's phase (`preparing`, `pulling`, `booting`, ...).
+  string phase = 5;
+  // How far along the whole create is, 0 to 100.
+  uint32 percent = 6;
+  // When the computer published it, unix ms.
+  uint64 updated_at_ms = 7;
+}
+
+// A named volume: the folder `volumes/<name>/` of Cua Volume.
+message NamedVolume {
+  // Volume name.
+  string name = 1;
+  // Ids of the Spaces that mount it.
+  repeated string mounted_in = 2;
+}
+
+// Request for `SpaceService.ListVolumes`.
+message ListVolumesRequest {}
+
+// Response for `SpaceService.ListVolumes`.
+message ListVolumesResponse {
+  // The volumes, by name.
+  repeated NamedVolume volumes = 1;
+}
+
+// Request for `SpaceService.CreateVolume`.
+message CreateVolumeRequest {
+  // 1-63 of `a-z`, `0-9`, `.`, `_`, `-`. Fails when it exists.
+  string name = 1;
+}
+
+// Response for `SpaceService.CreateVolume`.
+message CreateVolumeResponse {
+  // The new volume.
+  NamedVolume volume = 1;
+}
+
+// Request for `SpaceService.DeleteVolume`.
+message DeleteVolumeRequest {
+  // Volume name.
+  string name = 1;
+  // Delete although Spaces mount it.
+  bool force = 2;
+}
+
+// Response for `SpaceService.DeleteVolume`.
+message DeleteVolumeResponse {
+  // Files removed.
+  uint64 files = 1;
+}
+
+// Request for `SpaceService.RemoveSpace`.
+message RemoveSpaceRequest {
+  // Space id.
+  string id = 1;
+}
+
+// Response for `SpaceService.RemoveSpace`.
+message RemoveSpaceResponse {}
+
+// Request for `SpaceService.ResolveSpace`.
+message ResolveSpaceRequest {
+  // Id, legacy id, URL or display name.
+  string space = 1;
+}
+
+// Response for `SpaceService.ResolveSpace`.
+message ResolveSpaceResponse {
+  // The registered Space.
+  Space space = 1;
+}
+
+// Request for `SpaceService.ProvisionLocalSpace`.
+message ProvisionLocalSpaceRequest {
+  // Image. Empty uses the default Spaces image.
+  string image = 1;
+  // Name. Empty generates one.
+  string name = 2;
+  // vCPUs (0 = 2).
+  uint32 cpus = 3;
+  // Memory in MiB (0 = 4096).
+  uint64 memory_mb = 4;
+  // Provisioning budget (default 600 s).
+  google.protobuf.Duration timeout = 5;
+  // Entrypoint override. Empty keeps the image's.
+  repeated string command = 6;
+  // Guest environment.
+  map<string, string> env = 7;
+  // Named services (name -> guest port), for example {"mcp": 8765}.
+  map<string, uint32> services = 8;
+  // Whether the image runs cua-spacesd. Unset: yes for the Spaces
+  // images, no for any other image.
+  optional bool spacesd = 9;
+}
+
+// Response for `SpaceService.ProvisionLocalSpace`.
+message ProvisionLocalSpaceResponse {
+  // The Space.
+  Space space = 1;
+}
+
+// Request for `SpaceService.ReleaseSpace`.
+message ReleaseSpaceRequest {
+  // Space.
+  string space = 1;
+}
+
+// Response for `SpaceService.ReleaseSpace`.
+message ReleaseSpaceResponse {
+  // What happened, for humans.
+  string message = 1;
+}
+
+// Request for `SpaceService.ConnectSpace`.
+message ConnectSpaceRequest {
+  // Space.
+  string space = 1;
+}
+
+// Response for `SpaceService.ConnectSpace`.
+message ConnectSpaceResponse {
+  // The Space.
+  Space space = 1;
+  // env passthrough base URL (speaks `cua.env.v1`, gRPC and gRPC-Web, and
+  // relays the `/media` and `/tunnel` WebSockets).
+  string env_url = 2;
+  // Bearer for `env_url` (the daemon's loopback token).
+  string token = 3;
+  // `cua.env.v1.GetCapabilitiesResponse` of the Space, protobuf-encoded.
+  bytes capabilities = 4;
+  // The Space's declared services through the daemon (same bearer as
+  // `env_url`). `env_url` is empty when the Space runs no cua-spacesd.
+  repeated SpaceServiceEndpoint services = 5;
+  // Which way the daemon's connection to the Space went when connecting,
+  // as `GetSpaceRouteResponse.route` describes it.
+  string route = 6;
+  // Host file of the bulk lane to this Space's guest on the daemon's
+  // machine (a Linux VM's shared disk), or empty. A client on that machine
+  // moves large files through it; the client proves the file is this
+  // guest's before it does (see `cua.env.v1.BulkLane`).
+  string bulk = 7;
+  // What carries the daemon's connection, as
+  // `GetSpaceRouteResponse.transport` says.
+  string transport = 8;
+  // Why it took the relay's HTTPS path although the mesh was wanted, as
+  // `GetSpaceRouteResponse.fallback_reason` says.
+  string fallback_reason = 9;
+}
+
+// Request for `SpaceService.GetSpaceRoute`.
+message GetSpaceRouteRequest {
+  // Space.
+  string space = 1;
+}
+
+// Response for `SpaceService.GetSpaceRoute`.
+message GetSpaceRouteResponse {
+  // One line: `local <host:port>` (a Space on this machine),
+  // `direct <address>`, `relay <relay URL>` (the relay's HTTPS path),
+  // `mesh direct <ip:port> rtt <ms> ms` (end to end over the mesh, straight
+  // to the machine), `mesh relayed` (over the mesh, through the relay as
+  // ciphertext) or `cloud`. Empty when the Space runs no cua-spacesd.
+  string route = 1;
+  // Whether calls go straight to the machine: `local`, `direct` or
+  // `mesh direct`.
+  bool direct = 2;
+  // What carries the connection: `local`, `direct`, `mesh` (end to end),
+  // `relay_https` (the relay's HTTPS path: the relay can read the session
+  // in transit), `cloud`, or empty when the Space runs no cua-spacesd.
+  // For a badge.
+  string transport = 3;
+  // Why the connection took the relay's HTTPS path although the mesh was
+  // wanted (the relay or the computer has no mesh, or the mesh did not
+  // answer). Empty on the mesh, and when the HTTPS path was chosen
+  // (`CUA_MESH=off`).
+  string fallback_reason = 4;
+}
+
+// A declared service of a Space, reachable through the daemon.
+message SpaceServiceEndpoint {
+  // Service name, for example "mcp".
+  string name = 1;
+  // Base URL: requests to `<url><path>` reach `<path>` on the service.
+  string url = 2;
+  // Its MCP endpoint path, for example "/mcp".
+  string mcp_path = 3;
+}
+
+// Request for `SpaceService.ListSpaceTools`.
+message ListSpaceToolsRequest {}
+
+// Response for `SpaceService.ListSpaceTools`.
+message ListSpaceToolsResponse {
+  // MCP `tools/list` result as JSON.
+  string tools_json = 1;
+}
+
+// Request for `SpaceService.CallSpaceTool`.
+message CallSpaceToolRequest {
+  // Tool name from the Spaces contract.
+  string name = 1;
+  // Arguments as a JSON object. Empty means `{}`.
+  string arguments_json = 2;
+}
+
+// Response for `SpaceService.CallSpaceTool`.
+message CallSpaceToolResponse {
+  // MCP content parts as a JSON array.
+  string content_json = 1;
+  // MCP structured content as JSON, when present.
+  string structured_json = 2;
+  // The call failed as a tool error.
+  bool is_error = 3;
+  // The result's `_meta` as JSON, when present (forwarded verbatim from an
+  // in-Space MCP service).
+  string meta_json = 4;
+}
+
+// Response for `SpaceService.CreateSpace`.
+message CreateSpaceResponse {
+  // The Space (with `wait = false`: only its id).
+  Space space = 1;
+  // "ready", or "starting" with `wait = false`.
+  string phase = 2;
+  // `reuse` returned an existing Space.
+  bool reused = 3;
+  // The network applied: `none` or empty.
+  string network = 4;
+}
+
+// One message of `SpaceService.CreateSpaceStream`.
+message CreateSpaceStreamResponse {
+  // Progress, or the result.
+  oneof event {
+    // What the create is doing now.
+    CreateSpaceProgress progress = 1;
+    // The created Space (the last message).
+    CreateSpaceResponse result = 2;
+  }
+}
+
+// Request for `SpaceService.CancelCreateSpace`.
+message CancelCreateSpaceRequest {
+  // The create's `create_id`, the id the Space will have, or its name.
+  string space = 1;
+}
+
+// Response for `SpaceService.CancelCreateSpace`.
+message CancelCreateSpaceResponse {
+  // The Space id the create had, when known.
+  string id = 1;
+  // "cancelled", "not_creating" (nothing by that key is running) or
+  // "already_created" (it finished; delete it instead).
+  string state = 2;
+  // What was removed and what stays, for people.
+  string message = 3;
+}
+
+// Request for `SpaceService.SetSpaceLifetime`.
+message SetSpaceLifetimeRequest {
+  // Space.
+  string space = 1;
+  // How long from now. Zero ends it on the daemon's next check.
+  google.protobuf.Duration duration = 2;
+  // `delete` (default) or `suspend`. Empty keeps the Space's current choice.
+  string on_expire = 3;
+}
+
+// Response for `SpaceService.SetSpaceLifetime`.
+message SetSpaceLifetimeResponse {
+  // When the lifetime ends.
+  google.protobuf.Timestamp expires_at = 1;
+}
+
+// Request for `SpaceService.DeleteSpace`.
+message DeleteSpaceRequest {
+  // Space.
+  string space = 1;
+  // Keep its child Spaces: they become top-level Spaces and keep running.
+  // Unset: they are deleted first.
+  bool keep_children = 2;
+}
+
+// Response for `SpaceService.DeleteSpace`.
+message DeleteSpaceResponse {
+  // What happened, for humans.
+  string message = 1;
+}
+
+// Request for `SpaceService.DeleteSpaces`.
+message DeleteSpacesRequest {
+  // Space ids or names.
+  repeated string spaces = 1;
+}
+
+// The outcome for one Space of `DeleteSpaces` or `LeaveSpaces`.
+message SpaceBulkResult {
+  // The Space as asked.
+  string space = 1;
+  // It went through.
+  bool ok = 2;
+  // Why not, in plain words; empty when ok.
+  string error = 3;
+  // What happened, for humans.
+  string message = 4;
+}
+
+// Response for `SpaceService.DeleteSpaces`.
+message DeleteSpacesResponse {
+  // One per Space asked, in order.
+  repeated SpaceBulkResult results = 1;
+}
+
+// Request for `SpaceService.LeaveSpaces`.
+message LeaveSpacesRequest {
+  // Space ids or names.
+  repeated string spaces = 1;
+}
+
+// Response for `SpaceService.LeaveSpaces`.
+message LeaveSpacesResponse {
+  // One per Space asked, in order.
+  repeated SpaceBulkResult results = 1;
+}
+
+// Request for `SpaceService.RenameSpace`.
+message RenameSpaceRequest {
+  // Space id or name.
+  string space = 1;
+  // The new name: lowercase letters, digits and dashes, starting and
+  // ending with a letter or digit, at most 63.
+  string name = 2;
+}
+
+// Response for `SpaceService.RenameSpace`.
+message RenameSpaceResponse {
+  // The Space as it is listed now.
+  Space space = 1;
+}
+
+// Request for `SpaceService.ListHosts`.
+message ListHostsRequest {}
+
+// One limit of a host and how much of it is used.
+message SpacesHostLimit {
+  // `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
+  // Mac).
+  string resource = 1;
+  // In use now.
+  uint32 used = 2;
+  // The limit (0: none).
+  uint32 limit = 3;
+  // Why the limit exists, for people.
+  string reason = 4;
+}
+
+// One of your machines that provides Spaces.
+message SpacesHost {
+  // What `on="host:<id>"` takes: the relay machine id, or the name a
+  // direct host was added as.
+  string id = 1;
+  // Its name.
+  string name = 2;
+  // `relay` or `direct`.
+  string via = 3;
+  // It answered.
+  bool online = 4;
+  // Its operating system (`macos`, `linux`, `windows`), when it answered.
+  string os = 5;
+  // Its limits, when it answered.
+  repeated SpacesHostLimit limits = 6;
+  // How loaded it is, when it answered and reports it.
+  SpacesHostLoad load = 7;
+}
+
+// What a host offers and how much of it is free (its job runner's view).
+message SpacesHostLoad {
+  // CPU it offers, in thousandths.
+  uint32 millicpus_total = 1;
+  // Of that, free.
+  uint32 millicpus_free = 2;
+  // Memory it offers (MiB).
+  uint64 memory_total_mb = 3;
+  // Of that, free.
+  uint64 memory_free_mb = 4;
+  // Spaces running there (provided Spaces and jobs).
+  uint32 spaces = 5;
+  // Why it takes nothing now (empty: it does).
+  string problem = 6;
+  // Kinds it creates.
+  repeated string kinds = 7;
+}
+
+// Request for `SpaceService.PoolRequest`.
+message PoolRequestRequest {
+  // `local` or `pool`.
+  string target = 1;
+  // The request.
+  string method = 2;
+  // Its params, JSON.
+  string params_json = 3;
+}
+
+// Response for `SpaceService.PoolRequest`.
+message PoolRequestResponse {
+  // HTTP-like status (200 when it worked).
+  uint32 status = 1;
+  // The answer, JSON.
+  string body_json = 2;
+}
+
+// Response for `SpaceService.ListHosts`.
+message ListHostsResponse {
+  // In order: relay hosts, then direct ones.
+  repeated SpacesHost hosts = 1;
+}
+
+// Request for `SpaceService.GetSpaceThumbnail`.
+message GetSpaceThumbnailRequest {
+  // Space.
+  string space = 1;
+  // How old a cached thumbnail may be (unset: any age; zero: always
+  // capture).
+  google.protobuf.Duration max_age = 2;
+}
+
+// Response for `SpaceService.GetSpaceThumbnail`.
+message GetSpaceThumbnailResponse {
+  // Encoded image.
+  bytes image = 1;
+  // "jpeg".
+  string format = 2;
+  // Pixel width.
+  uint32 width = 3;
+  // Pixel height.
+  uint32 height = 4;
+  // When it was captured.
+  google.protobuf.Timestamp captured_at = 5;
+}
+
+// Request for `SpaceService.ForkSpace`.
+message ForkSpaceRequest {
+  // A local sandbox (running or stopped) or a checkpoint.
+  string source = 1;
+  // The new Space's name (empty: `<source>-<random>`).
+  string name = 2;
+}
+
+// Response for `SpaceService.ForkSpace`.
+message ForkSpaceResponse {
+  // The fork, connected.
+  Space space = 1;
+}
+
+// Request for `SpaceService.CreateSpace`.
+message CreateSpaceRequest {
+  // Image. Empty uses the canonical Linux image.
+  string image = 1;
+  // Where it runs: "local" or a registered provider. Empty uses
+  // the default (`default.on` in the config, `CUA_DEFAULT_ON`, else
+  // "local"); clients resolve the default on their side.
+  string location = 2;
+  // What kind of machine: "auto" (empty), "container" or "vm".
+  string kind = 3;
+  // Which engine: "auto" (empty), or one the location offers for the kind
+  // ("gvisor", "runc", "qemu", "lume" locally).
+  string runtime = 4;
+  // Name. Empty generates `space-<hex>`.
+  string name = 5;
+  // vCPUs (0 = the default, 2).
+  uint32 cpus = 6;
+  // Memory in MiB (0 = the default, 4096).
+  uint64 memory_mb = 7;
+  // Readiness budget (default 600 s).
+  google.protobuf.Duration timeout = 8;
+  // Wait until the Space is ready (default true when unset). With false the
+  // response carries only its id and phase "starting".
+  optional bool wait = 9;
+  // Return a reachable registered Space with the same image, location,
+  // kind and runtime instead of creating one (get-or-create).
+  bool reuse = 10;
+  // Entrypoint override. Empty keeps the image's.
+  repeated string command = 11;
+  // Guest environment.
+  map<string, string> env = 12;
+  // Named services (name -> guest port), for example {"mcp": 8765}.
+  map<string, uint32> services = 13;
+  // Whether the image runs cua-spacesd. Unset: yes for the canonical
+  // images and, injected, for any image on a local container or microVM.
+  // False runs the image as it is.
+  optional bool spacesd = 14;
+  // Grow the VM's disk to this many GiB (local VMs only; 0 keeps the
+  // image's size). Lume grows the macOS APFS container before the first
+  // boot; Linux images grow their root partition at boot (cloud-init
+  // growpart).
+  uint32 disk_gb = 15;
+  // A GPU option of the runtime the Space runs on (`GetGpuSupport`):
+  // "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental),
+  // "virgl", "nvidia", a provider's GPU type; "auto" picks the runtime's
+  // own. Empty: no GPU. Kept with the Space.
+  string gpu = 16;
+  // The caller's own key for this create (an app's pending row id), for
+  // `CancelCreateSpace` before the Space's id is known.
+  string create_id = 17;
+  // Keep the Space running on your machines (`on` "auto"): when its machine
+  // goes away it is created again on another one, with the same name. It
+  // needs the cua daemon of Cua Spaces and an account with machines that
+  // provide Spaces.
+  bool durable = 18;
+  // A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared
+  // file, so its checkpoints take milliseconds and forks of them share its
+  // pages. Other kinds ignore it.
+  bool forkable = 19;
+  // Guest network: empty or `default` gives outbound network; `none` gives
+  // none (QEMU VMs only; published ports still reach the guest).
+  string network = 20;
+  // Labels kept with the Space (`Space.labels`): up to 64 pairs, keys up to
+  // 63 bytes, values up to 256, none empty. Not with `durable` or `reuse`.
+  map<string, string> labels = 21;
+  // Egress policy, from the first instruction. Not with `durable`,
+  // `reuse` or `wait = false`.
+  EgressPolicy egress = 22;
+  // No desktop: only cua-spacesd runs (exec, files, processes, MCP), with
+  // no display, window manager or audio; a local VM gets no display
+  // hardware. The same switch as `CreateSandboxRequest.headless`.
+  bool headless = 23;
+  // Named volumes of Cua Volume to mount in the Space.
+  repeated cua.env.v1.VolumeMount volumes = 25;
+  // Cloud host machine type (a pin).
+  string instance_type = 26;
+  // Cloud host region (a pin).
+  string region = 27;
+  // Network settings. Unset: what `network` and `egress` say ("internet"
+  // when neither says anything).
+  NetworkSettings network_settings = 28;
+  // Create it as a child of this Space (id or name): its network is no
+  // more open than the parent's.
+  string parent = 29;
+  // With `parent`: let it be more open than its parent (recorded on the
+  // Space).
+  // (30 and 31 are kept for other create options.)
+  bool widen = 32;
+  // Let the Space make child Spaces of its own (`SetSpaceChildren`).
+  // Unset: off.
+  optional bool children = 33;
+}
+
+// Request for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenRequest {
+  // Id or name.
+  string space = 1;
+  // On or off.
+  bool enabled = 2;
+}
+
+// Response for `SpaceService.SetSpaceChildren`.
+message SetSpaceChildrenResponse {
+  // The Space as it is now.
+  Space space = 1;
+}
+
+// Request for `SpaceService.CreateSpaceStream`.
+message CreateSpaceStreamRequest {
+  // The create, as for `CreateSpace`. `wait` is ignored: the stream always
+  // runs until the Space is ready or the create fails.
+  CreateSpaceRequest create = 1;
+}
+
+// What a create is doing.
+message CreateSpaceProgress {
+  // "preparing", "pulling", "creating", "booting", "waiting_for_services",
+  // "connecting" or "ready", in that order.
+  string phase = 1;
+  // How far through the phase, 0.0 to 1.0, when its size is known (an
+  // image pull).
+  optional double fraction = 2;
+  // One short line, for example the image being pulled.
+  string detail = 3;
+  // Bytes downloaded so far, when the step counts them (an image pull).
+  optional uint64 bytes_done = 4;
+  // Bytes the download has in all.
+  optional uint64 bytes_total = 5;
+  // Smoothed download rate, bytes per second.
+  optional double bytes_per_second = 6;
+  // The id the Space will have (`local:<name>`), for `CancelCreateSpace`.
+  string space = 7;
+}
+
+// Request for `SpaceService.GetGpuSupport`.
+message GetGpuSupportRequest {
+  // "local" (empty) or a registered provider.
+  string location = 1;
+}
+
+// One GPU option of a runtime.
+message GpuOption {
+  // What to pass as `gpu`.
+  string id = 1;
+  // How a person names it ("GPU acceleration").
+  string label = 2;
+  // Experimental.
+  bool experimental = 3;
+  // Works on this host (and account) now.
+  bool supported = 4;
+  // Why not, one short line.
+  string reason = 5;
+  // A page that explains it.
+  string learn_more = 6;
+  // Estimated cost per hour while it runs (a provider's GPU types).
+  optional double usd_per_hour = 7;
+}
+
+// The GPU options of one runtime.
+message GpuSupport {
+  // "lume", "qemu", "container", "gvisor", a provider's name.
+  string runtime = 1;
+  // Its options; empty: none.
+  repeated GpuOption options = 2;
+  // Why it has none.
+  string reason = 3;
+}
+
+// Response for `SpaceService.GetGpuSupport`.
+message GetGpuSupportResponse {
+  // One entry per runtime of the location.
+  repeated GpuSupport runtimes = 1;
+}
+
+// What a tree's children may hold and cost. Unset: the default.
+message TreeBudgetLimits {
+  // Child Spaces at once (default 16).
+  optional uint32 max_spaces = 1;
+  // vCPUs at once (default 16).
+  optional uint32 max_vcpus = 2;
+  // Memory at once, MiB (default 32768).
+  optional uint64 max_memory_mb = 3;
+  // Cost per hour of what runs at once, in linked clouds (default 2.0).
+  optional double usd_per_hour = 4;
+  // Cost in total (default: no total cap).
+  optional double usd_total = 5;
+}
+
+// Request for `SpaceService.GetTreeBudget`.
+message GetTreeBudgetRequest {
+  // Any Space of the tree (id or name).
+  string space = 1;
+}
+
+// Request for `SpaceService.SetTreeBudget`.
+message SetTreeBudgetRequest {
+  // Any Space of the tree (id or name); the budget is kept on its root.
+  string space = 1;
+  // The limits.
+  TreeBudgetLimits limits = 2;
+}
+
+// Response for `SpaceService.GetTreeBudget`.
+message GetTreeBudgetResponse {
+  // The budget and use.
+  TreeBudget budget = 1;
+}
+
+// Response for `SpaceService.SetTreeBudget`.
+message SetTreeBudgetResponse {
+  // The budget and use.
+  TreeBudget budget = 1;
+}
+
+// A tree's budget and use.
+message TreeBudget {
+  // The tree's top-level Space.
+  string root = 1;
+  // What the owner set (unset fields take the default).
+  TreeBudgetLimits set = 2;
+  // Child Spaces it may hold at once.
+  uint32 max_spaces = 3;
+  // vCPUs it may hold at once.
+  uint32 max_vcpus = 4;
+  // Memory it may hold at once (MiB).
+  uint64 max_memory_mb = 5;
+  // Cost per hour it may run at.
+  double usd_per_hour = 6;
+  // Cost in total it may reach, when capped.
+  optional double usd_total = 7;
+  // Child Spaces now (creates in flight included).
+  uint32 spaces = 8;
+  // vCPUs they hold.
+  uint32 vcpus = 9;
+  // Memory they hold (MiB).
+  uint64 memory_mb = 10;
+  // Cost per hour they run at.
+  double usd_per_hour_used = 11;
+  // What its children have cost so far.
+  double usd_spent = 12;
+}
+
+// Request for `SpaceService.ListOrphans`.
+message ListOrphansRequest {}
+
+// A child Space whose parent is gone or out of reach.
+message Orphan {
+  // The child.
+  string space = 1;
+  // Its parent's id.
+  string parent = 2;
+  // "ending": its parent is provably gone and it ends after the grace;
+  // "listed": its parent is not this machine's to judge, so it stays until
+  // deleted or its own lifetime ends.
+  string state = 3;
+  // Why, in words.
+  string why = 4;
+  // Seconds until it ends ("ending" only).
+  int64 ends_in_secs = 5;
+}
+
+// Response for `SpaceService.ListOrphans`.
+message ListOrphansResponse {
+  // By child id.
+  repeated Orphan orphans = 1;
+}
+
+// Request for `SpaceService.ListStreamWindows`.
+message ListStreamWindowsRequest {
+  // The Space whose Stream section shows them (id or name).
+  string space = 1;
+}
+
+// Where a window row's picture comes from.
+message StreamOrigin {
+  // The origin Space (canonical id).
+  string space_id = 1;
+  // Its name.
+  string name = 2;
+  // Its OS: `macos`, `linux`, `windows` or empty.
+  string os = 3;
+  // The window's handle in the origin.
+  string window_id = 4;
+}
+
+// A window another Space shows, as a row of this Space's window list.
+message StreamWindow {
+  // The handle to open it with (`OpenStreamEntry`).
+  string window_id = 1;
+  // Title.
+  string title = 2;
+  // App name.
+  string app_name = 3;
+  // App id.
+  string app_id = 4;
+  // Owning process in the origin.
+  uint32 pid = 5;
+  // The Space it comes from.
+  StreamOrigin origin = 6;
+}
+
+// Response for `SpaceService.ListStreamWindows`.
+message ListStreamWindowsResponse {
+  // The rows, in registration order.
+  repeated StreamWindow windows = 1;
+}
+
+// Request for `SpaceService.OpenStreamEntry`.
+message OpenStreamEntryRequest {
+  // The row's `window_id`.
+  string window_id = 1;
+  // Frames per second cap (0 = 30).
+  uint32 max_fps = 2;
+  // Ticket lifetime in seconds (0 = default).
+  uint32 ticket_ttl_seconds = 3;
+  // Mint the ticket here even when the route is direct. By default a direct
+  // route returns only the decision (the client opens the origin Space
+  // itself, with its own credentials); a proxied route always mints.
+  bool mint = 4;
+}
+
+// Response for `SpaceService.OpenStreamEntry`.
+message OpenStreamEntryResponse {
+  // `direct` (from the origin) or `proxied` (through this daemon's bridge).
+  string route = 1;
+  // What the caller holds on the origin: `owner`, `grant` or `none`.
+  string access = 2;
+  // The Space whose spacesd minted the ticket.
+  string minted_by = 3;
+  // The ticket (`StreamTicket` as JSON), scoped to that Space and window.
+  // Empty for a direct route that was not asked to mint.
+  string ticket_json = 4;
+  // The origin Space (canonical id).
+  string origin_space = 5;
+  // The window's handle in the origin.
+  string origin_window_id = 6;
+}

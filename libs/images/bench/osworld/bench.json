@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "id": "osworld",
+  "name": "OSWorld-Verified (Ubuntu 22.04 desktop, 369 tasks)",
+  "version": "verified",
+  "kind": "image",
+  "repository": "ghcr.io/trycua/bench-osworld",
+  "redistribution": "public",
+  "visibility": "public",
+  "license": {
+    "code": "Apache-2.0",
+    "data": "Apache-2.0 (xlang-ai/OSWorld tasks)",
+    "image": "Apache-2.0 per the Hugging Face card; the disk bundles third-party software (Google Chrome, VS Code, Thunderbird, LibreOffice, GIMP, VLC) under their own terms",
+    "note": "Public since 2026-09-25 (maintainer decision). The disk bundles Google Chrome and VS Code under their own terms. The build is reproducible from the pinned public sources."
+  },
+  "upstream": {
+    "repo": "https://github.com/xlang-ai/OSWorld",
+    "commit": "b138d348256078fa634fc3b73567a7337c793e6b",
+    "paper": "https://arxiv.org/abs/2404.07972"
+  },
+  "sources": [
+    {
+      "role": "image",
+      "kind": "qcow2",
+      "hf": {
+        "repo": "xlangai/ubuntu_osworld",
+        "repo_type": "dataset",
+        "revision": "a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133",
+        "file": "Ubuntu.qcow2.zip"
+      },
+      "sha256": "b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712",
+      "size": 12273896463,
+      "unpack": "zip",
+      "inner": "Ubuntu.qcow2",
+      "gated": false
+    },
+    {
+      "role": "container:supervisor",
+      "kind": "wheel",
+      "name": "supervisor-4.3.0-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/py2.py3/s/supervisor/supervisor-4.3.0-py2.py3-none-any.whl",
+      "sha256": "0bcb763fddafba410f35cbde226aa7f8514b9fb82eb05a0c85f6588d1c13f8db",
+      "license": "BSD-derived (repoze)"
+    },
+    {
+      "role": "container:xorg-dummy",
+      "kind": "deb",
+      "name": "xserver-xorg-video-dummy_0.3.8-2build1_amd64.deb",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/x/xserver-xorg-video-dummy/xserver-xorg-video-dummy_0.3.8-2build1_amd64.deb",
+      "sha256": "2ef60bd404142f7bb3d77a2886ac89d8a0dabc101d87ce7496ebe45f19ae8fc3",
+      "license": "MIT (X11)"
+    }
+  ],
+  "os": "linux",
+  "distro": "ubuntu-22.04",
+  "arch": [
+    "amd64"
+  ],
+  "variants": [
+    "rootfs",
+    "containerdisk"
+  ],
+  "requires": {
+    "rootfs": [
+      "egress"
+    ],
+    "containerdisk": [
+      "egress",
+      "kvm"
+    ]
+  },
+  "server": {
+    "name": "osworld",
+    "port": 5000,
+    "protocol": "http",
+    "health": "GET /screenshot"
+  },
+  "extra_ports": {
+    "chromium_cdp": 9222,
+    "vlc_http": 8080
+  },
+  "spacesd": true,
+  "desktop": {
+    "user": "user",
+    "uid": 1000,
+    "display": ":0",
+    "resolution": "1920x1080"
+  },
+  "build": {
+    "kind": "qcow2",
+    "vm": "vm/customize.sh",
+    "container": "container/overlay.py",
+    "rootfs_excludes": [
+      "boot",
+      "lib/modules",
+      "usr/lib/modules",
+      "snap",
+      "var/lib/snapd",
+      "var/snap",
+      "var/cache/snapd",
+      "swapfile",
+      "swap.img",
+      "etc/fstab",
+      "lost+found",
+      "proc",
+      "sys",
+      "dev",
+      "run",
+      "tmp",
+      "var/cache/apt/archives",
+      "var/lib/apt/lists",
+      "var/log/journal"
+    ],
+    "rootfs_layers": {
+      "usr": [
+        "usr"
+      ],
+      "home": [
+        "home",
+        "root"
+      ],
+      "opt": [
+        "opt"
+      ],
+      "var": [
+        "var"
+      ]
+    }
+  },
+  "container_fidelity": {
+    "degraded_domains": [
+      "os"
+    ],
+    "notes": [
+      "No systemd as PID 1: supervisord runs Xorg (dummy video driver) and the GNOME session of user, the OSWorld server and cua-spacesd",
+      "timedatectl, hostnamectl, loginctl, systemctl, gsettings-daemon and audio-backed tasks behave differently; the adapter marks them container_fidelity=degraded (13 of 369)",
+      "Snaps do not run (snapd and /snap are removed from the rootfs)",
+      "/dev/uinput is absent under gVisor: input goes through XTest",
+      "The display is Xorg with the dummy driver at 1920x1080 (the same X server build the VM runs, without a virtual GPU)"
+    ]
+  },
+  "smoke": {
+    "script": "smoke.py",
+    "tasks": "parity.txt"
+  }
+}

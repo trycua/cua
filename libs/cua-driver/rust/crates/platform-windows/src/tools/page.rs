@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows implementation of the cross-platform `PageBackend` trait.
 //!
 //! - `get_text` — find the Document UIA element under the active tab's web-
@@ -28,7 +31,7 @@
 //!        Returns an actionable error if neither path works.
 
 use async_trait::async_trait;
-use cua_driver_core::page::{ClickElementResult, PageBackend};
+use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -60,11 +63,12 @@ impl Default for WindowsPageBackend {
 
 #[async_trait]
 impl PageBackend for WindowsPageBackend {
-    async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<String> {
+    async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
         let hwnd = window_id;
-        tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
+        let content = tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
             .await
-            .map_err(|e| anyhow::anyhow!("join error: {e}"))?
+            .map_err(|e| anyhow::anyhow!("join error: {e}"))??;
+        Ok(PageReadResult::text(content))
     }
 
     async fn query_dom(
@@ -73,13 +77,16 @@ impl PageBackend for WindowsPageBackend {
         window_id: u64,
         css_selector: &str,
         attributes: &[String],
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<PageReadResult> {
         let hwnd = window_id;
         let selector = css_selector.to_owned();
         let attrs: Vec<String> = attributes.to_vec();
-        tokio::task::spawn_blocking(move || unsafe { query_dom_blocking(hwnd, &selector, &attrs) })
-            .await
-            .map_err(|e| anyhow::anyhow!("join error: {e}"))?
+        let content = tokio::task::spawn_blocking(move || unsafe {
+            query_dom_blocking(hwnd, &selector, &attrs)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("join error: {e}"))??;
+        Ok(PageReadResult::text(content))
     }
 
     async fn execute_javascript(
@@ -190,6 +197,8 @@ impl PageBackend for WindowsPageBackend {
                 return JSON.stringify({{\
                     vx: r.left + r.width/2,\
                     vy: r.top  + r.height/2,\
+                    vw: r.width,\
+                    vh: r.height,\
                     sx: window.screenX + (window.outerWidth - window.innerWidth)/2,\
                     sy: window.screenY + (window.outerHeight - window.innerHeight),\
                     dpr: window.devicePixelRatio || 1\
@@ -261,12 +270,24 @@ impl PageBackend for WindowsPageBackend {
 
         let screen_x = sx + vx * dpr;
         let screen_y = sy + vy * dpr;
+        // Element box in the same space as the click point; optional, so a
+        // probe without vw/vh just glides without a target rect.
+        let extent = |key: &str| {
+            parsed
+                .get(key)
+                .and_then(|v| v.as_f64())
+                .filter(|f| f.is_finite() && *f >= 0.0)
+        };
+        let target_rect = extent("vw").zip(extent("vh")).map(|(vw, vh)| {
+            let (w, h) = (vw * dpr, vh * dpr);
+            [screen_x - w / 2.0, screen_y - h / 2.0, w, h]
+        });
 
         // Step 2 — drive the cursor overlay. Pin above the browser's root
         // HWND so the overlay sits at z+1 of the page, glide, click-pulse.
         // Inlined GA_ROOT lookup mirrors the helper in tools/impl_.rs but
         // keeps page.rs from depending on a private symbol there.
-        let hwnd = window_id as u64;
+        let hwnd = window_id;
         {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
@@ -282,7 +303,13 @@ impl PageBackend for WindowsPageBackend {
         // caller `session`, so this drives the seeded `"default"` cursor rather
         // than a per-session one. Threading session through the trait is a
         // separate cross-platform change (tracked as a follow-up).
-        crate::overlay::animate_cursor_to("default".to_owned(), screen_x, screen_y).await;
+        crate::overlay::animate_cursor_to_target(
+            "default".to_owned(),
+            screen_x,
+            screen_y,
+            target_rect,
+        )
+        .await;
         crate::overlay::send_command_default(cursor_overlay::OverlayCommand::ClickPulse {
             x: screen_x,
             y: screen_y,
@@ -318,8 +345,7 @@ impl PageBackend for WindowsPageBackend {
 fn escape_js_string_literal(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('\'', "\\'")
-        .replace('\r', " ")
-        .replace('\n', " ")
+        .replace(['\r', '\n'], " ")
 }
 
 /// `execute_javascript` returns the raw JS result prefixed with the

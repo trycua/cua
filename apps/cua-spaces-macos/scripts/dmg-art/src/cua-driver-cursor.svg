@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="36 24 80 80">
+<!-- The Cua Driver cursor body: CURSOR_PATH in trycua/cua libs/cua-driver/rust/crates/cursor-overlay/assets/build_default_theme.py (hotspot 55,30). Fill only, no glow. -->
+<path d="M55 30 C48 28 42 33 43 41 C43 41 64 98 64 98 C67 106 73 106 77 99 C77 99 86 79 86 79 C88 75 91 72 95 70 C95 70 108 63 108 63 C115 59 114 53 107 50 C107 50 55 30 55 30 Z" fill="#ffffff"/>
+</svg>

@@ -1,0 +1,117 @@
+# Swift binding tests (swift/scripts/test.sh, against the release dylib and the
+# loopback test fixtures). 43 minutes (p90 64) and 187 runs a week made this the
+# longest job on the pull requests that touched the SDK, and it is nightly-shaped:
+# it checks that a Swift binding still works against the SDK, not that this
+# change is right.
+#
+#   - pull requests: only when the Swift binding itself (libs/cua/swift/**) or
+#     this workflow changes. Binding drift (`generate-uniffi-bindings.mjs --check`)
+#     and the Kotlin compile still run on every SDK change in ci-cua-sdk.yml.
+#   - push to main on every path below, and the nightly schedule: the full list.
+#     ci-cua-sdk.yml's `swift` job runs the same suite there too.
+#   - a failed main or nightly run opens or updates one issue (`report` job).
+#
+# It uses the same Rust cache family (cua-sdk-swift) as ci-cua-sdk.yml's
+# swift job, which main's pushes and the nightly keep warm. (It used to share
+# the macOS `libs-cua` family with jobs of other shapes: 4 GB full of
+# their units, 22% hits, a 35 to 46 minute release build on every PR.)
+name: e2b-bindings
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "libs/cua/swift/**"
+      - ".github/workflows/e2b-bindings.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-sdk-native/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/swift/**"
+      - "libs/cua/kotlin/**"
+      - "libs/cua/python/src/**"
+      - "libs/cua/typescript/src/**"
+      - ".github/workflows/e2b-bindings.yml"
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2b-bindings-${{ github.ref }}
+  # A main or nightly run always finishes: it saves the cache pull requests restore.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  swift:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    name: swift tests (macOS)
+    runs-on: macos-26
+    # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        id: cache
+        with:
+          workspaces: libs/cua
+          shared-key: cua-sdk-swift
+          size: 8G
+          save-always: "true"
+      - name: Release cua-sdk dylib
+        run: cargo build --locked --release -p cua-sdk-native
+      - name: Test fixtures
+        run: scripts/build-test-fixtures.sh
+      - name: Stage the UniFFI library
+        run: node scripts/stage-uniffi-library.mjs --only=swift
+      - name: Swift build (tests included)
+        run: swift/scripts/test.sh --build-only
+      - name: Swift tests
+        run: swift/scripts/test.sh --skip-build --parallel
+      # Keep the warm compile even when a test step above fails.
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}
+
+  report:
+    name: open or update the issue
+    needs: swift
+    if: ${{ failure() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/nightly-issue
+      - uses: ./.github/actions/nightly-issue
+        with:
+          title: "e2b-bindings: Swift binding tests are failing on main"
+          detail: >-
+            The Swift binding suite failed on a main push or the nightly run. Pull requests only run it when
+            libs/cua/swift changes, so an SDK or proto change that breaks the Swift binding shows up here.

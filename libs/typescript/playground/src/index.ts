@@ -2,7 +2,7 @@
 // @trycua/playground
 // =============================================================================
 // Reusable playground UI for Cua computer-use agents.
-// Supports both local (localStorage + user-provided URLs) and cloud (CUA API) usage.
+// Runs against your own machines: localStorage + user-provided agent and VNC URLs.
 
 // Types
 export * from './types';
@@ -10,7 +10,6 @@ export * from './adapters/types';
 
 // Adapters
 export { createLocalAdapter } from './adapters/local';
-export { createCloudAdapter } from './adapters/cloud';
 
 // Utilities
 export * from './utils';
@@ -98,8 +97,8 @@ export type { SandboxPreset } from './constants/sandboxPresets';
 export { default as TrajectoryViewer } from './components/TrajectoryViewer';
 
 // Telemetry
-export { TelemetryProvider, usePlaygroundTelemetry } from './telemetry';
-export type { TelemetryProviderProps, TelemetryFunctions } from './telemetry';
+export { TelemetryProvider, usePlaygroundTelemetry, classifyTrajectoryError } from './telemetry';
+export type { TelemetryProviderProps, TelemetryFunctions, TrajectoryErrorType } from './telemetry';
 
 // Main Playground Component
 export { Playground } from './components/Playground';

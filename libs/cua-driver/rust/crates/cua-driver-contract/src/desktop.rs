@@ -8,28 +8,124 @@
 //! do not replace the richer platform-owned runtime schemas.
 
 use crate::{
-    ClickInput, ClickOutput, CursorAction, CursorPositionOutput, CursorSemantics,
-    DesktopActionOutput, DesktopStateOutput, DragInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, HotkeyInput, MoveCursorInput, MoveCursorOutput,
-    Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput, ToolAnnotations,
-    ToolContract, ToolInput, ToolOutput, TypeTextInput,
+    ActionResult, ClickInput, ClipboardReadInput, ClipboardReadOutput, ClipboardWriteInput,
+    ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
+    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
+    ListWindowsInput, ListWindowsOutput, MoveCursorInput, Platform, PressKeyInput, SchemaMode,
+    ScreenSizeOutput, ScrollInput, SetWindowFrameInput, ToolAnnotations, ToolContract, ToolInput,
+    ToolOutput, TypeTextInput, WindowStateOutput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
 
 pub fn contracts() -> Vec<ToolContract> {
     vec![
+        list_apps(),
+        list_windows(),
+        get_window_state(),
         get_desktop_state(),
         get_screen_size(),
         get_cursor_position(),
         move_cursor(),
+        set_window_frame(),
+        invoke_menu(),
         click(),
         drag(),
         scroll(),
+        clipboard_read(),
+        clipboard_write(),
         type_text(),
         press_key(),
         hotkey(),
     ]
+}
+
+fn list_apps() -> ToolContract {
+    contract::<ListAppsInput, ListAppsOutput>(
+        "list_apps",
+        "Discover installed and running native applications.",
+        &["app.list"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
+}
+
+fn list_windows() -> ToolContract {
+    contract::<ListWindowsInput, ListWindowsOutput>(
+        "list_windows",
+        "Discover exact native windows and observable bounds and stacking order.",
+        &["window.list"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
+}
+
+fn get_window_state() -> ToolContract {
+    contract::<GetWindowStateInput, WindowStateOutput>(
+        "get_window_state",
+        "Observe an exact native window with snapshot-bound elements and optional screenshots.",
+        &[
+            "accessibility.window_state",
+            "accessibility.tree",
+            "accessibility.tree.structured",
+            "accessibility.tree.bounded",
+            "accessibility.element_tokens",
+            "screen.capture",
+            "screen.capture.window",
+        ],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
+}
+
+fn clipboard_read() -> ToolContract {
+    let mut contract = contract::<ClipboardReadInput, ClipboardReadOutput>(
+        "clipboard_read",
+        "List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.",
+        &["clipboard.read", "clipboard.types"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
+}
+
+fn clipboard_write() -> ToolContract {
+    let mut contract = contract::<ClipboardWriteInput, ClipboardWriteOutput>(
+        "clipboard_write",
+        "Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.",
+        &["clipboard.write", "clipboard.write.text", "clipboard.write.image", "clipboard.write.file_url", "clipboard.types"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Text,
+    );
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
 }
 
 fn contract<I: ToolInput, O: ToolOutput>(
@@ -51,6 +147,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
         cursor_semantics: Some(CursorSemantics::new(cursor_action)),
         input_schema: I::input_schema(),
         success_output_schema: Some(O::output_schema()),
+        error_output_schema: None,
         output_validator: crate::validate_typed_output::<O>,
     }
 }
@@ -101,7 +198,7 @@ fn get_cursor_position() -> ToolContract {
 }
 
 fn move_cursor() -> ToolContract {
-    contract::<MoveCursorInput, MoveCursorOutput>(
+    contract::<MoveCursorInput, ActionResult>(
         "move_cursor",
         "Move the real OS pointer in get_desktop_state coordinates.",
         &["agent_cursor.move", "input.pointer.move"],
@@ -115,14 +212,49 @@ fn move_cursor() -> ToolContract {
     )
 }
 
+fn set_window_frame() -> ToolContract {
+    contract::<SetWindowFrameInput, ActionResult>(
+        "set_window_frame",
+        "Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.",
+        &["window.frame.set"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::App,
+    )
+}
+
+fn invoke_menu() -> ToolContract {
+    contract::<InvokeMenuInput, ActionResult>(
+        "invoke_menu",
+        "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
+        &[
+            "menu.path.invoke",
+            "accessibility.menu.native",
+            "input.delivery_mode",
+        ],
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        },
+        CursorAction::App,
+    )
+}
+
 fn click() -> ToolContract {
-    contract::<ClickInput, ClickOutput>(
+    contract::<ClickInput, ActionResult>(
         "click",
-        "Click an absolute point in get_desktop_state coordinates without targeting a window.",
+        "Click coordinates or a snapshot-bound element with an explicit target and delivery mode.",
         &[
             "input.pointer.click",
             "input.pointer.click.left",
             "accessibility.element_tokens",
+            "input.delivery_mode",
         ],
         ToolAnnotations {
             read_only: false,
@@ -135,7 +267,7 @@ fn click() -> ToolContract {
 }
 
 fn drag() -> ToolContract {
-    contract::<DragInput, DesktopActionOutput>(
+    contract::<DragInput, ActionResult>(
         "drag",
         "Drag between two absolute points in get_desktop_state coordinates.",
         &["input.pointer.drag"],
@@ -150,7 +282,7 @@ fn drag() -> ToolContract {
 }
 
 fn scroll() -> ToolContract {
-    contract::<ScrollInput, DesktopActionOutput>(
+    contract::<ScrollInput, ActionResult>(
         "scroll",
         "Scroll at an absolute point in get_desktop_state coordinates.",
         &["input.pointer.scroll", "accessibility.element_tokens"],
@@ -165,7 +297,7 @@ fn scroll() -> ToolContract {
 }
 
 fn type_text() -> ToolContract {
-    contract::<TypeTextInput, DesktopActionOutput>(
+    contract::<TypeTextInput, ActionResult>(
         "type_text",
         "Type text into the current foreground desktop application.",
         &[
@@ -184,7 +316,7 @@ fn type_text() -> ToolContract {
 }
 
 fn press_key() -> ToolContract {
-    contract::<PressKeyInput, DesktopActionOutput>(
+    contract::<PressKeyInput, ActionResult>(
         "press_key",
         "Press one key, with optional modifiers, in the foreground desktop application.",
         &["input.keyboard.press", "accessibility.element_tokens"],
@@ -199,7 +331,7 @@ fn press_key() -> ToolContract {
 }
 
 fn hotkey() -> ToolContract {
-    contract::<HotkeyInput, DesktopActionOutput>(
+    contract::<HotkeyInput, ActionResult>(
         "hotkey",
         "Press a key chord in the foreground desktop application.",
         &["input.keyboard.hotkey"],

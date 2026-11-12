@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! SkyLight SPI bridge — Rust port of Swift's `SkyLightEventPost`.
 //!
 //! Two-layer story (matches Swift reference exactly):
@@ -41,6 +44,322 @@ type SetIntFieldFn = unsafe extern "C" fn(*mut c_void, u32, i64);
 /// `uint32_t CGSMainConnectionID(void)`
 type ConnectionIDFn = unsafe extern "C" fn() -> u32;
 
+/// `uint64_t CGSGetActiveSpace(uint32_t cid)`
+type GetActiveSpaceFn = unsafe extern "C" fn(u32) -> u64;
+
+/// `CFArrayRef SLSCopySpacesForWindows(uint32_t cid, int selector, CFArrayRef windowIDs)`
+type CopySpacesForWindowsFn = unsafe extern "C" fn(u32, i32, *const c_void) -> *mut c_void;
+
+/// `CFStringRef SLSCopyManagedDisplayForWindow(uint32_t cid, uint32_t wid)`
+type CopyManagedDisplayForWindowFn = unsafe extern "C" fn(u32, u32) -> *mut c_void;
+
+/// `uint64_t SLSManagedDisplayGetCurrentSpace(uint32_t cid, CFStringRef display)`
+type ManagedDisplayGetCurrentSpaceFn = unsafe extern "C" fn(u32, *const c_void) -> u64;
+
+/// How the exact window became the app's key window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyPrime {
+    AlreadyKey,
+    /// The in-app key-window records ([`post_window_key_records`]).
+    KeyRecords,
+    AxFocusedWindow,
+}
+
+/// Where an app's keyboard focus is, as Accessibility reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyFocus {
+    /// The app's `AXFocusedWindow`.
+    pub window: Option<crate::ax::exact_target::AxWindowId>,
+    /// The window holding the app's `AXFocusedUIElement`.
+    pub element_window: Option<u32>,
+}
+
+impl KeyFocus {
+    /// Keys posted to the app go to `target`. The focused window is the
+    /// predictor: in every LibreOffice trial keys went to `AXFocusedWindow`
+    /// (a sibling document or Find & Replace when the switch failed, the
+    /// target when it held). The focused element is not used here: VCL keeps
+    /// reporting a modeless dialog's field as focused after its document
+    /// window has become key and is receiving the keys.
+    fn routes_to(self, target: u32) -> bool {
+        self.window.is_some_and(|window| window.is(target))
+    }
+
+    /// `target` is key with nothing left to prime. A focused window without
+    /// any focused element is a LibreOffice that has never been active: it
+    /// drops every key until the window is primed (CUA-1767).
+    fn settled_on(self, target: u32) -> bool {
+        self.routes_to(target) && self.element_window.is_some()
+    }
+}
+
+/// Make `target` the app's key window and PROVE it before any key is posted.
+///
+/// `focus` re-reads the app's focus; `key_records` posts the in-app key-window
+/// records and waits for them to settle; `ax_focus` writes `AXFocusedWindow`.
+/// Each step is followed by a re-read, and keys may only be posted when it
+/// shows `target` as the window keys route to. Returns `Err` otherwise:
+/// refusing is safe, a key that lands in a sibling window (a Find & Replace
+/// field, another document) is not.
+pub fn prime_exact_window_key(
+    target: u32,
+    mut focus: impl FnMut() -> KeyFocus,
+    mut key_records: impl FnMut() -> bool,
+    mut ax_focus: impl FnMut() -> bool,
+) -> Result<KeyPrime, String> {
+    if focus().settled_on(target) {
+        return Ok(KeyPrime::AlreadyKey);
+    }
+    // The records go out at most twice: WindowServer delivers them
+    // asynchronously, and the second pass catches an app that was still
+    // handling the first.
+    for _ in 0..2 {
+        if key_records() && focus().routes_to(target) {
+            return Ok(KeyPrime::KeyRecords);
+        }
+    }
+    if ax_focus() && focus().routes_to(target) {
+        return Ok(KeyPrime::AxFocusedWindow);
+    }
+    let now = focus();
+    Err(format!(
+        "window {target} could not be confirmed as the app's key window (the app's focused \
+         window is {:?}, its focused element is in window {:?}), so no keys were sent: they \
+         could have gone to another window of the same app. Close the other window, or use \
+         delivery_mode:\"foreground\"",
+        now.window.map(|window| window.own),
+        now.element_window
+    ))
+}
+
+/// Holds an exact window as the app's key window; hands key back on drop
+/// (with the same in-app records, so the app is never activated or raised).
+pub struct WindowKeyScope {
+    pid: pid_t,
+    target: u32,
+    previous: Option<u32>,
+    /// The app's on-screen windows before priming, front to back.
+    order_before: Vec<u32>,
+    primed: KeyPrime,
+}
+
+/// The window key goes back to. Normally the previous key window. LibreOffice
+/// hides a document's modeless dialog (Find & Replace) while another of its
+/// documents is key, and re-shows it, raising its document, when that
+/// document is key again. When the previous key window was such a dialog it
+/// is gone now, so key goes to the frontmost window that was on screen
+/// before: its document, which brings the dialog and the window order back.
+fn restore_target(
+    target: u32,
+    previous: Option<u32>,
+    order_before: &[u32],
+    on_screen_now: &[u32],
+) -> Option<u32> {
+    let present = |w: &u32| *w != target && on_screen_now.contains(w);
+    previous
+        .filter(present)
+        .or_else(|| order_before.iter().copied().find(present))
+}
+
+/// `pid`'s on-screen layer-0 windows, front to back.
+fn app_window_order(pid: pid_t) -> Vec<u32> {
+    let mut windows: Vec<_> = crate::windows::visible_windows()
+        .into_iter()
+        .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
+        .collect();
+    windows.sort_by_key(|w| std::cmp::Reverse(w.z_index));
+    windows.into_iter().map(|w| w.window_id).collect()
+}
+
+impl Drop for WindowKeyScope {
+    fn drop(&mut self) {
+        if self.primed == KeyPrime::AlreadyKey {
+            return;
+        }
+        let Some(previous) = restore_target(
+            self.target,
+            self.previous,
+            &self.order_before,
+            &app_window_order(self.pid),
+        ) else {
+            return;
+        };
+        match self.primed {
+            KeyPrime::AlreadyKey => {}
+            KeyPrime::KeyRecords => {
+                post_window_key_records(self.pid, Some(self.target), previous);
+            }
+            KeyPrime::AxFocusedWindow => {
+                set_app_focused_window(self.pid, previous);
+            }
+        }
+    }
+}
+
+fn set_app_focused_window(pid: pid_t, wid: u32) -> bool {
+    use crate::ax::bindings::{
+        ax_get_window_id, copy_ax_windows, AXUIElementCreateApplication,
+        AXUIElementSetAttributeValue,
+    };
+    use core_foundation::{
+        base::{CFRelease, TCFType},
+        string::CFString,
+    };
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let attr = CFString::new("AXFocusedWindow");
+        let mut ok = false;
+        for window in copy_ax_windows(app) {
+            if !ok && ax_get_window_id(window) == Some(wid) {
+                ok = AXUIElementSetAttributeValue(
+                    app,
+                    attr.as_concrete_TypeRef(),
+                    window as core_foundation::base::CFTypeRef,
+                ) == 0;
+            }
+            CFRelease(window as _);
+        }
+        CFRelease(app as _);
+        ok
+    }
+}
+
+/// The app's focus as Accessibility reports it.
+fn key_focus_of_pid(pid: pid_t) -> KeyFocus {
+    KeyFocus {
+        window: crate::ax::bindings::focused_window_id_of_pid(pid),
+        element_window: crate::ax::bindings::focused_element_window_id_of_pid(pid),
+    }
+}
+
+/// Settle time between the key-window records. Without it the app can drop
+/// the focus record while it is still handling the defocus (measured on
+/// LibreOffice 26.8: about half the switches failed without a pause).
+const KEY_RECORD_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// Move key status inside `pid` from `current` to `target` without activating
+/// the app, raising a window or touching the pointer. Every record goes to
+/// `pid` only; the user's front app receives nothing and keeps key focus.
+///
+/// Sequence, measured on LibreOffice (VCL) where each step alone is ignored:
+/// 1. defocus record (0x0d, 0x8a=2) for the app's current key window;
+/// 2. focus record (0x0d, 0x8a=1) for `target`;
+/// 3. the make-key record pair (0x01/0x02) for `target`, as
+///    [`make_exact_window_key`] sends after fronting, here without fronting.
+///
+/// Returns `true` when every record was posted. Whether the app acted on them
+/// is for the caller to confirm.
+pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) -> bool {
+    crate::focus_arbiter::end_detached();
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut psn = [0u8; 8];
+    if !get_process_psn_for_window(target, pid, &mut psn) {
+        return false;
+    }
+    let send = |record: &[u8; 0xF8]| {
+        note_post_status(unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) })
+    };
+    let mut ok = true;
+    if let Some(current) = current {
+        let mut defocus = focus_record(current);
+        defocus[0x8A] = 0x02;
+        ok &= send(&defocus);
+        std::thread::sleep(KEY_RECORD_SETTLE);
+    }
+    let mut focus = focus_record(target);
+    focus[0x8A] = 0x01;
+    ok &= send(&focus);
+    std::thread::sleep(KEY_RECORD_SETTLE);
+    for event_kind in [0x01, 0x02] {
+        ok &= send(&make_key_window_record(target, event_kind));
+    }
+    ok
+}
+
+/// Wait until the app's focus has settled on `target`, for at most `budget`.
+/// The make-key records are handled on the app's main thread, so the change
+/// trails the post; a never-active LibreOffice shows it last, when a focused
+/// element appears. The caller re-reads and decides.
+fn await_key_focus(pid: pid_t, target: u32, budget: std::time::Duration) {
+    std::thread::sleep(KEY_RECORD_SETTLE);
+    let deadline = std::time::Instant::now() + budget;
+    while !key_focus_of_pid(pid).settled_on(target) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+}
+
+/// Name the window that holds key focus in a refused-key message, so the next
+/// call acts on it. A modal dialog or panel (LibreOffice's Tip of the Day,
+/// Confirmation after File > Reload, Delete Contents) holds focus after an
+/// earlier step; the agent otherwise only sees a bare window id and retries.
+fn with_blocker_hint(message: String, blocker: Option<(u32, &str)>) -> String {
+    let Some((id, title)) = blocker else {
+        return message;
+    };
+    let name = if title.is_empty() {
+        format!("an untitled window (window_id {id})")
+    } else {
+        format!("the window \"{title}\" (window_id {id})")
+    };
+    format!(
+        "{message}. Focus is held by {name}, most likely an open dialog or panel: \
+         get_window_state it, answer it (click its OK, Yes or Close button, or press_key \
+         escape on that window_id), then repeat this call"
+    )
+}
+
+/// Make `target_wid` the app's key window (no activation, no raise, no
+/// pointer), confirmed by re-reading the app's focus, and return a guard that
+/// hands key back. `Err` when it cannot be confirmed.
+pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeyScope, String> {
+    let before = key_focus_of_pid(pid);
+    let previous = before.window.map(|window| window.own);
+    let order_before = app_window_order(pid);
+    let primed = prime_exact_window_key(
+        target_wid,
+        || key_focus_of_pid(pid),
+        || {
+            let ok = post_window_key_records(pid, previous, target_wid);
+            if ok {
+                await_key_focus(pid, target_wid, std::time::Duration::from_millis(400));
+            }
+            ok
+        },
+        || {
+            let ok = set_app_focused_window(pid, target_wid);
+            if ok {
+                await_key_focus(pid, target_wid, std::time::Duration::from_millis(200));
+            }
+            ok
+        },
+    )
+    .map_err(|message| {
+        let blocker = key_focus_of_pid(pid)
+            .window
+            .map(|window| window.own)
+            .filter(|own| *own != target_wid)
+            .map(|own| {
+                let title = crate::windows::describe_window(own)
+                    .map(|info| info.title)
+                    .unwrap_or_default();
+                (own, title)
+            });
+        with_blocker_hint(message, blocker.as_ref().map(|(id, t)| (*id, t.as_str())))
+    })?;
+    Ok(WindowKeyScope {
+        pid,
+        target: target_wid,
+        previous,
+        order_before,
+        primed,
+    })
+}
+
 // ── NSMenu shortcut activation SPIs ──────────────────────────────────────────
 
 /// `OSStatus SLPSSetFrontProcessWithOptions(const void *psn, uint32_t windowID, uint32_t options)`
@@ -51,6 +370,38 @@ type GetWindowOwnerFn = unsafe extern "C" fn(u32, u32, *mut u32) -> i32;
 
 /// `OSStatus SLSGetConnectionPSN(uint32_t cid, void *psn)`
 type GetConnectionPSNFn = unsafe extern "C" fn(u32, *mut c_void) -> i32;
+
+// ── WindowServer connection health (CUA-1777) ───────────────────────────────
+
+/// `SLPSPostEventRecordTo` result for "invalid connection". The daemon gets it
+/// when it runs as its own responsible process (a bare binary outside
+/// CuaDriver.app, which relaunches itself disclaimed): the process has no
+/// usable WindowServer connection for the target, so every no-raise focus
+/// record is dropped.
+pub const WINDOWSERVER_INVALID_CONNECTION: i32 = 1002;
+
+static WINDOWSERVER_CONNECTION_INVALID: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record the status of one `SLPSPostEventRecordTo` and report success. A
+/// 1002 is remembered for the life of the process so tools and `health_report`
+/// can fail loudly instead of continuing without the focus step.
+pub(crate) fn note_post_status(status: i32) -> bool {
+    if status == WINDOWSERVER_INVALID_CONNECTION {
+        WINDOWSERVER_CONNECTION_INVALID.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    status == 0
+}
+
+/// True once any focus-record post returned the invalid-connection status.
+pub fn windowserver_connection_invalid() -> bool {
+    WINDOWSERVER_CONNECTION_INVALID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_windowserver_connection_invalid_for_test() {
+    WINDOWSERVER_CONNECTION_INVALID.store(false, std::sync::atomic::Ordering::Relaxed);
+}
 
 // ── Focus-without-raise SPIs ──────────────────────────────────────────────────
 
@@ -138,6 +489,42 @@ fn set_int_field_fn() -> Option<SetIntFieldFn> {
 fn connection_id_fn() -> Option<ConnectionIDFn> {
     static SYM: OnceLock<Option<ConnectionIDFn>> = OnceLock::new();
     *SYM.get_or_init(|| find_sym(b"CGSMainConnectionID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_active_space_fn() -> Option<GetActiveSpaceFn> {
+    static SYM: OnceLock<Option<GetActiveSpaceFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSGetActiveSpace\0")
+            .or_else(|| find_sym(b"CGSGetActiveSpace\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn copy_spaces_for_windows_fn() -> Option<CopySpacesForWindowsFn> {
+    static SYM: OnceLock<Option<CopySpacesForWindowsFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSCopySpacesForWindows\0")
+            .or_else(|| find_sym(b"CGSCopySpacesForWindows\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn copy_managed_display_for_window_fn() -> Option<CopyManagedDisplayForWindowFn> {
+    static SYM: OnceLock<Option<CopyManagedDisplayForWindowFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSCopyManagedDisplayForWindow\0")
+            .or_else(|| find_sym(b"CGSCopyManagedDisplayForWindow\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+fn managed_display_get_current_space_fn() -> Option<ManagedDisplayGetCurrentSpaceFn> {
+    static SYM: OnceLock<Option<ManagedDisplayGetCurrentSpaceFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSManagedDisplayGetCurrentSpace\0")
+            .or_else(|| find_sym(b"CGSManagedDisplayGetCurrentSpace\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
 }
 
 fn factory_msg_send_fn() -> Option<FactoryMsgSendFn> {
@@ -303,8 +690,9 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
     true
 }
 
-/// Stamp a window-local `(x, y)` point onto `event_ptr` via the private
-/// `CGEventSetWindowLocation` SPI. Returns `true` when the SPI resolved.
+/// Stamp `(x, y)` via `CGEventSetWindowLocation`. Background clicks use the
+/// window-local point on macOS 27+, or the screen point on earlier releases,
+/// for both SkyLight and public PID routes. Returns `true` when the SPI resolved.
 pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {
@@ -332,11 +720,279 @@ pub fn main_connection_id() -> Option<u32> {
     connection_id_fn().map(|f| unsafe { f() })
 }
 
+fn nonzero_space_id(space_id: Option<u64>) -> Option<u64> {
+    space_id.filter(|id| *id != 0)
+}
+
+/// A consistent WindowServer connection and active-Space snapshot for one
+/// enumeration. Space membership must be queried one window at a time:
+/// `SLSCopySpacesForWindows` returns the set union for its input window list,
+/// not a positionally aligned result.
+pub(crate) struct SpaceQuery {
+    connection_id: u32,
+    current_space_id: Option<u64>,
+    copy_spaces_for_windows: Option<CopySpacesForWindowsFn>,
+    copy_managed_display_for_window: Option<CopyManagedDisplayForWindowFn>,
+    managed_display_get_current_space: Option<ManagedDisplayGetCurrentSpaceFn>,
+}
+
+impl SpaceQuery {
+    pub(crate) fn new() -> Option<Self> {
+        let connection_id = main_connection_id()?;
+        let current_space_id =
+            nonzero_space_id(get_active_space_fn().map(|f| unsafe { f(connection_id) }));
+        Some(Self {
+            connection_id,
+            current_space_id,
+            copy_spaces_for_windows: copy_spaces_for_windows_fn(),
+            copy_managed_display_for_window: copy_managed_display_for_window_fn(),
+            managed_display_get_current_space: managed_display_get_current_space_fn(),
+        })
+    }
+
+    pub(crate) fn current_space_id(&self) -> Option<u64> {
+        self.current_space_id
+    }
+
+    /// Return every Space containing `window_id`.
+    pub(crate) fn window_space_ids(&self, window_id: u32) -> Option<Vec<u64>> {
+        use core_foundation::{
+            array::CFArray,
+            base::{CFGetTypeID, CFTypeRef, TCFType},
+            number::CFNumber,
+        };
+
+        let copy_spaces = self.copy_spaces_for_windows?;
+        let window_number = CFNumber::from(window_id as i64);
+        let window_ref = window_number.as_concrete_TypeRef() as *const c_void;
+        let windows = CFArray::<CFTypeRef>::from_copyable(&[window_ref]);
+        let result_ptr = unsafe {
+            copy_spaces(
+                self.connection_id,
+                0x7,
+                windows.as_concrete_TypeRef() as *const c_void,
+            )
+        };
+        if result_ptr.is_null() {
+            return None;
+        }
+
+        let result: CFArray<CFTypeRef> =
+            unsafe { CFArray::wrap_under_create_rule(result_ptr as _) };
+        let mut space_ids = Vec::with_capacity(result.len() as usize);
+        for item in result.iter() {
+            let item = *item;
+            if unsafe { CFGetTypeID(item) } != CFNumber::type_id() {
+                return None;
+            }
+            let number = unsafe { CFNumber::wrap_under_get_rule(item as _) };
+            let space_id = u64::try_from(number.to_i64()?).ok()?;
+            if space_id != 0 {
+                space_ids.push(space_id);
+            }
+        }
+
+        (!space_ids.is_empty()).then_some(space_ids)
+    }
+
+    /// Return the active Space on the display WindowServer associates with
+    /// `window_id`. This avoids comparing every window against the main
+    /// display's active Space when displays use independent Spaces.
+    pub(crate) fn current_space_for_window(&self, window_id: u32) -> Option<u64> {
+        use core_foundation::{base::TCFType, string::CFString};
+
+        let copy_display = self.copy_managed_display_for_window?;
+        let get_current_space = self.managed_display_get_current_space?;
+        let display_ptr = unsafe { copy_display(self.connection_id, window_id) };
+        if display_ptr.is_null() {
+            return None;
+        }
+        let display = unsafe { CFString::wrap_under_create_rule(display_ptr as _) };
+        nonzero_space_id(Some(unsafe {
+            get_current_space(
+                self.connection_id,
+                display.as_concrete_TypeRef() as *const c_void,
+            )
+        }))
+    }
+}
+
+// ── Off-Space window capture ──────────────────────────────────────────────────
+
+/// `CFArrayRef SLSHWCaptureWindowList(CGSConnectionID cid, CGWindowID *windows,
+/// int count, uint32_t options)`. Returns a +1 array of `CGImageRef`, one per
+/// captured window. Unlike ScreenCaptureKit and `screencapture -l`, it returns
+/// the content of a window that sits on another Space (CUA-1351); window
+/// switchers such as AltTab use it for the same reason. Read-only: it does not
+/// switch Spaces, order windows, or activate anything.
+type HwCaptureWindowListFn = unsafe extern "C" fn(c_int, *mut u32, c_int, u32) -> *const c_void;
+
+/// Capture through the window's clip shape (rounded corners, Space clipping).
+const HW_CAPTURE_IGNORE_GLOBAL_CLIP_SHAPE: u32 = 1 << 11;
+/// Backing-store resolution (Retina pixels), matching the ScreenCaptureKit path.
+const HW_CAPTURE_BEST_RESOLUTION: u32 = 1 << 8;
+
+fn hw_capture_window_list_fn() -> Option<HwCaptureWindowListFn> {
+    static SYM: OnceLock<Option<HwCaptureWindowListFn>> = OnceLock::new();
+    *SYM.get_or_init(|| {
+        find_sym(b"SLSHWCaptureWindowList\0")
+            .or_else(|| find_sym(b"CGSHWCaptureWindowList\0"))
+            .map(|p| unsafe { as_fn(p) })
+    })
+}
+
+/// Capture one window's backing store with `SLSHWCaptureWindowList`.
+///
+/// `None` when the SPI is missing or WindowServer returns no image.
+pub fn hw_capture_window(window_id: u32) -> Option<core_graphics::image::CGImage> {
+    use core_foundation::{
+        array::CFArray,
+        base::{CFGetTypeID, CFRetain, CFTypeRef, TCFType},
+    };
+    use foreign_types::ForeignType;
+
+    extern "C" {
+        fn CGImageGetTypeID() -> core_foundation::base::CFTypeID;
+    }
+
+    let capture = hw_capture_window_list_fn()?;
+    let cid = c_int::try_from(main_connection_id()?).ok()?;
+    let mut window = window_id;
+    let array_ptr = unsafe {
+        capture(
+            cid,
+            &mut window,
+            1,
+            HW_CAPTURE_IGNORE_GLOBAL_CLIP_SHAPE | HW_CAPTURE_BEST_RESOLUTION,
+        )
+    };
+    if array_ptr.is_null() {
+        return None;
+    }
+    let images: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(array_ptr as _) };
+    let first = *images.get(0)?;
+    if first.is_null() || unsafe { CFGetTypeID(first) } != unsafe { CGImageGetTypeID() } {
+        return None;
+    }
+    // The array owns its element; take our own reference before it drops.
+    unsafe {
+        CFRetain(first);
+        Some(core_graphics::image::CGImage::from_ptr(first as *mut _))
+    }
+}
+
+// ── Key-focus theft ───────────────────────────────────────────────────────────
+
+/// `CGError SLPSStealKeyFocusReturningID(uint32_t cid, uint32_t options, int32_t *theft_id)`
+type StealKeyFocusReturningIdFn = unsafe extern "C" fn(u32, u32, *mut i32) -> i32;
+
+/// `CGError SLPSReleaseKeyFocusWithID(int32_t theft_id)`
+type ReleaseKeyFocusWithIdFn = unsafe extern "C" fn(i32) -> i32;
+
+fn steal_key_focus_fn() -> Option<StealKeyFocusReturningIdFn> {
+    static SYM: OnceLock<Option<StealKeyFocusReturningIdFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSStealKeyFocusReturningID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn release_key_focus_fn() -> Option<ReleaseKeyFocusWithIdFn> {
+    static SYM: OnceLock<Option<ReleaseKeyFocusWithIdFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSReleaseKeyFocusWithID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+/// `OSStatus SLPSGetKeyFocusProcess(ProcessSerialNumber *psn, uint32_t *connection)`.
+/// Both are out-parameters; the second must be a valid pointer.
+type GetKeyFocusProcessFn = unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32;
+
+/// `OSStatus GetProcessPID(const ProcessSerialNumber *psn, pid_t *pid)`
+type GetProcessPidFn = unsafe extern "C" fn(*const c_void, *mut pid_t) -> i32;
+
+fn get_key_focus_process_fn() -> Option<GetKeyFocusProcessFn> {
+    static SYM: OnceLock<Option<GetKeyFocusProcessFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"SLPSGetKeyFocusProcess\0").map(|p| unsafe { as_fn(p) }))
+}
+
+fn get_process_pid_fn() -> Option<GetProcessPidFn> {
+    static SYM: OnceLock<Option<GetProcessPidFn>> = OnceLock::new();
+    *SYM.get_or_init(|| find_sym(b"GetProcessPID\0").map(|p| unsafe { as_fn(p) }))
+}
+
+/// The pid of the process WindowServer gives key focus to: normally the
+/// frontmost app, or a non-activating panel (Spotlight-like launchers) or a
+/// menu that took it.
+pub fn key_focus_pid() -> Option<pid_t> {
+    let get = get_key_focus_process_fn()?;
+    let to_pid = get_process_pid_fn()?;
+    let mut psn = [0u8; 8];
+    // Room for whatever the second out-parameter holds (a connection id).
+    let mut second = [0u64; 2];
+    let err = unsafe {
+        get(
+            psn.as_mut_ptr() as *mut c_void,
+            second.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if err != 0 || psn == [0u8; 8] {
+        return None;
+    }
+    let mut pid: pid_t = 0;
+    if unsafe { to_pid(psn.as_ptr() as *const c_void, &mut pid) } != 0 || pid <= 0 {
+        return None;
+    }
+    Some(pid)
+}
+
+/// The pid of the process WindowServer has frontmost now. Unlike
+/// `NSWorkspace.frontmostApplication`, this does not wait for the caller's
+/// AppKit run loop to process an activation notice, so it sees a background
+/// app's self-activation at once.
+pub fn front_process_pid() -> Option<pid_t> {
+    let get_front = get_front_process_fn()?;
+    let to_pid = get_process_pid_fn()?;
+    let mut psn = [0u8; 8];
+    if unsafe { get_front(psn.as_mut_ptr() as *mut c_void) } != 0 || psn == [0u8; 8] {
+        return None;
+    }
+    let mut pid: pid_t = 0;
+    if unsafe { to_pid(psn.as_ptr() as *const c_void, &mut pid) } != 0 || pid <= 0 {
+        return None;
+    }
+    Some(pid)
+}
+
+/// Whether the key-focus theft SPIs resolve on this system.
+pub fn key_focus_theft_available() -> bool {
+    steal_key_focus_fn().is_some()
+        && release_key_focus_fn().is_some()
+        && main_connection_id().is_some()
+}
+
+/// Steal key focus for this process's own connection and return the theft id.
+///
+/// WindowServer numbers thefts from one session-wide counter, so the id tells
+/// the caller which id the next theft will get. AppKit uses the same call,
+/// with the same options, when it opens a menu in an app that is not active.
+pub fn steal_key_focus() -> Option<i32> {
+    let steal = steal_key_focus_fn()?;
+    let cid = main_connection_id()?;
+    let mut id = 0i32;
+    let err = unsafe { steal(cid, 0xC80, &mut id) };
+    (err == 0 && id != 0).then_some(id)
+}
+
+/// Release a key-focus theft by id, whichever connection made it.
+/// Returns the CGError (0 on success; 1010 when no such theft is live).
+pub fn release_key_focus(theft_id: i32) -> i32 {
+    match release_key_focus_fn() {
+        Some(release) => unsafe { release(theft_id) },
+        None => -1,
+    }
+}
+
 // ── Focus-without-raise ───────────────────────────────────────────────────────
 
 /// Activate `target_pid`'s window `target_wid` without raising any windows
-/// or triggering Space-follow. Ported from yabai's
-/// `window_manager_focus_window_without_raise`.
+/// or triggering Space-follow. Derived from yabai (MIT); see
+/// THIRD_PARTY_NOTICES.md.
 ///
 /// Recipe:
 /// 1. `_SLPSGetFrontProcess` → capture current front PSN.
@@ -352,6 +1008,17 @@ pub fn main_connection_id() -> Option<u32> {
 ///
 /// Returns `true` when all SPIs resolved and both posts succeeded.
 pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
+    activate_without_raise_with(target_pid, target_wid, true)
+}
+
+/// [`activate_without_raise`] with the defocus record to the current front
+/// process made optional (`defocus_front`).
+pub fn activate_without_raise_with(
+    target_pid: pid_t,
+    target_wid: u32,
+    defocus_front: bool,
+) -> bool {
+    crate::focus_arbiter::end_detached();
     let post_fn = match post_event_record_to_fn() {
         Some(f) => f,
         None => return false,
@@ -385,13 +1052,93 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
 
     // Step 3: defocus previous front.
     buf[0x8A] = 0x02;
-    let defocus_ok = unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let defocus_ok = !defocus_front
+        || note_post_status(unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     // Step 4: focus target.
     buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let focus_ok =
+        note_post_status(unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) });
 
     defocus_ok && focus_ok
+}
+
+/// Reverse [`activate_without_raise`] once a background click is delivered:
+/// defocus `target_wid` and hand key focus back to `previous_pid`'s key window.
+///
+/// The no-raise recipe posts a defocus record to the user's front process.
+/// That process stays frontmost as far as NSWorkspace reports, but its key
+/// window stops receiving keyboard input until the user clicks it again, so
+/// the activation-based restore never fires. Returns `true` when both posts
+/// succeeded.
+pub fn restore_focus_after_without_raise(
+    previous_pid: pid_t,
+    previous_key_wid: Option<u32>,
+    target_pid: pid_t,
+    target_wid: u32,
+) -> bool {
+    let Some(post_fn) = post_event_record_to_fn() else {
+        return false;
+    };
+    let Some(previous_wid) = previous_key_wid.or_else(|| key_window_of_pid(previous_pid)) else {
+        return false;
+    };
+    let mut previous_psn = [0u8; 8];
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(previous_wid, previous_pid, &mut previous_psn)
+        || !get_process_psn_for_window(target_wid, target_pid, &mut target_psn)
+    {
+        return false;
+    }
+
+    let mut buf = focus_record(target_wid);
+    buf[0x8A] = 0x02;
+    let defocus_ok =
+        note_post_status(unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) });
+
+    let mut buf = focus_record(previous_wid);
+    buf[0x8A] = 0x01;
+    let focus_ok =
+        note_post_status(unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) });
+
+    defocus_ok && focus_ok
+}
+
+/// The 248-byte focus/defocus event record with `wid` stamped little-endian at
+/// bytes 0x3c–0x3f. The caller sets the direction byte at 0x8a.
+fn focus_record(wid: u32) -> [u8; 0xF8] {
+    let mut buf = [0u8; 0xF8];
+    buf[0x04] = 0xF8;
+    buf[0x08] = 0x0D;
+    buf[0x3C..0x40].copy_from_slice(&wid.to_le_bytes());
+    buf
+}
+
+/// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
+/// frontmost on-screen layer-0 window.
+pub fn key_window_of_pid(pid: pid_t) -> Option<u32> {
+    use crate::ax::bindings::{ax_get_window_id, copy_element_attr, AXUIElementCreateApplication};
+    let focused = unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            None
+        } else {
+            let window = copy_element_attr(app, "AXFocusedWindow");
+            core_foundation::base::CFRelease(app as _);
+            window.and_then(|window| {
+                let wid = ax_get_window_id(window);
+                core_foundation::base::CFRelease(window as _);
+                wid
+            })
+        }
+    };
+    focused.or_else(|| {
+        crate::windows::visible_windows()
+            .into_iter()
+            .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
+            .max_by_key(|w| w.z_index)
+            .map(|w| w.window_id)
+    })
 }
 
 // ── NSMenu shortcut activation ────────────────────────────────────────────────
@@ -423,6 +1170,22 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
     false
 }
 
+/// Return whether WindowServer currently considers the exact window's process
+/// frontmost. Unlike `NSWorkspace.frontmostApplication`, this query does not
+/// depend on the caller's AppKit run loop processing an activation update.
+pub fn front_process_matches(target_pid: libc::pid_t, target_wid: u32) -> Option<bool> {
+    let get_front = get_front_process_fn()?;
+    let mut front_psn = [0u8; 8];
+    if unsafe { get_front(front_psn.as_mut_ptr() as *mut c_void) } != 0 {
+        return None;
+    }
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return None;
+    }
+    Some(front_psn == target_psn)
+}
+
 /// Make `target_pid` and `target_wid` WindowServer-frontmost and leave them
 /// there. Unlike [`with_foreground_assist`], this deliberately does not save or
 /// restore the previous process. It is the persistent counterpart required by
@@ -432,6 +1195,7 @@ pub fn get_process_psn_for_window(window_id: u32, pid: libc::pid_t, out_psn: &mu
 /// Returns `true` only when the target PSN resolved and WindowServer accepted
 /// `SLPSSetFrontProcessWithOptions`.
 pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    crate::focus_arbiter::note_intentional();
     let Some(set_front) = set_front_process_fn() else {
         return false;
     };
@@ -445,15 +1209,134 @@ pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) 
     unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) == 0 }
 }
 
-/// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
-/// posts the synthetic input), then restore the prior frontmost process.
+fn make_key_window_record(window_id: u32, event_kind: u8) -> [u8; 0xF8] {
+    let mut record = [0u8; 0xF8];
+    record[0x04] = 0xF8;
+    record[0x08] = event_kind;
+    record[0x3A] = 0x10;
+    record[0x3C..0x40].copy_from_slice(&window_id.to_le_bytes());
+    record[0x20..0x30].fill(0xFF);
+    record
+}
+
+/// Make one exact application window native-key and frontmost.
+///
+/// Accessibility's `AXFocusedWindow` can change without AppKit making the
+/// corresponding `NSWindow` key. Native menu validation observes the latter,
+/// so focus-sensitive commands remain disabled in that split state. This is
+/// the bounded exact-window sequence used by established macOS window tools:
+/// mark the front-process request as user generated, synthesize the paired
+/// make-key records for the requested WindowServer id, then let the caller
+/// raise the matching AX window. No other application window is addressed.
+pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    crate::focus_arbiter::note_intentional();
+    exact_window_key(target_pid, target_wid)
+}
+
+/// Give the user's window `wid` of `pid` key and front back after a target
+/// took it, by the same sequence as [`make_exact_window_key`]. Not a driver
+/// activation: the watcher that undoes the target's change keeps running.
+pub fn return_key_to(pid: libc::pid_t, wid: u32) -> bool {
+    exact_window_key(pid, wid)
+}
+
+fn exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    let Some(set_front) = set_front_process_fn() else {
+        return false;
+    };
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        return false;
+    }
+
+    // kCPSUserGenerated = 0x200. Unlike kCPSNoWindows, this permits AppKit to
+    // establish the requested native key window before it validates NSMenu.
+    if unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x200) } != 0 {
+        return false;
+    }
+    for event_kind in [0x01, 0x02] {
+        let record = make_key_window_record(target_wid, event_kind);
+        if !note_post_status(unsafe { post(target_psn.as_ptr() as *const c_void, record.as_ptr()) })
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Serializes every foreground activation in the daemon.
+///
+/// Each helper below saves the front process, fronts its target, acts, and
+/// restores. Two of them interleaving (an agent issuing `click` and
+/// `type_text` in parallel) restore each other's "previous" front process
+/// mid-flight, so the second never sees its window focused and fails with
+/// "did not become focused" (bench CDB-S02, CDB-G03; CUA-1218). One holder at a
+/// time removes that race. Nested calls on the holding thread pass through.
+static FOREGROUND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HOLDS_FOREGROUND_LOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+struct ForegroundTurn {
+    _guard: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+impl Drop for ForegroundTurn {
+    fn drop(&mut self) {
+        if self._guard.is_some() {
+            HOLDS_FOREGROUND_LOCK.with(|held| held.set(false));
+        }
+    }
+}
+
+/// Whether some thread holds a foreground turn right now (the driver is
+/// deliberately fronting a target).
+pub fn foreground_turn_active() -> bool {
+    FOREGROUND_LOCK.try_lock().is_err()
+}
+
+fn foreground_turn() -> ForegroundTurn {
+    // Watchers armed before this, including the previous action's detached
+    // window watch, no longer undo an activation.
+    crate::focus_arbiter::note_intentional();
+    if HOLDS_FOREGROUND_LOCK.with(std::cell::Cell::get) {
+        return ForegroundTurn { _guard: None };
+    }
+    let guard = FOREGROUND_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    HOLDS_FOREGROUND_LOCK.with(|held| held.set(true));
+    ForegroundTurn {
+        _guard: Some(guard),
+    }
+}
+
+/// Tool-agnostic foreground-assist: briefly front `window_id`, wait for the
+/// activation to actually land, run `body` (which posts the synthetic input),
+/// then restore the prior frontmost process.
 ///
 /// This is the `delivery_mode:"foreground"` rung of the best-effort-background
-/// ladder, shared by `type_text` and `click`. It is the same brief front →
-/// act → restore primitive `press_key`/`hotkey` use for NSMenu key dispatch —
-/// see [`with_menu_shortcut_activation`], which this delegates to. Reached only
-/// when the agent has seen the background rungs fail (clicks) or the field is
-/// unverifiable + focus-sensitive (Catalyst typing).
+/// ladder, shared by `type_text` and `click`. Reached only when the agent has
+/// seen the background rungs fail (clicks) or the field is unverifiable +
+/// focus-sensitive (Catalyst typing).
+///
+/// ## Why the body waits for the activation
+///
+/// `set_front` is asynchronous, so running the body straight away means the
+/// body's `AXFocused` write races AppKit's own activation. AppKit wins: when
+/// activation completes it installs the window's remembered first responder
+/// and clobbers the write. The keystrokes then land wherever the app chose —
+/// for a Catalyst app such as WhatsApp, the message list rather than the
+/// composer, which silently scrolls the transcript instead of typing.
+///
+/// So this waits for the activation to be observable before running `body`, the
+/// same ordering [`with_foreground_hid_activation`] already relies on. The wait
+/// is a bounded poll rather than a fixed sleep: an app that activates in 10 ms
+/// pays 10 ms, and a slow Catalyst/RDP surface still gets its full budget.
 ///
 /// Returns `Ok(true)` when the brief activation happened, `Ok(false)` when the
 /// fronting SPIs are unavailable (the body still ran, just without a front).
@@ -462,22 +1345,140 @@ pub fn with_foreground_assist(
     target_wid: u32,
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
-    with_menu_shortcut_activation(target_pid, target_wid, body)
+    let _turn = foreground_turn();
+    let set_front = match set_front_process_fn() {
+        Some(f) => f,
+        None => {
+            // SPIs unavailable — run body anyway without activation.
+            body()?;
+            return Ok(false);
+        }
+    };
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        body()?;
+        return Ok(false);
+    }
+
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    // `set_front` moves WindowServer's front process but does not make the
+    // target's NSWindow key, and AppKit installs a first responder only for a
+    // key window. Without this the app is "frontmost" to WindowServer while
+    // remaining, from AppKit's point of view, unfocused — so the AXFocused
+    // write in the body has no responder chain to attach to.
+    make_exact_window_key(target_pid, target_wid);
+    await_window_focused(target_pid, target_wid);
+
+    let result = body();
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result?;
+    Ok(true)
+}
+
+/// Upper bound on how long [`with_foreground_assist`] waits for a requested
+/// activation to become observable. Chosen to cover a Catalyst app's activation
+/// plus key-window install; past this the caller proceeds anyway so a stubborn
+/// target degrades to the old behavior instead of hanging.
+const ACTIVATION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Poll interval for [`await_window_focused`]. Short enough that a fast native
+/// app pays roughly one tick, long enough not to spin on the WindowServer.
+const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Block until `target_wid` is the application's focused AX window, or the
+/// timeout expires. Returns whether that state was observed.
+///
+/// The predicate is deliberately `AXFocusedWindow` and not
+/// `NSWorkspace.frontmostApplication`. The latter does not observe a
+/// SkyLight-level front-process change at all: polling it every 15ms across a
+/// full foreground `type_text` against WhatsApp showed zero transitions while
+/// the target was demonstrably being fronted, so a frontmost-based wait always
+/// burns its whole timeout and never actually gates on anything. `AXFocusedWindow`
+/// is the same proof [`preserves_exact_existing_focus`] already trusts to decide
+/// whether a window is focused.
+///
+/// A `false` return is not fatal: the caller proceeds with delivery regardless,
+/// because a target that never reports focus is exactly the case the pre-existing
+/// best-effort contract already covered.
+fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
+    let deadline = std::time::Instant::now() + ACTIVATION_WAIT_TIMEOUT;
+    loop {
+        if crate::ax::bindings::focused_window_id_of_pid(pid).is_some_and(|w| w.is(window_id)) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(ACTIVATION_POLL_INTERVAL);
+    }
+}
+
+/// Why `target_wid` could not take focus, as a caller-actionable suffix for
+/// the refusal: another window of the app holds focus (an open modal dialog,
+/// e.g. LibreOffice "Delete Contents"), or the target is not a visible window
+/// (a closed Chrome omnibox popup) and can never be key. Empty when neither
+/// is proven.
+fn focus_failure_hint(pid: libc::pid_t, target_wid: u32) -> String {
+    let target = crate::windows::describe_window(target_wid);
+    let focused = crate::ax::bindings::focused_window_id_of_pid(pid)
+        .filter(|focused| !focused.is(target_wid))
+        .map(|focused| focused.own);
+    focus_failure_hint_from(
+        target.as_ref().map(|window| {
+            window.is_on_screen && window.bounds.width >= 2.0 && window.bounds.height >= 2.0
+        }),
+        focused.map(|window_id| {
+            let title = crate::windows::describe_window(window_id)
+                .map(|window| window.title)
+                .unwrap_or_default();
+            (window_id, title)
+        }),
+    )
+}
+
+fn focus_failure_hint_from(
+    target_visible: Option<bool>,
+    focused_other: Option<(u32, String)>,
+) -> String {
+    match (target_visible, focused_other) {
+        (Some(false), Some((window_id, title))) => format!(
+            ": the target is not a visible window and cannot take keyboard focus; the \
+             app's focused window is window_id {window_id} \"{title}\", act on that instead"
+        ),
+        (Some(false), None) => {
+            ": the target is not a visible window and cannot take keyboard focus".to_owned()
+        }
+        (_, Some((window_id, title))) => format!(
+            ": window_id {window_id} \"{title}\" of the same app holds focus (an open \
+             dialog or panel); act on that window_id, or close it first"
+        ),
+        _ => String::new(),
+    }
 }
 
 /// Activate an exact target window for a global HID keyboard action.
 ///
-/// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
-/// when the private foreground SPI is unavailable: a global HID event has no
-/// pid addressing and would otherwise land in whichever application is
-/// currently frontmost. The short settles keep the target frontmost until
-/// WindowServer has routed both sides of the key chord, then restore the prior
-/// process even when the action fails.
+/// This helper must not run `action` when the private foreground SPI is
+/// unavailable: a global HID event has no pid addressing and would otherwise
+/// land in whichever application is currently frontmost. The short settles
+/// keep the target frontmost until WindowServer has routed both sides of the
+/// key chord, then restore the prior process even when the action fails.
 pub fn with_foreground_hid_activation(
     target_pid: libc::pid_t,
     target_wid: u32,
     action: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    let _turn = foreground_turn();
     let set_front = set_front_process_fn()
         .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
 
@@ -490,12 +1491,41 @@ pub fn with_foreground_hid_activation(
     if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
+
+    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
+    {
+        // Re-activating an already key exact window can clear Chromium's
+        // renderer focus even though WindowServer keeps the app frontmost.
+        // The AX window proof lets us deliver directly without weakening the
+        // exact-window guard or disturbing the current key target.
+        return action();
+    }
+
     let activated = unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
     if activated != 0 {
         anyhow::bail!("WindowServer rejected foreground HID activation");
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    make_exact_window_key(target_pid, target_wid);
+    crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
+    // A slow app (LibreOffice) can take longer than one wait to install its
+    // key window: ask once more before giving up.
+    if !await_window_focused(target_pid, target_wid) {
+        unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+        make_exact_window_key(target_pid, target_wid);
+        crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
+    }
+    if !await_window_focused(target_pid, target_wid) {
+        if prev_ok {
+            unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+        }
+        anyhow::bail!(
+            "exact target window did not become focused for foreground HID delivery{}",
+            focus_failure_hint(target_pid, target_wid)
+        );
+    }
+
     let result = action();
     std::thread::sleep(std::time::Duration::from_millis(40));
 
@@ -506,53 +1536,332 @@ pub fn with_foreground_hid_activation(
     result
 }
 
-/// Activate `target_pid`'s window `target_wid` for NSMenu key dispatch, run `action`,
-/// then immediately restore the prior frontmost process.
-///
-/// The entire activate → action → restore sequence is < 1 ms — a 5 ms UX monitor
-/// never observes the intermediate frontmost state. NSMenu still fires because the
-/// key event is already enqueued in the target's run-loop queue before we restore.
-///
-/// Returns `Ok(true)` when activation succeeded, `Ok(false)` when SPIs unavailable.
-pub fn with_menu_shortcut_activation(
-    target_pid: libc::pid_t,
-    target_wid: u32,
-    action: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<bool> {
-    let set_front = match set_front_process_fn() {
-        Some(f) => f,
-        None => {
-            // SPIs unavailable — run action anyway without activation.
-            action()?;
-            return Ok(false);
-        }
+fn preserves_exact_existing_focus(
+    previous_process_known: bool,
+    previous_psn: [u8; 8],
+    target_psn: [u8; 8],
+    focused_window_id: Option<crate::ax::exact_target::AxWindowId>,
+    target_window_id: u32,
+) -> bool {
+    previous_process_known
+        && previous_psn == target_psn
+        && focused_window_id.is_some_and(|focused| focused.is(target_window_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
+        preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
+        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
+    use crate::ax::exact_target::AxWindowId;
 
-    // Capture prior frontmost PSN.
-    let mut prev_psn = [0u8; 8];
-    let prev_ok = get_front_process_fn()
-        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
-        .unwrap_or(false);
-
-    // Resolve target PSN.
-    let mut target_psn = [0u8; 8];
-    let target_ok = get_process_psn_for_window(target_wid, target_pid, &mut target_psn);
-    if !target_ok {
-        action()?;
-        return Ok(false);
+    #[test]
+    fn a_1002_post_status_is_remembered_and_other_failures_are_not() {
+        reset_windowserver_connection_invalid_for_test();
+        assert!(note_post_status(0));
+        assert!(!note_post_status(-1));
+        assert!(!windowserver_connection_invalid());
+        assert!(!note_post_status(WINDOWSERVER_INVALID_CONNECTION));
+        assert!(windowserver_connection_invalid());
+        reset_windowserver_connection_invalid_for_test();
     }
 
-    // Make target WindowServer-frontmost (kCPSNoWindows = 0x400).
-    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
-
-    // Run action then restore — even if action fails.
-    let result = action();
-
-    // Restore prior frontmost (windowID=0, options=0x400).
-    if prev_ok {
-        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    #[test]
+    fn focus_failure_names_the_dialog_that_holds_focus() {
+        let hint = focus_failure_hint_from(Some(true), Some((3991, "Delete Contents".into())));
+        assert!(hint.contains("window_id 3991"), "{hint}");
+        assert!(hint.contains("Delete Contents"), "{hint}");
     }
 
-    result?;
-    Ok(true)
+    #[test]
+    fn focus_failure_on_an_invisible_target_says_it_cannot_be_key() {
+        let hint = focus_failure_hint_from(Some(false), Some((2497, "Morrowglass".into())));
+        assert!(hint.contains("not a visible window"), "{hint}");
+        assert!(hint.contains("window_id 2497"), "{hint}");
+        assert_eq!(focus_failure_hint_from(Some(true), None), "");
+        assert_eq!(focus_failure_hint_from(None, None), "");
+    }
+
+    #[test]
+    fn foreground_turns_serialize_across_threads_and_nest_on_one() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let inside = Arc::new(AtomicUsize::new(0));
+        let max_inside = Arc::new(AtomicUsize::new(0));
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let inside = inside.clone();
+                let max_inside = max_inside.clone();
+                std::thread::spawn(move || {
+                    let _turn = foreground_turn();
+                    // A nested helper on the holding thread must not deadlock.
+                    let _nested = foreground_turn();
+                    let now = inside.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_inside.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    inside.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(max_inside.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn make_key_records_address_only_the_exact_window() {
+        let press = make_key_window_record(0x7856_3412, 0x01);
+        let release = make_key_window_record(0x7856_3412, 0x02);
+        assert_eq!(press.len(), 0xF8);
+        assert_eq!(press[0x04], 0xF8);
+        assert_eq!(press[0x08], 0x01);
+        assert_eq!(release[0x08], 0x02);
+        assert_eq!(&press[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(press[0x3A], 0x10);
+        assert!(press[0x20..0x30].iter().all(|byte| *byte == 0xFF));
+    }
+
+    #[test]
+    fn exact_existing_focus_avoids_reactivation() {
+        let psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert!(preserves_exact_existing_focus(
+            true,
+            psn,
+            psn,
+            Some(AxWindowId::window(42)),
+            42
+        ));
+    }
+
+    #[test]
+    fn a_focused_sheet_avoids_reactivation_for_the_sheet_and_its_window() {
+        let psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        let sheet = Some(AxWindowId { own: 43, root: 42 });
+        assert!(preserves_exact_existing_focus(true, psn, psn, sheet, 42));
+        assert!(preserves_exact_existing_focus(true, psn, psn, sheet, 43));
+        assert!(!preserves_exact_existing_focus(true, psn, psn, sheet, 41));
+    }
+
+    #[test]
+    fn process_or_window_uncertainty_requires_guarded_activation() {
+        let target = [1, 2, 3, 4, 5, 6, 7, 8];
+        let other = [8, 7, 6, 5, 4, 3, 2, 1];
+        assert!(!preserves_exact_existing_focus(
+            false,
+            target,
+            target,
+            Some(AxWindowId::window(42)),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            other,
+            target,
+            Some(AxWindowId::window(42)),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true,
+            target,
+            target,
+            Some(AxWindowId::window(41)),
+            42
+        ));
+        assert!(!preserves_exact_existing_focus(
+            true, target, target, None, 42
+        ));
+    }
+}
+
+#[cfg(test)]
+mod key_prime_tests {
+    use super::{prime_exact_window_key, restore_target, KeyFocus, KeyPrime};
+    use crate::ax::exact_target::AxWindowId;
+    use std::cell::Cell;
+
+    fn at(window: Option<u32>, element_window: Option<u32>) -> KeyFocus {
+        KeyFocus {
+            window: window.map(AxWindowId::window),
+            element_window,
+        }
+    }
+
+    /// Sheet 15304 attached to window 167 is the app's focused window.
+    fn sheet_focused() -> KeyFocus {
+        KeyFocus {
+            window: Some(AxWindowId {
+                own: 15304,
+                root: 167,
+            }),
+            element_window: Some(15304),
+        }
+    }
+
+    /// Keys addressed to the window go to its open sheet, and keys addressed
+    /// to the sheet itself are confirmed by the same focus read.
+    #[test]
+    fn a_focused_sheet_is_key_for_the_sheet_and_its_window() {
+        for target in [167, 15304] {
+            let r =
+                prime_exact_window_key(target, sheet_focused, || panic!("record"), || panic!("ax"));
+            assert_eq!(r, Ok(KeyPrime::AlreadyKey), "target {target}");
+        }
+        // A sibling window of the app is still refused.
+        let r = prime_exact_window_key(200, sheet_focused, || true, || true);
+        assert!(r.unwrap_err().contains("no keys were sent"));
+    }
+
+    /// The parent window focused does not prove keys reach its sheet.
+    #[test]
+    fn a_focused_parent_does_not_confirm_its_sheet() {
+        let r = prime_exact_window_key(15304, || at(Some(167), Some(167)), || true, || true);
+        assert!(r.unwrap_err().contains("no keys were sent"));
+    }
+
+    #[test]
+    fn a_refused_key_names_the_window_that_holds_focus() {
+        let base = "window 5 could not be confirmed".to_string();
+        let named = super::with_blocker_hint(base.clone(), Some((9, "Tip of the Day")));
+        assert!(
+            named.contains("\"Tip of the Day\" (window_id 9)"),
+            "{named}"
+        );
+        assert!(named.contains("answer it"), "{named}");
+        let untitled = super::with_blocker_hint(base.clone(), Some((9, "")));
+        assert!(
+            untitled.contains("untitled window (window_id 9)"),
+            "{untitled}"
+        );
+        assert_eq!(super::with_blocker_hint(base.clone(), None), base);
+    }
+
+    #[test]
+    fn already_key_sends_nothing() {
+        let r = prime_exact_window_key(
+            7,
+            || at(Some(7), Some(7)),
+            || panic!("record"),
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::AlreadyKey));
+    }
+
+    /// LibreOffice that was never active: AX names the window but no element
+    /// has focus, and keys are dropped. It must be primed, not trusted.
+    #[test]
+    fn focused_window_without_focused_element_is_primed() {
+        let focus = Cell::new(at(Some(7), None));
+        let records = Cell::new(0);
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                records.set(records.get() + 1);
+                focus.set(at(Some(7), Some(7)));
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+        assert_eq!(records.get(), 1);
+    }
+
+    #[test]
+    fn key_records_are_accepted_only_after_the_reread_names_the_target() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                focus.set(at(Some(7), Some(7)));
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+    }
+
+    /// The records are delivered asynchronously; a second pass is allowed.
+    #[test]
+    fn a_late_switch_is_caught_by_the_second_pass() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let passes = Cell::new(0);
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                passes.set(passes.get() + 1);
+                if passes.get() == 2 {
+                    focus.set(at(Some(7), Some(7)));
+                }
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+        assert_eq!(passes.get(), 2);
+    }
+
+    #[test]
+    fn ignored_records_fall_back_to_ax_then_confirm() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || true, // records posted but the app ignored them
+            || {
+                focus.set(at(Some(7), None));
+                true
+            },
+        );
+        assert_eq!(r, Ok(KeyPrime::AxFocusedWindow));
+    }
+
+    /// After the switch VCL can keep naming a Find & Replace field as the
+    /// focused element while the document window is key and gets the keys.
+    #[test]
+    fn a_stale_dialog_element_does_not_block_a_confirmed_switch() {
+        let focus = Cell::new(at(Some(9), Some(9)));
+        let r = prime_exact_window_key(
+            7,
+            || focus.get(),
+            || {
+                focus.set(at(Some(7), Some(9)));
+                true
+            },
+            || panic!("ax"),
+        );
+        assert_eq!(r, Ok(KeyPrime::KeyRecords));
+    }
+
+    #[test]
+    fn key_goes_back_to_the_previous_window() {
+        assert_eq!(restore_target(7, Some(9), &[9, 7, 5], &[7, 9, 5]), Some(9));
+    }
+
+    /// LibreOffice hid the Find & Replace dialog (9) of document 5 when
+    /// document 7 became key: hand key to 5, which re-shows the dialog.
+    #[test]
+    fn a_hidden_previous_dialog_hands_key_to_the_frontmost_remaining_window() {
+        assert_eq!(restore_target(7, Some(9), &[9, 5, 7], &[7, 5]), Some(5));
+    }
+
+    #[test]
+    fn nothing_to_restore_when_only_the_target_is_left() {
+        assert_eq!(restore_target(7, Some(7), &[7], &[7]), None);
+        assert_eq!(restore_target(7, None, &[], &[7]), None);
+    }
+
+    /// The Find & Replace leak: the dialog keeps key, nothing redirects. Must
+    /// refuse, never post.
+    #[test]
+    fn unconfirmed_key_window_refuses_instead_of_leaking() {
+        for focused in [at(Some(9), Some(9)), at(None, None), at(Some(9), Some(7))] {
+            let r = prime_exact_window_key(7, || focused, || true, || true);
+            assert!(r.unwrap_err().contains("no keys were sent"));
+        }
+    }
 }

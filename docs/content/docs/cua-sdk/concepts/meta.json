@@ -1,0 +1,10 @@
+{
+  "title": "Concepts",
+  "pages": [
+    "how-sandboxes-work",
+    "telemetry",
+    "telemetry-events",
+    "telemetry-counting",
+    "telemetry-error-kinds"
+  ]
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Universal background mouse actuator: coordinate-routed pointer/touch
 //! injection that delivers a click to whatever window sits under a screen
 //! point **without** `SetForegroundWindow` and **without** moving the user's
@@ -38,6 +41,9 @@ use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Controls::{
     CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
     POINTER_FEEDBACK_DEFAULT, POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
 };
 use windows::Win32::UI::Input::Pointer::{
     InjectSyntheticPointerInput, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
@@ -127,6 +133,28 @@ pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
         let _ = AttachThreadInput(my_tid, cur_tid, false);
     }
     GetForegroundWindow() == target
+}
+
+/// Retry an explicit visible foreground transition after a reserved no-name
+/// key grants this process the most-recent-input token. The key has no
+/// application meaning; the retry count keeps the transition bounded.
+pub(crate) unsafe fn force_foreground_assisted(target: HWND) -> (bool, bool) {
+    if unsafe { force_foreground_attached(target) } {
+        return (true, false);
+    }
+
+    const VK_NONAME: u8 = 0xFC;
+    unsafe {
+        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+    }
+    for _ in 0..3 {
+        if unsafe { force_foreground_attached(target) } {
+            return (true, true);
+        }
+        sleep(Duration::from_millis(25));
+    }
+    (false, true)
 }
 
 /// RAII guard that makes a specific target window **unable to become the
@@ -257,7 +285,7 @@ fn pen_taps(sx: i32, sy: i32, barrel: bool, count: usize) -> Result<()> {
                 sleep(Duration::from_millis(70));
             }
         }
-        let _ = DestroySyntheticPointerDevice(dev);
+        DestroySyntheticPointerDevice(dev);
         result?;
     }
     Ok(())
@@ -349,7 +377,8 @@ pub fn inject_click_screen(
 /// rather than an occluder. Used to enforce the macOS-aligned rule that a
 /// `background` actuation never raises: when this is false the injection bails
 /// and the tool returns `background_unavailable` (escalate to foreground).
-unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
+/// The foreground SendInput drag uses the same check before its button-down.
+pub(crate) unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
     let top = WindowFromPoint(POINT { x: sx, y: sy });
     if top.0.is_null() {
         return false;
@@ -381,6 +410,58 @@ pub fn point_in_window_bounds(hwnd: u64, x: i32, y: i32) -> bool {
         return true;
     }
     x >= r.left && x < r.right && y >= r.top && y < r.bottom
+}
+
+fn point_in_rect(x: i32, y: i32, left: i32, top: i32, width: i32, height: i32) -> bool {
+    if width <= 0 || height <= 0 {
+        return false;
+    }
+    let (x, y, left, top, width, height) = (
+        i64::from(x),
+        i64::from(y),
+        i64::from(left),
+        i64::from(top),
+        i64::from(width),
+        i64::from(height),
+    );
+    x >= left && x < left + width && y >= top && y < top + height
+}
+
+/// True when `(x, y)` belongs to the live Windows virtual desktop.
+///
+/// Unlike a fixed negative-coordinate threshold, this admits every layout the
+/// OS actually reports. It also rejects the iconic `(-32000, -32000)` region
+/// when a transient `IsIconic` query races with UIA/GetWindowRect state.
+pub fn point_on_virtual_desktop(x: i32, y: i32) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    unsafe {
+        point_in_rect(
+            x,
+            y,
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    }
+}
+
+/// True when `hwnd` is minimized (iconic).
+///
+/// Authoritative counterpart to [`is_iconic_sentinel_point`]: the capture path
+/// already refuses iconic windows outright (see `capture.rs`), and the input
+/// path needs the same signal so an element action can fail loudly instead of
+/// posting into the off-screen iconic region.
+pub fn window_is_iconic(hwnd: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsIconic;
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe { IsIconic(HWND(hwnd as *mut _)).as_bool() }
 }
 
 /// One pen press-drag-release from screen `(sx0,sy0)` to `(sx1,sy1)`, with
@@ -440,7 +521,7 @@ fn pen_drag(sx0: i32, sy0: i32, sx1: i32, sy1: i32, steps: usize, barrel: bool) 
         sleep(Duration::from_millis(8));
         let up = mk(POINTER_FLAG_UP, sx1, sy1);
         res = res.and(InjectSyntheticPointerInput(dev, &[up]));
-        let _ = DestroySyntheticPointerDevice(dev);
+        DestroySyntheticPointerDevice(dev);
         res.map_err(|e| anyhow::anyhow!("InjectSyntheticPointerInput(pen drag): {e}"))?;
     }
     Ok(())
@@ -634,6 +715,57 @@ pub fn inject_drag_screen(
         }
     }
     r
+}
+
+#[cfg(test)]
+mod iconic_sentinel_tests {
+    use super::*;
+
+    /// The exact rect Win32 hands back for a minimized window, as documented on
+    /// the capture-path guard in `capture.rs`.
+    const ICONIC_RECT: (i32, i32, i32, i32) = (-32000, -32000, -31840, -31972);
+
+    #[test]
+    fn virtual_desktop_membership_has_no_magic_negative_ceiling() {
+        assert!(point_in_rect(-31920, 50, -40000, 0, 50000, 2000));
+    }
+
+    #[test]
+    fn iconic_center_is_outside_an_ordinary_virtual_desktop() {
+        let (left, top, right, bottom) = ICONIC_RECT;
+        let (cx, cy) = ((left + right) / 2, (top + bottom) / 2);
+        assert!(!point_in_rect(cx, cy, -2560, -1080, 6400, 3240));
+    }
+
+    #[test]
+    fn iconic_value_on_either_axis_is_outside_the_desktop() {
+        assert!(!point_in_rect(640, -32000, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(-32000, 480, -2560, -1080, 6400, 3240));
+    }
+
+    #[test]
+    fn real_negative_origin_monitor_points_remain_valid() {
+        for (x, y) in [
+            (-1920, 0),
+            (-1795, 383),
+            (-2560, 0),
+            (0, -1080),
+            (-1920, -1080),
+            (0, 0),
+            (1920, 1080),
+        ] {
+            assert!(point_in_rect(x, y, -2560, -1080, 6400, 3240));
+        }
+    }
+
+    #[test]
+    fn virtual_desktop_edges_and_invalid_extents_fail_closed() {
+        assert!(point_in_rect(-1795, 383, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(-2561, 383, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(3840, 0, -2560, -1080, 6400, 3240));
+        assert!(!point_in_rect(0, 0, 0, 0, 0, 1080));
+        assert!(!point_in_rect(0, 0, 0, 0, 1920, -1));
+    }
 }
 
 // (Removed inject_key_cloaked / inject_text_cloaked.) The macOS-aligned

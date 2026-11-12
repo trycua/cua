@@ -1,0 +1,48 @@
+{"cases": [
+{"name": "tpl_build_use", "tags": ["platform", "templates"], "sandbox": "none", "steps": [
+ ["Template.build", [{"$template": {"context": {"hello.txt": "hello from ctx\n", "sub/a.txt": "a\n"}, "steps": [["from_base_image"], ["copy", ["hello.txt", "/home/user/hello.txt"]], ["copy", ["sub", "/home/user/subdir/"]], ["run_cmd", ["echo built-marker && echo built > /home/user/built.txt"]], ["set_workdir", ["/tmp"]], ["set_envs", [{"TPL_ENV": "yes"}]], ["run_cmd", ["echo \"[$TPL_ENV][$(pwd)][$(whoami)]\" > /home/user/where.txt"]], ["set_start_cmd", ["sleep infinity", "test -f /home/user/built.txt"]]]}}, "cprobe-t-${run_id}"], {"tags": ["v1"], "on_build_logs": {"$cb": "build_logs", "as": "message", "probe": ["built-marker", "Build finished"]}}, {"as": "info", "pick": ["name", "tags"]}],
+ ["Template.exists", ["cprobe-t-${run_id}"]],
+ ["Template.exists", ["cprobe-t-${run_id}:v1"]],
+ ["Template.exists", ["cprobe-t-${run_id}:nope"]],
+ ["Template.alias_exists", ["cprobe-t-${run_id}"]],
+ ["Template.alias_exists", ["cprobe-missing-${run_id}"]],
+ ["Template.get_tags", ["$info.template_id"], {}, {"pick": ["tag"]}],
+ ["Template.assign_tags", ["cprobe-t-${run_id}:v1", ["stable"]], {}, {"pick": ["tags"]}],
+ ["Template.get_tags", ["$info.template_id"], {}, {"pick": ["tag"], "sort": true}],
+ ["Template.remove_tags", ["cprobe-t-${run_id}", ["stable"]]],
+ ["Template.get_tags", ["$info.template_id"], {}, {"pick": ["tag"], "sort": true}],
+ ["Sandbox.create", [], {"template": "cprobe-t-${run_id}:v1", "timeout": 60}, {"as": "box", "quiet": true}],
+ ["commands.run", ["cat /home/user/hello.txt /home/user/subdir/a.txt /home/user/built.txt /home/user/where.txt"], {}, {"on": "box"}],
+ ["commands.run", ["echo \"[$TPL_ENV][$(pwd)][$(whoami)]\""], {}, {"on": "box"}],
+ ["commands.run", ["pgrep -x sleep >/dev/null && echo start-cmd-running || echo start-cmd-missing"], {}, {"on": "box"}],
+ ["get_info", [], {}, {"on": "box", "pick": ["name", "state"]}],
+ ["kill", [], {}, {"on": "box"}],
+ ["api", ["DELETE", "/templates/${info.template_id}"]],
+ ["Template.exists", ["cprobe-t-${run_id}"]],
+ ["Sandbox.create", [], {"template": "cprobe-t-${run_id}:v1", "timeout": 60}]
+]},
+{"name": "tpl_user_workdir", "tags": ["platform", "templates"], "sandbox": "none", "steps": [
+ ["Template.build", [{"$template": {"steps": [["from_base_image"], ["set_user", ["root"]], ["run_cmd", ["whoami > /home/user/built-as.txt && chmod 644 /home/user/built-as.txt"]], ["set_workdir", ["/opt"]]]}}, "cprobe-u-${run_id}"], {}, {"as": "info", "pick": ["name"]}],
+ ["Sandbox.create", [], {"template": "cprobe-u-${run_id}", "timeout": 60}, {"as": "box", "quiet": true}],
+ ["commands.run", ["echo \"[$(whoami)][$(pwd)][$HOME]\"; cat /home/user/built-as.txt"], {}, {"on": "box"}],
+ ["commands.run", ["echo \"[$(whoami)][$(pwd)]\""], {"user": "user"}, {"on": "box"}],
+ ["files.write", ["default-user-file.txt", "x"], {}, {"on": "box", "pick": ["path"]}],
+ ["kill", [], {}, {"on": "box"}],
+ ["api", ["DELETE", "/templates/${info.template_id}"]]
+]},
+{"name": "tpl_build_failure", "tags": ["platform", "templates"], "sandbox": "none", "steps": [
+ ["Template.build", [{"$template": {"steps": [["from_base_image"], ["run_cmd", ["echo before-fail"]], ["run_cmd", ["exit 7"]]]}}, "cprobe-f-${run_id}"], {"on_build_logs": {"$cb": "build_logs", "as": "message", "probe": ["before-fail"]}}, {"as": "info", "pick": ["name"]}],
+ ["Template.exists", ["cprobe-f-${run_id}"]],
+ ["api", ["GET", "/templates/aliases/cprobe-f-${run_id}"]]
+]},
+{"name": "tpl_build_bad_image", "tags": ["platform", "templates"], "sandbox": "none", "steps": [
+ ["Template.build", [{"$template": {"steps": [["from_image", ["cprobe-nonexistent-image:zz"]], ["run_cmd", ["true"]]]}}, "cprobe-b-${run_id}"], {}]
+]},
+{"name": "tpl_names", "tags": ["platform", "templates"], "sandbox": "none", "steps": [
+ ["Template.build_in_background", [{"$template": {"steps": [["from_base_image"]]}}, "BAD NAME!"], {}],
+ ["Template.build_in_background", [{"$template": {"steps": [["from_base_image"]]}}, "cprobe-n-${run_id}"], {"tags": ["a", "b"]}, {"as": "info", "pick": ["name", "tags"]}],
+ ["Template.get_build_status", ["$info"], {}, {"pick": ["status"], "until": {"path": "status", "equals": "ready", "timeout": 240, "interval": 3}}],
+ ["Template.get_tags", ["$info.template_id"], {}, {"pick": ["tag"], "sort": true}],
+ ["api", ["DELETE", "/templates/${info.template_id}"]]
+]}
+]}

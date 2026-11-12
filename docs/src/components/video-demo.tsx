@@ -6,6 +6,10 @@ interface VideoDemoProps {
   title: string;
   sourceUrl?: string;
   className?: string;
+  aspectRatio?: number;
+  autoPlay?: boolean;
+  loop?: boolean;
+  preload?: 'none' | 'metadata' | 'auto';
   children?: ReactNode;
 }
 
@@ -14,7 +18,18 @@ function withDocsBasePath(path: string) {
   return `/docs${path}`;
 }
 
-export function VideoDemo({ src, poster, title, sourceUrl, className, children }: VideoDemoProps) {
+export function VideoDemo({
+  src,
+  poster,
+  title,
+  sourceUrl,
+  className,
+  aspectRatio = 16 / 9,
+  autoPlay = false,
+  loop = false,
+  preload = 'metadata',
+  children,
+}: VideoDemoProps) {
   const mediaSrc = withDocsBasePath(src);
   const mediaPoster = withDocsBasePath(poster);
 
@@ -29,11 +44,15 @@ export function VideoDemo({ src, poster, title, sourceUrl, className, children }
     >
       <video
         aria-label={title}
-        className="block aspect-video w-full bg-black object-contain"
+        autoPlay={autoPlay}
+        className="block w-full bg-black object-contain"
         controls
+        loop={loop}
+        muted
         playsInline
         poster={mediaPoster}
-        preload="metadata"
+        preload={preload}
+        style={{ aspectRatio }}
       >
         <source src={mediaSrc} type="video/mp4" />
         <a href={mediaSrc}>Open the video.</a>

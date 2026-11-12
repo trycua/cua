@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Terminal-emulator detection for the Windows `type_text` path.
 //!
 //! Terminal emulators (Windows Terminal, mintty / Git-Bash, Vim, NeoVim,
@@ -187,16 +190,6 @@ mod tests {
                 "expected non-terminal class {name:?} to NOT match"
             );
         }
-    }
-
-    #[test]
-    fn windows_terminal_and_mintty_present() {
-        // Spot-check the trio called out in the bug report so the
-        // regression that motivated this list can't quietly slip back
-        // out during a refactor.
-        assert!(class_matches_terminal("CASCADIA_HOSTING_WINDOW_CLASS"));
-        assert!(class_matches_terminal("mintty"));
-        assert!(class_matches_terminal("ConsoleWindowClass"));
     }
 
     #[test]

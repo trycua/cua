@@ -13,6 +13,17 @@ Install, uninstall, local-build, and VM sync helpers for cua-driver.
 | `sync-vm-worktree.sh` | Sync this checkout to verification VMs and pull artifacts back |
 | `post-install-hints.txt` | User-facing hints printed by install scripts |
 
+## KDE Plasma (KWin) desktop entry
+
+The installer grants nothing on KWin. When `kwin_wayland` is on the `PATH`,
+`install.sh` asks the installed driver for `cua-driver kwin-capture status`.
+While the switch is off, it logs that KWin window capture is off and that
+`cua-driver kwin-capture on` turns it on. When an earlier
+`cua-driver kwin-capture on` left it on, it logs that status instead. That command writes
+`$XDG_DATA_HOME/applications/ai.cua.driver.desktop` (default
+`~/.local/share/applications`). `uninstall.sh` removes the entry when it names
+that install.
+
 ## Stable macOS local signing
 
 macOS Accessibility and Screen Recording grants are tied to an app's
@@ -42,6 +53,16 @@ security set-keychain-settings "$SIGNING_KEYCHAIN"
 security unlock-keychain "$SIGNING_KEYCHAIN"
 export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
 ```
+
+To use an existing certificate without allowing the installer to select a
+different identity from that keychain, also provide its exact SHA-1 fingerprint:
+
+```bash
+export CUA_DRIVER_LOCAL_SIGNING_IDENTITY="<40-hex-character SHA-1>"
+```
+
+The installer fails closed when that exact usable code-signing identity is not
+present in `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN`.
 
 The first install creates `CuaDriver Local Signing (cua-driver-rs)` in that
 keychain. If `codesign` cannot use its private key non-interactively, unlock
@@ -82,5 +103,22 @@ libs/cua-driver/scripts/uninstall-local.ps1
 ```
 
 The local uninstaller leaves `cua-driver`, `CuaDriver.app`, release services,
-release state, and release TCC grants untouched. On macOS it revokes only
-`com.trycua.driver.local`; pass `--keep-tcc` to retain that local grant.
+release state, and release TCC grants untouched. It also keeps the
+`com.trycua.driver.local` macOS permissions; pass `--reset-permissions` to
+revoke that local grant.
+
+The release Unix uninstaller shuts down the release service before removing
+anything. It first requires the systemd/launchd supervisor to stop, then uses
+the daemon PID file to validate the installed release process and invokes the
+trusted installed helper as `cua-driver --expected-pid <pid> stop`. A helper
+that supports this option reads daemon metadata and requires the daemon PID to
+match before sending shutdown; older helpers reject this argv shape instead of
+silently stopping an unrelated default-socket daemon. The uninstaller escalates
+only the already-validated release PID if graceful shutdown is unavailable, and
+verifies the daemon stays stopped before cleanup begins.
+
+With a missing or stale PID file, the script performs only a narrow
+release-executable process check. It never signals an ambiguous process. If
+supervisor shutdown, ownership validation, process inspection, or final
+shutdown verification cannot be proven safe, uninstall aborts non-zero while
+the runtime is still in place.

@@ -1,0 +1,652 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+@testable import CuaSpacesMacKit
+import AppKit
+import CuaSDK
+import CuaSpacesStreaming
+import CuaSpacesFFI
+import Foundation
+import Testing
+
+/// The web UI's bridge contract on the Mac (`apps/cua-spaces-web/src/bridge`):
+///
+/// - every method `WebUIBridge.methods` lists is routed (it never answers
+///   `unimplemented`), and every method the routing switches name is listed
+///   (the web side checks the list against `WEBKIT_METHODS` and `coverage.ts`);
+/// - the answers have the shapes the page reads: each one, on fixture
+///   backends, is checked against `contracts/bridge-shapes.json` (exported
+///   from `contracts/shapes.ts`; `pnpm contract:shapes` there rewrites it).
+///
+/// `CUA_BRIDGE_ANSWERS=<path>` also writes every answer there, as JSON
+/// (for a look at what the page gets).
+@Suite("Bridge contract")
+@MainActor
+struct BridgeContractTests {
+    static let webBridge = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("../cua-spaces-web/src/bridge").standardizedFileURL
+    static let sources = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Sources/CuaSpacesMacKit/WebHost")
+
+    init() { _ = NSApplication.shared }
+
+    // MARK: - Routing
+
+    /// A bare model: nothing signed in, no daemon, no updater. Every method
+    /// still has a route; what it can't do here fails with its own code.
+    func bareBridge() -> WebUIBridge {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-contract-\(UUID().uuidString)")
+        let model = AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: nil),
+                             onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             telemetry: FixtureTelemetry())
+        let bridge = WebUIBridge(model: model, allowedOrigins: [])
+        bridge.actions = WebUIActions(openSpace: { _ in })
+        // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
+        let cliDir = dir.appendingPathComponent("cli").path
+        bridge.makeCliInstaller = {
+            AppCliInstaller.withPaths(bundled: nil, binDir: cliDir, pathEnv: "", profile: cliDir + "/.zshrc")
+        }
+        // "Send file…" picks this instead of showing the native panel.
+        bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
+        // Settings, Advanced's "Browse…" picks this instead of the panel.
+        bridge.pickRuntime = { _ in URL(fileURLWithPath: "/opt/homebrew/bin/podman") }
+        return bridge
+    }
+
+    func code(_ bridge: WebUIBridge, _ method: String, _ args: [String: Any] = [:]) async -> String? {
+        do {
+            _ = try await bridge.handle(method, args)
+            return nil
+        } catch let f as WebUIBridge.Failure {
+            return f.code
+        } catch {
+            return "failed"
+        }
+    }
+
+    @Test func everyListedMethodIsRouted() async {
+        let bridge = bareBridge()
+        var unrouted: [String] = []
+        for method in WebUIBridge.methods where await code(bridge, method) == "unimplemented" {
+            unrouted.append(method)
+        }
+        #expect(unrouted == [], "listed in WebUIBridge.methods, answered unimplemented")
+        #expect(await code(bridge, "spaces.nope") == "unimplemented")
+        #expect(Set(WebUIBridge.methods).count == WebUIBridge.methods.count, "listed twice")
+    }
+
+    /// Every `case "a.b"` in the routing switches is a listed method (the
+    /// sub-switches' words have no dot).
+    @Test func everyRoutedMethodIsListed() throws {
+        let files = try FileManager.default.contentsOfDirectory(at: Self.sources, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("WebUIBridge") && $0.pathExtension == "swift" }
+        #expect(files.count >= 3)
+        let caseLine = try NSRegularExpression(pattern: #"^\s*case\s+("[^"]*"(?:\s*,\s*"[^"]*")*)\s*:"#,
+                                               options: [.anchorsMatchLines])
+        let quoted = try NSRegularExpression(pattern: #""([^"]+)""#)
+        var routed = Set<String>()
+        for file in files {
+            // Continuation lines of a multi-line `case` list too.
+            let src = try String(contentsOf: file, encoding: .utf8)
+                .replacingOccurrences(of: #",\s*\n\s*""#, with: #", ""#, options: .regularExpression)
+            let ns = src as NSString
+            for m in caseLine.matches(in: src, range: NSRange(location: 0, length: ns.length)) {
+                let list = ns.substring(with: m.range(at: 1))
+                for q in quoted.matches(in: list, range: NSRange(location: 0, length: (list as NSString).length)) {
+                    let word = (list as NSString).substring(with: q.range(at: 1))
+                    if word.contains(".") { routed.insert(word) }
+                }
+            }
+        }
+        #expect(routed.count > 50)
+        #expect(routed.subtracting(WebUIBridge.methods).sorted() == [], "routed but not in WebUIBridge.methods")
+        #expect(Set(WebUIBridge.methods).subtracting(routed).sorted() == [], "listed but no case names it")
+    }
+
+    // MARK: - Shapes
+
+    /// A fixture backend with the daemon's tools: the Agents, Volume and
+    /// agent keys fakes, by tool name.
+    final class ToolBackend: SpacesBackend, AgentsToolRunning, CloudToolRunning, @unchecked Sendable {
+        let inner: FixtureSpacesBackend
+        let agents = FakeAgentsTools()
+        let drive = FakeDriveTools()
+        let keys = FakeAgentKeysTools()
+        let github = FakeGithubTools()
+        init(_ inner: FixtureSpacesBackend) { self.inner = inner }
+
+        func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
+            if tool.hasPrefix("agent_keys.") { return try await keys.agentsTool(tool, args) }
+            if tool.hasPrefix("github.") { return try await github.agentsTool(tool, args) }
+            // An agent's home and its files: the Agents fake.
+            let home = ["volume_read", "volume_history", "volume_restore"].contains(tool)
+                || (tool == "volume_ls" && (args["path"] as? String ?? "").hasPrefix("agents/"))
+            if tool.hasPrefix("volume_") && !["volume_requests", "volume_grants"].contains(tool) && !home {
+                return try await drive.agentsTool(tool, args)
+            }
+            return try await agents.agentsTool(tool, args)
+        }
+        func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any { try await inner.cloudTool(tool, args) }
+
+        func repoCacheStatus() async -> RepoCacheState? { await inner.repoCacheStatus() }
+        func setRepoCache(enabled: Bool?, size: String?) async throws -> RepoCacheState? {
+            try await inner.setRepoCache(enabled: enabled, size: size)
+        }
+        func clearRepoCache() async throws -> RepoCacheState? { try await inner.clearRepoCache() }
+
+        func rows() async throws -> [AppSpaceRow] { try await inner.rows() }
+        func create(_ args: AppCreateSpaceArgs, createId: String,
+                    progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {
+            try await inner.create(args, createId: createId, progress: progress)
+        }
+        func cancelCreate(createId: String) async throws { try await inner.cancelCreate(createId: createId) }
+        func gpuChoices() async -> [AppGpuChoice]? { await inner.gpuChoices() }
+        func links() async throws -> [ShareLink] { try await inner.links() }
+        func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+            try await inner.createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
+        }
+        func stopLink(id: String) async throws -> [String] { try await inner.stopLink(id: id) }
+        func approveLink(id: String, always: Bool) async throws -> ShareLink { try await inner.approveLink(id: id, always: always) }
+        func denyLink(id: String) async throws { try await inner.denyLink(id: id) }
+        func shareSettings() async throws -> ShareSettingsRow { try await inner.shareSettings() }
+        func setShareSettings(_ settings: ShareSettingsRow) async throws -> ShareSettingsRow { try await inner.setShareSettings(settings) }
+        func removeShareEdge() async throws -> [String] { try await inner.removeShareEdge() }
+        func network(id: String) async throws -> [String: Any] { try await inner.network(id: id) }
+        func setNetwork(id: String, word: String, allow: [String], deny: [String], widen: Bool, tree: Bool, via: String?) async throws -> String {
+            try await inner.setNetwork(id: id, word: word, allow: allow, deny: deny, widen: widen, tree: tree, via: via)
+        }
+        func networkLog(id: String) async throws -> [[String: Any]] { try await inner.networkLog(id: id) }
+        func ackNetworkNotice(id: String) async throws { try await inner.ackNetworkNotice(id: id) }
+        func setAccess(id: String, clipboard: String?, volume: String?) async throws {
+            try await inner.setAccess(id: id, clipboard: clipboard, volume: volume)
+        }
+        func spaceTree() async throws -> [[String: Any]] { try await inner.spaceTree() }
+        func setChildren(id: String, enabled: Bool) async throws { try await inner.setChildren(id: id, enabled: enabled) }
+        func treeBudget(id: String) async throws -> [String: Any] { try await inner.treeBudget(id: id) }
+        func setTreeBudget(id: String, limits: [String: Any]) async throws -> [String: Any] {
+            try await inner.setTreeBudget(id: id, limits: limits)
+        }
+        func services(id: String) async throws -> [[String: Any]] { try await inner.services(id: id) }
+        func controlService(id: String, name: String, action: String) async throws {
+            try await inner.controlService(id: id, name: name, action: action)
+        }
+        func hosts() async -> [AppSpaceHost] { await inner.hosts() }
+        func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
+        func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
+        func remove(id: String, removeOnly: Bool) async throws { try await inner.remove(id: id, removeOnly: removeOnly) }
+        func rename(id: String, name: String) async throws { try await inner.rename(id: id, name: name) }
+        func setPower(id: String, on: Bool) async throws { try await inner.setPower(id: id, on: on) }
+        func streamProvider(id: String) async throws -> SpaceStreamSourceProviding { try await inner.streamProvider(id: id) }
+        func localBackends() async -> [String]? { await inner.localBackends() }
+        func localRuntimes() async -> (ready: [String], details: [String: String])? { await inner.localRuntimes() }
+        func runtimeKinds() async -> [AppRuntimeKindInput]? { await inner.runtimeKinds() }
+        func runtimeCheckPath(kind: String, path: String) async throws -> AppRuntimePathCheck {
+            try await inner.runtimeCheckPath(kind: kind, path: path)
+        }
+        func setRuntimeSetting(key: String, value: String?) async throws {
+            try await inner.setRuntimeSetting(key: key, value: value)
+        }
+        func lumeSource() async -> String? { await inner.lumeSource() }
+        func setLumeSource(_ value: String) async throws { try await inner.setLumeSource(value) }
+        func linuxSource() async -> String? { await inner.linuxSource() }
+        func setLinuxSource(_ value: String) async throws { try await inner.setLinuxSource(value) }
+        func localStorage() async -> LocalStorage? { await inner.localStorage() }
+        func runningMacosVms() async -> Int? { await inner.runningMacosVms() }
+        func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
+            try await inner.teleportContext(id: id)
+        }
+        func teleportHandle() -> CuaSpacesFFI.Teleport? { inner.teleportHandle() }
+        func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] {
+            try await inner.sendFiles(id: id, paths: paths)
+        }
+        func agentRuns(id: String) async throws -> [AppSpaceAgentRun] { try await inner.agentRuns(id: id) }
+        func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? {
+            await inner.thumbnail(id: id, maxAgeMs: maxAgeMs)
+        }
+        func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] {
+            await inner.appIcons(id: id, requests: requests)
+        }
+        func primaryDisplay(id: String) async -> AppStreamDisplay? { await inner.primaryDisplay(id: id) }
+        func usage(id: String) async -> AppSpaceUsage? { await inner.usage(id: id) }
+        func shares(id: String) async throws -> [AppShareEntryInput] { try await inner.shares(id: id) }
+        func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] {
+            try await inner.share(id: id, who: who, role: role)
+        }
+        func unshare(id: String, who: String) async throws -> [AppShareEntryInput] {
+            try await inner.unshare(id: id, who: who)
+        }
+    }
+
+    /// The app as `CUA_SPACES_FIXTURES=1` runs it, plus the daemon's tools,
+    /// a Keyvault broker and an updater.
+    func fixtureBridge(startup: StartupModel? = nil) async throws -> (WebUIBridge, AppModel, String) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-contract-\(UUID().uuidString)")
+        let inner = FixtureSpacesBackend()
+        inner.fixtureRuns["local:aurora"] = AgentRunsTests.runs
+        let model = AppModel(backend: ToolBackend(inner),
+                             keyvault: KeyvaultModel(client: FakeKeyvault(try fixtureOverview()), clock: { fixtureNow }),
+                             onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             host: FixtureHost(), account: FixtureAccount(identity: "ada@example.com"),
+                             telemetry: FixtureTelemetry(), agentSetup: FixtureAgentSetup(),
+                             devices: FixtureDevices(), presence: FixturePresence(),
+                             loginItem: FixtureLoginItem(.enabled), startup: startup)
+        model.updates = UpdatesModel(updater: FixtureUpdater(lastCheck: fixtureNow), channel: .stable)
+        await model.refresh()
+        await model.keyvault.refresh()
+        let bridge = WebUIBridge(model: model, allowedOrigins: [])
+        bridge.actions = WebUIActions(openSpace: { _ in })
+        // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
+        let cliDir = dir.appendingPathComponent("cli").path
+        bridge.makeCliInstaller = {
+            AppCliInstaller.withPaths(bundled: nil, binDir: cliDir, pathEnv: "", profile: cliDir + "/.zshrc")
+        }
+        // "Send file…" picks this instead of showing the native panel.
+        bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
+        bridge.pickRuntime = { _ in URL(fileURLWithPath: "/opt/homebrew/bin/podman") }
+        let space = try #require(model.spaces.first?.id)
+        return (bridge, model, space)
+    }
+
+    /// Each method with arguments that take it down its usual path on the
+    /// fixtures. A method left out says why in `skipped`.
+    func cases(space: String) -> [(String, [String: Any])] {
+        [
+            // The relay allowance before the sign-out below (signed out, it is null).
+            // No request is waiting on the fixtures: an answer to none is left alone.
+            ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]),
+            // The default Space reads from the fixture account (before the sign-out: signed out, each is null).
+            ("spaces.settings", [:]), ("spaces.setSettings", ["defaultSpace": NSNull(), "fallback": [String](), "fallbackOn": true]),
+            ("spaces.resolveDefault", [:]), ("session.signOut", [:]),
+            ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
+            ("links.approve", ["id": "share-pending"]), ("links.deny", ["id": "share-pending"]),
+            ("shares.settings.get", [:]), ("shares.edge.remove", [:]),
+            ("network.get", ["spaceId": space]),
+            ("network.set", ["spaceId": space, "network": "internet", "allow": [String](), "deny": [String]()]),
+            ("network.log", ["spaceId": space]), ("network.ackNotice", ["spaceId": space]),
+            ("spaces.setAccess", ["spaceId": space, "clipboard": "ask"]), ("spaces.tree", [:]),
+            ("children.set", ["spaceId": space, "enabled": true]),
+            ("budget.get", ["spaceId": space]), ("budget.set", ["spaceId": space, "limits": ["maxSpaces": 4]]),
+            ("services.list", ["spaceId": space]), ("services.control", ["spaceId": space, "name": "web", "action": "restart"]),
+            ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
+            ("shares.settings.set", ["settings": ["landing": "auto", "relayFallback": true, "dailyCapMib": 2048, "defaultAllow": [String](), "approveAgentShares": true, "alwaysAllowSpaces": [String](), "edgeConsent": [String](), "usedToday": 0]]),
+            ("cli.plan", [:]),
+            ("spaces.list", [:]),
+            ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
+            ("spaces.setPower", ["id": space, "on": true]),
+            ("spaces.rename", ["spaceId": space, "name": "design-review"]),
+            ("spaces.open", ["id": space]),
+            ("machines.list", [:]), ("host.status", [:]),
+            ("agents.list", [:]), ("agents.runs", ["spaceId": "local:aurora"]), ("agents.setup", [:]),
+            ("agents.configure", ["agents": ["claude-code"]]), ("agents.signIn", ["agent": "codex"]),
+            ("agents.status", ["refresh": true]), ("agents.connect", ["agents": ["claude-code"], "signIn": true]),
+            ("agents.disconnect", ["agents": ["claude-code"], "signIn": true]),
+            ("agents.signInStart", ["agent": "codex"]), ("agents.signInWait", ["id": "codex-1"]),
+            ("agents.detail", ["name": "ada"]), ("agents.readFile", ["path": "agents/ada/hermes/MEMORY.md"]),
+            ("agents.restoreFile", ["path": "agents/ada/hermes/MEMORY.md", "version": "v1"]),
+            ("agents.addRoutine", ["agent": "ada", "title": "Inbox", "prompt": "Sort my inbox", "everyMinutes": NSNull(),
+                                   "dailyAt": "08:00", "weeklyOn": NSNull()]),
+            ("agents.setRoutine", ["id": "R1", "enabled": false]), ("agents.removeRoutine", ["id": "R1"]),
+            ("agents.allowComputer", ["agent": "ada", "machine": "relay:0123"]),
+            ("agents.revokeComputer", ["agent": "ada", "machine": "relay:0123"]),
+            ("agentKeys.list", [:]), ("agentKeys.check", [:]), ("agentKeys.set", ["provider": "anthropic", "value": "sk-ant-test-0000"]),
+            ("agentKeys.remove", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.rename", ["env": "ANTHROPIC_API_KEY", "label": "Work key"]),
+            ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.copySignIn", ["on": false]),
+            ("github.status", [:]), ("github.rescan", [:]), ("github.use", ["host": "github.com", "login": "ada"]),
+            ("github.enable", ["host": "github.com", "enabled": false]),
+            ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
+            ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
+            ("clouds.disconnect", ["provider": "aws", "deleteResources": false]),
+            ("clouds.approve", ["provider": "aws", "approve": true]),
+            ("sharing.list", ["spaceId": space]), ("sharing.share", ["spaceId": space, "who": "bob@example.com", "role": "viewer"]),
+            ("sharing.unshare", ["spaceId": space, "who": "bob@example.com"]),
+            ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
+            ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
+            ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
+            ("about.get", [:]), ("about.set", ["channel": "nightly"]), ("about.checkNow", [:]),
+            ("update.get", [:]), ("update.install", [:]),
+            ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
+            ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
+            ("devices.createPairingCode", ["team": NSNull()]), ("devices.pairingCodes", [:]),
+            ("teams.list", [:]),
+            ("devices.revokePairingCode", ["id": "pc_fixture1"]),
+            ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
+            ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
+            ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]), ("crashReporting.config", [:]),
+            ("spaces.usage", ["spaceId": space]), ("spaces.reach", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
+            ("spaces.thumbnail", ["spaceId": space]),
+            ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
+            ("spaces.sendFiles", ["spaceId": space, "paths": ["/tmp/cua-contract-notes.txt"]]),
+            ("settings.get", [:]), ("settings.choose", ["row": "telemetry", "option": "off"]),
+            ("runtimes.check", ["kind": "container", "path": "/usr/local/bin/docker"]), ("runtimes.browse", ["kind": "container"]),
+            ("repoCache.get", [:]), ("repoCache.set", ["enabled": true, "sizeGb": 2]), ("repoCache.clear", [:]),
+            ("settings.update", ["tips": ["off": false, "done": ["try-agent"]]]),
+            ("keyvault.get", [:]),
+            ("keyvault.lock", ["ids": ["kv-1"]]),
+            ("keyvault.approve", ["requestId": "req-1", "items": NSNull()]), ("keyvault.deny", ["requestId": "req-2"]),
+            ("keyvault.revokeGrant", ["id": "grant-1"]), ("keyvault.setDisabled", ["disabled": false]),
+            ("keyvault.showItems", [:]), ("keyvault.dismiss", ["imports": ["imp-1"]]),
+            ("keyvault.run", ["command": ["type": "revoke-grant", "id": "grant-1"]]),
+            ("teleport.remembered", ["providerId": "chrome", "spaceId": space]),
+            ("window.setBackgroundColor", ["color": "#16181c"]),
+            ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 48]]]),
+            ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
+            ("startup.get", [:]),
+            // A test runner carries no Cua Driver: null and an empty list.
+            ("driver.status", [:]),
+            ("driver.permissions", [:]),
+            ("driver.list", [:]),
+        ]
+    }
+
+    /// Methods not called here, and why (the rest of `WebUIBridge.methods`
+    /// must be in `cases`).
+    static let skipped: [String: String] = [
+        "session.signIn": "starts a device sign-in that waits for the browser",
+        "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
+        "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
+        "onboarding.reset": "FirstRunTests covers it (removes the state file)",
+        "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
+        "spaces.delete": "removes the fixture Space the later cases use",
+        "spaces.deleteMany": "removes fixture Spaces the later cases use; BulkDeleteTests covers it",
+        "spaces.leave": "changes the fixture list the later cases use; BulkDeleteTests covers it",
+        "spaces.add": "needs a running cua-spacesd at the address",
+        "host.setUp": "installs the host service", "host.action": "changes the host service", "host.limits": "changes the host settings (HostBridgeTests covers hostLimitsChangeThroughTheHostModel)",
+        "host.openSettings": "opens System Settings",
+        "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
+        "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
+        "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",
+        "agents.message": "as agents.start (the daemon's agent_message)",
+        "agents.recentThreads": "needs the daemon's agent_threads; WebUIHostTests checks it is unsupported without it",
+        "agents.threadHistory": "as agents.recentThreads (the daemon's agent_thread_read)",
+        "agents.computerSignIn": "needs the daemon's agent_sign_in and a Space to sign in on; ops/agent-sign-in.ts and the Rust remote_login tests cover it",
+        "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
+        "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
+        // Teleport needs the SDK's handle and a reachable Space; its answers
+        // are checked from the records the routes encode (teleportAnswers).
+        "teleport.catalog": "needs the SDK's teleport handle", "teleport.entryForPath": "needs the SDK's teleport handle",
+        "teleport.windows": "lists this Mac's real windows", "teleport.remoteWindows": "needs a Space's stream",
+        "teleport.icon": "needs the SDK's teleport handle", "teleport.thumbnail": "needs the SDK's teleport handle",
+        "teleport.plan": "needs the SDK's teleport handle", "teleport.run": "needs the SDK's teleport handle",
+        "teleport.sites": "reads a browser's profile through the Keyvault", "teleport.readiness": "checks a browser through the Keyvault", "teleport.streamWindow": "opens a native window",
+        "volume.approve": "the fake has no request", "volume.deny": "the fake has no request",
+        "volume.revoke": "the fake has no grant", "volume.resolve": "changes the fake's conflicts",
+        "volume.reveal": "opens Finder", "loginItem.openSettings": "opens System Settings",
+        "devices.approve": "asks for presence", "devices.rename": "changes the fixture account",
+        "devices.revoke": "changes the fixture account", "devices.confirmMachine": "changes the fixture account",
+        "machines.rename": "changes the fixture account; MachinesViewTests covers it",
+        "machines.remove": "changes the fixture account; MachinesViewTests covers it",
+        "machines.checkHealth": "asks each machine's daemon; MachinesViewTests covers it",
+        "stream.pip": "opens a picture-in-picture window",
+        "keyvault.delete": "asks in an alert; TeleportBridgeTests answers it",
+        "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID or a passphrase in a sheet",
+        "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
+        "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
+        "cli.install": "writes the CLI into a bin folder and a shell profile; CliBridgeTests covers it on temp folders",
+        "ci.overview": "runs the bundled cua ci app; CiRunnersTests covers the arguments and answers with a fake cua",
+        "ci.connect": "as ci.overview (it starts a GitHub install)",
+        "ci.connectToken": "as ci.overview (it makes a pool from a GitHub token)",
+        "ci.connectCancel": "as ci.overview",
+        "ci.repositories": "as ci.overview (it changes which repositories may run jobs)",
+        "ci.goal": "as ci.overview (it changes a cloud's goal)",
+        "ci.log": "as ci.overview",
+        "thread.read": "answers the daemon's thread_read as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.post": "answers the daemon's thread_post as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.members": "answers the daemon's agent_members as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.setRights": "answers the daemon's agent_set_rights as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.agentAdd": "answers the daemon's agent_add as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.agentRemove": "answers the daemon's agent_remove as-is (the page ignores it); ThreadBridgeTests covers the arguments",
+        "thread.joinCodeCreate": "answers the daemon's thread_join_code_create as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.joinCodeList": "answers the daemon's thread_join_code_list as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "thread.joinCodeCancel": "answers the daemon's thread_join_code_cancel as-is (the page ignores it); ThreadBridgeTests covers the arguments",
+        "thread.settings": "answers the daemon's thread_settings as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "driver.config": "needs the bundled Cua Driver running (embedded-driver-vm-check.sh); EmbeddedDriverTests covers the socket",
+        "driver.setConfig": "as driver.config",
+        "driver.test": "as driver.config (it moves the agent pointer)",
+        "driver.pause": "as driver.config (it stops the driver); EmbeddedDriverTests covers the marker path",
+        "driver.setup": "writes the coding agents' configs and restarts the driver",
+        "driver.setApp": "as driver.setup, for one agent",
+    ]
+
+    static func shapes() throws -> [String: Any] {
+        let url = webBridge.appendingPathComponent("contracts/bridge-shapes.json")
+        let data = try Data(contentsOf: url)
+        return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// What WebKit hands the page: the answer as JSON.
+    static func json(_ value: Any) throws -> Any {
+        let data = try JSONSerialization.data(withJSONObject: ["v": value], options: [.fragmentsAllowed])
+        return try #require((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["v"])
+    }
+
+    @Test func everyMethodHasACaseOrAReason() {
+        let named = Set(cases(space: "s").map(\.0)).union(Self.skipped.keys)
+        #expect(Set(WebUIBridge.methods).subtracting(named).sorted() == [], "add a case or a reason")
+        #expect(named.subtracting(WebUIBridge.methods).sorted() == [], "stale cases")
+    }
+
+    @Test func answersHaveTheShapesThePageReads() async throws {
+        let doc = try Self.shapes()
+        let webkit = try #require(doc["webkit"] as? [String: Any])
+        let defs = doc["$defs"] as? [String: Any] ?? [:]
+        let (bridge, _, space) = try await fixtureBridge()
+        var problems: [String] = []
+        var answers: [String: Any] = [:]
+        for (method, args) in cases(space: space) {
+            let answer: Any
+            do {
+                answer = try Self.json(try await bridge.handle(method, args))
+            } catch {
+                problems.append("\(method) failed: \(error)")
+                continue
+            }
+            answers[method] = answer
+            guard let schema = webkit[method] else {
+                problems.append("\(method): no shape in bridge-shapes.json")
+                continue
+            }
+            problems += JSONShape.validate(schema, answer, defs: defs).map { "\(method) \($0)" }
+        }
+        for (method, value) in try Self.teleportAnswers() {
+            answers[method] = value
+            guard let schema = webkit[method] else {
+                problems.append("\(method): no shape in bridge-shapes.json")
+                continue
+            }
+            problems += JSONShape.validate(schema, value, defs: defs).map { "\(method) \($0)" }
+        }
+        if let out = ProcessInfo.processInfo.environment["CUA_BRIDGE_ANSWERS"] {
+            let data = try JSONSerialization.data(withJSONObject: answers, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: URL(fileURLWithPath: out))
+        }
+        #expect(problems == [])
+    }
+
+    /// What the teleport routes answer, from the records they encode (the
+    /// SDK's handle and a reachable Space have no fixture): a catalog entry,
+    /// windows, an icon, a plan, a run report and a site inventory.
+    static func teleportAnswers() throws -> [(String, Any)] {
+        let entry = AppCatalogEntry(
+            id: "slack", name: "Slack", hostPath: "/Applications/Slack.app", hostAppId: "com.tinyspeck.slackmacgap",
+            version: "4.41", capability: .full, reason: nil, moves: [.appOnly, .appWithState], providerId: "slack",
+            sensitiveGroups: [.signIns], installSource: "manifest", installId: "slack", installVersion: nil,
+            launchBin: nil, lastUsedMs: 1_700_000_000_000, json: "{}")
+        let plan = AppTeleportPlan(
+            app: entry, spaceId: "local:aurora", moves: .appWithState,
+            steps: [AppPlanStepView(kind: "install", summary: "Install Slack"), AppPlanStepView(kind: "state", summary: "Sign-ins")],
+            consent: [AppConsentItem(kind: .state, key: "cookies", label: "Sign-ins", detail: "3 sites", bytes: 2048, sensitive: true)],
+            sensitive: true, totalBytes: 2048, warnings: ["Slack must be closed"], relayUnsealed: false, json: "plan-1")
+        let report = TeleportRunReport(appId: "slack", installed: ["slack"], sent: [], imported: ["cookies"],
+                                       skipped: [], launched: true)
+        let sites = KvInventory(providerId: "chrome", appDisplay: "Google Chrome", domains: [
+            KvDomainCount(domain: "slack.com", cookies: 4, sessionCookies: 1, localStorage: 2, passwords: 0,
+                          signin: true, identityProvider: false, unavailable: 0, unavailableReason: ""),
+        ], notes: [])
+        let readiness = KvReadiness(
+            providerId: "chrome", appDisplay: "Google Chrome", keyvaultInitialized: true, keyvaultUnlocked: false,
+            profile: "Profile 1", defaultProfile: "Default",
+            profiles: [KvBrowserProfile(dir: "Default", name: "Personal", account: nil, lastUsed: false),
+                       KvBrowserProfile(dir: "Profile 1", name: "Work", account: "ada@work.example", lastUsed: true)],
+            files: KvReadinessCheck(state: "denied", say: "Turn on Full Disk Access."),
+            tabs: KvReadinessCheck(state: "unknown", say: ""), profileEmpty: false)
+        let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
+                                 bundlePath: "/Applications/Slack.app")
+        let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
+                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil, origin: nil)
+        let png = WebUIBridge.dataURL(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]))
+        return try [
+            ("teleport.catalog", [BridgeValue.encode(entry)]),
+            ("teleport.entryForPath", BridgeValue.encode(entry)),
+            ("teleport.windows", BridgeValue.encode([open])),
+            ("teleport.remoteWindows", BridgeValue.encode([remote])),
+            ("teleport.icon", png),
+            ("teleport.thumbnail", WebUIBridge.dataURL(nil)),
+            ("teleport.plan", BridgeValue.encode(plan)),
+            ("teleport.run", WebUIBridge.runReport(report)),
+            ("teleport.sites", BridgeValue.encode(sites)),
+            ("teleport.readiness", BridgeValue.encode(readiness)),
+            ("teleport.streamWindow", NSNull()),
+        ].map { ($0.0, try json($0.1)) }
+    }
+
+    /// Set up Keyvault on a vault that is set up already: refused, with
+    /// no Touch ID asked (the real setup is the native Keyvault's).
+    @Test func keyvaultSetupRefusesASetUpVault() async throws {
+        let (bridge, _, _) = try await fixtureBridge()
+        #expect(await code(bridge, "keyvault.setup") == "failed")
+    }
+
+    /// New Space's options, while starting and once ready: never an
+    /// answer the page's wizard can't run on.
+    @Test func createOptionsHaveTheirShapeWhileStartingAndReady() async throws {
+        let doc = try Self.shapes()
+        let schema = try #require((doc["webkit"] as? [String: Any])?["spaces.createOptions"])
+        let defs = doc["$defs"] as? [String: Any] ?? [:]
+        let (bridge, model, _) = try await fixtureBridge()
+        // While the launch is still at the Keychain: at once, with what is known.
+        let starting = try Self.json(WebUIBridge.createOptions(env: model.knownNewSpaceEnv(), macosVmsRunning: nil, pending: true))
+        #expect(JSONShape.validate(schema, starting, defs: defs) == [])
+        let routed = try Self.json(try await bridge.handle("spaces.createOptions", [:]))
+        #expect(JSONShape.validate(schema, routed, defs: defs) == [])
+        let ready = try Self.json(WebUIBridge.createOptions(env: await model.newSpaceEnv(), macosVmsRunning: 1, pending: false))
+        #expect(JSONShape.validate(schema, ready, defs: defs) == [])
+        // Such an answer fails.
+        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "experiments": [:], "maxCpus": 8]
+        #expect(JSONShape.validate(schema, broken, defs: defs).sorted() == ["$.env: missing", "$.local: expected object, got null"])
+    }
+
+    @Test func startupStatesHaveTheirShape() throws {
+        let doc = try Self.shapes()
+        let schema = try #require((doc["webkit"] as? [String: Any])?["startup.get"])
+        let defs = doc["$defs"] as? [String: Any] ?? [:]
+        for phase in [StartupModel.Phase.starting, .needsKeychain(locked: false), .ready] {
+            let state = try Self.json(WebUIBridge.startupState(StartupModel(phase: phase)))
+            #expect(JSONShape.validate(schema, state, defs: defs) == [], "\(phase)")
+        }
+    }
+}
+
+/// The JSON Schema subset `contracts/schema.ts` writes and validates:
+/// `type`, `properties`, `required`, `additionalProperties`, `items`,
+/// `enum`, `anyOf` and `$ref` (`#/$defs/<name>`). Errors read like the web
+/// side's (`$.local: expected object, got null`).
+enum JSONShape {
+    static func isBool(_ v: Any) -> Bool {
+        guard let n = v as? NSNumber else { return false }
+        return CFGetTypeID(n) == CFBooleanGetTypeID()
+    }
+
+    static func typeName(_ v: Any) -> String {
+        if v is NSNull { return "null" }
+        if isBool(v) { return "boolean" }
+        if v is NSNumber { return "number" }
+        if v is String { return "string" }
+        if v is [Any] { return "array" }
+        if v is [String: Any] { return "object" }
+        return "\(type(of: v))"
+    }
+
+    static func matches(_ t: String, _ v: Any) -> Bool {
+        switch t {
+        case "integer": return !isBool(v) && (v as? NSNumber).map { $0.doubleValue.rounded() == $0.doubleValue } ?? false
+        case "number": return !isBool(v) && v is NSNumber
+        default: return typeName(v) == t
+        }
+    }
+
+    static func same(_ a: Any, _ b: Any) -> Bool {
+        if a is NSNull || b is NSNull { return a is NSNull && b is NSNull }
+        if isBool(a) != isBool(b) { return false }
+        if let x = a as? String, let y = b as? String { return x == y }
+        if let x = a as? NSNumber, let y = b as? NSNumber { return x == y }
+        return false
+    }
+
+    static func show(_ v: Any) -> String {
+        if let s = v as? String { return "\"\(s)\"" }
+        if v is NSNull { return "null" }
+        if isBool(v) { return (v as? Bool) == true ? "true" : "false" }
+        return "\(v)"
+    }
+
+    static func validate(_ schemaAny: Any, _ value: Any, defs: [String: Any], path: String = "$") -> [String] {
+        guard let schema = schemaAny as? [String: Any] else { return ["\(path): bad shape"] }
+        if let ref = schema["$ref"] as? String {
+            let name = ref.replacingOccurrences(of: "#/$defs/", with: "")
+            guard let target = defs[name] else { return ["\(path): unknown shape \(ref)"] }
+            return validate(target, value, defs: defs, path: path)
+        }
+        if let any = schema["anyOf"] as? [Any] {
+            let each = any.map { validate($0, value, defs: defs, path: path) }
+            if each.contains(where: \.isEmpty) { return [] }
+            return each.min { $0.count < $1.count } ?? ["\(path): matches no alternative"]
+        }
+        if let options = schema["enum"] as? [Any], !options.contains(where: { same($0, value) }) {
+            return ["\(path): \(show(value)) is not one of \(options.map(show).joined(separator: ", "))"]
+        }
+        if let t = schema["type"] {
+            let types = (t as? [String]) ?? [(t as? String) ?? ""]
+            if !types.contains(where: { matches($0, value) }) {
+                return ["\(path): expected \(types.joined(separator: " or ")), got \(typeName(value))"]
+            }
+        }
+        var errors: [String] = []
+        if let array = value as? [Any], let items = schema["items"] {
+            for (i, x) in array.enumerated() { errors += validate(items, x, defs: defs, path: "\(path)[\(i)]") }
+        } else if let object = value as? [String: Any] {
+            let properties = schema["properties"] as? [String: Any] ?? [:]
+            for k in schema["required"] as? [String] ?? [] where object[k] == nil { errors.append("\(path).\(k): missing") }
+            for (k, s) in properties.sorted(by: { $0.key < $1.key }) {
+                if let x = object[k] { errors += validate(s, x, defs: defs, path: "\(path).\(k)") }
+            }
+            if let extra = schema["additionalProperties"] as? [String: Any] {
+                for (k, x) in object.sorted(by: { $0.key < $1.key }) where properties[k] == nil {
+                    errors += validate(extra, x, defs: defs, path: "\(path).\(k)")
+                }
+            }
+        }
+        return errors
+    }
+}
+
+/// The core reads a failed create's fix action in kebab case; the page gets it that way.
+@Suite("Bridge values")
+struct BridgeValueFixTests {
+    @Test("a fix action crosses the bridge in the case the core reads")
+    func fixActionIsKebabCase() {
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let out = BridgeValue.encode(fix) as? [String: Any]
+        #expect(out?["action"] as? String == "copy-command")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
+    }
+}

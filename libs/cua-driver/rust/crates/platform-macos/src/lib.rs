@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS platform backend for cua-driver-rs.
 //!
 //! Provides background automation on macOS via:
@@ -6,30 +9,63 @@
 //! - NSRunningApplication / NSWorkspace for app enumeration and lifecycle
 //! - CGWindow / ScreenCaptureKit for window enumeration and screenshots
 
+// Tool helpers return `Result<_, ToolResult>`: the error arm is the finished
+// tool reply (see the note in cua-driver-core), not a propagated error, so
+// clippy's result_large_err does not apply.
+#![allow(clippy::result_large_err)]
+
+#[cfg(target_os = "macos")]
+pub mod apple_events;
 #[cfg(target_os = "macos")]
 pub mod apps;
 #[cfg(target_os = "macos")]
 pub mod ax;
 #[cfg(target_os = "macos")]
+mod background_mutation;
+#[cfg(target_os = "macos")]
 pub mod browser;
 #[cfg(target_os = "macos")]
 pub mod capture;
 #[cfg(target_os = "macos")]
+pub mod capture_consent;
+#[cfg(target_os = "macos")]
 pub mod cursor;
+#[cfg(target_os = "macos")]
+pub mod display_awake;
+#[cfg(target_os = "macos")]
+pub mod document_edit;
+#[cfg(target_os = "macos")]
+pub mod fast_path_guard;
+#[cfg(target_os = "macos")]
+pub mod focus_arbiter;
 #[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
 pub mod focus_steal;
 #[cfg(target_os = "macos")]
+pub mod history;
+#[cfg(target_os = "macos")]
 pub mod input;
+#[cfg(target_os = "macos")]
+pub mod key_focus_guard;
+#[cfg(target_os = "macos")]
+mod permission_observation;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod pip;
 #[cfg(target_os = "macos")]
+pub mod pointer_shape;
+/// AX role -> cursor shape table for the presence hit-test (pure, every host).
+pub mod pointer_shape_map;
+#[cfg(target_os = "macos")]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
+pub mod security_prompt;
+#[cfg(target_os = "macos")]
 pub mod session;
+#[cfg(all(test, target_os = "macos"))]
+mod step_latency_bench;
 #[cfg(target_os = "macos")]
 pub mod terminal;
 #[cfg(target_os = "macos")]
@@ -43,16 +79,29 @@ pub mod windows;
 
 use cua_driver_core::tool::ToolRegistry;
 
+/// Install the macOS presence pointer-shape backend (AX hit-test, NSCursor
+/// readout, pointer warp) into `cua_driver_core::pointer_shape`. Returns
+/// false off macOS or when a backend was already installed.
+pub fn install_pointer_shape_backend() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        pointer_shape::install()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 /// Register all macOS tools.  For programs that don't restructure `main`
 /// (e.g. test harnesses), the overlay is skipped.
 pub fn register_tools() -> ToolRegistry {
     register_tools_with_compat(false)
 }
 
-/// Same as `register_tools` but lets the caller pick the Claude Code
-/// computer-use compat mode. `compat=true` swaps the regular `screenshot`
-/// tool for the window-scoped variant (pid + window_id required,
-/// JPEG @ 85%, text note pointing at pixel tools).
+/// Same as `register_tools` but accepts the legacy Claude Code
+/// computer-use compatibility flag. The flag currently has no tool-surface
+/// effect; it remains accepted so existing launch configurations keep working.
 pub fn register_tools_with_compat(compat: bool) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     {
@@ -73,10 +122,8 @@ pub fn register_tools_with_compat(compat: bool) -> ToolRegistry {
 /// `platform_macos::cursor::overlay::run_on_main_thread()` on the OS
 /// main thread to actually display the overlay.
 ///
-/// `compat=true` enables Claude Code computer-use compatibility mode:
-/// the regular `screenshot` tool is replaced by a window-scoped variant
-/// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
-/// tools). See `tools::screenshot_compat`.
+/// `compat` is a legacy Claude Code compatibility flag with no current
+/// tool-surface effect. It remains accepted for launch compatibility.
 pub fn register_tools_with_cursor(
     cfg: cursor_overlay::CursorConfig,
     compat: bool,
@@ -110,6 +157,23 @@ pub fn register_tools_with_cursor_and_provider(
         if cursor_overlay_available {
             cursor::overlay::init(cfg);
         }
+        // System cursor shape reporting is independent of the agent-cursor
+        // overlay: a remote viewer wants the I-beam even when Cua draws no
+        // cursor of its own. It needs only a Window Server session, so it is
+        // gated on graphic access rather than on `cfg.enabled`.
+        if session::has_graphic_access() {
+            cursor::shape::install();
+        }
+        // This adapter drives `push_cursor_event` from the cursor write path in
+        // `cursor::state`, so declare cursor tracking as supported. The Windows
+        // adapter makes no such declaration, which is how an embedder
+        // learns it must publish the limitation instead of waiting for events
+        // that will never arrive. Unconditional: emission depends on the
+        // registry write path, not on the overlay or on graphic access.
+        cua_driver_core::cursor_hook::declare_cursor_hook_emitter();
+        // Keep the display awake while tools run, so the screen saver and
+        // display sleep do not lock the session mid-task.
+        display_awake::install();
         let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
         tools::register_all(
             &mut r,

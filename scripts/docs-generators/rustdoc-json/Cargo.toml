@@ -1,0 +1,16 @@
+[package]
+name = "cua-rustdoc-json"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "Dumps the public API of the cua Rust crates from rustdoc JSON (pinned nightly) for the docs reference generator."
+
+# Not a member of libs/cua: this tool pins its own nightly toolchain.
+[workspace]
+
+[dependencies]
+# Must match the pinned nightly's rustdoc JSON FORMAT_VERSION (checked at runtime).
+rustdoc-types = "=0.61.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

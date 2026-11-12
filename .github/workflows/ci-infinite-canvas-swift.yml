@@ -1,0 +1,161 @@
+name: "CI: infinite-canvas (Swift)"
+
+# examples/infinite-canvas-swift builds on the Swift packages (libs/cua/swift,
+# libs/spaces-sdk-swift, and libs/spaces-app-swift for CuaSpacesStreaming) and
+# the cua SDK dylib, so an SDK change can break it
+# without touching the sample. The tests are hermetic: the canvas model, the
+# tile pipeline on a local H.264 test pattern (VideoToolbox encode and
+# decode), and a UI smoke test in an offscreen window. Nothing connects to a
+# Space and nothing touches host apps. Liquid Glass needs the macOS 26 SDK.
+#
+# The macOS build is 28 to 33 minutes, so a pull request runs it only when
+# something it compiles or reads changes: the sample, the Swift packages, the
+# SDK crate the binding is generated from, the composite actions it runs and
+# the cursor theme (the map and the reasons are in
+# .github/scripts/ci_swift_samples_scope.py). There is no event-level `paths:`
+# filter: the cheap ubuntu `scope` job always runs and decides, so the `ci:full`
+# label, every push to main and the nightly schedule reach it. Rust-internal
+# changes that leave the binding alone are covered by the full run on every
+# push to main and by the nightly schedule. Release-please branches skip the
+# macOS job as they always have. The benchmark is a separate job that
+# never runs on pull requests (it is not a gate: it only records numbers), so it
+# cannot delay or fail one.
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  # Drift check: the full build on main, whatever changed.
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-infinite-canvas-swift-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  quick:
+    name: quick
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    uses: ./.github/workflows/ci-quick.yml
+
+  changes:
+    needs: quick
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
+    name: scope (macOS Swift sample)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Fails when the dependency map no longer matches the Swift manifests.
+          python3 .github/scripts/ci_swift_samples_scope.py check-manifests infinite-canvas
+          files=""
+          if [[ "$EVENT" == pull_request ]]; then
+            # Both names of a renamed file: moving a dependency out of a mapped
+            # directory is still a change to the dependency.
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
+          fi
+          python3 .github/scripts/ci_swift_samples_scope.py scope infinite-canvas <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  swift:
+    needs: [quick, changes]
+    # The status functions matter: `quick` is skipped on push and schedule, and
+    # without them the implicit success() skips this job too, so main never ran
+    # it or saved the SDK build cache and every pull request built cold (56 minutes).
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
+    name: infinite-canvas-swift (swift test)
+    runs-on: macos-26
+    # A cold SDK build takes 25 to 56 minutes; main's cache makes it a few.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          # Its own family: this job builds `--release -p cua-sdk-native`, whose units
+          # the default libs-cua family (debug test builds) does not hold, so
+          # every run compiled the SDK tree cold (25 minutes). Pushes to main
+          # save this family; pull requests restore it.
+          shared-key: libs-cua-sdk-release-macos
+      - name: Build and stage the cua SDK for Swift
+        run: |
+          (cd libs/cua && cargo build --locked --release -p cua-sdk-native)
+          node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
+      - name: Cursor theme is the driver's
+        run: examples/infinite-canvas-swift/scripts/sync-cursor-assets.sh --check
+      - name: Test the sample
+        timeout-minutes: 20
+        run: examples/infinite-canvas-swift/scripts/test.sh
+
+  # Not a gate and never on pull requests: records the headless hot-path numbers
+  # on main and nightly, with its own limit. Nothing in ci-gate reads it.
+  bench:
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.run == 'true' && needs.quick.outputs.skip != 'true' }}
+    name: infinite-canvas-bench (headless hot paths)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-sdk-release-macos
+          # The swift job saves this family; do not race it for the same key.
+          save-if: "false"
+      - name: Build and stage the cua SDK for Swift
+        run: |
+          (cd libs/cua && cargo build --locked --release -p cua-sdk-native)
+          node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
+      - name: Benchmark
+        working-directory: examples/infinite-canvas-swift
+        timeout-minutes: 15
+        run: |
+          swift build -c release --product canvas-bench
+          .build/release/canvas-bench --tiles 8 --seconds 5 --json canvas-bench.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: infinite-canvas-bench
+          path: examples/infinite-canvas-swift/canvas-bench.json
+          if-no-files-found: ignore

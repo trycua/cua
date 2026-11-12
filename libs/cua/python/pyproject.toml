@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cua"
+version = "0.25.2"
+description = "The cua SDK: sandboxes (local, direct, your own cloud), cua-spacesd, media streaming and the cua daemon, on a Rust core"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "TryCua", email = "hello@trycua.com" }]
+keywords = ["computer-use", "sandbox", "agents", "automation", "vm", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.10"
+# The released wheel also requires `cua-cli==<its version>`: the Rust `cua`
+# CLI as its own platform wheel (cli/), since PyPI caps a file at 100 MB and
+# the CLI and the library together are over it. build_wheel.py adds that
+# pin (hatch_build.py), so a source or editable install of this directory
+# needs nothing that is not on an index. `pip install --no-deps cua` is the
+# SDK alone.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+# The convenience surface of the former `cua` meta-package (0.1.x): with an
+# extra installed, `from cua import Sandbox, Image, ComputerAgent` keeps working.
+sandbox = ["cua-sandbox>=0.8.0; python_version >= '3.11'"]
+agent = ["cua-agent[cloud]>=0.8.0; python_version >= '3.11'"]
+ui = ["cua-agent[ui]>=0.8.0; python_version >= '3.11'"]
+all = [
+    "cua-sandbox>=0.8.0; python_version >= '3.11'",
+    "cua-agent[all]>=0.8.0; python_version >= '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[project.scripts]
+# Runs the Rust `cua` CLI at cua_cli/bin/cua[.exe], which the `cua-cli`
+# wheel installs; without it (`--no-deps`), prints how to install it.
+cua = "cua._cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua"]
+artifacts = [
+    "src/cua/*.dylib",
+    "src/cua/*.so",
+    "src/cua/*.dll",
+    "src/cua/bin/*",
+]
+pure-python = false
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

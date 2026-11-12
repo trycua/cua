@@ -1,14 +1,105 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cursor_overlay::{
-    theme::paint_default_theme, CursorAction, CursorVisualState, DeliveryModifier, ReducedMotion,
+    render_frame, CursorAction, CursorConfig, DeliveryModifier, OverlayCommand, RenderStateCore,
     TargetModifier,
 };
-use std::{fs, path::Path};
-use tiny_skia::Pixmap;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 const SIZE: u32 = 256;
 const FPS: u32 = 30;
 const DURATION_SECS: u32 = 4;
 const PREVIEW_BACKING_SCALE: f32 = 1.5;
+const RUNTIME_SESSION_LABEL: &str = "Research";
+
+#[derive(Clone, Copy)]
+struct GalleryState {
+    action: CursorAction,
+    delivery: Option<DeliveryModifier>,
+    target: Option<TargetModifier>,
+    session_label: Option<&'static str>,
+}
+
+const DELIVERIES: [Option<DeliveryModifier>; 3] = [
+    None,
+    Some(DeliveryModifier::Background),
+    Some(DeliveryModifier::Foreground),
+];
+
+const TARGETS: [Option<TargetModifier>; 5] = [
+    None,
+    Some(TargetModifier::Ax),
+    Some(TargetModifier::Pixel),
+    Some(TargetModifier::Browser),
+    Some(TargetModifier::Desktop),
+];
+
+fn delivery_slug(delivery: Option<DeliveryModifier>) -> &'static str {
+    match delivery {
+        None => "none",
+        Some(DeliveryModifier::Background) => "background",
+        Some(DeliveryModifier::Foreground) => "foreground",
+    }
+}
+
+fn target_slug(target: Option<TargetModifier>) -> &'static str {
+    match target {
+        None => "none",
+        Some(TargetModifier::Ax) => "ax",
+        Some(TargetModifier::Pixel) => "pixel",
+        Some(TargetModifier::Browser) => "browser",
+        Some(TargetModifier::Desktop) => "desktop",
+    }
+}
+
+fn preview_slug(state: GalleryState) -> String {
+    format!(
+        "{}--{}--{}",
+        state.action.as_str(),
+        delivery_slug(state.delivery),
+        target_slug(state.target),
+    )
+}
+
+fn preview_states(output: &Path) -> Vec<(PathBuf, GalleryState)> {
+    let mut states = Vec::with_capacity(CursorAction::ALL.len() * DELIVERIES.len() * TARGETS.len());
+    for action in CursorAction::ALL {
+        for delivery in DELIVERIES {
+            for target in TARGETS {
+                let state = GalleryState {
+                    action,
+                    delivery,
+                    target,
+                    session_label: Some(RUNTIME_SESSION_LABEL),
+                };
+                states.push((output.join("previews").join(preview_slug(state)), state));
+            }
+        }
+    }
+    states
+}
+
+fn export_states(states: Vec<(PathBuf, GalleryState)>) {
+    let worker_count = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4)
+        .min(12)
+        .min(states.len().max(1));
+    let chunk_size = states.len().div_ceil(worker_count);
+    std::thread::scope(|scope| {
+        for chunk in states.chunks(chunk_size) {
+            scope.spawn(move || {
+                for (path, state) in chunk {
+                    export_state(path, *state);
+                }
+            });
+        }
+    });
+}
 
 fn main() {
     let output = std::env::args()
@@ -20,70 +111,54 @@ fn main() {
     for action in CursorAction::ALL {
         states.push((
             output.join("actions").join(action.as_str()),
-            action,
-            None,
-            None,
+            GalleryState {
+                action,
+                delivery: None,
+                target: None,
+                session_label: None,
+            },
         ));
     }
-
-    for (name, delivery, target) in [
-        ("background", Some(DeliveryModifier::Background), None),
-        ("foreground", Some(DeliveryModifier::Foreground), None),
-        ("ax", None, Some(TargetModifier::Ax)),
-        ("pixel", None, Some(TargetModifier::Pixel)),
-        ("browser", None, Some(TargetModifier::Browser)),
-        ("desktop", None, Some(TargetModifier::Desktop)),
-    ] {
-        states.push((
-            output.join("modifiers").join(name),
-            CursorAction::Idle,
-            delivery,
-            target,
-        ));
-    }
-
-    states.push((
-        output.join("combined").join("foreground-pixel-click"),
-        CursorAction::Click,
-        Some(DeliveryModifier::Foreground),
-        Some(TargetModifier::Pixel),
-    ));
-
-    std::thread::scope(|scope| {
-        for (path, action, delivery, target) in states {
-            scope.spawn(move || export_state(&path, action, delivery, target));
-        }
-    });
+    export_states(states);
+    export_states(preview_states(output));
 }
 
-fn export_state(
-    output: &Path,
-    action: CursorAction,
-    delivery: Option<DeliveryModifier>,
-    target: Option<TargetModifier>,
-) {
+fn export_state(output: &Path, state: GalleryState) {
     fs::create_dir_all(output).expect("create frame output");
     for frame in 0..FPS * DURATION_SECS {
-        let mut pixmap = Pixmap::new(SIZE, SIZE).expect("create frame");
-        let visual = CursorVisualState {
-            requested_action: action,
-            resolved_action: action,
-            delivery,
-            target,
-            elapsed_secs: f64::from(frame) / f64::from(FPS),
-            ending_secs: None,
-            reduced_motion: ReducedMotion::Off,
-            preempted_count: 0,
+        let config = CursorConfig {
+            cursor_id: "gallery-session".into(),
+            ..CursorConfig::default()
         };
-        paint_default_theme(
-            &mut pixmap,
-            &visual,
-            SIZE as f32 / 2.0,
-            SIZE as f32 / 2.0,
-            std::f32::consts::FRAC_PI_4,
-            PREVIEW_BACKING_SCALE,
-            1.0,
+        let mut core = RenderStateCore::new(config);
+        // The gallery documents every badge combination, which only the
+        // verbose badge shows.
+        core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
+        core.motion.idle_hide_ms = 0.0;
+        core.pos = (
+            f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
+            f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
         );
+        core.placed = true;
+        core.heading = f64::from(std::f32::consts::FRAC_PI_4);
+        if let Some(session_label) = state.session_label {
+            core.apply_command_base(
+                OverlayCommand::SetSessionLabel(session_label.into()),
+                false,
+                false,
+            );
+        }
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: state.action,
+                delivery: state.delivery,
+                target: state.target,
+            },
+            false,
+            false,
+        );
+        core.visual.elapsed_secs = f64::from(frame) / f64::from(FPS);
+        let pixmap = render_frame(&core, SIZE, SIZE, 0.0, 0.0, None, PREVIEW_BACKING_SCALE);
         let pixels = unpremultiply_rgba(pixmap.data().to_vec());
         image::save_buffer_with_format(
             output.join(format!("{frame:04}.png")),
@@ -94,6 +169,30 @@ fn export_state(
             image::ImageFormat::Png,
         )
         .expect("write frame");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_inventory_covers_every_runtime_combination_once() {
+        let root = Path::new("gallery");
+        let states = preview_states(root);
+        assert_eq!(
+            states.len(),
+            CursorAction::ALL.len() * DELIVERIES.len() * TARGETS.len()
+        );
+
+        let slugs = states
+            .iter()
+            .map(|(_, state)| preview_slug(*state))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(slugs.len(), states.len());
+        assert!(slugs.contains("observe--background--browser"));
+        assert!(slugs.contains("idle--none--none"));
+        assert!(slugs.contains("system--foreground--desktop"));
     }
 }
 

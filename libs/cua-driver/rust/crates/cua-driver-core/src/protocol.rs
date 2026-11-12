@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MCP JSON-RPC 2.0 protocol types.
 
 use serde::{Deserialize, Serialize};
@@ -203,6 +206,8 @@ pub enum ResponseBody {
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl Response {
@@ -215,6 +220,15 @@ impl Response {
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
+        Self::error_with_data(id, code, message, None)
+    }
+
+    pub fn error_with_data(
+        id: Value,
+        code: i64,
+        message: impl Into<String>,
+        data: Option<Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -222,6 +236,7 @@ impl Response {
                 error: RpcError {
                     code,
                     message: message.into(),
+                    data,
                 },
             },
         }
@@ -289,6 +304,11 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Rich actuator facts retained inside the daemon. This is deliberately
+    /// skipped by serde so the nonbreaking truth-layer migration cannot alter
+    /// the MCP result envelope or its legacy structured payload.
+    #[serde(skip)]
+    pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
 impl ToolResult {
@@ -311,6 +331,14 @@ impl ToolResult {
         self.structured_content = Some(v);
         self
     }
+
+    pub fn with_action_record(
+        mut self,
+        record: crate::action_record::ActionExecutionRecord,
+    ) -> Self {
+        self.action_record = Some(record);
+        self
+    }
 }
 
 // ── Initialize result ─────────────────────────────────────────────────────────
@@ -318,7 +346,7 @@ impl ToolResult {
 pub fn initialize_result() -> Value {
     serde_json::json!({
         "protocolVersion": "2025-06-18",
-        "capabilities": { "tools": {} },
+        "capabilities": crate::mcp_wire::server_capabilities(),
         "serverInfo": { "name": "cua-driver", "version": env!("CARGO_PKG_VERSION") },
         "instructions": agent_instructions()
     })
@@ -336,39 +364,57 @@ pub fn initialize_result() -> Value {
 /// Goose uses in its `ComputerController` extension and Open
 /// Interpreter uses for its system message.
 fn agent_instructions() -> String {
+    // macOS needs no platform pointer: its permission line below names MACOS.md.
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
-        (
-            "AX (Accessibility)",
-            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch)",
-        )
+        ("AX", "")
     } else if cfg!(target_os = "windows") {
         (
-            "UIA (UI Automation)",
-            "WINDOWS.md (UIA tree, UWP / ApplicationFrameHost hosting, Session 0 isolation)",
+            "UIA",
+            ", WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
         )
     } else {
         (
             "AT-SPI",
-            "LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
+            ", LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
         )
     };
 
+    // macOS only: Cua Driver's own TCC prompts have one narrow, owner-gated
+    // exception to "system prompts belong to the user"; the steps and
+    // guardrails live in MACOS.md ("Install and approve permissions").
+    let permission_line = if cfg!(target_os = "macos") {
+        "\n\nmacOS: if `check_permissions` shows Accessibility or Screen Recording off, ask the user; approve Cua Driver's own prompts only if the owner explicitly authorized it (MACOS.md)."
+    } else {
+        ""
+    };
+
+    // Only point at run_script when this driver offers it.
+    #[cfg(feature = "script")]
+    let script_enabled = crate::script_tool::enabled();
+    #[cfg(not(feature = "script"))]
+    let script_enabled = false;
+    let script_line = if script_enabled {
+        " Loops, branches or retries: one `run_script` call."
+    } else {
+        ""
+    };
+
     format!(
-        r#"cua-driver: cross-platform background computer-use automation.
+        r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
-Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
+1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`.
+2. Read narrowly: `get_window_state` with `query:"Save"`. Re-read with `since:"latest"`.
+3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixels only for surfaces missing from the tree.
+4. Act through `run_steps({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step, batching actions: stops at the first failure, returns what changed.{script_line}
+5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
-Workflow per turn:
-0. start_session(session) once at the start of a run → declares THIS run's identity (a stable id you choose, e.g. "research-1"). Pass that same `session` on every action below. It owns your agent cursor (a distinct color per id) and follows the run across apps/windows. End with end_session(session) when done. Concurrent runs/subagents each use their OWN `session`. (Omitting `session` still works, just with no cursor.)
-1. launch_app  → idempotent, returns pid + windows array in one call. Pass creates_new_application_instance:true if another run may touch the same app, so you get your own window.
-2. (skip list_windows when launch_app already returned a single window)
-3. get_window_state(pid, window_id) → refresh the {tree_kind} snapshot, get element indices
-4. click/type_text/press_key using element_index from step 3 (+ your `session`)
-5. get_window_state(pid, window_id) again → verify the action landed
+Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages. Stay in the background; `delivery_mode:"foreground"` only if refused/unverifiable.
 
-Agent cursor: a per-SESSION overlay cursor visualises where a run is acting without moving the real pointer. It is shown only for a DECLARED session (pass `session`), is color-coded by the session id, and is removed by end_session or the idle-TTL. The same id over MCP, the CLI, or the raw socket drives the same cursor. set_agent_cursor_* tools hide/show/customise it. Note: a pure accessibility-action (element_index) click snaps the cursor with a brief pulse on its first action rather than a long glide, so it can be easy to miss — issue a pixel click or move_cursor first for a visibly gliding demo/recording.
+Chrome/Edge/Brave page: `get_browser_state({{pid, window_id}})`, its `detail.next_call` (`browser_prepare`) if refused, then `browser_click`/`browser_type`/`browser_pointer` (hover, drag); never desktop pointer tools.
 
-If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.{permission_line}
+
+Guides: `get_guide({{topic}})` (drag, browser, permissions, batching, menus), `skill://cua-driver/SKILL.md`{platform_skill_pointer}."#
     )
 }
 
@@ -415,6 +461,154 @@ mod image_mime_type_tests {
             v.get("mimeType").is_none(),
             "text content must not carry mimeType"
         );
+    }
+}
+
+#[cfg(test)]
+mod action_record_wire_tests {
+    use super::ToolResult;
+    use crate::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn internal_action_record_never_changes_mcp_serialization() {
+        let legacy = serde_json::json!({
+            "path": "cgevent",
+            "verified": false,
+            "effect": "unverifiable",
+        });
+        let plain = ToolResult::text("clicked").with_structured(legacy.clone());
+        let with_truth = ToolResult::text("clicked")
+            .with_structured(legacy)
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosCgEventPid,
+                    RequestedDelivery::Background,
+                )
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("valid action record"),
+            );
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize plain result"),
+            serde_json::to_value(with_truth).expect("serialize result with internal truth"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_instruction_tests {
+    use super::{agent_instructions, initialize_result};
+
+    #[test]
+    fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("verify_state"));
+        assert!(instructions.contains("`unknown` and `effect:\"unverifiable\"` are not success"));
+        assert!(instructions.contains("app API/SDK"));
+        assert!(instructions.contains("read the result back there"));
+        assert!(instructions.contains("narrowest semantic route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows`"));
+        assert!(instructions.contains("typed browser tools"));
+        assert!(instructions.contains("`get_browser_state({pid, window_id})`"));
+        assert!(instructions.contains("`detail.next_call` (`browser_prepare`)"));
+        assert!(
+            instructions.contains("`browser_pointer` (hover, drag); never desktop pointer tools")
+        );
+        assert!(instructions.contains("No shell"));
+        // The efficient workflow must be front-loaded: targeted read, act by
+        // token, verify at checkpoints.
+        assert!(instructions.contains("`query:\"Save\"`"));
+        assert!(instructions.contains("Act by `element_token`"));
+        assert!(instructions.contains("Verify at checkpoints, not after every action"));
+        assert!(
+            instructions.find("Read narrowly") < instructions.find("Act by `element_token`"),
+            "the targeted read must precede acting"
+        );
+        #[cfg(feature = "script")]
+        if crate::script_tool::enabled() {
+            assert!(instructions.contains("one `run_script` call"));
+        }
+        assert!(
+            instructions.split_whitespace().count() <= 200,
+            "initialize instructions should stay within the documented context budget"
+        );
+    }
+
+    #[test]
+    fn instructions_point_at_get_guide_and_keep_the_skill_resource() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("`get_guide({topic})`"));
+        for topic in crate::guide::topic_names()
+            .into_iter()
+            .filter(|topic| *topic != "overview")
+        {
+            assert!(
+                instructions.contains(topic),
+                "instructions should name the {topic} topic"
+            );
+        }
+        assert!(instructions.contains("`skill://cua-driver/SKILL.md`"));
+        assert!(instructions.split_whitespace().count() <= 200);
+    }
+
+    #[test]
+    fn macos_instructions_gate_permission_approval_on_owner_authorization() {
+        let instructions = agent_instructions();
+        let has_line = instructions.contains("Cua Driver's own prompts");
+        assert_eq!(
+            has_line,
+            cfg!(target_os = "macos"),
+            "only the macOS instructions mention TCC prompts"
+        );
+        if has_line {
+            // Keeps the narrow exception narrow: ask first, own prompts only,
+            // explicit owner authorization; MACOS.md holds the detail.
+            assert!(instructions.contains("ask the user"));
+            assert!(instructions.contains(
+                "approve Cua Driver's own prompts only if the owner explicitly authorized it"
+            ));
+            assert!(instructions.contains("(MACOS.md)"));
+            assert!(instructions.contains("`check_permissions`"));
+        }
+    }
+
+    #[test]
+    fn initialize_instructions_describe_implicit_session_lifecycle() {
+        let result = initialize_result();
+        let instructions = result["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions");
+
+        assert!(instructions.contains("`start_session` is optional"));
+        assert!(
+            instructions.contains("repeat a short `session` label on every call that accepts it")
+        );
+        assert!(
+            !instructions.contains("`start_session(session)` once"),
+            "initialize instructions must not require explicit session setup"
+        );
+    }
+
+    #[test]
+    fn initialize_instructions_conditionally_consult_history_before_discovery() {
+        let instructions = initialize_result()["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions")
+            .to_owned();
+
+        assert!(instructions.contains("continuation/recent-work"));
+        let status = instructions.find("call `history_status`").unwrap();
+        let bounded_query = instructions
+            .find("one bounded initial `history_query`")
+            .unwrap();
+        let discovery = instructions.find("broad discovery").unwrap();
+        assert!(status < bounded_query);
+        assert!(bounded_query < discovery);
+        assert!(instructions.contains("if ready"));
+        assert!(instructions.split_whitespace().count() <= 200);
     }
 }
 

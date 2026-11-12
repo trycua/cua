@@ -28,4 +28,5 @@ inside the compiled artifact matches the checked-in `.lottie` bytes.
 The source uses Cua blue as a palette key and white for outlines. At runtime,
 only the embedded default is recolored to the stable session fill. Installed
 custom themes retain their authored colors. The shared floating motion is
-applied after compositing so action and modifier layers remain synchronized.
+applied to the selected action animation. Delivery and target context is
+painted by the host-owned session badge and is not part of theme artifacts.

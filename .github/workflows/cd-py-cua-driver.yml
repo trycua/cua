@@ -1,7 +1,9 @@
 name: "CD: Cua Driver SDK packages"
 
 # Triggered after a Cua Driver release to publish version-locked Python wheels
-# and the TypeScript SDK plus its platform-native npm packages.
+# and the TypeScript SDK plus its platform-native npm packages. Only trycua/cua
+# publishes to PyPI and npm; any other repository (trycua/cua-staging) runs
+# `twine check` and `npm publish --dry-run` instead.
 
 on:
   workflow_dispatch:
@@ -17,8 +19,15 @@ on:
       - completed
 
 permissions:
+  actions: read
   contents: read
   id-token: write
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CANONICAL: ${{ github.repository == 'trycua/cua' }}
 
 jobs:
   # Extract version from the triggering workflow or input
@@ -26,7 +35,12 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'failure'
+    # A failed post-publish bookkeeping job (installer bump PR) marks the CD run
+    # failed even though the release is published. The published-release check
+    # below still gates every publish, so a failed run with no published
+    # release stays a no-op.
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -38,38 +52,77 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
             if [ -z "$VERSION" ]; then
               VERSION=$(sed -n -E 's/^version = "([^"]+)"/\1/p' libs/cua-driver/rust/Cargo.toml | head -1)
             fi
-            SHOULD_PUBLISH="true"
+            TAG="cua-driver-rs-v$VERSION"
           else
-            # Extract from the tag that triggered the workflow_run
-            # Validate SHA format to prevent injection
-            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-            if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
-              echo "Invalid SHA format: $HEAD_SHA"
-              VERSION="0.0.0"
-              SHOULD_PUBLISH="false"
+            # Resolve the version from the exact metadata artifact produced by
+            # the release job of the stable tag run that published the draft.
+            if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
+              echo "Invalid workflow run ID: $RUN_ID" >&2
+              exit 1
+            fi
+            ARTIFACTS_FILE="$RUNNER_TEMP/cua-driver-release-metadata-artifacts.txt"
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | .name' \
+              > "$ARTIFACTS_FILE"
+            mapfile -t RELEASE_VERSIONS < <(
+              sed -nE \
+                's/^cua-driver-release-metadata-([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$/\1/p' \
+                "$ARTIFACTS_FILE" | sort -u
+            )
+
+            if [ "${#RELEASE_VERSIONS[@]}" -gt 1 ]; then
+              echo "Multiple Cua Driver release metadata artifacts found for run $RUN_ID" >&2
+              printf '  %s\n' "${RELEASE_VERSIONS[@]}" >&2
+              exit 1
+            elif [ "${#RELEASE_VERSIONS[@]}" -eq 1 ]; then
+              VERSION="${RELEASE_VERSIONS[0]}"
+              TAG="cua-driver-rs-v$VERSION"
             else
+              # Build-only runs skip the release job and therefore have no
+              # release metadata artifact. Fall back to the tag at the run's
+              # SHA; the published-release check below still gates publishing.
+              if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+                echo "Invalid SHA format: $HEAD_SHA" >&2
+                exit 1
+              fi
               git fetch --tags
               TAG=$(git tag --points-at "$HEAD_SHA" | grep '^cua-driver-rs-v' | head -1 || echo "")
-              if [ -n "$TAG" ]; then
-                VERSION="${TAG#cua-driver-rs-v}"
-                if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-                  SHOULD_PUBLISH="true"
-                else
-                  echo "GitHub Release $TAG is not available; skipping PyPI publish."
-                  SHOULD_PUBLISH="false"
-                fi
-              else
-                # No matching tag, skip
-                VERSION="0.0.0"
-                SHOULD_PUBLISH="false"
-              fi
+              VERSION="${TAG#cua-driver-rs-v}"
             fi
+
+            if [ -z "$TAG" ]; then
+              VERSION="0.0.0"
+            fi
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Cua Driver version: $VERSION" >&2
+            exit 1
+          fi
+          SHOULD_PUBLISH="false"
+          # Authenticated release reads also find drafts. Only the exact,
+          # published component release may feed either SDK publisher.
+          if [ -n "$TAG" ] && RELEASE_METADATA=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft) &&
+            jq -e -s --arg tag "$TAG" \
+              'length == 1 and (.[0] | type == "object" and .tagName == $tag and .isDraft == false)' \
+              <<< "$RELEASE_METADATA" >/dev/null 2>&1; then
+            SHOULD_PUBLISH="true"
+          elif [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            echo "GitHub Release $TAG must be published before SDK recovery." >&2
+            exit 1
+          else
+            echo "GitHub Release $TAG is not verified as published; skipping SDK publish."
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=cua-driver-rs-v$VERSION" >> "$GITHUB_OUTPUT"
@@ -179,7 +232,12 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
-          python -m twine upload --skip-existing --verbose dist/*
+          python -m twine check --strict dist/*.whl
+          if [ "$CANONICAL" = true ]; then
+            python -m twine upload --skip-existing --verbose dist/*
+          else
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
+          fi
       - name: Attach Python wheels to the Cua Driver release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,7 +276,8 @@ jobs:
           TAG: ${{ needs.get-version.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/cua-driver-assets" "$RUNNER_TEMP/cua-driver-native"
-          gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
             --pattern '*-darwin-universal-binary.tar.gz' \
             --pattern '*-linux-x86_64-binary.tar.gz' \
             --pattern '*-linux-arm64-binary.tar.gz' \
@@ -303,7 +362,9 @@ jobs:
             fi
             NAME=$(tar -xOf "$package" package/package.json | node -e \
               "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).name))")
-            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            if [ "$CANONICAL" != true ]; then
+              npm publish "./$package" --access public --dry-run
+            elif npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
               echo "$NAME@$VERSION already published; skipping"
             else
               npm publish "./$package" --access public --provenance
@@ -314,7 +375,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.get-version.outputs.version }}
         run: |
-          if npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
+          if [ "$CANONICAL" != true ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: npm publish --dry-run"
+            npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --dry-run
+          elif npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
             echo "@trycua/cua-driver@$VERSION already published; skipping"
           else
             npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance

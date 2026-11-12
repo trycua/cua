@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Transport-level contract tests for per-session capture scope.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -78,8 +81,15 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
         "get_screen_size",
         json!({"session": "scope-desktop"}),
     );
+    // Every error result now carries a refusal marker, so "no code at all" no
+    // longer distinguishes a permitted call from one that failed for an
+    // unrelated environment reason (a runner with no display, say). Assert
+    // what this test is actually about: the scope policy did not refuse it.
     assert!(
-        code(&desktop_screen_size).is_none(),
+        !matches!(
+            code(&desktop_screen_size),
+            Some("desktop_scope_disabled" | "desktop_escalation_required")
+        ),
         "desktop scope should permit global screen geometry: {desktop_screen_size}"
     );
 
@@ -112,6 +122,23 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
         json!({"session": "scope-auto"}),
     );
     assert_eq!(code(&auto_window), Some("window_scope_disabled"));
+    assert_eq!(
+        auto_window["result"]["structuredContent"],
+        json!({
+            "session": "scope-auto",
+            "capture_scope": "auto",
+            "effective_scope": "desktop",
+            "desktop_capture_authorized": true,
+            "desktop_unlocked": true,
+            "escalation_reason": "foreground_ineffective",
+            "escalation_detail": "window ladder exhausted",
+            "code": "window_scope_disabled"
+        })
+    );
+    assert_eq!(
+        auto_window["result"]["content"][0]["text"],
+        "window-scope tool 'get_window_state' is disabled because escalation to desktop scope is permanent for session 'scope-auto'; to recover, call end_session for session 'scope-auto', then call start_session with a new session id"
+    );
 
     let conflict = call(
         &mut driver,
@@ -155,6 +182,6 @@ fn persistent_capture_scope_key_is_retired() {
     assert_eq!(code(&response), Some("config_key_retired"));
     assert_eq!(
         response["result"]["structuredContent"]["replacement"],
-        "start_session.capture_scope"
+        "action.target"
     );
 }

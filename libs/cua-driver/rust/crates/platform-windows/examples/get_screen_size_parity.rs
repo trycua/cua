@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `get_screen_size`.
 //!
 //! Asserts text matches the Windows wording:
@@ -8,7 +11,9 @@
 //!
 //! Hard 4-second per-call timeout.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

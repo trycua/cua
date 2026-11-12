@@ -51,7 +51,9 @@ enum DetachedVMRunner {
       fileURLWithPath: FileManager.default.currentDirectoryPath,
       isDirectory: true
     )
-    process.environment = ProcessInfo.processInfo.environment
+    var environment = ProcessInfo.processInfo.environment
+    environment["NSUnbufferedIO"] = "YES"
+    process.environment = environment
     process.standardInput = FileHandle.nullDevice
     process.standardOutput = logHandle
     process.standardError = logHandle
@@ -85,16 +87,30 @@ enum DetachedVMRunner {
         }
       }
     }
+    let hasExplicitDisplay = childArguments.contains("--display")
+      || childArguments.contains("--no-display")
+      || childArguments.contains("-d")
+      || childArguments.contains(where: { $0.hasPrefix("--display=") })
+    if !hasExplicitDisplay {
+      childArguments += ["--display", "none"]
+    }
+
     return childArguments
   }
 
-  static func defaultLogURL(vmName: String) -> URL {
+  /// `<vm>.log` in `~/Library/Logs/lume`, or `~/Library/Logs/lume-local` for
+  /// `lume-local`, so a Local detached run never appends to the released
+  /// Lume's logs.
+  static func defaultLogURL(
+    vmName: String,
+    channel: LumeChannel = .current,
+    userHome: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) -> URL {
     let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
     let safeName = String(
       vmName.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "_" }
     )
-    return FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Logs/lume", isDirectory: true)
+    return channel.lumeLogDir(userHome: userHome)
       .appendingPathComponent("\(safeName).log")
   }
 

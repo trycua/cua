@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional permission-policy enforcement for MCP tool calls.
 
 use std::path::{Path, PathBuf};
@@ -106,12 +109,36 @@ impl PolicyEngine {
             Self::Disabled => PolicyDecision::Error("policy support is not enabled".to_owned()),
         }
     }
+
+    /// Returns `true` when the tool should appear in `tools/list`.
+    ///
+    /// For YAML policies a tool is potentially listable when it is not
+    /// explicitly denied and has at least one allow path (unconditional or
+    /// rule-constrained).  For Rego, the policy is evaluated with empty
+    /// arguments as an approximation; Rego rules can implement their own
+    /// "no-args" sentinel if finer control is needed.
+    pub fn is_potentially_listable(&self, tool: &str) -> bool {
+        let tool = canonical_tool_name(tool);
+        #[cfg(not(any(feature = "yaml", feature = "rego")))]
+        let _ = tool;
+        match self {
+            #[cfg(feature = "yaml")]
+            Self::Yaml(policy) => policy.is_potentially_listable(tool),
+            #[cfg(feature = "rego")]
+            Self::Rego(policy) => {
+                let empty_args = Value::Object(serde_json::Map::new());
+                matches!(policy.evaluate(tool, &empty_args), PolicyDecision::Allow)
+            }
+            #[cfg(not(any(feature = "yaml", feature = "rego")))]
+            Self::Disabled => false,
+        }
+    }
 }
 
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
-        other => other,
+        other => crate::tool::renamed_tool(other).unwrap_or(other),
     }
 }
 
@@ -288,6 +315,34 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
     authorize_policy_layers(tool, args, layers)
 }
 
+/// Returns `true` when the tool should be advertised in `tools/list`.
+///
+/// Unlike [`authorize_tool_call`], this does not require a full argument set:
+/// it checks only whether the tool has any potential allow path (is not
+/// unconditionally denied).  Tools that are conditionally allowed via
+/// `allow.rules` are still listed so that callers can attempt a constrained
+/// invocation.  When no policy is configured, all tools are listable.
+///
+/// On a policy loading error, this returns `true` (fail-open for listing).
+/// The error will surface at invocation time through [`authorize_tool_call`],
+/// and [`validate_configured_policy`] is expected to have caught it at startup.
+pub fn is_tool_listable(tool: &str) -> bool {
+    let managed = match configured_managed_policy() {
+        Ok(policy) => policy,
+        Err(_) => return true,
+    };
+    let user = match configured_policy() {
+        Ok(policy) => policy,
+        Err(_) => return true,
+    };
+    for policy in [managed, user].into_iter().flatten() {
+        if !policy.is_potentially_listable(tool) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Eagerly validate the immutable process policy before any action endpoint is
 /// exposed. This prevents a configured typo from producing a listening daemon
 /// that only discovers the error after clients begin issuing calls.
@@ -363,6 +418,20 @@ impl YamlPolicy {
             "tool '{tool}' argument constraints were not satisfied: {}",
             failures.join("; ")
         ))
+    }
+
+    /// Returns `true` when the tool is not explicitly denied and has at least
+    /// one potential allow path (an unconditional entry in `allow.tools` or an
+    /// entry in `allow.rules`).  This is the correct predicate for advertising
+    /// a tool in `tools/list`: the tool may be conditionally allowed, so we
+    /// must not hide it just because a call with empty arguments would be
+    /// denied by unsatisfied constraints.
+    fn is_potentially_listable(&self, tool: &str) -> bool {
+        if self.denied_tools.iter().any(|denied| denied == tool) {
+            return false;
+        }
+        self.allowed_tools.iter().any(|allowed| allowed == tool)
+            || self.rules.iter().any(|rule| rule.tool == tool)
     }
 }
 
@@ -715,13 +784,13 @@ mod tests {
         let policy = yaml_policy(
             r#"
 allow:
-  tools: [screenshot, wait]
+  tools: [get_window_state, wait]
 deny:
   tools: [shell_execute]
 "#,
         );
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert!(matches!(
@@ -733,7 +802,7 @@ deny:
     #[cfg(feature = "yaml")]
     #[test]
     fn yaml_is_deny_by_default() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\n");
+        let policy = yaml_policy("allow:\n  tools: [get_window_state]\n");
         assert!(matches!(
             policy.evaluate("click", &serde_json::json!({"x": 10, "y": 10})),
             PolicyDecision::Deny(_)
@@ -835,9 +904,11 @@ allow:
     #[cfg(feature = "yaml")]
     #[test]
     fn explicit_deny_overrides_allow() {
-        let policy = yaml_policy("allow:\n  tools: [screenshot]\ndeny:\n  tools: [screenshot]\n");
+        let policy = yaml_policy(
+            "allow:\n  tools: [get_window_state]\ndeny:\n  tools: [get_window_state]\n",
+        );
         assert!(matches!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Deny(_)
         ));
     }
@@ -873,7 +944,7 @@ default allow = false
 
 allow if {
     input.server == "cua-driver"
-    input.tool == "screenshot"
+    input.tool == "get_window_state"
 }
 
 allow if {
@@ -888,7 +959,7 @@ allow if {
         .unwrap();
         let policy = PolicyEngine::load(&path).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
         assert_eq!(
@@ -915,13 +986,13 @@ allow if {
         )
         .unwrap();
         fs::write(
-            dir.path().join("screenshot.rego"),
-            "package cua.policy\nallow if input.tool == \"screenshot\"\n",
+            dir.path().join("window-state.rego"),
+            "package cua.policy\nallow if input.tool == \"get_window_state\"\n",
         )
         .unwrap();
         let policy = PolicyEngine::load(dir.path()).unwrap().unwrap();
         assert_eq!(
-            policy.evaluate("screenshot", &serde_json::json!({})),
+            policy.evaluate("get_window_state", &serde_json::json!({})),
             PolicyDecision::Allow
         );
     }

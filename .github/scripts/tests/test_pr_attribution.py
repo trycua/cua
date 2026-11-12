@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from release_attribution import ReleaseError, source_pull_numbers, validate_pr_attribution
+import release_attribution
+
+from release_attribution import (
+    CommitRecord,
+    ReleaseError,
+    source_pull_numbers,
+    unresolved_coauthor_identities,
+    validate_pr_attribution,
+)
 
 
 def config(**overrides):
@@ -50,9 +58,16 @@ def commit(
 
 
 class SourceGitHub:
-    def __init__(self, authors, source_emails):
+    def __init__(self, authors, source_emails, comparisons=None):
         self.authors = authors
         self.source_emails = source_emails
+        self.comparisons = comparisons or {}
+
+    def get(self, path):
+        value = self.comparisons[path]
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def pull(self, repository: str, number: int):
         assert repository == "trycua/cua"
@@ -70,9 +85,11 @@ def validate(
     pull_value=None,
     commits=None,
     base=None,
-    head=None,
+    changes=None,
     authors=None,
     source_emails=None,
+    comparisons=None,
+    main_sha="",
 ):
     base = base or config()
     validate_pr_attribution(
@@ -80,8 +97,9 @@ def validate(
         pull=pull_value or pull(),
         commits=commits or [],
         base_config=base,
-        head_config=head or base,
-        github=SourceGitHub(authors or {}, source_emails or {}),
+        identity_changes=changes or {},
+        github=SourceGitHub(authors or {}, source_emails or {}, comparisons),
+        main_sha=main_sha,
     )
 
 
@@ -99,6 +117,22 @@ def test_resolvable_github_and_noreply_identities_pass():
             ),
         ]
     )
+
+
+def test_unresolved_coauthor_identity_helper_reports_squash_risk():
+    identities = unresolved_coauthor_identities(
+        [
+            CommitRecord(
+                "deadbeef",
+                "fix: preserve attribution",
+                "Co-authored-by: Local Machine <machine@example.invalid>",
+            )
+        ],
+        config(),
+    )
+    assert identities == [
+        {"sha": "deadbeef", "name": "Local Machine", "email": "machine@example.invalid"}
+    ]
 
 
 def test_distinct_resolvable_commit_author_requires_preserved_source():
@@ -179,7 +213,7 @@ def test_merge_coauthor_still_requires_source_evidence():
                         "Merge main\n\n"
                         "Co-authored-by: Contributor <contributor@institution.example>"
                     ),
-                )
+                ),
             ]
         )
 
@@ -196,18 +230,24 @@ def test_explicit_cherry_pick_source_reference_is_parsed_but_supersedes_is_not()
     assert source_pull_numbers("Supersedes #2280", "trycua/cua") == []
 
 
-def test_direct_contributor_with_unlinked_email_does_not_fail():
+def test_direct_contributor_with_unlinked_email_is_rejected_before_squash_merge():
+    with pytest.raises(ReleaseError) as error:
+        validate(
+            pull_value=pull(login="direct-contributor"),
+            commits=[commit(email="private@institution.example")],
+        )
+    message = str(error.value)
+    assert "would become a squash coauthor" in message
+    assert "private@institution.example" in message
+    assert "linked GitHub/noreply email" in message
+
+
+def test_direct_contributor_with_verified_override_is_merge_ready():
+    base = config(identityOverrides={"private@institution.example": "direct-contributor"})
     validate(
         pull_value=pull(login="direct-contributor"),
         commits=[commit(email="private@institution.example")],
-    )
-
-    validate(
-        pull_value=pull(
-            login="direct-contributor",
-            body="Based on #99 for the API shape",
-        ),
-        commits=[commit(email="private@institution.example")],
+        base=base,
     )
 
 
@@ -263,11 +303,10 @@ def test_verified_source_pr_produces_exact_override_and_accepts_it():
         error.value
     )
 
-    head = config(identityOverrides={"source@university.example": "source-login"})
     validate(
         pull_value=landing,
         commits=commits,
-        head=head,
+        changes={"source@university.example": "source-login"},
         authors={2280: "source-login"},
         source_emails={2280: ["source@university.example"]},
     )
@@ -309,15 +348,15 @@ def test_source_pr_author_without_exact_email_is_not_mapping_evidence():
 
 
 def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
-    head = config(identityOverrides={"historic@institution.example": "historic-author"})
+    changes = {"historic@institution.example": "historic-author"}
     with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
-        validate(head=head)
+        validate(changes=changes)
 
     validate(
         pull_value=pull(
             body=("The identity is verified by [PR #20](https://github.com/trycua/cua/pull/20)")
         ),
-        head=head,
+        changes=changes,
         authors={20: "historic-author"},
         source_emails={20: ["historic@institution.example"]},
     )
@@ -326,12 +365,22 @@ def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
 def test_existing_identity_override_cannot_be_removed_or_changed():
     base = config(identityOverrides={"known@institution.example": "known-author"})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
-        validate(base=base, head=config())
+        validate(base=base, changes={"known@institution.example": None})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
         validate(
             base=base,
-            head=config(identityOverrides={"known@institution.example": "other-author"}),
+            changes={"known@institution.example": "other-author"},
         )
+
+
+def test_protected_mapping_errors_are_complete_and_sorted():
+    base = config(identityOverrides={"z@example.com": "zoe", "a@example.com": "alice"})
+    with pytest.raises(ReleaseError) as error:
+        validate(base=base, changes={"z@example.com": None, "a@example.com": "other"})
+    assert str(error.value) == (
+        "the pull request removes or changes trusted identityOverrides: "
+        "a@example.com='other' (expected 'alice'), z@example.com=None (expected 'zoe')"
+    )
 
 
 def test_internal_bot_and_ignored_coauthors_are_excluded():
@@ -370,3 +419,115 @@ def test_coauthor_trailer_parsing_is_case_insensitive_and_multiline():
                 )
             ]
         )
+
+
+class PagedCompareGitHub(release_attribution.GitHubClient):
+    """Serves a 300-commit pull request: the commits endpoint stops at 250."""
+
+    def __init__(self, total: int = 300, reported_total: int | None = None):
+        super().__init__("token", "https://api.example")
+        self.total = total
+        self.reported_total = total if reported_total is None else reported_total
+        self.paths: list[str] = []
+
+    def get(self, path: str):
+        self.paths.append(path)
+        if "/pulls/" in path:
+            raise AssertionError("a pull request past 250 commits must not use /pulls/N/commits")
+        page = int(path.rsplit("page=", 1)[1])
+        start = (page - 1) * 100
+        end = min(start + 100, self.total)
+        return {
+            "total_commits": self.reported_total,
+            "commits": [{"sha": f"{index:040x}"} for index in range(start, end)],
+        }
+
+
+def large_pull(commits: int = 300):
+    return {"number": 19, "commits": commits, "base": {"ref": "main"}, "head": {"sha": "f" * 40}}
+
+
+def test_pull_request_past_the_commits_endpoint_cap_pages_the_compare_api():
+    client = PagedCompareGitHub()
+    commits = client.all_pull_commits("trycua/cua-staging", large_pull())
+    assert len(commits) == 300
+    assert client.paths[0] == (
+        "repos/trycua/cua-staging/compare/main..." + "f" * 40 + "?per_page=100&page=1"
+    )
+
+
+def test_compare_total_disagreeing_with_the_pull_request_is_refused():
+    client = PagedCompareGitHub(total=300, reported_total=299)
+    with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
+        client.all_pull_commits("trycua/cua-staging", large_pull())
+
+
+def test_compare_pages_that_stop_short_are_refused():
+    client = PagedCompareGitHub(total=250, reported_total=300)
+    with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
+        client.all_pull_commits("trycua/cua-staging", large_pull())
+
+
+@pytest.mark.parametrize(
+    "status, branch_files, main_files, failure, clean",
+    [
+        ("ahead", ["main-change"], ["branch-change"], False, True),
+        ("identical", ["main-change"], ["branch-change"], False, True),
+        ("ahead", ["conflict"], ["conflict"], False, False),
+        ("ahead", [{"filename": "q", "previous_filename": "p"}], ["p"], False, False),
+        ("diverged", ["main-change"], ["branch-change"], False, False),
+        ("ahead", [str(i) for i in range(300)], ["branch-change"], False, False),
+        ("ahead", ["main-change"], [str(i) for i in range(300)], False, False),
+        ("ahead", ["main-change"], ["branch-change"], True, False),
+        (None, ["main-change"], ["branch-change"], False, False),
+        ("ahead", ["main-change"], ["branch-change"], "missing-files", False),
+    ],
+)
+def test_main_sync_merge_authorship(status, branch_files, main_files, failure, clean):
+    comparisons = {
+        "repos/trycua/cua/compare/main-tip...trusted-main": {"status": status} if status else {},
+        "repos/trycua/cua/compare/feature-tip...sync-merge": {
+            "files": [
+                name if isinstance(name, dict) else {"filename": name} for name in branch_files
+            ]
+        },
+        "repos/trycua/cua/compare/main-tip...sync-merge": (
+            ReleaseError("API failed")
+            if failure is True
+            else (
+                {}
+                if failure == "missing-files"
+                else {"files": [{"filename": name} for name in main_files]}
+            )
+        ),
+    }
+    values = dict(
+        commits=[
+            commit(sha="feature-tip", login="landing-author"),
+            commit(
+                sha="sync-merge",
+                login="injaneity",
+                email="44902825+injaneity@users.noreply.github.com",
+                parent_shas=("feature-tip", "main-tip"),
+            ),
+        ],
+        comparisons=comparisons,
+        main_sha="trusted-main",
+    )
+    if clean:
+        validate(**values)
+        unlinked = commit(
+            sha="sync-merge",
+            email="unlinked@institution.example",
+            parent_shas=("feature-tip", "main-tip"),
+        )
+        with pytest.raises(ReleaseError, match="unlinked commit author"):
+            validate(**{**values, "commits": [values["commits"][0], unlinked]})
+        values["commits"][1]["commit"][
+            "message"
+        ] += "\n\nCo-authored-by: Pair <pair@institution.example>"
+        with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
+            validate(**values)
+    else:
+        with pytest.raises(ReleaseError, match="base synchronization merge"):
+            validate(**values)

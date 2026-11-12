@@ -2,27 +2,42 @@
 FROM python:3.12-slim AS builder
 
 # Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Pinned: `uv:latest` would let the build tool itself drift between rebuilds.
+COPY --from=ghcr.io/astral-sh/uv:0.6.17 /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
 
 # Copy project files
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 
-# Create virtual environment and install dependencies
-RUN uv venv /app/.venv
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Install dependencies (without the project itself for better caching)
-RUN uv pip install --no-cache -r pyproject.toml
+# Install dependencies from uv.lock.
+#
+# --locked is the point of this file: it installs exactly what uv.lock
+# records and fails if the lock is out of date with pyproject.toml, instead
+# of silently re-resolving. Without it, two builds of the same commit months
+# apart produce different dependency trees, which is how the reader's lancedb
+# drifted away from the indexer's and broke vector search.
+#
+# --no-install-project: application modules are copied in, not packaged.
+RUN uv sync --locked --no-dev --no-install-project
 
 # Copy application code
-COPY main.py ./
+COPY main.py docs_index.py sync_docs_index.py ./
 
 # Production image
 FROM python:3.12-slim AS runtime
+
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
@@ -31,7 +46,7 @@ WORKDIR /app
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/main.py /app/main.py
+COPY --from=builder /app/main.py /app/docs_index.py /app/sync_docs_index.py /app/
 
 # Set environment variables
 ENV VIRTUAL_ENV=/app/.venv

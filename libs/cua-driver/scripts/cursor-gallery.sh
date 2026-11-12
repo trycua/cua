@@ -28,7 +28,7 @@ export_assets() {
     --features theme-authoring \
     -- "$FRAMES_DIR"
 
-  for group in actions modifiers combined; do
+  for group in actions previews; do
     mkdir -p "$GENERATED_DIR/$group"
     for state_dir in "$FRAMES_DIR/$group"/*; do
       state=$(basename "$state_dir")
@@ -121,11 +121,6 @@ export_docs() {
     "action-animations" \
     "$capture_dir/actions" \
     "$docs_dir/action-animations.gif"
-  make_gif \
-    "delivery-target-context" \
-    "$capture_dir/modifiers" \
-    "$docs_dir/delivery-target-context.gif"
-
   echo "cursor-gallery: wrote documentation GIFs to $docs_dir"
 }
 
@@ -142,8 +137,18 @@ case "${1:-help}" in
   export-docs)
     export_docs
     ;;
+  motion-lab)
+    # Pure JS, no renderer assets needed.
+    require python3
+    echo "cursor-gallery: motion lab at http://127.0.0.1:$PORT/motion-lab/"
+    exec python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$GALLERY_DIR"
+    ;;
+  motion-test)
+    require node
+    exec node --test "$GALLERY_DIR/motion-lab/test/"
+    ;;
   *)
-    echo "usage: $0 {assets|serve|export-docs}" >&2
+    echo "usage: $0 {assets|serve|export-docs|motion-lab|motion-test}" >&2
     exit 2
     ;;
 esac

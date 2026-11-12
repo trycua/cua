@@ -1,0 +1,58 @@
+name: "CD: Docs Pin Dispatch"
+
+# When docs content lands on main, immediately notify trycua/cloud so its
+# update-cua-docs-pin.yml workflow advances the website docs pin, instead of
+# waiting for that repository's scheduled catch-all run. Delivery is
+# best-effort: repository_dispatch events can be dropped, so the cloud cron
+# still converges the pin if a notification is lost.
+#
+# The dispatch uses the release GitHub App (RELEASE_APP_ID /
+# RELEASE_APP_PRIVATE_KEY, as cd-cua-spaces.yml and cd-rust-cua-driver.yml use
+# it to dispatch on trycua/cloud), downscoped to contents write on
+# trycua/cloud. It used to use the Copybara App from AWS Secrets Manager; that
+# App lost its installation on 5 Nov 2026 (it lists no installations), so
+# every run failed with "Not Found" while minting the token.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/content/docs/**"
+      - "docs/public/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Collapse bursts of docs merges into the newest dispatch; the cloud updater
+# always resolves the latest docs commit itself, so older events are redundant.
+concurrency:
+  group: cd-docs-pin-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: Notify trycua/cloud
+    runs-on: ubuntu-latest
+    if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets
+    timeout-minutes: 5
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: trycua
+          repositories: cloud
+          permission-contents: write
+
+      - name: Send repository_dispatch to cloud
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api "repos/${{ github.repository_owner }}/cloud/dispatches" \
+            -f event_type=cua-docs-updated \
+            -f "client_payload[source_repo]=${{ github.repository }}" \
+            -f "client_payload[source_sha]=${{ github.sha }}"

@@ -175,16 +175,19 @@ enum VMError: Error, LocalizedError {
     case notFound(String)
     case notInitialized(String)
     case notRunning(String)
+    case unsafeOwner(String)
     case alreadyRunning(String)
     case installNotStarted(String)
     case stopTimeout(String)
     case resizeTooSmall(current: UInt64, requested: UInt64)
     case vncNotConfigured
     case vncPortBindingFailed(requested: Int, actual: Int)
+    case vncDisabledConflict(String)
     case internalError(String)
     case unsupportedOS(String)
     case invalidDisplayResolution(String)
     case stillProvisioning(String)
+    case insufficientHostSpace(name: String, volume: String, required: UInt64, available: UInt64)
     var errorDescription: String? {
         switch self {
         case .alreadyExists(let name):
@@ -193,6 +196,8 @@ enum VMError: Error, LocalizedError {
             return "Virtual machine not found: \(name)"
         case .notInitialized(let name):
             return "Virtual machine not initialized: \(name)"
+        case .unsafeOwner(let name):
+            return "Cannot verify the owner of VM ‘\(name)’. Stop the VM from the terminal that started it."
         case .notRunning(let name):
             return "Virtual machine not running: \(name)"
         case .alreadyRunning(let name):
@@ -210,6 +215,8 @@ enum VMError: Error, LocalizedError {
                 return "Could not bind to VNC port \(requested) (port already in use). Try a different port or use port 0 for auto-assign."
             }
             return "Could not bind to VNC port \(requested) (port already in use). System assigned port \(actual) instead. Try a different port or use port 0 for auto-assign."
+        case .vncDisabledConflict(let option):
+            return "VNC is disabled for this run, so '\(option)' cannot be used."
         case .internalError(let message):
             return "Internal error: \(message)"
         case .unsupportedOS(let os):
@@ -218,6 +225,10 @@ enum VMError: Error, LocalizedError {
             return "Invalid display resolution: \(resolution)"
         case .stillProvisioning(let name):
             return "Virtual machine is still being provisioned: \(name)"
+        case .insufficientHostSpace(let name, let volume, let required, let available):
+            let format: (UInt64) -> String = { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) }
+            return
+                "Not enough free space on host volume \(volume) to run \(name): its writable disks need \(format(required)) (\(required) bytes) free, \(format(available)) (\(available) bytes) is available. Guest writes would fail once the host volume fills. Free space on the host or move the VM to another storage location; the VM was not started."
         }
     }
 }

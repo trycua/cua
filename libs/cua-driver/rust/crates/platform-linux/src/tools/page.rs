@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux implementation of the cross-platform `PageBackend` trait.
 //!
 //! Read paths use AT-SPI via the existing `walk_tree` infrastructure
@@ -6,7 +9,7 @@
 //! `--remote-debugging-port=N` for that to succeed.
 
 use async_trait::async_trait;
-use cua_driver_core::page::PageBackend;
+use cua_driver_core::page::{PageBackend, PageReadResult};
 
 pub struct LinuxPageBackend;
 
@@ -24,13 +27,15 @@ impl Default for LinuxPageBackend {
 
 #[async_trait]
 impl PageBackend for LinuxPageBackend {
-    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String> {
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
         let pid_u = pid as u32;
         let xid = window_id;
         let result = tokio::task::spawn_blocking(move || crate::atspi::walk_tree(pid_u, xid, None))
             .await
             .map_err(|e| anyhow::anyhow!("AT-SPI walk task failed: {e}"))?;
-        Ok(extract_text_from_markdown(&result.tree_markdown))
+        Ok(PageReadResult::text(extract_text_from_markdown(
+            &result.tree_markdown,
+        )))
     }
 
     async fn query_dom(
@@ -39,7 +44,7 @@ impl PageBackend for LinuxPageBackend {
         window_id: u64,
         css_selector: &str,
         _attributes: &[String],
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<PageReadResult> {
         let pid_u = pid as u32;
         let xid = window_id;
         let selector = css_selector.to_owned();
@@ -95,11 +100,12 @@ impl PageBackend for LinuxPageBackend {
             })
             .collect();
 
-        if lines.is_empty() {
-            Ok("No elements found.".to_owned())
+        let content = if lines.is_empty() {
+            "No elements found.".to_owned()
         } else {
-            Ok(lines.join("\n"))
-        }
+            lines.join("\n")
+        };
+        Ok(PageReadResult::text(content))
     }
 
     async fn execute_javascript(
@@ -159,9 +165,7 @@ fn role_for_selector(sel: &str) -> Option<String> {
     let s = sel.trim();
     // Trim trailing [attr=...] or .class / #id qualifiers — we filter on
     // role only here (the macOS backend has richer JS-side filtering).
-    let tag_end = s
-        .find(|c: char| c == '[' || c == '.' || c == '#')
-        .unwrap_or(s.len());
+    let tag_end = s.find(['[', '.', '#']).unwrap_or(s.len());
     let tag = &s[..tag_end];
     let role = match tag.to_ascii_lowercase().as_str() {
         "a" => "link",

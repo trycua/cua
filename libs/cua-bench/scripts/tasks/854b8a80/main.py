@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 854b8a80-36a7-4ba9-8acd-fdb7ddf40806."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''Design a transistor-based astable multivibrator circuit. Use two BF457 NPN transistors. For the timing network, use two 10kΩ base resistors and two 10µF electrolytic capacitors. Each collector should drive an LED through a 330Ω current-limiting resistor.''',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="""Design a transistor-based astable multivibrator circuit. Use two BF457 NPN transistors. For the timing network, use two 10kΩ base resistors and two 10µF electrolytic capacitors. Each collector should drive an LED through a 330Ω current-limiting resistor.""",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 

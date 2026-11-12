@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `health_report` — single-call end-to-end driver diagnostics.
 //!
 //! The point of this tool is to let downstream consumers ship one stable
@@ -49,6 +52,7 @@ pub const NAME_TCC_ACCESSIBILITY: &str = "tcc_accessibility";
 pub const NAME_TCC_SCREEN_RECORDING: &str = "tcc_screen_recording";
 pub const NAME_AX_CAPABILITY: &str = "ax_capability";
 pub const NAME_SCREEN_CAPTURE_CAPABILITY: &str = "screen_capture_capability";
+pub const NAME_WINDOWSERVER_CONNECTION: &str = "windowserver_connection";
 
 /// Checks whose failure marks the whole report as `failed` (vs
 /// `degraded`). Binary, platform, and the MCP session itself are
@@ -95,7 +99,13 @@ pub struct CheckData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle_identifier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_bundle_identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_process_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,7 +122,10 @@ impl CheckData {
     /// serialized as `{}`.
     pub fn is_empty(&self) -> bool {
         self.bundle_identifier.is_none()
+            && self.configured_bundle_identifier.is_none()
             && self.executable_path.is_none()
+            && self.identity_source.is_none()
+            && self.parent_process_id.is_none()
             && self.os_version.is_none()
             && self.architecture.is_none()
             && self.display_count.is_none()
@@ -184,6 +197,22 @@ impl CheckEntry {
         }
         self
     }
+
+    /// The `binary_version` check. The version is a compiled-in constant, so
+    /// reaching this code already implies the binary built; it always passes.
+    pub fn binary_version() -> Self {
+        Self::pass(
+            NAME_BINARY_VERSION,
+            format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
+        )
+    }
+
+    /// The `session_active` check. The server is servicing this MCP call, so
+    /// by construction the session is up. The check exists so consumers can
+    /// hard-code a canonical "is the server reachable?" signal.
+    pub fn session_active() -> Self {
+        Self::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
+    }
 }
 
 /// Top-level `health_report` payload.
@@ -198,6 +227,11 @@ pub struct Report {
     pub driver_version: String,
     pub overall: Overall,
     pub checks: Vec<CheckEntry>,
+    /// Build identity of the running process (source revision and the
+    /// sha256 of the executable actually running). Additive under
+    /// `schema_version="1"`; absent from older drivers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<crate::build_info::BuildInfo>,
 }
 
 // ── Provider trait ───────────────────────────────────────────────────────────
@@ -222,6 +256,15 @@ pub trait HealthCheckProvider: Send + Sync {
     /// Run a single check by name. The dispatcher only forwards names
     /// from `check_names()`; provider authors do not need to handle
     /// unknown names defensively.
+    ///
+    /// Calls MAY OVERLAP: the dispatcher polls every selected check
+    /// concurrently within one task, so a check must not depend on
+    /// another check having run first, and probes that share
+    /// thread-unsafe native state must serialize internally. Overlap
+    /// is concurrency at await points, not parallelism — a provider
+    /// whose check bodies never yield still runs them one at a time,
+    /// and moving a blocking probe onto a worker thread is a per-probe
+    /// decision that requires knowing the native call is thread-safe.
     async fn run_check(&self, name: &str) -> CheckEntry;
 }
 
@@ -343,7 +386,7 @@ fn def() -> &'static ToolDef {
         // The description is part of the public contract — downstream
         // consumers depend on it spelling out `schema_version="1"` and the per-
         // platform check matrix. A test pins this commitment.
-        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped; use `cua-driver permissions grant` to verify it explicitly. cua-driver owns the health model; consumers stay thin.
+        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.
 
 Input — all optional:
   {
@@ -355,7 +398,7 @@ If both are given, `include` wins.
 Canonical check names:
   macOS  : binary_version, platform_supported, session_active,
            bundle_identity, tcc_accessibility, tcc_screen_recording,
-           ax_capability, screen_capture_capability
+           ax_capability, screen_capture_capability, windowserver_connection
   Windows: binary_version, platform_supported, session_active,
            ax_capability (via UIA), screen_capture_capability (via DXGI)
   Linux  : binary_version, platform_supported, session_active,
@@ -426,14 +469,28 @@ impl Tool for HealthReportTool {
 
         // Every canonical check appears in the output, even if filtered
         // out — consumers get a complete map of what was considered.
-        let mut checks: Vec<CheckEntry> = Vec::with_capacity(all.len());
-        for name in all {
-            if !to_run.contains(*name) {
-                checks.push(CheckEntry::skip(*name, "Skipped by include/skip filter."));
-                continue;
-            }
-            checks.push(self.provider.run_check(name).await);
-        }
+        //
+        // Checks run concurrently: each is an independent probe, and the
+        // sequential version paid the sum of their latencies (the slowest
+        // probes dominate a full report). `join_all` polls every future
+        // within this one task — no extra threads, no new Send/Sync
+        // requirements on the provider — and returns results in input
+        // order, so the report keeps its canonical check order.
+        //
+        // Scope: this overlaps only the checks that YIELD (async
+        // probes, subprocess waits, spawn_blocking work). A provider
+        // whose run_check bodies are synchronous still runs them back
+        // to back; migrating such probes to worker threads is per-probe
+        // work gated on native thread-safety and is tracked separately.
+        let checks: Vec<CheckEntry> =
+            futures_util::future::join_all(all.iter().map(|name| async {
+                if !to_run.contains(*name) {
+                    CheckEntry::skip(*name, "Skipped by include/skip filter.")
+                } else {
+                    self.provider.run_check(name).await
+                }
+            }))
+            .await;
 
         let report = Report {
             schema_version: "1".to_owned(),
@@ -441,6 +498,7 @@ impl Tool for HealthReportTool {
             driver_version: env!("CARGO_PKG_VERSION").to_owned(),
             overall: compute_overall(&checks),
             checks,
+            build: Some(crate::build_info::current()),
         };
 
         let text = text_summary(&report);
@@ -461,6 +519,22 @@ impl Tool for HealthReportTool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shared_constant_checks_always_pass_with_canonical_names() {
+        let version = CheckEntry::binary_version();
+        assert_eq!(version.name, NAME_BINARY_VERSION);
+        assert_eq!(version.status, CheckStatus::Pass);
+        assert_eq!(
+            version.message,
+            format!("cua-driver {}", env!("CARGO_PKG_VERSION"))
+        );
+
+        let session = CheckEntry::session_active();
+        assert_eq!(session.name, NAME_SESSION_ACTIVE);
+        assert_eq!(session.status, CheckStatus::Pass);
+        assert_eq!(session.message, "MCP session is active.");
+    }
 
     // A platform-agnostic fixture provider used to exercise the
     // dispatcher, filter, and rollup logic without touching any real
@@ -501,13 +575,6 @@ mod tests {
             NAME_AX_CAPABILITY,
             NAME_SCREEN_CAPTURE_CAPABILITY,
         ]
-    }
-
-    fn parse_args(v: Value) -> (BTreeSet<String>, BTreeSet<String>) {
-        (
-            parse_string_set(v.get("include")),
-            parse_string_set(v.get("skip")),
-        )
     }
 
     // ── select_checks ────────────────────────────────────────────────
@@ -551,6 +618,14 @@ mod tests {
         let chosen = select_checks(macos_names(), &BTreeSet::new(), &skip);
         assert!(!chosen.contains(NAME_TCC_ACCESSIBILITY));
         assert!(chosen.contains(NAME_BINARY_VERSION));
+    }
+
+    #[test]
+    fn advertised_capture_remediation_is_owner_scoped() {
+        let description = &def().description;
+        assert!(description.contains("For standalone CuaDriver"));
+        assert!(description.contains("does not verify"));
+        assert!(def().read_only);
     }
 
     // ── compute_overall ──────────────────────────────────────────────
@@ -739,10 +814,139 @@ mod tests {
         );
     }
 
-    // Belt-and-suspenders use of `parse_args` — keeps the helper
-    // exercised in case future tests reach for it.
-    #[test]
-    fn parse_args_compiles() {
-        let _ = parse_args(json!({ "include": ["x"], "skip": ["y"] }));
+    // ── Concurrency contract ─────────────────────────────────────────
+
+    // Instrumented provider: every check yields (tokio sleep), overlap
+    // is recorded as an active-counter high-water mark, completion
+    // order is recorded, and an RAII guard does the release bookkeeping
+    // so a CANCELLED check is still counted down (a dropped future
+    // never runs code after its await).
+    struct DelayedProvider {
+        names: &'static [&'static str],
+        delays_ms: &'static [u64],
+        active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        max_active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        started: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        completed: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl DelayedProvider {
+        fn new(names: &'static [&'static str], delays_ms: &'static [u64]) -> Self {
+            Self {
+                names,
+                delays_ms,
+                active: Default::default(),
+                max_active: Default::default(),
+                started: Default::default(),
+                completed: Default::default(),
+            }
+        }
+    }
+
+    struct ActiveGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl HealthCheckProvider for DelayedProvider {
+        fn platform(&self) -> &'static str {
+            "fixture"
+        }
+        fn check_names(&self) -> &'static [&'static str] {
+            self.names
+        }
+        async fn run_check(&self, name: &str) -> CheckEntry {
+            use std::sync::atomic::Ordering;
+            let idx = self.names.iter().position(|n| *n == name).unwrap();
+            self.started.lock().unwrap().push(name.to_owned());
+            let now = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(now, Ordering::SeqCst);
+            let _guard = ActiveGuard(self.active.clone());
+            tokio::time::sleep(std::time::Duration::from_millis(self.delays_ms[idx])).await;
+            self.completed.lock().unwrap().push(name.to_owned());
+            CheckEntry::pass(name, format!("{name} ok"))
+        }
+    }
+
+    /// The dispatcher must actually overlap yielding checks (the old
+    /// sequential loop fails this: its high-water mark is 1), complete
+    /// them in delay order rather than declaration order, and still
+    /// report entries in canonical `check_names()` order.
+    #[tokio::test]
+    async fn yielding_checks_overlap_and_report_in_canonical_order() {
+        let provider = DelayedProvider::new(&["slow", "mid", "fast"], &[120, 60, 10]);
+        let max_active = provider.max_active.clone();
+        let completed = provider.completed.clone();
+        let tool = HealthReportTool::new(Arc::new(provider));
+
+        let result = tool.invoke(json!({})).await;
+        let checks = result.structured_content.unwrap()["checks"].clone();
+        let reported: Vec<String> = checks
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(reported, vec!["slow", "mid", "fast"], "canonical order");
+
+        let done = completed.lock().unwrap().clone();
+        assert_eq!(
+            done,
+            vec!["fast", "mid", "slow"],
+            "completion follows delays"
+        );
+        assert!(
+            max_active.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "checks never overlapped — high-water mark {}",
+            max_active.load(std::sync::atomic::Ordering::SeqCst)
+        );
+    }
+
+    /// A skipped name must never reach the provider, and its Skip entry
+    /// must still hold its canonical position in the report.
+    #[tokio::test]
+    async fn skipped_checks_never_reach_the_provider() {
+        let provider = DelayedProvider::new(&["slow", "mid", "fast"], &[5, 5, 5]);
+        let started = provider.started.clone();
+        let tool = HealthReportTool::new(Arc::new(provider));
+
+        let result = tool.invoke(json!({ "skip": ["mid"] })).await;
+        let checks = result.structured_content.unwrap()["checks"].clone();
+        let entries = checks.as_array().unwrap();
+        assert_eq!(entries[1]["name"], "mid");
+        assert_eq!(entries[1]["status"], "skip");
+        assert!(
+            !started.lock().unwrap().contains(&"mid".to_owned()),
+            "skipped check reached the provider"
+        );
+    }
+
+    /// Cancelling the report mid-flight must drop every started check
+    /// cleanly: the RAII guards release the active counter, nothing
+    /// panics, and only the checks whose delays elapsed completed.
+    #[tokio::test]
+    async fn cancellation_releases_started_checks() {
+        let provider = DelayedProvider::new(&["fast", "slow_a", "slow_b"], &[5, 30_000, 30_000]);
+        let active = provider.active.clone();
+        let started = provider.started.clone();
+        let completed = provider.completed.clone();
+        let tool = HealthReportTool::new(Arc::new(provider));
+
+        let out = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            tool.invoke(json!({})),
+        )
+        .await;
+        assert!(out.is_err(), "expected the report to be cancelled");
+        assert_eq!(started.lock().unwrap().len(), 3, "all checks had started");
+        assert_eq!(completed.lock().unwrap().clone(), vec!["fast"]);
+        assert_eq!(
+            active.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "cancelled checks did not release the active counter"
+        );
     }
 }

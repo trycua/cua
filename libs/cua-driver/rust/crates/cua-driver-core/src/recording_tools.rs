@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent recording / replay tools.
 //!
 //! Registered on all platforms via `ToolRegistry::register_recording_tools()`.
@@ -20,7 +23,7 @@ use serde_json::{json, Value};
 
 use crate::{
     protocol::ToolResult,
-    recording::{RecordingSession, RecordingState},
+    recording::{RecordingSession, RecordingState, StopBy},
     tool::{Tool, ToolDef, ToolRegistry},
 };
 
@@ -45,9 +48,14 @@ impl Tool for StartRecordingTool {
     fn def(&self) -> &ToolDef {
         START_REC_DEF.get_or_init(|| ToolDef {
             name: "start_recording".into(),
-            description: "Start trajectory recording. Every subsequent action-tool \
+            description: "Start trajectory recording for the calling session. Each action-tool \
                 invocation (click, right_click, scroll, type_text, press_key, hotkey, \
-                set_value) writes a turn folder under `output_dir`:\n\n\
+                set_value) from that session writes a turn folder under `output_dir`. \
+                Without `session`, every call on the same connection is recorded, \
+                including named-session calls. Other connections and session lifecycle \
+                calls (`start_session` / `end_session`) are not recorded. CLI recordings started with \
+                `cua-driver recording start` are daemon-wide.\n\n\
+                Each turn folder holds:\n\n\
                 - `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI \
                   state immediately before and after the action.\n\
                 - `before.png` / `after.png` — target-window screenshots immediately \
@@ -56,10 +64,26 @@ impl Tool for StartRecordingTool {
                   expected artifact could not be captured.\n\
                 - `app_state.json` — post-action AX/UIA snapshot for the target pid.\n\
                 - `screenshot.png` — compatibility alias of `after.png`.\n\
-                - `action.json` — tool name, full input arguments, result summary, pid, \
-                  click point (when applicable), ISO-8601 timestamp.\n\
-                - `click.png` — for click-family actions only, `before.png` with a red \
-                  marker at the click point.\n\n\
+                - `action.json` — tool name, full input arguments, result summary, \
+                  result-error flag, pid, click point (when applicable), ISO-8601 \
+                  timestamp.\n\
+                - `click.png` — for dispatched click-family actions only, `before.png` \
+                  with a red marker at the click point. A call refused before target \
+                  resolution is explicitly not applicable instead.\n\n\
+                The per-turn accessibility walk is bounded like `get_window_state`: \
+                `state_timeout_ms` (default 1000) caps each before/after walk, a walk \
+                that runs out of budget records the PARTIAL tree, and `evidence.json` \
+                carries `truncated`, `truncation_reason`, `nodes_visited`, \
+                `nodes_pending` and `timeout_ms` for that phase. A provider that stops \
+                answering is abandoned after the budget plus a short grace and the \
+                phase is classified `state_capture_timeout`. Actions refused before \
+                dispatch (for example an unknown or expired `capture_id`) skip the \
+                state walk; their state is classified `not_applicable` / \
+                `action_refused_before_dispatch`. Pass `include_accessibility_tree: \
+                false` to record screenshots and actions without state.\n\n\
+                Pass `redact_values` with any secret the session will type (for \
+                example a password): each occurrence in a turn's text files is \
+                replaced with `[redacted]`, and such turns are not replayed.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \
@@ -67,15 +91,28 @@ impl Tool for StartRecordingTool {
                 30 fps) for the lifetime of the session. The recording is torn \
                 down automatically when the MCP client disconnects.\n\n\
                 **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + \
-                SCRecordingOutput) so video inherits the daemon's Screen \
-                Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
-                Requires macOS 15.0+.\n\n\
-                **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
+                SCRecordingOutput) under the daemon's Screen Recording grant, \
+                with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 \
+                (Tahoe), the first direct capture can also show a one-time \
+                consent asking to let Cua Driver bypass the system private \
+                window picker and directly access your screen and audio; \
+                choose Allow, or run `cua-driver permissions grant` beforehand \
+                to answer it up front. The recorder captures screen video only \
+                and does not enable system-audio capture.\n\n\
+                **Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / \
                 `x11grab` + libx264). Requires ffmpeg on PATH (winget install \
                 Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or \
                 fails on startup the per-turn capture (screenshots + \
                 action.json) still runs and the session's `last_error` field \
                 carries the diagnostic.\n\n\
+                **Linux Wayland routes by compositor**: GNOME uses the trusted \
+                Shell helper's frames, wlroots compositors use `wf-recorder`, \
+                and compositors without wlr-screencopy (KDE/KWin) record the \
+                monitor the user grants through the xdg-desktop-portal \
+                ScreenCast (one consent dialog per install; requires a build \
+                with the `portal-capture` feature and ffmpeg on PATH). \
+                Unsupported combinations report the exact limitation in \
+                `last_error`.\n\n\
                 State persists for the life of the daemon; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
                 disable + finalize the mp4."
@@ -95,8 +132,46 @@ impl Tool for StartRecordingTool {
                             Default: false. Set to true to also capture the main \
                             display to recording.mp4 (otherwise only the per-turn \
                             screenshots + JSON are recorded). On macOS this uses native \
-                            ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
-                            Windows + Linux it requires ffmpeg on PATH."
+                            ScreenCaptureKit (macOS 15.0+); macOS 26 can show a one-time \
+                            direct screen-capture consent on first use (see \
+                            `cua-driver permissions grant`). On Windows + Linux it \
+                            requires ffmpeg on PATH."
+                    },
+                    "state_timeout_ms": {
+                        "type": "integer",
+                        "minimum": crate::tool_schema::TIMEOUT_MS_MIN,
+                        "maximum": crate::tool_schema::TIMEOUT_MS_MAX,
+                        "default": crate::recording::TURN_STATE_TIMEOUT_MS_DEFAULT,
+                        "description": "Wall-clock budget in milliseconds for EACH per-turn \
+                            before/after accessibility walk (same default and bounds as \
+                            get_window_state's timeout_ms). A walk that runs out records \
+                            the partial tree and marks it truncated in evidence.json."
+                    },
+                    "include_accessibility_tree": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Default true. Set false to skip the per-turn \
+                            before/after accessibility walks entirely; screenshots, \
+                            click markers and action.json are still recorded and state \
+                            is classified `state_capture_disabled`."
+                    },
+                    "redact_values": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "minItems": 1,
+                        "maxItems": REDACT_VALUES_MAX,
+                        "description": "Secret values, such as passwords or tokens, that must \
+                            never be written to the recording. Every occurrence in a turn's \
+                            action.json and state files is replaced with `[redacted]`, and the \
+                            turn is marked `redacted: true` so replay_trajectory skips it. \
+                            The values are held in memory only, never written, and cleared \
+                            when recording stops. Screenshots and video are not altered."
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": "For multi-call work, prefer a short public session label \
+                            and repeat it on every call that accepts it. Omit it to use the \
+                            authenticated transport's implicit lifecycle session."
                     }
                 },
                 "additionalProperties": false
@@ -120,10 +195,23 @@ impl Tool for StartRecordingTool {
         // (session_end) only stops the recording its own session started.
         let owner = args.opt_str("_session_id");
 
-        match self.session.start(
+        let state_budget = args.bool_or("include_accessibility_tree", true).then(|| {
+            crate::recording::StateCaptureBudget {
+                timeout_ms: crate::tool_schema::resolve_timeout_ms(args.get("state_timeout_ms")),
+            }
+        });
+
+        let redactions = match parse_redact_values(args.get("redact_values")) {
+            Ok(redactions) => redactions,
+            Err(message) => return ToolResult::error(message),
+        };
+
+        match self.session.start_with_redactions(
             output_dir.as_deref().unwrap(),
             record_video,
             owner.as_deref(),
+            state_budget,
+            redactions,
         ) {
             Ok(()) => {
                 let state = self.session.current_state();
@@ -201,10 +289,9 @@ impl Tool for StopRecordingTool {
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // Manual stop is unconditional — `None` requester tears down whatever
-        // recording is active. Session-scoped teardown is driven by the
-        // registry-owned session-end hook, which calls `stop_owner(sid)`.
-        match self.session.stop_owner(None) {
+        // Manual stop tears down whatever recording is live. Session-scoped
+        // teardown is the registry-owned session-end hook's `StopBy::Owner`.
+        match self.session.stop(StopBy::Anyone) {
             Ok(()) => {
                 let state = self.session.current_state();
                 let video_note = state
@@ -300,8 +387,8 @@ impl Tool for ReplayTrajectoryTool {
                 recorded tool is called with its recorded `arguments` via the same dispatch \
                 path an MCP / CLI call uses.\n\n\
                 Caveats:\n\
-                - Element-indexed actions (`click({pid, element_index})` etc.) will fail \
-                  because element indices are per-snapshot and don't survive across \
+                - Element-token actions (`click({pid, element_token})` etc.) will fail \
+                  because element tokens are per-snapshot and don't survive across \
                   sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools \
                   replay cleanly. Failures are reported but don't stop replay unless \
                   `stop_on_error` is true.\n\
@@ -508,6 +595,36 @@ fn recording_state_json(state: &RecordingState) -> Value {
     })
 }
 
+/// Upper bound on `start_recording`'s `redact_values` list.
+const REDACT_VALUES_MAX: usize = 64;
+
+/// Never echoes a value back: error messages name only the position.
+fn parse_redact_values(value: Option<&Value>) -> Result<crate::recording::Redactions, String> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(crate::recording::Redactions::default());
+    };
+    let items = value
+        .as_array()
+        .ok_or_else(|| "`redact_values` must be an array of strings.".to_owned())?;
+    if items.len() > REDACT_VALUES_MAX {
+        return Err(format!(
+            "`redact_values` accepts at most {REDACT_VALUES_MAX} values."
+        ));
+    }
+    let mut values = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        match item.as_str() {
+            Some(text) if !text.is_empty() => values.push(text.to_owned()),
+            _ => {
+                return Err(format!(
+                    "`redact_values[{index}]` must be a non-empty string."
+                ))
+            }
+        }
+    }
+    Ok(crate::recording::Redactions::new(values))
+}
+
 fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> {
     if !path.exists() {
         anyhow::bail!("Missing action.json");
@@ -519,6 +636,14 @@ fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> 
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("action.json missing 'tool' string field"))?
         .to_owned();
+    // A turn whose arguments lost a secret value would replay the placeholder
+    // (for example typing "[redacted]"), so it is refused instead.
+    if obj.get("redacted").and_then(Value::as_bool) == Some(true) {
+        anyhow::bail!(
+            "turn arguments were redacted when recorded (start_recording redact_values); \
+             it cannot be replayed as recorded"
+        );
+    }
     let tool_args = obj
         .get("arguments")
         .cloned()
@@ -613,6 +738,98 @@ impl Tool for InstallFfmpegTool {
                 ToolResult::error(format!("ffmpeg install failed: {e}\nCommand: {display}"))
             }
             Err(e) => ToolResult::error(format!("install task error: {e}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn start_recording_resolves_the_per_turn_state_budget() {
+        let session = Arc::new(RecordingSession::new());
+        let tool = StartRecordingTool::new(session.clone());
+        let properties = &tool.def().input_schema["properties"];
+        assert_eq!(properties["state_timeout_ms"]["default"], 1000);
+        assert_eq!(properties["include_accessibility_tree"]["default"], true);
+
+        let directory = tempfile::tempdir().unwrap();
+        let dir = directory.path().to_str().unwrap();
+        for (args, expected) in [
+            (json!({"output_dir": dir}), Some(1000)),
+            (
+                json!({"output_dir": dir, "state_timeout_ms": 250}),
+                Some(250),
+            ),
+            // Clamped to the shared timeout_ms bounds.
+            (json!({"output_dir": dir, "state_timeout_ms": 1}), Some(100)),
+            (
+                json!({"output_dir": dir, "include_accessibility_tree": false}),
+                None,
+            ),
+        ] {
+            let result = tool.invoke(args.clone()).await;
+            assert_ne!(result.is_error, Some(true), "{args}");
+            assert_eq!(
+                session.state_budget().map(|budget| budget.timeout_ms),
+                expected,
+                "{args}"
+            );
+            session.stop(StopBy::Anyone).unwrap();
+        }
+    }
+
+    #[test]
+    fn replay_refuses_redacted_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("action.json");
+        std::fs::write(
+            &path,
+            r#"{"tool":"type_text","arguments":{"text":"[redacted]"},"redacted":true}"#,
+        )
+        .unwrap();
+        let error = parse_action_json(&path).unwrap_err().to_string();
+        assert!(error.contains("redacted"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn start_recording_validates_redact_values_without_echoing_them() {
+        let session = Arc::new(RecordingSession::new());
+        let tool = StartRecordingTool::new(session.clone());
+        let schema = &tool.def().input_schema["properties"]["redact_values"];
+        assert_eq!(schema["type"], "array");
+        let directory = tempfile::tempdir().unwrap();
+        let dir = directory.path().to_str().unwrap();
+
+        for bad in [
+            json!("hunter2-Secret"),
+            json!(["hunter2-Secret", ""]),
+            json!([7]),
+        ] {
+            let result = tool
+                .invoke(json!({"output_dir": dir, "redact_values": bad}))
+                .await;
+            assert_eq!(result.is_error, Some(true), "{bad}");
+            let text = serde_json::to_string(&result.content).unwrap();
+            assert!(!text.contains("hunter2-Secret"), "{text}");
+            assert!(!session.current_state().enabled);
+        }
+
+        let result = tool
+            .invoke(json!({"output_dir": dir, "redact_values": ["hunter2-Secret"]}))
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        let text = serde_json::to_string(&result.content).unwrap()
+            + &serde_json::to_string(&result.structured_content).unwrap_or_default();
+        assert!(!text.contains("hunter2-Secret"), "{text}");
+        session.stop(StopBy::Anyone).unwrap();
+        for entry in std::fs::read_dir(directory.path()).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read_to_string(&path).unwrap_or_default();
+                assert!(!bytes.contains("hunter2-Secret"), "{}", path.display());
+            }
         }
     }
 }

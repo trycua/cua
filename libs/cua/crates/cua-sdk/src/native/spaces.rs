@@ -1,0 +1,8526 @@
+//! `Spaces` and `Space`: the Spaces registry and primitives of `cua-spaces`
+//! for every language, in both topologies.
+//!
+//! | | embedded (`Cua.embedded`) | daemon (`Cua.connect`) |
+//! |---|---|---|
+//! | registry / lifecycle | `cua_spaces::Spaces` in this process | `SpaceService` RPCs |
+//! | typed primitives (exec, files, services, streams, presence) | `cua_spaces::Space` over the Space's spacesd | the same `cua_spaces::Space` code over the daemon's per-Space env passthrough (`SpaceService.ConnectSpace`); the Space's credentials never leave the daemon |
+//! | host-effect primitives (teleport, hotspot, agents) | the Spaces MCP tool, in process | the same tool in the daemon (`SpaceService.CallSpaceTool`), so hotspots outlive the caller and host reads happen in one place |
+//!
+//! Tool-backed results are parsed from the tool's JSON, and direct results
+//! are serialized through the same serde shape, so both modes return
+//! identical records. [`SPACES_TOOL_METHODS`] maps every contract tool to
+//! the SDK method that covers it (checked by a test).
+
+use super::teleport_types::TeleportManifest;
+use super::{AudioSink, Backend, CheckpointSummary, FrameSink, MediaEvent, run};
+use crate::{CuaError, Result};
+use cua_daemon_core::client::DaemonClient;
+use cua_proto::daemon::v1 as dpb;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+mod build;
+pub use build::{
+    BuildImageConfig, BuildInfo, BuildListener, BuildOptions, BuildProgress, BuildResult,
+    BuildStep, BuildStepResult,
+};
+
+/// Every Spaces contract tool and the SDK method(s) covering it
+/// (`Class.method`). `Spaces.call_tool_json` reaches any of them verbatim.
+pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
+    ("add_space", "Spaces.add"),
+    ("remove_space", "Spaces.remove"),
+    ("list_spaces", "Spaces.list"),
+    ("create_space", "Spaces.create"),
+    ("delete_space", "Spaces.delete"),
+    ("stop_space", "Spaces.stop"),
+    ("start_space", "Spaces.start"),
+    ("resize_space", "Spaces.resize"),
+    ("space_bash", "Space.bash"),
+    ("space_job", "Spaces.call_tool_json"),
+    ("space_write", "Space.write"),
+    ("upload", "Space.upload"),
+    ("send_file", "Space.send_file"),
+    ("download", "Space.download"),
+    ("stream_endpoint", "Space.open_stream"),
+    ("list_space_windows", "Space.windows"),
+    ("stream_space_window", "Spaces.call_tool_json"),
+    ("show_space_pip", "Spaces.call_tool_json"),
+    ("hide_space_pip", "Spaces.call_tool_json"),
+    ("open_space_viewer", "Spaces.call_tool_json"),
+    ("list_tools", "Space.list_tools"),
+    ("call_tool", "Space.call_tool"),
+    ("agent_start", "Space.agent_start"),
+    ("agent_message", "Space.agent_message"),
+    ("agent_status", "Space.agent_status"),
+    ("agent_events", "Space.agent_events"),
+    ("agent_interrupt", "Space.agent_interrupt"),
+    ("agent_stop", "Space.agent_stop"),
+    ("agent_list", "Space.agent_list"),
+    ("agent_capabilities", "Spaces.agent_capabilities"),
+    ("agent_threads", "Spaces.call_tool_json"),
+    ("agent_thread_read", "Spaces.call_tool_json"),
+    ("agent_sign_in", "Spaces.call_tool_json"),
+    ("agent_add", "Spaces.persistent_agent_create"),
+    ("persistent_agent_list", "Spaces.persistent_agents"),
+    ("agent_remove", "Spaces.persistent_agent_remove"),
+    ("agent_send", "Spaces.persistent_agent_send"),
+    ("persistent_agent_save", "Spaces.persistent_agent_save"),
+    ("agent_pause", "Spaces.agent_pause"),
+    ("agent_resume", "Spaces.agent_resume"),
+    ("agent_schedule_add", "Spaces.routine_add"),
+    ("agent_schedule_list", "Spaces.routines"),
+    ("agent_schedule_remove", "Spaces.routine_remove"),
+    ("agent_schedule_set_enabled", "Spaces.routine_set_enabled"),
+    ("notify_user", "Spaces.notify_user"),
+    ("notifications_list", "Spaces.notifications"),
+    ("notifications_ack", "Spaces.notifications_ack"),
+    ("computer_access_grant", "Spaces.computer_access_grant"),
+    ("computer_access_revoke", "Spaces.computer_access_revoke"),
+    ("computer_access_list", "Spaces.computer_access"),
+    // The Space thread and agent members: typed methods (`space.thread()`,
+    // `space.agents()`) come next; until then, the generic call.
+    ("thread_read", "Spaces.call_tool_json"),
+    ("thread_post", "Spaces.call_tool_json"),
+    ("thread_inbox", "Spaces.call_tool_json"),
+    ("thread_claim", "Spaces.call_tool_json"),
+    ("thread_reply", "Spaces.call_tool_json"),
+    ("thread_import", "Spaces.call_tool_json"),
+    ("agent_members", "Spaces.call_tool_json"),
+    ("agent_set_rights", "Spaces.call_tool_json"),
+    ("thread_join", "Spaces.call_tool_json"),
+    ("thread_join_code_create", "Spaces.call_tool_json"),
+    ("thread_join_code_list", "Spaces.call_tool_json"),
+    ("thread_join_code_cancel", "Spaces.call_tool_json"),
+    ("thread_join_redeem", "Spaces.call_tool_json"),
+    ("thread_settings", "Spaces.call_tool_json"),
+    ("thread_device_revoke", "Spaces.call_tool_json"),
+    ("teleport_manifest", "Space.teleport_manifest"),
+    ("teleport_app", "Space.teleport"),
+    ("request_site_login", "Space.request_site_login"),
+    ("hotspot_start", "Space.start_hotspot"),
+    ("hotspot_stop", "Space.stop_hotspot"),
+    ("hotspot_status", "Space.hotspot_status"),
+    ("volume_ls", "Spaces.volume_ls"),
+    ("volume_read", "Spaces.volume_read"),
+    ("volume_write", "Spaces.volume_write"),
+    ("volume_delete", "Spaces.volume_delete"),
+    ("volume_history", "Spaces.volume_history"),
+    ("volume_restore", "Spaces.volume_restore"),
+    ("volume_grant", "Spaces.volume_grant"),
+    ("volume_revoke", "Spaces.volume_revoke"),
+    ("volume_grants", "Spaces.volume_grants"),
+    ("volume_request_access", "Spaces.volume_request_access"),
+    ("volume_requests", "Spaces.volume_requests"),
+    ("volume_approve", "Spaces.volume_approve"),
+    ("volume_deny", "Spaces.volume_deny"),
+    ("volume_audit", "Spaces.volume_audit"),
+    ("volume_storage", "Spaces.volume_storage"),
+    ("volume_storage_set", "Spaces.volume_storage_set"),
+    ("volume_mount_status", "Spaces.volume_mount_status"),
+    ("volume_mount", "Spaces.volume_mount"),
+    ("volume_unmount", "Spaces.volume_unmount"),
+    ("volume_sync_status", "Spaces.volume_sync_status"),
+    ("volume_sync_events", "Spaces.volume_sync_events"),
+    ("volume_sync_resolve", "Spaces.volume_sync_resolve"),
+    ("volume_cache_stats", "Spaces.volume_cache_stats"),
+    ("volume_cache_set", "Spaces.volume_cache_set"),
+    ("volume_cache_clear", "Spaces.volume_cache_clear"),
+    ("share_space", "Space.share"),
+    ("network_show", "Spaces.network"),
+    ("network_set", "Spaces.set_network"),
+    ("network_log", "Spaces.network_log"),
+    ("space_service", "Space.put_service"),
+    ("unshare_space", "Space.unshare"),
+    ("space_shares", "Space.shares"),
+    ("relay_register_space", "Spaces.relay_register"),
+    ("relay_unregister_space", "Spaces.relay_unregister"),
+    ("cloud_status", "Spaces.cloud_status"),
+    ("cloud_connect", "Spaces.cloud_connect"),
+    ("cloud_test", "Spaces.cloud_test"),
+    ("cloud_disconnect", "Spaces.cloud_disconnect"),
+    ("cloud_approve", "Spaces.cloud_approve"),
+    ("cloud_sweep", "Spaces.cloud_sweep"),
+    ("cloud_plan", "Spaces.cloud_plan"),
+    ("cloud_hosts", "Spaces.cloud_hosts"),
+    ("cloud_add_host", "Spaces.cloud_add_host"),
+    ("cloud_remove_host", "Spaces.cloud_remove_host"),
+    ("cloud_budget", "Spaces.cloud_budget"),
+    ("cloud_reconcile", "Spaces.cloud_reconcile"),
+    ("prewarm", "Spaces.prewarm"),
+    ("prewarm_list", "Spaces.prewarms"),
+    ("prewarm_remove", "Spaces.remove_prewarm"),
+    ("cloud_audit", "Spaces.cloud_audit"),
+    ("cloud_cost", "Spaces.cloud_cost"),
+];
+
+/// SDK methods that have no contract tool (SDK-only surface).
+pub const SPACES_SDK_ONLY_METHODS: &[&str] = &[
+    "Spaces.resolve",
+    "Spaces.space",
+    "Spaces.list_tools_json",
+    "Spaces.call_tool_json",
+    "Spaces.resources",
+    "Spaces.watch_resources",
+    "Spaces.watch_list",
+    "Space.home",
+    "Space.screenshot",
+    "Space.close_stream",
+    "Space.attach_stream",
+    "Space.stream_session",
+    "Space.join_presence",
+];
+
+/// One row of [`SPACES_TOOL_METHODS`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpacesToolMethod {
+    /// Contract tool name.
+    pub tool: String,
+    /// `Class.method` (Rust / Python spelling; camelCase in TS, Swift and
+    /// Kotlin).
+    pub method: String,
+}
+
+/// Which SDK method covers each Spaces contract tool. Language test suites
+/// check every listed method exists on the generated class.
+#[uniffi::export]
+pub fn spaces_tool_methods() -> Vec<SpacesToolMethod> {
+    SPACES_TOOL_METHODS
+        .iter()
+        .map(|(tool, method)| SpacesToolMethod {
+            tool: (*tool).into(),
+            method: (*method).into(),
+        })
+        .collect()
+}
+
+// ------------------------------------------------------------------ records
+
+/// Which destinations a Space may open connections to. Everything is
+/// allowed unless a rule says otherwise: every `deny` entry blocks that
+/// destination, every `allow` entry is an exception that wins over `deny`
+/// (`deny: ["all"]` with `allow: ["1.1.1.1"]` leaves only 1.1.1.1
+/// reachable), and an `allow` list with no `deny` blocks nothing. Entries
+/// are IPv4/IPv6 addresses or CIDRs (`all` is `0.0.0.0/0` and `::/0`);
+/// a hostname is refused (rules are by IP/CIDR). DNS works only while the
+/// resolver the guest uses is not blocked (or is allowed): there is no
+/// special case. Loopback, replies to connections made to the guest and
+/// IPv6 neighbor discovery are never filtered.
+///
+/// The host the Space runs on enforces it, outside the guest, from the
+/// guest's first instruction ([`SpaceInfo::egress_enforced`]): containers
+/// (runc and gVisor) on the container engine's host, Firecracker and QEMU
+/// VMs on Linux in a network namespace around the VM. Nothing in the
+/// guest, root included, can change it. macOS VMs, Apple Containerization,
+/// QEMU on macOS or Windows, Cua Cloud and your own cloud accounts refuse
+/// a policy (`Unsupported`, saying why).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct EgressPolicy {
+    /// Destinations that stay reachable where `deny` blocks them.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Destinations that are blocked.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+impl From<cua_spaces::egress::EgressPolicy> for EgressPolicy {
+    fn from(p: cua_spaces::egress::EgressPolicy) -> Self {
+        EgressPolicy {
+            allow: p.allow,
+            deny: p.deny,
+        }
+    }
+}
+
+impl From<EgressPolicy> for cua_spaces::egress::EgressPolicy {
+    fn from(p: EgressPolicy) -> Self {
+        cua_spaces::egress::EgressPolicy {
+            allow: p.allow,
+            deny: p.deny,
+        }
+    }
+}
+
+impl From<EgressPolicy> for dpb::EgressPolicy {
+    fn from(p: EgressPolicy) -> Self {
+        dpb::EgressPolicy {
+            allow: p.allow,
+            deny: p.deny,
+        }
+    }
+}
+
+/// Where a Space's egress policy is enforced ([`SpaceInfo::egress_enforced`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EgressEnforcement {
+    /// By the host the Space runs on, outside the guest: nothing in the
+    /// guest, root included, can change it.
+    Host,
+}
+
+impl From<cua_spaces::egress::Enforcement> for EgressEnforcement {
+    fn from(e: cua_spaces::egress::Enforcement) -> Self {
+        match e {
+            cua_spaces::egress::Enforcement::Host => EgressEnforcement::Host,
+        }
+    }
+}
+
+impl EgressEnforcement {
+    /// From the wire word (`host`); `None` for empty or unknown.
+    fn from_word(w: &str) -> Option<Self> {
+        (w == cua_spaces::egress::Enforcement::Host.as_str()).then_some(EgressEnforcement::Host)
+    }
+}
+
+/// A Space's network settings: a preset and the user's own lists. The host
+/// the Space runs on compiles them to rules it enforces outside the guest.
+///
+/// - `internet` (the default): the public internet and the Space's own
+///   tree; this computer, your local network, cloud metadata, other trees
+///   and the cua daemon are blocked;
+/// - `none`: no network;
+/// - `localhost`: `internet`, plus this computer's localhost on
+///   `localhost_ports` (every port only with `all_localhost_ports`);
+/// - `lan`: `internet`, plus your local network (not this computer);
+/// - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+///   `lan` are independent extras; this is the one preset with both);
+/// - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
+/// - `unprotected`: everything but cloud metadata, other trees and the
+///   daemon.
+///
+/// A runtime that can't protect a Space yet starts it without network and
+/// says so (`SpaceInfo.network_note`); it never starts it open unless the
+/// preset is `unprotected`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct NetworkSettings {
+    /// `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+    /// `unprotected`; empty is `internet`.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub preset: String,
+    /// `localhost` and `localhost+lan`: the ports of this computer's
+    /// localhost the Space may reach.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub localhost_ports: Vec<u16>,
+    /// `localhost` and `localhost+lan`: every port (the daemon's stay
+    /// blocked).
+    #[uniffi(default)]
+    #[serde(default)]
+    pub all_localhost_ports: bool,
+    /// Destinations that stay reachable (addresses or CIDRs).
+    #[uniffi(default)]
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Destinations that are blocked (addresses, CIDRs or `all`).
+    #[uniffi(default)]
+    #[serde(default)]
+    pub deny: Vec<String>,
+    /// `custom`: what it starts from, `internet` (empty) or `none`.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub custom_base: String,
+    /// Set when the Space was allowed more than its parent: who and when.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub widened_by: Option<String>,
+    /// Where its internet traffic leaves ("Exit through"): `None` or
+    /// `internet` for its own network, `this-computer` (the hotspot),
+    /// `space:<name>` (a Space of its tree) or `socks5://host:port`. A
+    /// child keeps its parent's.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub via: Option<String>,
+}
+
+impl From<NetworkSettings> for dpb::NetworkSettings {
+    fn from(n: NetworkSettings) -> Self {
+        dpb::NetworkSettings {
+            preset: n.preset,
+            localhost_ports: n.localhost_ports.into_iter().map(u32::from).collect(),
+            all_localhost_ports: n.all_localhost_ports,
+            allow: n.allow,
+            deny: n.deny,
+            custom_base: n.custom_base,
+            widened_by: n.widened_by.unwrap_or_default(),
+            via: n.via.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<dpb::NetworkSettings> for NetworkSettings {
+    fn from(n: dpb::NetworkSettings) -> Self {
+        NetworkSettings {
+            preset: if n.preset.is_empty() {
+                "internet".into()
+            } else {
+                n.preset
+            },
+            localhost_ports: n
+                .localhost_ports
+                .into_iter()
+                .filter_map(|p| u16::try_from(p).ok())
+                .collect(),
+            all_localhost_ports: n.all_localhost_ports,
+            allow: n.allow,
+            deny: n.deny,
+            custom_base: if n.custom_base.is_empty() {
+                "internet".into()
+            } else {
+                n.custom_base
+            },
+            widened_by: (!n.widened_by.is_empty()).then_some(n.widened_by),
+            via: (!n.via.is_empty() && n.via != "internet").then_some(n.via),
+        }
+    }
+}
+
+impl From<cua_spaces::network::NetworkSettings> for NetworkSettings {
+    fn from(n: cua_spaces::network::NetworkSettings) -> Self {
+        cua_spaces::network::to_pb(&n).into()
+    }
+}
+
+impl NetworkSettings {
+    /// The checked model of these settings.
+    fn checked(&self) -> Result<cua_spaces::network::NetworkSettings> {
+        cua_spaces::network::from_pb(&self.clone().into())
+            .map_err(|e| CuaError::InvalidArgument(e.to_string()))
+    }
+}
+
+/// One kind of connection a Space tried and its network refused
+/// ([`Spaces::network_log`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct NetworkEvent {
+    /// Why: `platform:metadata`, `default:lan`, `default:host-loopback`,
+    /// `user:deny`, `default:none`, ...
+    pub reason: String,
+    /// Where to (`169.254.169.254:80`, or the rule's network where only the
+    /// host's firewall counted it).
+    pub dst: String,
+    /// `tcp` or `udp` when known.
+    pub proto: Option<String>,
+    /// How many times.
+    pub count: u64,
+    /// When the last one was refused (Unix seconds), when known.
+    pub last_unix: Option<u64>,
+}
+
+impl From<dpb::NetworkEvent> for NetworkEvent {
+    fn from(e: dpb::NetworkEvent) -> Self {
+        NetworkEvent {
+            reason: e.reason,
+            dst: e.dst,
+            proto: (!e.proto.is_empty()).then_some(e.proto),
+            count: e.count,
+            last_unix: (e.last_unix > 0).then_some(e.last_unix),
+        }
+    }
+}
+
+/// A Space's network as `cua network show` says it ([`Spaces::network`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceNetworkInfo {
+    /// Its settings.
+    pub settings: NetworkSettings,
+    /// One plain line ("Internet only").
+    pub summary: String,
+    /// What the settings open beyond `internet`, one plain line each.
+    pub widenings: Vec<String>,
+    /// `enforced` (rules on the host, outside the guest), `no_network`
+    /// (its runtime can't protect it yet), `open` (No protection) or
+    /// `refused`; empty when unknown (a Space another computer runs).
+    pub enforcement: String,
+    /// Where the rules are enforced, or why its network is cut.
+    pub point: String,
+    /// Why its network is not what was asked; `None` otherwise.
+    pub note: Option<String>,
+    /// Its parent and its tree's top-level Space; `None` for a top-level
+    /// Space.
+    pub parent: Option<String>,
+    pub root: Option<String>,
+    /// What no setting opens, in plain words.
+    pub always_blocked: Vec<String>,
+    /// An update changed its settings: say so once.
+    pub notice_pending: bool,
+    /// A VM's address in its tree (`198.19.0.0/16`), where the other
+    /// members of its tree reach it; `None` for a container or a Space
+    /// another computer runs.
+    #[uniffi(default = None)]
+    pub tree_address: Option<String>,
+    /// Its topology as JSON text (`cua network show --json`'s `topology`):
+    /// its name and address, its tree's members, the host and the ports it
+    /// may reach there, its policy, its exit and the exit's state, and the
+    /// path to the other computers of its tree. Empty from an older daemon.
+    #[uniffi(default = "")]
+    pub topology_json: String,
+}
+
+impl From<dpb::SpaceNetworkInfo> for SpaceNetworkInfo {
+    fn from(i: dpb::SpaceNetworkInfo) -> Self {
+        SpaceNetworkInfo {
+            settings: i.settings.unwrap_or_default().into(),
+            summary: i.summary,
+            widenings: i.widenings,
+            enforcement: i.enforcement,
+            point: i.point,
+            note: (!i.note.is_empty()).then_some(i.note),
+            parent: (!i.parent.is_empty()).then_some(i.parent),
+            root: (!i.root.is_empty()).then_some(i.root),
+            always_blocked: i.always_blocked,
+            notice_pending: i.notice_pending,
+            tree_address: (!i.tree_address.is_empty()).then_some(i.tree_address),
+            topology_json: i.topology_json,
+        }
+    }
+}
+
+/// What [`Spaces::set_network`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SetNetworkResult {
+    /// `now` (the running guest is under them) or `next_start`.
+    pub applied: String,
+    /// The Space's network after the change.
+    pub network: SpaceNetworkInfo,
+}
+
+/// What carries a connected Space's calls ([`Space::transport`]), for a
+/// badge: whether the relay can read them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceTransport {
+    /// `local`, `direct`, `mesh` (end to end), `relay_https` (the relay's
+    /// HTTPS path: the relay can read the session in transit), `cloud`, or
+    /// empty when the Space runs no cua-spacesd.
+    pub transport: String,
+    /// Why it took the relay's HTTPS path although the mesh was wanted;
+    /// empty on the mesh and when the HTTPS path was chosen
+    /// (`CUA_MESH=off`), and from an older daemon.
+    pub fallback_reason: String,
+}
+
+/// The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceList {
+    /// This machine's Spaces, and the account's other computers' as far as
+    /// they answered (the last known ones meanwhile).
+    pub spaces: Vec<SpaceInfo>,
+    /// Some of the account's computers have not answered yet: the list may
+    /// grow, and an empty one is not "no Spaces". Always false from a
+    /// daemon that predates it (it answers once every computer did).
+    pub incomplete: bool,
+    /// How many computers are still being reached (0 when unknown).
+    pub reaching: u32,
+    /// The other computers' rows are the last known ones, not yet
+    /// confirmed by the relay.
+    pub stale: bool,
+    /// Why the account's computers could not be read, when they could not.
+    pub notice: String,
+    /// Spaces your other computers are creating now, from what each
+    /// published through the relay (empty from a daemon that predates it).
+    pub creating: Vec<SpaceCreatingElsewhere>,
+}
+
+/// A Space another of your computers is creating ([`SpaceList::creating`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceCreatingElsewhere {
+    /// The computer's relay machine id.
+    pub machine_id: String,
+    /// The computer's name.
+    pub machine_name: String,
+    /// The Space's name.
+    pub name: String,
+    /// `macos`, `linux`, `windows`, or empty when unknown.
+    pub os: String,
+    /// The create's phase (`preparing`, `pulling`, `booting`, ...).
+    pub phase: String,
+    /// How far along the whole create is, 0 to 100.
+    pub percent: u32,
+    /// When the computer published it, unix ms.
+    pub updated_at_ms: u64,
+}
+
+/// A registered Space.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceInfo {
+    /// Id, for example `direct:10.0.0.5:3211` or `cloud:<name>` (the
+    /// sandbox ref scheme).
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// The name it was given with [`Spaces::rename`], which apps show in
+    /// place of `name`; empty when it keeps the one it was created with. A
+    /// Space that is a machine on the relay is renamed there, so its `name`
+    /// changes instead.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub display_name: String,
+    /// `cloud`, `local`, `direct` or `relay` (the location words).
+    pub provider: String,
+    /// spacesd version at the last handshake.
+    pub spacesd_version: String,
+    /// Supported features at the last handshake.
+    pub features: Vec<String>,
+    /// Guest OS family at the last handshake: `linux`, `macos`, `windows`,
+    /// or empty when not reported.
+    #[serde(default)]
+    pub os: String,
+    /// Guest OS product or distribution at the last handshake ("Ubuntu",
+    /// "macOS"), or empty when not reported.
+    #[serde(default)]
+    pub os_name: String,
+    /// The guest's full OS string at the last handshake ("Ubuntu 24.04.3
+    /// LTS", "macOS 26.5.2 (25F84)"), or empty from older drivers.
+    #[serde(default)]
+    pub os_pretty_name: String,
+    /// The image the sandbox runs ("ghcr.io/trycua/linux:24.04"), or empty
+    /// when unknown (a Space added by address).
+    #[serde(default)]
+    pub image: String,
+    /// The digest of the variant that runs ("sha256:..."), or empty.
+    #[serde(default)]
+    pub image_digest: String,
+    /// `container`, `vm` or `microvm`, or empty when unknown.
+    #[serde(default)]
+    pub kind: String,
+    /// The guest's CPU architecture (`arm64`, `amd64`), or empty when
+    /// unknown.
+    #[serde(default)]
+    pub arch: String,
+    /// Declared services (never `env`), reachable with `list_tools` /
+    /// `call_tool` (`service`). A Space without cua-spacesd has an empty
+    /// `features` list and only these.
+    #[serde(default)]
+    pub services: Vec<String>,
+    /// When it was added (RFC 3339).
+    #[serde(default)]
+    pub added_at: Option<String>,
+    /// For a Space one of your machines provides (created with
+    /// `on="host:<machine>"`): that host's relay machine id; empty
+    /// otherwise. Lists group these Spaces under their host.
+    #[serde(default)]
+    pub host: String,
+    /// The host's display name, when known.
+    #[serde(default)]
+    pub host_name: String,
+    /// How it turns off and on again ([`Spaces::stop`], [`Spaces::start`]):
+    /// `suspend` (its memory is kept), `stop` (its disk is kept), or empty
+    /// when it cannot (a cloud Space, a Space added by address).
+    #[serde(default)]
+    pub power: String,
+    /// `running`, `suspended` or `stopped` as cua last recorded it; empty
+    /// when unknown (a Space one of your machines provides answers while it
+    /// runs).
+    #[serde(default)]
+    pub power_state: String,
+    /// A Space in your own cloud: the provider (`aws`, `gcp`, `hetzner`, `modal`);
+    /// empty otherwise.
+    #[serde(default)]
+    pub cloud: String,
+    /// Where it runs ("AWS · us-west-2").
+    #[serde(default)]
+    pub cloud_place: String,
+    /// How `delete` would delete it permanently from here: `here` (this
+    /// device created it), `host:<machine>` (the device that created it,
+    /// through the relay) or `elsewhere` (only there; `remove` keeps it).
+    /// Empty for other Spaces.
+    #[serde(default)]
+    pub cloud_delete: String,
+    /// A durable Space (`SpaceCreateOptions.durable`): its name. It is
+    /// created again on another of your machines when its machine goes
+    /// away, and keeps this name. Empty for other Spaces.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub durable: String,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
+    /// and once it is started again.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub stop_reason: String,
+    /// Labels set at create (`SpaceCreateOptions.labels`).
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
+    /// When the Space ends (Unix seconds), as set by
+    /// [`Spaces::set_lifetime`]; 0 when it has none.
+    #[serde(default)]
+    pub expires_at_unix: i64,
+    /// What happens then: `delete` or `suspend`; empty without a lifetime.
+    #[serde(default)]
+    pub on_expire: String,
+    /// When the Space was created (Unix seconds; the time it was added, for
+    /// a Space added by address); 0 when unknown.
+    #[serde(default)]
+    pub created_at_unix: i64,
+    /// The egress policy last set on the Space; empty when it has none.
+    #[serde(default)]
+    pub egress: EgressPolicy,
+    /// Where `egress` is enforced; `None` without one.
+    #[serde(default)]
+    pub egress_enforced: Option<EgressEnforcement>,
+    /// Its network settings; `None` for a Space this computer keeps no
+    /// record of, or one created before they existed (it gets them on its
+    /// next start).
+    #[serde(default)]
+    pub network: Option<NetworkSettings>,
+    /// Why its network is not what was asked, in plain words (a runtime
+    /// that can't protect it yet started it without network); `None`
+    /// otherwise.
+    #[serde(default)]
+    pub network_note: Option<String>,
+    /// An update changed its network settings (an old Space moved to the
+    /// new defaults): say so once.
+    #[serde(default)]
+    pub network_notice_pending: bool,
+    /// The Space it was created from, by id; `None` for a top-level Space.
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// The top-level Space of its tree, by id; `None` for a top-level
+    /// Space.
+    #[serde(default)]
+    pub root: Option<String>,
+    /// How far below its tree's top-level Space it is (0: top-level).
+    #[serde(default)]
+    pub depth: u32,
+    /// It may make child Spaces of its own ([`Spaces::set_children`]).
+    #[serde(default)]
+    #[uniffi(default = false)]
+    pub children: bool,
+    /// A VM's address in its tree (`198.19.0.0/16`), where the other
+    /// members of its tree reach it; `None` otherwise.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub tree_address: Option<String>,
+    /// When viewers may move the clipboard between this computer and the
+    /// Space: `viewing` (only while you're viewing, the default), `ask` or
+    /// `off`. See [`Spaces::set_clipboard`].
+    #[serde(default)]
+    pub clipboard: String,
+    /// What it sees of the Cua Volume: `own` (its own folder, the default)
+    /// or `off`. See [`Spaces::set_volume`].
+    #[serde(default)]
+    pub volume: String,
+    /// Named volumes mounted in the Space (see
+    /// [`SpaceCreateOptions::volumes`]).
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+    /// A Space that is a machine on the relay: who owns it and who else
+    /// has it, as this account sees it. `None` for other Spaces.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub sharing: Option<SpaceSharing>,
+}
+
+/// Who a Space belongs to and who else has it, as this account sees it
+/// ([`SpaceInfo::sharing`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceSharing {
+    /// The owner's account id.
+    #[serde(default)]
+    pub owner_id: String,
+    /// The owner's email, when known.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub owner_email: String,
+    /// The owner's display name, when known.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub owner_name: String,
+    /// What this account may do: `owner`, `editor` or `viewer`.
+    #[serde(default)]
+    pub role: String,
+    /// The team this account reaches it through (its key), when it is a
+    /// team's and not shared with this account directly.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub team: String,
+    /// That team's display name (its key when the name is not known).
+    #[serde(default)]
+    #[uniffi(default)]
+    pub team_name: String,
+    /// Owner view: accounts (emails or ids) that may use it.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub editors: Vec<String>,
+    /// Owner view: accounts that may only watch.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub viewers: Vec<String>,
+    /// Owner view: the teams it is a machine of.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub teams: Vec<SpaceTeamShare>,
+}
+
+/// A team a Space is shared with ([`SpaceSharing::teams`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceTeamShare {
+    /// The team's key (org id).
+    pub key: String,
+    /// Its display name.
+    pub name: String,
+    /// `editor` or `viewer`.
+    pub role: String,
+}
+
+impl From<cua_spaces::SpaceSharing> for SpaceSharing {
+    fn from(s: cua_spaces::SpaceSharing) -> Self {
+        SpaceSharing {
+            owner_id: s.owner_id,
+            owner_email: s.owner_email,
+            owner_name: s.owner_name,
+            role: s.role,
+            team: s.team,
+            team_name: s.team_name,
+            editors: s.editors,
+            viewers: s.viewers,
+            teams: s
+                .teams
+                .into_iter()
+                .map(|t| SpaceTeamShare {
+                    key: t.key,
+                    name: t.name,
+                    role: t.role,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<dpb::SpaceSharing> for SpaceSharing {
+    fn from(s: dpb::SpaceSharing) -> Self {
+        cua_spaces::SpaceSharing::from(s).into()
+    }
+}
+
+/// The outcome for one Space of [`Spaces::delete_many`] or
+/// [`Spaces::leave_many`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct BulkResult {
+    /// The Space as asked.
+    pub id: String,
+    /// It went through.
+    pub ok: bool,
+    /// Why not, in plain words.
+    #[serde(default)]
+    pub error: Option<String>,
+    /// What happened, for people.
+    #[serde(default)]
+    pub message: String,
+}
+
+impl From<cua_spaces::BulkResult> for BulkResult {
+    fn from(r: cua_spaces::BulkResult) -> Self {
+        BulkResult {
+            id: r.id,
+            ok: r.ok,
+            error: r.error,
+            message: r.message,
+        }
+    }
+}
+
+impl From<dpb::SpaceBulkResult> for BulkResult {
+    fn from(r: dpb::SpaceBulkResult) -> Self {
+        cua_spaces::BulkResult::from(r).into()
+    }
+}
+
+/// A named volume of Cua Volume mounted in a Space: the folder
+/// `volumes/<name>/` (or `subpath` inside it) appears at `path`.
+///
+/// Linux Spaces of every kind (containers, microVMs, VMs) bind-mount it;
+/// a macOS Space gets a symbolic link to the folder (its writes are
+/// refused when `read_only`, by the volume's access rules, though the link
+/// itself is not read-only). The Space sees only the volumes it mounted.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record,
+)]
+pub struct VolumeMount {
+    /// The volume's name ([`Spaces::create_volume`]): 1 to 63 of `a-z`,
+    /// `0-9`, `.`, `_`, `-`.
+    pub name: String,
+    /// Where it appears in the Space (absolute, for example `/mnt/shared`).
+    pub path: String,
+    /// Mounted read-only: writes fail.
+    #[uniffi(default = false)]
+    #[serde(default)]
+    pub read_only: bool,
+    /// A folder inside the volume to mount instead of all of it (relative).
+    #[uniffi(default = "")]
+    #[serde(default)]
+    pub subpath: String,
+}
+
+impl From<VolumeMount> for cua_spaces::named_volumes::VolumeMount {
+    fn from(v: VolumeMount) -> Self {
+        Self {
+            name: v.name,
+            path: v.path,
+            read_only: v.read_only,
+            subpath: v.subpath,
+        }
+    }
+}
+
+impl From<cua_spaces::named_volumes::VolumeMount> for VolumeMount {
+    fn from(v: cua_spaces::named_volumes::VolumeMount) -> Self {
+        Self {
+            name: v.name,
+            path: v.path,
+            read_only: v.read_only,
+            subpath: v.subpath,
+        }
+    }
+}
+
+impl From<VolumeMount> for cua_proto::env::v1::VolumeMount {
+    fn from(v: VolumeMount) -> Self {
+        Self {
+            name: v.name,
+            path: v.path,
+            read_only: v.read_only,
+            subpath: v.subpath,
+        }
+    }
+}
+
+impl From<cua_proto::env::v1::VolumeMount> for VolumeMount {
+    fn from(v: cua_proto::env::v1::VolumeMount) -> Self {
+        Self {
+            name: v.name,
+            path: v.path,
+            read_only: v.read_only,
+            subpath: v.subpath,
+        }
+    }
+}
+
+/// A named volume of Cua Volume ([`Spaces::volumes`]).
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record,
+)]
+pub struct NamedVolume {
+    /// The name.
+    pub name: String,
+    /// Ids of the Spaces that mount it.
+    pub mounted_in: Vec<String>,
+}
+
+impl From<dpb::Space> for SpaceInfo {
+    fn from(s: dpb::Space) -> Self {
+        let provider = cua_spaces::SpaceId::parse(&s.id)
+            .map(|id| id.provider().as_str().to_string())
+            .unwrap_or_default();
+        SpaceInfo {
+            added_at: s.added_at.as_ref().map(|t| {
+                let at = std::time::UNIX_EPOCH
+                    + Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32);
+                humantime_rfc3339(at)
+            }),
+            id: s.id,
+            name: s.name,
+            display_name: s.display_name,
+            provider,
+            spacesd_version: s.spacesd_version,
+            features: s.features,
+            os: s.os,
+            os_name: s.os_name,
+            os_pretty_name: s.os_pretty_name,
+            image: s.image,
+            image_digest: s.image_digest,
+            kind: s.kind,
+            arch: s.arch,
+            services: s.services,
+            host: s.host,
+            host_name: s.host_name,
+            power: s.power,
+            power_state: s.power_state,
+            cloud: s.cloud,
+            cloud_place: s.cloud_place,
+            cloud_delete: s.cloud_delete,
+            durable: s.durable,
+            stop_reason: s.stop_reason,
+            volumes: s.volumes.into_iter().map(Into::into).collect(),
+            labels: s.labels,
+            expires_at_unix: s.expires_at_unix,
+            on_expire: s.on_expire,
+            created_at_unix: s.created_at_unix,
+            egress: s
+                .egress
+                .map(|e| EgressPolicy {
+                    allow: e.allow,
+                    deny: e.deny,
+                })
+                .unwrap_or_default(),
+            egress_enforced: EgressEnforcement::from_word(&s.egress_enforced),
+            network: s.network_settings.map(Into::into),
+            network_note: (!s.network_note.is_empty()).then_some(s.network_note),
+            network_notice_pending: s.network_notice_pending,
+            parent: (!s.parent.is_empty()).then_some(s.parent),
+            root: (!s.root.is_empty()).then_some(s.root),
+            depth: s.depth,
+            children: s.children,
+            tree_address: (!s.tree_address.is_empty()).then_some(s.tree_address),
+            clipboard: if s.clipboard.is_empty() {
+                cua_spaces::clipboard::ClipboardSetting::Viewing
+                    .as_str()
+                    .into()
+            } else {
+                s.clipboard
+            },
+            volume: if s.volume.is_empty() {
+                "own".into()
+            } else {
+                s.volume
+            },
+            sharing: s.sharing.map(Into::into),
+        }
+    }
+}
+
+impl From<cua_spaces::SpaceInfo> for SpaceInfo {
+    fn from(s: cua_spaces::SpaceInfo) -> Self {
+        let tree_address = cua_spaces::network::tree_address(&s.name);
+        SpaceInfo {
+            id: s.id,
+            name: s.name,
+            display_name: s.display_name,
+            provider: s.provider.as_str().into(),
+            spacesd_version: s.spacesd_version,
+            features: s.features,
+            os: s.os,
+            os_name: s.os_name,
+            os_pretty_name: s.os_pretty_name,
+            image: s.image,
+            image_digest: s.image_digest,
+            kind: s.kind,
+            arch: s.arch,
+            services: s.services,
+            added_at: s.added_at,
+            host: s.host,
+            host_name: s.host_name,
+            power: s.power,
+            power_state: s.power_state,
+            cloud: s.cloud,
+            cloud_place: s.cloud_place,
+            cloud_delete: s.cloud_delete,
+            durable: s.durable,
+            stop_reason: s.stop_reason,
+            volumes: s.volumes.into_iter().map(Into::into).collect(),
+            labels: s.labels.into_iter().collect(),
+            expires_at_unix: i64::try_from(s.expires_at_unix).unwrap_or(0),
+            on_expire: s.on_expire,
+            created_at_unix: i64::try_from(s.created_at_unix).unwrap_or(0),
+            egress: s.egress.into(),
+            egress_enforced: s.egress_enforced.map(Into::into),
+            network: s.network.as_ref().map(|n| n.settings.clone().into()),
+            network_note: s.network.as_ref().and_then(|n| n.note.clone()),
+            network_notice_pending: s.network.as_ref().is_some_and(|n| n.notice_pending),
+            parent: s.tree.as_ref().and_then(|t| t.parent.clone()),
+            root: s.tree.as_ref().and_then(|t| t.root.clone()),
+            depth: s.tree.as_ref().map_or(0, |t| t.depth),
+            // Kept by the cua daemon (its records say it).
+            children: false,
+            tree_address,
+            clipboard: s.clipboard.as_str().into(),
+            volume: s.volume_setting.as_str().into(),
+            sharing: s.sharing.map(Into::into),
+        }
+    }
+}
+
+fn humantime_rfc3339(at: std::time::SystemTime) -> String {
+    let secs = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Civil-from-days (Howard Hinnant), UTC.
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// Options for [`Spaces::create`]: the same location / kind / runtime model
+/// as sandboxes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceCreateOptions {
+    /// Image (default: the canonical Linux image). `checkpoint:<name>`
+    /// starts a fork of that checkpoint, on whichever of your machines
+    /// holds it ([`CheckpointSummary::host`]): its disk, memory and
+    /// processes, so no command, environment, services, GPU or disk size.
+    #[uniffi(default = None)]
+    pub image: Option<String>,
+    /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+    /// `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+    /// `CUA_DEFAULT_ON`, else `local`); for a `checkpoint:` image, where the
+    /// checkpoint is. A checkpoint also starts on `host:<machine>` or
+    /// `auto`, copied there first when that machine lacks it.
+    #[uniffi(default = None)]
+    pub on: Option<String>,
+    /// `auto` (default), `container`, `vm` or `microvm`.
+    #[uniffi(default = None)]
+    pub kind: Option<String>,
+    /// `auto` (default) or an engine the location offers for the kind.
+    #[uniffi(default = None)]
+    pub runtime: Option<String>,
+    /// Name (default `space-<hex>`).
+    #[uniffi(default = None)]
+    pub name: Option<String>,
+    /// vCPUs. Local default 2.
+    #[uniffi(default = None)]
+    pub cpus: Option<u32>,
+    /// Memory in MiB. Local default 4096.
+    #[uniffi(default = None)]
+    pub memory_mb: Option<u64>,
+    /// Grow the VM's disk to this many GiB (local VMs; default: the
+    /// image's size, never smaller). Lume grows the macOS APFS container
+    /// before the first boot; Linux images grow their root partition at
+    /// boot. Containers and cloud Spaces refuse it.
+    #[uniffi(default = None)]
+    pub disk_gb: Option<u32>,
+    /// Readiness budget (local; default 600 s).
+    #[uniffi(default = None)]
+    pub timeout_ms: Option<u64>,
+    /// Wait until ready (default true).
+    #[uniffi(default = None)]
+    pub wait: Option<bool>,
+    /// Return a reachable registered Space in the same location with the
+    /// requested services instead of creating one.
+    #[uniffi(default = false)]
+    pub reuse: bool,
+    /// Entrypoint override.
+    #[uniffi(default = None)]
+    pub command: Option<Vec<String>>,
+    /// Guest environment.
+    #[uniffi(default)]
+    pub env: HashMap<String, String>,
+    /// Named services (name → guest port), for example `{"mcp": 8765}`.
+    #[uniffi(default)]
+    pub services: HashMap<String, u16>,
+    /// Whether the image runs cua-spacesd (default: yes for the canonical
+    /// images; any other image gets a static one injected on a local
+    /// container or microVM, so it is a full Space; `false` runs the image
+    /// as it is).
+    #[uniffi(default = None)]
+    pub spacesd: Option<bool>,
+    /// A GPU option of the runtime the Space runs on
+    /// ([`Spaces::gpu_support`]): `paravirtual` for a macOS VM on Lume (GPU
+    /// acceleration, experimental), `virgl` (QEMU on Linux), `nvidia` (a
+    /// runc container on Linux); `auto` picks the runtime's own. `None`
+    /// (the default): no GPU. Kept with the Space.
+    #[uniffi(default = None)]
+    pub gpu: Option<String>,
+    /// Your own key for this create (an app's pending row), for
+    /// [`Spaces::cancel_create`] before the Space's id is known.
+    #[uniffi(default = None)]
+    pub create_id: Option<String>,
+    /// Keep the Space on your machines (`on` "auto"): when its machine goes
+    /// away it is created again on another one, with the same name (its
+    /// disk starts fresh). Needs the cua daemon of Cua Spaces and an
+    /// account with machines that provide Spaces.
+    #[uniffi(default = false)]
+    pub durable: bool,
+    /// A size profile: defaults for what is left unset. `"rollout"`: 1
+    /// vCPU, 1024 MiB and `headless` (a local VM gets no display hardware,
+    /// so many more fit on one machine), for RL rollouts and agent episodes
+    /// that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB.
+    #[uniffi(default = None)]
+    pub profile: Option<String>,
+    /// A Space without a desktop: only cua-spacesd runs (exec, files,
+    /// processes, MCP), with no display, window manager or audio. For shell
+    /// and RL workloads it starts several times faster and fits many more
+    /// per machine. `None`: what `profile` says (a desktop by default).
+    #[uniffi(default = None)]
+    pub headless: Option<bool>,
+    /// A fork source (a "bake" Space): a local QEMU VM's guest RAM is a
+    /// shared file, so its checkpoints ([`Space::checkpoint`]) take
+    /// milliseconds and forks of them ([`Space::fork`], [`Spaces::fork`])
+    /// share its pages. Other kinds ignore it. `None` (the default): not
+    /// one.
+    #[uniffi(default = None)]
+    pub forkable: Option<bool>,
+    /// Build an image first (cached when unchanged), then fork the result.
+    /// `image` must be unset.
+    #[uniffi(default = None)]
+    pub build: Option<BuildOptions>,
+    /// Named volumes of Cua Volume to mount in the Space
+    /// ([`Spaces::create_volume`]): each appears at its `path`, read-write
+    /// or read-only; the Space sees no other volume. Needs the Cua Volume
+    /// (Cua Spaces) and a guest that can mount it; the create fails
+    /// otherwise, naming what is missing. A fork mounts the same volumes.
+    #[uniffi(default)]
+    pub volumes: Vec<VolumeMount>,
+    /// Guest network: `default` (unset) gives outbound network; `none`
+    /// gives none (QEMU VMs, here or on one of your machines; published
+    /// ports and cua-spacesd still reach the guest). Not with `durable` or
+    /// `reuse`. A daemon or machine whose cua is too old to enforce `none`
+    /// is refused (`CapabilityMissing`) and the Space it made is deleted.
+    #[uniffi(default = None)]
+    pub network: Option<String>,
+    /// Labels kept with the Space and returned in `SpaceInfo.labels`: at
+    /// most 64; keys and values are not empty (UTF-8); keys up to 63 bytes,
+    /// values up to 256. Not with `durable` or `reuse`. The device that
+    /// creates the Space keeps them (also for `host:` and `auto`).
+    #[uniffi(default)]
+    pub labels: HashMap<String, String>,
+    /// Egress policy (see [`EgressPolicy`]), enforced by the host the Space
+    /// runs on from the guest's first instruction. A kind or location with
+    /// no host-side point refuses it (`Unsupported`) before anything is
+    /// created. Not with `durable`, `reuse` or `wait = false`; a daemon too old
+    /// to enforce it makes the create fail.
+    #[uniffi(default = None)]
+    pub egress: Option<EgressPolicy>,
+    /// Network settings (see [`NetworkSettings`]). `None`: what `network`
+    /// and `egress` say (`internet` when neither says anything). A daemon
+    /// too old to keep them makes the create fail.
+    #[uniffi(default = None)]
+    pub network_settings: Option<NetworkSettings>,
+    /// Create it as a child of this Space (id or name): its network is no
+    /// more open than its parent's, and it joins the parent's tree.
+    #[uniffi(default = None)]
+    pub parent: Option<String>,
+    /// With `parent`: let its network be more open than its parent's
+    /// (recorded on the Space).
+    #[uniffi(default = None)]
+    pub widen: Option<bool>,
+    /// With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type
+    /// its host must be (`c7g.xlarge`, `cax41`), a pin of the elastic
+    /// pool's solve. `None`: the pool picks the cheapest that fits.
+    #[uniffi(default = None)]
+    pub instance_type: Option<String>,
+    /// With `on` a linked cloud: the region its host must be in.
+    #[uniffi(default = None)]
+    pub region: Option<String>,
+    /// Lets the Space make child Spaces of its own ([`Spaces::set_children`]).
+    /// `None`: off. Only a Space the machine of the runtime runs itself.
+    #[uniffi(default = None)]
+    pub children: Option<bool>,
+}
+
+impl SpaceCreateOptions {
+    /// Fills in what its `profile` sets and the options leave unset.
+    fn apply_profile(&mut self) -> Result<()> {
+        let Some(p) = self.profile.as_deref().filter(|p| !p.trim().is_empty()) else {
+            return Ok(());
+        };
+        let p = cua_sandbox_core::profile::Profile::parse(p).map_err(CuaError::InvalidArgument)?;
+        self.cpus = self.cpus.or(p.cpus());
+        self.memory_mb = self.memory_mb.or(p.memory_mb());
+        if p.headless() {
+            self.headless = self.headless.or(Some(true));
+        }
+        Ok(())
+    }
+}
+
+/// One GPU option of a runtime (see [`Spaces::gpu_support`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct GpuOption {
+    /// What to pass as `gpu`.
+    pub id: String,
+    /// How a person names it ("GPU acceleration").
+    pub label: String,
+    /// Experimental.
+    pub experimental: bool,
+    /// Works on this host now.
+    pub supported: bool,
+    /// Why not, one short line (empty when supported).
+    pub reason: String,
+    /// A page that explains it.
+    pub learn_more: Option<String>,
+    /// Estimated cost per hour while it runs (cloud GPU types).
+    pub usd_per_hour: Option<f64>,
+}
+
+/// One limit of a host that provides Spaces and how much of it is used.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpacesHostLimit {
+    /// `spaces` (every Space it provides) or `macos_vms`.
+    pub resource: String,
+    /// In use now.
+    pub used: u32,
+    /// The limit (0: none).
+    pub limit: u32,
+    /// Why the limit exists, for people.
+    pub reason: String,
+}
+
+/// One of your machines that provides Spaces ([`Spaces::hosts`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpacesHost {
+    /// What `on="host:<id>"` takes: the relay machine id, or the name a
+    /// direct host was added as.
+    pub id: String,
+    /// Its name.
+    pub name: String,
+    /// `relay` or `direct`.
+    pub via: String,
+    /// It answered.
+    pub online: bool,
+    /// Its operating system (`macos`, `linux`, `windows`), when it answered.
+    pub os: String,
+    /// Its limits, when it answered.
+    pub limits: Vec<SpacesHostLimit>,
+    /// How busy it is, when it answered and reports it.
+    pub load: Option<SpacesHostLoad>,
+}
+
+/// How busy one of your machines is (its job runner's view).
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpacesHostLoad {
+    /// CPU it offers, in thousandths.
+    pub millicpus_total: u32,
+    /// Of that, free.
+    pub millicpus_free: u32,
+    /// Memory it offers (MiB).
+    pub memory_total_mb: u64,
+    /// Of that, free.
+    pub memory_free_mb: u64,
+    /// Spaces running there.
+    pub spaces: u32,
+    /// Why it takes nothing now (empty: it does).
+    pub problem: String,
+    /// The kinds it creates (`container`, `vm`, `microvm`), as it reports
+    /// them; empty when it does not say.
+    pub kinds: Vec<String>,
+}
+
+impl From<cua_spaces::host_spaces::HostOffer> for SpacesHost {
+    fn from(h: cua_spaces::host_spaces::HostOffer) -> Self {
+        Self {
+            id: h.id,
+            name: h.name,
+            via: h.via,
+            online: h.online,
+            os: h.os,
+            limits: h
+                .limits
+                .into_iter()
+                .map(|l| SpacesHostLimit {
+                    resource: l.resource,
+                    used: l.used,
+                    limit: l.limit,
+                    reason: l.reason,
+                })
+                .collect(),
+            load: h.node.map(|n| SpacesHostLoad {
+                millicpus_total: n.millicpus_total,
+                millicpus_free: n.millicpus_free,
+                memory_total_mb: n.memory_total_mb,
+                memory_free_mb: n.memory_free_mb,
+                spaces: n.running.values().sum(),
+                problem: n.problem,
+                kinds: n.kinds,
+            }),
+        }
+    }
+}
+
+impl From<dpb::SpacesHost> for SpacesHost {
+    fn from(h: dpb::SpacesHost) -> Self {
+        Self {
+            id: h.id,
+            name: h.name,
+            via: h.via,
+            online: h.online,
+            os: h.os,
+            limits: h
+                .limits
+                .into_iter()
+                .map(|l| SpacesHostLimit {
+                    resource: l.resource,
+                    used: l.used,
+                    limit: l.limit,
+                    reason: l.reason,
+                })
+                .collect(),
+            load: h.load.map(|l| SpacesHostLoad {
+                millicpus_total: l.millicpus_total,
+                millicpus_free: l.millicpus_free,
+                memory_total_mb: l.memory_total_mb,
+                memory_free_mb: l.memory_free_mb,
+                spaces: l.spaces,
+                problem: l.problem,
+                kinds: l.kinds,
+            }),
+        }
+    }
+}
+
+/// The GPU options of one runtime: empty, with the reason, when it has
+/// none.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct GpuSupport {
+    /// `lume`, `qemu`, `container`, `gvisor`, a provider's name.
+    pub runtime: String,
+    /// Its options.
+    pub options: Vec<GpuOption>,
+    /// Why it has none.
+    pub reason: String,
+}
+
+impl From<cua_sandbox_core::gpu::GpuSupport> for GpuSupport {
+    fn from(g: cua_sandbox_core::gpu::GpuSupport) -> Self {
+        Self {
+            runtime: g.runtime,
+            options: g
+                .options
+                .into_iter()
+                .map(|o| GpuOption {
+                    id: o.id,
+                    label: o.label,
+                    experimental: o.experimental,
+                    supported: o.supported,
+                    reason: o.reason,
+                    learn_more: o.learn_more,
+                    usd_per_hour: o.usd_per_hour,
+                })
+                .collect(),
+            reason: g.reason,
+        }
+    }
+}
+
+impl From<dpb::GpuSupport> for GpuSupport {
+    fn from(g: dpb::GpuSupport) -> Self {
+        Self {
+            runtime: g.runtime,
+            options: g
+                .options
+                .into_iter()
+                .map(|o| GpuOption {
+                    id: o.id,
+                    label: o.label,
+                    experimental: o.experimental,
+                    supported: o.supported,
+                    reason: o.reason,
+                    learn_more: (!o.learn_more.is_empty()).then_some(o.learn_more),
+                    usd_per_hour: o.usd_per_hour,
+                })
+                .collect(),
+            reason: g.reason,
+        }
+    }
+}
+
+/// What [`Spaces::cancel_create`] did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceCancelOutcome {
+    /// The Space id the create had (`local:<name>`), when known.
+    pub id: String,
+    /// `cancelled`, `not_creating` (nothing by that key is running) or
+    /// `already_created` (it finished: delete it instead).
+    pub state: String,
+    /// What was removed and what stays, for people.
+    pub message: String,
+}
+
+/// Result of [`Spaces::create`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceCreateResult {
+    /// The Space, once ready.
+    pub space: Option<SpaceInfo>,
+    /// With `wait = false`: the id the Space will have.
+    pub pending_id: Option<String>,
+    /// `reuse` returned an existing Space.
+    pub reused: bool,
+}
+
+/// What a Space create is doing (see [`Spaces::create_with_progress`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SpaceCreateProgress {
+    /// `preparing`, `pulling`, `creating`, `booting`,
+    /// `waiting_for_services`, `connecting` or `ready`, in that order.
+    pub phase: String,
+    /// How far through the phase, 0.0 to 1.0, when its size is known (an
+    /// image pull).
+    pub fraction: Option<f64>,
+    /// One short line, for example the image being pulled.
+    pub detail: String,
+    /// Bytes downloaded so far, when the step counts them (an image pull).
+    #[uniffi(default = None)]
+    pub bytes_done: Option<u64>,
+    /// Bytes the download has in all.
+    #[uniffi(default = None)]
+    pub bytes_total: Option<u64>,
+    /// Smoothed download rate, bytes per second (time left: the bytes to
+    /// go over it).
+    #[uniffi(default = None)]
+    pub bytes_per_second: Option<f64>,
+    /// The id the Space will have (`local:<name>`), for
+    /// [`Spaces::cancel_create`].
+    #[uniffi(default = "")]
+    pub space: String,
+}
+
+impl From<&cua_spaces::CreateProgress> for SpaceCreateProgress {
+    fn from(p: &cua_spaces::CreateProgress) -> Self {
+        Self {
+            phase: p.phase.as_str().into(),
+            fraction: p.fraction,
+            detail: p.detail.clone(),
+            bytes_done: p.bytes.map(|b| b.done),
+            bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
+            bytes_per_second: p.bytes.and_then(|b| b.per_second),
+            space: p.target.clone(),
+        }
+    }
+}
+
+/// Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
+/// runs, in order, ending with `ready`. Called on an SDK worker thread;
+/// return quickly.
+#[uniffi::export(with_foreign)]
+pub trait SpaceCreateListener: Send + Sync {
+    /// The create moved on.
+    fn on_progress(&self, progress: SpaceCreateProgress);
+}
+
+/// Output of [`Space::bash`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceBashResult {
+    /// Stdout.
+    pub stdout: String,
+    /// Stderr.
+    pub stderr: String,
+    /// Exit code (absent when signalled or timed out).
+    pub exit_code: Option<i32>,
+    /// Signal name, when killed by one.
+    pub signal: Option<String>,
+    /// Hit the timeout.
+    pub timed_out: bool,
+    /// Launch error.
+    pub error: Option<String>,
+    /// The `space_bash` tool text (`stdout`, `[stderr]`, `[exit N]`).
+    pub rendered: String,
+}
+
+/// Result of [`Space::write`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceWriteReport {
+    /// Guest path.
+    pub path: String,
+    /// Bytes.
+    pub bytes: u64,
+    /// SHA-256 verified in the Space.
+    pub sha256: String,
+}
+
+/// What a tree's children may hold and cost ([`Spaces::set_tree_budget`]).
+/// `None`: the default.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct TreeBudgetLimits {
+    /// Child Spaces at once (default 16).
+    #[uniffi(default = None)]
+    pub max_spaces: Option<u32>,
+    /// vCPUs at once (default 16).
+    #[uniffi(default = None)]
+    pub max_vcpus: Option<u32>,
+    /// Memory at once, MiB (default 32768).
+    #[uniffi(default = None)]
+    pub max_memory_mb: Option<u64>,
+    /// Cost per hour, in linked clouds (default 2.0).
+    #[uniffi(default = None)]
+    pub usd_per_hour: Option<f64>,
+    /// Cost in total (default: none).
+    #[uniffi(default = None)]
+    pub usd_total: Option<f64>,
+}
+
+/// A tree's budget and what its children use ([`Spaces::tree_budget`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TreeBudget {
+    /// The tree's top-level Space.
+    pub root: String,
+    /// What the owner set.
+    pub set: TreeBudgetLimits,
+    /// Child Spaces it may hold at once.
+    pub max_spaces: u32,
+    /// vCPUs it may hold at once.
+    pub max_vcpus: u32,
+    /// Memory it may hold at once (MiB).
+    pub max_memory_mb: u64,
+    /// Cost per hour it may run at.
+    pub usd_per_hour: f64,
+    /// Cost in total it may reach, when capped.
+    pub usd_total: Option<f64>,
+    /// Child Spaces now.
+    pub spaces: u32,
+    /// vCPUs they hold.
+    pub vcpus: u32,
+    /// Memory they hold (MiB).
+    pub memory_mb: u64,
+    /// Cost per hour they run at.
+    pub usd_per_hour_used: f64,
+    /// What they have cost so far.
+    pub usd_spent: f64,
+}
+
+impl From<dpb::TreeBudget> for TreeBudget {
+    fn from(b: dpb::TreeBudget) -> Self {
+        let set = b.set.unwrap_or_default();
+        Self {
+            root: b.root,
+            set: TreeBudgetLimits {
+                max_spaces: set.max_spaces,
+                max_vcpus: set.max_vcpus,
+                max_memory_mb: set.max_memory_mb,
+                usd_per_hour: set.usd_per_hour,
+                usd_total: set.usd_total,
+            },
+            max_spaces: b.max_spaces,
+            max_vcpus: b.max_vcpus,
+            max_memory_mb: b.max_memory_mb,
+            usd_per_hour: b.usd_per_hour,
+            usd_total: b.usd_total,
+            spaces: b.spaces,
+            vcpus: b.vcpus,
+            memory_mb: b.memory_mb,
+            usd_per_hour_used: b.usd_per_hour_used,
+            usd_spent: b.usd_spent,
+        }
+    }
+}
+
+/// A child Space whose parent is gone or out of reach ([`Spaces::orphans`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceOrphan {
+    /// The child.
+    pub space: String,
+    /// Its parent's id.
+    pub parent: String,
+    /// `ending` (its parent is provably gone: it ends after the grace) or
+    /// `listed` (not this computer's to judge: it stays until deleted or its
+    /// own lifetime ends).
+    pub state: String,
+    /// Why.
+    pub why: String,
+    /// Seconds until it ends (`ending` only).
+    pub ends_in_secs: i64,
+}
+
+/// A command a Space keeps running ([`Space::put_service`]).
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record, Serialize, Deserialize)]
+pub struct SpaceServiceDef {
+    /// Name: lowercase letters, digits, `-`, `_`, `.` (1 to 63).
+    pub name: String,
+    /// The shell command line it runs.
+    pub command: String,
+    /// Extra environment.
+    #[uniffi(default)]
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Working directory.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// When it is started again: `always` (default), `on-failure` or
+    /// `never`.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub restart: Option<String>,
+    /// A health check; failing it restarts the service.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub probe: Option<SpaceServiceProbe>,
+    /// Start it when the Space boots. `None`: yes.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub start_on_boot: Option<bool>,
+}
+
+/// A health check: exactly one of `http`, `tcp`, `command`.
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record, Serialize, Deserialize)]
+pub struct SpaceServiceProbe {
+    /// A URL that answers 2xx or 3xx.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub http: Option<String>,
+    /// `host:port` that accepts a TCP connection.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub tcp: Option<String>,
+    /// A shell command that exits 0 when healthy.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Seconds between checks (default 10).
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub interval_secs: Option<u64>,
+    /// Failed checks in a row that restart it (default 3).
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub failures: Option<u32>,
+}
+
+/// A service and how it is doing ([`Space::services`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Serialize, Deserialize)]
+pub struct SpaceServiceInfo {
+    /// Name.
+    pub name: String,
+    /// The command line.
+    pub command: String,
+    /// `starting`, `running`, `unhealthy`, `backoff`, `stopped`, `exited`
+    /// or `failed`.
+    pub state: String,
+    /// Its process, while it runs.
+    pub pid: u32,
+    /// Starts after the first.
+    pub restarts: u32,
+    /// How the last process ended, if one did.
+    pub last_end: String,
+    /// The last failed health check, if the last one failed.
+    pub probe_error: String,
+    /// `always`, `on-failure` or `never`.
+    pub restart: String,
+    /// Starts when the Space boots.
+    pub start_on_boot: bool,
+    /// Its log file in the Space.
+    pub log_path: String,
+}
+
+impl SpaceServiceDef {
+    fn core(self) -> Result<cua_spaces::keep::ServiceDef> {
+        let restart = match self.restart.as_deref() {
+            None => cua_spaces::keep::Restart::Always,
+            Some(r) => cua_spaces::keep::Restart::parse(r).ok_or_else(|| {
+                CuaError::InvalidArgument(format!("restart {r:?}: use always, on-failure or never"))
+            })?,
+        };
+        Ok(cua_spaces::keep::ServiceDef {
+            name: self.name,
+            command: self.command,
+            env: self.env.into_iter().collect(),
+            cwd: self.cwd,
+            restart,
+            probe: self.probe.map(|p| cua_spaces::keep::Probe {
+                http: p.http,
+                tcp: p.tcp,
+                command: p.command,
+                interval_secs: p.interval_secs,
+                failures: p.failures,
+            }),
+            start_on_boot: self.start_on_boot.unwrap_or(true),
+        })
+    }
+}
+
+/// Result of [`Space::upload`] / [`Space::download`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceTransferReport {
+    /// Source.
+    pub source: String,
+    /// Destination.
+    pub dest: String,
+    /// `file` or `folder`.
+    pub kind: String,
+    /// Files written.
+    pub files: u64,
+    /// Directories created (uploads).
+    #[serde(default)]
+    pub directories: u64,
+    /// Total bytes.
+    pub bytes: u64,
+    /// SHA-256 (single files).
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// Every file verified by SHA-256.
+    pub verified: bool,
+}
+
+/// Options for [`Space::send_file`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceSendFileOptions {
+    /// Downloads subdirectory (`None` = `~/Downloads`), or a `~/Downloads/…`
+    /// path.
+    #[uniffi(default = None)]
+    pub target_directory: Option<String>,
+    /// Honor ignore files when sending a folder.
+    #[uniffi(default = true)]
+    pub respect_ignore_files: bool,
+    /// When a file of the same name is already there: `rename` (default,
+    /// keeps both as `name (1).ext`), `skip`, or `overwrite` to replace it.
+    #[uniffi(default = None)]
+    pub conflict: Option<String>,
+}
+
+impl Default for SpaceSendFileOptions {
+    fn default() -> Self {
+        Self {
+            target_directory: None,
+            respect_ignore_files: true,
+            conflict: None,
+        }
+    }
+}
+
+/// One file placed by [`Space::send_file`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceSentFile {
+    /// Guest path.
+    pub path: String,
+    /// Bytes.
+    pub size: u64,
+    /// SHA-256, verified on both ends.
+    pub sha256: String,
+}
+
+/// Result of [`Space::send_file`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceSendFileReport {
+    /// Host source.
+    pub source: String,
+    /// Transfer root in the guest.
+    pub destination: String,
+    /// Where the file or folder landed.
+    pub dest: String,
+    /// `file` or `folder`.
+    pub kind: String,
+    /// Files placed.
+    pub files: Vec<SpaceSentFile>,
+    /// Total bytes.
+    pub bytes: u64,
+    /// Paths left out by ignore rules (first 200).
+    pub skipped_by_ignorefiles: Vec<String>,
+    /// Paths the guest skipped.
+    pub skipped_by_guest: Vec<String>,
+    /// Every hash matched.
+    pub verified: bool,
+}
+
+/// A tool of a Space's MCP service.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceToolInfo {
+    /// Name.
+    pub name: String,
+    /// Description.
+    pub description: String,
+    /// Input JSON Schema.
+    pub input_schema_json: String,
+    /// Read-only.
+    pub read_only: bool,
+    /// Destructive.
+    pub destructive: bool,
+}
+
+/// The result of a tool call (MCP content as JSON).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceToolResult {
+    /// MCP content parts as a JSON array.
+    pub content_json: String,
+    /// Structured content as JSON, when present.
+    pub structured_json: Option<String>,
+    /// The tool failed.
+    pub is_error: bool,
+    /// Concatenated text parts.
+    pub text: String,
+    /// The result's `_meta` as JSON, when present.
+    pub meta_json: Option<String>,
+}
+
+impl SpaceToolResult {
+    fn with_meta(
+        content: Vec<Value>,
+        structured: Option<Value>,
+        is_error: bool,
+        meta: Option<Value>,
+    ) -> Self {
+        let text = content
+            .iter()
+            .filter_map(|c| c.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        SpaceToolResult {
+            content_json: Value::Array(content).to_string(),
+            structured_json: structured.map(|s| s.to_string()),
+            is_error,
+            text,
+            meta_json: meta.map(|m| m.to_string()),
+        }
+    }
+}
+
+/// A streamable window.
+#[derive(Debug, Clone, PartialEq, uniffi::Record, Deserialize)]
+pub struct SpaceWindow {
+    /// Window handle.
+    pub window_id: String,
+    /// Generation.
+    pub epoch: u64,
+    /// Title.
+    pub title: String,
+    /// App name.
+    pub app_name: String,
+    /// App id.
+    pub app_id: String,
+    /// Pid.
+    pub pid: u32,
+    /// `[x, y, width, height]` in logical points.
+    pub bounds: Vec<f64>,
+    /// On screen.
+    pub on_screen: bool,
+    /// Focused.
+    pub focused: bool,
+    /// Streamable now.
+    pub available: bool,
+    /// Why not.
+    #[serde(default)]
+    pub limitation: String,
+    /// Where the picture comes from when another Space shows this window
+    /// here (`stream_space_window`); `None` for the Space's own windows.
+    /// Open it like any window: [`Space::open_stream`] with its `window_id`
+    /// streams it straight from the origin when you may reach it.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub origin: Option<SpaceWindowOrigin>,
+}
+
+/// The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceWindowOrigin {
+    /// The origin Space (canonical id).
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`, or empty).
+    #[serde(default)]
+    pub os: String,
+    /// The window's handle in the origin.
+    pub window_id: String,
+}
+
+/// Processor, memory and storage use ([`Space::usage`]). A size is the
+/// guest's own limit only when its `*_limited` flag says so (a VM's memory
+/// or disk, a container's cgroup memory limit).
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record, Deserialize)]
+pub struct SpaceUsage {
+    /// Cores the guest sees (0 from a guest that does not report it).
+    #[uniffi(default = 0)]
+    #[serde(default)]
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    #[uniffi(default = 0.0)]
+    #[serde(default)]
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    #[uniffi(default = 0.0)]
+    #[serde(default)]
+    pub load_average_1m: f64,
+    /// Memory in use, bytes.
+    pub memory_used: u64,
+    /// Memory size, bytes.
+    pub memory_total: u64,
+    /// `memory_total` is the guest's limit.
+    pub memory_limited: bool,
+    /// Home filesystem bytes in use.
+    pub disk_used: u64,
+    /// Home filesystem size, bytes.
+    pub disk_total: u64,
+    /// `disk_total` is the guest's own disk.
+    pub disk_limited: bool,
+}
+
+/// One of a Space's displays ([`Space::displays`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record, Deserialize)]
+pub struct SpaceDisplay {
+    /// Display id.
+    pub id: String,
+    /// Name ("XVFB-0", "Built-in Retina Display").
+    pub name: String,
+    /// The primary display.
+    pub primary: bool,
+    /// Framebuffer width in physical pixels.
+    pub width_px: u32,
+    /// Framebuffer height in physical pixels.
+    pub height_px: u32,
+    /// Physical pixels per logical point.
+    pub scale_factor: f64,
+}
+
+/// An app icon from [`Space::app_icons`]: the icon the guest desktop uses,
+/// normalized by the SDK's icon cache.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceAppIcon {
+    /// The 64 px PNG (2x), or an SVG the guest could not rasterize.
+    pub bytes: Vec<u8>,
+    /// `image/png` or `image/svg+xml`.
+    pub content_type: String,
+    /// The 32 px PNG (1x); empty for an SVG.
+    pub bytes_1x: Vec<u8>,
+}
+
+impl From<cua_spaces::AppIcon> for SpaceAppIcon {
+    fn from(i: cua_spaces::AppIcon) -> Self {
+        SpaceAppIcon {
+            bytes: i.bytes,
+            content_type: i.content_type.into(),
+            bytes_1x: i.bytes_1x,
+        }
+    }
+}
+
+/// One window's app, for [`Space::app_icons`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceAppIconRequest {
+    /// App name, as the window list reports it.
+    pub app_name: String,
+    /// App id (bundle id, `.desktop` id).
+    #[uniffi(default = "")]
+    pub app_id: String,
+    /// A process of the app (0 when unknown).
+    #[uniffi(default = 0)]
+    pub pid: u32,
+}
+
+/// What to stream and how.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceStreamOptions {
+    /// Window handle (wins over `app_name` and `display`).
+    #[uniffi(default = None)]
+    pub window_id: Option<String>,
+    /// The largest window of this app.
+    #[uniffi(default = None)]
+    pub app_name: Option<String>,
+    /// Display id (`None` = primary).
+    #[uniffi(default = None)]
+    pub display: Option<String>,
+    /// Codecs in preference order (`h264`, `bgra`, `png`; empty = any).
+    #[uniffi(default = [])]
+    pub codecs: Vec<String>,
+    /// FPS cap (0 = 30).
+    #[uniffi(default = 0)]
+    pub max_fps: u32,
+    /// Long-edge cap (0 = native).
+    #[uniffi(default = 0)]
+    pub max_dimension: u32,
+    /// Request the paired audio track.
+    #[uniffi(default = false)]
+    pub audio: bool,
+    /// Ticket lifetime (default 60 s).
+    #[uniffi(default = None)]
+    pub ticket_ttl_ms: Option<u64>,
+    /// Input policy: `view_only` (default), `background_only` (input
+    /// without activating the target) or `allow_activation`.
+    #[uniffi(default = None)]
+    pub policy: Option<String>,
+}
+
+/// Media sessions opened on another Space's behalf (a window it shows
+/// here): session id to the Space whose spacesd minted it, so closing goes
+/// to that Space and not to the one that listed the window.
+static ORIGIN_SESSIONS: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+fn remember_origin_session(session: &str, origin: &str) {
+    if session.is_empty() {
+        return;
+    }
+    ORIGIN_SESSIONS
+        .lock()
+        .expect("origin sessions")
+        .get_or_insert_with(Default::default)
+        .insert(session.to_string(), origin.to_string());
+}
+
+fn take_origin_session(session: &str) -> Option<String> {
+    ORIGIN_SESSIONS
+        .lock()
+        .expect("origin sessions")
+        .as_mut()
+        .and_then(|m| m.remove(session))
+}
+
+/// The proxied route: the daemon opens the origin's window and serves it on
+/// its loopback media bridge; the viewer attaches to the daemon (with the
+/// daemon's credentials, which the parent's handle carries), never to the
+/// origin it has no access to.
+async fn open_proxied(
+    d: &DaemonClient,
+    origin: &str,
+    window: &str,
+    parent: &str,
+    options: &SpaceStreamOptions,
+) -> Result<SpaceStreamTicket> {
+    let mut open = serde_json::json!({
+        "target": {"window": {"id": window}},
+        "policy": "SESSION_POLICY_BACKGROUND_ONLY",
+        "ticketTtl": "120s",
+    });
+    if options.max_fps > 0 {
+        open["maxFps"] = serde_json::json!(options.max_fps);
+    }
+    let r = d
+        .open_media_bridge(origin, Some(open.to_string()))
+        .await
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    let resp: Value = serde_json::from_str(&r.open_media_response_json).unwrap_or(Value::Null);
+    let pick = |a: &str, b: &str| {
+        resp.get(a)
+            .or_else(|| resp.get(b))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let media_session_id = pick("mediaSessionId", "media_session_id")
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let size = |k: &str| {
+        resp["geometry"]["frameSize"][k]
+            .as_u64()
+            .or_else(|| resp["geometry"]["frame_size"][k].as_u64())
+            .unwrap_or(0) as u32
+    };
+    remember_origin_session(&media_session_id, origin);
+    Ok(SpaceStreamTicket {
+        space: parent.to_string(),
+        media_session_id,
+        ws_url: r.ws_url,
+        ticket: r.ticket,
+        ticket_expires_at: None,
+        codec: pick("codec", "codec")
+            .as_str()
+            .map(|c| c.trim_start_matches("MEDIA_CODEC_").to_lowercase())
+            .unwrap_or_default(),
+        wire_version: pick("wireVersion", "wire_version").as_u64().unwrap_or(2) as u32,
+        width: size("width"),
+        height: size("height"),
+        needs_headers: true,
+    })
+}
+
+struct EntryRoute {
+    direct: bool,
+    origin_space: String,
+}
+
+struct StreamTicketJson {
+    space: String,
+    media_session_id: String,
+    ws_url: String,
+    ticket: String,
+    ticket_expires_at: Option<String>,
+    codec: String,
+    wire_version: u32,
+    frame_size: [u32; 2],
+}
+
+/// A minted media session.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceStreamTicket {
+    /// Space id.
+    pub space: String,
+    /// Media session id.
+    pub media_session_id: String,
+    /// Media WebSocket URL, ticket included (the daemon passthrough in
+    /// daemon mode).
+    pub ws_url: String,
+    /// The bare ticket.
+    pub ticket: String,
+    /// Expiry (RFC 3339).
+    pub ticket_expires_at: Option<String>,
+    /// `h264`, `bgra` or `png`.
+    pub codec: String,
+    /// Media wire version.
+    pub wire_version: u32,
+    /// Initial width.
+    pub width: u32,
+    /// Initial height.
+    pub height: u32,
+    /// Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+    /// passthrough).
+    pub needs_headers: bool,
+}
+
+/// Delivery counters of a [`SpaceStreamSession`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceStreamStats {
+    /// Frames delivered.
+    pub frames: u64,
+    /// Keyframes delivered.
+    pub keyframes: u64,
+    /// Frames dropped (sink behind; each forces a keyframe resync).
+    pub frames_dropped: u64,
+    /// Frames held back awaiting a keyframe.
+    pub frames_gated: u64,
+    /// Keyframe requests sent.
+    pub keyframe_requests: u64,
+    /// Audio packets delivered.
+    pub audio_packets: u64,
+    /// Audio packets reported lost.
+    pub audio_lost: u64,
+    /// Control events delivered.
+    pub events: u64,
+    /// Malformed messages ignored.
+    pub malformed: u64,
+}
+
+impl From<cua_spaces::stream::StreamStats> for SpaceStreamStats {
+    fn from(s: cua_spaces::stream::StreamStats) -> Self {
+        SpaceStreamStats {
+            frames: s.frames,
+            keyframes: s.keyframes,
+            frames_dropped: s.frames_dropped,
+            frames_gated: s.frames_gated,
+            keyframe_requests: s.keyframe_requests,
+            audio_packets: s.audio_packets,
+            audio_lost: s.audio_lost,
+            events: s.events,
+            malformed: s.malformed,
+        }
+    }
+}
+
+/// The stable presence color of an agent or other principal (`#rrggbb`): a
+/// cursor palette color picked by a hash of `id`. Request it when the agent
+/// joins presence (`PresenceIdentity.color`) and use it as the agent's
+/// avatar background, so both come from one source.
+#[uniffi::export]
+pub fn presence_color(id: String) -> String {
+    cua_spaces::presence::color_for(&id).to_string()
+}
+
+/// Black or white text (`#000000` / `#ffffff`), whichever reads better on
+/// `background` (`#rrggbb`).
+#[uniffi::export]
+pub fn presence_text_color(background: String) -> String {
+    cua_spaces::presence::text_color_on(&background).to_string()
+}
+
+/// Who joins presence.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct PresenceIdentity {
+    /// Stable principal id.
+    pub id: String,
+    /// Display name.
+    pub display_name: String,
+    /// Requested color.
+    #[uniffi(default = "")]
+    pub color: String,
+    /// An agent rather than a human.
+    #[uniffi(default = false)]
+    pub agent: bool,
+}
+
+/// A presence participant.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PresenceParticipant {
+    /// Participant id (per join).
+    pub participant_id: String,
+    /// Principal id.
+    pub principal_id: String,
+    /// Display name.
+    pub display_name: String,
+    /// Color.
+    pub color: String,
+    /// `human` or `agent`.
+    pub kind: String,
+}
+
+impl From<cua_spaces::presence::Participant> for PresenceParticipant {
+    fn from(p: cua_spaces::presence::Participant) -> Self {
+        PresenceParticipant {
+            participant_id: p.participant_id,
+            principal_id: p.principal_id,
+            display_name: p.display_name,
+            color: p.color,
+            kind: p.kind,
+        }
+    }
+}
+
+/// A normalized cursor.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PresenceCursor {
+    /// Display id (empty = primary).
+    #[uniffi(default = "")]
+    pub display_id: String,
+    /// Window handle.
+    #[uniffi(default = None)]
+    pub window_id: Option<String>,
+    /// X in `[0, 1]`.
+    pub x: f64,
+    /// Y in `[0, 1]`.
+    pub y: f64,
+    /// Visible.
+    #[uniffi(default = true)]
+    pub visible: bool,
+    /// A button is down (datagram channel only).
+    #[uniffi(default = false)]
+    pub pressed: bool,
+    /// The guest's cursor shape here (server-computed): `arrow`, `text`,
+    /// `pointer`, `resize_ns`, `resize_ew`, `resize_nesw`, `resize_nwse`,
+    /// `wait`, `progress`, `not_allowed`, `crosshair`, `grab`, `grabbing`,
+    /// `move`. Ignored when publishing.
+    #[uniffi(default = "arrow")]
+    pub shape: String,
+    /// How `shape` was determined: `unspecified`, `hit_test`, `system` or
+    /// `probe`. Ignored when publishing.
+    #[uniffi(default = "unspecified")]
+    pub shape_source: String,
+    /// Server time of the sample in milliseconds (0 = unknown).
+    #[uniffi(default = 0.0)]
+    pub at_ms: f64,
+    /// Local Unix time it was received in milliseconds (0 = unknown).
+    #[uniffi(default = 0.0)]
+    pub received_ms: f64,
+}
+
+impl From<cua_spaces::presence::Cursor> for PresenceCursor {
+    fn from(c: cua_spaces::presence::Cursor) -> Self {
+        PresenceCursor {
+            display_id: c.display_id,
+            window_id: c.window_id,
+            x: c.x,
+            y: c.y,
+            visible: c.visible,
+            pressed: c.pressed,
+            shape: c.shape.as_str().into(),
+            shape_source: c.shape_source.as_str().into(),
+            at_ms: c.at_ms,
+            received_ms: c.received_ms,
+        }
+    }
+}
+
+impl From<PresenceCursor> for cua_spaces::presence::Cursor {
+    fn from(c: PresenceCursor) -> Self {
+        cua_spaces::presence::Cursor {
+            display_id: c.display_id,
+            window_id: c.window_id,
+            x: c.x,
+            y: c.y,
+            visible: c.visible,
+            pressed: c.pressed,
+            shape: cua_spaces::presence::CursorShape::parse(&c.shape),
+            shape_source: cua_spaces::presence::ShapeSource::parse(&c.shape_source),
+            at_ms: c.at_ms,
+            received_ms: c.received_ms,
+        }
+    }
+}
+
+/// A roster entry.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PresenceMember {
+    /// Who.
+    pub participant: PresenceParticipant,
+    /// Their cursor, if known.
+    pub cursor: Option<PresenceCursor>,
+}
+
+/// A presence event.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PresenceEvent {
+    /// `joined`, `left`, `cursor_moved`, `shape_changed`, `heartbeat` or
+    /// `keep_alive`.
+    pub kind: String,
+    /// `joined`: who.
+    pub participant: Option<PresenceParticipant>,
+    /// `left` / `cursor_moved` / `shape_changed`: whose.
+    pub participant_id: Option<String>,
+    /// `cursor_moved`: where.
+    pub cursor: Option<PresenceCursor>,
+    /// `shape_changed`: the new shape.
+    #[uniffi(default = None)]
+    pub shape: Option<String>,
+    /// `shape_changed`: how it was determined.
+    #[uniffi(default = None)]
+    pub shape_source: Option<String>,
+    /// `left`: why (`left`, `disconnected`, `timeout`, `run_ended`, or
+    /// empty).
+    #[uniffi(default = None)]
+    pub reason: Option<String>,
+    /// `heartbeat`: everyone present.
+    #[uniffi(default = None)]
+    pub participant_ids: Option<Vec<String>>,
+}
+
+impl From<cua_spaces::presence::PresenceEvent> for PresenceEvent {
+    fn from(e: cua_spaces::presence::PresenceEvent) -> Self {
+        use cua_spaces::presence::PresenceEvent as E;
+        let mut out = PresenceEvent {
+            kind: String::new(),
+            participant: None,
+            participant_id: None,
+            cursor: None,
+            shape: None,
+            shape_source: None,
+            reason: None,
+            participant_ids: None,
+        };
+        match e {
+            E::Joined { participant } => {
+                out.kind = "joined".into();
+                out.participant = Some(participant.into());
+            }
+            E::Left {
+                participant_id,
+                reason,
+            } => {
+                out.kind = "left".into();
+                out.participant_id = Some(participant_id);
+                out.reason = Some(reason);
+            }
+            E::CursorMoved {
+                participant_id,
+                cursor,
+            } => {
+                out.kind = "cursor_moved".into();
+                out.participant_id = Some(participant_id);
+                out.cursor = Some(cursor.into());
+            }
+            E::ShapeChanged {
+                participant_id,
+                shape,
+                source,
+            } => {
+                out.kind = "shape_changed".into();
+                out.participant_id = Some(participant_id);
+                out.shape = Some(shape.as_str().into());
+                out.shape_source = Some(source.as_str().into());
+            }
+            E::Heartbeat { participant_ids } => {
+                out.kind = "heartbeat".into();
+                out.participant_ids = Some(participant_ids);
+            }
+            E::KeepAlive => out.kind = "keep_alive".into(),
+        }
+        out
+    }
+}
+
+impl PresenceEvent {
+    /// Back to the core event; `None` for an unknown kind or a missing field.
+    fn to_core(&self) -> Option<cua_spaces::presence::PresenceEvent> {
+        use cua_spaces::presence::{CursorShape, PresenceEvent as E, ShapeSource};
+        let pid = || self.participant_id.clone();
+        Some(match self.kind.as_str() {
+            "joined" => E::Joined {
+                participant: self.participant.clone()?.into(),
+            },
+            "left" => E::Left {
+                participant_id: pid()?,
+                reason: self.reason.clone().unwrap_or_default(),
+            },
+            "cursor_moved" => E::CursorMoved {
+                participant_id: pid()?,
+                cursor: self.cursor.clone()?.into(),
+            },
+            "shape_changed" => E::ShapeChanged {
+                participant_id: pid()?,
+                shape: CursorShape::parse(self.shape.as_deref()?),
+                source: ShapeSource::parse(self.shape_source.as_deref().unwrap_or_default()),
+            },
+            "heartbeat" => E::Heartbeat {
+                participant_ids: self.participant_ids.clone()?,
+            },
+            "keep_alive" => E::KeepAlive,
+            _ => return None,
+        })
+    }
+}
+
+impl From<PresenceParticipant> for cua_spaces::presence::Participant {
+    fn from(p: PresenceParticipant) -> Self {
+        cua_spaces::presence::Participant {
+            participant_id: p.participant_id,
+            principal_id: p.principal_id,
+            display_name: p.display_name,
+            color: p.color,
+            kind: p.kind,
+        }
+    }
+}
+
+/// A normalized point.
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct PresencePoint {
+    /// X in `[0, 1]`.
+    pub x: f64,
+    /// Y in `[0, 1]`.
+    pub y: f64,
+}
+
+/// One cursor to draw now (see [`PresenceView::drawables`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PresenceDrawable {
+    /// Whose.
+    pub participant_id: String,
+    /// Their display name.
+    pub display_name: String,
+    /// Their color (`#rrggbb`).
+    pub color: String,
+    /// This client's own cursor, drawn at the local pointer.
+    pub is_me: bool,
+    /// An agent.
+    pub is_agent: bool,
+    /// Normalized x.
+    pub x: f64,
+    /// Normalized y.
+    pub y: f64,
+    /// Shape name (see [`PresenceCursor::shape`]).
+    pub shape: String,
+    /// How the shape was determined.
+    pub shape_source: String,
+    /// Opacity in `[0, 1]` (idle cursors fade).
+    pub alpha: f64,
+    /// Display id of the cursor's target.
+    pub display_id: String,
+    /// Window id, when over a window stream.
+    pub window_id: Option<String>,
+}
+
+impl From<cua_spaces::presence::Drawable> for PresenceDrawable {
+    fn from(d: cua_spaces::presence::Drawable) -> Self {
+        PresenceDrawable {
+            participant_id: d.participant_id,
+            display_name: d.display_name,
+            color: d.color,
+            is_me: d.is_me,
+            is_agent: d.is_agent,
+            x: d.x,
+            y: d.y,
+            shape: d.shape.as_str().into(),
+            shape_source: d.shape_source.as_str().into(),
+            alpha: d.alpha,
+            display_id: d.display_id,
+            window_id: d.window_id,
+        }
+    }
+}
+
+/// The shared presence netcode model: who is present and what to draw.
+/// Remote cursors are interpolated (render delay, Catmull-Rom,
+/// extrapolation cap), idle cursors faded, stale participants dropped and
+/// your own cursor kept at the local pointer (libs/cua/proto/PRESENCE.md
+/// section 4). Feed it every presence event; call `drawables` each frame.
+#[derive(uniffi::Object)]
+pub struct PresenceView {
+    inner: std::sync::Mutex<cua_spaces::presence::PresenceView>,
+}
+
+impl PresenceView {
+    fn wrap(v: cua_spaces::presence::PresenceView) -> Arc<Self> {
+        Arc::new(PresenceView {
+            inner: std::sync::Mutex::new(v),
+        })
+    }
+}
+
+#[uniffi::export]
+impl PresenceView {
+    /// A view for `me` (the caller's participant id), rendering remote
+    /// cursors `delay_ms` behind (default 100; 66 on the datagram channel).
+    #[uniffi::constructor(default(delay_ms = None))]
+    pub fn new(me: String, delay_ms: Option<f64>) -> Arc<Self> {
+        Self::wrap(cua_spaces::presence::PresenceView::new(
+            &me,
+            delay_ms.unwrap_or(cua_spaces::presence::view::STREAM_DELAY_MS),
+        ))
+    }
+
+    /// Adds or updates a participant.
+    pub fn upsert(&self, participant: PresenceParticipant) {
+        self.inner.lock().unwrap().upsert(participant.into());
+    }
+
+    /// Folds one event in at `local_ms` (see [`presence_now_ms`]). Returns
+    /// whether anything changed.
+    pub fn apply(&self, event: PresenceEvent, local_ms: f64) -> bool {
+        match event.to_core() {
+            Some(e) => self.inner.lock().unwrap().apply(&e, local_ms),
+            None => false,
+        }
+    }
+
+    /// Everything to draw at `local_ms`, your own cursor at `pointer` when
+    /// the local pointer is over the surface.
+    #[uniffi::method(default(pointer = None))]
+    pub fn drawables(
+        &self,
+        local_ms: f64,
+        pointer: Option<PresencePoint>,
+    ) -> Vec<PresenceDrawable> {
+        self.inner
+            .lock()
+            .unwrap()
+            .drawables(local_ms, pointer.map(|p| (p.x, p.y)))
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    /// Drops everyone but the caller when heartbeats stopped for 3
+    /// intervals. Returns the removed ids.
+    pub fn expire(&self, local_ms: f64) -> Vec<String> {
+        self.inner.lock().unwrap().expire(local_ms)
+    }
+
+    /// Participant ids, the caller first.
+    pub fn participant_ids(&self) -> Vec<String> {
+        self.inner.lock().unwrap().participant_ids()
+    }
+
+    /// A participant.
+    pub fn participant(&self, participant_id: String) -> Option<PresenceParticipant> {
+        self.inner
+            .lock()
+            .unwrap()
+            .participant(&participant_id)
+            .cloned()
+            .map(Into::into)
+    }
+
+    /// A participant's current shape name (the caller's included).
+    pub fn shape_of(&self, participant_id: String) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .shape_of(&participant_id)
+            .map(|(s, _)| s.as_str().to_string())
+    }
+
+    /// The expected heartbeat interval (default 5000 ms).
+    pub fn set_heartbeat_interval_ms(&self, ms: f64) {
+        self.inner.lock().unwrap().set_heartbeat_interval_ms(ms);
+    }
+}
+
+/// The local clock [`PresenceView`] expects: Unix time in milliseconds.
+#[uniffi::export]
+pub fn presence_now_ms() -> f64 {
+    cua_spaces::presence::now_ms()
+}
+
+/// One cursor shape's shared art: an SVG path on a square canvas, filled
+/// with the participant's color over an outline.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct CursorArt {
+    /// Shape name.
+    pub shape: String,
+    /// SVG path data (absolute `M`, `L`, `C`, `Z`; nonzero fill).
+    pub path_d: String,
+    /// Hot spot x on the canvas.
+    pub hotspot_x: f64,
+    /// Hot spot y on the canvas.
+    pub hotspot_y: f64,
+    /// Canvas size (square).
+    pub canvas: f64,
+    /// Outline color, drawn under the fill.
+    pub outline_color: String,
+    /// Outline width in canvas units.
+    pub outline_width: f64,
+}
+
+impl From<&cua_spaces::presence::art::CursorArt> for CursorArt {
+    fn from(a: &cua_spaces::presence::art::CursorArt) -> Self {
+        CursorArt {
+            shape: a.shape.as_str().into(),
+            path_d: a.path_d.clone(),
+            hotspot_x: a.hotspot_x,
+            hotspot_y: a.hotspot_y,
+            canvas: a.canvas,
+            outline_color: a.outline_color.clone(),
+            outline_width: a.outline_width,
+        }
+    }
+}
+
+/// The shared art for `shape` (unknown names give the arrow).
+#[uniffi::export]
+pub fn presence_cursor_art(shape: String) -> CursorArt {
+    cua_spaces::presence::art::cursor_art(cua_spaces::presence::CursorShape::parse(&shape)).into()
+}
+
+/// The shared art for every shape.
+#[uniffi::export]
+pub fn presence_cursor_art_all() -> Vec<CursorArt> {
+    cua_spaces::presence::art::all_cursor_art()
+        .iter()
+        .map(Into::into)
+        .collect()
+}
+
+/// A standalone SVG of `shape` in `color`, `size` pixels square.
+#[uniffi::export]
+pub fn presence_cursor_art_svg(shape: String, color: String, size: f64) -> String {
+    cua_spaces::presence::art::cursor_art_svg(
+        cua_spaces::presence::CursorShape::parse(&shape),
+        &color,
+        size,
+    )
+}
+
+/// The presence conformance vectors (JSON), for binding test suites.
+#[uniffi::export]
+pub fn presence_conformance_json() -> String {
+    cua_spaces::presence::view::CONFORMANCE_JSON.to_string()
+}
+
+/// A human's answer to a teleport manifest.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct TeleportDecision {
+    /// Items to send (`None` = the provider's default-checked set, never
+    /// everything). An empty list is refused as ambiguous.
+    #[uniffi(default = None)]
+    pub include: Option<Vec<String>>,
+    /// The human acknowledged the sensitive items in the selection.
+    #[uniffi(default = false)]
+    pub acknowledge_sensitive: bool,
+}
+
+/// What a teleport moved, or how to retry a pending Keyvault approval.
+///
+/// Through a daemon (`Host::Daemon`), the underlying `teleport_app` tool is
+/// consent-gated: a first call never delivers, it only files the request and
+/// returns `status: "pending"` with a `request_id`; show the user the
+/// Keyvault approval step, then call [`Space::teleport`] again with that
+/// same `request_id` (`TeleportRetry::request_id`). A second `"pending"`
+/// means the user has not decided yet -- call again the same way. Only
+/// `status: "moved"` means the session actually landed. An embedded host
+/// (no separate daemon) always returns `"moved"` in one call: there is
+/// nothing to retry.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct TeleportReceipt {
+    /// `moved` or `pending`.
+    #[serde(default = "status_moved")]
+    pub status: String,
+    /// The Keyvault request to retry with, while pending.
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// App.
+    #[serde(default)]
+    pub app: String,
+    /// Space.
+    #[serde(default)]
+    pub space: String,
+    /// `import_session`.
+    #[serde(default)]
+    pub method: String,
+    /// Paths sent.
+    #[serde(default)]
+    pub transferred_paths: Vec<String>,
+    /// Bundle bytes.
+    #[serde(default)]
+    pub bundle_bytes: u64,
+    /// Bundle SHA-256, verified by the Space.
+    #[serde(default)]
+    pub bundle_sha256: String,
+    /// Groups imported.
+    #[serde(default)]
+    pub imported: Vec<String>,
+    /// Items skipped, with reasons.
+    #[serde(default)]
+    pub skipped: Vec<String>,
+    /// The app was launched.
+    #[serde(default)]
+    pub launched: bool,
+}
+
+fn status_moved() -> String {
+    "moved".to_string()
+}
+
+/// The consent gate of [`Space::teleport`]: shown the manifest, returns
+/// the human's decision, or `None` to cancel. Runs on a blocking worker
+/// thread; it may take as long as the human needs.
+#[uniffi::export(with_foreign)]
+pub trait TeleportApprover: Send + Sync {
+    /// Decides.
+    fn approve(&self, manifest: TeleportManifest) -> Option<TeleportDecision>;
+}
+
+/// Hotspot state.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceHotspotStatus {
+    /// Space.
+    pub space: String,
+    /// `stopped`, `waiting_for_peer` or `active`.
+    pub state: String,
+    /// Hotspot id.
+    pub hotspot_id: String,
+    /// Guest SOCKS address.
+    pub socks_address: String,
+    /// Open relayed connections.
+    pub active_connections: u32,
+    /// Bytes out of the guest.
+    pub bytes_out: u64,
+    /// Bytes into the guest.
+    pub bytes_in: u64,
+    /// Served by the process that owns the Spaces runtime.
+    pub served_here: bool,
+}
+
+/// One account a Space is shared with.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceShareEntry {
+    /// The email or account id, as shared.
+    pub who: String,
+    /// `viewer` or `editor`.
+    pub role: String,
+    /// Connected through the relay right now.
+    #[serde(default)]
+    pub connected: bool,
+}
+
+/// Who a Space is shared with.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceShares {
+    /// The Space.
+    pub space: String,
+    /// The relay machine it is shared as (empty when not shared).
+    #[serde(default)]
+    pub machine: String,
+    /// What the people it is shared with open (`relay:<machine>`).
+    #[serde(default)]
+    pub invitee_space: String,
+    /// The relay URL of the machine.
+    #[serde(default)]
+    pub url: String,
+    /// The machine is on the relay now.
+    #[serde(default)]
+    pub online: bool,
+    /// The accounts and their roles.
+    #[serde(default)]
+    pub shares: Vec<SpaceShareEntry>,
+}
+
+/// A Space published on the relay ([`Spaces::relay_register`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceRelayRegistration {
+    /// The Space.
+    pub space: String,
+    /// How the account's other devices reach it: `relay:<machine>`.
+    pub relay_space: String,
+    /// The relay machine id.
+    pub machine: String,
+    /// The relay URL of the machine.
+    #[serde(default)]
+    pub url: String,
+    /// Connected to the relay now.
+    #[serde(default)]
+    pub online: bool,
+}
+
+/// What [`Spaces::stop`] or [`Spaces::start`] did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpacePowerReport {
+    /// The Space.
+    pub space: String,
+    /// `running`, `suspended` or `stopped`: the state it is in now.
+    pub state: String,
+    /// How it was turned off: `suspend` (its memory is kept, and still in
+    /// use) or `stop` (its disk is kept; its memory is freed).
+    pub power: String,
+    /// What happened, for people.
+    #[serde(default)]
+    pub message: String,
+}
+
+/// What [`Spaces::resize`] did: the shape the Space has now.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceResizeReport {
+    /// The Space.
+    pub space: String,
+    /// vCPUs (when changed).
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory in MiB (when changed).
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Disk in GiB (when grown).
+    #[serde(default)]
+    pub disk_gb: Option<u32>,
+    /// What happened, for people.
+    #[serde(default)]
+    pub message: String,
+}
+
+/// Result of [`Space::agent_start`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AgentStartReport {
+    /// Run id.
+    pub run_id: String,
+    /// Agent.
+    pub agent: String,
+    /// Space.
+    pub space: String,
+    /// spacesd process tag of the first turn.
+    pub process_tag: String,
+    /// Preparation steps that could not be completed.
+    pub notes: Vec<String>,
+    /// The whole report as JSON.
+    pub json: String,
+}
+
+/// One agent run's status.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AgentRunStatus {
+    /// Run id.
+    pub run_id: String,
+    /// Agent.
+    pub agent: Option<String>,
+    /// Status (`running`, `done`, `failed`, ...).
+    pub status: String,
+    /// Why.
+    pub reason: String,
+    /// Finer grain: `installing`, `working`, `waiting`, `exited`, ...
+    pub phase: String,
+    /// The last turn's final text (`agent_status` only).
+    pub result_text: Option<String>,
+    /// A follow-up sent now starts the next turn (the server's rule: idle,
+    /// or a crashed or failed run it restarts; not mid-turn). Read this,
+    /// never derive it from `status`.
+    pub accepts_message: bool,
+    /// Output tail.
+    pub output_tail: Option<String>,
+    /// The whole status as JSON.
+    pub json: String,
+}
+
+impl AgentRunStatus {
+    fn from_json(v: Value) -> Result<Self> {
+        let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+        Ok(AgentRunStatus {
+            run_id: s("run_id").unwrap_or_default(),
+            agent: s("agent"),
+            status: status_string(v.get("status")),
+            reason: s("reason").unwrap_or_default(),
+            phase: s("phase").unwrap_or_default(),
+            result_text: v
+                .get("result")
+                .and_then(|r| r.get("text"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            accepts_message: v
+                .get("accepts_message")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            output_tail: s("output_tail"),
+            json: v.to_string(),
+        })
+    }
+}
+
+fn status_string(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Options for [`Space::request_site_login`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct SiteLoginOptions {
+    /// Which saved username, when the site has several.
+    #[uniffi(default = None)]
+    pub username: Option<String>,
+    /// The persistent agent asking (shown to the user in the approval).
+    #[uniffi(default = None)]
+    pub agent: Option<String>,
+    /// cua-driver lifecycle session of the tab to sign in.
+    #[uniffi(default = None)]
+    pub session: Option<String>,
+    /// cua-driver browser target id (from `get_browser_state`).
+    #[uniffi(default = None)]
+    pub target_id: Option<String>,
+    /// cua-driver tab id (from `get_browser_state`).
+    #[uniffi(default = None)]
+    pub tab_id: Option<String>,
+    /// The request id a previous call returned (the retry after approval).
+    #[uniffi(default = None)]
+    pub request_id: Option<String>,
+    /// Seconds to wait for the user's decision on a retry (default 20, at
+    /// most 120).
+    #[uniffi(default = None)]
+    pub wait_secs: Option<u32>,
+}
+
+/// What [`Space::request_site_login`] did. Never the password.
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record, Deserialize)]
+pub struct SiteLoginReport {
+    /// `pending` (the user has not approved yet) or `filled`.
+    pub status: String,
+    /// The Keyvault request to retry with, while pending.
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// Site of the saved login (`github.com`), once filled.
+    #[serde(default)]
+    pub site: Option<String>,
+    /// The origin signed in to, once filled.
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// The username, masked (`a***@example.test`).
+    #[serde(default)]
+    pub username_hint: Option<String>,
+    /// The form was submitted.
+    #[serde(default)]
+    pub submitted: bool,
+    /// The tab's URL after the fill.
+    #[serde(default)]
+    pub page_url: Option<String>,
+    /// The tab it signed in (cua-driver ids), to keep using it.
+    #[serde(default)]
+    pub session: Option<String>,
+    /// See `session`.
+    #[serde(default)]
+    pub target_id: Option<String>,
+    /// See `session`.
+    #[serde(default)]
+    pub tab_id: Option<String>,
+}
+
+/// Options for [`Space::agent_start`] beyond the harness and prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct SpaceAgentOptions {
+    /// Provider key variables forwarded from the Spaces host's environment.
+    #[uniffi(default)]
+    pub env_from_host: Vec<String>,
+    /// More environment for the agent, for example `HERMES_HOME` (stored
+    /// 0600 in the run, redacted from its output; not for provider keys).
+    #[uniffi(default)]
+    pub env: std::collections::HashMap<String, String>,
+    #[uniffi(default = None)]
+    pub repo: Option<String>,
+    #[uniffi(default = None)]
+    pub branch: Option<String>,
+    #[uniffi(default = None)]
+    pub cwd: Option<String>,
+    #[uniffi(default = None)]
+    pub model: Option<String>,
+    /// A custom model endpoint.
+    #[uniffi(default = None)]
+    pub base_url: Option<String>,
+    /// Stop (resumably) once the prompt is answered.
+    #[uniffi(default = None)]
+    pub exit_when_idle: Option<bool>,
+    /// Run as this persistent agent: its home in the Cua Volume is restored
+    /// first and saved after every turn (see `Spaces.persistent_agent_send`).
+    #[uniffi(default = None)]
+    pub home: Option<String>,
+}
+
+/// Result of [`Space::agent_message`] / [`Space::agent_stop`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AgentActionReport {
+    /// Run id.
+    pub run_id: String,
+    /// Delivered (message) or stopped (stop).
+    pub ok: bool,
+    /// Why.
+    pub reason: String,
+    /// The whole report as JSON.
+    pub json: String,
+}
+
+// ------------------------------------------------------------ plumbing
+
+fn tag_error(kind: &str, message: String) -> CuaError {
+    match kind {
+        "invalid_argument" => CuaError::InvalidArgument(message),
+        "not_found" => CuaError::NotFound(super::not_found_message(message)),
+        "ambiguous_sandbox" => CuaError::AmbiguousSandbox(message),
+        "insufficient_disk" => CuaError::InsufficientDisk(message),
+        "host_capacity" => CuaError::HostCapacity(message),
+        "spacesd_not_available" => CuaError::SpacesdNotAvailable(message),
+        "capability_missing" => CuaError::CapabilityMissing(message),
+        "host_capability_missing" => CuaError::HostCapabilityMissing(message),
+        "wrong_provider" => CuaError::Unsupported(message),
+        "teleport_refused" => CuaError::TeleportRefused(message),
+        "timeout" => CuaError::Timeout(message),
+        "cancelled" => CuaError::Cancelled(message),
+        "unauthenticated" => CuaError::Unauthenticated(message),
+        "cloud" => CuaError::Cloud(message),
+        "sandbox" => CuaError::Runtime(message),
+        // Cua Volume: refusals by the access rules or a declined presence
+        // prompt; a stale etag, a held lease or a blocked secret is a
+        // problem with the input.
+        "forbidden" | "not_confirmed" => CuaError::PermissionDenied(message),
+        "precondition_failed" | "lease_held" | "secret_detected" => {
+            CuaError::InvalidArgument(message)
+        }
+        "io" | "json" => CuaError::Internal(message),
+        "mcp" => CuaError::Http(message),
+        _ => CuaError::Env(message),
+    }
+}
+
+impl From<cua_spaces::Error> for CuaError {
+    fn from(e: cua_spaces::Error) -> Self {
+        let kind = e.tag();
+        let message = e.to_string();
+        match e {
+            cua_spaces::Error::Env(env) => env.into(),
+            // The refusal's own words: `CuaError::TeleportRefused` says
+            // "teleport refused:" itself (not twice).
+            cua_spaces::Error::TeleportRefused(why) => CuaError::TeleportRefused(why),
+            _ => tag_error(kind, message),
+        }
+    }
+}
+
+/// A refused input as the caller's own `InvalidArgument` (no second
+/// "invalid argument:" in front of the message).
+fn refused(e: cua_spaces::Error) -> CuaError {
+    match e {
+        cua_spaces::Error::InvalidArgument(m) => CuaError::InvalidArgument(m),
+        other => other.into(),
+    }
+}
+
+fn daemon_err(s: tonic::Status) -> CuaError {
+    cua_daemon_core::client::status_error(s).into()
+}
+
+/// A Spaces tool the running daemon does not have: it is another app's
+/// build (kept because it is not older), so say whose and how to get this
+/// app's own instead of a bare "not found".
+async fn missing_tool(d: &DaemonClient, tool: &str, e: CuaError) -> CuaError {
+    let unknown =
+        matches!(&e, CuaError::NotFound(m) if m.ends_with(&format!("Spaces tool {tool}")));
+    if !unknown {
+        return e;
+    }
+    match d.info().await {
+        Ok(info) => CuaError::NotFound(cua_daemon_core::identity::missing_tool_error(tool, &info)),
+        Err(_) => e,
+    }
+}
+
+fn outcome_value(out: ToolOut) -> Result<Value> {
+    if out.is_error {
+        let (kind, message) = out
+            .structured
+            .as_ref()
+            .and_then(|s| s.get("error"))
+            .map(|e| {
+                (
+                    e.get("kind").and_then(Value::as_str).unwrap_or("env"),
+                    e.get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            })
+            .unwrap_or(("env", out.text()));
+        return Err(tag_error(kind, message));
+    }
+    let text = out.text();
+    Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+}
+
+pub(super) fn parse<T: serde::de::DeserializeOwned>(v: Value) -> Result<T> {
+    serde_json::from_value(v)
+        .map_err(|e| CuaError::Internal(format!("unexpected tool output: {e}")))
+}
+
+/// `Space::teleport` in process: the Cua Spaces teleport extension, when the
+/// host registered it (the Spaces apps do), mints the approval from the
+/// approver's decision and exports through its app-session providers.
+/// Without it: `HostCapabilityMissing` (teleport ships with Cua Spaces).
+async fn teleport_embedded(
+    spaces: &cua_spaces::Spaces,
+    space: &str,
+    manifest: &TeleportManifest,
+    decision: TeleportDecision,
+) -> Result<TeleportReceipt> {
+    let receipt = spaces
+        .call_extension(
+            "teleport",
+            "teleport.send",
+            json!({
+                "space": space,
+                "app": manifest.app,
+                "scope": manifest.scope,
+                "include": decision.include,
+                "acknowledge_sensitive": decision.acknowledge_sensitive,
+            }),
+        )
+        .await?;
+    parse(receipt)
+}
+
+/// Turns the daemon's `teleport_app` answer into a [`TeleportReceipt`]:
+/// `moved: true` is a completed teleport, `consent_required: true` (with or
+/// without `status: "pending"`; the tool sends the former on the filing call
+/// and both on a still-pending retry) is [`TeleportReceipt::status`]
+/// `"pending"` with the `request_id` to retry with -- NOT an error, so a
+/// caller that only checks `Result::Err` does not mistake "ask the user"
+/// for "refused". Anything else (denied, malformed) is the refusal
+/// [`keyvault_refusal`] already built.
+fn teleport_app_response(v: &Value) -> Result<TeleportReceipt> {
+    if v.get("moved").and_then(Value::as_bool) == Some(true) {
+        let strings = |key: &str| -> Vec<String> {
+            v.get(key)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        return Ok(TeleportReceipt {
+            status: "moved".into(),
+            request_id: None,
+            app: v
+                .get("app")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            space: v
+                .get("space")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            method: "import_session".into(),
+            transferred_paths: strings("transferred_paths"),
+            bundle_bytes: 0,
+            bundle_sha256: String::new(),
+            imported: strings("transferred_paths"),
+            skipped: Vec::new(),
+            launched: false,
+        });
+    }
+    if v.get("consent_required").and_then(Value::as_bool) == Some(true)
+        && let Some(id) = v.get("request_id").and_then(Value::as_str)
+    {
+        return Ok(TeleportReceipt {
+            status: "pending".into(),
+            request_id: Some(id.to_string()),
+            app: v
+                .get("app")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            space: v
+                .get("space")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            method: "import_session".into(),
+            transferred_paths: Vec::new(),
+            bundle_bytes: 0,
+            bundle_sha256: String::new(),
+            imported: Vec::new(),
+            skipped: Vec::new(),
+            launched: false,
+        });
+    }
+    Err(keyvault_refusal(v))
+}
+
+/// The daemon's `teleport_app` answer as a typed refusal: the user declined,
+/// or something else went wrong (never "pending" -- that is handled above
+/// before this is reached).
+fn keyvault_refusal(v: &Value) -> CuaError {
+    let message = v
+        .get("message")
+        .or_else(|| v.pointer("/error/message"))
+        .and_then(Value::as_str)
+        .unwrap_or("moving a signed-in session needs the user's approval in Cua (Keyvault)");
+    match v.get("request_id").and_then(Value::as_str) {
+        Some(id) => CuaError::TeleportRefused(format!(
+            "{message} Keyvault request {id}: approve it in Cua (Keyvault page)."
+        )),
+        None => CuaError::TeleportRefused(message.to_string()),
+    }
+}
+
+fn via_json<T: serde::Serialize, U: serde::de::DeserializeOwned>(v: &T) -> Result<U> {
+    parse(serde_json::to_value(v).map_err(|e| CuaError::Internal(e.to_string()))?)
+}
+
+struct ToolOut {
+    content: Vec<Value>,
+    structured: Option<Value>,
+    is_error: bool,
+    meta: Option<Value>,
+}
+
+impl ToolOut {
+    fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|c| c.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+// The resource records and watch live in `spaces_resources.rs` (the docs
+// generators read `native/*.rs`), included here so they share this module's
+// private `Host` and `daemon_err`.
+include!("spaces_resources.rs");
+
+// The list watch lives in `spaces_list_watch.rs`.
+include!("spaces_list_watch.rs");
+
+/// Where the Spaces runtime lives.
+#[derive(Clone)]
+enum Host {
+    Embedded(cua_spaces::Spaces),
+    Daemon(DaemonClient),
+}
+
+impl Host {
+    fn of(backend: &Backend) -> Self {
+        match backend {
+            Backend::Embedded(rt) => Host::Embedded(rt.spaces().clone()),
+            Backend::Daemon(d) => Host::Daemon(d.clone()),
+        }
+    }
+
+    async fn tool(&self, name: &str, arguments: Value) -> Result<ToolOut> {
+        match self {
+            Host::Embedded(spaces) => {
+                let o = match cua_spaces::agents::keys::is_app_method(name) {
+                    true => cua_spaces::agents::keys::app_tool_async(name, arguments)
+                        .await
+                        .unwrap_or_else(|| {
+                            cua_spaces::mcp::ToolOutcome::error_message("not_found", name)
+                        }),
+                    false if cua_spaces::reach::is_app_method(name) => {
+                        cua_spaces::reach::app_call(spaces, name, arguments)
+                            .await
+                            .unwrap_or_else(|| {
+                                cua_spaces::mcp::ToolOutcome::error_message("not_found", name)
+                            })
+                    }
+                    false => {
+                        cua_spaces::mcp::McpServer::new(spaces.clone())
+                            .call(name, arguments)
+                            .await
+                    }
+                };
+                Ok(ToolOut {
+                    content: o.content,
+                    structured: o.structured,
+                    is_error: o.is_error,
+                    meta: o.meta,
+                })
+            }
+            Host::Daemon(d) => {
+                let r = match d
+                    .spaces()
+                    .call_space_tool(dpb::CallSpaceToolRequest {
+                        name: name.into(),
+                        arguments_json: arguments.to_string(),
+                    })
+                    .await
+                {
+                    Ok(r) => r.into_inner(),
+                    Err(s) => return Err(missing_tool(d, name, daemon_err(s)).await),
+                };
+                let content: Vec<Value> = serde_json::from_str(&r.content_json)
+                    .map_err(|e| CuaError::Internal(format!("content_json: {e}")))?;
+                let structured = (!r.structured_json.is_empty())
+                    .then(|| serde_json::from_str(&r.structured_json))
+                    .transpose()
+                    .map_err(|e| CuaError::Internal(format!("structured_json: {e}")))?;
+                let meta = (!r.meta_json.is_empty())
+                    .then(|| serde_json::from_str(&r.meta_json))
+                    .transpose()
+                    .map_err(|e| CuaError::Internal(format!("meta_json: {e}")))?;
+                Ok(ToolOut {
+                    content,
+                    structured,
+                    is_error: r.is_error,
+                    meta,
+                })
+            }
+        }
+    }
+
+    async fn tool_value(&self, name: &str, arguments: Value) -> Result<Value> {
+        outcome_value(self.tool(name, arguments).await?)
+    }
+
+    async fn record(&self, space: &str) -> Result<SpaceInfo> {
+        match self {
+            Host::Embedded(s) => Ok(s.find(space).await?.into()),
+            Host::Daemon(d) => d
+                .spaces()
+                .resolve_space(dpb::ResolveSpaceRequest {
+                    space: space.into(),
+                })
+                .await
+                .map_err(daemon_err)?
+                .into_inner()
+                .space
+                .map(Into::into)
+                .ok_or_else(|| CuaError::Internal("no space returned".into())),
+        }
+    }
+
+    /// The windows other Spaces show in `space` (empty on any failure: the
+    /// Space's own list is still right).
+    async fn stream_windows(&self, space: &str) -> Vec<SpaceWindow> {
+        match self {
+            Host::Embedded(s) => via_json(&s.stream_windows(space).await).unwrap_or_default(),
+            Host::Daemon(d) => d
+                .spaces()
+                .list_stream_windows(dpb::ListStreamWindowsRequest {
+                    space: space.into(),
+                })
+                .await
+                .map(|r| {
+                    r.into_inner()
+                        .windows
+                        .into_iter()
+                        .map(|w| {
+                            let o = w.origin.unwrap_or_default();
+                            SpaceWindow {
+                                window_id: w.window_id,
+                                epoch: 0,
+                                title: w.title,
+                                app_name: w.app_name,
+                                app_id: w.app_id,
+                                pid: w.pid,
+                                bounds: vec![0.0, 0.0, 1280.0, 800.0],
+                                on_screen: true,
+                                focused: false,
+                                available: true,
+                                limitation: String::new(),
+                                origin: Some(SpaceWindowOrigin {
+                                    space_id: o.space_id,
+                                    name: o.name,
+                                    os: o.os,
+                                    window_id: o.window_id,
+                                }),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The origin Space and window handle behind a registry entry's handle.
+    async fn entry_origin(&self, window_id: &str) -> Result<(String, String)> {
+        match self {
+            Host::Embedded(s) => {
+                let d = s.resolve_stream_entry(window_id).await?;
+                Ok((d.entry.origin_space, d.entry.window_id))
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .open_stream_entry(dpb::OpenStreamEntryRequest {
+                        window_id: window_id.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                Ok((r.origin_space, r.origin_window_id))
+            }
+        }
+    }
+
+    /// How a registry entry streams for this viewer.
+    async fn entry_route(&self, window_id: &str) -> Result<EntryRoute> {
+        match self {
+            Host::Embedded(s) => {
+                let d = s.resolve_stream_entry(window_id).await?;
+                Ok(EntryRoute {
+                    direct: d.route == cua_spaces::stream_registry::Route::Direct,
+                    origin_space: d.entry.origin_space,
+                })
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .open_stream_entry(dpb::OpenStreamEntryRequest {
+                        window_id: window_id.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                Ok(EntryRoute {
+                    direct: r.route == "direct",
+                    origin_space: r.origin_space,
+                })
+            }
+        }
+    }
+
+    /// Opens a registry entry's window ([`Space::open_stream`]).
+    async fn open_entry_stream(
+        &self,
+        window_id: &str,
+        parent: &str,
+        options: &SpaceStreamOptions,
+    ) -> Result<SpaceStreamTicket> {
+        let (route, origin, origin_window, ticket) = match self {
+            Host::Embedded(s) => {
+                let d = s.resolve_stream_entry(window_id).await?;
+                let t = if d.route == cua_spaces::stream_registry::Route::Proxied {
+                    Some(
+                        s.open_stream_entry(window_id, stream_options(options)?)
+                            .await?
+                            .ticket,
+                    )
+                    .flatten()
+                } else {
+                    None
+                };
+                (
+                    if t.is_some() { "proxied" } else { "direct" }.to_string(),
+                    d.entry.origin_space,
+                    d.entry.window_id,
+                    t,
+                )
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .open_stream_entry(dpb::OpenStreamEntryRequest {
+                        window_id: window_id.into(),
+                        max_fps: options.max_fps,
+                        ticket_ttl_seconds: 0,
+                        mint: false,
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                let t = (!r.ticket_json.is_empty())
+                    .then(|| serde_json::from_str::<Value>(&r.ticket_json).ok())
+                    .flatten();
+                // No access to the origin: the daemon that holds it relays
+                // the stream through its media bridge.
+                if r.route == "proxied" && t.is_none() {
+                    return open_proxied(d, &r.origin_space, &r.origin_window_id, parent, options)
+                        .await;
+                }
+                let t = t.map(|t| StreamTicketJson {
+                    space: t["space"].as_str().unwrap_or_default().into(),
+                    media_session_id: t["media_session_id"].as_str().unwrap_or_default().into(),
+                    ws_url: t["ws_url"].as_str().unwrap_or_default().into(),
+                    ticket: t["ticket"].as_str().unwrap_or_default().into(),
+                    ticket_expires_at: t["ticket_expires_at"].as_str().map(Into::into),
+                    codec: t["codec"].as_str().unwrap_or_default().into(),
+                    wire_version: t["wire_version"].as_u64().unwrap_or(2) as u32,
+                    frame_size: [
+                        t["frame_size"][0].as_u64().unwrap_or(0) as u32,
+                        t["frame_size"][1].as_u64().unwrap_or(0) as u32,
+                    ],
+                });
+                if let Some(t) = &t {
+                    remember_origin_session(&t.media_session_id, &r.origin_space);
+                }
+                return match t {
+                    Some(t) => Ok(SpaceStreamTicket {
+                        space: t.space,
+                        media_session_id: t.media_session_id,
+                        ws_url: t.ws_url,
+                        ticket: t.ticket,
+                        ticket_expires_at: t.ticket_expires_at,
+                        codec: t.codec,
+                        wire_version: t.wire_version,
+                        width: t.frame_size[0],
+                        height: t.frame_size[1],
+                        needs_headers: true,
+                    }),
+                    None => {
+                        self.open_direct(&r.origin_space, &r.origin_window_id, options)
+                            .await
+                    }
+                };
+            }
+        };
+        let _ = route;
+        if let Some(t) = &ticket {
+            remember_origin_session(&t.media_session_id, &origin);
+        }
+        match ticket {
+            Some(t) => Ok(SpaceStreamTicket {
+                space: t.space,
+                media_session_id: t.media_session_id,
+                ws_url: t.ws_url,
+                ticket: t.ticket,
+                ticket_expires_at: t.ticket_expires_at,
+                codec: t.codec,
+                wire_version: t.wire_version,
+                width: t.frame_size[0],
+                height: t.frame_size[1],
+                needs_headers: t.needs_gateway_headers,
+            }),
+            None => self.open_direct(&origin, &origin_window, options).await,
+        }
+    }
+
+    /// A ticket of the origin Space, minted with this viewer's own handle on
+    /// it: the stream goes straight to the origin.
+    async fn open_direct(
+        &self,
+        origin: &str,
+        window_id: &str,
+        options: &SpaceStreamOptions,
+    ) -> Result<SpaceStreamTicket> {
+        let daemon = matches!(self, Host::Daemon(_));
+        let (_, handle) = self.connect(origin).await?;
+        let t = handle
+            .open_stream(
+                cua_spaces::stream::StreamTarget::Window(window_id.into()),
+                stream_options(options)?,
+            )
+            .await?;
+        remember_origin_session(&t.media_session_id, origin);
+        Ok(SpaceStreamTicket {
+            space: t.space,
+            media_session_id: t.media_session_id,
+            ws_url: t.ws_url,
+            ticket: t.ticket,
+            ticket_expires_at: t.ticket_expires_at,
+            codec: t.codec,
+            wire_version: t.wire_version,
+            width: t.frame_size[0],
+            height: t.frame_size[1],
+            needs_headers: t.needs_gateway_headers || daemon,
+        })
+    }
+
+    async fn connect(&self, space: &str) -> Result<(SpaceInfo, cua_spaces::Space)> {
+        match self {
+            Host::Embedded(s) => {
+                let handle = s.space(space).await?;
+                let info = self.record(&handle.id().to_string()).await?;
+                Ok((info, handle))
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .connect_space(dpb::ConnectSpaceRequest {
+                        space: space.into(),
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                let record = r
+                    .space
+                    .ok_or_else(|| CuaError::Internal("no space returned".into()))?;
+                let caps =
+                    <cua_spacesd_client::pb::GetCapabilitiesResponse as prost::Message>::decode(
+                        r.capabilities.as_ref(),
+                    )
+                    .map_err(|e| CuaError::Internal(format!("capabilities: {e}")))?;
+                let id = cua_spaces::SpaceId::parse(&record.id)?;
+                // A Space made from a build runs commands with its image's
+                // environment, working directory and user.
+                let image_config: Option<cua_spaces::build::ImageConfig> =
+                    (!record.image_config.is_empty())
+                        .then(|| serde_json::from_str(&record.image_config).ok())
+                        .flatten();
+                let with_config = |h: cua_spaces::Space| match image_config.clone() {
+                    Some(c) => h.with_image_config(c),
+                    None => h,
+                };
+                let bearer = vec![("authorization".to_string(), format!("Bearer {}", r.token))];
+                // Declared services through the daemon's service passthrough.
+                let services = r
+                    .services
+                    .iter()
+                    .map(|svc| {
+                        (
+                            svc.name.clone(),
+                            cua_spaces::SpaceService {
+                                source: cua_spaces::ServiceSource::Url(
+                                    cua_sandbox_core::ServiceEndpoint {
+                                        url: svc.url.clone(),
+                                        headers: bearer.clone(),
+                                    },
+                                ),
+                                mcp_path: svc.mcp_path.clone(),
+                            },
+                        )
+                    })
+                    .collect();
+                if r.env_url.is_empty() {
+                    let handle = with_config(cua_spaces::Space::generic(
+                        id,
+                        record.name.clone(),
+                        services,
+                    ));
+                    return Ok((record.into(), handle));
+                }
+                let mut o = cua_spacesd_client::ConnectOptions::parse(&r.env_url)?
+                    .transport(cua_spacesd_client::TransportPreference::Native)
+                    .probe(false);
+                o.token = Some(r.token.clone());
+                let env = cua_spacesd_client::SpacesdClient::connect(o).await?;
+                // The daemon's machine shares a disk with a Linux VM Space:
+                // when this process is on that machine, large files go
+                // through it (the guest proves the file is its own).
+                if !r.bulk.is_empty() {
+                    env.attach_bulk(&r.bulk).await;
+                }
+                let mut handle =
+                    cua_spaces::Space::attach(id, record.name.clone(), env, caps, bearer)
+                        .with_services(services);
+                if !r.route.is_empty() {
+                    // The daemon's connection fell back to the relay's
+                    // HTTPS path: say so here too, where a person sees it
+                    // (the daemon's own log has the warning). An older
+                    // daemon sends no reason.
+                    if !r.fallback_reason.is_empty()
+                        && let Some(relay) = r.route.strip_prefix("relay ")
+                    {
+                        let machine = match handle.id() {
+                            cua_spaces::SpaceId::Relay { machine_id } => machine_id.clone(),
+                            other => other.to_string(),
+                        };
+                        cua_spaces::mesh::announce_fallback(relay, &machine, &r.fallback_reason);
+                        handle = handle.with_fallback_reason(r.fallback_reason.clone());
+                    }
+                    handle = handle.with_route(cua_spaces::ChannelRoute::Passthrough(r.route));
+                }
+                Ok((record.into(), with_config(handle)))
+            }
+        }
+    }
+}
+
+impl Host {
+    /// [`Space::transport`]: from the connection in this process, or the
+    /// daemon's own connection to the Space.
+    async fn transport(&self, space: &cua_spaces::Space) -> Result<SpaceTransport> {
+        match self {
+            Host::Embedded(_) => Ok(SpaceTransport {
+                transport: space
+                    .route()
+                    .map(|r| r.transport().as_str().to_owned())
+                    .unwrap_or_default(),
+                fallback_reason: space.fallback_reason().unwrap_or_default().to_owned(),
+            }),
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .get_space_route(dpb::GetSpaceRouteRequest {
+                        space: space.id().to_string(),
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                // An older daemon sends the route line only.
+                let transport = if r.transport.is_empty() && !r.route.is_empty() {
+                    cua_spaces::Transport::of_described(&r.route)
+                        .as_str()
+                        .to_owned()
+                } else {
+                    r.transport
+                };
+                Ok(SpaceTransport {
+                    transport,
+                    fallback_reason: r.fallback_reason,
+                })
+            }
+        }
+    }
+
+    /// [`Space::route`]: live from the connection in this process, or the
+    /// daemon's own connection to the Space.
+    async fn route(&self, space: &cua_spaces::Space) -> Result<String> {
+        match self {
+            Host::Embedded(_) => Ok(space
+                .route()
+                .map(cua_spaces::ChannelRoute::describe)
+                .unwrap_or_default()),
+            Host::Daemon(d) => Ok(d
+                .spaces()
+                .get_space_route(dpb::GetSpaceRouteRequest {
+                    space: space.id().to_string(),
+                })
+                .await
+                .map_err(daemon_err)?
+                .into_inner()
+                .route),
+        }
+    }
+}
+
+/// Calls Spaces tools where the runtime lives (for sibling modules).
+#[derive(Clone)]
+pub(super) struct SpacesToolCaller(Host);
+
+impl SpacesToolCaller {
+    /// The tool's JSON result, or its error.
+    pub(super) async fn tool_value(&self, name: &str, arguments: Value) -> Result<Value> {
+        self.0.tool_value(name, arguments).await
+    }
+
+    /// Refuses before the call when the daemon's `tool` takes none of
+    /// `fields` it would need (`what`: what they are for, in words): an
+    /// older daemon ignores arguments it does not know, and would do
+    /// something else than asked.
+    pub(super) async fn require_fields(
+        &self,
+        tool: &str,
+        fields: &[&str],
+        what: &str,
+    ) -> Result<()> {
+        let Host::Daemon(d) = &self.0 else {
+            return Ok(());
+        };
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let listed = d
+            .spaces()
+            .list_space_tools(dpb::ListSpaceToolsRequest {})
+            .await
+            .map_err(daemon_err)?
+            .into_inner()
+            .tools_json;
+        let missing = missing_fields(&listed, tool, fields);
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let version = d
+            .info()
+            .await
+            .map(|i| format!(" (cua {})", i.version))
+            .unwrap_or_default();
+        Err(CuaError::CapabilityMissing(format!(
+            "the cua daemon{version} is too old to {what} (its {tool} has no {}), so nothing was \
+             changed; update cua and restart its daemon (`cua daemon stop`, then run this again, \
+             or quit and reopen Cua Spaces)",
+            missing.join(", ")
+        )))
+    }
+}
+
+/// Which of `fields` the `tool` in a `tools/list` result (`listed`, JSON)
+/// does not take; all of them when the tool is not listed.
+fn missing_fields(listed: &str, tool: &str, fields: &[&str]) -> Vec<String> {
+    let v: Value = serde_json::from_str(listed).unwrap_or_default();
+    let props = v["tools"]
+        .as_array()
+        .and_then(|ts| ts.iter().find(|t| t["name"] == tool))
+        .map(|t| t["inputSchema"]["properties"].clone())
+        .unwrap_or_default();
+    fields
+        .iter()
+        .filter(|f| props.get(**f).is_none())
+        .map(|f| (*f).to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod require_fields_tests {
+    use super::missing_fields;
+
+    #[test]
+    fn an_older_daemons_cloud_connect_misses_the_new_fields() {
+        // What a 0.8 daemon lists: no auth, no budget.
+        let old = r#"{"tools":[{"name":"cloud_connect","inputSchema":{"properties":
+            {"provider":{},"profile":{},"region":{},"make_default":{},"ttl_hours":{}}}}]}"#;
+        assert_eq!(
+            missing_fields(old, "cloud_connect", &["auth", "budget_usd_month"]),
+            vec!["auth", "budget_usd_month"]
+        );
+        assert!(missing_fields(old, "cloud_connect", &["ttl_hours"]).is_empty());
+        assert_eq!(missing_fields(old, "cloud_gone", &["x"]), vec!["x"]);
+        // This build's own contract takes every field it sends.
+        let ours = cua_spaces::mcp::McpServer::remote(std::sync::Arc::new(Nothing))
+            .tools_list()
+            .to_string();
+        let all = [
+            "auth",
+            "budget_usd_month",
+            "max_size",
+            "account_id",
+            "role_arn",
+            "check",
+            "agent",
+        ];
+        assert!(missing_fields(&ours, "cloud_connect", &all).is_empty());
+    }
+
+    struct Nothing;
+
+    #[async_trait::async_trait]
+    impl cua_spaces::mcp::ToolBackend for Nothing {
+        async fn call(&self, _: &str, _: serde_json::Value) -> cua_spaces::mcp::ToolOutcome {
+            cua_spaces::mcp::ToolOutcome::text("")
+        }
+    }
+}
+
+// ------------------------------------------------------------ Machine health
+
+/// One check of a machine's health ([`Spaces::machine_health`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealthCheck {
+    /// `machine.local_network`, `machine.disk`, `machine.virtualization`,
+    /// `machine.memory`, `machine.permissions.<id>`.
+    pub id: String,
+    /// `pass`, `warn`, `fail` or `skip`.
+    pub status: String,
+    /// What it found, in one line.
+    pub message: String,
+    /// What to do about a warning or failure.
+    pub remediation: String,
+    /// What a UI needs to word it and offer its fix (`app`, `settings_url`,
+    /// `free_gb`, ...).
+    pub facts: std::collections::HashMap<String, String>,
+}
+
+/// A machine's health as its own cua daemon checks it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealth {
+    /// The Cua version of the daemon that checked.
+    pub cua_version: String,
+    /// `macos`, `linux`, `windows`.
+    pub os: String,
+    /// Every check, in order.
+    pub checks: Vec<MachineHealthCheck>,
+    /// The whole report as JSON (the schema `cua doctor --json` writes).
+    pub report_json: String,
+}
+
+impl From<cua_proto::env::v1::DiagnoseHostResponse> for MachineHealth {
+    fn from(r: cua_proto::env::v1::DiagnoseHostResponse) -> Self {
+        let report = cua_spacesd_client::diagnose::Report::from_pb(r.report.unwrap_or_default());
+        Self {
+            cua_version: r.cua_version,
+            os: r.os,
+            checks: report
+                .checks
+                .iter()
+                .map(|c| MachineHealthCheck {
+                    id: c.id.clone(),
+                    status: c.status.as_str().to_string(),
+                    message: c.message.clone(),
+                    remediation: c.remediation.clone(),
+                    facts: c.facts.clone().into_iter().collect(),
+                })
+                .collect(),
+            report_json: report.to_json(),
+        }
+    }
+}
+
+// ------------------------------------------------------------ Spaces
+
+/// The Spaces registry: add a machine by URL, provision a local one, and get
+/// [`Space`] handles.
+#[derive(uniffi::Object)]
+pub struct Spaces {
+    host: Host,
+    /// The sandbox API of the same runtime (checkpoints and forks).
+    backend: Backend,
+}
+
+impl Spaces {
+    pub(crate) fn new(backend: &Backend) -> Self {
+        Self {
+            host: Host::of(backend),
+            backend: backend.clone(),
+        }
+    }
+
+    /// Forks `source` (a sandbox ref or name, or a checkpoint name) as
+    /// sandbox `name`, registers it as a Space and connects to it, as
+    /// [`Spaces::space`] does.
+    /// The core's one fork path (`cua_spaces::Spaces::fork_local`), here
+    /// or through the daemon's `ForkSpace`: the fork is registered once its
+    /// cua-spacesd answers, and deleted when it never does.
+    async fn fork_impl(&self, source: String, name: String) -> Result<Arc<Space>> {
+        let host = self.host.clone();
+        let id = run(async move {
+            Ok::<_, CuaError>(match host {
+                Host::Embedded(s) => s.fork_local(&source, Some(name)).await?.id,
+                Host::Daemon(d) => d
+                    .spaces()
+                    .fork_space(dpb::ForkSpaceRequest { source, name })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .space
+                    .map(|s| s.id)
+                    .unwrap_or_default(),
+            })
+        })
+        .await?;
+        self.space(id).await
+    }
+
+    /// An owned handle that calls this runtime's Spaces tools.
+    pub(super) fn tool_caller(&self) -> SpacesToolCaller {
+        SpacesToolCaller(self.host.clone())
+    }
+}
+
+/// The sandbox ref behind Space `id` for `op` (checkpoints, forks): a local
+/// Space's; any other is the same `Unsupported` error the sandbox API gives.
+fn local_sandbox_of(id: &str, op: &str) -> Result<String> {
+    match cua_spaces::SpaceId::parse(id) {
+        Ok(local @ cua_spaces::SpaceId::Local { .. }) => Ok(local.to_string()),
+        _ => Err(cua_daemon_core::Error::Unsupported(format!(
+            "{op} local sandboxes ({id} is not one)"
+        ))
+        .into()),
+    }
+}
+
+#[uniffi::export]
+impl Spaces {
+    /// Adds a Space by URL (`http(s)://host:port`, `host:port`, or a
+    /// Space id such as `local:<name>`) after a `GetCapabilities` handshake. Any other MCP
+    /// endpoint (`http://host:8765/mcp`) becomes a Space with one MCP
+    /// service, `mcp`, and no spacesd capabilities.
+    pub async fn add(
+        &self,
+        url: String,
+        token: Option<String>,
+        name: Option<String>,
+    ) -> Result<SpaceInfo> {
+        self.add_with_service(url, token, name, None).await
+    }
+
+    /// [`Spaces::add`], naming the service a plain MCP endpoint is
+    /// registered under (default `mcp`).
+    pub async fn add_with_service(
+        &self,
+        url: String,
+        token: Option<String>,
+        name: Option<String>,
+        service: Option<String>,
+    ) -> Result<SpaceInfo> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    Ok(s.add_with_service(&url, token, name, service).await?.into())
+                }
+                Host::Daemon(d) => d
+                    .spaces()
+                    .add_space(dpb::AddSpaceRequest {
+                        url,
+                        token: token.unwrap_or_default(),
+                        name: name.unwrap_or_default(),
+                        service: service.unwrap_or_default(),
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .space
+                    .map(Into::into)
+                    .ok_or_else(|| CuaError::Internal("no space returned".into())),
+            }
+        })
+        .await
+    }
+
+    /// Registered Spaces.
+    pub async fn list(&self) -> Result<Vec<SpaceInfo>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                // With the account's relay machines, the directory read
+                // again, as `cua daemon`'s `ListSpaces` does.
+                Host::Embedded(s) => Ok(s.list_all().await?.into_iter().map(Into::into).collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .list_spaces(dpb::ListSpacesRequest::default())
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .spaces
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// The Spaces known now: this machine's at once, and the account's other
+    /// computers as far as they answered within a moment ([`SpaceList`]
+    /// says how far the read got). A slow or unreachable relay never holds
+    /// up or fails this machine's own Spaces, so an app shows them right
+    /// away and reads again while the list is incomplete. [`Spaces::list`]
+    /// waits for every computer instead.
+    pub async fn list_known(&self) -> Result<SpaceList> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let l = s.list_known(cua_spaces::LIST_WAIT).await?;
+                    Ok(SpaceList {
+                        spaces: l.spaces.into_iter().map(Into::into).collect(),
+                        incomplete: l.progress.incomplete,
+                        reaching: l.progress.reaching,
+                        stale: l.progress.stale,
+                        notice: l.progress.notice,
+                        creating: l
+                            .creating
+                            .into_iter()
+                            .map(|c| SpaceCreatingElsewhere {
+                                machine_id: c.machine_id,
+                                machine_name: c.machine_name,
+                                name: c.name,
+                                os: c.os,
+                                phase: c.phase,
+                                percent: u32::from(c.percent),
+                                updated_at_ms: c.updated_at_ms,
+                            })
+                            .collect(),
+                    })
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .list_spaces(dpb::ListSpacesRequest { known_now: true })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    Ok(SpaceList {
+                        spaces: r.spaces.into_iter().map(Into::into).collect(),
+                        incomplete: r.incomplete,
+                        reaching: r.reaching,
+                        stale: r.stale,
+                        notice: r.notice,
+                        creating: r
+                            .creating
+                            .into_iter()
+                            .map(|c| SpaceCreatingElsewhere {
+                                machine_id: c.machine_id,
+                                machine_name: c.machine_name,
+                                name: c.name,
+                                os: c.os,
+                                phase: c.phase,
+                                percent: c.percent.min(100),
+                                updated_at_ms: c.updated_at_ms,
+                            })
+                            .collect(),
+                    })
+                }
+            }
+        })
+        .await
+    }
+
+    /// The named volumes of Cua Volume, by name, with the Spaces that mount
+    /// each. Needs Cua Spaces (the Cua Volume).
+    pub async fn volumes(&self) -> Result<Vec<NamedVolume>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let v = s
+                        .call_extension("Cua Volume", "volumes.list", json!({}))
+                        .await?;
+                    parse(v["volumes"].clone())
+                }
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .list_volumes(dpb::ListVolumesRequest {})
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .volumes
+                    .into_iter()
+                    .map(|v| NamedVolume {
+                        name: v.name,
+                        mounted_in: v.mounted_in,
+                    })
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// Creates the empty named volume `name` (1 to 63 of `a-z`, `0-9`, `.`,
+    /// `_`, `-`). Fails when it exists. Mount it with
+    /// [`SpaceCreateOptions::volumes`]; read and write its files with
+    /// [`Spaces::volume_ls`] and friends under `volumes/<name>/`.
+    pub async fn create_volume(&self, name: String) -> Result<NamedVolume> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    s.call_extension("Cua Volume", "volumes.create", json!({"name": name}))
+                        .await?;
+                    Ok(NamedVolume {
+                        name,
+                        mounted_in: vec![],
+                    })
+                }
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .create_volume(dpb::CreateVolumeRequest { name: name.clone() })
+                        .await
+                        .map_err(daemon_err)?;
+                    Ok(NamedVolume {
+                        name,
+                        mounted_in: vec![],
+                    })
+                }
+            }
+        })
+        .await
+    }
+
+    /// Deletes the named volume `name` and its files (their history stays
+    /// in the Cua Volume). Refused while Spaces mount it unless `force`.
+    /// Returns how many files went.
+    #[uniffi::method(default(force = false))]
+    pub async fn delete_volume(&self, name: String, force: bool) -> Result<u64> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let v = s
+                        .call_extension(
+                            "Cua Volume",
+                            "volumes.delete",
+                            json!({"name": name, "force": force}),
+                        )
+                        .await?;
+                    Ok(v["files"].as_u64().unwrap_or(0))
+                }
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .delete_volume(dpb::DeleteVolumeRequest { name, force })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .files),
+            }
+        })
+        .await
+    }
+
+    /// Resolves an id, legacy id, URL or display name.
+    pub async fn resolve(&self, space: String) -> Result<SpaceInfo> {
+        let host = self.host.clone();
+        run(async move { host.record(&space).await }).await
+    }
+
+    /// Unregisters a Space (the sandbox is not touched).
+    pub async fn remove(&self, space: String) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    s.remove(&space).await?;
+                }
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .remove_space(dpb::RemoveSpaceRequest { id: space })
+                        .await
+                        .map_err(daemon_err)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Creates a Space where `options.on` says (the user default when
+    /// unset): a new sandbox registered as a Space. An existing machine is
+    /// added with [`Spaces::add`].
+    pub async fn create(&self, options: SpaceCreateOptions) -> Result<SpaceCreateResult> {
+        self.create_impl(options, None).await
+    }
+
+    /// [`Spaces::create`], reporting what it does to `listener` (pulling
+    /// the image, booting, waiting for cua-spacesd, connecting) until the
+    /// Space is ready. Always waits (`options.wait` is ignored). Through a
+    /// daemon that predates progress, the listener hears only `ready`.
+    pub async fn create_with_progress(
+        &self,
+        options: SpaceCreateOptions,
+        listener: Arc<dyn SpaceCreateListener>,
+    ) -> Result<SpaceCreateResult> {
+        self.create_impl(
+            SpaceCreateOptions {
+                wait: Some(true),
+                ..options
+            },
+            Some(listener),
+        )
+        .await
+    }
+}
+
+impl Spaces {
+    async fn create_impl(
+        &self,
+        mut options: SpaceCreateOptions,
+        listener: Option<Arc<dyn SpaceCreateListener>>,
+    ) -> Result<SpaceCreateResult> {
+        use cua_sandbox_core::placement::{Kind, On, Runtime};
+        options.apply_profile()?;
+        if let Some(mut build) = options.build.take() {
+            if options
+                .image
+                .as_deref()
+                .is_some_and(|i| !i.trim().is_empty())
+            {
+                return Err(CuaError::InvalidArgument(
+                    "`build` and `image` are two ways to say what the Space runs: give one".into(),
+                ));
+            }
+            // The Space is a fork of the build's machine: the create's shape
+            // is the build's, unless the build says otherwise.
+            build.cpus = build.cpus.or(options.cpus.take());
+            build.memory_mb = build.memory_mb.or(options.memory_mb.take());
+            build.headless = build.headless.or(options.headless.take());
+            build.kind = build.kind.or(options.kind.take());
+            build.on = build.on.or(options.on.clone());
+            let on_build: Option<Arc<dyn build::BuildListener>> = listener.clone().map(|l| {
+                struct AsCreate(Arc<dyn SpaceCreateListener>);
+                impl build::BuildListener for AsCreate {
+                    fn on_progress(&self, p: build::BuildProgress) {
+                        if p.event == "step" || p.event == "note" {
+                            self.0.on_progress(SpaceCreateProgress {
+                                phase: "building".into(),
+                                fraction: (p.event == "step" && p.total > 0)
+                                    .then(|| f64::from(p.index) / f64::from(p.total)),
+                                detail: if p.event == "step" {
+                                    format!("Step {}/{} : {}", p.index, p.total, p.text)
+                                } else {
+                                    p.text
+                                },
+                                bytes_done: None,
+                                bytes_total: None,
+                                bytes_per_second: None,
+                                space: String::new(),
+                            });
+                        }
+                    }
+                }
+                Arc::new(AsCreate(l)) as Arc<dyn build::BuildListener>
+            });
+            let built = self.build_impl(build, on_build).await?;
+            options.image = Some(format!("build:{}", &built.key[..12.min(built.key.len())]));
+        }
+        let place =
+            |e: cua_sandbox_core::placement::PlacementError| CuaError::InvalidPlacement(e.message);
+        let text = |v: &Option<String>| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        // A fork of a checkpoint (image `checkpoint:<name>`) with no `on`
+        // starts where the checkpoint is, which only the Spaces runtime
+        // knows.
+        let from_checkpoint =
+            cua_spaces::pool_checkpoints::checkpoint_image(options.image.as_deref()).is_some();
+        // The default location is resolved here, in the caller's process.
+        let on: Option<On> = match text(&options.on) {
+            Some(o) => Some(On::parse(&o).map_err(place)?),
+            None if from_checkpoint => None,
+            None => Some(
+                cua_sandbox_core::settings::Settings::load()
+                    .and_then(|s| s.default_on())
+                    .map_err(|e| CuaError::InvalidArgument(e.to_string()))?
+                    .0,
+            ),
+        };
+        let kind = Kind::parse(&text(&options.kind).unwrap_or_default()).map_err(place)?;
+        let runtime = Runtime::parse(&text(&options.runtime).unwrap_or_default()).map_err(place)?;
+        if let Some(on) = &on {
+            cua_sandbox_core::placement::validate(on, kind, &runtime).map_err(place)?;
+        }
+        // `network` takes a preset word too (`lan`, `localhost:5432`,
+        // `unprotected`): it becomes the settings when none are given.
+        let network_word = options
+            .network
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        let legacy_word = matches!(
+            network_word.to_ascii_lowercase().as_str(),
+            "" | "default" | "none"
+        );
+        let network =
+            cua_sandbox_core::NetworkMode::parse(if legacy_word { network_word } else { "" })
+                .map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+        cua_spaces::registry::validate_labels(&options.labels).map_err(refused)?;
+        let network_settings = match &options.network_settings {
+            Some(n) => Some(n.checked()?),
+            None if !legacy_word => Some(
+                cua_spaces::network::parse_network(
+                    network_word,
+                    &options
+                        .egress
+                        .as_ref()
+                        .map(|e| e.allow.clone())
+                        .unwrap_or_default(),
+                    &options
+                        .egress
+                        .as_ref()
+                        .map(|e| e.deny.clone())
+                        .unwrap_or_default(),
+                )
+                .map_err(|e| CuaError::InvalidArgument(e.to_string()))?,
+            ),
+            None => None,
+        };
+        if let Some(e) = &options.egress {
+            cua_spaces::egress::EgressPolicy::from(e.clone())
+                .parse()
+                .map_err(|e| CuaError::InvalidArgument(e.0))?;
+        }
+        // Refused here too, so an older daemon (which would drop both) never
+        // gets a request it would answer with an open Space.
+        let asked_egress = options
+            .egress
+            .as_ref()
+            .is_some_and(|e| !e.allow.is_empty() || !e.deny.is_empty());
+        if asked_egress && options.wait == Some(false) {
+            return Err(CuaError::InvalidArgument(
+                "egress needs the Space ready: a create with wait = false returns before it is, \
+                 so create it with wait, or set the policy with set_egress once it is"
+                    .into(),
+            ));
+        }
+        if network == cua_sandbox_core::NetworkMode::None && (options.durable || options.reuse) {
+            return Err(CuaError::InvalidArgument(
+                "network=none does not apply with durable or reuse: a durable Space is created \
+                 again elsewhere without it, and a reused Space keeps the network it has"
+                    .into(),
+            ));
+        }
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let created = s
+                        .create(cua_spaces::SpaceCreate {
+                            image: options.image,
+                            on,
+                            kind,
+                            runtime,
+                            name: options.name,
+                            cpus: options.cpus,
+                            memory_mb: options.memory_mb,
+                            disk_gb: options.disk_gb,
+                            timeout: options.timeout_ms.map(Duration::from_millis),
+                            wait: options.wait,
+                            reuse: options.reuse,
+                            command: options.command,
+                            env: options.env.into_iter().collect(),
+                            services: options.services.into_iter().collect(),
+                            spacesd: options.spacesd,
+                            env_token: None,
+                            progress: listener.clone().map(|l| {
+                                cua_spaces::ProgressSink::new(move |p| l.on_progress(p.into()))
+                            }),
+                            create_id: options.create_id.clone(),
+                            gpu: options.gpu.clone().filter(|g| !g.trim().is_empty()),
+                            durable: options.durable,
+                            mounts: Vec::new(),
+                            headless: options.headless.unwrap_or(false),
+                            forkable: options.forkable.unwrap_or(false),
+                            volumes: options.volumes.into_iter().map(Into::into).collect(),
+                            network,
+                            labels: options.labels.into_iter().collect(),
+                            egress: options.egress.map(Into::into).unwrap_or_default(),
+                            network_settings: network_settings.clone(),
+                            parent: text(&options.parent),
+                            widen: options.widen.unwrap_or(false),
+                            instance_type: text(&options.instance_type),
+                            region: text(&options.region),
+                            tree: None,
+                            relay: None,
+                        })
+                        .await?;
+                    if options.children == Some(true)
+                        && let cua_spaces::SpaceCreated::Ready { info, .. } = &created
+                    {
+                        s.set_children(&info.id, true)?;
+                    }
+                    Ok(match created {
+                        cua_spaces::SpaceCreated::Ready { info, reused } => SpaceCreateResult {
+                            space: Some(info.into()),
+                            pending_id: None,
+                            reused,
+                        },
+                        cua_spaces::SpaceCreated::Starting(p) => SpaceCreateResult {
+                            space: None,
+                            pending_id: Some(p.id),
+                            reused: false,
+                        },
+                    })
+                }
+                Host::Daemon(d) => {
+                    let request = dpb::CreateSpaceRequest {
+                        image: options.image.unwrap_or_default(),
+                        location: on.map(|o| o.to_string()).unwrap_or_default(),
+                        kind: kind.to_string(),
+                        runtime: runtime.to_string(),
+                        name: options.name.unwrap_or_default(),
+                        cpus: options.cpus.unwrap_or(0),
+                        memory_mb: options.memory_mb.unwrap_or(0),
+                        disk_gb: options.disk_gb.unwrap_or(0),
+                        timeout: options.timeout_ms.map(|ms| pbjson_types::Duration {
+                            seconds: (ms / 1000) as i64,
+                            nanos: ((ms % 1000) * 1_000_000) as i32,
+                        }),
+                        wait: options.wait,
+                        reuse: options.reuse,
+                        command: options.command.unwrap_or_default(),
+                        env: options.env,
+                        services: options
+                            .services
+                            .into_iter()
+                            .map(|(k, v)| (k, u32::from(v)))
+                            .collect(),
+                        spacesd: options.spacesd,
+                        gpu: options.gpu.unwrap_or_default(),
+                        create_id: options.create_id.unwrap_or_default(),
+                        durable: options.durable,
+                        headless: options.headless.unwrap_or(false),
+                        forkable: options.forkable.unwrap_or(false),
+                        volumes: options.volumes.into_iter().map(Into::into).collect(),
+                        network: options.network.clone().unwrap_or_default(),
+                        labels: options.labels,
+                        egress: options.egress.map(Into::into),
+                        network_settings: network_settings.as_ref().map(cua_spaces::network::to_pb),
+                        parent: options.parent.clone().unwrap_or_default(),
+                        widen: options.widen.unwrap_or(false),
+                        instance_type: options.instance_type.clone().unwrap_or_default(),
+                        region: options.region.clone().unwrap_or_default(),
+                        children: options.children,
+                    };
+                    let r = match listener {
+                        Some(l) => daemon_create_streaming(d, request, l).await?,
+                        None => d
+                            .spaces()
+                            .create_space(request)
+                            .await
+                            .map_err(daemon_err)?
+                            .into_inner(),
+                    };
+                    if let Err(what) = daemon_applied(network, asked_egress, &r).and_then(|()| {
+                        // A daemon from before network settings never reads
+                        // them: only its answer proves they hold.
+                        match (&network_settings, r.space.as_ref()) {
+                            (Some(_), Some(s)) if !r.reused && s.network_settings.is_none() => {
+                                Err("network settings")
+                            }
+                            _ => Ok(()),
+                        }
+                    }) {
+                        return Err(refuse_daemon_create(d, &r, what).await);
+                    }
+                    Ok(if r.phase == "starting" {
+                        SpaceCreateResult {
+                            space: None,
+                            pending_id: r.space.map(|s| s.id),
+                            reused: false,
+                        }
+                    } else {
+                        SpaceCreateResult {
+                            space: r.space.map(Into::into),
+                            pending_id: None,
+                            reused: r.reused,
+                        }
+                    })
+                }
+            }
+        })
+        .await
+    }
+}
+
+/// A daemon that predates network settings: nothing was read or changed.
+fn too_old_for_network(e: tonic::Status) -> CuaError {
+    match e.code() {
+        tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+            "network settings: the cua daemon is too old for them; update cua and restart its \
+             daemon"
+                .into(),
+        ),
+        _ => daemon_err(e),
+    }
+}
+
+/// What a daemon's create left out of what was asked (`Err`): `network`
+/// none it did not echo (`CreateSpaceResponse.network`), or an egress
+/// policy the Space does not carry (`Space.egress`). A daemon that predates
+/// either field never reads it and creates an open Space, so only its
+/// answer proves the setting holds.
+fn daemon_applied(
+    network: cua_sandbox_core::NetworkMode,
+    egress: bool,
+    r: &dpb::CreateSpaceResponse,
+) -> std::result::Result<(), &'static str> {
+    if network == cua_sandbox_core::NetworkMode::None && r.network != "none" {
+        return Err("network none");
+    }
+    let carried = r
+        .space
+        .as_ref()
+        .and_then(|s| s.egress.as_ref())
+        .is_some_and(|e| !e.allow.is_empty() || !e.deny.is_empty());
+    if egress && !carried {
+        return Err("egress rules");
+    }
+    Ok(())
+}
+
+/// Deletes the Space a daemon made without `what` (never a reused one) and
+/// says the daemon is too old to enforce it.
+async fn refuse_daemon_create(
+    d: &DaemonClient,
+    r: &dpb::CreateSpaceResponse,
+    what: &str,
+) -> CuaError {
+    let id = r.space.as_ref().map(|s| s.id.clone()).unwrap_or_default();
+    let deleted = if r.reused || id.is_empty() {
+        String::new()
+    } else {
+        // A create that did not wait may still be running: stop it, then
+        // delete what it made.
+        if r.phase == "starting" {
+            let _ = d
+                .spaces()
+                .cancel_create_space(dpb::CancelCreateSpaceRequest { space: id.clone() })
+                .await;
+        }
+        let _ = d
+            .spaces()
+            .delete_space(dpb::DeleteSpaceRequest {
+                space: id.clone(),
+                keep_children: false,
+            })
+            .await;
+        format!(", so the Space it made ({id}) was deleted")
+    };
+    let version = d
+        .info()
+        .await
+        .map(|i| format!(" ({})", i.version))
+        .unwrap_or_default();
+    CuaError::CapabilityMissing(format!(
+        "{what}: the cua daemon{version} is too old to enforce it (the Space would have \
+         outbound network){deleted}; update cua and restart its daemon"
+    ))
+}
+
+/// How long a create stream may stay silent (see [`daemon_create_streaming`]).
+const CREATE_STREAM_IDLE: Duration = Duration::from_secs(15 * 60);
+/// Over a caller's own create timeout.
+const CREATE_STREAM_IDLE_MARGIN: Duration = Duration::from_secs(5 * 60);
+
+/// `CreateSpaceStream` through the daemon, forwarding its progress; a
+/// daemon without it (`Unimplemented`) gets a plain `CreateSpace` and the
+/// listener hears only `ready`.
+async fn daemon_create_streaming(
+    d: &DaemonClient,
+    request: dpb::CreateSpaceRequest,
+    listener: Arc<dyn SpaceCreateListener>,
+) -> Result<dpb::CreateSpaceResponse> {
+    let timeout = request
+        .timeout
+        .as_ref()
+        .map(|t| Duration::from_secs(t.seconds.max(0) as u64));
+    use dpb::create_space_stream_response::Event;
+    let ready = || SpaceCreateProgress {
+        phase: "ready".into(),
+        fraction: None,
+        detail: String::new(),
+        bytes_done: None,
+        bytes_total: None,
+        bytes_per_second: None,
+        space: String::new(),
+    };
+    let mut stream = match d
+        .spaces()
+        .create_space_stream(dpb::CreateSpaceStreamRequest {
+            create: Some(request.clone()),
+        })
+        .await
+    {
+        Ok(s) => s.into_inner(),
+        Err(e) if e.code() == tonic::Code::Unimplemented => {
+            let r = d
+                .spaces()
+                .create_space(request)
+                .await
+                .map_err(daemon_err)?
+                .into_inner();
+            listener.on_progress(ready());
+            return Ok(r);
+        }
+        Err(e) => return Err(daemon_err(e)),
+    };
+    // The daemon ends the stream after one result (or an error status).
+    // Bounded: every phase of a create reports within its own budget (the
+    // longest, the readiness wait, is `timeout`, 10 min by default), so a
+    // stream silent for longer is a daemon that lost the create.
+    let idle = timeout
+        .map(|t| t + CREATE_STREAM_IDLE_MARGIN)
+        .unwrap_or(CREATE_STREAM_IDLE)
+        .max(CREATE_STREAM_IDLE);
+    while let Some(msg) = tokio::time::timeout(idle, stream.message())
+        .await
+        .map_err(|_| {
+            CuaError::Timeout(format!(
+                "the cua daemon reported nothing about the create for {} min; see `cua daemon \
+                 status` and `cua sb ls`",
+                idle.as_secs() / 60
+            ))
+        })?
+        .map_err(daemon_err)?
+    {
+        match msg.event {
+            Some(Event::Progress(p)) => listener.on_progress(SpaceCreateProgress {
+                phase: p.phase,
+                fraction: p.fraction,
+                detail: p.detail,
+                bytes_done: p.bytes_done,
+                bytes_total: p.bytes_total,
+                bytes_per_second: p.bytes_per_second,
+                space: p.space,
+            }),
+            Some(Event::Result(r)) => return Ok(r),
+            None => {}
+        }
+    }
+    Err(CuaError::Internal(
+        "the daemon ended the create stream without a result".into(),
+    ))
+}
+
+#[uniffi::export]
+impl Spaces {
+    /// Cancels a create that is still running: `space` is the create's
+    /// `create_id`, the id the Space will have (`local:<name>`, carried by
+    /// every progress report) or its name. The work in flight stops (an
+    /// image download, a boot, a relay registration) and what the
+    /// create made is removed (its VM or container and disks, its relay
+    /// machine); nothing that existed before is touched.
+    /// Finished image downloads stay cached, so the next create resumes.
+    /// Returns once the clean-up is done; the create itself fails with
+    /// `Cancelled`. Idempotent: a second call says `not_creating`. Works
+    /// for a create another process runs, and one a daemon restart cut off.
+    pub async fn cancel_create(&self, space: String) -> Result<SpaceCancelOutcome> {
+        let host = self.host.clone();
+        run(async move {
+            Ok(match &host {
+                Host::Embedded(s) => {
+                    let o = s.cancel_create(&space).await?;
+                    SpaceCancelOutcome {
+                        id: o.id,
+                        state: o.state.as_str().into(),
+                        message: o.message,
+                    }
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .cancel_create_space(dpb::CancelCreateSpaceRequest { space })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    SpaceCancelOutcome {
+                        id: r.id,
+                        state: r.state,
+                        message: r.message,
+                    }
+                }
+            })
+        })
+        .await
+    }
+
+    /// The GPU options each runtime of `on` (`local` by default, or
+    /// `cloud`) offers on this host: Lume's "GPU acceleration" for macOS
+    /// VMs (experimental, Apple silicon), QEMU's virgl and containers'
+    /// NVIDIA GPUs on Linux. A runtime with no option says why.
+    pub async fn gpu_support(&self, on: Option<String>) -> Result<Vec<GpuSupport>> {
+        let host = self.host.clone();
+        run(async move {
+            let location = on.unwrap_or_default();
+            Ok(match &host {
+                Host::Embedded(s) => {
+                    let on = if location.trim().is_empty() {
+                        cua_sandbox_core::placement::On::Local
+                    } else {
+                        cua_sandbox_core::placement::On::parse(&location)
+                            .map_err(|e| CuaError::InvalidPlacement(e.message))?
+                    };
+                    s.gpu_support(&on)
+                        .await
+                        .into_iter()
+                        .map(Into::into)
+                        .collect()
+                }
+                Host::Daemon(d) => d
+                    .spaces()
+                    .get_gpu_support(dpb::GetGpuSupportRequest { location })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .runtimes
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            })
+        })
+        .await
+    }
+
+    /// Your machines that provide Spaces (the account's relay hosts, then
+    /// the hosts added by their Tailscale or LAN address), each asked for
+    /// its limits: what `create` takes as `on="host:<id>"`. One that does
+    /// not answer is listed offline when it provided a Space before.
+    pub async fn hosts(&self) -> Result<Vec<SpacesHost>> {
+        let host = self.host.clone();
+        run(async move {
+            Ok(match &host {
+                Host::Embedded(s) => s.hosts().await?.into_iter().map(Into::into).collect(),
+                Host::Daemon(d) => d
+                    .spaces()
+                    .list_hosts(dpb::ListHostsRequest {})
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .hosts
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+            })
+        })
+        .await
+    }
+
+    /// Gives a Space a lifetime of `seconds` from now, replacing any earlier
+    /// one: when it passes, the cua daemon deletes the Space (`on_expire`
+    /// `"delete"`, the default) or turns it off (`"suspend"`), whether or
+    /// not this process is still running. Works for a Space on this machine
+    /// or one of your machines. Returns when it ends (Unix seconds).
+    /// Embedded: recorded; the cua daemon on this machine enforces it.
+    pub async fn set_lifetime(
+        &self,
+        space: String,
+        seconds: u64,
+        on_expire: Option<String>,
+    ) -> Result<i64> {
+        let action = match on_expire.as_deref().filter(|s| !s.is_empty()) {
+            None => None,
+            Some(s) => Some(cua_sandbox_core::LocalExpiry::parse(s).ok_or_else(|| {
+                CuaError::InvalidArgument(format!(
+                    "on_expire {s:?}: expected \"delete\" or \"suspend\""
+                ))
+            })?),
+        };
+        let host = self.host.clone();
+        run(async move {
+            let d = Duration::from_secs(seconds);
+            match &host {
+                Host::Embedded(s) => {
+                    let at = s.set_lifetime(&space, d, action)?;
+                    Ok(at
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0))
+                }
+                Host::Daemon(c) => Ok(c
+                    .spaces()
+                    .set_space_lifetime(dpb::SetSpaceLifetimeRequest {
+                        space,
+                        duration: Some(pbjson_types::Duration {
+                            seconds: seconds as i64,
+                            nanos: 0,
+                        }),
+                        on_expire: action.map(|a| a.as_str().to_string()).unwrap_or_default(),
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .expires_at
+                    .map(|t| t.seconds)
+                    .unwrap_or(0)),
+            }
+        })
+        .await
+    }
+
+    /// A Space's network: its settings, what they open, where they are
+    /// enforced (or why its network is cut), and what is always blocked.
+    pub async fn network(&self, space: String) -> Result<SpaceNetworkInfo> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    Ok(cua_spaces::network::info_to_pb(&s.network_info(&space).await?).into())
+                }
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .get_space_network(dpb::GetSpaceNetworkRequest {
+                        space,
+                        ack_notice: false,
+                    })
+                    .await
+                    .map_err(too_old_for_network)?
+                    .into_inner()
+                    .network
+                    .unwrap_or_default()
+                    .into()),
+            }
+        })
+        .await
+    }
+
+    /// What a Space on the daemon's computer tried to reach and its network
+    /// refused, most recent first (`cua network log`).
+    pub async fn network_log(&self, space: String) -> Result<Vec<NetworkEvent>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s
+                    .network_events(&space)
+                    .await?
+                    .into_iter()
+                    .map(|e| NetworkEvent {
+                        reason: e.reason,
+                        dst: e.dst,
+                        proto: e.proto,
+                        count: e.count,
+                        last_unix: e.last_unix,
+                    })
+                    .collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .get_space_network_log(dpb::GetSpaceNetworkLogRequest { space })
+                    .await
+                    .map_err(too_old_for_network)?
+                    .into_inner()
+                    .events
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// Marks the one-time notice about the new network defaults as shown
+    /// for `space` ([`SpaceNetworkInfo::notice_pending`]).
+    pub async fn ack_network_notice(&self, space: String) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s.ack_network_notice(&space)?),
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .get_space_network(dpb::GetSpaceNetworkRequest {
+                            space,
+                            ack_notice: true,
+                        })
+                        .await
+                        .map_err(too_old_for_network)?;
+                    Ok(())
+                }
+            }
+        })
+        .await
+    }
+
+    /// Replaces a Space's network settings (see [`NetworkSettings`]). A
+    /// child stays within its parent's unless `widen`; `tree` gives its
+    /// children the same settings. They hold at once where the runtime can
+    /// change a running guest's network, else from its next start
+    /// (`applied`). A Space another computer runs is `Unsupported`.
+    pub async fn set_network(
+        &self,
+        space: String,
+        settings: NetworkSettings,
+        widen: bool,
+        tree: bool,
+    ) -> Result<SetNetworkResult> {
+        let checked = settings.checked()?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let applied = s.set_network(&space, &checked, widen, tree).await?;
+                    let info = s.network_info(&space).await?;
+                    Ok(SetNetworkResult {
+                        applied: match applied {
+                            cua_spaces::network::Applied::Now => "now",
+                            cua_spaces::network::Applied::NextStart => "next_start",
+                        }
+                        .into(),
+                        network: cua_spaces::network::info_to_pb(&info).into(),
+                    })
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .set_space_network(dpb::SetSpaceNetworkRequest {
+                            space,
+                            settings: Some(cua_spaces::network::to_pb(&checked)),
+                            widen,
+                            tree,
+                        })
+                        .await
+                        .map_err(too_old_for_network)?
+                        .into_inner();
+                    Ok(SetNetworkResult {
+                        applied: r.applied,
+                        network: r.network.unwrap_or_default().into(),
+                    })
+                }
+            }
+        })
+        .await
+    }
+
+    /// Replaces a Space's egress policy; an empty one removes it (see
+    /// [`EgressPolicy`]). Its host enforces it at once. A bad entry is
+    /// `InvalidArgument`, a Space that cannot take one `Unsupported`.
+    pub async fn set_egress(&self, space: String, policy: EgressPolicy) -> Result<()> {
+        // Checked here too, so no call travels with an entry it refuses.
+        cua_spaces::egress::EgressPolicy::from(policy.clone())
+            .parse()
+            .map_err(|e| CuaError::InvalidArgument(e.0))?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.set_egress(&space, &policy.into()).await?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_egress(dpb::SetSpaceEgressRequest {
+                            space,
+                            egress: Some(policy.into()),
+                        })
+                        .await
+                        .map_err(|e| match e.code() {
+                            // A daemon that predates egress rules: nothing
+                            // was applied.
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "egress rules: the cua daemon is too old to set them; update \
+                                 cua and restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Sets when a Space's viewers may move the clipboard between this
+    /// computer and the Space: `viewing` (only while you're viewing, the
+    /// default), `ask` or `off`. It applies to viewers opened afterwards.
+    /// The agent tools `computer_clipboard_*` act inside the Space and are
+    /// not affected. Another word is `InvalidArgument`.
+    /// Sets what a Space sees of the Cua Volume: `own` (its own folder) or
+    /// `off`. Applies now: `off` unmounts the Volume (named volumes it
+    /// mounted stay).
+    pub async fn set_volume(&self, space: String, volume: String) -> Result<()> {
+        let setting = cua_spaces::registry::VolumeSetting::parse(&volume)?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.set_volume_setting(&space, setting).await?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_volume(dpb::SetSpaceVolumeRequest {
+                            space,
+                            volume: setting.as_str().into(),
+                        })
+                        .await
+                        .map_err(|e| match e.code() {
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "the Volume setting: the cua daemon is too old to set it; \
+                                 update cua and restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn set_clipboard(&self, space: String, clipboard: String) -> Result<()> {
+        // Checked here too, so no call travels with a word it refuses.
+        let setting: cua_spaces::clipboard::ClipboardSetting = clipboard.parse()?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.set_clipboard(&space, setting)?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_clipboard(dpb::SetSpaceClipboardRequest {
+                            space,
+                            clipboard: setting.as_str().into(),
+                        })
+                        .await
+                        .map_err(|e| match e.code() {
+                            // A daemon that predates the setting: nothing
+                            // was applied.
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "the clipboard setting: the cua daemon is too old to set it; \
+                                 update cua and restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Lets a Space make child Spaces of its own, or stops it. While on,
+    /// `cua`, the SDKs and the agent's tools in that Space create, list and
+    /// delete Spaces that belong to it (on the same computer, never wider
+    /// than it, ending no later than it), through a channel only it can
+    /// reach. Off ends its capability at once; children it made keep running
+    /// until deleted or their lifetime ends. Only for a Space the machine of
+    /// this runtime runs itself.
+    pub async fn set_children(&self, space: String, enabled: bool) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let id = s.resolve(&space)?.to_string();
+                    if enabled && !id.starts_with("local:") {
+                        return Err(CuaError::Unsupported(
+                            "child Spaces are available for Spaces this computer runs".into(),
+                        ));
+                    }
+                    s.set_children(&id, enabled)?;
+                }
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_children(dpb::SetSpaceChildrenRequest { space, enabled })
+                        .await
+                        .map_err(|e| match e.code() {
+                            tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                                "child Spaces: the cua daemon is too old; update cua and \
+                                 restart its daemon"
+                                    .into(),
+                            ),
+                            _ => daemon_err(e),
+                        })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// The budget of `space`'s tree (any Space of it) and what its
+    /// children use now. Kept by the cua daemon.
+    pub async fn tree_budget(&self, space: String) -> Result<TreeBudget> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(_) => Err(CuaError::Unsupported(
+                    "tree budgets are kept by the cua daemon; start it with `cua daemon start`"
+                        .into(),
+                )),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .get_tree_budget(dpb::GetTreeBudgetRequest { space })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .budget
+                    .unwrap_or_default()
+                    .into()),
+            }
+        })
+        .await
+    }
+
+    /// Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
+    /// memory its children may hold at once, and what they may cost. A child
+    /// that does not fit is refused with what is left. All `None` removes it.
+    pub async fn set_tree_budget(
+        &self,
+        space: String,
+        limits: TreeBudgetLimits,
+    ) -> Result<TreeBudget> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(_) => Err(CuaError::Unsupported(
+                    "tree budgets are kept by the cua daemon; start it with `cua daemon start`"
+                        .into(),
+                )),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .set_tree_budget(dpb::SetTreeBudgetRequest {
+                        space,
+                        limits: Some(dpb::TreeBudgetLimits {
+                            max_spaces: limits.max_spaces,
+                            max_vcpus: limits.max_vcpus,
+                            max_memory_mb: limits.max_memory_mb,
+                            usd_per_hour: limits.usd_per_hour,
+                            usd_total: limits.usd_total,
+                        }),
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .budget
+                    .unwrap_or_default()
+                    .into()),
+            }
+        })
+        .await
+    }
+
+    /// Child Spaces whose parent is gone or out of reach. The cua daemon
+    /// ends a child only on proof its parent is gone (after a grace period);
+    /// the rest are listed here and never ended by it.
+    pub async fn orphans(&self) -> Result<Vec<SpaceOrphan>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(_) => Err(CuaError::Unsupported(
+                    "orphaned children are judged by the cua daemon; start it with `cua daemon \
+                     start`"
+                        .into(),
+                )),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .list_orphans(dpb::ListOrphansRequest {})
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .orphans
+                    .into_iter()
+                    .map(|o| SpaceOrphan {
+                        space: o.space,
+                        parent: o.parent,
+                        state: o.state,
+                        why: o.why,
+                        ends_in_secs: o.ends_in_secs,
+                    })
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// A machine's health as its own cua daemon checks it: Local Network
+    /// access (and which app macOS holds responsible), free disk,
+    /// virtualization, memory left by running Spaces, the permissions
+    /// sharing its desktop needs. `machine`: another of your machines, by
+    /// id or name (asked over the relay, the mesh or its direct address);
+    /// `None` for this one. Read-only; fails plainly when that machine is
+    /// offline, not yours, or runs a Cua that predates the check.
+    pub async fn machine_health(&self, machine: Option<String>) -> Result<MachineHealth> {
+        let host = self.host.clone();
+        run(async move {
+            let machine = machine.filter(|m| !m.trim().is_empty());
+            let r = match (&host, machine) {
+                (Host::Embedded(_), None) => cua_daemon_core::machine_doctor::response().await,
+                (Host::Embedded(s), Some(m)) => s.machine_health(&m).await?,
+                (Host::Daemon(d), m) => d.diagnose_host(m.unwrap_or_default()).await?,
+            };
+            Ok(r.into())
+        })
+        .await
+    }
+
+    /// Deletes a Space's sandbox and forgets it (a Space added by address
+    /// is only forgotten). Its child Spaces are deleted first. Returns what
+    /// happened.
+    pub async fn delete(&self, space: String) -> Result<String> {
+        self.delete_tree(space, false).await
+    }
+
+    /// [`Spaces::delete`], with `keep_children`: its child Spaces become
+    /// top-level Spaces and keep running instead of being deleted first.
+    pub async fn delete_tree(&self, space: String, keep_children: bool) -> Result<String> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s.delete_tree(&space, keep_children).await?),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .delete_space(dpb::DeleteSpaceRequest {
+                        space,
+                        keep_children,
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .message),
+            }
+        })
+        .await
+    }
+
+    /// Deletes several Spaces ([`Spaces::delete`] each), at most three at
+    /// a time, turning running ones off first. One result per id, in
+    /// order; one failure never stops the rest.
+    pub async fn delete_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s
+                    .delete_many(&ids)
+                    .await
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .delete_spaces(dpb::DeleteSpacesRequest { spaces: ids })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .results
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// Takes this account off Spaces shared with it (through the relay): a
+    /// direct share ends, a team's Space leaves this account's list. Your
+    /// own Spaces are refused (delete them). One result per id, in order;
+    /// a relay that predates leaving answers "Couldn't leave <name>: the
+    /// Cua relay needs an update."
+    pub async fn leave_many(&self, ids: Vec<String>) -> Result<Vec<BulkResult>> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(s
+                    .leave_many(&ids)
+                    .await
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .leave_spaces(dpb::LeaveSpacesRequest { spaces: ids })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .results
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()),
+            }
+        })
+        .await
+    }
+
+    /// Gives a Space a new name; its id stays the same. Returns the Space
+    /// as it is listed now (`display_name`, or `name` for a Space that is a
+    /// machine on the relay).
+    ///
+    /// The name follows the rule a create's does (lowercase letters,
+    /// digits and dashes, starting and ending with a letter or digit, at
+    /// most 63) and may not be another of your Spaces' names
+    /// (`InvalidArgument`). Only its owner renames a Space: one shared with
+    /// you is refused (`PermissionDenied`). A Space you shared, or one of
+    /// your computers provides, is renamed on the relay too, so your other
+    /// devices and the people it is shared with see the new name.
+    pub async fn rename(&self, space: String, name: String) -> Result<SpaceInfo> {
+        cua_spaces::rename::check_space_name(&name).map_err(refused)?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    s.rename(&space, &name)
+                        .await
+                        .map(Into::into)
+                        .map_err(|e| match e {
+                            // The relay's refusal in its own words.
+                            cua_spaces::Error::Relay(r) if e.tag() == "permission_denied" => {
+                                CuaError::PermissionDenied(r.to_string())
+                            }
+                            e => refused(e),
+                        })
+                }
+                Host::Daemon(d) => d
+                    .spaces()
+                    .rename_space(dpb::RenameSpaceRequest { space, name })
+                    .await
+                    .map_err(|e| match e.code() {
+                        // A daemon that predates renaming: nothing changed.
+                        tonic::Code::Unimplemented => CuaError::CapabilityMissing(
+                            "renaming a Space: the cua daemon is too old to rename one; update \
+                             cua and restart its daemon"
+                                .into(),
+                        ),
+                        _ => daemon_err(e),
+                    })?
+                    .into_inner()
+                    .space
+                    .map(Into::into)
+                    .ok_or_else(|| CuaError::Internal("the daemon answered no Space".into())),
+            }
+        })
+        .await
+    }
+
+    /// Turns a Space off the way its provider can (`SpaceInfo.power`):
+    /// stops it, keeping its disk and freeing its memory (a local VM; a
+    /// Space one of your machines provides, which that machine stops), or
+    /// suspends it, keeping its memory (a local container that cannot
+    /// stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+    /// purpose. A Space added by address and your own computers cannot be
+    /// turned off.
+    pub async fn stop(&self, space: String) -> Result<SpacePowerReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("stop_space", json!({"space": space}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Suspends a local Space (a container or a QEMU VM), keeping its
+    /// memory: it resumes where it was, and its memory stays in use until
+    /// then. [`Spaces::stop`] stops it instead and frees its memory.
+    pub async fn suspend(&self, space: String) -> Result<SpacePowerReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("stop_space", json!({"space": space, "suspend": true}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+    /// of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+    /// shuts down and boots again from its own disk (a stopped one boots),
+    /// so its files stay and its memory and processes do not. Returns once
+    /// it is ready again.
+    pub async fn resize(
+        &self,
+        space: String,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<SpaceResizeReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "resize_space",
+                    json!({"space": space, "cpus": cpus, "memory_mb": memory_mb, "disk_gb": disk_gb}),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// Turns a Space on again: resumes a suspended one, boots a stopped one
+    /// (a Space one of your machines provides joins the relay again), and
+    /// leaves a running one as it is. Returns once it answers (bounded).
+    pub async fn start(&self, space: String) -> Result<SpacePowerReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("start_space", json!({"space": space}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Publishes `space` on the cua.ai relay as a machine of the signed-in
+    /// account, the way `cua host setup` publishes this computer: the
+    /// Space's own driver dials out, so the account's other devices (a
+    /// phone off this network) reach it as `relay:<machine>`, and nobody
+    /// else until it is shared. Idempotent.
+    pub async fn relay_register(&self, space: String) -> Result<SpaceRelayRegistration> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("relay_register_space", json!({"space": space}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Takes `space` off the relay (its driver leaves; every share goes).
+    /// Returns false when it was not on the relay.
+    pub async fn relay_unregister(&self, space: String) -> Result<bool> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host
+                .tool_value("relay_unregister_space", json!({"space": space}))
+                .await?;
+            Ok(v.get("unregistered")
+                .and_then(Value::as_bool)
+                .unwrap_or(false))
+        })
+        .await
+    }
+
+    /// [`Spaces::relay_unregister`] for one of your computers
+    /// (`relay:<machine>`), choosing what happens to the Spaces it
+    /// provides: with `delete_spaces` false they stay on the account,
+    /// detached (they come back when the computer registers again); with
+    /// true they are deleted too, files first (through the computer while
+    /// it answers), then their records. Returns false when it was not on
+    /// the relay.
+    pub async fn relay_unregister_computer(
+        &self,
+        space: String,
+        delete_spaces: bool,
+    ) -> Result<bool> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host
+                .tool_value(
+                    "relay_unregister_space",
+                    json!({"space": space, "delete_spaces": delete_spaces}),
+                )
+                .await?;
+            Ok(v.get("unregistered")
+                .and_then(Value::as_bool)
+                .unwrap_or(false))
+        })
+        .await
+    }
+
+    /// A connected handle to a registered Space.
+    pub async fn space(&self, space: String) -> Result<Arc<Space>> {
+        let host = self.host.clone();
+        let backend = self.backend.clone();
+        run(async move {
+            let (mut info, inner) = host.connect(&space).await?;
+            // Relay discovery has no OS fields. Use the handshake already
+            // fetched by either topology, without registering the machine.
+            if let Some((family, name, pretty_name)) = inner.reported_os() {
+                info.os = family.into();
+                info.os_name = name.into();
+                info.os_pretty_name = pretty_name.into();
+            }
+            Ok(Arc::new(Space {
+                host,
+                backend,
+                info,
+                inner,
+            }))
+        })
+        .await
+    }
+
+    /// Starts Space `name` from `source` (a Space id such as
+    /// `local:<name>`, a sandbox name, a checkpoint name, or the tag of a
+    /// build ([`Spaces::build`]) or its checkpoint; a sandbox wins) and returns it
+    /// connected.
+    /// A running source is forked with its memory; a QEMU checkpoint's
+    /// forks share its RAM copy-on-write. A fork of a build has the build's
+    /// environment, working directory and user. Local sandboxes only.
+    pub async fn fork(&self, source: String, name: String) -> Result<Arc<Space>> {
+        let source = match cua_spaces::SpaceId::parse(&source) {
+            Ok(_) => local_sandbox_of(&source, "forks are of")?,
+            Err(_) => source,
+        };
+        self.fork_impl(source, name).await
+    }
+
+    /// What every agent harness is and cannot do (`agent_capabilities`),
+    /// as JSON.
+    pub async fn agent_capabilities(&self) -> Result<String> {
+        let host = self.host.clone();
+        run(async move {
+            Ok(host
+                .tool_value("agent_capabilities", json!({}))
+                .await?
+                .to_string())
+        })
+        .await
+    }
+
+    /// The Spaces MCP `tools/list` result as JSON (the contract).
+    pub async fn list_tools_json(&self) -> Result<String> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => Ok(cua_spaces::mcp::McpServer::new(s.clone())
+                    .tools_list()
+                    .to_string()),
+                Host::Daemon(d) => Ok(d
+                    .spaces()
+                    .list_space_tools(dpb::ListSpaceToolsRequest {})
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner()
+                    .tools_json),
+            }
+        })
+        .await
+    }
+
+    /// Calls any Spaces MCP tool with JSON arguments (the implementation
+    /// `cua daemon mcp` serves). Tool errors are returned, not raised.
+    // It also serves the app's own methods (`agent_keys.*`, `spaces.reach`).
+    // A plain comment, not a doc comment: UniFFI's API checksum covers doc
+    // comments, so editing one makes the checked-in bindings stale.
+    pub async fn call_tool_json(
+        &self,
+        tool: String,
+        arguments_json: Option<String>,
+    ) -> Result<SpaceToolResult> {
+        let host = self.host.clone();
+        run(async move {
+            // The contract's tools, and the Spaces app's settings methods
+            // (`agent_keys.*`), which no MCP server serves.
+            if cua_spaces::contract::tool(&tool).is_none()
+                && !cua_spaces::agents::keys::is_app_method(&tool)
+                && !cua_spaces::reach::is_app_method(&tool)
+            {
+                return Err(CuaError::NotFound(format!("Spaces tool {tool}")));
+            }
+            let args: Value = match arguments_json.as_deref().map(str::trim) {
+                None | Some("") => json!({}),
+                Some(s) => serde_json::from_str(s)?,
+            };
+            let o = host.tool(&tool, args).await?;
+            Ok(SpaceToolResult::with_meta(
+                o.content,
+                o.structured,
+                o.is_error,
+                o.meta,
+            ))
+        })
+        .await
+    }
+}
+
+// ------------------------------------------------------------ Space
+
+/// A connected Space. Every primitive checks the spacesd feature it
+/// needs first and fails with `CapabilityMissing` naming it.
+#[derive(uniffi::Object)]
+pub struct Space {
+    host: Host,
+    /// The sandbox API of the same runtime (checkpoints and forks).
+    backend: Backend,
+    info: SpaceInfo,
+    inner: cua_spaces::Space,
+}
+
+impl Space {
+    /// Rust hosts: the `cua_spaces::Space` handle.
+    pub fn handle(&self) -> &cua_spaces::Space {
+        &self.inner
+    }
+
+    /// Runs a Space-scoped contract tool (`upload`, `send_file`, ...; see
+    /// [`cua_spaces::mcp::SPACE_SCOPED_TOOLS`]) in this process against this
+    /// handle rather than in the daemon, so host paths are read with this
+    /// process's file permissions. Tool errors are returned, not raised.
+    pub async fn call_tool_here(
+        &self,
+        tool: &str,
+        arguments: Value,
+    ) -> cua_spaces::mcp::ToolOutcome {
+        let s = self.inner.clone();
+        let tool = tool.to_string();
+        run(async move { Ok(cua_spaces::mcp::call_on(&s, &tool, arguments).await) })
+            .await
+            .unwrap_or_else(|e| cua_spaces::mcp::ToolOutcome::error_message("env", e.to_string()))
+    }
+}
+
+fn stream_target(
+    s: &cua_spaces::Space,
+    o: &SpaceStreamOptions,
+) -> impl std::future::Future<Output = Result<cua_spaces::stream::StreamTarget>> + Send {
+    let s = s.clone();
+    let o = o.clone();
+    async move {
+        use cua_spaces::stream::StreamTarget;
+        Ok(match (o.window_id, o.app_name) {
+            (Some(w), _) if !w.is_empty() => StreamTarget::Window(w),
+            (_, Some(app)) if !app.is_empty() => {
+                StreamTarget::Window(s.find_window(&app).await?.window_id)
+            }
+            _ => StreamTarget::Display(o.display),
+        })
+    }
+}
+
+fn stream_options(o: &SpaceStreamOptions) -> Result<cua_spaces::stream::StreamOptions> {
+    use cua_spacesd_client::pb::MediaCodec;
+    let codecs = o
+        .codecs
+        .iter()
+        .map(|c| match c.to_ascii_lowercase().as_str() {
+            "h264" => Ok(MediaCodec::H264),
+            "bgra" => Ok(MediaCodec::Bgra),
+            "png" => Ok(MediaCodec::Png),
+            other => Err(CuaError::InvalidArgument(format!(
+                "unknown codec {other:?}"
+            ))),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(cua_spaces::stream::StreamOptions {
+        codecs,
+        max_fps: o.max_fps,
+        max_dimension: o.max_dimension,
+        audio: o.audio,
+        ticket_ttl: o.ticket_ttl_ms.map(Duration::from_millis),
+        policy: match o.policy.as_deref() {
+            None | Some("") => None,
+            Some("view_only") => Some(cua_spacesd_client::pb::SessionPolicy::ViewOnly),
+            Some("background_only") => Some(cua_spacesd_client::pb::SessionPolicy::BackgroundOnly),
+            Some("allow_activation") => {
+                Some(cua_spacesd_client::pb::SessionPolicy::AllowActivation)
+            }
+            Some(other) => {
+                return Err(CuaError::InvalidArgument(format!(
+                    "policy must be view_only, background_only or allow_activation (got {other:?})"
+                )));
+            }
+        },
+    })
+}
+
+#[uniffi::export]
+impl Space {
+    /// Id.
+    pub fn id(&self) -> String {
+        self.info.id.clone()
+    }
+
+    /// Saves this Space's state as checkpoint `checkpoint` (the sandbox
+    /// API's `Sandboxes.checkpoint`): it keeps running, and
+    /// `Spaces.fork(checkpoint, name)` (this machine) or `Spaces.create`
+    /// with image `checkpoint:<name>` (any of your machines) starts new
+    /// Spaces from it. `pin` (default false) keeps it until it is unpinned
+    /// (`Sandboxes.pin_checkpoint`). A Space another machine of yours
+    /// provides is checkpointed on that machine, which keeps the checkpoint
+    /// ([`CheckpointSummary::host`]).
+    #[uniffi::method(default(pin = false))]
+    pub async fn checkpoint(&self, checkpoint: String, pin: bool) -> Result<CheckpointSummary> {
+        super::Sandboxes {
+            backend: self.backend.clone(),
+        }
+        .checkpoint(self.info.id.clone(), checkpoint, pin)
+        .await
+    }
+
+    /// Starts Space `name`, a fork of this one (with its memory when it is
+    /// running), and returns it connected. To fork from a checkpoint, use
+    /// `Spaces.fork(checkpoint, name)`. Local Spaces only.
+    pub async fn fork(&self, name: String) -> Result<Arc<Space>> {
+        let sandbox = local_sandbox_of(&self.info.id, "forks are of")?;
+        Spaces {
+            host: self.host.clone(),
+            backend: self.backend.clone(),
+        }
+        .fork_impl(sandbox, name)
+        .await
+    }
+
+    /// Connection-time snapshot; never refreshed. With spacesd, handshake
+    /// `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+    /// families clear them. Other fields and non-spacesd services retain
+    /// registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
+    pub fn info(&self) -> SpaceInfo {
+        self.info.clone()
+    }
+
+    /// Whether the spacesd supports `feature`.
+    pub fn supports(&self, feature: String) -> bool {
+        self.inner.supports(&feature)
+    }
+
+    /// `GetCapabilities` of the spacesd, as proto3 JSON.
+    pub fn capabilities_json(&self) -> Result<String> {
+        Ok(serde_json::to_string(self.inner.capabilities())?)
+    }
+
+    /// The cua-spacesd client over the connection this Space authenticated.
+    pub fn spacesd(&self) -> Result<Arc<super::spacesd::SpacesdClient>> {
+        let client = self.inner.spacesd()?.clone();
+        let s = self.inner.clone();
+        let refresh: super::spacesd::WsHeaderRefresh = Arc::new(move || {
+            let s = s.clone();
+            Box::pin(async move { Ok(s.websocket_headers().await?) })
+        });
+        let (host, space) = (self.host.clone(), self.inner.clone());
+        let route: super::spacesd::RouteSource = Arc::new(move || {
+            let (host, space) = (host.clone(), space.clone());
+            Box::pin(async move { host.route(&space).await })
+        });
+        Ok(Arc::new(
+            super::spacesd::SpacesdClient::new(client, vec![])
+                .at(self.inner.provider().as_str())
+                .with_ws_refresh(refresh)
+                .with_route(route),
+        ))
+    }
+
+    /// Which way this Space's calls go now (see [`super::spacesd::SpacesdClient::route`]):
+    /// `local …`, `direct …`, `relay …`, `mesh direct <ip:port> rtt <ms> ms`,
+    /// `mesh relayed` or `cloud`; empty when the Space runs no cua-spacesd.
+    /// In daemon mode it is the daemon's connection to the Space.
+    pub async fn route(&self) -> Result<String> {
+        let (host, space) = (self.host.clone(), self.inner.clone());
+        run(async move { host.route(&space).await }).await
+    }
+
+    /// What carries this Space's calls, for a badge: `mesh` (end to end) or
+    /// `relay_https` (the relay can read the session in transit; with
+    /// `fallback_reason` when the mesh was wanted), or `local`, `direct`,
+    /// `cloud`. In daemon mode it is the daemon's connection to the Space.
+    pub async fn transport(&self) -> Result<SpaceTransport> {
+        let (host, space) = (self.host.clone(), self.inner.clone());
+        run(async move { host.transport(&space).await }).await
+    }
+
+    /// Forwards a free loopback port on this machine to guest `port` over
+    /// this Space's own connection (cua-spacesd's tunnel): the same path its
+    /// calls take, so a Space one of your machines provides on your LAN is
+    /// reached directly, and never through a port opened on that machine's
+    /// network. `local_addr()` is the address to connect to; the forward
+    /// stops on `close()` or when dropped. `bind` is the local address to
+    /// listen on (default `127.0.0.1:0`, a free loopback port; for example
+    /// `0.0.0.0:0` serves your LAN, so only do that on a network you trust:
+    /// whoever reaches it reaches the guest port).
+    #[uniffi::method(default(bind = None))]
+    pub async fn forward(
+        &self,
+        port: u16,
+        bind: Option<String>,
+    ) -> Result<Arc<super::sandbox::PortForward>> {
+        let s = self.inner.clone();
+        run(async move {
+            s.require(cua_spacesd_client::TUNNEL_FORWARD_FEATURE)?;
+            let mut opts = cua_spacesd_client::ForwardOptions::new(port);
+            if let Some(b) = bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                opts.bind = b.parse().map_err(|e| {
+                    CuaError::InvalidArgument(format!(
+                        "bind {b:?}: {e} (use host:port, e.g. 127.0.0.1:0)"
+                    ))
+                })?;
+            }
+            let fwd = s.spacesd()?.forward_tcp(opts).await?;
+            Ok(Arc::new(super::sandbox::PortForward::tunnel(fwd)))
+        })
+        .await
+    }
+
+    /// Headers a media WebSocket to this Space needs besides its ticket.
+    pub async fn websocket_headers(&self) -> Result<Vec<super::HttpHeader>> {
+        let s = self.inner.clone();
+        run(async move {
+            Ok(s.websocket_headers()
+                .await?
+                .into_iter()
+                .map(|(name, value)| super::HttpHeader { name, value })
+                .collect())
+        })
+        .await
+    }
+
+    // ---- exec
+
+    /// Runs a shell command (`/bin/sh -c`, `cmd /C` on Windows).
+    pub async fn bash(&self, command: String, timeout_ms: Option<u64>) -> Result<SpaceBashResult> {
+        let s = self.inner.clone();
+        run(async move {
+            let t = Duration::from_millis(timeout_ms.unwrap_or(60_000).clamp(1, 86_400_000));
+            let o = s.bash(&command, t).await?;
+            Ok(SpaceBashResult {
+                rendered: o.render(),
+                stdout: o.stdout,
+                stderr: o.stderr,
+                exit_code: o.exit_code,
+                signal: o.signal,
+                timed_out: o.timed_out,
+                error: o.error,
+            })
+        })
+        .await
+    }
+
+    /// Writes bytes to a guest path (parents created, verified by SHA-256).
+    pub async fn write(&self, path: String, content: Vec<u8>) -> Result<SpaceWriteReport> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.write(&path, content).await?) }).await
+    }
+
+    // ---- keep running
+
+    /// Keeps a command running in this Space (replacing a service of that
+    /// name): restarted by its policy when it ends or fails its health
+    /// check, started when the Space boots, its output kept in a log file.
+    pub async fn put_service(&self, def: SpaceServiceDef) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.put_service(&def.core()?).await?) }).await
+    }
+
+    /// This Space's services.
+    pub async fn kept_services(&self) -> Result<Vec<SpaceServiceInfo>> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.kept_services().await?) }).await
+    }
+
+    /// Starts a stopped service.
+    pub async fn start_service(&self, name: String) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.control_service(&name, cua_spaces::keep::ServiceControl::Start)
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Stops a service and keeps it stopped (also across a reboot).
+    pub async fn stop_service(&self, name: String) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.control_service(&name, cua_spaces::keep::ServiceControl::Stop)
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Restarts a service.
+    pub async fn restart_service(&self, name: String) -> Result<SpaceServiceInfo> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.control_service(&name, cua_spaces::keep::ServiceControl::Restart)
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Stops a service and forgets it (its logs go too).
+    pub async fn delete_service(&self, name: String) -> Result<()> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.delete_service(&name).await?) }).await
+    }
+
+    /// The end of a service's log (`tail_bytes` `None`: 64 KiB).
+    pub async fn service_logs(&self, name: String, tail_bytes: Option<u64>) -> Result<String> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.service_logs(&name, tail_bytes.unwrap_or(0)).await?) }).await
+    }
+
+    /// The Space user's home directory.
+    pub async fn home(&self) -> Result<String> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.home().await?) }).await
+    }
+
+    // ---- files
+
+    /// Copies a host file or folder to `dest` in the Space (default: the
+    /// home directory).
+    pub async fn upload(
+        &self,
+        local_path: String,
+        dest: Option<String>,
+    ) -> Result<SpaceTransferReport> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.upload(std::path::Path::new(&local_path), dest.as_deref())
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Copies a guest file or folder into `dest_dir` on this host. Existing
+    /// host files are never replaced: a name that is taken lands as
+    /// `name (1).ext`, and the report's `dest` is the path used. Use
+    /// `download_file` on the Space's environment to write one exact path.
+    pub async fn download(
+        &self,
+        remote_path: String,
+        dest_dir: String,
+    ) -> Result<SpaceTransferReport> {
+        let s = self.inner.clone();
+        run(async move {
+            via_json(
+                &s.download(&remote_path, std::path::Path::new(&dest_dir))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Drops a host file or folder into the Space's `~/Downloads[/subdir]`
+    /// (TeleportService.ReceiveFiles, per-file SHA-256).
+    pub async fn send_file(
+        &self,
+        local_path: String,
+        options: SpaceSendFileOptions,
+    ) -> Result<SpaceSendFileReport> {
+        let s = self.inner.clone();
+        run(async move {
+            use cua_spaces::files::{SendFileOptions, downloads_subdir};
+            let needs_home = options
+                .target_directory
+                .as_deref()
+                .is_some_and(|t| t.starts_with('/'));
+            let home = if needs_home {
+                s.home().await.ok()
+            } else {
+                None
+            };
+            let subdir = downloads_subdir(options.target_directory.as_deref(), home.as_deref())?;
+            let conflict = parse_conflict(options.conflict.as_deref())?;
+            via_json(
+                &s.send_file(
+                    std::path::Path::new(&local_path),
+                    SendFileOptions {
+                        subdir,
+                        respect_ignore_files: options.respect_ignore_files,
+                        conflict,
+                    },
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    // ---- services
+
+    /// The MCP services this Space exposes: `driver` when its spacesd has
+    /// the tool registry, then every declared service (reached over generic
+    /// MCP; no spacesd needed).
+    pub fn services(&self) -> Vec<String> {
+        self.inner.services()
+    }
+
+    /// Tools of the Space's MCP service (`driver`, the default).
+    pub async fn list_tools(&self, service: Option<String>) -> Result<Vec<SpaceToolInfo>> {
+        let s = self.inner.clone();
+        run(async move {
+            let (tools, _) = s.list_tools(service.as_deref()).await?;
+            Ok(tools
+                .into_iter()
+                .map(|t| SpaceToolInfo {
+                    name: t.name,
+                    description: t.description,
+                    input_schema_json: t.input_schema.to_string(),
+                    read_only: t.read_only,
+                    destructive: t.destructive,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// Captures the Space's display: PNG at full size on the primary
+    /// display unless `options` say otherwise (for a small preview,
+    /// [`Space::thumbnail`] reads the shared cache instead). Fails with
+    /// `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
+    pub async fn screenshot(
+        &self,
+        options: Option<crate::types::ScreenshotOptions>,
+    ) -> Result<crate::types::Screenshot> {
+        let s = self.inner.clone();
+        let request = super::spacesd::screenshot_request(options);
+        run(async move {
+            let shot = s.spacesd()?.screenshot(request).await?;
+            Ok(super::spacesd::screenshot_reply(shot))
+        })
+        .await
+    }
+
+    /// The Space's latest thumbnail (a small JPEG of its primary display)
+    /// from the cache every client on this machine shares: returned at
+    /// once when it is younger than `max_age_ms` (unset: any age), else
+    /// captured fresh through cua-spacesd and kept for the next caller.
+    /// When that capture fails, the older one comes back (`captured_at_ms`
+    /// says how old). Asking keeps the daemon refreshing running Spaces'
+    /// thumbnails in the background for a while (about every 90 s).
+    pub async fn thumbnail(&self, max_age_ms: Option<u64>) -> Result<crate::types::SpaceThumbnail> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let max_age = max_age_ms.map(Duration::from_millis);
+            Ok(match &host {
+                Host::Embedded(s) => {
+                    let t = s.thumbnail(&id, max_age).await?;
+                    crate::types::SpaceThumbnail {
+                        format: thumbnail_format(&t.format),
+                        width: t.width,
+                        height: t.height,
+                        captured_at_ms: t
+                            .captured_at
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0),
+                        image: t.image,
+                    }
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .get_space_thumbnail(dpb::GetSpaceThumbnailRequest {
+                            space: id,
+                            max_age: max_age.map(|d| pbjson_types::Duration {
+                                seconds: d.as_secs() as i64,
+                                nanos: d.subsec_nanos() as i32,
+                            }),
+                        })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    let captured_at_ms = r
+                        .captured_at
+                        .map(|t| {
+                            (t.seconds.max(0) as u64) * 1000 + (t.nanos.max(0) as u64) / 1_000_000
+                        })
+                        .unwrap_or(0);
+                    crate::types::SpaceThumbnail {
+                        image: r.image,
+                        format: thumbnail_format(&r.format),
+                        width: r.width,
+                        height: r.height,
+                        captured_at_ms,
+                    }
+                }
+            })
+        })
+        .await
+    }
+
+    /// Calls a tool of the Space's MCP service with JSON arguments.
+    pub async fn call_tool(
+        &self,
+        tool: String,
+        arguments_json: Option<String>,
+        service: Option<String>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SpaceToolResult> {
+        let s = self.inner.clone();
+        run(async move {
+            let args = match arguments_json.as_deref().map(str::trim) {
+                None | Some("") => serde_json::Map::new(),
+                Some(j) => match serde_json::from_str::<Value>(j)? {
+                    Value::Object(m) => m,
+                    _ => {
+                        return Err(CuaError::InvalidArgument(
+                            "arguments_json must be a JSON object".into(),
+                        ));
+                    }
+                },
+            };
+            let r = s
+                .call_tool(
+                    service.as_deref(),
+                    &tool,
+                    args,
+                    timeout_ms.map(Duration::from_millis),
+                )
+                .await?;
+            Ok(SpaceToolResult::with_meta(
+                r.content,
+                r.structured,
+                r.is_error,
+                r.meta,
+            ))
+        })
+        .await
+    }
+
+    // ---- streams
+
+    /// Streamable windows, optionally of one app.
+    pub async fn windows(&self, app: Option<String>) -> Result<Vec<SpaceWindow>> {
+        let s = self.inner.clone();
+        let host = self.host.clone();
+        run(async move {
+            let mut rows: Vec<SpaceWindow> = via_json(&s.windows(app.as_deref()).await?)?;
+            // The windows other Spaces show here.
+            let wanted = app.as_deref().map(str::to_lowercase);
+            rows.extend(
+                host.stream_windows(&s.id().to_string())
+                    .await
+                    .into_iter()
+                    .filter(|w| {
+                        wanted
+                            .as_deref()
+                            .is_none_or(|a| w.app_name.to_lowercase().contains(a))
+                    }),
+            );
+            Ok(rows)
+        })
+        .await
+    }
+
+    /// A small JPEG preview of one of the Space's windows (`window_id` and
+    /// `epoch` from `windows`), at most `max_dimension` px, reused for a
+    /// few seconds (the SDK's preview cache); `None` when the guest
+    /// captured nothing.
+    pub async fn window_thumbnail(
+        &self,
+        window_id: String,
+        epoch: u64,
+        max_dimension: u32,
+    ) -> Result<Option<Vec<u8>>> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.window_thumbnail(&window_id, epoch, max_dimension).await?) }).await
+    }
+
+    /// Processor, memory and storage use now (cheap: poll it at a low rate
+    /// while a detail is visible).
+    pub async fn usage(&self) -> Result<SpaceUsage> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.usage().await?) }).await
+    }
+
+    /// The Space's displays, primary first, with their resolution in
+    /// physical pixels.
+    pub async fn displays(&self) -> Result<Vec<SpaceDisplay>> {
+        let s = self.inner.clone();
+        run(async move { via_json(&s.displays().await?) }).await
+    }
+
+    /// The icon the guest desktop shows for a window's app (pass the
+    /// window's `app_name`, `app_id` and `pid`), or `None` when the Space
+    /// has none: show no icon then, not a placeholder. A window list should
+    /// ask [`Space::app_icons`] once for all its windows instead.
+    pub async fn app_icon(
+        &self,
+        app_name: String,
+        app_id: String,
+        pid: u32,
+    ) -> Result<Option<SpaceAppIcon>> {
+        Ok(self
+            .app_icons(vec![SpaceAppIconRequest {
+                app_name,
+                app_id,
+                pid,
+            }])
+            .await?
+            .pop()
+            .flatten())
+    }
+
+    /// Icons for many windows' apps at once, in request order (`None`: the
+    /// Space has no icon for that app; show none). Answered by the SDK's
+    /// one icon cache (memory, then `$CUA_HOME/cache/icons`, keyed by the
+    /// app and the Space's image, never the pid); every miss costs one
+    /// guest round trip for the whole batch. macOS renders the app bundle
+    /// of the pid; Linux reads the `.desktop` entry's `Icon=` from the icon
+    /// theme; Windows has none.
+    pub async fn app_icons(
+        &self,
+        requests: Vec<SpaceAppIconRequest>,
+    ) -> Result<Vec<Option<SpaceAppIcon>>> {
+        let s = self.inner.clone();
+        run(async move {
+            let requests: Vec<cua_spaces::IconRequest> = requests
+                .into_iter()
+                .map(|r| cua_spaces::IconRequest {
+                    app_name: r.app_name,
+                    app_id: r.app_id,
+                    pid: r.pid,
+                })
+                .collect();
+            Ok(s.app_icons(&requests)
+                .await?
+                .into_iter()
+                .map(|i| i.map(SpaceAppIcon::from))
+                .collect())
+        })
+        .await
+    }
+
+    /// Mints a media session (ticket + WebSocket URL) for another client
+    /// to attach to.
+    pub async fn open_stream(&self, options: SpaceStreamOptions) -> Result<SpaceStreamTicket> {
+        let s = self.inner.clone();
+        let daemon = matches!(self.host, Host::Daemon(_));
+        let host = self.host.clone();
+        let parent = self.inner.id().to_string();
+        run(async move {
+            // A window another Space shows here: the route is decided now.
+            // The viewer who may reach the origin connects straight to it
+            // (a ticket of the origin, scoped to that window); the others are
+            // served by the runtime that holds it.
+            if let Some(w) = options
+                .window_id
+                .as_deref()
+                .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some())
+            {
+                return host.open_entry_stream(w, &parent, &options).await;
+            }
+            let target = stream_target(&s, &options).await?;
+            let t = s.open_stream(target, stream_options(&options)?).await?;
+            Ok(SpaceStreamTicket {
+                space: t.space,
+                media_session_id: t.media_session_id,
+                ws_url: t.ws_url,
+                ticket: t.ticket,
+                ticket_expires_at: t.ticket_expires_at,
+                codec: t.codec,
+                wire_version: t.wire_version,
+                width: t.frame_size[0],
+                height: t.frame_size[1],
+                needs_headers: t.needs_gateway_headers || daemon,
+            })
+        })
+        .await
+    }
+
+    /// Closes a media session opened with [`Space::open_stream`].
+    pub async fn close_stream(&self, media_session_id: String) -> Result<()> {
+        let s = self.inner.clone();
+        let host = self.host.clone();
+        run(async move {
+            // A window another Space shows here was minted by that Space.
+            if let Some(origin) = take_origin_session(&media_session_id) {
+                // A viewer with no handle on the origin was served through the
+                // daemon's bridge: that session ends with its socket.
+                return match host.connect(&origin).await {
+                    Ok((_, handle)) => Ok(handle.close_stream(&media_session_id).await?),
+                    Err(_) => Ok(()),
+                };
+            }
+            Ok(s.close_stream(&media_session_id).await?)
+        })
+        .await
+    }
+
+    /// Attaches to a ticket from [`Self::open_stream`] and delivers the
+    /// media socket's encoded frames and audio packets to the sinks as they
+    /// arrive. Keyframe gating, loss recovery and decoding are the
+    /// caller's; [`Self::stream_session`] does them and ships with Cua
+    /// Spaces. End the session with [`Self::close_stream`] and the ticket's
+    /// `media_session_id`.
+    pub async fn attach_stream(
+        &self,
+        ticket: SpaceStreamTicket,
+        frames: Arc<dyn FrameSink>,
+        audio: Option<Arc<dyn AudioSink>>,
+    ) -> Result<Arc<super::MediaSession>> {
+        let s = self.inner.clone();
+        let host = self.host.clone();
+        let own = s.id().to_string();
+        let ticket_space = ticket.space.clone();
+        // A ticket of another Space (a window it shows here, streamed
+        // straight from its origin) attaches with that Space's credentials.
+        let headers = run(async move {
+            if ticket_space != own && !ticket_space.is_empty() {
+                let (_, origin) = host.connect(&ticket_space).await?;
+                return Ok(origin.websocket_headers().await?);
+            }
+            Ok(s.websocket_headers().await?)
+        })
+        .await?;
+        super::MediaSession::attach_url_as(
+            ticket.ws_url,
+            headers,
+            frames,
+            audio,
+            ticket.media_session_id,
+            ticket.codec,
+        )
+        .await
+    }
+
+    /// Opens a media session and delivers keyframe-gated encoded frames
+    /// and audio to the sinks (one delivery thread; decoding stays with the
+    /// caller). The streaming client ships with Cua Spaces
+    /// (source-available, FSL-1.1-MIT): without it this raises
+    /// `HostCapabilityMissing`; [`Self::attach_stream`] needs no client.
+    pub async fn stream_session(
+        &self,
+        options: SpaceStreamOptions,
+        frames: Arc<dyn FrameSink>,
+        audio: Option<Arc<dyn AudioSink>>,
+    ) -> Result<Arc<SpaceStreamSession>> {
+        let s = self.inner.clone();
+        let host = self.host.clone();
+        run(async move {
+            // A window another Space shows here streams from its origin.
+            let (s, options) = match options
+                .window_id
+                .as_deref()
+                .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some())
+            {
+                Some(w) => {
+                    let (origin, window) = host.entry_origin(w).await?;
+                    let (_, handle) = host.connect(&origin).await?;
+                    (
+                        handle,
+                        SpaceStreamOptions {
+                            window_id: Some(window),
+                            ..options
+                        },
+                    )
+                }
+                None => (s, options),
+            };
+            let target = stream_target(&s, &options).await?;
+            let frames: Arc<dyn cua_spaces::stream::FrameSink> = Arc::new(FrameAdapter(frames));
+            let audio =
+                audio.map(|a| Arc::new(AudioAdapter(a)) as Arc<dyn cua_spaces::stream::AudioSink>);
+            let session = s
+                .stream_session(target, stream_options(&options)?, frames, audio)
+                .await?;
+            Ok(Arc::new(SpaceStreamSession {
+                media_session_id: session.media_session_id().to_string(),
+                codec: session.codec().to_string(),
+                inner: tokio::sync::Mutex::new(Some(session)),
+            }))
+        })
+        .await
+    }
+
+    // ---- presence
+
+    /// Joins presence. Waits up to `timeout_ms` (default 10 s) for the
+    /// roster.
+    pub async fn join_presence(
+        &self,
+        identity: PresenceIdentity,
+        timeout_ms: Option<u64>,
+    ) -> Result<Arc<SpacePresence>> {
+        self.join_presence_for(None, identity, timeout_ms).await
+    }
+
+    /// Joins presence for the window being watched. For a window another
+    /// Space shows here and the viewer streams straight from its origin
+    /// (`window_id` from [`Space::windows`]), this joins the origin's channel
+    /// and this Space's, publishes the cursor to both and reads them as one:
+    /// one avatar and one cursor per viewer, as if the stream came through
+    /// this Space. For any other window, or `None`, it is
+    /// [`Space::join_presence`].
+    pub async fn join_presence_for(
+        &self,
+        window_id: Option<String>,
+        identity: PresenceIdentity,
+        timeout_ms: Option<u64>,
+    ) -> Result<Arc<SpacePresence>> {
+        let s = self.inner.clone();
+        let host = self.host.clone();
+        let started = std::time::Instant::now();
+        let timeout = Duration::from_millis(timeout_ms.unwrap_or(10_000));
+        let r = run(async move {
+            let who = cua_spaces::presence::Identity {
+                id: identity.id,
+                display_name: identity.display_name,
+                color: identity.color,
+                agent: identity.agent,
+            };
+            let entry = window_id
+                .as_deref()
+                .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some());
+            if let Some(w) = entry {
+                let route = host.entry_route(w).await?;
+                // Only a direct attach has a second channel; a proxied
+                // stream is the parent's own.
+                if route.direct {
+                    let (_, origin) = host.connect(&route.origin_space).await?;
+                    let primary = origin.join_presence(who.clone(), timeout).await?;
+                    let secondary = s.join_presence(who, timeout).await?;
+                    let dual = cua_spaces::presence::DualPresence::new(primary, secondary);
+                    let peak = dual.roster().len() as u64;
+                    return Ok(Arc::new(SpacePresence {
+                        sender: PresenceSender::Fanout(dual.sender()),
+                        datagrams: dual.uses_datagrams(),
+                        view_seed: dual.view(),
+                        inner: Arc::new(tokio::sync::Mutex::new(Some(PresenceChannels::Dual(
+                            Box::new(dual),
+                        )))),
+                        stats: PresenceStats::new(peak),
+                    }));
+                }
+            }
+            let session = s.join_presence(who, timeout).await?;
+            let peak = session.roster().len() as u64;
+            Ok(Arc::new(SpacePresence {
+                sender: PresenceSender::Single(session.sender()),
+                datagrams: session.uses_datagrams(),
+                view_seed: session.view(),
+                inner: Arc::new(tokio::sync::Mutex::new(Some(PresenceChannels::Single(
+                    Box::new(session),
+                )))),
+                stats: PresenceStats::new(peak),
+            }))
+        })
+        .await;
+        if r.is_err() {
+            // A join that failed: counted as a session with nobody in it.
+            cua_telemetry::capture(cua_telemetry::events::presence_session(
+                cua_telemetry::Outcome::Error,
+                0,
+                started.elapsed(),
+            ));
+        }
+        r
+    }
+
+    /// Sets this Space's presence settings. `cursor_probe`: whether
+    /// cua-spacesd may read the real cursor shape by briefly moving the idle
+    /// guest pointer to a participant's position (on by default); `None`
+    /// leaves it unchanged.
+    #[uniffi::method(default(cursor_probe = None))]
+    pub async fn set_presence_settings(&self, cursor_probe: Option<bool>) -> Result<()> {
+        let s = self.inner.clone();
+        run(async move { Ok(s.set_presence_settings(cursor_probe).await?) }).await
+    }
+
+    // ---- teleport (host effects: run where the Spaces runtime lives)
+
+    /// What teleporting `app` (`full` or `tabs`) would move from this host.
+    pub async fn teleport_manifest(
+        &self,
+        app: String,
+        scope: Option<String>,
+    ) -> Result<TeleportManifest> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("teleport_manifest", json!({"app": app, "scope": scope}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Teleports `app`'s session into this Space. `approver` sees the
+    /// manifest and returns the human's decision; `None` cancels (raises
+    /// `TeleportRefused`). Sensitive items need an explicit acknowledgement.
+    ///
+    /// Through a daemon, this may need two calls (see [`TeleportReceipt`]):
+    /// the first returns `status: "pending"` with a `request_id` once the
+    /// user's approval is filed with the Cua Keyvault; call again with that
+    /// same `request_id` (`approver` is not consulted again -- the decision
+    /// it already made was what the first call filed) until `status:
+    /// "moved"`. `request_id` is ignored for an embedded host, which always
+    /// finishes in one call.
+    #[uniffi::method(default(request_id = None))]
+    pub async fn teleport(
+        &self,
+        app: String,
+        scope: Option<String>,
+        approver: Arc<dyn TeleportApprover>,
+        request_id: Option<String>,
+    ) -> Result<TeleportReceipt> {
+        let started = std::time::Instant::now();
+        let app_id = app.clone();
+        let r = self.teleport_inner(app, scope, approver, request_id).await;
+        super::telemetry::teleport(&app_id, "full", "app_with_state", started, &r, 0);
+        r
+    }
+}
+
+impl Space {
+    async fn teleport_inner(
+        &self,
+        app: String,
+        scope: Option<String>,
+        approver: Arc<dyn TeleportApprover>,
+        request_id: Option<String>,
+    ) -> Result<TeleportReceipt> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        // A retry (the user already decided what to file; re-asking the
+        // approver would ask it to decide a second time for nothing, since
+        // the daemon ignores the selection on a retry call and only asks
+        // the Keyvault whether the SAME request was approved).
+        if let (Some(rid), Host::Daemon(_)) = (&request_id, &host) {
+            let rid = rid.clone();
+            return run(async move {
+                let out = host
+                    .tool(
+                        "teleport_app",
+                        json!({"space": id, "app": app, "request_id": rid}),
+                    )
+                    .await?;
+                let v = out
+                    .structured
+                    .clone()
+                    .or_else(|| serde_json::from_str(&out.text()).ok())
+                    .unwrap_or(Value::Null);
+                teleport_app_response(&v)
+            })
+            .await;
+        }
+        run(async move {
+            let manifest: TeleportManifest = parse(
+                host.tool_value("teleport_manifest", json!({"app": app, "scope": scope}))
+                    .await?,
+            )?;
+            let m = manifest.clone();
+            let decision = tokio::task::spawn_blocking(move || approver.approve(m))
+                .await
+                .map_err(|e| CuaError::Internal(format!("approver: {e}")))?
+                .ok_or_else(|| CuaError::TeleportRefused("the approver declined".into()))?;
+            match &host {
+                // In process: this program exports with its own rights, and
+                // the approver is its consent gate (as in the Spaces UI and
+                // the interactive CLI).
+                Host::Embedded(spaces) => teleport_embedded(spaces, &id, &manifest, decision).await,
+                // Through the daemon: the `teleport_app` tool never delivers a
+                // caller-approved session (the daemon would be a confused
+                // deputy). It files a Keyvault request instead.
+                Host::Daemon(_) => {
+                    let out = host
+                        .tool(
+                            "teleport_app",
+                            json!({
+                                "space": id,
+                                "app": manifest.app,
+                                "scope": manifest.scope,
+                                "include": decision.include,
+                                "acknowledge_sensitive": decision.acknowledge_sensitive,
+                            }),
+                        )
+                        .await?;
+                    let v = out
+                        .structured
+                        .clone()
+                        .or_else(|| serde_json::from_str(&out.text()).ok())
+                        .unwrap_or(Value::Null);
+                    teleport_app_response(&v)
+                }
+            }
+        })
+        .await
+    }
+}
+
+#[uniffi::export]
+impl Space {
+    // ---- hotspot
+
+    /// Starts the reverse-SOCKS hotspot: this host serves the Space's
+    /// egress. `set_system_proxy` points the guest's proxy settings at it
+    /// (default false here).
+    pub async fn start_hotspot(
+        &self,
+        set_system_proxy: Option<bool>,
+        bypass: Option<Vec<String>>,
+    ) -> Result<SpaceHotspotStatus> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "hotspot_start",
+                    json!({
+                        "space": id,
+                        "set_system_proxy": set_system_proxy.unwrap_or(false),
+                        "bypass": bypass.unwrap_or_default(),
+                        // An explicit SDK call is the user's own start; the
+                        // tool's `confirm` guards agents that reach it
+                        // without asking.
+                        "confirm": true,
+                    }),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// Stops this Space's hotspot. Returns the stopped Space ids.
+    pub async fn stop_hotspot(&self) -> Result<Vec<String>> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let v = host
+                .tool_value("hotspot_stop", json!({"space": id}))
+                .await?;
+            parse(v.get("stopped").cloned().unwrap_or(json!([])))
+        })
+        .await
+    }
+
+    /// Signs in to a site in this Space's browser with a password the user
+    /// saved in the Cua Keyvault. The first call files a request
+    /// (`status == "pending"` with a `request_id`); the user approves it in
+    /// Cua, then call again with that `request_id` and the Keyvault types
+    /// the login through the Space's cua-driver (`status == "filled"`). A
+    /// declined request is an error. The password never reaches the caller.
+    pub async fn request_site_login(
+        &self,
+        url: String,
+        options: Option<SiteLoginOptions>,
+    ) -> Result<SiteLoginReport> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        let o = options.unwrap_or_default();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "request_site_login",
+                    json!({
+                        "space": id,
+                        "url": url,
+                        "username": o.username,
+                        "agent": o.agent,
+                        "session": o.session,
+                        "target_id": o.target_id,
+                        "tab_id": o.tab_id,
+                        "request_id": o.request_id,
+                        "wait_secs": o.wait_secs,
+                    }),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// This Space's hotspot status.
+    pub async fn hotspot_status(&self) -> Result<Vec<SpaceHotspotStatus>> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let v = host
+                .tool_value("hotspot_status", json!({"space": id}))
+                .await?;
+            parse(v.get("hotspots").cloned().unwrap_or(json!([])))
+        })
+        .await
+    }
+
+    // ---- sharing
+
+    /// Lets `who` (a verified email or an account id) watch (`viewer`,
+    /// the default) or use (`editor`) this Space through the relay. A Space
+    /// that is not a host is attached to the relay on its first share.
+    pub async fn share(&self, who: String, role: Option<String>) -> Result<SpaceShares> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "share_space",
+                    json!({"space": id, "who": who, "role": role.unwrap_or_else(|| "viewer".into())}),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// Stops sharing this Space with `who` at once, or with everyone when
+    /// `who` is `None`.
+    pub async fn unshare(&self, who: Option<String>) -> Result<SpaceShares> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            parse(
+                host.tool_value("unshare_space", json!({"space": id, "who": who}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Who this Space is shared with, and who of them is connected now.
+    pub async fn shares(&self) -> Result<SpaceShares> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            parse(
+                host.tool_value("space_shares", json!({"space": id}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    // ---- agents
+
+    /// Starts an agent CLI (`claude-code`, `openai-codex`, ...) with a
+    /// prompt, as a detached spacesd process.
+    pub async fn agent_start(
+        &self,
+        agent: String,
+        prompt: String,
+        show: Option<bool>,
+        options: Option<SpaceAgentOptions>,
+    ) -> Result<AgentStartReport> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        let o = options.unwrap_or_default();
+        run(async move {
+            let v = host
+                .tool_value(
+                    "agent_start",
+                    json!({"space": id, "agent": agent, "prompt": prompt, "show": show,
+                           "env_from_host": o.env_from_host, "repo": o.repo, "branch": o.branch,
+                           "cwd": o.cwd, "model": o.model, "base_url": o.base_url,
+                           "exit_when_idle": o.exit_when_idle, "home": o.home, "env": o.env}),
+                )
+                .await?;
+            let s = |k: &str| {
+                v.get(k)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            Ok(AgentStartReport {
+                run_id: s("run_id"),
+                agent: s("agent"),
+                space: s("space"),
+                process_tag: s("process_tag"),
+                notes: parse(v.get("notes").cloned().unwrap_or(json!([])))?,
+                json: v.to_string(),
+            })
+        })
+        .await
+    }
+
+    /// A run's status with the last `tail` lines of output.
+    pub async fn agent_status(&self, run_id: String, tail: Option<u32>) -> Result<AgentRunStatus> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            AgentRunStatus::from_json(
+                host.tool_value(
+                    "agent_status",
+                    json!({"space": id, "run_id": run_id, "tail": tail}),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// Sends a follow-up message to a run.
+    pub async fn agent_message(
+        &self,
+        run_id: String,
+        text: String,
+        force: Option<bool>,
+    ) -> Result<AgentActionReport> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let v = host
+                .tool_value(
+                    "agent_message",
+                    json!({"space": id, "run_id": run_id, "text": text, "force": force}),
+                )
+                .await?;
+            Ok(AgentActionReport {
+                run_id: v["run_id"].as_str().unwrap_or_default().into(),
+                ok: v["delivered"].as_bool().unwrap_or(false),
+                reason: v["reason"].as_str().unwrap_or_default().into(),
+                json: v.to_string(),
+            })
+        })
+        .await
+    }
+
+    /// Stops a run.
+    pub async fn agent_stop(&self, run_id: String) -> Result<AgentActionReport> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let v = host
+                .tool_value("agent_stop", json!({"space": id, "run_id": run_id}))
+                .await?;
+            Ok(AgentActionReport {
+                run_id: v["run_id"].as_str().unwrap_or_default().into(),
+                ok: v["stopped"].as_bool().unwrap_or(false),
+                reason: v["reason"].as_str().unwrap_or_default().into(),
+                json: v.to_string(),
+            })
+        })
+        .await
+    }
+
+    /// Normalized events after `cursor` (0: the start), as the
+    /// `agent_events` JSON (`events`, `cursor`, `caught_up`, `status`).
+    pub async fn agent_events(
+        &self,
+        run_id: String,
+        cursor: Option<u64>,
+        max: Option<u32>,
+    ) -> Result<String> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            Ok(host
+                .tool_value(
+                    "agent_events",
+                    json!({"space": id, "run_id": run_id, "cursor": cursor, "max": max}),
+                )
+                .await?
+                .to_string())
+        })
+        .await
+    }
+
+    /// Cancels the run's turn in flight; the session stays open.
+    pub async fn agent_interrupt(&self, run_id: String) -> Result<AgentActionReport> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let v = host
+                .tool_value("agent_interrupt", json!({"space": id, "run_id": run_id}))
+                .await?;
+            Ok(AgentActionReport {
+                run_id: v["run_id"].as_str().unwrap_or_default().into(),
+                ok: v["interrupted"].as_bool().unwrap_or(false),
+                reason: v["status"].as_str().unwrap_or_default().into(),
+                json: v.to_string(),
+            })
+        })
+        .await
+    }
+
+    /// Every agent run in this Space.
+    pub async fn agent_list(&self) -> Result<Vec<AgentRunStatus>> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let v = host.tool_value("agent_list", json!({"space": id})).await?;
+            v.get("runs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(AgentRunStatus::from_json)
+                .collect()
+        })
+        .await
+    }
+}
+
+// ------------------------------------------------------------ streams
+
+struct FrameAdapter(Arc<dyn FrameSink>);
+
+impl cua_spaces::stream::FrameSink for FrameAdapter {
+    fn on_frame(&self, f: cua_spaces::stream::VideoFrame) {
+        self.0.on_frame(super::VideoFrame {
+            sequence: f.sequence,
+            codec: f.codec,
+            keyframe: f.keyframe,
+            width: f.width,
+            height: f.height,
+            capture_timestamp_us: f.capture_timestamp_us,
+            codec_epoch: f.codec_epoch,
+            geometry_epoch: f.geometry_epoch,
+            data: f.data,
+            header_json: String::new(),
+        });
+    }
+
+    fn on_event(&self, e: cua_spaces::stream::StreamEvent) {
+        use cua_spaces::stream::StreamEvent as E;
+        let (kind, json) = match e {
+            E::Opened(v) => ("session_opened".to_string(), v.to_string()),
+            E::AudioConfigured(v) => ("audio_config".to_string(), v.to_string()),
+            E::Lifecycle(v) => ("lifecycle".to_string(), v.to_string()),
+            E::Stats(v) => ("stats".to_string(), v.to_string()),
+            E::Message(v) => (
+                v.get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("message")
+                    .to_string(),
+                v.to_string(),
+            ),
+            E::Closed { code, reason } => (
+                "closed".to_string(),
+                json!({"code": code, "reason": reason}).to_string(),
+            ),
+        };
+        self.0.on_event(MediaEvent { kind, json });
+    }
+}
+
+struct AudioAdapter(Arc<dyn AudioSink>);
+
+impl cua_spaces::stream::AudioSink for AudioAdapter {
+    fn on_audio(&self, p: cua_spaces::stream::AudioPacket) {
+        self.0.on_audio(super::AudioPacket {
+            track_id: p.track_id,
+            sequence: p.sequence,
+            pts_us: p.pts_us,
+            frame_samples: p.frame_samples,
+            config_epoch: 0,
+            discontinuity: p.lost > 0,
+            dtx: p.dtx,
+            data: p.data,
+        });
+    }
+}
+
+/// A live Space media session (see [`Space::stream_session`]).
+#[derive(uniffi::Object)]
+pub struct SpaceStreamSession {
+    media_session_id: String,
+    codec: String,
+    inner: tokio::sync::Mutex<Option<cua_spaces::stream::StreamSession>>,
+}
+
+#[uniffi::export]
+impl SpaceStreamSession {
+    /// Media session id.
+    pub fn media_session_id(&self) -> String {
+        self.media_session_id.clone()
+    }
+
+    /// Negotiated codec.
+    pub fn codec(&self) -> String {
+        self.codec.clone()
+    }
+
+    /// Delivery counters (zeros once closed).
+    pub fn stats(&self) -> SpaceStreamStats {
+        self.inner
+            .try_lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.stats().into()))
+            .unwrap_or(SpaceStreamStats {
+                frames: 0,
+                keyframes: 0,
+                frames_dropped: 0,
+                frames_gated: 0,
+                keyframe_requests: 0,
+                audio_packets: 0,
+                audio_lost: 0,
+                events: 0,
+                malformed: 0,
+            })
+    }
+
+    /// Whether the socket is still open.
+    pub fn is_open(&self) -> bool {
+        self.inner
+            .try_lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.is_open()))
+            .unwrap_or(false)
+    }
+
+    /// Asks the encoder for a keyframe.
+    pub fn request_keyframe(&self) -> Result<()> {
+        let g = self
+            .inner
+            .try_lock()
+            .map_err(|_| CuaError::Internal("session busy".into()))?;
+        let s = g
+            .as_ref()
+            .ok_or_else(|| CuaError::Closed("stream session".into()))?;
+        Ok(s.request_keyframe()?)
+    }
+
+    /// Sends a raw JSON control message (for example input events).
+    pub fn send_text(&self, json: String) -> Result<()> {
+        let g = self
+            .inner
+            .try_lock()
+            .map_err(|_| CuaError::Internal("session busy".into()))?;
+        let s = g
+            .as_ref()
+            .ok_or_else(|| CuaError::Closed("stream session".into()))?;
+        Ok(s.send_text(json)?)
+    }
+
+    /// Closes the socket and the media session. Returns the final counters.
+    pub async fn close(&self) -> Result<SpaceStreamStats> {
+        let s = self.inner.lock().await.take();
+        run(async move {
+            match s {
+                Some(s) => Ok(s.close().await?.into()),
+                None => Err(CuaError::Closed("stream session".into())),
+            }
+        })
+        .await
+    }
+}
+
+// ------------------------------------------------------------ presence
+
+/// A joined presence session.
+#[derive(uniffi::Object)]
+pub struct SpacePresence {
+    inner: Arc<tokio::sync::Mutex<Option<PresenceChannels>>>,
+    /// Publishes without the session lock, so `update_cursor` never waits
+    /// for a pending `next_event`.
+    sender: PresenceSender,
+    datagrams: bool,
+    view_seed: cua_spaces::presence::PresenceView,
+    stats: PresenceStats,
+}
+
+/// One presence session, or two for a window streamed straight from another
+/// Space (the origin's and the parent's, read as one).
+enum PresenceChannels {
+    Single(Box<cua_spaces::presence::PresenceSession>),
+    Dual(Box<cua_spaces::presence::DualPresence>),
+}
+
+impl PresenceChannels {
+    fn me(&self) -> cua_spaces::presence::Participant {
+        match self {
+            Self::Single(s) => s.me().clone(),
+            Self::Dual(d) => d.me().clone(),
+        }
+    }
+
+    fn roster(
+        &self,
+    ) -> Vec<(
+        cua_spaces::presence::Participant,
+        Option<cua_spaces::presence::Cursor>,
+    )> {
+        match self {
+            Self::Single(s) => s.roster().to_vec(),
+            Self::Dual(d) => d.roster(),
+        }
+    }
+
+    async fn next_event(
+        &mut self,
+        timeout: Duration,
+    ) -> cua_spaces::Result<Option<cua_spaces::presence::PresenceEvent>> {
+        match self {
+            Self::Single(s) => s.next_event(timeout).await,
+            Self::Dual(d) => d.next_event(timeout).await,
+        }
+    }
+
+    async fn leave(self) -> cua_spaces::Result<()> {
+        match self {
+            Self::Single(s) => s.leave().await,
+            Self::Dual(d) => d.leave().await,
+        }
+    }
+}
+
+/// Publishes the viewer's cursor on one channel or on both.
+#[derive(Clone)]
+enum PresenceSender {
+    Single(cua_spaces::presence::CursorSender),
+    Fanout(cua_spaces::presence::FanoutSender),
+}
+
+impl PresenceSender {
+    async fn update(&self, c: &cua_spaces::presence::Cursor) -> cua_spaces::Result<()> {
+        match self {
+            Self::Single(s) => s.update(c).await,
+            Self::Fanout(f) => f.update(c).await,
+        }
+    }
+}
+
+/// What `cua_presence_session` reports when the session ends: how long it
+/// lasted and the most people seen at once (both bucketed when sent).
+struct PresenceStats {
+    joined: std::time::Instant,
+    peak: std::sync::atomic::AtomicU64,
+    recorded: std::sync::atomic::AtomicBool,
+}
+
+impl PresenceStats {
+    fn new(peak: u64) -> Self {
+        Self {
+            joined: std::time::Instant::now(),
+            peak: std::sync::atomic::AtomicU64::new(peak),
+            recorded: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn saw(&self, present: usize) {
+        self.peak
+            .fetch_max(present as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Records the session once (at leave, or when it is dropped).
+    fn finish(&self) {
+        if self
+            .recorded
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        cua_telemetry::capture(cua_telemetry::events::presence_session(
+            cua_telemetry::Outcome::Ok,
+            self.peak.load(std::sync::atomic::Ordering::Relaxed),
+            self.joined.elapsed(),
+        ));
+    }
+}
+
+impl Drop for SpacePresence {
+    fn drop(&mut self) {
+        self.stats.finish();
+    }
+}
+
+impl SpacePresence {
+    async fn with<T>(&self, f: impl FnOnce(&mut PresenceChannels) -> T) -> Result<T> {
+        let mut g = self.inner.lock().await;
+        let s = g
+            .as_mut()
+            .ok_or_else(|| CuaError::Closed("presence session".into()))?;
+        Ok(f(s))
+    }
+}
+
+#[uniffi::export]
+impl SpacePresence {
+    /// This participant.
+    pub async fn me(&self) -> Result<PresenceParticipant> {
+        self.with(|s| s.me().into()).await
+    }
+
+    /// Everyone present, with cursors when known.
+    pub async fn roster(&self) -> Result<Vec<PresenceMember>> {
+        self.with(|s| {
+            self.stats.saw(s.roster().len());
+            s.roster()
+                .into_iter()
+                .map(|(p, c)| PresenceMember {
+                    participant: p.into(),
+                    cursor: c.map(Into::into),
+                })
+                .collect()
+        })
+        .await
+    }
+
+    /// Moves this participant's cursor. Throttled to 30 Hz, newest wins:
+    /// a move inside the interval is held and sent at its end, and show,
+    /// hide and target changes go out at once. Never waits for
+    /// `next_event`.
+    pub async fn update_cursor(&self, cursor: PresenceCursor) -> Result<()> {
+        let sender = self.sender.clone();
+        run(async move { Ok(sender.update(&cursor.into()).await?) }).await
+    }
+
+    /// Whether cursors travel over the QUIC datagram channel (else the
+    /// `Join` stream and `UpdateCursor`).
+    pub fn uses_datagrams(&self) -> bool {
+        self.datagrams
+    }
+
+    /// A fresh [`PresenceView`] seeded with the caller and the roster at
+    /// join, with the render delay matching the transport. Feed it every
+    /// event from `next_event`.
+    pub fn view(&self) -> Arc<PresenceView> {
+        PresenceView::wrap(self.view_seed.clone())
+    }
+
+    /// The next event, or `None` when `timeout_ms` (default 5 s) passes.
+    pub async fn next_event(&self, timeout_ms: Option<u64>) -> Result<Option<PresenceEvent>> {
+        let inner = self.inner.clone();
+        run(async move {
+            let mut g = inner.lock().await;
+            let s = g
+                .as_mut()
+                .ok_or_else(|| CuaError::Closed("presence session".into()))?;
+            let e = s
+                .next_event(Duration::from_millis(timeout_ms.unwrap_or(5_000)))
+                .await?;
+            Ok((e, s.roster().len()))
+        })
+        .await
+        .map(|(e, present)| {
+            self.stats.saw(present);
+            e.map(Into::into)
+        })
+    }
+
+    /// Leaves.
+    pub async fn leave(&self) -> Result<()> {
+        self.stats.finish();
+        let s = self.inner.lock().await.take();
+        run(async move {
+            match s {
+                Some(s) => Ok(s.leave().await?),
+                None => Ok(()),
+            }
+        })
+        .await
+    }
+}
+
+/// `SpaceSendFileOptions::conflict`: unset keeps both copies; replacing a
+/// file in the Space takes an explicit `overwrite`.
+fn parse_conflict(conflict: Option<&str>) -> Result<cua_spaces::files::Conflict> {
+    use cua_spaces::files::Conflict;
+    match conflict.unwrap_or("") {
+        "rename" | "" => Ok(Conflict::Rename),
+        "overwrite" => Ok(Conflict::Overwrite),
+        "skip" => Ok(Conflict::Skip),
+        other => Err(CuaError::InvalidArgument(format!(
+            "conflict must be rename, skip or overwrite (got {other:?})"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn where_an_egress_policy_is_enforced_comes_from_the_wire_and_the_core() {
+        let mut s = dpb::Space {
+            id: "local:web".into(),
+            ..Default::default()
+        };
+        assert_eq!(SpaceInfo::from(s.clone()).egress_enforced, None);
+        s.egress = Some(dpb::EgressPolicy {
+            allow: vec![],
+            deny: vec!["all".into()],
+        });
+        s.egress_enforced = "host".into();
+        let info = SpaceInfo::from(s.clone());
+        assert_eq!(info.egress_enforced, Some(EgressEnforcement::Host));
+        assert_eq!(info.egress.deny, ["all"]);
+        // A word this build does not know is not mistaken for enforcement.
+        s.egress_enforced = "guest".into();
+        assert_eq!(SpaceInfo::from(s).egress_enforced, None);
+        assert_eq!(
+            EgressEnforcement::from(cua_spaces::egress::Enforcement::Host),
+            EgressEnforcement::Host
+        );
+    }
+
+    #[test]
+    fn a_kind_that_cannot_enforce_egress_is_unsupported() {
+        let err = CuaError::from(cua_spaces::Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::Unsupported {
+                backend: "lume".into(),
+                op: "an egress policy (macOS VMs share Apple's vmnet NAT, which only pf can \
+                     filter, and pf needs root)"
+                    .into(),
+            },
+        )));
+        assert!(matches!(err, CuaError::Unsupported(_)), "{err:?}");
+        assert!(
+            err.to_string().contains("An egress policy (macOS VMs"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = CuaError::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert!(matches!(err, CuaError::TeleportRefused(_)), "{err:?}");
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+    }
+
+    #[test]
+    fn a_space_profile_fills_what_is_unset() {
+        let mut o = SpaceCreateOptions {
+            profile: Some("rollout".into()),
+            memory_mb: Some(2048),
+            ..Default::default()
+        };
+        o.apply_profile().unwrap();
+        assert_eq!((o.cpus, o.memory_mb), (Some(1), Some(2048)));
+        assert_eq!(o.headless, Some(true), "the one headless switch");
+        assert!(o.env.is_empty(), "no env-only headless path");
+        let mut desktop = SpaceCreateOptions {
+            profile: Some("rollout".into()),
+            headless: Some(false),
+            ..Default::default()
+        };
+        desktop.apply_profile().unwrap();
+        assert_eq!(desktop.headless, Some(false), "an explicit choice wins");
+        let mut bad = SpaceCreateOptions {
+            profile: Some("huge".into()),
+            ..Default::default()
+        };
+        assert!(
+            matches!(bad.apply_profile(), Err(CuaError::InvalidArgument(m)) if m.contains("rollout"))
+        );
+    }
+
+    #[test]
+    fn an_embedded_host_capacity_becomes_host_capacity() {
+        let err = cua_spaces::Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::HostCapacity("at its VM memory limit".into()),
+        ));
+        assert_eq!(err.tag(), "host_capacity");
+        match CuaError::from(err) {
+            CuaError::HostCapacity(m) => assert!(m.contains("VM memory limit")),
+            other => panic!("expected HostCapacity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_embedded_insufficient_disk_becomes_insufficient_disk() {
+        let err = cua_spaces::Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::InsufficientDisk("need 52 GB".into()),
+        ));
+        assert_eq!(err.tag(), "insufficient_disk");
+        match CuaError::from(err) {
+            CuaError::InsufficientDisk(message) => assert!(message.contains("need 52 GB")),
+            other => panic!("expected InsufficientDisk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn send_file_keeps_both_copies_unless_overwrite_is_explicit() {
+        use cua_spaces::files::Conflict;
+        assert_eq!(parse_conflict(None).unwrap(), Conflict::Rename);
+        assert_eq!(parse_conflict(Some("")).unwrap(), Conflict::Rename);
+        assert_eq!(parse_conflict(Some("rename")).unwrap(), Conflict::Rename);
+        assert_eq!(parse_conflict(Some("skip")).unwrap(), Conflict::Skip);
+        assert_eq!(
+            parse_conflict(Some("overwrite")).unwrap(),
+            Conflict::Overwrite
+        );
+        assert!(parse_conflict(Some("replace")).is_err());
+    }
+
+    /// The SDK retry-id bug this fixes: a first `teleport_app` call that
+    /// only filed the Keyvault request (`consent_required: true`, no
+    /// `status` key) must come back as `TeleportReceipt { status: "pending",
+    /// request_id: Some(_) }`, never an `Err` -- a caller that only checks
+    /// `Result::Err` must not mistake "ask the user" for "refused".
+    #[test]
+    fn a_filed_request_is_pending_with_a_retryable_request_id_not_an_error() {
+        let v = json!({
+            "consent_required": true,
+            "moved": false,
+            "request_id": "req-1",
+            "app": "chrome",
+            "space": "dev-1",
+        });
+        let r = teleport_app_response(&v).unwrap();
+        assert_eq!(r.status, "pending");
+        assert_eq!(r.request_id.as_deref(), Some("req-1"));
+    }
+
+    /// A still-pending retry (`status: "pending"` explicitly, same shape the
+    /// tool sends on a retry before the user has decided) is also pending,
+    /// not an error, and keeps the SAME request id to retry with again.
+    #[test]
+    fn a_still_pending_retry_stays_pending_with_the_same_request_id() {
+        let v = json!({
+            "consent_required": true,
+            "moved": false,
+            "request_id": "req-1",
+            "status": "pending",
+        });
+        let r = teleport_app_response(&v).unwrap();
+        assert_eq!(r.status, "pending");
+        assert_eq!(r.request_id.as_deref(), Some("req-1"));
+    }
+
+    /// Once the user approves and the broker delivers, `moved: true` is a
+    /// completed teleport: `status: "moved"`, no `request_id` to retry with.
+    #[test]
+    fn a_granted_and_delivered_request_is_moved() {
+        let v = json!({
+            "consent_required": false,
+            "moved": true,
+            "app": "chrome",
+            "space": "dev-1",
+            "items": ["item-1"],
+            "transferred_paths": ["tabs.json", "cookies.json"],
+            "import_ids": ["cua-kv-1"],
+            "expires_ms": 123,
+        });
+        let r = teleport_app_response(&v).unwrap();
+        assert_eq!(r.status, "moved");
+        assert_eq!(r.request_id, None);
+        assert_eq!(r.app, "chrome");
+        assert_eq!(r.space, "dev-1");
+        assert_eq!(r.method, "import_session");
+        assert_eq!(r.transferred_paths, ["tabs.json", "cookies.json"]);
+        assert_eq!(r.imported, ["tabs.json", "cookies.json"]);
+    }
+
+    /// The user declining (no `request_id` to retry: the request is done)
+    /// is a real refusal, not a pending state.
+    #[test]
+    fn a_denied_request_is_a_refusal_not_pending() {
+        let v = json!({
+            "moved": false,
+            "denied": true,
+            "message": "the user declined the teleport (user); do not ask again unless they bring it up",
+        });
+        let err = teleport_app_response(&v).unwrap_err();
+        assert!(matches!(err, CuaError::TeleportRefused(_)), "{err:?}");
+        match err {
+            CuaError::TeleportRefused(m) => assert!(m.contains("declined")),
+            _ => unreachable!(),
+        }
+    }
+
+    /// `requires_cua_app`-shaped error responses (no daemon Keyvault
+    /// reachable at all) also fall through to the refusal, with its
+    /// message, not a bogus "pending".
+    #[test]
+    fn an_error_response_is_a_refusal_with_its_message() {
+        let v = json!({
+            "moved": false,
+            "error": {"code": "requires_cua_app", "message": "install Cua"},
+        });
+        let err = teleport_app_response(&v).unwrap_err();
+        match err {
+            CuaError::TeleportRefused(m) => assert!(m.contains("install Cua")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The conformance vectors through the exported surface: every event
+    /// survives the record round trip and the exported view draws what the
+    /// core draws.
+    #[test]
+    fn presence_view_runs_the_conformance_vectors_through_the_bindings() {
+        let doc: Value = serde_json::from_str(&presence_conformance_json()).unwrap();
+        for case in doc["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let view = PresenceView::new(
+                case["me"].as_str().unwrap().into(),
+                case["delay_ms"].as_f64(),
+            );
+            for step in case["steps"].as_array().unwrap() {
+                let at = step["at"].as_f64().unwrap();
+                if let Some(e) = step.get("event") {
+                    let core: cua_spaces::presence::PresenceEvent =
+                        serde_json::from_value(e.clone()).unwrap();
+                    let record: PresenceEvent = core.clone().into();
+                    assert_eq!(record.to_core(), Some(core), "{name}");
+                    view.apply(record, at);
+                    continue;
+                }
+                let pointer = step["pointer"].as_array().map(|p| PresencePoint {
+                    x: p[0].as_f64().unwrap(),
+                    y: p[1].as_f64().unwrap(),
+                });
+                let got = view.drawables(at, pointer);
+                let want = step["expect"].as_array().unwrap();
+                assert_eq!(got.len(), want.len(), "{name}: {got:?}");
+                for (g, w) in got.iter().zip(want) {
+                    assert_eq!(g.participant_id, w["participant_id"].as_str().unwrap());
+                    assert!(
+                        (g.x - w["x"].as_f64().unwrap()).abs() < 1e-6,
+                        "{name} {g:?}"
+                    );
+                    assert!((g.alpha - w["alpha"].as_f64().unwrap()).abs() < 1e-6);
+                    assert_eq!(g.shape, w["shape"].as_str().unwrap());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn presence_art_is_exported_for_every_shape() {
+        let all = presence_cursor_art_all();
+        assert_eq!(all.len(), 14);
+        assert_eq!(presence_cursor_art("text".into()).shape, "text");
+        assert_eq!(presence_cursor_art("nonsense".into()).shape, "arrow");
+        assert!(
+            presence_cursor_art_svg("pointer".into(), "#3cb44b".into(), 24.0).contains("#3cb44b")
+        );
+    }
+
+    #[test]
+    fn an_agent_list_row_keeps_its_published_accepts_message() {
+        // The row shape `agent_list` serves: an idle run accepts a follow-up.
+        let row = json!({"run_id": "run-1", "agent": "goose", "status": "idle",
+            "phase": "waiting", "reason": "waiting for a follow-up", "turn": 1,
+            "alive": true, "accepts_message": true});
+        let s = AgentRunStatus::from_json(row).unwrap();
+        assert_eq!(s.status, "idle");
+        assert!(s.accepts_message);
+        assert_eq!(s.reason, "waiting for a follow-up");
+    }
+
+    #[test]
+    fn every_contract_tool_maps_to_an_sdk_method() {
+        let contract: BTreeSet<&str> = cua_spaces::contract::tools()
+            .iter()
+            .map(|t| t.name)
+            .collect();
+        let mapped: BTreeSet<&str> = SPACES_TOOL_METHODS.iter().map(|(t, _)| *t).collect();
+        assert_eq!(
+            mapped, contract,
+            "SPACES_TOOL_METHODS must list exactly the Spaces contract tools"
+        );
+    }
+
+    #[test]
+    fn rfc3339_matches_known_instants() {
+        let at = std::time::UNIX_EPOCH + Duration::from_secs(1_758_300_000);
+        assert_eq!(humantime_rfc3339(at), "2025-09-19T16:40:00Z");
+    }
+}
+
+// ------------------------------------------------------------ Cua Volume
+
+/// Whose view of the drive a call takes: the user (the default, the whole
+/// drive) or a persistent agent in a Space. It only ever narrows.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct DriveView {
+    /// A persistent agent's name (`ada`).
+    #[uniffi(default = None)]
+    pub as_agent: Option<String>,
+    /// The Space id the agent is in (`local:work`).
+    #[uniffi(default = None)]
+    pub in_space: Option<String>,
+}
+
+/// One row of a drive listing.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveEntry {
+    /// Key (folders end in `/`).
+    pub path: String,
+    pub name: String,
+    pub folder: bool,
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub modified_ms: u64,
+    #[serde(default)]
+    pub etag: String,
+    /// `r` or `rw`: what this view may do there.
+    pub mode: String,
+    /// A file's sync state, when it has something to say (uploading,
+    /// conflicted, or last written by another device).
+    #[serde(default)]
+    pub sync: Option<DriveFileSync>,
+}
+
+/// One file's sync state.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveFileSync {
+    /// `synced`, `pending_upload` (not yet in storage: other devices do not
+    /// see it), `conflict` (a write lost to a later one, kept at
+    /// `conflict_path`) or `conflict_copy` (the kept copy of a losing write).
+    pub state: String,
+    /// The device that last wrote it, when another one did.
+    #[serde(default)]
+    pub written_by: Option<String>,
+    #[serde(default)]
+    pub conflict_path: Option<String>,
+}
+
+/// A file waiting to upload.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DrivePendingUpload {
+    pub path: String,
+    pub bytes: u64,
+}
+
+/// The volume mounted in a Space's guest.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveSpaceVolume {
+    pub space: String,
+    /// `/volume` (Linux) or `~/Cua Volume` (macOS), as the guest sees it.
+    pub mount_path: String,
+    /// `fs` (FUSE) or `nfs`.
+    pub backend: String,
+    /// Whose view it shows: `space:<folder>`, or `agent:<name>` while a
+    /// persistent agent runs there.
+    pub principal: String,
+}
+
+/// A folder's listing.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveListing {
+    pub path: String,
+    /// `user` or `agent:<name>`.
+    pub principal: String,
+    pub entries: Vec<DriveEntry>,
+}
+
+/// A file's content and version.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DriveFile {
+    pub path: String,
+    pub size: u64,
+    pub etag: String,
+    pub version: String,
+    pub modified_ms: u64,
+    pub content: Vec<u8>,
+    /// Its sync state, while the drive's services run.
+    pub sync: Option<DriveFileSync>,
+}
+
+/// A written version.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveObject {
+    pub key: String,
+    pub size: u64,
+    pub etag: String,
+    pub version: String,
+    pub modified_ms: u64,
+}
+
+/// One version in a file's history.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveVersion {
+    pub version: String,
+    pub size: u64,
+    pub modified_ms: u64,
+    pub deleted: bool,
+    pub latest: bool,
+}
+
+/// A widening of an agent's or a Space's access.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveGrant {
+    pub id: String,
+    pub principal: String,
+    pub prefix: String,
+    /// `r` or `rw`.
+    pub mode: String,
+    pub created_ms: u64,
+    #[serde(default)]
+    pub expires_ms: Option<u64>,
+    #[serde(default)]
+    pub revoked: bool,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// An agent's request for more access, waiting for the user.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveAccessRequest {
+    pub id: String,
+    pub principal: String,
+    pub prefix: String,
+    pub mode: String,
+    #[serde(default)]
+    pub reason: String,
+    pub created_ms: u64,
+}
+
+/// One audit event.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveAuditEvent {
+    pub seq: u64,
+    pub ts_ms: u64,
+    pub principal: String,
+    pub action: String,
+    pub path: String,
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// The newest audit events and whether the hash chain verified.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveAudit {
+    pub events: Vec<DriveAuditEvent>,
+    pub verified: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Where an S3-compatible bucket is (no keys).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize, Serialize)]
+pub struct DriveS3Settings {
+    /// `http://127.0.0.1:9000`, `https://<account>.r2.cloudflarestorage.com`;
+    /// `None` for AWS.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// `us-east-1`; `auto` for R2.
+    #[serde(default)]
+    pub region: String,
+    pub bucket: String,
+    /// A key prefix inside the bucket (may be empty).
+    #[serde(default)]
+    pub root: String,
+    /// Path-style addressing (MinIO and most self-hosted stores).
+    #[serde(default)]
+    pub path_style: bool,
+}
+
+/// Where the drive keeps its bytes (Settings > Storage).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveStorage {
+    /// `fs` or `s3`.
+    pub backend: String,
+    /// Where the `fs` backend keeps bytes.
+    pub fs_path: String,
+    #[serde(default)]
+    pub s3: Option<DriveS3Settings>,
+    /// S3 keys are saved (they are never returned).
+    pub has_keys: bool,
+    /// Always false in this release: hide the Cua cloud option.
+    pub cloud_available: bool,
+}
+
+/// A storage change, or with `dry_run` a connection test.
+#[derive(Clone, PartialEq, Eq, uniffi::Record, Serialize)]
+pub struct DriveStorageUpdate {
+    /// `fs` or `s3` (`cloud` is refused).
+    pub backend: String,
+    pub s3: Option<DriveS3Settings>,
+    /// With `secret_access_key` (both or neither); saved in the credential
+    /// store.
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    /// Only test; change nothing.
+    pub dry_run: bool,
+}
+
+impl std::fmt::Debug for DriveStorageUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveStorageUpdate")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
+}
+
+/// What a storage test found.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveStorageCheck {
+    pub ok: bool,
+    pub reachable: bool,
+    pub authorized: bool,
+    /// Bucket versioning is on (required).
+    pub versioning: bool,
+    /// A sentence when not ok: what is wrong and how to fix it.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// What is wrong, to key the UI on: `unreachable`, `bad_keys`,
+    /// `forbidden`, `bucket_missing`, `versioning_off`,
+    /// `path_style_needed`.
+    #[serde(default)]
+    pub problem: Option<String>,
+    /// Saved and switched live.
+    pub applied: bool,
+}
+
+/// The drive as a volume.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveMountStatus {
+    /// The user's opt-in (off by default).
+    pub enabled: bool,
+    /// `off`, `mounting`, `mounted`, `needs_approval`, `unsupported`, `error`.
+    pub state: String,
+    /// `nfs` (macOS), `fuse` (Linux), `fskit`, `none`.
+    pub method: String,
+    /// The mount point when mounted ("Show in Finder" opens it).
+    #[serde(default)]
+    pub path: Option<String>,
+    pub volume_name: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub settings_url: Option<String>,
+}
+
+/// A write that lost to a later one, kept in history and as a copy.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveConflict {
+    pub path: String,
+    pub conflict_path: String,
+    pub winner_device: String,
+    pub loser_device: String,
+    pub winner_version: String,
+    pub loser_version: String,
+    pub ts_ms: u64,
+}
+
+/// A device sharing the drive's bucket.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveDevice {
+    pub id: String,
+    pub name: String,
+    pub this_device: bool,
+    pub last_seen_ms: u64,
+    pub last_change_ms: u64,
+    pub changes: u64,
+}
+
+/// Sync across devices.
+#[derive(Debug, Clone, PartialEq, uniffi::Record, Deserialize)]
+pub struct DriveSyncStatus {
+    pub device_id: String,
+    pub device_name: String,
+    /// `live`, `off` (a store on this machine), `offline` (the bucket
+    /// stopped answering; see `last_error`).
+    pub feed: String,
+    pub poll_interval_ms: u64,
+    pub last_poll_ms: u64,
+    pub last_remote_change_ms: u64,
+    pub pending_uploads: u32,
+    pub pending_bytes: u64,
+    pub conflicts: Vec<DriveConflict>,
+    pub devices: Vec<DriveDevice>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// The files still uploading, largest first (at most 100).
+    #[serde(default)]
+    pub pending: Vec<DrivePendingUpload>,
+    /// `fs` (This Mac) or `s3` (your bucket).
+    #[serde(default)]
+    pub backend: String,
+    /// This machine's mount: `off`, `mounting`, `mounted`,
+    /// `needs_approval`, `unsupported` or `error`.
+    #[serde(default)]
+    pub mount: String,
+    /// The block cache in front of a bucket.
+    #[serde(default)]
+    pub cache: Option<DriveCacheStats>,
+    /// The volume mounted in Spaces.
+    #[serde(default)]
+    pub volumes: Vec<DriveSpaceVolume>,
+}
+
+/// One sync event.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveSyncEvent {
+    pub seq: u64,
+    pub ts_ms: u64,
+    /// `remote_change`, `remote_delete`, `upload_started`, `upload_done`,
+    /// `upload_failed`, `conflict`, `error`.
+    pub kind: String,
+    pub path: String,
+    pub device: String,
+    pub size: u64,
+    pub version: String,
+    pub detail: String,
+}
+
+/// Events after a sequence number, and the sequence to ask after next.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct DriveSyncEvents {
+    pub events: Vec<DriveSyncEvent>,
+    pub next_seq: u64,
+}
+
+/// The block cache in front of a remote store.
+#[derive(Debug, Clone, PartialEq, uniffi::Record, Deserialize)]
+pub struct DriveCacheStats {
+    pub dir: String,
+    pub size_bytes: u64,
+    pub capacity_bytes: u64,
+    pub block_bytes: u64,
+    pub blocks: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub prefetched_bytes: u64,
+    pub evictions: u64,
+}
+
+fn with_view(mut args: Value, view: Option<DriveView>) -> Value {
+    if let Some(v) = view {
+        if let Some(a) = v.as_agent {
+            args["as_agent"] = json!(a);
+        }
+        if let Some(s) = v.in_space {
+            args["in_space"] = json!(s);
+        }
+    }
+    args
+}
+
+fn b64() -> base64::engine::GeneralPurpose {
+    base64::engine::general_purpose::STANDARD
+}
+
+/// Cua Volume: the versioned volume every Space and agent shares
+/// (`public/`, `agents/<agent>/`, `spaces/<space>/`). The same tools
+/// `cua daemon mcp` serves; access is checked by the runtime.
+#[uniffi::export]
+impl Spaces {
+    /// `volume_ls`: a folder's immediate children (default the root).
+    pub async fn volume_ls(
+        &self,
+        path: Option<String>,
+        view: Option<DriveView>,
+    ) -> Result<DriveListing> {
+        let host = self.host.clone();
+        run(async move {
+            let args = with_view(json!({"path": path.unwrap_or_default()}), view);
+            parse(host.tool_value("volume_ls", args).await?)
+        })
+        .await
+    }
+
+    /// `volume_read`: a file (or one of its versions).
+    pub async fn volume_read(
+        &self,
+        path: String,
+        version: Option<String>,
+        view: Option<DriveView>,
+    ) -> Result<DriveFile> {
+        use base64::Engine as _;
+        let host = self.host.clone();
+        run(async move {
+            let mut args = json!({"path": path});
+            if let Some(v) = version {
+                args["version"] = json!(v);
+            }
+            let v = host
+                .tool_value("volume_read", with_view(args, view))
+                .await?;
+            let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
+            let content = match v["encoding"].as_str() {
+                Some("base64") => b64()
+                    .decode(s("content"))
+                    .map_err(|e| CuaError::Internal(format!("volume_read content: {e}")))?,
+                _ => s("content").into_bytes(),
+            };
+            Ok(DriveFile {
+                path: s("path"),
+                size: v["size"].as_u64().unwrap_or(0),
+                etag: s("etag"),
+                version: s("version"),
+                modified_ms: v["modified_ms"].as_u64().unwrap_or(0),
+                content,
+                sync: serde_json::from_value(v["sync"].clone()).ok(),
+            })
+        })
+        .await
+    }
+
+    /// `volume_write`: a new version of a file. `if_etag` makes it a
+    /// compare-and-swap, `create_only` makes it create-only.
+    pub async fn volume_write(
+        &self,
+        path: String,
+        content: Vec<u8>,
+        if_etag: Option<String>,
+        create_only: bool,
+        view: Option<DriveView>,
+    ) -> Result<DriveObject> {
+        use base64::Engine as _;
+        let host = self.host.clone();
+        run(async move {
+            let mut args = json!({"path": path, "content": b64().encode(&content),
+                "encoding": "base64", "create_only": create_only});
+            if let Some(e) = if_etag {
+                args["if_etag"] = json!(e);
+            }
+            parse(
+                host.tool_value("volume_write", with_view(args, view))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// `volume_delete`: a delete marker (history stays).
+    pub async fn volume_delete(
+        &self,
+        path: String,
+        if_etag: Option<String>,
+        view: Option<DriveView>,
+    ) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            let mut args = json!({"path": path});
+            if let Some(e) = if_etag {
+                args["if_etag"] = json!(e);
+            }
+            host.tool_value("volume_delete", with_view(args, view))
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// `volume_history`: a file's versions, newest first.
+    pub async fn volume_history(
+        &self,
+        path: String,
+        view: Option<DriveView>,
+    ) -> Result<Vec<DriveVersion>> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host
+                .tool_value("volume_history", with_view(json!({"path": path}), view))
+                .await?;
+            parse(v["versions"].clone())
+        })
+        .await
+    }
+
+    /// `volume_restore`: makes an old version current again.
+    pub async fn volume_restore(
+        &self,
+        path: String,
+        version: String,
+        view: Option<DriveView>,
+    ) -> Result<DriveObject> {
+        let host = self.host.clone();
+        run(async move {
+            let args = with_view(json!({"path": path, "version": version}), view);
+            parse(host.tool_value("volume_restore", args).await?)
+        })
+        .await
+    }
+
+    /// `volume_grant`: widens `principal`'s access (`agent:<name>` or
+    /// `space:<id>`, mode `r` or `rw`). The user confirms with presence.
+    pub async fn volume_grant(
+        &self,
+        principal: String,
+        prefix: String,
+        mode: String,
+        expires_in_secs: Option<u64>,
+        note: Option<String>,
+    ) -> Result<DriveGrant> {
+        let host = self.host.clone();
+        run(async move {
+            let args = json!({"principal": principal, "prefix": prefix, "mode": mode,
+                "expires_in_secs": expires_in_secs, "note": note});
+            parse(host.tool_value("volume_grant", args).await?)
+        })
+        .await
+    }
+
+    /// `volume_revoke`.
+    pub async fn volume_revoke(&self, grant_id: String) -> Result<DriveGrant> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("volume_revoke", json!({"grant_id": grant_id}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// `volume_grants`: live grants (every grant with `all`).
+    pub async fn volume_grants(&self, all: bool) -> Result<Vec<DriveGrant>> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host
+                .tool_value("volume_grants", json!({"all": all}))
+                .await?;
+            parse(v["grants"].clone())
+        })
+        .await
+    }
+
+    /// `volume_request_access`: `agent` asks the user for more access.
+    pub async fn volume_request_access(
+        &self,
+        agent: String,
+        prefix: String,
+        mode: String,
+        reason: Option<String>,
+        in_space: Option<String>,
+    ) -> Result<DriveAccessRequest> {
+        let host = self.host.clone();
+        run(async move {
+            let args = json!({"as_agent": agent, "in_space": in_space, "prefix": prefix,
+                "mode": mode, "reason": reason});
+            parse(host.tool_value("volume_request_access", args).await?)
+        })
+        .await
+    }
+
+    /// `volume_requests`: requests waiting for the user.
+    pub async fn volume_requests(&self) -> Result<Vec<DriveAccessRequest>> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host.tool_value("volume_requests", json!({})).await?;
+            parse(v["requests"].clone())
+        })
+        .await
+    }
+
+    /// `volume_approve`: the request becomes a grant (with presence).
+    pub async fn volume_approve(
+        &self,
+        request_id: String,
+        expires_in_secs: Option<u64>,
+    ) -> Result<DriveGrant> {
+        let host = self.host.clone();
+        run(async move {
+            let args = json!({"request_id": request_id, "expires_in_secs": expires_in_secs});
+            parse(host.tool_value("volume_approve", args).await?)
+        })
+        .await
+    }
+
+    /// `volume_deny`.
+    pub async fn volume_deny(&self, request_id: String) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            host.tool_value("volume_deny", json!({"request_id": request_id}))
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// `volume_storage`: where the drive keeps its bytes.
+    pub async fn volume_storage(&self) -> Result<DriveStorage> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_storage", json!({})).await?) }).await
+    }
+
+    /// `volume_storage_set`: tests, and unless `dry_run` saves and switches
+    /// to, a storage backend (live, no restart).
+    pub async fn volume_storage_set(
+        &self,
+        update: DriveStorageUpdate,
+    ) -> Result<DriveStorageCheck> {
+        let host = self.host.clone();
+        run(async move {
+            let args = serde_json::to_value(&update)
+                .map_err(|e| CuaError::Internal(format!("volume_storage_set: {e}")))?;
+            parse(host.tool_value("volume_storage_set", args).await?)
+        })
+        .await
+    }
+
+    /// `volume_mount_status`: whether the drive is mounted as a volume.
+    pub async fn volume_mount_status(&self) -> Result<DriveMountStatus> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_mount_status", json!({})).await?) }).await
+    }
+
+    /// `volume_mount`: turns the mount on (kept across restarts) and mounts.
+    pub async fn volume_mount(&self) -> Result<DriveMountStatus> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_mount", json!({})).await?) }).await
+    }
+
+    /// `volume_unmount`: turns the mount off; pending uploads land first.
+    pub async fn volume_unmount(&self) -> Result<DriveMountStatus> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_unmount", json!({})).await?) }).await
+    }
+
+    /// `volume_sync_status`: devices, pending uploads and conflicts.
+    pub async fn volume_sync_status(&self) -> Result<DriveSyncStatus> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_sync_status", json!({})).await?) }).await
+    }
+
+    /// `volume_sync_events`: events after `since_seq`, waiting up to
+    /// `wait_ms` (at most 30000) for one.
+    pub async fn volume_sync_events(
+        &self,
+        since_seq: Option<u64>,
+        wait_ms: Option<u32>,
+    ) -> Result<DriveSyncEvents> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "volume_sync_events",
+                    json!({"since_seq": since_seq, "wait_ms": wait_ms}),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// `volume_sync_resolve`: clears a conflict from the list (files stay).
+    pub async fn volume_sync_resolve(&self, path: String) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            host.tool_value("volume_sync_resolve", json!({"path": path}))
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// `volume_cache_stats`: the block cache's size, cap and hit rate.
+    pub async fn volume_cache_stats(&self) -> Result<DriveCacheStats> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_cache_stats", json!({})).await?) }).await
+    }
+
+    /// `volume_cache_set`: the cache's size cap (at least 256 MiB).
+    pub async fn volume_cache_set(&self, capacity_bytes: u64) -> Result<DriveCacheStats> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "volume_cache_set",
+                    json!({"capacity_bytes": capacity_bytes}),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// `volume_cache_clear`: drops every cached block.
+    pub async fn volume_cache_clear(&self) -> Result<DriveCacheStats> {
+        let host = self.host.clone();
+        run(async move { parse(host.tool_value("volume_cache_clear", json!({})).await?) }).await
+    }
+
+    /// `volume_audit`: the newest events (default 50) and whether the log
+    /// verified.
+    pub async fn volume_audit(&self, limit: Option<u32>) -> Result<DriveAudit> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("volume_audit", json!({"limit": limit}))
+                    .await?,
+            )
+        })
+        .await
+    }
+}
+
+/// The drive method names from before the rename to Cua Volume, for Rust
+/// callers only and for one release (the language bindings have the new
+/// names only).
+impl Spaces {
+    #[deprecated(note = "renamed to `volume_ls` (Cua Volume); removed after this release")]
+    pub async fn drive_ls(
+        &self,
+        path: Option<String>,
+        view: Option<DriveView>,
+    ) -> Result<DriveListing> {
+        self.volume_ls(path, view).await
+    }
+
+    #[deprecated(note = "renamed to `volume_read` (Cua Volume); removed after this release")]
+    pub async fn drive_read(
+        &self,
+        path: String,
+        version: Option<String>,
+        view: Option<DriveView>,
+    ) -> Result<DriveFile> {
+        self.volume_read(path, version, view).await
+    }
+
+    #[deprecated(note = "renamed to `volume_write` (Cua Volume); removed after this release")]
+    pub async fn drive_write(
+        &self,
+        path: String,
+        content: Vec<u8>,
+        if_etag: Option<String>,
+        create_only: bool,
+        view: Option<DriveView>,
+    ) -> Result<DriveObject> {
+        self.volume_write(path, content, if_etag, create_only, view)
+            .await
+    }
+
+    #[deprecated(note = "renamed to `volume_delete` (Cua Volume); removed after this release")]
+    pub async fn drive_delete(
+        &self,
+        path: String,
+        if_etag: Option<String>,
+        view: Option<DriveView>,
+    ) -> Result<()> {
+        self.volume_delete(path, if_etag, view).await
+    }
+
+    #[deprecated(note = "renamed to `volume_history` (Cua Volume); removed after this release")]
+    pub async fn drive_history(
+        &self,
+        path: String,
+        view: Option<DriveView>,
+    ) -> Result<Vec<DriveVersion>> {
+        self.volume_history(path, view).await
+    }
+
+    #[deprecated(note = "renamed to `volume_restore` (Cua Volume); removed after this release")]
+    pub async fn drive_restore(
+        &self,
+        path: String,
+        version: String,
+        view: Option<DriveView>,
+    ) -> Result<DriveObject> {
+        self.volume_restore(path, version, view).await
+    }
+
+    #[deprecated(note = "renamed to `volume_grant` (Cua Volume); removed after this release")]
+    pub async fn drive_grant(
+        &self,
+        principal: String,
+        prefix: String,
+        mode: String,
+        expires_in_secs: Option<u64>,
+        note: Option<String>,
+    ) -> Result<DriveGrant> {
+        self.volume_grant(principal, prefix, mode, expires_in_secs, note)
+            .await
+    }
+
+    #[deprecated(note = "renamed to `volume_revoke` (Cua Volume); removed after this release")]
+    pub async fn drive_revoke(&self, grant_id: String) -> Result<DriveGrant> {
+        self.volume_revoke(grant_id).await
+    }
+
+    #[deprecated(note = "renamed to `volume_grants` (Cua Volume); removed after this release")]
+    pub async fn drive_grants(&self, all: bool) -> Result<Vec<DriveGrant>> {
+        self.volume_grants(all).await
+    }
+
+    #[deprecated(
+        note = "renamed to `volume_request_access` (Cua Volume); removed after this release"
+    )]
+    pub async fn drive_request_access(
+        &self,
+        agent: String,
+        prefix: String,
+        mode: String,
+        reason: Option<String>,
+        in_space: Option<String>,
+    ) -> Result<DriveAccessRequest> {
+        self.volume_request_access(agent, prefix, mode, reason, in_space)
+            .await
+    }
+
+    #[deprecated(note = "renamed to `volume_requests` (Cua Volume); removed after this release")]
+    pub async fn drive_requests(&self) -> Result<Vec<DriveAccessRequest>> {
+        self.volume_requests().await
+    }
+
+    #[deprecated(note = "renamed to `volume_approve` (Cua Volume); removed after this release")]
+    pub async fn drive_approve(
+        &self,
+        request_id: String,
+        expires_in_secs: Option<u64>,
+    ) -> Result<DriveGrant> {
+        self.volume_approve(request_id, expires_in_secs).await
+    }
+
+    #[deprecated(note = "renamed to `volume_deny` (Cua Volume); removed after this release")]
+    pub async fn drive_deny(&self, request_id: String) -> Result<()> {
+        self.volume_deny(request_id).await
+    }
+
+    #[deprecated(note = "renamed to `volume_storage` (Cua Volume); removed after this release")]
+    pub async fn drive_storage(&self) -> Result<DriveStorage> {
+        self.volume_storage().await
+    }
+
+    #[deprecated(note = "renamed to `volume_storage_set` (Cua Volume); removed after this release")]
+    pub async fn drive_storage_set(&self, update: DriveStorageUpdate) -> Result<DriveStorageCheck> {
+        self.volume_storage_set(update).await
+    }
+
+    #[deprecated(
+        note = "renamed to `volume_mount_status` (Cua Volume); removed after this release"
+    )]
+    pub async fn drive_mount_status(&self) -> Result<DriveMountStatus> {
+        self.volume_mount_status().await
+    }
+
+    #[deprecated(note = "renamed to `volume_mount` (Cua Volume); removed after this release")]
+    pub async fn drive_mount(&self) -> Result<DriveMountStatus> {
+        self.volume_mount().await
+    }
+
+    #[deprecated(note = "renamed to `volume_unmount` (Cua Volume); removed after this release")]
+    pub async fn drive_unmount(&self) -> Result<DriveMountStatus> {
+        self.volume_unmount().await
+    }
+
+    #[deprecated(note = "renamed to `volume_sync_status` (Cua Volume); removed after this release")]
+    pub async fn drive_sync_status(&self) -> Result<DriveSyncStatus> {
+        self.volume_sync_status().await
+    }
+
+    #[deprecated(note = "renamed to `volume_sync_events` (Cua Volume); removed after this release")]
+    pub async fn drive_sync_events(
+        &self,
+        since_seq: Option<u64>,
+        wait_ms: Option<u32>,
+    ) -> Result<DriveSyncEvents> {
+        self.volume_sync_events(since_seq, wait_ms).await
+    }
+
+    #[deprecated(
+        note = "renamed to `volume_sync_resolve` (Cua Volume); removed after this release"
+    )]
+    pub async fn drive_sync_resolve(&self, path: String) -> Result<()> {
+        self.volume_sync_resolve(path).await
+    }
+
+    #[deprecated(note = "renamed to `volume_cache_stats` (Cua Volume); removed after this release")]
+    pub async fn drive_cache_stats(&self) -> Result<DriveCacheStats> {
+        self.volume_cache_stats().await
+    }
+
+    #[deprecated(note = "renamed to `volume_cache_set` (Cua Volume); removed after this release")]
+    pub async fn drive_cache_set(&self, capacity_bytes: u64) -> Result<DriveCacheStats> {
+        self.volume_cache_set(capacity_bytes).await
+    }
+
+    #[deprecated(note = "renamed to `volume_cache_clear` (Cua Volume); removed after this release")]
+    pub async fn drive_cache_clear(&self) -> Result<DriveCacheStats> {
+        self.volume_cache_clear().await
+    }
+
+    #[deprecated(note = "renamed to `volume_audit` (Cua Volume); removed after this release")]
+    pub async fn drive_audit(&self, limit: Option<u32>) -> Result<DriveAudit> {
+        self.volume_audit(limit).await
+    }
+}
+
+/// The thumbnail cache's format word (`jpeg`, `png`, `webp`).
+fn thumbnail_format(word: &str) -> crate::types::ImageFormat {
+    match word {
+        "png" => crate::types::ImageFormat::Png,
+        "webp" => crate::types::ImageFormat::Webp,
+        _ => crate::types::ImageFormat::Jpeg,
+    }
+}

@@ -1,0 +1,1 @@
+Replace the pristine workbook to make reset verification fail.

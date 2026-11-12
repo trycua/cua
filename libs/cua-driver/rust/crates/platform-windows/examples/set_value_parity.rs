@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `set_value`.
 //!
 //! Tests the Swift-shaped error wording and text format.  We don't issue a
@@ -5,7 +8,9 @@
 //! freshly-walked UIA cache; the response-shape verification on the error
 //! paths is sufficient to lock the parity.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]
@@ -45,9 +50,8 @@ fn main() {
             .unwrap_or_default()
     }
 
-    // Missing value error (with all three integers present).  Note: pid /
-    // window_id / element_index are schema-required; we pick a real pid +
-    // window_id to ensure the schema doesn't reject before our tool runs.
+    // Missing value error. We pick a real pid + window_id to ensure the
+    // schema doesn't reject before our tool runs.
     let lw = req(
         &mut pipe,
         r#"{"method":"call","name":"list_windows","args":{}}"#,
@@ -80,7 +84,7 @@ fn main() {
     let r1 = req(
         &mut pipe,
         &format!(
-            r#"{{"method":"call","name":"set_value","args":{{"pid":{pid},"window_id":{wid},"element_index":0}}}}"#
+            r#"{{"method":"call","name":"set_value","args":{{"pid":{pid},"window_id":{wid},"element_token":"s00000000:0"}}}}"#
         ),
     );
     let e1 = extract_text(&serde_json::from_str(r1.trim()).unwrap());
@@ -95,7 +99,7 @@ fn main() {
     let r2 = req(
         &mut pipe,
         &format!(
-            r#"{{"method":"call","name":"set_value","args":{{"pid":{pid},"window_id":{wid},"element_index":99999,"value":"x"}}}}"#
+            r#"{{"method":"call","name":"set_value","args":{{"pid":{pid},"window_id":{wid},"element_token":"s00000000:99999","value":"x"}}}}"#
         ),
     );
     let e2 = extract_text(&serde_json::from_str(r2.trim()).unwrap());

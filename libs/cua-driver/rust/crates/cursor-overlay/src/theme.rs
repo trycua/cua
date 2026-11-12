@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Canonical cursor-theme semantics and `cua.default` runtime parameters.
 //!
 //! The default artwork is authored as a checked-in dotLottie archive and
 //! compiled into the bounded artifact embedded by [`crate::theme_artifact`].
-//! This module owns transport-neutral state, session colors, and the shared
-//! runtime float transform. It does not parse Lottie at runtime.
+//! This module owns transport-neutral state and session colors. It does not
+//! parse Lottie at runtime.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,11 +16,10 @@ pub use cua_driver_contract::{
 };
 
 pub const DEFAULT_THEME_ID: &str = "cua.default";
-pub const DEFAULT_THEME_VERSION: &str = "1.0.0";
-pub const THEME_PROFILE: &str = "cua-driver-full-v1";
+pub const DEFAULT_THEME_VERSION: &str = "2.0.0";
+pub const THEME_PROFILE: &str = "cua-driver-actions-v2";
 pub const CANVAS_SIZE: f32 = 128.0;
-pub const DISPLAY_SIZE: f32 = 48.0;
-const FLOAT_DURATION_SECS: f32 = 4.0;
+pub const DISPLAY_SIZE: f32 = 42.0;
 
 pub const DEFAULT_CURSOR_FILL: [u8; 4] = [94, 192, 232, 255];
 
@@ -179,26 +181,10 @@ impl CursorVisualState {
     }
 }
 
-pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> (f32, f32, f32) {
-    if visual.reduced_motion == ReducedMotion::On {
-        return (0.0, 0.0, 0.0);
-    }
-
-    let progress =
-        (visual.elapsed_secs as f32).rem_euclid(FLOAT_DURATION_SECS) / FLOAT_DURATION_SECS;
-    let angle = progress * std::f32::consts::TAU;
-    (
-        angle.sin() * 5.0,
-        6.0 * angle.cos() - 5.0,
-        2.5_f32.to_radians() * angle.cos(),
-    )
-}
-
-/// Paint one frame of the embedded Full-v1 theme.
+/// Paint one frame of the embedded actions-v2 theme.
 ///
-/// `anchor_x/y` is the existing overlay's cursor centre. The Lottie canvas is
-/// centred there so the established click offset and path physics remain
-/// unchanged. `heading` rotates the artwork around the canvas centre.
+/// `anchor_x/y` is where the theme hotspot is drawn. `heading` and the
+/// display scale pivot around that hotspot.
 pub fn paint_default_theme(
     pm: &mut tiny_skia::Pixmap,
     visual: &CursorVisualState,
@@ -250,17 +236,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_profile_has_twelve_unique_actions() {
-        let mut names = std::collections::BTreeSet::new();
-        for action in CursorAction::ALL {
-            assert!(names.insert(action.as_str()));
-        }
-        assert_eq!(names.len(), 12);
-    }
-
-    #[test]
-    fn default_theme_uses_compact_48_point_footprint() {
-        assert_eq!(DISPLAY_SIZE, 48.0);
+    fn default_theme_uses_compact_42_point_footprint() {
+        assert_eq!(DISPLAY_SIZE, 42.0);
     }
 
     #[test]
@@ -360,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn foreground_and_pixel_modifiers_render_on_opposite_sides() {
+    fn action_theme_ignores_host_owned_modifiers() {
         let mut base = tiny_skia::Pixmap::new(128, 128).unwrap();
         let mut pixmap = tiny_skia::Pixmap::new(128, 128).unwrap();
         let base_visual = CursorVisualState {
@@ -394,50 +371,7 @@ mod tests {
             [12, 34, 56, 255],
         );
 
-        let changed_pixels = |x_range: std::ops::Range<u32>| {
-            (0..128)
-                .flat_map(|y| x_range.clone().map(move |x| (x, y)))
-                .filter(|(x, y)| {
-                    let index = ((y * pixmap.width() + x) * 4) as usize;
-                    pixmap.data()[index..index + 4] != base.data()[index..index + 4]
-                })
-                .count()
-        };
-
-        assert!(changed_pixels(0..50) > 5);
-        assert!(changed_pixels(78..128) > 5);
-    }
-
-    #[test]
-    fn every_action_inherits_the_same_floating_base_motion() {
-        let idle = CursorVisualState {
-            elapsed_secs: 0.75,
-            ..CursorVisualState::default()
-        };
-        let expected = shared_float_motion(&idle);
-        assert_ne!(expected, (0.0, 0.0, 0.0));
-
-        for action in CursorAction::ALL {
-            let mut visual = CursorVisualState::default();
-            visual.begin(action, None, None);
-            visual.elapsed_secs = 0.75;
-            assert_eq!(
-                shared_float_motion(&visual),
-                expected,
-                "{} did not inherit the shared floating motion",
-                action.as_str()
-            );
-        }
-    }
-
-    #[test]
-    fn reduced_motion_disables_shared_floating_motion() {
-        let visual = CursorVisualState {
-            elapsed_secs: 0.75,
-            reduced_motion: ReducedMotion::On,
-            ..CursorVisualState::default()
-        };
-        assert_eq!(shared_float_motion(&visual), (0.0, 0.0, 0.0));
+        assert_eq!(pixmap.data(), base.data());
     }
 
     #[test]

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -12,22 +15,23 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_windows".into(),
-        description: "List all layer-0 top-level windows currently known to WindowServer. \
-            Includes off-screen windows (minimized, on another Space, hidden-launched). \
-            Use this to find a window_id before calling get_window_state.\n\n\
-            Per-record fields: window_id, pid, app_name, title, bounds \
-            (x/y/width/height, top-left origin), z_index (higher = frontmost), \
-            is_on_screen, on_current_space.".into(),
+        description: "List top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden): layer-0 only without `pid`, every layer with `pid`. Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.\n\
+            \n\
+            Per record: window_id, pid, app_name, title, bounds, layer, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "pid": {
                     "type": "integer",
-                    "description": "Optional pid filter. When set, only this pid's windows are returned."
+                    "description": "Only this pid's windows, on every layer."
+                },
+                "app": {
+                    "type": "string",
+                    "description": cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION
                 },
                 "on_screen_only": {
                     "type": "boolean",
-                    "description": "When true, drop windows not on the current Space. Default false."
+                    "description": "Drop windows not on the current Space."
                 }
             },
             "additionalProperties": false
@@ -50,44 +54,174 @@ impl Tool for ListWindowsTool {
         let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
         let on_screen_only = args.bool_or("on_screen_only", false);
 
-        let mut windows = if on_screen_only {
-            crate::windows::visible_windows()
+        let enumeration = match pid_filter {
+            Some(pid) => crate::windows::pid_windows_with_space_snapshot(pid, on_screen_only),
+            None if on_screen_only => crate::windows::visible_windows_with_space_snapshot(),
+            None => crate::windows::all_windows_with_space_snapshot(),
+        };
+        let current_space_id = enumeration.current_space_id;
+        let mut windows = enumeration.windows;
+
+        // The driver's own windows (the agent cursor overlay) are not targets.
+        let own_pid = std::process::id() as i32;
+        windows.retain(|w| w.pid != own_pid);
+        if let Some(filter) = args.opt_str("app") {
+            let mut bundle_ids = std::collections::HashMap::new();
+            windows.retain(|w| {
+                let bundle_id = bundle_ids
+                    .entry(w.pid)
+                    .or_insert_with(|| crate::apps::bundle_id_for_pid(w.pid));
+                cua_driver_core::tool_args::app_filter_matches(
+                    &filter,
+                    &w.app_name,
+                    bundle_id.as_deref(),
+                )
+            });
+        }
+        crate::windows::retain_ax_reachable(&mut windows, current_space_id);
+        crate::windows::normalize_z_indices(&mut windows);
+
+        let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
+
+        ToolResult::text(format_window_list(&windows)).with_structured(serde_json::json!({
+            "windows": windows_json,
+            "current_space_id": current_space_id
+        }))
+    }
+}
+
+fn format_window_list(windows: &[crate::windows::WindowInfo]) -> String {
+    let mut lines = vec![format!("Found {} window(s).", windows.len())];
+    for w in windows {
+        let title = if w.title.is_empty() {
+            "(no title)".to_owned()
         } else {
-            crate::windows::all_windows()
+            format!("\"{}\"", w.title)
+        };
+        let tag = if w.is_on_screen { "" } else { " [off-screen]" };
+        lines.push(format!(
+            "- {} (pid {}) {} [window_id: {}]{tag}",
+            w.app_name, w.pid, title, w.window_id
+        ));
+    }
+    lines.join("\n")
+}
+
+pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
+    serde_json::json!({
+        "window_id": w.window_id,
+        "pid": w.pid,
+        "app_name": w.app_name,
+        "title": w.title,
+        "bounds": {
+            "x": w.bounds.x,
+            "y": w.bounds.y,
+            "width": w.bounds.width,
+            "height": w.bounds.height
+        },
+        "layer": w.layer,
+        "z_index": w.z_index,
+        "is_on_screen": w.is_on_screen,
+        "current_space_id": w.current_space_id,
+        "on_current_space": w.on_current_space,
+        "space_ids": w.space_ids,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_windows_receive_contiguous_zero_based_z_indices() {
+        let mut windows = vec![
+            window(1, 100, "A", "front", true),
+            window(2, 200, "B", "middle", true),
+            window(3, 100, "A", "back", true),
+        ];
+        windows.retain(|window| window.pid == 100);
+
+        crate::windows::normalize_z_indices(&mut windows);
+
+        let z: Vec<_> = windows.iter().map(|window| window.z_index).collect();
+        assert_eq!(z, [1, 0]);
+    }
+
+    #[test]
+    fn window_record_includes_observed_z_index() {
+        let window = crate::windows::WindowInfo {
+            window_id: 42,
+            pid: 123,
+            app_name: "Example".into(),
+            title: "Document".into(),
+            bounds: crate::windows::WindowBounds {
+                x: 1.0,
+                y: 2.0,
+                width: 300.0,
+                height: 200.0,
+            },
+            layer: 0,
+            z_index: 7,
+            is_on_screen: true,
+            current_space_id: Some(1),
+            on_current_space: Some(true),
+            space_ids: Some(vec![1]),
         };
 
-        if let Some(pid) = pid_filter {
-            windows.retain(|w| w.pid == pid);
+        assert_eq!(window_record_json(&window)["z_index"], serde_json::json!(7));
+        assert_eq!(
+            window_record_json(&window)["current_space_id"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            window_record_json(&window)["on_current_space"],
+            serde_json::json!(true)
+        );
+    }
+
+    fn window(
+        window_id: u32,
+        pid: i32,
+        app: &str,
+        title: &str,
+        on_screen: bool,
+    ) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: app.into(),
+            title: title.into(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: on_screen,
+            current_space_id: Some(1),
+            on_current_space: Some(true),
+            space_ids: Some(vec![1]),
         }
+    }
 
-        let windows_json: Vec<Value> = windows
-            .iter()
-            .map(|w| {
-                serde_json::json!({
-                    "window_id": w.window_id,
-                    "pid": w.pid,
-                    "app_name": w.app_name,
-                    "title": w.title,
-                    "bounds": {
-                        "x": w.bounds.x,
-                        "y": w.bounds.y,
-                        "width": w.bounds.width,
-                        "height": w.bounds.height
-                    },
-                    "layer": w.layer,
-                    "z_index": w.z_index,
-                    "is_on_screen": w.is_on_screen,
-                    "on_current_space": w.on_current_space,
-                    "space_ids": w.space_ids,
-                })
-            })
-            .collect();
+    #[test]
+    fn empty_list_keeps_the_count_only_header() {
+        assert_eq!(format_window_list(&[]), "Found 0 window(s).");
+    }
 
-        ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
-            serde_json::json!({
-                "windows": windows_json,
-                "current_space_id": null
-            }),
-        )
+    #[test]
+    fn text_lists_one_row_per_window_with_ids_and_screen_state() {
+        let text = format_window_list(&[
+            window(10700, 65305, "Calculator", "Calculator", true),
+            window(10701, 65305, "Calculator", "", false),
+        ]);
+        assert_eq!(
+            text,
+            "Found 2 window(s).\n\
+             - Calculator (pid 65305) \"Calculator\" [window_id: 10700]\n\
+             - Calculator (pid 65305) (no title) [window_id: 10701] [off-screen]"
+        );
     }
 }

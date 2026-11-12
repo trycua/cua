@@ -302,6 +302,7 @@ func telemetryMappingsAreBounded() {
     "run": "run", "stop": "stop", "ssh": "ssh", "sip": "sip", "ipsw": "ipsw",
     "serve": "serve", "delete": "delete", "prune": "prune", "config": "config",
     "logs": "logs", "check-update": "check_update", "update": "update", "setup": "setup",
+    "channel": "channel",
     "dump-docs": "dump_docs",
   ]
   for (command, operation) in commands {
@@ -355,4 +356,50 @@ func invalidPersistedIdentityIsReplaced() async throws {
   #expect(ids.count == 1)
   #expect(ids.first != secret)
   #expect(ids.first.flatMap(UUID.init(uuidString:)) != nil)
+}
+
+@Test("image refs become catalog ids or custom, never the reference")
+func imageRefsBecomeCatalogIdsOrCustom() {
+  #expect(TelemetryClient.imageId("macos-tahoe-vanilla:latest") == "macos-tahoe-vanilla")
+  #expect(TelemetryClient.imageId("ghcr.io/trycua/macos:26") == "macos:26")
+  #expect(TelemetryClient.imageId("macos-sequoia-cua:15.4") == "macos-sequoia-cua")
+  #expect(TelemetryClient.imageId("macos-tahoe-cua@sha256:abc") == "macos-tahoe-cua")
+  // Anything a user named, or from another registry or org, is custom.
+  #expect(TelemetryClient.imageId("private/customer-image:prod") == "custom")
+  #expect(TelemetryClient.imageId("acme-secret-build:latest") == "custom")
+  #expect(TelemetryClient.imageId("macos-tahoe-vanilla:my-branch") == "custom")
+  #expect(TelemetryClient.imageId("macos:beta") == "custom")
+  #expect(
+    TelemetryClient.imageId("macos-tahoe-vanilla:latest", organization: "acme-corp") == "custom")
+  #expect(
+    TelemetryClient.imageId("macos-tahoe-vanilla:latest", registry: "registry.acme.io")
+      == "custom")
+  #expect(TelemetryClient.imageId("") == "custom")
+}
+
+@Test("pull payloads carry the image id and drop anything else")
+func pullPayloadCarriesOnlyTheImageId() async throws {
+  let home = try telemetryTempDirectory()
+  defer { try? FileManager.default.removeItem(at: home) }
+  let recorder = TelemetryRequestRecorder()
+  let client = TelemetryClient(
+    homeDirectory: home,
+    poster: { request in await recorder.post(request) },
+    preferenceProvider: { true }
+  )
+  client.record(
+    event: TelemetryEvent.pull,
+    properties: ["image": TelemetryClient.imageId("private/customer-image:prod")])
+  client.record(
+    event: TelemetryEvent.apiPull,
+    properties: ["image": TelemetryClient.imageId("macos-tahoe-vanilla:latest")])
+  // A raw reference smuggled into the allowed key is replaced.
+  client.record(event: TelemetryEvent.apiImages, properties: ["image": "acme/secret:1"])
+  #expect(await client.flush())
+  #expect(await recorder.stringProperty(event: TelemetryEvent.pull, key: "image") == "custom")
+  #expect(
+    await recorder.stringProperty(event: TelemetryEvent.apiPull, key: "image")
+      == "macos-tahoe-vanilla")
+  #expect(
+    await recorder.stringProperty(event: TelemetryEvent.apiImages, key: "image") == "unknown")
 }

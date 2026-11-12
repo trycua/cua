@@ -2,7 +2,59 @@
 
 Background computer-use driver for any agents. Speaks MCP over stdio; drives native macOS apps without stealing focus.
 
+See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
+stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
+
+## Optional visual perception
+
+The default MIT-licensed Driver works without model artifacts. An explicitly
+installed `cua-perception` extension can parse one retained native window or
+desktop screenshot into model-neutral text and icon regions. Capture and input
+authority remain in Driver, and a region-derived pixel click must carry the
+same one-use `capture_id` as the observation.
+
+See the [extension and runtime contract](docs/perception-extension.md) for
+installation, failure, capture, and action boundaries.
+
+> [!WARNING]
+> The extension is not MIT licensed. Its OmniParser icon detector is
+> AGPL-3.0-only. Installing the extension does not change the Driver's MIT
+> license. However, redistributing the extension, or offering it to users over a
+> network, can require you to provide the AGPL corresponding source. If your
+> organization does not accept AGPL components, do not install the extension.
+> Read the [third-party notices and precautions](docs/perception-third-party-notices.md)
+> before you install, redistribute, or host it.
+
+For offline inspection of an existing PNG, the CLI also provides a local-only
+mode:
+
+```bash
+cua-driver perception parse --image /tmp/window.png --capture /tmp/capture.json --json
+```
+
+This mode never registers the file as a Driver capture and its output cannot
+authorize a Driver action. Its required JSON mode returns failures as
+`{"ok":false,"error":{"code":"...","message":"...","retryable":false}}`;
+see the extension contract for the stable codes.
+
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
+
+## Get Cua Driver
+
+**Get Cua Driver with Cua Spaces (recommended on a Mac).** Cua Spaces for Mac
+(macOS 26 or later) carries Cua Driver, runs it in the background, keeps it up
+to date and connects Claude Code and Codex to it. Download it from
+[cua.ai/download](https://cua.ai/download). Permissions are granted to Cua Spaces,
+and its Cua Driver page shows whether Cua Driver is running, with **Repair** and
+**Test now**. See [how the install works](https://cua.ai/docs/cua-driver/guides/cua-spaces).
+
+**Install Cua Driver on its own.** For Windows, Linux, older macOS, or if you
+don't want Cua Spaces:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"   # macOS and Linux
+irm https://cua.ai/driver/install.ps1 | iex                       # Windows (PowerShell)
+```
 
 ## Integration surfaces
 
@@ -20,11 +72,33 @@ language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public
 suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
+## Computer History macOS preview
+
+Nightly macOS builds can provide an opt-in, encrypted history of actions
+performed through Cua Driver. The preview stores a strict metadata allowlist,
+stays local, and exposes permission-gated `history_status` and `history_query`
+tools for read-only agent hydration. It never stores screenshots, typed text,
+clipboard contents, raw arguments or results, accessibility trees, paths,
+window titles, or URLs.
+
+See [Try the Computer History macOS
+preview](docs/computer-history-preview.md) for installation, lifecycle,
+inspection, deletion, and stable-channel return instructions. The [architecture
+and staged plan](docs/computer-history-architecture.md) defines the format,
+security boundary, release gates, and later NVIDIA OpenShell integration.
+
 ## Permission modes
 
 `standard` is the promptless default for normal automation. `bounded` admits
 only the tools and resources in a reviewed manifest. `unrestricted` requires
 `--dangerously-bypass-approvals`.
+
+The mode belongs to the process that owns the runtime and is fixed at launch:
+`cua-driver serve` takes the flags, while `cua-driver mcp` and embedding hosts
+use the matching `CUA_DRIVER_PERMISSION_MODE`,
+`CUA_DRIVER_CAPABILITY_MANIFEST_FILE`, and
+`CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED` variables. Choose it before starting
+the daemon; a running daemon must be restarted to change it.
 
 Attaching to an existing logged-in Chromium profile remains explicit:
 
@@ -37,7 +111,7 @@ bounded runtime can declare `kind: existing_profile` in its manifest. Cua
 Driver does not render its own authorization modal or banner.
 
 See the hosted [permission mode
-reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
+reference](https://cua.ai/docs/cua-driver/guides/permissions).
 
 ## Repository Layout
 
@@ -48,12 +122,36 @@ reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
 | `contract/`                     | Experimental generated SDK contract and fixtures                       |
 | `typescript/`                   | Generated TypeScript SDK                                               |
 | `tests/fixtures/`               | Source-built GUI harness apps and shared fixtures                      |
-| `rust/crates/cua-driver/tests/` | Rust integration tests for the driver and GUI harnesses                |
+| `rust/crates/cua-driver/tests/` | Hermetic Rust integration tests for the driver                         |
+| `rust/crates/cua-driver-e2e/tests/` | Desktop E2E suites for the GUI harnesses                       |
 | `scripts/`                      | Install, uninstall, local build, and VM sync helpers                   |
 | `docs/`                         | Small repo-local specs that are not part of the hosted docs site       |
 
-Start with `rust/README.md`, `rust/crates/cua-driver/tests/README.md`, and
+Start with `rust/README.md`, `rust/crates/cua-driver-e2e/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
+
+The canonical GUI runners execute the complete Rust harness catalog:
+
+```text
+Linux X11/session: scripts/ci/linux/run-rust-e2e.sh
+Linux Sway:        scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux niri:        CUA_E2E_WAYLAND_SESSION=niri scripts/ci/linux/run-rust-e2e-wayland.sh
+Linux nested:      scripts/ci/linux/run-rust-e2e-inject.sh
+Linux GNOME/KDE:   scripts/ci/linux/run-rust-e2e-desktop.sh <gnome|kde>
+Linux real Xorg:   scripts/ci/linux/run-rust-e2e-desktop.sh xorg
+Windows:           .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+macOS:             scripts/ci/macos/run-rust-e2e.sh
+```
+
+The Sway runner creates a controlled stock-wlroots session; Nix owns the Linux
+source/package gate and the optional nested `cua-compositor` session. GNOME,
+KDE, real Xorg, Windows, and macOS use an existing graphical login (Windows:
+an interactive console or RDP session; macOS: a logged-in session with
+Accessibility and Screen Recording). See
+[`docs/test-harnesses-guide.md`](docs/test-harnesses-guide.md) and, for macOS in
+Lume, [`tests/runners/macos-lume/README.md`](tests/runners/macos-lume/README.md).
+Keep build artifacts, VM logs, and local verification journals out of git
+unless they become a stable fixture or contributor doc.
 
 The contract-first SDK architecture is documented in
 [`contract/README.md`](contract/README.md). The Rust contract crate generates
@@ -80,6 +178,31 @@ For direct agent integrations, see the
 SDK examples. They connect the agent to `cua-driver mcp` without importing a
 generated Cua client.
 
+## Muse Code
+
+[Muse Code](https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2)
+can use Cua Driver as a local stdio MCP server on macOS and Linux. Merge the
+following entry into `$XDG_CONFIG_HOME/muse/settings.json`, or
+`~/.config/muse/settings.json` when `XDG_CONFIG_HOME` is not set:
+
+```json
+{
+  "mcp_servers": {
+    "cua-driver": {
+      "enabled": true,
+      "transport": "stdio",
+      "command": "/absolute/path/to/cua-driver",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Use the installed binary's absolute path, which `command -v cua-driver` prints.
+Merge the `cua-driver` entry with any existing `mcp_servers` instead of
+replacing the settings file. Start a new Muse session after saving the file;
+Muse loads MCP servers at session startup.
+
 Contributor documentation:
 
 - `docs/cursor-themes.md` documents the default semantic cursor and custom
@@ -90,29 +213,25 @@ Contributor documentation:
 - `docs/linux-desktop-validation.md` covers representative Linux sessions.
 - `docs/linux-support-completion-plan.md` preserves the historical Linux plan.
 
-## Claude Code computer-use compatibility
+## Claude Code registration
 
-Standard Claude Code MCP registration:
+Register the standard MCP server:
 
 ```bash
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-If you want Claude Code's vision/computer-use-style flow to ground on CuaDriver window screenshots, register the compatibility mode:
-
-```bash
-claude mcp add --transport stdio cua-computer-use -- cua-driver mcp --claude-code-computer-use-compat
-```
-
-This keeps CuaDriver's normal MCP tools and changes only `screenshot`, which requires `pid` and `window_id` and captures that window only.
-
-Use MCP for this Claude Code vision/computer-use-style path. CLI screenshots still work as CuaDriver calls, but they do not expose the `mcp__cua-computer-use__screenshot` tool name that Claude Code appears to use as the image-grounding cue.
+The legacy `--claude-code-computer-use-compat` flag is still accepted so old
+configurations keep starting, but it currently has no tool-surface effect and
+does not register a standalone `screenshot` tool. Use `get_window_state` for a
+window tree plus screenshot, `get_desktop_state` for a full-display screenshot,
+and `zoom` for a cropped region.
 
 ## macOS process identity and permissions
 
 macOS attributes Accessibility and Screen Recording grants to a responsible app identity, not simply to an executable path. Use one of these supported launch modes:
 
-- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `open -n -g -a CuaDriver --args serve`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
+- **Standalone:** install `CuaDriver.app`, grant permissions to it, and start its daemon with `cua-driver permissions grant`. The installed `cua-driver mcp` CLI may proxy through this daemon automatically.
 - **Explicit direct MCP:** `cua-driver mcp --direct` makes the MCP process own
   its runtime. On macOS this deliberately uses the spawning host's TCC
   attribution and does not provide the AppKit cursor overlay without a
@@ -139,7 +258,7 @@ ClawHub CLI. A real release is available only through the
 all of the following:
 
 1. Dispatch the workflow from `main`.
-2. Enter a version that matches both `rust/Cargo.toml` and the `version` field
+2. Enter a version that matches both `rust/Cargo.toml` and the `metadata.version` field
    in `rust/Skills/cua-driver/SKILL.md`.
 3. Confirm the MIT-0 rights check in the workflow form.
 4. Configure a repository Actions secret named `CLAWHUB_TOKEN` for a publisher

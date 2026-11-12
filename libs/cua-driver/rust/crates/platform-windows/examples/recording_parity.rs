@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Smoke check for the recording tools via the Windows named-pipe daemon.
 //!
 //! Renamed from the old "Swift-parity" check — the API split into
@@ -5,7 +8,9 @@
 //! the older Swift CLI surface is no longer the reference. This file
 //! verifies the new contract end-to-end against a running daemon.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

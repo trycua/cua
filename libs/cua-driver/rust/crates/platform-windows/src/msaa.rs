@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MSAA (Microsoft Active Accessibility) tree walker.
 //!
 //! Fallback for SAL/VCL window classes (LibreOffice, OpenOffice) where the
@@ -25,6 +28,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{AccessibleObjectFromWindow, IAccessible};
 
 use crate::uia::{UiaNode, UiaTreeResult};
+use cua_driver_core::walk_budget::WalkBudget;
 
 const OBJID_CLIENT: u32 = 0xFFFFFFFC;
 
@@ -66,10 +70,15 @@ const MAX_TOTAL_ELEMENTS: usize = 5000;
 /// Walk the MSAA tree for the window with the given HWND. Used as fallback
 /// for SAL/VCL targets where the UIA walker would hang.
 pub fn walk_msaa_tree(hwnd: u64) -> UiaTreeResult {
-    unsafe { walk_unsafe(hwnd) }
+    walk_msaa_tree_budgeted(hwnd, &mut WalkBudget::nodes_only(MAX_TOTAL_ELEMENTS))
 }
 
-unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
+/// [`walk_msaa_tree`] under the caller's node and time budget.
+pub fn walk_msaa_tree_budgeted(hwnd: u64, budget: &mut WalkBudget) -> UiaTreeResult {
+    unsafe { walk_unsafe(hwnd, budget) }
+}
+
+unsafe fn walk_unsafe(hwnd: u64, budget: &mut WalkBudget) -> UiaTreeResult {
     let hwnd_win = HWND(hwnd as *mut _);
     let mut raw_root: *mut std::ffi::c_void = null_mut();
     // AccessibleObjectFromWindow returns IAccessible (as `*mut c_void` typed
@@ -87,6 +96,7 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
                 "- Window <SAL/VCL — MSAA fallback failed (AccessibleObjectFromWindow hr={hr:?})>\n"
             ),
             nodes: Vec::new(),
+            elements_complete: false,
         };
     }
     let root: IAccessible = IAccessible::from_raw(raw_root);
@@ -94,22 +104,14 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     let mut nodes: Vec<UiaNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new();
     let mut counter = 0usize;
-    let mut total = 0usize;
 
-    walk(
-        &root,
-        0,
-        None,
-        &mut nodes,
-        &mut lines,
-        &mut counter,
-        &mut total,
-    );
+    walk(&root, 0, None, &mut nodes, &mut lines, &mut counter, budget);
 
     let tree_markdown = render_lines(&lines);
     UiaTreeResult {
         tree_markdown,
         nodes,
+        elements_complete: false,
     }
 }
 
@@ -121,12 +123,11 @@ unsafe fn walk(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
+    budget: &mut WalkBudget,
 ) {
-    if depth >= MAX_DEPTH || *total >= MAX_TOTAL_ELEMENTS {
+    if depth >= MAX_DEPTH || !budget.admit() {
         return;
     }
-    *total += 1;
 
     let self_var: VARIANT = VARIANT::from(0i32); // CHILDID_SELF
 
@@ -192,6 +193,8 @@ unsafe fn walk(
                 automation_id: None,
                 help_text: None,
                 actions: actions.clone(),
+                enabled: None,
+                selected: None,
                 element_ptr: ptr,
                 center_x,
                 center_y,
@@ -210,6 +213,8 @@ unsafe fn walk(
                 automation_id: None,
                 help_text: None,
                 actions: Vec::new(),
+                enabled: None,
+                selected: None,
                 element_ptr: ptr,
                 center_x: 0,
                 center_y: 0,
@@ -241,7 +246,7 @@ unsafe fn walk(
                         nodes,
                         lines,
                         counter,
-                        total,
+                        budget,
                     );
                 }
             }
@@ -263,7 +268,7 @@ unsafe fn walk(
                     nodes,
                     lines,
                     counter,
-                    total,
+                    budget,
                 );
             }
         }

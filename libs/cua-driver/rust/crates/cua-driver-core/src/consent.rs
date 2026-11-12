@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted host authorization seam.
 //!
 //! Ordinary MCP elicitation, tool arguments, inherited stdio, files, and
@@ -94,11 +97,13 @@ pub enum ConsentError {
     Canceled,
     #[error("confirmation provider failed: {0}")]
     Provider(String),
+    #[error("{0}")]
+    ProtectedScope(crate::tool::ProtectedResourceScopeError),
     #[error("confirmation response did not match the exact request digest")]
     DigestMismatch,
     #[error("confirmation expired before activation")]
     Expired,
-    #[error("protected resource is outside the bounded session policy: {0}")]
+    #[error("protected resource is outside the capability manifest: {0}")]
     BoundedResource(String),
 }
 
@@ -338,6 +343,21 @@ impl ProtectedResourceOwnershipStore {
         matches
     }
 
+    /// Forget one launched process instance. A later launch that reused its
+    /// pid keeps its own record.
+    pub fn remove_process(&self, session: &str, process: &crate::browser::ProcessFingerprint) {
+        let mut sessions = self.processes_by_session.lock().unwrap();
+        let Some(processes) = sessions.get_mut(session) else {
+            return;
+        };
+        if processes.get(&process.pid) == Some(process) {
+            processes.remove(&process.pid);
+        }
+        if processes.is_empty() {
+            sessions.remove(session);
+        }
+    }
+
     pub fn remove_session(&self, session: &str) {
         self.processes_by_session.lock().unwrap().remove(session);
     }
@@ -372,7 +392,27 @@ impl ProtectedResourceGrants {
                     "protected resource adapter '{adapter_id}' is not registered"
                 ))
             })?;
-        match descriptor.behavior_by_mode.for_mode(context.mode()) {
+        if let Some(manifest) = context.capability_manifest() {
+            manifest
+                .authorize_protected_resource(adapter_id, &resource)
+                .map_err(ConsentError::BoundedResource)?;
+        }
+        let profile_behavior = if adapter_id == "process_control"
+            && context.mode() == PermissionMode::Standard
+            && resource
+                .get("driver_owned")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            // Standard's process-control capability is ownership-dependent:
+            // an attested runtime-launched process remains available, while a
+            // foreign process is denied before approval. Manifest scope is an
+            // additional ceiling and never replaces that ownership proof.
+            ModeBehavior::Allow
+        } else {
+            descriptor.profile_behavior.for_mode(context.mode())
+        };
+        match profile_behavior {
             ModeBehavior::Allow => return Ok(None),
             ModeBehavior::Deny => {
                 return Err(ConsentError::Provider(format!(
@@ -380,15 +420,12 @@ impl ProtectedResourceGrants {
                     context.mode().as_str()
                 )))
             }
-            ModeBehavior::Manifest => {
-                let manifest = context.bounded_manifest().ok_or_else(|| {
+            ModeBehavior::AllowWithoutGrant => {
+                context.capability_manifest().ok_or_else(|| {
                     ConsentError::BoundedResource(
-                        "bounded mode has no approved session manifest".to_owned(),
+                        "bounded mode has no approved capability manifest".to_owned(),
                     )
                 })?;
-                manifest
-                    .authorize_protected_resource(adapter_id, &resource)
-                    .map_err(ConsentError::BoundedResource)?;
                 return Ok(None);
             }
             ModeBehavior::RequireGrant => {}
@@ -595,6 +632,8 @@ fn digest_request(request: &ConsentRequest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "yaml")]
+    use std::io::Write;
 
     struct FakeProvider {
         action: ConsentAction,
@@ -656,6 +695,29 @@ mod tests {
         .unwrap();
         crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
             .compatibility_context(mode, None)
+            .unwrap()
+    }
+
+    #[cfg(feature = "yaml")]
+    fn authorization_context_with_manifest(
+        mode: PermissionMode,
+    ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "version: 1\nmode: bounded\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  desktop:\n    windows:\n      - pid: 42\n        window_id: 7\nallow:\n  tools: [click]"
+        )
+        .unwrap();
+        let manifest = Arc::new(crate::session_manifest::load_manifest(file.path()).unwrap());
+        let ceiling = crate::session_authorization::SessionModeCeiling::for_trusted_sessions(
+            [mode],
+            mode == PermissionMode::Unrestricted,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        crate::session_authorization::SessionAuthorizationRegistry::with_ceiling(ceiling)
+            .compatibility_context(mode, Some(manifest))
             .unwrap()
     }
 
@@ -775,6 +837,45 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[tokio::test]
+    async fn capability_manifest_resources_narrow_standard_and_unrestricted_without_prompting() {
+        for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
+            let provider = provider(ConsentAction::Accept);
+            let grants =
+                ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider.clone()))));
+            let context = authorization_context_with_manifest(mode);
+
+            assert!(grants
+                .authorize(
+                    &context,
+                    "desktop_input",
+                    RiskClass::R1,
+                    Some("public-a"),
+                    serde_json::json!({"kind": "window_input", "pid": 42, "window_id": 7}),
+                    "Control the declared window",
+                    Duration::from_secs(30),
+                    Duration::from_secs(60),
+                )
+                .await
+                .is_ok());
+            assert!(grants
+                .authorize(
+                    &context,
+                    "desktop_input",
+                    RiskClass::R1,
+                    Some("public-a"),
+                    serde_json::json!({"kind": "window_input", "pid": 42, "window_id": 8}),
+                    "Control an undeclared window",
+                    Duration::from_secs(30),
+                    Duration::from_secs(60),
+                )
+                .await
+                .is_err());
+            assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[tokio::test]

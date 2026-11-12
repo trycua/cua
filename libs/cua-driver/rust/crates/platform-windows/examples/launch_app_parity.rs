@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `launch_app`.
 //!
 //! Launches Notepad (safe target) in background, asserts:
@@ -16,7 +19,9 @@
 //!
 //! Cleans up: terminates the launched pid before exit.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

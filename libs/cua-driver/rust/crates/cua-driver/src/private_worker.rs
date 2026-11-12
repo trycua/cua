@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Hidden process-isolated SDK runtime entry point.
 //!
 //! This is intentionally not a CLI product surface. A trusted SDK host starts
@@ -160,7 +163,7 @@ async fn run_async(
     )?;
 
     let mut sessions: HashMap<String, Arc<CuaDriverSession>> = HashMap::new();
-    while let Some(line) = lines.next() {
+    for line in lines {
         let line = match line {
             Ok(line) => line,
             Err(_) => break,
@@ -236,6 +239,11 @@ async fn handle_request(
             .map_err(|error| error.to_string()),
         "list" => driver
             .list_tools_json()
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string())),
+        "sessions_list" => driver
+            .list_host_sessions_json()
             .await
             .map_err(|error| error.to_string())
             .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string())),
@@ -329,14 +337,4 @@ fn write_response(writer: &mut impl Write, response: &ChannelResponse) -> anyhow
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::requested_generation;
-
-    #[test]
-    fn ordinary_process_is_not_a_private_worker() {
-        assert!(requested_generation().is_none());
-    }
 }

@@ -1,0 +1,45 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "schemaVersion": 1,
+  "component": "cua-perception",
+  "version": "0.1.0",
+  "driverVersion": ">=0.28.2",
+  "sourceSha": "0000000000000000000000000000000000000000",
+  "target": { "triple": "x86_64-unknown-linux-gnu", "os": "linux", "arch": "x86_64" },
+  "protocol": { "name": "cua-perception-worker", "version": 1 },
+  "artifacts": [
+    {
+      "kind": "worker",
+      "name": "cua-perception-worker",
+      "path": "payload/cua-perception-worker",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1,
+      "target": { "triple": "x86_64-unknown-linux-gnu", "os": "linux", "arch": "x86_64" },
+      "protocolVersion": 1,
+      "license": { "spdx": "Apache-2.0", "source": "https://github.com/trycua/cua", "notice": "payload/NOTICE" }
+    },
+    {
+      "kind": "notice",
+      "name": "NOTICE",
+      "path": "payload/NOTICE",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1,
+      "license": { "spdx": "Apache-2.0", "source": "https://github.com/trycua/cua" }
+    },
+    {
+      "kind": "model-manifest",
+      "name": "model-manifest.json",
+      "path": "payload/model-manifest.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1,
+      "license": { "spdx": "Apache-2.0", "source": "https://github.com/trycua/cua", "notice": "payload/NOTICE" }
+    }
+  ],
+  "modelLedger": "model-ledger.json",
+  "sourceLedger": "source-ledger.json",
+  "suppliedVerification": {
+    "health": "verification/health.json",
+    "selfTest": "verification/self-test.json",
+    "realParse": "verification/real-parse.json"
+  }
+}

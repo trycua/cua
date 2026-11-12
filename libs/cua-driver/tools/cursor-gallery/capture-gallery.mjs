@@ -55,7 +55,6 @@ async function evaluate(expression, awaitPromise = false) {
 }
 
 await fs.mkdir(path.join(outputRoot, 'actions'), { recursive: true });
-await fs.mkdir(path.join(outputRoot, 'modifiers'), { recursive: true });
 await command('Page.enable');
 await command('Runtime.enable');
 await command('Emulation.setDeviceMetricsOverride', {
@@ -70,7 +69,8 @@ await evaluate(
     const deadline = Date.now() + 15000;
     const ready = () => {
       const videos = [...document.querySelectorAll(".cursor-video")];
-      if (videos.length === 19 && videos.every((video) => video.readyState >= 2)) resolve(true);
+      const expected = Number(document.documentElement.dataset.galleryVideoCount);
+      if (Number.isFinite(expected) && videos.length === expected && videos.every((video) => video.readyState >= 2)) resolve(true);
       else if (Date.now() > deadline) reject(new Error("Timed out waiting for videos"));
       else setTimeout(ready, 50);
     };
@@ -93,7 +93,6 @@ await evaluate(`(() => {
 })()`);
 
 const clips = await evaluate(`(() => {
-  const sections = [...document.querySelectorAll(".gallery-section")];
   const clipFor = (section, bottomPadding) => {
     const heading = section.querySelector(".section-heading").getBoundingClientRect();
     const grid = section.querySelector(".state-grid").getBoundingClientRect();
@@ -105,7 +104,9 @@ const clips = await evaluate(`(() => {
       height: Math.ceil(grid.bottom - heading.top + 28 + bottomPadding)
     };
   };
-  return { actions: clipFor(sections[0], 28), modifiers: clipFor(sections[1], 14) };
+  return {
+    actions: clipFor(document.querySelector('[data-capture-group="actions"]'), 28)
+  };
 })()`);
 
 for (let frame = 0; frame < fps * duration; frame += 1) {

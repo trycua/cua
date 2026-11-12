@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared delivery-mode logic for cua-driver Linux input tools.
 //!
 //! Mirrors macOS `tools::DeliveryMode` and Windows `input::delivery`: each
@@ -29,39 +32,8 @@
 
 use serde_json::Value;
 
-/// Input delivery modality — the agent-selected rung of the best-effort-
-/// background ladder, passed per call (never a stored/config setting). Mirrors
-/// macOS `tools::DeliveryMode` and Windows `input::delivery::DeliveryMode`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub enum DeliveryMode {
-    /// Inject without activating the target (X11 XTEST/MPX; Wayland libei-to-focus).
-    #[default]
-    Background,
-    /// Activate the target, inject, restore prior active window.
-    Foreground,
-}
-
-impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background` — the
-    /// correct default, so an omitted/garbage value never silently fronts.
-    /// Matches macOS / Windows `DeliveryMode::parse`.
-    pub fn parse(arg: Option<&str>) -> Self {
-        match arg {
-            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
-        }
-    }
-
-    /// Parse from a tool's JSON args, reading the `delivery_mode` field.
-    pub fn from_args(args: &Value) -> Self {
-        Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
-    }
-
-    pub fn is_foreground(self) -> bool {
-        matches!(self, Self::Foreground)
-    }
-}
+/// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
+pub use cua_driver_core::delivery::DeliveryMode;
 
 /// JSON-schema fragment for the `delivery_mode` field. Include this in every
 /// input tool's `input_schema.properties.delivery_mode`. Two modes, matching
@@ -95,25 +67,35 @@ pub enum BackgroundUnavailable {
     /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
+    /// The menu's items only exist once the menu is open, and opening a
+    /// toolkit menu grabs the user's keyboard and pointer for as long as it
+    /// stays open: the user's keystrokes would land in the menu instead of in
+    /// their own window (trycua/cua#7371).
+    MenuOpenGrabsKeyboard,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
-    /// addressed to an occluded, unfocused renderer without briefly moving
-    /// focus, which background delivery forbids.
+    /// addressed to an unfocused window without briefly moving focus, which
+    /// background delivery forbids.
     ChromiumInput,
+    /// An XInput2 toolkit (GTK, Qt, LibreOffice VCL) discards synthetic
+    /// XSendEvent pointer input, and this X server has no real
+    /// target-addressed pointer backend (Xvfb / Xtigervnc cannot hot-add the
+    /// agent's uinput pointer), so a wheel or button event would be lost
+    /// (trycua/cua#7369).
+    SyntheticPointerDropped,
     /// The remaining backend can only inject into the globally focused widget.
     FocusedInputOnly,
     /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
     /// pointer backend is available in this session.
     WebKitSyntheticInput,
+    /// Qt runs a shortcut in an inactive window only for the agent's own XI2
+    /// master keyboard, which this host cannot add; a synthetic chord arrives
+    /// and fires nothing (trycua/cua#7370).
+    QtInactiveWindowShortcut,
 }
 
 impl BackgroundUnavailable {
     fn code(self) -> &'static str {
-        match self {
-            Self::NoLibeiBackend => "background_unavailable",
-            Self::ChromiumInput => "background_unavailable",
-            Self::FocusedInputOnly => "background_unavailable",
-            Self::WebKitSyntheticInput => "background_unavailable",
-        }
+        "background_unavailable"
     }
     fn detail(self) -> &'static str {
         match self {
@@ -122,16 +104,33 @@ impl BackgroundUnavailable {
                  portal-input, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
             }
+            Self::MenuOpenGrabsKeyboard => {
+                "this menu only publishes its items once it is open, and an open menu takes the \
+                 keyboard and pointer from the user until it closes, so their typing would be lost"
+            }
             Self::ChromiumInput => {
-                "Chromium/Electron does not accept pointer or keyboard input \
-                 addressed to an occluded, unfocused renderer through X11 \
-                 background injection"
+                "Chromium/Electron drops synthetic pointer and keyboard events sent to \
+                 a window that does not have the input focus. In the background only \
+                 accessibility actions reach it: a left click on a button, link or \
+                 other control, by element_token or at its pixel"
+            }
+            Self::SyntheticPointerDropped => {
+                "this app reads pointer and wheel input only from real input devices and discards \
+                 synthetic events, and this display server cannot add the agent's own pointer \
+                 device, so the event would be lost"
             }
             Self::FocusedInputOnly => {
-                "the requested target has no focus-free input backend; the remaining XTest/X11 route can only deliver to the globally focused widget"
+                "the requested target has no focus-free input backend; the remaining input route can only deliver to the globally focused widget"
             }
             Self::WebKitSyntheticInput => {
                 "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
+            }
+            Self::QtInactiveWindowShortcut => {
+                "Qt runs a keyboard shortcut sent to a window that is not active only when it \
+                 comes from the agent's own keyboard device, and this display server cannot add \
+                 one (it needs a writable /dev/uinput, which Xvfb and Xtigervnc never offer); \
+                 the synthetic chord would arrive and trigger nothing. For a command that is in \
+                 a menu, invoke_menu runs it in the background"
             }
         }
     }
@@ -144,21 +143,17 @@ pub fn background_unavailable_error(
     reason: BackgroundUnavailable,
 ) -> cua_driver_core::protocol::ToolResult {
     let detail = reason.detail();
-    cua_driver_core::protocol::ToolResult::error(format!(
-        "Background delivery is not available: {detail}. Retry this action with \
-         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
-         the action and restore the previous foreground afterward."
-    ))
-    .with_structured(serde_json::json!({
-        "code": reason.code(),
-        "detail": detail,
-        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
-        "escalation": {
-            "recommended": "foreground",
-            "reason": "background input is unavailable on this surface; retry this \
-                       action with delivery_mode:\"foreground\".",
-        },
-    }))
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "Background delivery is not available: {detail}. Retry this action with \
+             delivery_mode:\"foreground\"; Cua Driver will activate the target window, \
+             confirm it holds the input focus, and deliver real input to it."
+        ),
+        reason.code(),
+        "background input is unavailable on this surface; retry this \
+         action with delivery_mode:\"foreground\".",
+        serde_json::json!({ "detail": detail }),
+    )
 }
 
 #[cfg(test)]
@@ -166,43 +161,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn delivery_mode_parses_known_values() {
-        let j = |s: &str| serde_json::json!({"delivery_mode": s});
+    fn focused_input_refusal_does_not_claim_an_x11_backend() {
+        let result = background_unavailable_error(BackgroundUnavailable::FocusedInputOnly);
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], "background_unavailable");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
         assert_eq!(
-            DeliveryMode::from_args(&j("background")),
-            DeliveryMode::Background
+            structured["suggestion"],
+            cua_driver_core::delivery::FOREGROUND_RETRY_SUGGESTION
         );
-        assert_eq!(
-            DeliveryMode::from_args(&j("foreground")),
-            DeliveryMode::Foreground
-        );
-        // Case-insensitive, matching macOS / Windows.
-        assert_eq!(
-            DeliveryMode::from_args(&j("Foreground")),
-            DeliveryMode::Foreground
-        );
-    }
-
-    #[test]
-    fn delivery_mode_defaults_to_background() {
-        // Missing field, garbage value, null, and the removed legacy "auto" all
-        // resolve to Background — the no-foreground-by-default contract.
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
-            DeliveryMode::Background
-        );
+        let detail = structured["detail"].as_str().unwrap();
+        assert!(detail.contains("globally focused widget"));
+        assert!(!detail.contains("XTest"));
+        assert!(!detail.contains("X11"));
+        let text = result
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                cua_driver_core::protocol::Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!text.contains("XTest"));
+        assert!(!text.contains("X11"));
+        assert!(text.contains("delivery_mode:\"foreground\""));
     }
 
     #[test]
@@ -220,34 +204,5 @@ mod tests {
             .as_str()
             .expect("delivery_mode description");
         assert!(!description.contains("bring_to_front"));
-    }
-
-    #[test]
-    fn background_unavailable_error_carries_code() {
-        let r = background_unavailable_error(BackgroundUnavailable::NoLibeiBackend);
-        assert_eq!(r.is_error, Some(true));
-        assert_eq!(
-            r.structured_content.as_ref().unwrap()["code"],
-            serde_json::json!("background_unavailable")
-        );
-        let text = match &r.content[0] {
-            cua_driver_core::protocol::Content::Text { text, .. } => text,
-            _ => panic!("expected text content"),
-        };
-        let structured = r.structured_content.as_ref().unwrap();
-        assert!(text.contains("Retry this action with delivery_mode:\"foreground\""));
-        assert!(!text.contains("bring_to_front"));
-        assert_eq!(
-            structured["suggestion"].as_str(),
-            Some("Retry this action with delivery_mode:\"foreground\".")
-        );
-        assert_eq!(
-            structured["escalation"]["recommended"].as_str(),
-            Some("foreground")
-        );
-        assert!(!structured["escalation"]["reason"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("bring_to_front"));
     }
 }

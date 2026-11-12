@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -22,7 +23,13 @@ def _sandbox(tmp_path: Path, os_name: str) -> tuple[Path, Path, dict[str, str]]:
     calls = tmp_path / "calls.log"
     home.mkdir()
     fake_bin.mkdir()
+    for command in ("cat", "dirname", "id", "readlink", "realpath", "sleep"):
+        executable = shutil.which(command, path=os.defpath)
+        assert executable is not None, f"missing fixture utility: {command}"
+        (fake_bin / command).symlink_to(executable)
 
+    _write_executable(fake_bin / "pgrep", "exit 1\n")
+    _write_executable(fake_bin / "ps", "exit 2\n")
     _write_executable(fake_bin / "uname", f"printf '%s\\n' '{os_name}'\n")
     for command in ("launchctl", "systemctl", "tccutil", "sudo"):
         _write_executable(
@@ -53,21 +60,13 @@ done
 """,
     )
 
-    env = os.environ.copy()
-    env.update(
-        {
-            "HOME": str(home),
-            "PATH": f"{fake_bin}:/usr/bin:/bin",
-        }
-    )
-    env.pop("CUA_DRIVER_HOME", None)
-    env.pop("CUA_DRIVER_RS_HOME", None)
+    env = {"HOME": str(home), "PATH": str(fake_bin)}
     return home, calls, env
 
 
-def _run_uninstall(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_uninstall(env: dict[str, str], *flags: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        ["/bin/bash", str(UNINSTALL)],
+        ["/bin/bash", str(UNINSTALL), *flags],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -153,3 +152,99 @@ def test_current_autostart_file_is_a_rust_install_marker(
 
     assert not autostart_file.exists()
     assert not skill_link.is_symlink()
+
+
+@pytest.mark.parametrize("os_name", ["Linux", "Darwin"])
+def test_release_uninstall_reports_and_preserves_local_product(
+    tmp_path: Path, os_name: str
+) -> None:
+    home, calls, env = _sandbox(tmp_path, os_name)
+    local_home = home / ".cua-driver-local"
+    local_marker = local_home / "packages/current/cua-driver-local"
+    local_marker.parent.mkdir(parents=True)
+    local_marker.write_text("local driver\n", encoding="utf-8")
+    local_cli = home / ".local/bin/cua-driver-local"
+    local_cli.parent.mkdir(parents=True)
+    local_cli.symlink_to(local_marker)
+
+    result = _run_uninstall(env)
+
+    assert "cua-driver-local" not in (calls.read_text() if calls.exists() else "")
+    assert local_cli.is_symlink()
+    assert local_marker.read_text(encoding="utf-8") == "local driver\n"
+    assert "a separate source-built cua-driver-local installation remains" in result.stdout
+    assert str(local_cli) in result.stdout
+    assert "./libs/cua-driver/scripts/uninstall-local.sh" in result.stdout
+
+
+def test_release_uninstall_ignores_marker_free_local_home(tmp_path: Path) -> None:
+    home, calls, env = _sandbox(tmp_path, "Linux")
+    local_home = home / ".cua-driver-local"
+    local_home.mkdir()
+    (local_home / "unrelated.txt").write_text("keep\n", encoding="utf-8")
+
+    result = _run_uninstall(env)
+
+    assert "cua-driver-local" not in (calls.read_text() if calls.exists() else "")
+    assert (local_home / "unrelated.txt").read_text(encoding="utf-8") == "keep\n"
+    assert "source-built cua-driver-local installation remains" not in result.stdout
+
+
+def _install_darwin_marker(home: Path) -> None:
+    plist = home / "Library/LaunchAgents/com.trycua.cua-driver.plist"
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_text("fixture\n", encoding="utf-8")
+
+
+def _tccutil_calls(calls: Path) -> list[str]:
+    if not calls.exists():
+        return []
+    return [line for line in calls.read_text(encoding="utf-8").splitlines() if line.startswith("tccutil:")]
+
+
+# `--purge` is left out on purpose: on macOS it runs the installed signed helper at
+# /Applications/CuaDriver.app to destroy Computer History, which a sandbox cannot
+# fake. It fails on a machine without that app (CI) and would run for real on one
+# with it. The purge flow has its own tests (uninstall-history-purge-test.sh).
+@pytest.mark.parametrize("flags", [(), ("--keep-tcc",)])
+def test_uninstall_keeps_macos_permissions_by_default(tmp_path: Path, flags: tuple[str, ...]) -> None:
+    """Accessibility and Screen Recording survive an uninstall unless asked.
+
+    The grants belong to the signed app identity, so a reinstall of the same
+    signed app picks them up. Wiping them by default is what made an accidental
+    uninstall cost a manual re-approval (18 Oct 2026).
+    """
+    home, calls, env = _sandbox(tmp_path, "Darwin")
+    _install_darwin_marker(home)
+
+    result = _run_uninstall(env, *flags)
+
+    assert _tccutil_calls(calls) == []
+    assert "macOS permissions (Accessibility + Screen Recording) were kept" in result.stdout
+    assert "--reset-permissions" in result.stdout
+
+
+@pytest.mark.parametrize("flag", ["--reset-permissions", "--reset-tcc"])
+def test_uninstall_resets_macos_permissions_only_when_asked(tmp_path: Path, flag: str) -> None:
+    home, calls, env = _sandbox(tmp_path, "Darwin")
+    _install_darwin_marker(home)
+
+    result = _run_uninstall(env, flag)
+
+    assert _tccutil_calls(calls) == [
+        "tccutil:reset Accessibility com.trycua.driver",
+        "tccutil:reset ScreenCapture com.trycua.driver",
+        "tccutil:reset AppleEvents com.trycua.driver",
+    ]
+    assert "were kept" not in result.stdout
+
+
+def test_uninstall_never_resets_permissions_on_linux(tmp_path: Path) -> None:
+    home, calls, env = _sandbox(tmp_path, "Linux")
+    unit = home / ".config/systemd/user/cua-driver.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("fixture\n", encoding="utf-8")
+
+    _run_uninstall(env, "--reset-permissions")
+
+    assert _tccutil_calls(calls) == []

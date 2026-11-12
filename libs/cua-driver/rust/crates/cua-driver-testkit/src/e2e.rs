@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Typed contracts and result reporting for desktop E2E cells.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -136,6 +139,7 @@ pub enum DriverRoute {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxHyprlandIsolatedInput,
     Cdp,
     Composite,
 }
@@ -299,6 +303,7 @@ pub enum OracleKind {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
+    BringToFrontExactWindowUnverified,
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
@@ -315,11 +320,18 @@ pub enum RefusalCode {
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
     BrowserActionUnavailable,
+    ModifiedPointerUnavailable,
+    WindowMinimized,
+    ElementNotVisible,
+    ForegroundUnavailable,
 }
 
 impl RefusalCode {
     pub fn from_driver_code(code: &str) -> Option<Self> {
         match code {
+            "bring_to_front_exact_window_unverified" => {
+                Some(Self::BringToFrontExactWindowUnverified)
+            }
             "background_unavailable" => Some(Self::BackgroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),
@@ -336,6 +348,10 @@ impl RefusalCode {
             "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
             "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
+            "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
+            "window_minimized" => Some(Self::WindowMinimized),
+            "element_not_visible" => Some(Self::ElementNotVisible),
+            "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             _ => None,
         }
     }
@@ -437,6 +453,8 @@ fn compositor_from_env() -> Option<String> {
                 .to_ascii_lowercase();
             if desktop.contains("sway") {
                 Some("sway".to_owned())
+            } else if desktop.contains("niri") {
+                Some("niri".to_owned())
             } else if desktop.contains("gnome") {
                 Some("gnome-mutter".to_owned())
             } else if desktop.contains("kde") || desktop.contains("plasma") {
@@ -570,21 +588,50 @@ impl CaseSpec {
             return Err(format!("{}: no external oracle declared", self.cell_id));
         }
         if let ContractExpectation::Refuse { allowed_codes } = &self.expected_behavior {
-            if self.delivery != Delivery::Background {
+            let exact_activation_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Window
+                && self.driver_route == DriverRoute::WindowState
+                && allowed_codes == &[RefusalCode::BringToFrontExactWindowUnverified];
+            // A desktop pointer route that cannot carry keyboard modifier
+            // state (native Wayland) must refuse a modified gesture before
+            // dispatch. The fixture under the gesture is the oracle that
+            // nothing reached it.
+            let desktop_modifier_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Desktop
+                && allowed_codes == &[RefusalCode::ModifiedPointerUnavailable];
+            // A coordinate-routed foreground pointer action whose target cannot
+            // be brought over a covering window must refuse before dispatch.
+            // The covering window's journal proves nothing leaked into it.
+            let covered_target_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Window
+                && self.driver_route == DriverRoute::WindowsSendInput
+                && allowed_codes == &[RefusalCode::ForegroundUnavailable];
+            if self.delivery != Delivery::Background
+                && !exact_activation_refusal
+                && !desktop_modifier_refusal
+                && !covered_target_refusal
+            {
                 return Err(format!(
-                    "{}: only background delivery may declare refusal",
+                    "{}: only background delivery, exact-window activation, a covered foreground target, or a desktop modified-pointer limitation may declare refusal",
                     self.cell_id
                 ));
             }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            for required in [
-                OracleKind::Focus,
-                OracleKind::ZOrder,
-                OracleKind::NoLeakedInput,
-            ] {
-                if !self.oracles.contains(&required) {
+            let required_oracles: &[OracleKind] = if covered_target_refusal {
+                &[OracleKind::FixtureState, OracleKind::NoLeakedInput]
+            } else if exact_activation_refusal || desktop_modifier_refusal {
+                &[OracleKind::FixtureState]
+            } else {
+                &[
+                    OracleKind::Focus,
+                    OracleKind::ZOrder,
+                    OracleKind::NoLeakedInput,
+                ]
+            };
+            for required in required_oracles {
+                if !self.oracles.contains(required) {
                     return Err(format!(
                         "{}: refusal is missing {:?} oracle",
                         self.cell_id, required
@@ -829,37 +876,7 @@ pub struct ValidationSummary {
 }
 
 impl ValidationSummary {
-    pub fn markdown(&self, results: &[CaseResult]) -> String {
-        let declarations = results
-            .iter()
-            .map(|result| result.case.clone())
-            .collect::<Vec<_>>();
-        self.markdown_with_declarations(&declarations, results)
-    }
-
-    pub fn markdown_with_declarations(
-        &self,
-        declarations: &[CaseSpec],
-        results: &[CaseResult],
-    ) -> String {
-        self.markdown_with_declarations_and_source(declarations, results, None)
-    }
-
-    pub fn markdown_with_declarations_and_source(
-        &self,
-        declarations: &[CaseSpec],
-        results: &[CaseResult],
-        source_sha: Option<&str>,
-    ) -> String {
-        self.markdown_with_declarations_source_and_environment(
-            declarations,
-            results,
-            source_sha,
-            None,
-        )
-    }
-
-    pub fn markdown_with_declarations_source_and_environment(
+    pub fn markdown(
         &self,
         declarations: &[CaseSpec],
         results: &[CaseResult],
@@ -1176,22 +1193,6 @@ pub fn validate_catalog(
     artifact_root: Option<&Path>,
     require_video: bool,
 ) -> Result<ValidationSummary, Vec<String>> {
-    validate_catalog_with_evidence(
-        declarations,
-        results,
-        artifact_root,
-        require_video,
-        require_video,
-    )
-}
-
-pub fn validate_catalog_with_evidence(
-    declarations: &[CaseSpec],
-    results: &[CaseResult],
-    artifact_root: Option<&Path>,
-    require_video: bool,
-    require_turn_evidence: bool,
-) -> Result<ValidationSummary, Vec<String>> {
     let mut errors = Vec::new();
     let policy = CatalogPolicy::from_environment(&mut errors);
     if declarations.is_empty() {
@@ -1284,7 +1285,7 @@ pub fn validate_catalog_with_evidence(
                 }
             }
         }
-        if require_turn_evidence {
+        if require_video {
             match (artifact_root, recording_directory(&result.evidence)) {
                 (Some(root), Some(relative_dir)) => {
                     validate_turn_evidence(
@@ -1493,6 +1494,17 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_str()
             .is_some_and(|summary| summary.starts_with("✅ bring_to_front:"))
     });
+    let refused_minimized_action = action.as_ref().is_some_and(|value| {
+        value["result_error"].as_bool() == Some(true)
+            && value["result_summary"]
+                .as_str()
+                .is_some_and(|summary| summary.starts_with("refused (window_minimized):"))
+    });
+    // A call on a pid that has no window errors out and the recorder names the
+    // missing window, so there is no image or tree to require.
+    let errored_without_window = action
+        .as_ref()
+        .is_some_and(|value| value["result_error"].as_bool() == Some(true));
     let restored_state_captured = manifest
         .as_ref()
         .is_some_and(|value| value["after"]["state"]["status"].as_str() == Some("captured"));
@@ -1506,6 +1518,10 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                         && successful_restore
                         && restored_state_captured
                         && classification(phase, "screenshot") == Some("capture_failed"))))
+            || (refused_minimized_action
+                && classification(phase, "screenshot") == Some("target_minimized"))
+            || (errored_without_window
+                && classification(phase, "screenshot") == Some(NO_TARGET_WINDOW))
     };
 
     for (phase, kind) in [("before", "screenshot"), ("after", "screenshot")] {
@@ -1543,8 +1559,30 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_ref()
             .and_then(|value| value["arguments"]["pid"].as_i64())
             .is_some();
+    // An action refused before dispatch cannot change the application, so
+    // the recorder skips its accessibility walk and says so explicitly.
+    let refused_without_dispatch = action.as_ref().is_some_and(|value| {
+        value["result_error"].as_bool() == Some(true)
+            && (value.get("action_truth").is_none()
+                || value["action_truth"]["effect"].as_str() == Some("refused"))
+    });
+    let state_skipped_for_refusal = |phase: &str| {
+        refused_without_dispatch
+            && manifest.as_ref().is_some_and(|value| {
+                value[phase]["state"]["status"] == "not_applicable"
+                    && value[phase]["state"]["classification"] == "action_refused_before_dispatch"
+            })
+            || (errored_without_window
+                && manifest.as_ref().is_some_and(|value| {
+                    value[phase]["state"]["status"] == "not_applicable"
+                        && value[phase]["state"]["classification"] == NO_TARGET_WINDOW
+                }))
+    };
     if state_expected {
         for phase in ["before", "after"] {
+            if state_skipped_for_refusal(phase) {
+                continue;
+            }
             validate_capture_status(
                 manifest.as_ref(),
                 &[phase, "state"],
@@ -1558,6 +1596,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             ("after_state.json", "after"),
             ("app_state.json", "after"),
         ] {
+            if state_skipped_for_refusal(phase) {
+                continue;
+            }
             validate_json_file(
                 &turn.join(file),
                 cell_id,
@@ -1568,12 +1609,63 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
         }
     }
 
+    if manifest
+        .as_ref()
+        .is_some_and(|value| value["click"]["classification"] == "semantic_action_without_point")
+        && !action.as_ref().is_some_and(semantic_action_without_point)
+    {
+        errors.push(format!(
+            "invalid semantic-click classification for {cell_id}/{turn_name}: action does not prove a single semantic dispatch without a point"
+        ));
+    }
     if action.as_ref().is_some_and(|value| {
         matches!(
             value["tool"].as_str(),
             Some("click" | "double_click" | "right_click")
         )
     }) {
+        let refused_before_target_resolution = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true)
+                && value.get("click_point").is_none()
+                && (value.get("action_truth").is_none()
+                    || value["action_truth"]["effect"] == "refused")
+        });
+        let refused_before_dispatch = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(true)
+                && value["action_truth"]["effect"].as_str() == Some("refused")
+        });
+        if refused_before_target_resolution || refused_before_dispatch {
+            let click = manifest.as_ref().map(|value| &value["click"]);
+            let expected_classification = if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else {
+                "action_refused_before_dispatch"
+            };
+            if !click.is_some_and(|value| {
+                value["status"].as_str() == Some("not_applicable")
+                    && value["classification"].as_str() == Some(expected_classification)
+            }) {
+                errors.push(format!(
+                    "invalid refused-click evidence for {cell_id}/{turn_name}: expected not_applicable/{expected_classification}"
+                ));
+            }
+            return;
+        }
+        if action.as_ref().is_some_and(semantic_action_without_point) {
+            if !manifest.as_ref().is_some_and(|value| {
+                value["click"]["status"] == "not_applicable"
+                    && value["click"]["classification"] == "semantic_action_without_point"
+            }) || turn.join("click.png").exists()
+            {
+                errors.push(format!(
+                    "invalid semantic-click evidence for {cell_id}/{turn_name}: expected not_applicable/semantic_action_without_point without click.png"
+                ));
+            }
+            return;
+        }
+        if let (Some(action), Some(manifest)) = (&action, &manifest) {
+            validate_click_source(turn, cell_id, action, manifest, errors);
+        }
         validate_capture_status(
             manifest.as_ref(),
             &["click"],
@@ -1593,6 +1685,136 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
     }
 }
 
+// A tool may scroll an element into view after the original before image.
+// Its actual input point must be grounded in the supplemental pre-input frame.
+fn validate_click_source(
+    turn: &Path,
+    cell_id: &str,
+    action: &Value,
+    manifest: &Value,
+    errors: &mut Vec<String>,
+) {
+    let declared = action.get("click_point_image");
+    if declared.is_none() {
+        if manifest.get("click_source").is_some()
+            || manifest["click"]
+                .get("source_image")
+                .is_some_and(|source| source != "before.png")
+            || turn.join("click_source.png").exists()
+        {
+            errors.push(format!(
+                "undeclared supplemental click source for {cell_id}"
+            ));
+        }
+        return;
+    }
+    if declared.and_then(Value::as_str) != Some("click_source.png")
+        || manifest["click"]["source_image"] != "click_source.png"
+    {
+        errors.push(format!("invalid supplemental click source for {cell_id}"));
+        return;
+    }
+    validate_capture_status(
+        Some(manifest),
+        &["click_source"],
+        cell_id,
+        "click_source.png",
+        errors,
+    );
+    let decode = |name: &str| -> Option<image::DynamicImage> {
+        let mut reader = image::ImageReader::open(turn.join(name)).ok()?;
+        reader.set_format(image::ImageFormat::Png);
+        reader.decode().ok()
+    };
+    let (Some(source), Some(marker)) = (decode("click_source.png"), decode("click.png")) else {
+        errors.push(format!("invalid supplemental click PNG for {cell_id}"));
+        return;
+    };
+    let point = action["click_point"]["x"]
+        .as_f64()
+        .zip(action["click_point"]["y"].as_f64());
+    if source.width() == 0
+        || source.height() == 0
+        || source.width() != marker.width()
+        || source.height() != marker.height()
+        || !point.is_some_and(|(x, y)| {
+            x.is_finite()
+                && y.is_finite()
+                && x >= 0.0
+                && y >= 0.0
+                && x < f64::from(source.width())
+                && y < f64::from(source.height())
+        })
+    {
+        errors.push(format!("invalid supplemental click geometry for {cell_id}"));
+    }
+}
+
+// Semantic activation has no spatial marker only when the retained execution
+// record proves a single accessibility dispatch without escalation or replay.
+fn semantic_action_without_point(action: &Value) -> bool {
+    let args = &action["arguments"];
+    let truth = &action["action_truth"];
+    action["tool"] == "click"
+        && action["result_error"] == false
+        && action.get("click_point").is_none()
+        && action.get("click_point_image").is_none()
+        && (args["element_index"].as_u64().is_some()
+            || args["element_token"]
+                .as_str()
+                .is_some_and(|token| !token.is_empty()))
+        && args.get("x").is_none()
+        && args.get("y").is_none()
+        && args.get("raw").is_none_or(|value| value == false)
+        && args.get("button").is_none_or(|value| value == "left")
+        && args
+            .get("count")
+            .is_none_or(|value| value.as_u64() == Some(1))
+        && args
+            .get("click_count")
+            .is_none_or(|value| value.as_u64() == Some(1))
+        && ["modifier", "modifiers"].iter().all(|key| {
+            args.get(*key)
+                .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
+        })
+        && matches!(
+            truth["transport"].as_str(),
+            Some(
+                "macos_ax_action"
+                    | "linux_at_spi_action"
+                    | "windows_uia_invoke"
+                    | "windows_uia_toggle"
+                    | "windows_uia_selection"
+                    | "windows_uia_expand_collapse"
+            )
+        )
+        && truth["route"] == "accessibility"
+        && matches!(truth["effect"].as_str(), Some("confirmed" | "unverifiable"))
+        && matches!(
+            truth["actual_delivery"].as_str(),
+            Some("background" | "foreground")
+        )
+        && truth["requested_delivery"] == truth["actual_delivery"]
+        && truth.get("escalation").is_some_and(Value::is_null)
+        && truth["fallbacks"].as_array().is_some_and(Vec::is_empty)
+        && truth
+            .get("delivered_count")
+            .is_some_and(|value| value.is_null() || value.as_u64() == Some(1))
+        && truth["attempts"].as_array().is_some_and(|attempts| {
+            // Legacy single-dispatch results carry transport/delivery above
+            // without a per-attempt journal. Any supplied attempt must match.
+            attempts.len() <= 1
+                && attempts.iter().all(|attempt| {
+                    attempt["transport"] == truth["transport"]
+                        && attempt["delivery"] == truth["actual_delivery"]
+                })
+        })
+}
+
+/// Recorder classification for a pid that has no window (see
+/// `cua_driver_core::recording::TARGET_UNAVAILABLE`).
+const NO_TARGET_WINDOW: &str = cua_driver_core::recording::TARGET_UNAVAILABLE;
+
 fn validate_capture_status(
     manifest: Option<&Value>,
     path: &[&str],
@@ -1610,8 +1832,13 @@ fn validate_capture_status(
     let classification = value["classification"]
         .as_str()
         .unwrap_or("missing_classification");
+    let cause = if classification == NO_TARGET_WINDOW {
+        ": the target pid had no window to capture, but the call did not error"
+    } else {
+        ""
+    };
     errors.push(format!(
-        "required evidence capture failed for {cell_id}: {label} (classified {classification})"
+        "required evidence capture failed for {cell_id}: {label} (classified {classification}){cause}"
     ));
 }
 
@@ -1662,7 +1889,211 @@ fn read_json_value(path: &Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn semantic_click_fixture() -> Value {
+        serde_json::json!({
+            "tool": "click", "result_error": false,
+            "arguments": {"pid": 1, "window_id": 2, "element_index": 3},
+            "action_truth": {
+                "effect": "unverifiable", "transport": "linux_at_spi_action",
+                "route": "accessibility", "requested_delivery": "background",
+                "actual_delivery": "background", "delivered_count": null,
+                "attempts": [], "fallbacks": [], "escalation": null
+            }
+        })
+    }
+
+    #[test]
+    fn semantic_click_without_point_requires_exact_action_truth() {
+        let original = semantic_click_fixture();
+        assert!(semantic_action_without_point(&original));
+        let mut token = original.clone();
+        token["arguments"]
+            .as_object_mut()
+            .unwrap()
+            .remove("element_index");
+        token["arguments"]["element_token"] = serde_json::json!("e:fixture");
+        token["action_truth"]["requested_delivery"] = serde_json::json!("foreground");
+        token["action_truth"]["actual_delivery"] = serde_json::json!("foreground");
+        token["action_truth"]["effect"] = serde_json::json!("confirmed");
+        assert!(semantic_action_without_point(&token));
+        for transport in [
+            "windows_uia_invoke",
+            "windows_uia_toggle",
+            "windows_uia_selection",
+            "windows_uia_expand_collapse",
+        ] {
+            let mut windows = original.clone();
+            windows["action_truth"]["transport"] = serde_json::json!(transport);
+            assert!(semantic_action_without_point(&windows));
+            windows["action_truth"]["attempts"] = serde_json::json!([{
+                "transport":transport, "delivery":"background"
+            }]);
+            assert!(semantic_action_without_point(&windows));
+            windows["action_truth"]["attempts"][0]["transport"] =
+                serde_json::json!("linux_at_spi_action");
+            assert!(!semantic_action_without_point(&windows));
+        }
+        for (pointer, replacements) in [
+            ("/result_error", serde_json::json!([true, null])),
+            ("/tool", serde_json::json!(["double_click", "right_click"])),
+            ("/action_truth", serde_json::json!([null])),
+            (
+                "/action_truth/effect",
+                serde_json::json!(["unknown", "partial", "suspected_noop", "refused"]),
+            ),
+            (
+                "/action_truth/transport",
+                serde_json::json!(["linux_x11_event", "windows_send_input", "unknown"]),
+            ),
+            (
+                "/action_truth/route",
+                serde_json::json!(["unknown", "synthetic_events"]),
+            ),
+            (
+                "/action_truth/actual_delivery",
+                serde_json::json!(["unknown", null]),
+            ),
+            (
+                "/action_truth/requested_delivery",
+                serde_json::json!(["foreground"]),
+            ),
+            ("/action_truth/delivered_count", serde_json::json!([0, 2])),
+            (
+                "/action_truth/escalation",
+                serde_json::json!([{"kind":"retry_with_pixel_target"}]),
+            ),
+            ("/action_truth/fallbacks", serde_json::json!([[{}]])),
+            (
+                "/action_truth/attempts",
+                serde_json::json!([[{}], [{}, {}]]),
+            ),
+            ("/arguments/element_index", serde_json::json!([null, -1])),
+        ] {
+            for replacement in replacements.as_array().unwrap() {
+                let mut action = original.clone();
+                *action.pointer_mut(pointer).unwrap() = replacement.clone();
+                assert!(
+                    !semantic_action_without_point(&action),
+                    "{pointer}: {action}"
+                );
+            }
+        }
+        for (key, value) in [
+            ("x", serde_json::json!(10)),
+            ("y", serde_json::json!(20)),
+            ("raw", serde_json::json!(true)),
+            ("button", serde_json::json!("right")),
+            ("count", serde_json::json!(2)),
+            ("click_count", serde_json::json!(2)),
+            ("modifier", serde_json::json!(["shift"])),
+            ("modifiers", serde_json::json!(["ctrl"])),
+        ] {
+            let mut action = original.clone();
+            action["arguments"][key] = value;
+            assert!(!semantic_action_without_point(&action), "{key}");
+        }
+        let mut point = original.clone();
+        point["click_point"] = serde_json::json!({"x":10,"y":20});
+        assert!(!semantic_action_without_point(&point));
+        let mut supplemental = original.clone();
+        supplemental["click_point_image"] = serde_json::json!("click_source.png");
+        assert!(!semantic_action_without_point(&supplemental));
+        for key in [
+            "actual_delivery",
+            "requested_delivery",
+            "attempts",
+            "fallbacks",
+            "escalation",
+            "delivered_count",
+            "transport",
+            "route",
+            "effect",
+        ] {
+            let mut action = original.clone();
+            action["action_truth"].as_object_mut().unwrap().remove(key);
+            assert!(!semantic_action_without_point(&action), "missing {key}");
+        }
+    }
+
     use tempfile::TempDir;
+
+    fn supplemental_click_fixture() -> (TempDir, Value, Value) {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["click_source.png", "click.png"] {
+            image::RgbImage::new(20, 30)
+                .save(root.path().join(name))
+                .unwrap();
+        }
+        let action = serde_json::json!({
+            "click_point_image":"click_source.png", "click_point":{"x":10,"y":15}
+        });
+        let manifest = serde_json::json!({
+            "click":{"status":"captured","source_image":"click_source.png"},
+            "click_source":{"status":"captured"}
+        });
+        (root, action, manifest)
+    }
+
+    #[test]
+    fn supplemental_click_source_requires_decodable_matching_geometry() {
+        let (root, action, manifest) = supplemental_click_fixture();
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &manifest, &mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+        for point in [
+            serde_json::json!({"x":20,"y":15}),
+            serde_json::json!({"x":10,"y":30}),
+            serde_json::json!({"x":-1,"y":15}),
+            serde_json::json!({"x":10,"y":null}),
+        ] {
+            let mut invalid = action.clone();
+            invalid["click_point"] = point;
+            let mut errors = Vec::new();
+            validate_click_source(root.path(), "fixture", &invalid, &manifest, &mut errors);
+            assert!(!errors.is_empty());
+        }
+        image::RgbImage::new(10, 10)
+            .save(root.path().join("click.png"))
+            .unwrap();
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &manifest, &mut errors);
+        assert!(errors.iter().any(|error| error.contains("geometry")));
+        std::fs::write(root.path().join("click.png"), b"not a png").unwrap();
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &manifest, &mut errors);
+        assert!(errors.iter().any(|error| error.contains("PNG")));
+    }
+
+    #[test]
+    fn supplemental_click_source_rejects_inconsistent_or_failed_metadata() {
+        let (root, action, manifest) = supplemental_click_fixture();
+        for source in [
+            serde_json::json!("../outside.png"),
+            serde_json::json!("before.png"),
+            serde_json::Value::Null,
+        ] {
+            let mut invalid = action.clone();
+            invalid["click_point_image"] = source;
+            let mut errors = Vec::new();
+            validate_click_source(root.path(), "fixture", &invalid, &manifest, &mut errors);
+            assert!(!errors.is_empty());
+        }
+        let mut undeclared = action.clone();
+        undeclared
+            .as_object_mut()
+            .unwrap()
+            .remove("click_point_image");
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &undeclared, &manifest, &mut errors);
+        assert!(!errors.is_empty());
+        let mut failed = manifest.clone();
+        failed["click_source"] =
+            serde_json::json!({"status":"unavailable","classification":"capture_failed"});
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &failed, &mut errors);
+        assert!(!errors.is_empty());
+    }
 
     fn delivered_case(id: &str) -> CaseSpec {
         CaseSpec::delivered(
@@ -1696,6 +2127,113 @@ mod tests {
             DriverRoute::Composite,
             vec![OracleKind::FixtureState],
         )
+    }
+
+    #[test]
+    fn validator_semantic_click_requires_classification_and_retained_evidence() {
+        for (transport, token_target) in [
+            ("linux_at_spi_action", false),
+            ("linux_at_spi_action", true),
+            ("macos_ax_action", false),
+            ("macos_ax_action", true),
+        ] {
+            let (root, case, result, turn) = complete_turn_fixture();
+            let mut action = semantic_click_fixture();
+            action["action_truth"]["transport"] = serde_json::json!(transport);
+            if token_target {
+                action["arguments"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("element_index");
+                action["arguments"]["element_token"] = serde_json::json!("e:fixture");
+            }
+            std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
+            let manifest_path = turn.join("evidence.json");
+            let mut manifest: Value =
+                serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+            manifest["click"] = serde_json::json!({"status":"not_applicable","classification":"semantic_action_without_point"});
+            std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+            assert!(
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
+                "a semantic action cannot retain a spatial marker"
+            );
+            std::fs::remove_file(turn.join("click.png")).unwrap();
+            validate_catalog(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                Some(root.path()),
+                true,
+            )
+            .unwrap();
+            action["click_point"] = serde_json::json!({"x":10,"y":20});
+            std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
+            assert!(
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
+                "resolved points still require markers"
+            );
+            manifest["click"]["status"] = serde_json::json!("captured");
+            std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+            std::fs::write(turn.join("click.png"), b"png").unwrap();
+            assert!(
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
+                "a captured marker cannot legitimize a false semantic classification"
+            );
+            std::fs::remove_file(turn.join("click.png")).unwrap();
+            manifest["click"]["status"] = serde_json::json!("not_applicable");
+            action.as_object_mut().unwrap().remove("click_point");
+            std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
+            manifest["click"]["classification"] = serde_json::json!("capture_failed");
+            std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+            assert!(validate_catalog(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                Some(root.path()),
+                true
+            )
+            .is_err());
+            manifest["click"]["classification"] =
+                serde_json::json!("semantic_action_without_point");
+            std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+            std::fs::remove_file(turn.join("after.png")).unwrap();
+            assert!(
+                validate_catalog(&[case], &[result], Some(root.path()), true).is_err(),
+                "semantic actions still need before/after evidence"
+            );
+        }
+    }
+
+    #[test]
+    fn validator_unknown_dispatched_error_is_not_a_pretarget_refusal() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        let mut action = semantic_click_fixture();
+        action["result_error"] = serde_json::json!(true);
+        action["action_truth"]["actual_delivery"] = serde_json::json!("unknown");
+        std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
+        let manifest_path = turn.join("evidence.json");
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["click"] = serde_json::json!({"status":"not_applicable","classification":"action_refused_before_target_resolution"});
+        std::fs::write(manifest_path, manifest.to_string()).unwrap();
+        std::fs::remove_file(turn.join("click.png")).unwrap();
+        assert!(validate_catalog(&[case], &[result], Some(root.path()), true).is_err());
     }
 
     fn complete_turn_fixture() -> (TempDir, CaseSpec, CaseResult, PathBuf) {
@@ -1813,6 +2351,61 @@ mod tests {
             Some(RefusalCode::BackgroundUnavailable)
         );
         assert_eq!(RefusalCode::from_driver_code("background_timeout"), None);
+    }
+
+    #[test]
+    fn desktop_refusal_is_limited_to_the_modified_pointer_limitation() {
+        assert_eq!(
+            RefusalCode::from_driver_code("modified_pointer_unavailable"),
+            Some(RefusalCode::ModifiedPointerUnavailable)
+        );
+        let desktop_drag = |code| {
+            CaseSpec::delivered(
+                "desktop-modified-drag",
+                "gtk3",
+                "gtk3",
+                "drag",
+                Targeting::Px,
+                Delivery::Foreground,
+                Scope::Desktop,
+                DriverRoute::LinuxWaylandVirtualPointer,
+                vec![OracleKind::FixtureState],
+            )
+            .expecting_refusal(vec![code])
+        };
+        let case = desktop_drag(RefusalCode::ModifiedPointerUnavailable);
+        case.validate()
+            .expect("a desktop modified-pointer limitation may be declared");
+        assert!(desktop_drag(RefusalCode::BackgroundUnavailable)
+            .validate()
+            .is_err());
+        let mut window_scoped = case.clone();
+        window_scoped.scope = Scope::Window;
+        assert!(window_scoped.validate().is_err());
+        let mut without_fixture = case.clone();
+        without_fixture.oracles = vec![OracleKind::Protocol];
+        assert!(without_fixture.validate().is_err());
+
+        let refused = CaseResult::evaluate(
+            case.clone(),
+            Observation::refused(
+                RefusalCode::ModifiedPointerUnavailable,
+                vec![OracleKind::FixtureState],
+                "",
+                Evidence::default(),
+            ),
+            Duration::from_millis(1),
+        );
+        assert_eq!(refused.test_status, TestStatus::Pass);
+        let delivered = CaseResult::evaluate(
+            case,
+            Observation::delivered_with_fixture_state(Vec::new()),
+            Duration::from_millis(1),
+        );
+        assert_eq!(delivered.test_status, TestStatus::Fail);
+        assert!(delivered
+            .message
+            .contains("unexpected delivery requires contract review"));
     }
 
     #[test]
@@ -2050,6 +2643,97 @@ mod tests {
     }
 
     #[test]
+    fn validator_accepts_state_skipped_only_for_a_refusal_before_dispatch() {
+        let refused_evidence = br#"{
+            "schema":"cua-turn-evidence/v1",
+            "before":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
+            "after":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
+            "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
+        }"#;
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"x":3,"y":4,"capture_id":"expired"},
+                "click_point":{"x":3,"y":4},
+                "result_error":true,
+                "action_truth":{"effect":"refused","refusal":{"code":"capture_expired"}}
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(turn.join("evidence.json"), refused_evidence).unwrap();
+        for file in [
+            "click.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            std::fs::remove_file(turn.join(file)).unwrap();
+        }
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a refusal before dispatch needs no application-state walk");
+
+        // A dispatched click must still carry captured state.
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(turn.join("evidence.json"), refused_evidence).unwrap();
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("a dispatched action cannot skip state as refused");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/before state")));
+    }
+
+    #[test]
+    fn validator_accepts_click_refused_before_target_resolution_without_marker() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"element_token":"stale-token"},
+                "result_error":true
+            }"#,
+        )
+        .expect("write refused action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+            }"#,
+        )
+        .expect("write refused evidence");
+        std::fs::remove_file(turn.join("click.png")).expect("remove inapplicable click marker");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a pre-target refusal must not invent click evidence");
+    }
+
+    #[test]
+    fn validator_rejects_successful_click_marked_not_applicable() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_target_resolution"}
+            }"#,
+        )
+        .expect("write invalid evidence");
+
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("successful clicks still require click evidence");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/click")));
+    }
+
+    #[test]
     fn validator_reports_capture_classification_for_missing_phase() {
         let (root, case, result, turn) = complete_turn_fixture();
         std::fs::remove_file(turn.join("after.png")).expect("remove after image fixture");
@@ -2072,6 +2756,63 @@ mod tests {
     }
 
     #[test]
+    fn validator_accepts_errored_no_window_turn() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"get_window_state",
+                "arguments":{"pid":1},
+                "result_error":true,
+                "result_summary":"No windows found for pid 1. Provide window_id."
+            }"#,
+        )
+        .expect("write no-window action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"not_applicable","classification":"target_unavailable"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "after":{"state":{"status":"not_applicable","classification":"target_unavailable"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "click":{"status":"not_applicable","classification":"no_target_pid"}
+            }"#,
+        )
+        .expect("write no-window evidence");
+        for file in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            let _ = std::fs::remove_file(turn.join(file));
+        }
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("an errored call on a windowless pid needs no image or tree");
+    }
+
+    #[test]
+    fn validator_rejects_no_window_classification_on_a_successful_call() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_unavailable"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"captured"}
+            }"#,
+        )
+        .expect("write evidence");
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("a successful call still needs its screenshot");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("had no window to capture")));
+    }
+
+    #[test]
     fn validator_accepts_private_existing_profile_prepare_turn() {
         let (root, case, result, turn) = complete_turn_fixture();
         std::fs::write(
@@ -2079,7 +2820,6 @@ mod tests {
             br#"{
                 "tool":"browser_prepare",
                 "arguments":{
-                    "approval_token":"[redacted]",
                     "pid":1,
                     "window_id":2,
                     "strategy":{"kind":"existing_profile"}
@@ -2155,6 +2895,42 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("a minimized target cannot provide a pre-restore screenshot");
+    }
+
+    #[test]
+    fn validator_accepts_missing_images_for_typed_minimized_refusal() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"element_index":3},
+                "result_summary":"refused (window_minimized): restore before retrying",
+                "result_error":true,
+                "click_point":{"x":10,"y":20},
+                "action_truth":{"effect":"refused"}
+            }"#,
+        )
+        .expect("write minimized refusal action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"unavailable","classification":"target_minimized"}},
+                "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
+            }"#,
+        )
+        .expect("write minimized refusal evidence manifest");
+        for file in ["before.png", "after.png", "screenshot.png", "click.png"] {
+            let path = turn.join(file);
+            if path.exists() {
+                std::fs::remove_file(path).expect("remove unavailable image");
+            }
+        }
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a typed minimized refusal cannot provide target images");
     }
 
     #[test]
@@ -2268,7 +3044,12 @@ mod tests {
         .expect("valid catalog");
         assert_eq!(summary.delivered, 1);
         assert!(summary
-            .markdown_with_declarations(std::slice::from_ref(&case), std::slice::from_ref(&result),)
+            .markdown(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                None,
+                None
+            )
             .contains("1 delivered"));
 
         let value = serde_json::to_value(result).expect("serialize result");
@@ -2350,7 +3131,7 @@ mod tests {
         let declarations = vec![delivered, refused, failed, grouped];
         let summary =
             validate_catalog(&declarations, &results, None, false).expect("valid catalog");
-        let markdown = summary.markdown_with_declarations(&declarations, &results);
+        let markdown = summary.markdown(&declarations, &results, None, None);
 
         assert!(markdown.contains("| electron | click | PASS | - | REFUSED | FAIL | - | - |"));
         assert!(markdown.contains("| tauri | type_text | PASS | - | - | - | - | - |"));
@@ -2372,10 +3153,11 @@ mod tests {
         )
         .expect("valid catalog");
         let sha = "0123456789abcdef0123456789abcdef01234567";
-        let markdown = summary.markdown_with_declarations_and_source(
+        let markdown = summary.markdown(
             std::slice::from_ref(&case),
             std::slice::from_ref(&result),
             Some(sha),
+            None,
         );
 
         assert!(markdown.contains(&format!("**Source SHA:** `{sha}`")));
@@ -2410,7 +3192,7 @@ mod tests {
         let declarations = vec![page, not_applicable];
         let summary =
             validate_catalog(&declarations, &results, None, false).expect("valid catalog");
-        let markdown = summary.markdown_with_declarations(&declarations, &results);
+        let markdown = summary.markdown(&declarations, &results, None, None);
 
         assert!(markdown.contains(
             "| web | evaluate | - | - | - | - | Background: PASS | NotApplicable/Background: PASS |"
@@ -2519,6 +3301,30 @@ mod tests {
                 Delivery::Background,
             ),
             Ok(DriverRoute::WindowsTargetedInjection)
+        );
+    }
+
+    #[test]
+    fn macos_pixel_drag_routes_preserve_background_and_use_hid_for_foreground() {
+        assert_eq!(
+            shared_web_route(
+                Platform::Macos,
+                DisplayServer::Quartz,
+                "drag",
+                Targeting::Px,
+                Delivery::Background,
+            ),
+            Ok(DriverRoute::MacosCgEventPid)
+        );
+        assert_eq!(
+            shared_web_route(
+                Platform::Macos,
+                DisplayServer::Quartz,
+                "drag",
+                Targeting::Px,
+                Delivery::Foreground,
+            ),
+            Ok(DriverRoute::MacosCgEventHid)
         );
     }
 

@@ -1,0 +1,378 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Network tunnels between a client and the guest, carried over WebSocket
+// upgrades on the spacesd port so they work through gateways, the relay
+// and gRPC-Web-only networks.
+//
+// - `Forward`: client-to-guest TCP. Each WebSocket connection to
+//   `ws_path` becomes one TCP connection to the guest port; binary frames
+//   carry the byte stream in both directions.
+// - Hotspot: guest-to-client egress (reverse SOCKS5). A SOCKS5 listener on
+//   guest loopback relays each outbound connection over the client's
+//   WebSocket, and the client dials it from its own network. Replaces the
+//   unauthenticated rcdp-socks.
+// - Spawn: the guest-to-host channel of child Spaces. A listener on guest
+//   loopback relays each connection over the WebSocket of the host that runs
+//   the Space, which serves this Space's own children (create, list, delete)
+//   and nothing else. The host knows which Space a connection comes from by
+//   the WebSocket it opened, never by anything the guest says.
+service TunnelService {
+  // Authorizes TCP forwarding to a guest port and returns the WebSocket to
+  // connect to.
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+  // Lists active forwards.
+  rpc ListForwards(ListForwardsRequest) returns (ListForwardsResponse);
+  // Revokes a forward and closes its connections.
+  rpc CloseForward(CloseForwardRequest) returns (CloseForwardResponse);
+  // Starts the reverse-SOCKS hotspot for the calling client.
+  rpc StartHotspot(StartHotspotRequest) returns (StartHotspotResponse);
+  // Stops the hotspot.
+  rpc StopHotspot(StopHotspotRequest) returns (StopHotspotResponse);
+  // Reports hotspot state and counters.
+  rpc GetHotspotStatus(GetHotspotStatusRequest) returns (GetHotspotStatusResponse);
+  // Makes this Space an exit for the Spaces of its tree ("Exit through" a
+  // Space): a SOCKS5 listener on guest loopback that connects from this
+  // Space's own network (under this Space's network rules, which its host
+  // enforces). It is reached only through a `Forward` to that loopback
+  // port. Starting it again keeps the running exit.
+  rpc StartExit(StartExitRequest) returns (StartExitResponse);
+  // Stops the exit (its connections close).
+  rpc StopExit(StopExitRequest) returns (StopExitResponse);
+  // Publishes host ports on the guest's loopback: for each port, a listener
+  // on 127.0.0.1:<port> whose connections the host that runs the Space
+  // carries to the same port on its own loopback (the ports the Space's
+  // `localhost` network setting opens, so `localhost:3000` works as
+  // written). Only that host may call it; starting it again replaces the
+  // listeners.
+  rpc StartHostPorts(StartHostPortsRequest) returns (StartHostPortsResponse);
+  // Stops publishing host ports.
+  rpc StopHostPorts(StopHostPortsRequest) returns (StopHostPortsResponse);
+  // Starts the spawn channel and installs the Space's spawn capability.
+  // Only a caller holding the Space's own token (the host that runs it) may
+  // call it; starting it again replaces the channel and the capability.
+  rpc StartSpawn(StartSpawnRequest) returns (StartSpawnResponse);
+  // Stops the spawn channel and removes the capability from the guest.
+  rpc StopSpawn(StopSpawnRequest) returns (StopSpawnResponse);
+  // Reports the spawn channel's state.
+  rpc GetSpawnStatus(GetSpawnStatusRequest) returns (GetSpawnStatusResponse);
+  // Serves one public TCP share on a share slot: a port the cloud computer
+  // publishes from this Space (`CUA_SHARE_SLOTS`), forwarded to a port of
+  // this Space's own loopback only. The computer's firewall opens the slot
+  // separately. Only the Space's owner (or its host) may call it.
+  rpc PublishShareSlot(PublishShareSlotRequest) returns (PublishShareSlotResponse);
+  // Stops serving a share slot (its connections close).
+  rpc UnpublishShareSlot(UnpublishShareSlotRequest) returns (UnpublishShareSlotResponse);
+  // The share slots served now, with the data each moved (the daemon's
+  // data cap and its sweep of slots no share explains).
+  rpc ListShareSlots(ListShareSlotsRequest) returns (ListShareSlotsResponse);
+}
+
+// Request for `TunnelService.PublishShareSlot`.
+message PublishShareSlotRequest {
+  // The slot (one of `CUA_SHARE_SLOTS`).
+  uint32 slot = 1;
+  // The Space port it reaches (on 127.0.0.1).
+  uint32 port = 2;
+  // Who may connect (CIDRs); empty: anyone.
+  repeated string allow = 3;
+  // Minecraft Java: drop connections whose handshake names none of these
+  // hosts. Empty: no check.
+  repeated string expect_hosts = 4;
+  // How long it serves. Unset: 24 hours, the most.
+  google.protobuf.Duration ttl = 5;
+  // The most bytes it may move (both ways); 0: no cap. Reaching it ends
+  // every connection and refuses new ones.
+  uint64 max_bytes = 6;
+}
+
+// Response for `TunnelService.PublishShareSlot`.
+message PublishShareSlotResponse {
+  // The slot.
+  uint32 slot = 1;
+  // When it stops.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// Request for `TunnelService.UnpublishShareSlot`.
+message UnpublishShareSlotRequest {
+  // The slot.
+  uint32 slot = 1;
+}
+
+// Response for `TunnelService.UnpublishShareSlot`.
+message UnpublishShareSlotResponse {}
+
+// Request for `TunnelService.ListShareSlots`.
+message ListShareSlotsRequest {}
+
+// One served share slot.
+message ShareSlot {
+  // The slot.
+  uint32 slot = 1;
+  // The Space port it reaches.
+  uint32 port = 2;
+  // Bytes moved since it was published.
+  uint64 bytes = 3;
+  // Its data cap (0: none).
+  uint64 max_bytes = 4;
+  // Open connections.
+  uint32 connections = 5;
+  // When it stops.
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+// Response for `TunnelService.ListShareSlots`.
+message ListShareSlotsResponse {
+  // The slots, with what each moved.
+  repeated ShareSlot slots = 1;
+}
+
+// Request for `TunnelService.Forward`.
+message ForwardRequest {
+  // Guest TCP port to reach.
+  uint32 port = 1;
+  // Guest host to connect to. Empty means "127.0.0.1". Only loopback and
+  // the guest's own addresses are allowed.
+  string host = 2;
+  // How long the ticket accepts new connections. Unset means 10 minutes; at
+  // most 24 hours. Open connections survive expiry.
+  google.protobuf.Duration ttl = 3;
+}
+
+// Response for `TunnelService.Forward`.
+message ForwardResponse {
+  // Forward id.
+  string forward_id = 1;
+  // Ticket accepted by the tunnel WebSocket. Reusable for many connections
+  // until expiry.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the
+  // ticket, for example "/tunnel?ticket=…".
+  string ws_path = 3;
+  // When the ticket expires.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// An active forward.
+message ForwardInfo {
+  // Forward id.
+  string forward_id = 1;
+  // Guest host.
+  string host = 2;
+  // Guest port.
+  uint32 port = 3;
+  // Open connections.
+  uint32 active_connections = 4;
+  // Bytes sent to the guest port.
+  uint64 bytes_in = 5;
+  // Bytes received from the guest port.
+  uint64 bytes_out = 6;
+  // Ticket expiry.
+  google.protobuf.Timestamp expires_at = 7;
+}
+
+// Request for `TunnelService.ListForwards`.
+message ListForwardsRequest {}
+
+// Response for `TunnelService.ListForwards`.
+message ListForwardsResponse {
+  // Active forwards.
+  repeated ForwardInfo forwards = 1;
+}
+
+// Request for `TunnelService.CloseForward`.
+message CloseForwardRequest {
+  // Which forward.
+  string forward_id = 1;
+}
+
+// Response for `TunnelService.CloseForward`.
+message CloseForwardResponse {}
+
+// Request for `TunnelService.StartHotspot`.
+message StartHotspotRequest {
+  // Guest loopback port for the SOCKS5 listener. 0 means 1080.
+  uint32 socks_port = 1;
+  // Point the guest's system proxy settings (and HTTP(S)_PROXY for new
+  // processes) at the hotspot.
+  bool set_system_proxy = 2;
+  // Destinations (CIDRs or host suffixes) that bypass the hotspot and use
+  // the guest's own network.
+  repeated string bypass = 3;
+  // How long the ticket accepts the client's WebSocket. Unset means 60
+  // seconds.
+  google.protobuf.Duration ticket_ttl = 4;
+}
+
+// Response for `TunnelService.StartHotspot`.
+message StartHotspotResponse {
+  // Hotspot id.
+  string hotspot_id = 1;
+  // Ticket for the hotspot WebSocket.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the
+  // ticket, for example "/hotspot?ticket=…". The client keeps this socket
+  // open; the hotspot stops when it closes.
+  string ws_path = 3;
+  // Guest-side SOCKS5 address, for example "127.0.0.1:1080".
+  string socks_address = 4;
+}
+
+// Request for `TunnelService.StartExit`.
+message StartExitRequest {
+  // Guest loopback port; 0 picks a free one.
+  uint32 socks_port = 1;
+}
+
+// Response for `TunnelService.StartExit`.
+message StartExitResponse {
+  // Where the exit listens on guest loopback ("127.0.0.1:41081").
+  string socks_address = 1;
+}
+
+// Request for `TunnelService.StartHostPorts`.
+message StartHostPortsRequest {
+  // Host ports to publish on the guest's loopback, at the same numbers.
+  repeated uint32 ports = 1;
+  // How long the ticket accepts the host's WebSocket. Unset: 60 s.
+  google.protobuf.Duration ticket_ttl = 2;
+}
+
+// A host port the guest could not publish.
+message HostPortSkipped {
+  // The host port.
+  uint32 port = 1;
+  // Why, in plain words ("something in the Space listens there").
+  string reason = 2;
+}
+
+// Response for `TunnelService.StartHostPorts`.
+message StartHostPortsResponse {
+  // The session to stop later.
+  string session_id = 1;
+  // One-time ticket for the host's WebSocket.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, with the ticket.
+  string ws_path = 3;
+  // The ports listening on the guest's loopback now.
+  repeated uint32 listening = 4;
+  // The ports it could not take.
+  repeated HostPortSkipped skipped = 5;
+}
+
+// Request for `TunnelService.StopHostPorts`.
+message StopHostPortsRequest {}
+
+// Response for `TunnelService.StopHostPorts`.
+message StopHostPortsResponse {}
+
+// Request for `TunnelService.StopExit`.
+message StopExitRequest {}
+
+// Response for `TunnelService.StopExit`.
+message StopExitResponse {}
+
+// Request for `TunnelService.StopHotspot`.
+message StopHotspotRequest {
+  // Which hotspot.
+  string hotspot_id = 1;
+}
+
+// Response for `TunnelService.StopHotspot`.
+message StopHotspotResponse {}
+
+// Request for `TunnelService.GetHotspotStatus`.
+message GetHotspotStatusRequest {}
+
+// Hotspot state.
+enum HotspotState {
+  // Not reported.
+  HOTSPOT_STATE_UNSPECIFIED = 0;
+  // No hotspot.
+  HOTSPOT_STATE_STOPPED = 1;
+  // Started, waiting for the client WebSocket.
+  HOTSPOT_STATE_WAITING_FOR_PEER = 2;
+  // Relaying.
+  HOTSPOT_STATE_ACTIVE = 3;
+}
+
+// Response for `TunnelService.GetHotspotStatus`.
+message GetHotspotStatusResponse {
+  // State.
+  HotspotState state = 1;
+  // Hotspot id, when not stopped.
+  string hotspot_id = 2;
+  // Id of the principal whose client provides egress.
+  string peer_principal_id = 3;
+  // Guest-side SOCKS5 address.
+  string socks_address = 4;
+  // Open relayed connections.
+  uint32 active_connections = 5;
+  // Bytes sent from the guest through the hotspot.
+  uint64 bytes_out = 6;
+  // Bytes received into the guest through the hotspot.
+  uint64 bytes_in = 7;
+}
+
+// Request for `TunnelService.StartSpawn`.
+message StartSpawnRequest {
+  // The Space's spawn capability, minted by its host. The guest writes it
+  // to the token file (0600, owner: the user cua-spacesd runs as) for
+  // clients in the Space to present on the spawn listener.
+  string capability = 1;
+  // How long the ticket accepts the host's WebSocket. Unset means 60
+  // seconds.
+  google.protobuf.Duration ticket_ttl = 2;
+  // The Space's id, for the environment of new processes (`CUA_SPACE`).
+  string space_id = 3;
+}
+
+// Response for `TunnelService.StartSpawn`.
+message StartSpawnResponse {
+  // Spawn channel id.
+  string spawn_id = 1;
+  // Ticket for the spawn WebSocket.
+  string ticket = 2;
+  // WebSocket path relative to the spacesd base URL, including the ticket,
+  // for example "/spawn?ticket=…". The host keeps this socket open; the
+  // listener refuses connections while it is closed.
+  string ws_path = 3;
+  // Guest-side listener, as a URL clients in the Space use as their cua
+  // daemon, for example "http://127.0.0.1:41234".
+  string address = 4;
+  // Where the guest wrote the capability.
+  string token_path = 5;
+  // Where the guest wrote the listener's address (one line).
+  string address_path = 6;
+}
+
+// Request for `TunnelService.StopSpawn`.
+message StopSpawnRequest {
+  // Which channel. Empty stops the current one.
+  string spawn_id = 1;
+}
+
+// Response for `TunnelService.StopSpawn`.
+message StopSpawnResponse {}
+
+// Request for `TunnelService.GetSpawnStatus`.
+message GetSpawnStatusRequest {}
+
+// Response for `TunnelService.GetSpawnStatus`.
+message GetSpawnStatusResponse {
+  // A channel is started.
+  bool started = 1;
+  // The host's WebSocket is attached.
+  bool attached = 2;
+  // Channel id, when started.
+  string spawn_id = 3;
+  // Guest-side listener URL, when started.
+  string address = 4;
+  // Open relayed connections.
+  uint32 active_connections = 5;
+}

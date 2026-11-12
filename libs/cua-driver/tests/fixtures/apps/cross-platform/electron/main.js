@@ -12,6 +12,8 @@ const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAN
 const customCuaCompositor = process.env.CUA_E2E_WAYLAND_SESSION === 'cua-compositor';
 const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
 const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
+const sentinelControlPath = process.env.CUA_E2E_SENTINEL_CONTROL || '';
+const sentinelStatePath = process.env.CUA_E2E_SENTINEL_STATE || '';
 if (process.env.CUA_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.CUA_E2E_USER_DATA_DIR);
 }
@@ -59,6 +61,7 @@ ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
 
 let mainWindow;
 let sentinelHeartbeatTimer;
+let sentinelSetupToken;
 
 function createWindow() {
   const fixedTitle = sentinelMode
@@ -144,7 +147,34 @@ function createWindow() {
           if (!sentinelHeartbeatTimer) {
             sentinelHeartbeatTimer = setInterval(() => {
               if (mainWindow && !mainWindow.isDestroyed()) {
+                if (process.platform === 'win32' && sentinelControlPath) {
+                  // A partially written request is retried on the next tick.
+                  let request;
+                  try {
+                    request = JSON.parse(fs.readFileSync(sentinelControlPath, 'utf8'));
+                  } catch {}
+                  if (typeof request?.token === 'string' && request.token !== sentinelSetupToken) {
+                    sentinelSetupToken = request.token;
+                    mainWindow.webContents.send('cua-e2e-sentinel-arm-setup-click', request.token);
+                  }
+                }
                 mainWindow.webContents.send('cua-e2e-sentinel-heartbeat-probe');
+                if (sentinelStatePath) {
+                  // Fullscreen as the compositor's last configure set it; niri's
+                  // IPC cannot tell a fullscreen tile from a maximized one. The
+                  // event journal is reset during setup, so this state is kept
+                  // in its own file, replaced whole on every tick.
+                  const state = JSON.stringify({
+                    at_ms: Date.now(),
+                    fullscreen: mainWindow.isFullScreen(),
+                  });
+                  // A failed write leaves the report stale, which the observer
+                  // already treats as no fullscreen evidence.
+                  try {
+                    fs.writeFileSync(`${sentinelStatePath}.tmp`, state, 'utf8');
+                    fs.renameSync(`${sentinelStatePath}.tmp`, sentinelStatePath);
+                  } catch {}
+                }
               }
             }, 100);
             sentinelHeartbeatTimer.unref();

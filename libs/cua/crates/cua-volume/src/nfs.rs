@@ -1,0 +1,876 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! The drive as a localhost NFSv3 server (feature `nfs`), which macOS
+//! mounts with its built-in client: no kernel extension, no system
+//! extension, no approval step. This is the macOS mount until the FSKit
+//! module ships signed (see the Cua Volume guide).
+//!
+//! A Space's server binds `127.0.0.1` on a random port. This machine's
+//! own mount ([`NfsServer::start_host`]) asks for the port and file handle
+//! generation it had before (kept in the cua home), so a daemon that
+//! restarted after a crash serves the mount the last one left, and the
+//! kernel's client reconnects to it instead of reporting the server gone
+//! ("Server connections interrupted"). Each serves one
+//! [`Vfs`]. NFSv3 has no open or close, so a written file uploads after
+//! [`crate::vfs::UPLOAD_IDLE`] without writes; unmounting (or stopping
+//! the server) uploads whatever is left first.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use nfsserve::nfs::{
+    cookieverf3, fattr3, fileid3, filename3, fsinfo3, ftype3, nfs_fh3, nfspath3, nfsstat3,
+    nfstime3, sattr3, set_size3, specdata3,
+};
+use nfsserve::tcp::{NFSTcp, NFSTcpListener};
+use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
+
+use crate::vfs::{Attr, OP_DEADLINE, Vfs, errno, libc_errno};
+use crate::{Error, Result};
+
+/// The first component of a per-mount export name: `/cua-volume-<id>`
+/// mounts the root like `/` does. A guest names each mount this way (with
+/// its own id) so a client that caches by server and export (Windows keeps
+/// the root handle and directory listings of `\\\\127.0.0.1\\<export>`
+/// across mounts) never reuses an earlier view's.
+pub const EXPORT_PREFIX: &str = "cua-volume-";
+
+/// Largest read or write the client is told to use.
+const IO_SIZE: u32 = 1024 * 1024;
+
+struct NfsFs {
+    vfs: Arc<Vfs>,
+    uid: u32,
+    gid: u32,
+    /// Writable entries are writable by anyone (a guest's client, whose
+    /// uid is not the host's; the access rules are enforced here).
+    shared: bool,
+    /// This server's generation: the first half of every file handle it
+    /// hands out, and its file system id. Unique per server in this process
+    /// (nfsserve's default is one per process), so a client never mistakes
+    /// one view's handles or cached listings for another's: two Spaces, or
+    /// a Space's view after an agent's, get different handles for the same
+    /// file. This machine's mount keeps it across restarts (see
+    /// [`NfsServer::start_host`]).
+    generation: u64,
+    /// This process's server instance: the readdir cookie and write
+    /// verifier. Unlike the generation it always changes with a restart, so
+    /// a client that reconnects to a restarted server knows its earlier
+    /// cookies and unstable writes are void.
+    boot: u64,
+}
+
+/// The first inode number a restarted daemon's macOS mount hands out: the
+/// time in milliseconds times 1024, so no earlier daemon (which started
+/// earlier and would need over a million new files a second to catch up)
+/// numbered another file the same. Below 2^53 until the 23rd century, so it
+/// survives any JSON reader.
+pub fn ino_floor() -> u64 {
+    crate::now_ms().saturating_mul(1024)
+}
+
+/// A file handle generation for a new host server (see
+/// [`NfsServer::start_host`]).
+pub fn new_generation() -> u64 {
+    next_generation()
+}
+
+/// A generation no other server in this process has had: the time in
+/// milliseconds, raised past the last one handed out.
+fn next_generation() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mut last = LAST.load(Ordering::SeqCst);
+    loop {
+        let next = now.max(last + 1);
+        match LAST.compare_exchange(last, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return next,
+            Err(seen) => last = seen,
+        }
+    }
+}
+
+fn stat(e: Error) -> nfsstat3 {
+    match errno(&e) {
+        libc_errno::ENOENT => nfsstat3::NFS3ERR_NOENT,
+        libc_errno::EACCES => nfsstat3::NFS3ERR_ACCES,
+        libc_errno::EEXIST => nfsstat3::NFS3ERR_EXIST,
+        libc_errno::ENOTEMPTY => nfsstat3::NFS3ERR_NOTEMPTY,
+        libc_errno::EINVAL => nfsstat3::NFS3ERR_INVAL,
+        libc_errno::ENOTDIR => nfsstat3::NFS3ERR_NOTDIR,
+        libc_errno::EISDIR => nfsstat3::NFS3ERR_ISDIR,
+        _ => nfsstat3::NFS3ERR_IO,
+    }
+}
+
+fn name(f: &filename3) -> std::result::Result<String, nfsstat3> {
+    String::from_utf8(f.0.clone()).map_err(|_| nfsstat3::NFS3ERR_INVAL)
+}
+
+fn time(ms: u64) -> nfstime3 {
+    nfstime3 {
+        seconds: (ms / 1000) as u32,
+        nseconds: ((ms % 1000) * 1_000_000) as u32,
+    }
+}
+
+impl NfsFs {
+    /// Runs one operation on the filesystem within [`OP_DEADLINE`]: a
+    /// store that does not answer (sync stalled) fails the request with
+    /// EIO instead of leaving the kernel's client waiting.
+    async fn op<T, F, Fut>(&self, what: &'static str, f: F) -> std::result::Result<T, nfsstat3>
+    where
+        T: Send + 'static,
+        F: FnOnce(Arc<Vfs>) -> Fut,
+        Fut: std::future::Future<Output = Result<T>> + Send + 'static,
+    {
+        crate::vfs::bounded(OP_DEADLINE, what, f(self.vfs.clone()))
+            .await
+            .map_err(|e| {
+                tracing::debug!(op = what, error = %e, "nfs: answered with an error");
+                stat(e)
+            })
+    }
+
+    /// The file system id this server reports: distinct per server, and
+    /// below 2^31. The generation itself (milliseconds since 1970, past
+    /// 2^40) made the Windows NFS client refuse every rename on the mount
+    /// as a move to another drive (ERROR_NOT_SAME_DEVICE) without asking
+    /// the server, as if it keeps the fsid in 32 bits in one place and 64
+    /// in another.
+    fn fsid(&self) -> u64 {
+        self.generation % 0x7fff_fff0 + 1
+    }
+
+    fn fattr(&self, a: &Attr) -> fattr3 {
+        let mode = match (a.is_dir, a.writable, self.shared) {
+            (true, true, true) => 0o777,
+            (true, true, false) => 0o755,
+            (true, false, _) => 0o555,
+            (false, true, true) => 0o666,
+            (false, true, false) => 0o644,
+            (false, false, _) => 0o444,
+        };
+        fattr3 {
+            ftype: if a.is_dir {
+                ftype3::NF3DIR
+            } else {
+                ftype3::NF3REG
+            },
+            mode,
+            nlink: if a.is_dir { 2 } else { 1 },
+            uid: self.uid,
+            gid: self.gid,
+            size: a.size,
+            used: a.size,
+            rdev: specdata3::default(),
+            fsid: self.fsid(),
+            fileid: a.ino,
+            atime: time(a.mtime_ms),
+            mtime: time(a.mtime_ms),
+            ctime: time(a.mtime_ms),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl NFSFileSystem for NfsFs {
+    fn capabilities(&self) -> VFSCapabilities {
+        VFSCapabilities::ReadWrite
+    }
+
+    fn root_dir(&self) -> fileid3 {
+        crate::vfs::ROOT
+    }
+
+    /// MOUNT's path: `/`, or `/cua-volume-<id>` for the root (see
+    /// [`EXPORT_PREFIX`]), followed by an optional subpath.
+    async fn path_to_id(&self, path: &[u8]) -> std::result::Result<fileid3, nfsstat3> {
+        let mut parts: Vec<Vec<u8>> = path
+            .split(|&b| b == b'/')
+            .filter(|p| !p.is_empty())
+            .map(<[u8]>::to_vec)
+            .collect();
+        if parts
+            .first()
+            .is_some_and(|p| p.starts_with(EXPORT_PREFIX.as_bytes()))
+        {
+            parts.remove(0);
+        }
+        let mut id = self.root_dir();
+        for part in parts {
+            id = self.lookup(id, &part.into()).await?;
+        }
+        Ok(id)
+    }
+
+    fn id_to_fh(&self, id: fileid3) -> nfs_fh3 {
+        let mut data = Vec::with_capacity(16);
+        data.extend_from_slice(&self.generation.to_le_bytes());
+        data.extend_from_slice(&id.to_le_bytes());
+        nfs_fh3 { data }
+    }
+
+    fn fh_to_id(&self, fh: &nfs_fh3) -> std::result::Result<fileid3, nfsstat3> {
+        let (Some(generation), Some(id)) = (fh.data.get(..8), fh.data.get(8..16)) else {
+            return Err(nfsstat3::NFS3ERR_BADHANDLE);
+        };
+        if fh.data.len() != 16 {
+            return Err(nfsstat3::NFS3ERR_BADHANDLE);
+        }
+        let generation = u64::from_le_bytes(generation.try_into().expect("8 bytes"));
+        match generation.cmp(&self.generation) {
+            // Another server's handle (an earlier view, or a restart).
+            std::cmp::Ordering::Less => Err(nfsstat3::NFS3ERR_STALE),
+            std::cmp::Ordering::Greater => Err(nfsstat3::NFS3ERR_BADHANDLE),
+            std::cmp::Ordering::Equal => {
+                let id = u64::from_le_bytes(id.try_into().expect("8 bytes"));
+                // Same generation, inode unknown: a handle from before this
+                // daemon restarted (the root stays valid, the rest is
+                // looked up again).
+                if self.vfs.knows(id) {
+                    Ok(id)
+                } else {
+                    Err(nfsstat3::NFS3ERR_STALE)
+                }
+            }
+        }
+    }
+
+    fn serverid(&self) -> cookieverf3 {
+        self.boot.to_le_bytes()
+    }
+
+    async fn lookup(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+    ) -> std::result::Result<fileid3, nfsstat3> {
+        let n = name(filename)?;
+        if n == "." {
+            return Ok(dirid);
+        }
+        if n == ".." {
+            let key = self.vfs.key_of(dirid).map_err(stat)?;
+            let parent = parent_key(&key);
+            if parent.is_empty() {
+                return Ok(crate::vfs::ROOT);
+            }
+            return self
+                .op(
+                    "lookup",
+                    move |v| async move { v.lookup_path(&parent).await },
+                )
+                .await
+                .map(|a| a.ino);
+        }
+        self.op("lookup", move |v| async move { v.lookup(dirid, &n).await })
+            .await
+            .map(|a| a.ino)
+    }
+
+    async fn getattr(&self, id: fileid3) -> std::result::Result<fattr3, nfsstat3> {
+        self.op("getattr", move |v| async move { v.getattr(id).await })
+            .await
+            .map(|a| self.fattr(&a))
+    }
+
+    async fn setattr(&self, id: fileid3, setattr: sattr3) -> std::result::Result<fattr3, nfsstat3> {
+        let a = match setattr.size {
+            set_size3::size(s) => {
+                self.op("setattr", move |v| async move { v.truncate(id, s).await })
+                    .await?
+            }
+            set_size3::Void => {
+                self.op("setattr", move |v| async move { v.getattr(id).await })
+                    .await?
+            }
+        };
+        Ok(self.fattr(&a))
+    }
+
+    async fn read(
+        &self,
+        id: fileid3,
+        offset: u64,
+        count: u32,
+    ) -> std::result::Result<(Vec<u8>, bool), nfsstat3> {
+        self.op("read", move |v| async move {
+            v.read(id, offset, count as u64).await
+        })
+        .await
+    }
+
+    async fn write(
+        &self,
+        id: fileid3,
+        offset: u64,
+        data: &[u8],
+    ) -> std::result::Result<fattr3, nfsstat3> {
+        let data = data.to_vec();
+        self.op(
+            "write",
+            move |v| async move { v.write(id, offset, &data).await },
+        )
+        .await
+        .map(|a| self.fattr(&a))
+    }
+
+    async fn create(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+        attr: sattr3,
+    ) -> std::result::Result<(fileid3, fattr3), nfsstat3> {
+        let n = name(filename)?;
+        let size = match attr.size {
+            set_size3::size(s) => s,
+            set_size3::Void => 0,
+        };
+        let a = self
+            .op("create", move |v| async move {
+                let a = v.create(dirid, &n).await?;
+                if size > 0 {
+                    v.truncate(a.ino, size).await
+                } else {
+                    Ok(a)
+                }
+            })
+            .await?;
+        Ok((a.ino, self.fattr(&a)))
+    }
+
+    async fn create_exclusive(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+    ) -> std::result::Result<fileid3, nfsstat3> {
+        let n = name(filename)?;
+        self.op("create", move |v| async move {
+            if v.lookup(dirid, &n).await.is_ok() {
+                return Err(Error::Precondition(format!("{n} exists")));
+            }
+            v.create(dirid, &n).await
+        })
+        .await
+        .map(|a| a.ino)
+    }
+
+    async fn mkdir(
+        &self,
+        dirid: fileid3,
+        dirname: &filename3,
+    ) -> std::result::Result<(fileid3, fattr3), nfsstat3> {
+        let n = name(dirname)?;
+        let a = self
+            .op("mkdir", move |v| async move { v.mkdir(dirid, &n).await })
+            .await?;
+        Ok((a.ino, self.fattr(&a)))
+    }
+
+    async fn remove(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+    ) -> std::result::Result<(), nfsstat3> {
+        let n = name(filename)?;
+        self.op("remove", move |v| async move {
+            let a = v.lookup(dirid, &n).await?;
+            if a.is_dir {
+                v.rmdir(dirid, &n).await
+            } else {
+                v.unlink(dirid, &n).await
+            }
+        })
+        .await
+    }
+
+    async fn rename(
+        &self,
+        from_dirid: fileid3,
+        from_filename: &filename3,
+        to_dirid: fileid3,
+        to_filename: &filename3,
+    ) -> std::result::Result<(), nfsstat3> {
+        let (from, to) = (name(from_filename)?, name(to_filename)?);
+        self.op("rename", move |v| async move {
+            // Replacing an existing file (an editor's safe save): remove it
+            // first so the rename lands as the new current version.
+            if let Ok(existing) = v.lookup(to_dirid, &to).await
+                && !existing.is_dir
+            {
+                let _ = v.unlink(to_dirid, &to).await;
+            }
+            v.rename(from_dirid, &from, to_dirid, &to).await
+        })
+        .await
+    }
+
+    async fn readdir(
+        &self,
+        dirid: fileid3,
+        start_after: fileid3,
+        max_entries: usize,
+    ) -> std::result::Result<ReadDirResult, nfsstat3> {
+        let all = self
+            .op("readdir", move |v| async move { v.readdir(dirid).await })
+            .await?;
+        let start = if start_after == 0 {
+            0
+        } else {
+            match all.iter().position(|(_, a)| a.ino == start_after) {
+                Some(i) => i + 1,
+                None => return Err(nfsstat3::NFS3ERR_BAD_COOKIE),
+            }
+        };
+        let mut entries = vec![];
+        for (n, a) in all.iter().skip(start).take(max_entries) {
+            entries.push(DirEntry {
+                fileid: a.ino,
+                name: n.as_bytes().into(),
+                attr: self.fattr(a),
+            });
+        }
+        let end = start + entries.len() >= all.len();
+        Ok(ReadDirResult { entries, end })
+    }
+
+    async fn symlink(
+        &self,
+        _dirid: fileid3,
+        _linkname: &filename3,
+        _symlink: &nfspath3,
+        _attr: &sattr3,
+    ) -> std::result::Result<(fileid3, fattr3), nfsstat3> {
+        Err(nfsstat3::NFS3ERR_NOTSUPP)
+    }
+
+    async fn readlink(&self, _id: fileid3) -> std::result::Result<nfspath3, nfsstat3> {
+        Err(nfsstat3::NFS3ERR_NOTSUPP)
+    }
+
+    async fn fsinfo(&self, root_fileid: fileid3) -> std::result::Result<fsinfo3, nfsstat3> {
+        let attr = self.getattr(root_fileid).await?;
+        Ok(fsinfo3 {
+            obj_attributes: nfsserve::nfs::post_op_attr::attributes(attr),
+            rtmax: IO_SIZE,
+            rtpref: IO_SIZE,
+            rtmult: 4096,
+            wtmax: IO_SIZE,
+            wtpref: IO_SIZE,
+            wtmult: 4096,
+            dtpref: 64 * 1024,
+            maxfilesize: 5 * 1024 * 1024 * 1024 * 1024,
+            time_delta: nfstime3 {
+                seconds: 0,
+                nseconds: 1_000_000,
+            },
+            properties: nfsserve::nfs::FSF_HOMOGENEOUS | nfsserve::nfs::FSF_CANSETTIME,
+        })
+    }
+}
+
+fn parent_key(key: &str) -> String {
+    let k = key.trim_end_matches('/');
+    match k.rfind('/') {
+        Some(i) => k[..=i].to_string(),
+        None => String::new(),
+    }
+}
+
+/// Binds a server for `fs()` on the first of `ports` that is free, else
+/// on a random port. (tokio sets SO_REUSEADDR, so a port whose previous
+/// daemon's connections are still in TIME_WAIT binds.)
+async fn bind(fs: impl Fn() -> NfsFs, ports: &[u16]) -> Result<NFSTcpListener<NfsFs>> {
+    for &port in ports.iter().filter(|p| **p != 0) {
+        match NFSTcpListener::bind(&format!("127.0.0.1:{port}"), fs()).await {
+            Ok(l) => return Ok(l),
+            Err(e) => tracing::info!(port, error = %e, "nfs: the usual port is taken"),
+        }
+    }
+    NFSTcpListener::bind("127.0.0.1:0", fs())
+        .await
+        .map_err(|e| Error::Backend(format!("nfs listen: {e}")))
+}
+
+/// A running NFS server for one [`Vfs`].
+pub struct NfsServer {
+    port: u16,
+    generation: u64,
+    vfs: Arc<Vfs>,
+    accept: tokio::task::JoinHandle<()>,
+    uploader: tokio::task::JoinHandle<()>,
+}
+
+impl std::fmt::Debug for NfsServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NfsServer")
+            .field("port", &self.port)
+            .finish()
+    }
+}
+
+impl NfsServer {
+    /// Serves `vfs` on `127.0.0.1:<random port>`.
+    pub async fn start(vfs: Arc<Vfs>) -> Result<NfsServer> {
+        Self::start_with(vfs, false, &[], next_generation()).await
+    }
+
+    /// Serves this machine's mount of `vfs` with file handle `generation`
+    /// on the first of `ports` it can bind, else a random port. A restarted
+    /// daemon that gets its previous port and generation serves the mount
+    /// the previous one left: the kernel reconnects, the root handle is
+    /// valid again and any other handle it cached is stale (looked up
+    /// again), so the mount keeps working. Call [`Vfs::start_inos_above`]
+    /// with [`ino_floor`] on `vfs` first, so a cached handle never names
+    /// another file.
+    pub async fn start_host(vfs: Arc<Vfs>, ports: &[u16], generation: u64) -> Result<NfsServer> {
+        Self::start_with(vfs, false, ports, generation).await
+    }
+
+    /// Serves a Space's view for its guest. The guest's NFS client is
+    /// not the host's user (Windows mounts anonymously, as uid -2), so
+    /// writable entries carry the write bits for everyone: its client
+    /// would refuse a write on its own otherwise. The access rules stay
+    /// here, and refuse what the view may not write.
+    pub async fn start_for_guest(vfs: Arc<Vfs>) -> Result<NfsServer> {
+        Self::start_with(vfs, true, &[], next_generation()).await
+    }
+
+    async fn start_with(
+        vfs: Arc<Vfs>,
+        shared: bool,
+        ports: &[u16],
+        generation: u64,
+    ) -> Result<NfsServer> {
+        #[cfg(unix)]
+        // SAFETY: getuid/getgid never fail.
+        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        #[cfg(not(unix))]
+        let (uid, gid) = (0, 0);
+        let boot = next_generation();
+        let fs = || NfsFs {
+            vfs: vfs.clone(),
+            uid,
+            gid,
+            shared,
+            generation,
+            boot,
+        };
+        let listener = bind(fs, ports).await?;
+        let port = listener.get_listen_port();
+        let accept = tokio::spawn(async move {
+            let _ = listener.handle_forever().await;
+        });
+        let v = vfs.clone();
+        let uploader = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                v.upload_idle().await;
+            }
+        });
+        Ok(NfsServer {
+            port,
+            generation,
+            vfs,
+            accept,
+            uploader,
+        })
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The generation in every file handle this server hands out.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn vfs(&self) -> &Arc<Vfs> {
+        &self.vfs
+    }
+
+    /// The `mount_nfs` options for this server.
+    pub fn mount_options(&self) -> String {
+        format!(
+            "port={p},mountport={p},vers=3,tcp,nolocks,locallocks,rsize={IO_SIZE},wsize={IO_SIZE},readahead=16,actimeo=1,soft,timeo=100,retrans=3,intr,noowners",
+            p = self.port
+        )
+    }
+
+    /// Uploads what is pending and stops serving.
+    pub async fn stop(mut self) -> Result<()> {
+        self.uploader.abort();
+        let r = self.vfs.flush_all().await;
+        self.accept.abort();
+        // The listener is closed when this returns: a server started next
+        // (the same mount again) gets the same port.
+        let _ = (&mut self.accept).await;
+        r
+    }
+}
+
+impl Drop for NfsServer {
+    fn drop(&mut self) {
+        self.accept.abort();
+        self.uploader.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vfs::ROOT;
+    use crate::{Context, Drive};
+
+    fn fs(dir: &std::path::Path, ctx: Context, sub: &str) -> NfsFs {
+        let drive = Drive::open_local(&dir.join("home"));
+        NfsFs {
+            vfs: Vfs::new(&drive, ctx, None, None, &dir.join(sub)).unwrap(),
+            uid: 0,
+            gid: 0,
+            shared: true,
+            generation: next_generation(),
+            boot: next_generation(),
+        }
+    }
+
+    /// Two servers in one process (the user's view, then a Space's) never
+    /// share a file handle: a guest's NFS client that keeps its caches
+    /// across mounts (Windows does) would otherwise list the earlier view.
+    #[tokio::test]
+    async fn each_server_has_its_own_file_handles() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = fs(dir.path(), Context::user(), "u");
+        let space = fs(dir.path(), Context::space("local:lab"), "s");
+        let root = user.root_dir();
+        assert_eq!(root, space.root_dir());
+        let (a, b) = (user.id_to_fh(root), space.id_to_fh(root));
+        assert_ne!(a.data, b.data, "the same file, different handles");
+        assert_ne!(user.serverid(), space.serverid());
+        let code = |r: std::result::Result<fileid3, nfsstat3>| r.map_err(|e| e as u32);
+        assert_eq!(code(user.fh_to_id(&a)), Ok(root));
+        assert_eq!(code(space.fh_to_id(&b)), Ok(root));
+        // The later server refuses the earlier one's handles as stale, and
+        // the earlier one never takes a later one's.
+        let (stale, bad) = (
+            nfsstat3::NFS3ERR_STALE as u32,
+            nfsstat3::NFS3ERR_BADHANDLE as u32,
+        );
+        assert_eq!(code(space.fh_to_id(&a)), Err(stale));
+        assert_eq!(code(user.fh_to_id(&b)), Err(bad));
+        assert_eq!(
+            code(user.fh_to_id(&nfs_fh3 {
+                data: vec![1, 2, 3]
+            })),
+            Err(bad)
+        );
+        // Any per-mount export name mounts the root; the rest of the path
+        // resolves as usual.
+        for p in ["/", "", "/cua-volume-vol-abc", "/cua-volume-x/", "/."] {
+            assert_eq!(code(space.path_to_id(p.as_bytes()).await), Ok(root), "{p}");
+        }
+        let spaces = code(space.path_to_id(b"/cua-volume-vol-abc/spaces").await).unwrap();
+        assert_eq!(code(space.path_to_id(b"/spaces").await), Ok(spaces));
+        assert_ne!(spaces, root);
+        assert_eq!(
+            code(space.path_to_id(b"/cua-volume-x/agents").await),
+            Err(nfsstat3::NFS3ERR_NOENT as u32),
+            "a Space's view has no agents/"
+        );
+        // A rename within one directory, reached through a per-mount export
+        // and through `/`.
+        for (export, from, to) in [
+            (
+                "/cua-volume-0123abcd/spaces/local-lab",
+                "out.txt",
+                "done.txt",
+            ),
+            ("/spaces/local-lab", "done.txt", "final.txt"),
+        ] {
+            let dir = code(space.path_to_id(export.as_bytes()).await).unwrap();
+            if from == "out.txt" {
+                let (f, _) = space
+                    .create(dir, &b"out.txt".to_vec().into(), sattr3::default())
+                    .await
+                    .map_err(|e| e as u32)
+                    .unwrap();
+                space
+                    .write(f, 0, b"from the guest")
+                    .await
+                    .map_err(|e| e as u32)
+                    .unwrap();
+            }
+            space
+                .rename(
+                    dir,
+                    &from.as_bytes().to_vec().into(),
+                    dir,
+                    &to.as_bytes().to_vec().into(),
+                )
+                .await
+                .map_err(|e| e as u32)
+                .unwrap();
+            assert!(
+                space
+                    .lookup(dir, &from.as_bytes().to_vec().into())
+                    .await
+                    .is_err()
+            );
+            let f = code(space.lookup(dir, &to.as_bytes().to_vec().into()).await).unwrap();
+            assert_eq!(
+                space.read(f, 0, 100).await.map_err(|e| e as u32).unwrap().0,
+                b"from the guest"
+            );
+        }
+        let fsid = |f: &NfsFs, a: &Attr| f.fattr(a).fsid;
+        let attr = user.vfs.getattr(root).await.unwrap();
+        assert_ne!(fsid(&user, &attr), fsid(&space, &attr));
+        assert!(fsid(&user, &attr) < 1 << 31 && fsid(&space, &attr) < 1 << 31);
+    }
+
+    /// A restarted daemon's server for this machine's mount keeps the
+    /// generation: the kernel's root handle is valid again, a handle for
+    /// any other file the previous daemon numbered is stale (looked up
+    /// again, never another file), and the verifier changes so cookies and
+    /// writes from before are void.
+    #[tokio::test]
+    async fn a_restarted_host_server_takes_the_root_handle_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let generation = new_generation();
+        let host = |sub: &str| {
+            let mut f = fs(dir.path(), Context::user(), sub);
+            f.generation = generation;
+            f.vfs.start_inos_above(ino_floor());
+            f
+        };
+        let code = |r: std::result::Result<fileid3, nfsstat3>| r.map_err(|e| e as u32);
+        let before = host("a");
+        let public = code(before.path_to_id(b"/public").await).unwrap();
+        assert!(public > ino_floor() - 1_000_000, "numbered above the floor");
+        let (root_fh, public_fh) = (before.id_to_fh(ROOT), before.id_to_fh(public));
+        std::thread::sleep(Duration::from_millis(5));
+        let after = host("b");
+        assert_eq!(code(after.fh_to_id(&root_fh)), Ok(ROOT));
+        assert_eq!(
+            code(after.fh_to_id(&public_fh)),
+            Err(nfsstat3::NFS3ERR_STALE as u32)
+        );
+        let again = code(after.path_to_id(b"/public").await).unwrap();
+        assert!(again > public, "a new number, never an earlier one");
+        assert_eq!(code(after.fh_to_id(&after.id_to_fh(again))), Ok(again));
+        assert_ne!(before.serverid(), after.serverid());
+        let attr = after.vfs.getattr(ROOT).await.unwrap();
+        assert_eq!(
+            before.fattr(&attr).fsid,
+            after.fattr(&attr).fsid,
+            "same fsid"
+        );
+    }
+
+    /// The host server binds the port it asks for, and another one when
+    /// that is taken.
+    #[tokio::test]
+    async fn the_host_server_keeps_its_port_or_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let vfs = || fs(dir.path(), Context::user(), "v").vfs;
+        let first = NfsServer::start_host(vfs(), &[], new_generation())
+            .await
+            .unwrap();
+        let port = first.port();
+        first.stop().await.unwrap();
+        let again = NfsServer::start_host(vfs(), &[port], new_generation())
+            .await
+            .unwrap();
+        assert_eq!(again.port(), port, "the same port after a restart");
+        // Taken (here by the running server): the next candidate, else any.
+        let other = NfsServer::start_host(vfs(), &[port], new_generation())
+            .await
+            .unwrap();
+        assert_ne!(other.port(), port);
+        let g = new_generation();
+        let third = NfsServer::start_host(vfs(), &[port, 0], g).await.unwrap();
+        assert_ne!(third.port(), port);
+        assert_eq!(third.generation(), g);
+        let opts = again.mount_options();
+        assert!(
+            opts.starts_with(&format!("port={port},mountport={port},")),
+            "{opts}"
+        );
+    }
+
+    /// A store that never answers: the other computer while sync has
+    /// stalled.
+    struct Stalled;
+
+    #[async_trait::async_trait]
+    impl crate::Backend for Stalled {
+        fn kind(&self) -> &'static str {
+            "stalled"
+        }
+        async fn put(&self, _: &str, _: Vec<u8>, _: crate::Condition) -> Result<crate::ObjectMeta> {
+            std::future::pending().await
+        }
+        async fn get(&self, _: &str, _: Option<&str>) -> Result<(Vec<u8>, crate::ObjectMeta)> {
+            std::future::pending().await
+        }
+        async fn head(&self, _: &str) -> Result<Option<crate::ObjectMeta>> {
+            std::future::pending().await
+        }
+        async fn list(&self, _: &str) -> Result<Vec<crate::ObjectMeta>> {
+            std::future::pending().await
+        }
+        async fn delete(&self, _: &str, _: crate::Condition) -> Result<()> {
+            std::future::pending().await
+        }
+        async fn versions(&self, _: &str) -> Result<Vec<crate::VersionInfo>> {
+            std::future::pending().await
+        }
+    }
+
+    /// CUA-4002: with sync stalled, every request still gets an answer
+    /// within [`OP_DEADLINE`] (an I/O error), below the guest client's
+    /// 5 s `timeo`. Before, a `mkdir` waited as long as the store did, the
+    /// kernel kept the folder busy, an agent start's `mkdir -p` was killed
+    /// at 30 s ("guest command failed (None)") and the mount was declared
+    /// dead.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_store_fails_each_request_in_time_instead_of_hanging_the_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        let drive = Drive::new(Arc::new(Stalled), dir.path().join("state"));
+        let fs = NfsFs {
+            vfs: Vfs::new(&drive, Context::user(), None, None, &dir.path().join("m")).unwrap(),
+            uid: 0,
+            gid: 0,
+            shared: true,
+            generation: next_generation(),
+            boot: next_generation(),
+        };
+        // The root answers without the store: the client sees a live server.
+        assert!(fs.getattr(ROOT).await.is_ok());
+        let io = nfsstat3::NFS3ERR_IO as u32;
+        let t0 = tokio::time::Instant::now();
+        let mkdir = fs.mkdir(ROOT, &b"agents".to_vec().into()).await;
+        assert_eq!(mkdir.map(|_| ()).map_err(|e| e as u32), Err(io));
+        let listing = fs.readdir(ROOT, 0, 100).await;
+        assert_eq!(listing.map(|_| ()).map_err(|e| e as u32), Err(io));
+        let lookup = fs.lookup(ROOT, &b"public".to_vec().into()).await;
+        assert_eq!(lookup.map_err(|e| e as u32), Err(io));
+        // Three requests, each answered at its deadline, not at the store's.
+        let took = t0.elapsed();
+        assert!(
+            took >= OP_DEADLINE * 3 && took < OP_DEADLINE * 3 + Duration::from_secs(1),
+            "{took:?}"
+        );
+        assert!(
+            OP_DEADLINE < Duration::from_secs(5),
+            "below the guest's timeo"
+        );
+    }
+}

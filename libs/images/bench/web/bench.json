@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "id": "web",
+  "name": "bench-web: Chromium desktop for MiniWoB++, WebVoyager, Online-Mind2Web, WebGym plus bench-ui for the registry desktop tasksets",
+  "version": "1.0",
+  "kind": "image",
+  "repository": "ghcr.io/trycua/bench-web",
+  "redistribution": "public",
+  "visibility": "public",
+  "license": {
+    "code": "MIT",
+    "data": "MiniWoB++ pages MIT (Farama-Foundation/miniwob-plusplus); live-web task lists are not baked in",
+    "image": "cua code MIT; Chromium (open-source build from the xtradeb/apps PPA, pinned) BSD-3-Clause; Ubuntu 24.04 packages under their own licenses"
+  },
+  "upstream": {
+    "repo": "https://github.com/Farama-Foundation/miniwob-plusplus",
+    "commit": "a7658beb68e1d3572329e06734c5822bd284ddc8",
+    "benchmarks": {
+      "miniwob": "https://github.com/Farama-Foundation/miniwob-plusplus@a7658beb68e1d3572329e06734c5822bd284ddc8",
+      "webvoyager": "https://github.com/MinorJerry/WebVoyager@5a7896738c10bfb8b9edccce6bb0e0411f8ae569",
+      "online-mind2web": "https://github.com/OSU-NLP-Group/Online-Mind2Web@f0d805ee0e9e0b3ea70911e45e5264b72968f3dc",
+      "webgym": "https://github.com/microsoft/webgym@23028f06e1aa19b2f4c0a039957995a6ab7fcedd"
+    }
+  },
+  "sources": [
+    {
+      "role": "miniwob",
+      "kind": "dockerfile",
+      "git": {
+        "repo": "https://github.com/Farama-Foundation/miniwob-plusplus.git",
+        "commit": "a7658beb68e1d3572329e06734c5822bd284ddc8"
+      }
+    }
+  ],
+  "os": "linux",
+  "distro": "ubuntu-24.04",
+  "arch": [
+    "amd64",
+    "arm64"
+  ],
+  "variants": [
+    "rootfs",
+    "containerdisk"
+  ],
+  "requires": {
+    "rootfs": [],
+    "containerdisk": []
+  },
+  "server": {
+    "name": "bench-web-ctl",
+    "port": 7000,
+    "protocol": "http",
+    "health": "GET /healthz"
+  },
+  "extra_ports": {
+    "chromium_cdp": 9222,
+    "miniwob": 7560
+  },
+  "spacesd": true,
+  "desktop": {
+    "user": "cua",
+    "uid": 1000,
+    "display": ":1",
+    "resolution": "1280x800"
+  },
+  "build": {
+    "kind": "dockerfile",
+    "base": "linux",
+    "base_target": "slim",
+    "dockerfile": "Dockerfile",
+    "build_contexts": {
+      "benchui": "libs/python/bench-ui"
+    }
+  },
+  "smoke": {
+    "script": "smoke.py",
+    "tasks": "parity.txt"
+  }
+}

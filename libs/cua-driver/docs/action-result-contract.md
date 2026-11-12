@@ -128,6 +128,14 @@ For example, a background drag that macOS cannot drop returns:
 }
 ```
 
+A refusal also ends its text with a line `Next: <hint>`, so a client that shows
+the agent only the text still delivers it. The first line stays the refusal.
+Every hint names only routes the driver supports in that situation, and says
+why when nothing will work. For example, an Electron window drops background
+scrolling and typing, so those hints point to `get_window_state` plus
+`element_token`, `set_value` or `invoke_menu`, and name foreground delivery only
+with its condition.
+
 A producer that already sets `hint` or `next_call` keeps its own value. In
 `run_steps`, a failed step's report carries the same `hint` and `next_call`; in
 `run_script`, the hint is appended to the error message of the failed call.

@@ -792,8 +792,8 @@ fn deliver(
     drop(borrowed);
     // The master pair is retained for reuse. Per-call teardown would hot-plug
     // a uinput keyboard and churn the XInput hierarchy on every keystroke
-    // batch — enough to crash LibreOffice VCL. The pair goes back to the pool
-    // on end_session / idle / startup recovery instead.
+    // batch — enough to crash LibreOffice VCL. The pair is released (pooled, or
+    // removed under the opt-in) on end_session / idle / startup recovery instead.
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.2...cua-spacesd-v0.15.3) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+
 ## [0.15.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.1...cua-spacesd-v0.15.2) (2026-11-11)
 
 

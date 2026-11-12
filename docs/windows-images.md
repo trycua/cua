@@ -199,6 +199,13 @@ the real Cua Spaces Local app:
   Windows 11, Create Space: "Downloading Windows (first time only)" with bytes and time left, then
   "Installing Windows (first time only)" with a bar that moves, then "Booting Windows", then Running with the
   desktop streaming in the Space page).
+* Re-verified after merging main (2026-11-12, a second Apple silicon Mac, macOS 26.6, QEMU 11.1, HVF; Cua
+  Spaces Local built from this branch): New Space offers Windows (no "coming soon"), Windows 11 downloads and
+  installs unattended, the Space reaches Running, `cua sb exec` answers through cua-spacesd
+  (`Microsoft Windows [Version 10.0.26300.9457]`) and the guest has internet through the network gateway.
+  That run found that the gateway's DHCP offer (an empty DNS search list, option 119) was refused by Windows,
+  so no Windows guest got an address behind the secure network that main now always uses; the gateway no
+  longer sends the option without search domains.
 * A second Space is a copy-on-write clone: cua-spacesd answers 36 to 40 seconds after Create (CLI 36 s, app
   36 s and 40 s, the second while the first was running).
 * In the guest, through cua-spacesd: `cua sb screenshot`, `cua sb exec` (cmd.exe), `cua do click/type/key`

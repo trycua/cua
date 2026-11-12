@@ -970,6 +970,10 @@ fn configure_macos_test_browser_command(command: &mut Command) {
     // unexpected native prompt; this keeps the setup-success row focused on
     // the exact remote-debugging page instead of pre-answering OS consent.
     command.arg("--disable-features=MediaRouter");
+    // Throwaway test profiles must not read the login keychain: each launch
+    // of a binary missing from the "Safe Storage" item's access list shows a
+    // Keychain prompt, as Cua Driver's own isolated launches avoid.
+    command.arg("--use-mock-keychain");
 }
 
 fn browser_stderr() -> Stdio {

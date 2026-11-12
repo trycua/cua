@@ -124,6 +124,9 @@ pub struct RenderStateCore {
     pub motion_t: f64,
     /// Whether the current trajectory still owes its arrival signal.
     pub arrival_pending: bool,
+    /// Seconds into the current trajectory at which the arrival signal
+    /// fires; see [`release_time`].
+    pub release_t: f64,
     /// Seconds into the float loop. Owned by the cursor, not the action,
     /// and never reset, so the phase carries on across every move, click
     /// and cue. Only the amplitude settles to 0 for precise actions.
@@ -236,6 +239,7 @@ impl RenderStateCore {
             trajectory: None,
             motion_t: 0.0,
             arrival_pending: false,
+            release_t: 0.0,
             float_secs: 0.0,
             // A fresh cursor floats fully at rest.
             float_hold_secs: crate::cursor_pose::FLOAT_HOLD_SECS
@@ -787,7 +791,7 @@ impl RenderStateCore {
             let s = traj.sample_at(self.motion_t);
             self.pos = crate::anchor_for_pointer(s.x, s.y, s.heading);
             self.heading = s.heading;
-            if self.arrival_pending && self.motion_t >= traj.arrival_t {
+            if self.arrival_pending && self.motion_t >= self.release_t {
                 self.arrival_pending = false;
                 fire_arrival = true;
             }
@@ -947,7 +951,9 @@ impl RenderStateCore {
                     seed: format!("{}|{}", self.cfg.cursor_id, self.move_seq),
                     reduced_motion: self.reduced_motion(),
                 };
-                self.trajectory = Some(plan_move(&self.motion, &request));
+                let trajectory = plan_move(&self.motion, &request);
+                self.release_t = release_time(&self.motion, &request, &trajectory);
+                self.trajectory = Some(trajectory);
                 self.motion_t = 0.0;
                 self.arrival_pending = true;
                 // The navigate mark a move plays by itself is an opt-in
@@ -1179,6 +1185,30 @@ impl RenderStateCore {
 // `cua_cursor_motion::effects`; this module only paints it.
 
 use cua_cursor_motion::effects::{self, EffectFrame, CLICK_FX_SECS, MAGNET_INFLATE};
+
+/// When a move releases the action waiting on it, in seconds into `planned`.
+///
+/// A floor timing (`relaxed`, `steady`, `calm`) stretches a short hop so a
+/// person watching can follow it. The action does not wait for the stretch:
+/// it is released when the same move under `native` timing would have
+/// arrived, and the glide plays on to the target during the action. A move
+/// the floor did not stretch (its native arrival is past the floor), and
+/// every other timing, releases at its own arrival.
+fn release_time(motion: &MotionConfig, request: &MoveRequest, planned: &Trajectory) -> f64 {
+    let Some(floor_ms) = motion.timing.floor_ms() else {
+        return planned.arrival_t;
+    };
+    let native = MotionConfig {
+        timing: crate::MotionTiming::Native,
+        ..motion.clone()
+    };
+    let native_arrival = plan_move(&native, request).arrival_t;
+    if native_arrival * 1000.0 >= floor_ms {
+        planned.arrival_t
+    } else {
+        native_arrival.min(planned.arrival_t)
+    }
+}
 
 /// Effect colour: the session tint lifted toward white.
 fn effect_rgb(tint: [u8; 4]) -> (u8, u8, u8) {
@@ -1571,7 +1601,7 @@ pub fn paint_cursor(
 #[cfg(test)]
 mod glide_duration_tests {
     use super::*;
-    use crate::{CursorConfig, MotionStyle};
+    use crate::{CursorConfig, MotionStyle, MotionTiming};
 
     #[test]
     fn unplaced_coordinates_do_not_reveal_or_schedule_idle_fade() {
@@ -1665,6 +1695,68 @@ mod glide_duration_tests {
             }
         }
         t
+    }
+
+    /// Seconds until a `dist_pts` move under `timing` releases its action,
+    /// and the trajectory's own duration.
+    fn release_and_duration(timing: MotionTiming, dist_pts: f64) -> (f64, f64) {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.timing = timing;
+        core.motion.idle_hide_ms = 0.0;
+        core.pos = crate::anchor_for_pointer(0.0, 0.0, core.heading);
+        core.placed = true;
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: dist_pts,
+                y: 0.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let duration = core.trajectory.as_ref().unwrap().arrival_t;
+        let dt = 1.0 / 240.0;
+        let mut t = 0.0;
+        while !core.tick_motion(dt) {
+            t += dt;
+            assert!(t < 10.0, "the move never released its action");
+        }
+        (t + dt, duration)
+    }
+
+    /// The floor timings slow a short hop for the person watching, not for
+    /// the action: it is released when the native move would have arrived,
+    /// while the cursor glides on. A long move, which the floor does not
+    /// stretch, and the native timing release at their own arrival.
+    #[test]
+    fn a_floor_timing_releases_the_action_at_the_native_arrival() {
+        let dt = 1.0 / 240.0;
+        for timing in [
+            MotionTiming::Relaxed,
+            MotionTiming::Steady,
+            MotionTiming::Calm,
+        ] {
+            let floor = timing.floor_ms().unwrap() / 1000.0;
+            let (native_release, _) = release_and_duration(MotionTiming::Native, 20.0);
+            let (release, arrival) = release_and_duration(timing, 20.0);
+            assert!(
+                arrival >= 0.8 * floor,
+                "{timing:?}: the hop is still slowed"
+            );
+            assert!(
+                (release - native_release).abs() <= 2.0 * dt,
+                "{timing:?}: released at {release}, native arrives at {native_release}"
+            );
+            assert!(
+                release + 0.1 < arrival,
+                "{timing:?}: {release} vs {arrival}"
+            );
+        }
+        let (native_release, native_arrival) = release_and_duration(MotionTiming::Native, 20.0);
+        assert!((native_release - native_arrival).abs() <= 2.0 * dt);
+        let (long_release, long_arrival) = release_and_duration(MotionTiming::Steady, 1400.0);
+        assert!((long_release - long_arrival).abs() <= 2.0 * dt);
     }
 
     #[test]
@@ -3479,16 +3571,21 @@ mod plain_cursor_tests {
         );
     }
 
-    /// Play the current move at 120 Hz to its arrival, where the driver
-    /// performs the click, press or drop. Returns the float and rotation on
-    /// the arrival tick, plus the peak lift and peak rotation. The float
-    /// phase runs on at exactly the tick rate throughout.
+    /// Play the current move at 120 Hz to the hotspot's arrival, where the
+    /// click, press or drop shows. Returns the float and rotation on the
+    /// arrival tick, plus the peak lift and peak rotation. The float phase
+    /// runs on at exactly the tick rate throughout.
     fn play(cursor: &mut RenderStateCore) -> (FloatOffset, f64, f64, f64) {
         let mut at_arrival = None;
         let (mut peak_lift, mut peak_turn) = (0.0f64, 0.0f64);
         let mut last = (cursor.float_offset(), cursor.float_secs);
+        let arrival_t = cursor
+            .trajectory
+            .as_ref()
+            .map_or(0.0, |traj| traj.arrival_t);
         while cursor.trajectory.is_some() {
-            let arrived = cursor.tick_motion(1.0 / 120.0);
+            cursor.tick_motion(1.0 / 120.0);
+            let arrived = cursor.motion_t >= arrival_t;
             let float = cursor.float_offset();
             peak_lift = peak_lift.min(float.dy);
             peak_turn = peak_turn.max(cursor.painted_rotation().abs());

@@ -67,6 +67,11 @@ pub enum BackgroundUnavailable {
     /// No libei backend (built without `portal-input`, or the portal session
     /// was denied / unavailable). Input has no actuator at all.
     NoLibeiBackend,
+    /// The menu's items only exist once the menu is open, and opening a
+    /// toolkit menu grabs the user's keyboard and pointer for as long as it
+    /// stays open: the user's keystrokes would land in the menu instead of in
+    /// their own window (trycua/cua#7371).
+    MenuOpenGrabsKeyboard,
     /// X11/Chromium does not accept synthetic pointer or keyboard input
     /// addressed to an unfocused window without briefly moving focus, which
     /// background delivery forbids.
@@ -82,6 +87,10 @@ pub enum BackgroundUnavailable {
     /// WebKitGTK rejects synthetic XSendEvent input and no real target-addressed
     /// pointer backend is available in this session.
     WebKitSyntheticInput,
+    /// Qt runs a shortcut in an inactive window only for the agent's own XI2
+    /// master keyboard, which this host cannot add; a synthetic chord arrives
+    /// and fires nothing (trycua/cua#7370).
+    QtInactiveWindowShortcut,
 }
 
 impl BackgroundUnavailable {
@@ -94,6 +103,10 @@ impl BackgroundUnavailable {
                 "no libei input backend on this Wayland compositor (built without \
                  portal-input, or the xdg-desktop-portal RemoteDesktop session was \
                  unavailable/denied): synthetic input has no actuator"
+            }
+            Self::MenuOpenGrabsKeyboard => {
+                "this menu only publishes its items once it is open, and an open menu takes the \
+                 keyboard and pointer from the user until it closes, so their typing would be lost"
             }
             Self::ChromiumInput => {
                 "Chromium/Electron drops synthetic pointer and keyboard events sent to \
@@ -111,6 +124,13 @@ impl BackgroundUnavailable {
             }
             Self::WebKitSyntheticInput => {
                 "WebKitGTK rejects synthetic XSendEvent input and this session has no real target-addressed pointer backend"
+            }
+            Self::QtInactiveWindowShortcut => {
+                "Qt runs a keyboard shortcut sent to a window that is not active only when it \
+                 comes from the agent's own keyboard device, and this display server cannot add \
+                 one (it needs a writable /dev/uinput, which Xvfb and Xtigervnc never offer); \
+                 the synthetic chord would arrive and trigger nothing. For a command that is in \
+                 a menu, invoke_menu runs it in the background"
             }
         }
     }

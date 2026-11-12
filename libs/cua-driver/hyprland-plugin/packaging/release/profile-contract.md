@@ -126,3 +126,25 @@ release or profile label requires rebuilding and affected lifecycle evidence;
 changed source, compiler, headers, compositor or runtime inputs require a new
 reviewed profile and affected native qualification. A matching Hyprland version
 string alone is insufficient after an Arch package rebuild.
+
+## One kit tooling, one profile per channel
+
+Omarchy edge ships Hyprland `0.57.x` while stable and rc stay on `0.56.2`
+(CUA-4078). The plugin source detects the input internals of the installed
+headers instead of pinning a Hyprland version, so one source and one kit
+tooling serve both. Only the reviewed profile differs: each channel has its own
+`profiles/omarchy-<channel>-<date>.json` that names that channel's exact
+Hyprland package, headers, compiler and ABI runtime. Schema 2 profiles accept
+header versions `0.56.2` and `0.57.2`; any other version needs a reviewed
+change to `SUPPORTED_HYPRLAND_HEADERS` in `profile_verify.py` and a requalified
+build first.
+
+`ci-hyprland-plugin-kit.yml` builds the kit for each channel in an Arch
+container on that channel's own mirrors, runs `lifecycle.py`, loads the
+packaged module into a headless Hyprland and runs the background input smoke
+(type and click into a window that does not hold focus). Its job summary
+states whether the committed profile still describes the channel
+(`profile-unchanged`) or the channel moved (`rebuild`); the daily
+requalification (`nightly-hyprland-plugin-requalify.yml`) opens or refreshes the
+`hyprland-requalify` issue when a channel's packaged plugin stops installing
+or a build fails, so the next Hyprland bump is caught before users hit it.

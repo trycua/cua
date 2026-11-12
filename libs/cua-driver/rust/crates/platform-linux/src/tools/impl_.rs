@@ -1936,6 +1936,176 @@ pub(crate) fn unavailable_gtk_keyboard_background(
     .then(|| background_keyboard_refusal(atspi_up()))
 }
 
+pub(crate) fn maps_indicate_qt(maps: &str) -> bool {
+    maps.contains("libQt5Gui") || maps.contains("libQt6Gui")
+}
+
+fn is_qt_process(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/maps"))
+        .map(|maps| maps_indicate_qt(&maps))
+        .unwrap_or(false)
+}
+
+/// A modifier that turns a key into a shortcut chord. Shift alone only
+/// changes the character, so it is not one.
+fn is_shortcut_modifier(key: &str) -> bool {
+    is_modifier(key) && !key.eq_ignore_ascii_case("shift")
+}
+
+/// Qt matches `QShortcut` / `QAction` shortcuts only in its active window
+/// (`Qt::WindowShortcut` checks `QApplication::activeWindow()`). Synthetic
+/// `XSendEvent` keys reach an inactive Qt window and fire nothing, so on a
+/// host without the agent's own XI2 master keyboard (Xvfb, Xtigervnc, no
+/// writable `/dev/uinput`) a background chord to an inactive Qt window
+/// answered "Pressed" while nothing happened (trycua/cua#7370). The agent
+/// keyboard's focus does make Qt run the shortcut, so that route is kept.
+pub(crate) fn qt_shortcut_background_must_refuse(
+    foreground: bool,
+    agent_keyboard: bool,
+    qt: bool,
+    target_is_active: Option<bool>,
+    modifiers: &[String],
+) -> bool {
+    !foreground
+        && !agent_keyboard
+        && qt
+        && modifiers.iter().any(|key| is_shortcut_modifier(key))
+        && target_is_active != Some(true)
+}
+
+fn qt_shortcut_synthetic_is_lost(pid: u32, xid: u64, modifiers: &[String]) -> bool {
+    !crate::wayland::is_wayland()
+        && qt_shortcut_background_must_refuse(
+            false,
+            false,
+            is_qt_process(pid),
+            crate::x11::active_window().map(|active| active == xid),
+            modifiers,
+        )
+}
+
+pub(crate) fn unavailable_qt_shortcut_background(
+    pid: u32,
+    xid: u64,
+    modifiers: &[String],
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    (!delivery.is_foreground()
+        && !crate::input::real_keyboard_input_available()
+        && qt_shortcut_synthetic_is_lost(pid, xid, modifiers))
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::QtInactiveWindowShortcut,
+        )
+    })
+}
+
+#[cfg(test)]
+mod qt_shortcut_tests {
+    use super::*;
+
+    fn mods(keys: &[&str]) -> Vec<String> {
+        keys.iter().map(|key| key.to_string()).collect()
+    }
+
+    #[test]
+    fn a_chord_to_an_inactive_qt_window_is_refused() {
+        // trycua/cua#7370: ctrl+m to an inactive Qt window answered "Pressed"
+        // while the QAction never fired.
+        assert!(qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        for modifier in ["alt", "super", "Control", "meta"] {
+            assert!(
+                qt_shortcut_background_must_refuse(
+                    false,
+                    false,
+                    true,
+                    Some(false),
+                    &mods(&[modifier])
+                ),
+                "{modifier}"
+            );
+        }
+        // An active-window state the server cannot report is not a pass.
+        assert!(qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            None,
+            &mods(&["ctrl"])
+        ));
+    }
+
+    #[test]
+    fn active_qt_windows_plain_keys_and_other_toolkits_keep_their_route() {
+        // The active Qt window matches its shortcuts (the reporter's control).
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(true),
+            &mods(&["ctrl"])
+        ));
+        // Shift only changes the character; plain keys go to the focus widget.
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &mods(&["shift"])
+        ));
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            true,
+            Some(false),
+            &[]
+        ));
+        // Foreground activates the window first; other toolkits are not Qt.
+        assert!(!qt_shortcut_background_must_refuse(
+            true,
+            false,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            false,
+            false,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+        // The agent's own XI2 master keyboard focus makes Qt run the shortcut
+        // in an inactive window (measured on GNOME Xorg, Qt 6.4).
+        assert!(!qt_shortcut_background_must_refuse(
+            false,
+            true,
+            true,
+            Some(false),
+            &mods(&["ctrl"])
+        ));
+    }
+
+    #[test]
+    fn qt_is_recognised_from_its_gui_library() {
+        assert!(maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libQt5Gui.so.5.15.13\n"
+        ));
+        assert!(maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libQt6Gui.so.6.6.2\n"
+        ));
+        assert!(!maps_indicate_qt(
+            "7f /usr/lib/x86_64-linux-gnu/libgtk-3.so.0\n"
+        ));
+    }
+}
+
 /// Outcome of one background/foreground keyboard delivery on X11, funnelled
 /// through `spawn_blocking`'s success type so the tool can report the route.
 pub(crate) enum KeyRoute {
@@ -2037,6 +2207,12 @@ pub(crate) fn background_key_route(
             {
                 return Err(error.context("virtual master keyboard delivery failed"));
             }
+            Err(error) if qt_shortcut_synthetic_is_lost(pid, xid, &owned_modifiers(modifiers)) => {
+                return Err(error.context(
+                    "virtual master keyboard delivery failed, and Qt drops a synthetic \
+                     shortcut sent to a window that is not active",
+                ));
+            }
             Err(error) => tracing::warn!("MPX keyboard fell back to XSendEvent: {error}"),
         }
     }
@@ -2053,6 +2229,10 @@ pub(crate) fn background_key_route(
         None => crate::input::send_key(xid, key, modifiers),
     }
     .map(|()| KeyRoute::Synthetic)
+}
+
+fn owned_modifiers(modifiers: &[&str]) -> Vec<String> {
+    modifiers.iter().map(|key| key.to_string()).collect()
 }
 
 const GRAB_FOCUS_FAILURE_PREFIX: &str = "grab_focus_failed";

@@ -9,8 +9,9 @@ input v3 state and a ready transport.
 Smoke: the window-targeted background input check from the Omarchy validation
 record, reduced to native Wayland clients. A holder window keeps primary focus
 while background-seat KEY input over cua-input-v3 types into a separate target
-window; the target application's own output is the oracle, and primary focus
-must not move.
+window and a background CLICK lands on a third; each application's own output
+is the oracle (typed text, and the terminal's SGR mouse report), and primary
+focus must not move.
 
 Driver smoke (when --driver names a Cua Driver release tree): the released
 `cua-driver` serves the same session with native Wayland on and is asked for
@@ -23,6 +24,7 @@ the oracle. A failure here fails the build's smoke.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -30,6 +32,7 @@ import time
 
 TARGET_CLASS = "cua-requalify-target"
 HOLDER_CLASS = "cua-requalify-holder"
+CLICK_CLASS = "cua-requalify-click"
 # evdev codes: c u a Enter.
 KEYS = (46, 22, 30, 28)
 TYPED = "cua"
@@ -172,6 +175,10 @@ class InputLane:
         self.sequence += 1
         return self.request(f"KEY {self.sequence} {target['target']} {target['revision']} {key} {modifiers}")
 
+    def click(self, target, x, y, button=272, count=1):
+        self.sequence += 1
+        return self.request(f"CLICK {self.sequence} {target['target']} {target['revision']} {x} {y} {button} {count}")
+
     def close(self):
         self.socket.close()
 
@@ -179,6 +186,11 @@ class InputLane:
 def smoke(session):
     typed = session.out / "typed.txt"
     target = session.spawn(TARGET_CLASS, "sh", "-c", f'IFS= read -r line && printf %s "$line" > "{typed}"')
+    # A terminal that asks for SGR mouse reports writes the click's escape sequence to its program:
+    # the application's own output is the oracle for the background click, as typed text is for keys.
+    clicked = session.out / "clicked.txt"
+    clicker = session.spawn(CLICK_CLASS, "bash", "-c",
+                            f'printf "\\033[?1000h\\033[?1006h"; IFS= read -r -d M report; printf %s "$report" > "{clicked}"')
     holder = session.spawn(HOLDER_CLASS, "sleep", "600")
     focused = wait_for(lambda: (lambda a: a if a.get("address") == holder["address"] else None)(session.json("activewindow")),
                        10, "the holder window did not take primary focus")
@@ -202,6 +214,13 @@ def smoke(session):
                 raise RuntimeError(f"TARGET refused: {grant}")
             delivered.append(lane.key(grant, key))
         checks["keys_acknowledged"] = all(d.get("ok") and d.get("route") == "synthetic_events" for d in delivered)
+        grant = lane.target(clicker, capability=1)
+        observations["click_target"] = grant
+        if not grant.get("ok"):
+            raise RuntimeError(f"click TARGET refused: {grant}")
+        reply = lane.click(grant, int(grant["width"]) // 2, int(grant["height"]) // 2)
+        observations["click"] = reply
+        checks["click_acknowledged"] = reply.get("ok") is True
     finally:
         lane.close()
     try:
@@ -209,10 +228,16 @@ def smoke(session):
     except TimeoutError:
         text = None
     checks["application_received_text"] = text == TYPED
+    try:
+        report = wait_for(lambda: clicked.read_text() if clicked.exists() else None, 10, "click target wrote nothing")
+    except TimeoutError:
+        report = None
+    # SGR mouse report for the left button: ESC [ < 0 ; column ; row (then M, consumed as the delimiter).
+    checks["application_received_click"] = bool(report and re.fullmatch(r"\x1b\[<0;[0-9]+;[0-9]+", report))
     checks["primary_focus_unchanged"] = session.json("activewindow").get("address") == focused["address"]
     return {"target": {k: target[k] for k in ("address", "pid", "class")},
             "holder": {k: holder[k] for k in ("address", "pid", "class")},
-            "typed": text, "checks": checks, "observations": observations, "transcript": lane.transcript}
+            "typed": text, "click_report": report, "checks": checks, "observations": observations, "transcript": lane.transcript}
 
 
 class Driver:

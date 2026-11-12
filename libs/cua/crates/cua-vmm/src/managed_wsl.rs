@@ -53,7 +53,7 @@ use crate::host;
 /// The Ubuntu release of the pinned rootfs. Ubuntu, not Alpine: cua's engine
 /// helper (checkpoints, egress rules) runs in a privileged container that
 /// bind-mounts the engine's `/usr` and starts `/usr/bin/sleep`, and calls
-/// `/usr/sbin/chroot`, so the engine's Linux must have Ubuntu's merged-`/usr`
+/// `chroot`, so the engine's Linux must have Ubuntu's merged-`/usr`
 /// layout and GNU userland, as the Mac's runtime (Colima's Ubuntu) does.
 pub const BASE_VERSION: &str = "24.04.5";
 
@@ -464,10 +464,10 @@ pub fn install_script() -> String {
 }
 
 /// What the engine helper needs of the engine's Linux (`container::snapshot`
-/// bind-mounts `/usr`, starts `/usr/bin/sleep` and runs `/usr/sbin/chroot`;
+/// bind-mounts `/usr`, starts `/usr/bin/sleep` and runs `chroot`;
 /// `container::egress` runs `ip`, `nsenter` and `nft` in it):
 /// setup fails with a clear message instead of every later create doing so.
-pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && test -x /usr/sbin/chroot && command -v nft >/dev/null && command -v nsenter >/dev/null && command -v ip >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, /usr/sbin/chroot, nft, nsenter or ip (merged /usr layout)' >&2; exit 1; }";
+pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && command -v chroot >/dev/null && command -v nft >/dev/null && command -v nsenter >/dev/null && command -v ip >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, chroot, nft, nsenter or ip (merged /usr layout)' >&2; exit 1; }";
 
 /// The program that is the engine: Docker's daemon on [`GUEST_SOCKET`].
 pub const DOCKERD_SCRIPT: &str = "mkdir -p /run/cua && exec dockerd --host=unix:///run/cua/docker.sock --pidfile=/run/cua/dockerd.pid >>/var/log/dockerd.log 2>&1";
@@ -1028,7 +1028,7 @@ mod tests {
         assert!(s.contains(HELPER_CHECK), "{s}");
         assert!(
             HELPER_CHECK.contains("/usr/bin/sleep")
-                && HELPER_CHECK.contains("/usr/sbin/chroot")
+                && HELPER_CHECK.contains("command -v chroot ")
                 && HELPER_CHECK.contains("nft")
                 && HELPER_CHECK.contains("nsenter")
                 && HELPER_CHECK.contains("command -v ip ")

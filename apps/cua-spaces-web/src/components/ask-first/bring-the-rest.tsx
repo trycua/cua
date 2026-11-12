@@ -2,17 +2,18 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * "Now bring the rest in" on Home (CUA-3150, idea C): the extra setup (a teammate, another computer, letting agents
- * use apps on this Mac, Cua from Terminal) is asked for only once the first job is done, never during setup. Setup
- * leaves it `waiting`; the first finished job shows it; "Not now" puts it away for good.
+ * "Now bring the rest in" on Home (CUA-3150, idea C): the extra setup (a teammate, another computer, Cua from
+ * Terminal) is asked for only once the first job is done, never during setup. Setup leaves it `waiting`; the first
+ * finished job shows it; "Not now" puts it away for good. Letting agents use apps on this Mac is done in setup's
+ * agents step now (CUA-4067).
  */
 
 import { CheckIcon, ChevronRightIcon, MonitorIcon, ShieldIcon, TerminalIcon, UserPlusIcon } from "lucide-react";
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 
 import { cliMissing, firstRunCliView, useAgents, useCliInstall, useSession, useSettings, type AgentRunSummary } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
-import { readAskedAt, useAppPermissions } from "@/bridge/app-permissions";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
@@ -26,30 +27,22 @@ import { taskState, useAskTasks, type AskTask } from "@/lib/ask-first";
 import { bringRestView, firstJobDone, placeName, type BringRestView } from "@/lib/first-run-new";
 
 type RowId = BringRestView["rows"][number]["id"];
-const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon, cli: TerminalIcon } as const;
+const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, cli: TerminalIcon } as const;
 
-/**
- * The card itself, drawn from its view (tests draw every state). `apps` and `cli` are the rows' opened panels. `done`:
- * rows whose setup is finished (both permissions on), which show a check and "On" in place of nothing.
- */
+/** The card itself, drawn from its view (tests draw every state). `cli` is the Terminal row's opened panel. */
 export function BringTheRestCard({
   view,
   onRow,
   onDismiss,
   open,
-  apps,
   cli,
-  done,
 }: {
   view: BringRestView;
   onRow: (id: RowId) => void;
   onDismiss: () => void;
   open?: RowId | null;
-  apps?: ReactNode;
   cli?: ReactNode;
-  done?: Partial<Record<RowId, boolean>>;
 }) {
-  const t = useT();
   return (
     <section aria-labelledby="bring-rest-heading" data-bring-rest="">
       <div className="mb-3 flex items-start justify-between gap-4">
@@ -66,7 +59,7 @@ export function BringTheRestCard({
       <GroupedSection>
         {view.rows.map((r) => {
           const Icon = ICON[r.id];
-          const expands = r.id === "apps" || r.id === "cli";
+          const expands = r.id === "cli";
           return (
             <div key={r.id}>
               <button
@@ -81,17 +74,12 @@ export function BringTheRestCard({
                   <span className="block text-[13px] font-medium">{r.title}</span>
                   <span className="block text-xs text-muted-foreground">{r.sub}</span>
                 </span>
-                {done?.[r.id] ? (
-                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" data-bring-rest-done={r.id}>
-                    <CheckIcon aria-hidden className="size-3.5" /> {t("home.bring_rest.on")}
-                  </span>
-                ) : null}
                 <ChevronRightIcon
                   aria-hidden
                   className={expands && open === r.id ? "size-4 shrink-0 rotate-90 text-muted-foreground" : "size-4 shrink-0 text-muted-foreground"}
                 />
               </button>
-              {open === r.id ? (r.id === "apps" ? apps : r.id === "cli" ? cli : null) : null}
+              {open === r.id && r.id === "cli" ? cli : null}
             </div>
           );
         })}
@@ -185,28 +173,23 @@ function WaitForFirstJob({ sinceMs }: { sinceMs: number }) {
   return null;
 }
 
+/**
+ * The card, once the first job is done. Letting agents use apps on this Mac is not one of its rows any more: setup's
+ * agents step connects Cua Driver (CUA-4067), and a permission still off shows in the apps card on its own
+ * (`AppsOnThisMac`), next to this one.
+ */
 function Shown() {
   const ctx = useContext(BridgeContext);
   const core = ctx?.core ?? null;
   const session = useSession();
   const settings = useSettings();
   const os = hostOs();
-  // Back from "Quit & Reopen" (or any relaunch) shortly after Allow: the apps row opens again, so its rows show the
-  // switches being checked and then On, not a closed row with no news.
-  const [open, setOpen] = useState<RowId | null>(() => (os === "macos" && readAskedAt() != null ? "apps" : null));
+  const [open, setOpen] = useState<RowId | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const perms = useAppPermissions(os === "macos");
-  // Any launch with a permission missing: the apps row opens by itself too, unless the person has opened or closed a
-  // row already.
-  const touched = useRef(false);
-  const missing = perms.available && !perms.allGranted;
-  useEffect(() => {
-    if (missing && !touched.current) setOpen("apps");
-  }, [missing]);
   const cli = useCliInstall(true);
   const cliName = settings.data?.cli?.name ?? null;
   const cliView = core && (cliMissing(cli.state) || cli.state.installed) ? firstRunCliView(core, { cli: cli.state, cliName }) : null;
-  const view = bringRestView({ os, apps: os === "macos" && (perms.loading || perms.available), cli: Boolean(cliView) });
+  const view = bringRestView({ os, cli: Boolean(cliView) });
   const accountUrl = settings.data?.accountUrl ?? "https://app.cua.ai";
   return (
     <>
@@ -216,17 +199,13 @@ function Shown() {
         onRow={(id) => {
           if (id === "invite") void session.openExternal(`${accountUrl}/team`).catch(() => {});
           else if (id === "add-computer") setAddOpen(true);
-          else {
-            touched.current = true;
-            setOpen((o) => (o === id ? null : id));
-          }
+          else setOpen((o) => (o === id ? null : id));
         }}
         onDismiss={() => writeFirstRun({ restOffer: "dismissed" })}
-        apps={<AppsPanel perms={perms} />}
-        done={{ apps: perms.allGranted }}
         cli={cliView ? <CliPanel view={cliView} onInstall={() => void cli.install()} /> : null}
       />
       <AddComputerSheet open={addOpen} onOpenChange={setAddOpen} />
+      <AppsOnThisMac />
     </>
   );
 }

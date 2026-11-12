@@ -88,8 +88,8 @@ RULES: dict[str, Rule] = {
             "granted",
             "Keys or clicks posted to the user's own app (the frontmost app the task says to leave alone) land in "
             "their window: their typing is interrupted or changed.",
-            f"{MACOS_MD}:9-25 (background actions must preserve the user's frontmost app); {MACOS_MD}:880-889 (keys "
-            "go to the addressed window, never to whatever is focused)",
+            f"{MACOS_MD}:9-25 (background actions must preserve the user's frontmost app); {MACOS_MD}:997 (keys are "
+            "posted to the exact window addressed, which is made key without a raise)",
             "Post to the target app's pid (raw.post_key(target_pid, ...)) or set the field's AXValue.",
         ),
         Rule(
@@ -117,8 +117,9 @@ RULES: dict[str, Rule] = {
             "MB7",
             "open a popup, pull-down or context menu",
             "granted",
-            "AXShowMenu, and AXPress on a pop-up button, open a menu that steals key focus from the user's window and "
-            "lifts the target window over it while it is open.",
+            "AXShowMenu, AXPress on a pop-up or menu button, and a posted right-click or a posted click on such a "
+            "button open a menu that steals key focus from the user's window and lifts the target window over it while "
+            "it is open.",
             f"{MACOS_MD}:632-649; {MAC}/key_focus_guard.rs:4-28",
             "Choose the item with raw.driver('set_value', {pid, window_id, element_token, value}) on the pop-up: the "
             "driver opens the menu under its key-focus guard and hands key focus back.",
@@ -590,6 +591,13 @@ class _Walker(ast.NodeVisitor):
             action = _const_str(node.args[1])
             if action in AX_ACTION:
                 self.add(AX_ACTION[action], node, f"raw.ax.perform(..., {action!r})")
+        if func == "raw.post_click":
+            right = len(node.args) >= 4 and _const_str(node.args[3]) == "right"
+            right = right or any(
+                k.arg == "button" and _const_str(k.value) == "right" for k in node.keywords
+            )
+            if right:
+                self.add("MB7", node, "raw.post_click with button='right' opens a context menu")
         if func in {"raw.post_key", "raw.driver"}:
             self.keys(node)
         if func == "raw.driver":

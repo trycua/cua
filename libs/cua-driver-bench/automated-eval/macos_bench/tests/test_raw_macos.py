@@ -46,6 +46,8 @@ class LintTest(unittest.TestCase):
             ('raw.driver("bring_to_front", {"pid": 1})', "MB10"),
             ('raw.driver("click", {"x": 1, "y": 2, "target": {"kind": "desktop"}})', "MB10"),
             ('raw.ax.perform(pop, "AXShowMenu")', "MB7"),
+            ('raw.post_click(1, 10, 20, button="right")', "MB7"),
+            ('raw.post_click(1, 10, 20, "right")', "MB7"),
         ):
             with self.subTest(source=source):
                 found, ok = rules(source + READ)

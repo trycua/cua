@@ -242,6 +242,10 @@ class Watch:
 # ------------------------------------------------------------------ AX
 
 
+# Roles whose press opens a menu (MB6 for the menu bar, MB7 otherwise).
+MENU_OPENERS = ("AXPopUpButton", "AXMenuBarItem", "AXMenuButton")
+
+
 class _AX:
     """AXUIElement calls. Elements are pyobjc AXUIElementRef handles; attribute values come back as Python values."""
 
@@ -621,6 +625,12 @@ class Raw:
         does not move. Many apps ignore clicks while in the background; prefer an AX action and read back."""
         pid = int(pid)
         STATE.to_user(pid, "posted click")
+        if button == "right":
+            STATE.check("MB7", "posted right-click (opens a context menu)")
+        hit = self.ax.at(x, y)
+        role = _ax_get(hit, "AXRole") if hit is not None else None
+        if role in MENU_OPENERS:
+            STATE.check("MB6" if role == "AXMenuBarItem" else "MB7", f"posted click on {role}")
         down, up, btn = MOUSE[button]
         for n in range(1, int(count) + 1):
             for kind in (down, up):

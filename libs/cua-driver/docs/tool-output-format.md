@@ -48,3 +48,15 @@ cannot prove the exact target window's full UIA tree.
 Internal `verify_state` reads also remain incomplete while the Windows
 structured projection omits display-only UIA nodes. A complete native walk
 does not make that projection exhaustive.
+
+`elements` holds addressable rows only. With `tree_format: "elements"` or
+`"both"`, `get_window_state` also returns `observations`: the display-only
+rows of the same walk (static text, labels, read-only values) with `role`,
+`depth`, `label`, `value`, `frame` and `parent_index`, but no `element_index`
+or `element_token`. No action tool accepts them. A `query` keeps the
+observations whose role, label or value contains it. The list stops at 500
+rows and then carries `observations_truncated: true`. A platform that cannot
+observe these rows leaves `observations` out, which means not observed, never
+empty. `verify_state` searches `elements` first and `observations` after, so
+a predicate on display text such as Calculator's result can be satisfied.
+Values are compared exactly, including bidi marks such as U+200E.

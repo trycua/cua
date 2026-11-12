@@ -146,18 +146,12 @@ impl ObservationProvider for ToolObservationProvider {
             return Err(tool_error_text(&state, "get_window_state failed"));
         }
         let structured = state.structured_content.as_ref();
-        let elements = structured
-            .and_then(|value| value.get("elements"))
-            .and_then(Value::as_array)
-            .cloned();
+        let elements = structured.and_then(observed_elements);
         let trusted = structured
             .and_then(|value| value.get("degraded"))
             .and_then(Value::as_bool)
             != Some(true);
-        let complete = structured
-            .and_then(|value| value.get("elements_complete"))
-            .and_then(Value::as_bool)
-            == Some(true);
+        let complete = structured.is_some_and(observed_complete);
         let visual_evidence = state
             .content
             .into_iter()
@@ -174,6 +168,30 @@ impl ObservationProvider for ToolObservationProvider {
             visual_evidence,
         })
     }
+}
+
+/// The search domain of one window read: the addressable `elements`, then the
+/// display-only `observations` of the same walk, each marked `display_only`
+/// so the evaluator prefers an addressable match.
+fn observed_elements(structured: &Value) -> Option<Vec<Value>> {
+    let mut elements = structured.get("elements")?.as_array()?.clone();
+    if let Some(observations) = structured.get("observations").and_then(Value::as_array) {
+        elements.extend(observations.iter().cloned().map(|mut row| {
+            row["display_only"] = Value::Bool(true);
+            row
+        }));
+    }
+    Some(elements)
+}
+
+/// A read proves absence only when its walk was complete and its
+/// `observations` were not cut at their row cap.
+fn observed_complete(structured: &Value) -> bool {
+    structured.get("elements_complete").and_then(Value::as_bool) == Some(true)
+        && structured
+            .get("observations_truncated")
+            .and_then(Value::as_bool)
+            != Some(true)
 }
 
 fn window_state_observation_args(
@@ -840,6 +858,96 @@ mod tests {
         let elements_only = window_state_observation_args(42, 7, true, false);
         assert_eq!(elements_only["include_accessibility_tree"], json!(true));
         assert_eq!(elements_only["include_screenshot"], json!(false));
+    }
+
+    fn value_of(role: &str, value: &str) -> StatePredicate {
+        StatePredicate {
+            window: None,
+            element: Some(ElementPredicate {
+                selector: ElementSelector {
+                    role: Some(role.into()),
+                    label_contains: Some(value.into()),
+                },
+                exists: None,
+                value_equals: Some(value.into()),
+                enabled: None,
+                selected: None,
+            }),
+        }
+    }
+
+    /// #2958: Calculator after `4 + 2 =`, as macOS get_window_state publishes
+    /// it. The display text has no action handle, so it is only in
+    /// `observations`.
+    fn calculator_state() -> Value {
+        json!({
+            "elements": [
+                {"element_index": 0, "role": "AXWindow", "label": "Calculator", "depth": 0},
+                {"element_index": 1, "role": "AXButton", "label": "Delete", "depth": 1, "parent_index": 0}
+            ],
+            "observations": [
+                {"role": "AXStaticText", "label": "\u{200e}4\u{200e}+\u{200e}2", "value": "\u{200e}4\u{200e}+\u{200e}2", "depth": 1, "parent_index": 0},
+                {"role": "AXStaticText", "label": "\u{200e}6", "value": "\u{200e}6", "depth": 1, "parent_index": 0}
+            ],
+            "elements_complete": false
+        })
+    }
+
+    fn snapshot_of(state: &Value) -> ObservationSnapshot {
+        ObservationSnapshot {
+            window: Some(window()),
+            elements: observed_elements(state),
+            element_source_trusted: true,
+            elements_complete: false,
+        }
+    }
+
+    #[test]
+    fn display_only_observation_value_is_verifiable() {
+        let snapshot = snapshot_of(&calculator_state());
+        let satisfied = evaluate_predicates(&[value_of("AXStaticText", "\u{200e}6")], &snapshot);
+        assert_eq!(satisfied[0].status, VerificationStatus::Satisfied);
+        let observed = satisfied[0].observed_json.as_deref().unwrap();
+        assert!(observed.contains("\"display_only\":true"));
+        assert!(!observed.contains("element_index"));
+
+        // A unique display row holding another value is a confident no.
+        let mut wrong = value_of("AXStaticText", "+");
+        wrong.element.as_mut().unwrap().value_equals = Some("\u{200e}7".into());
+        let wrong = evaluate_predicates(&[wrong], &snapshot);
+        assert_eq!(wrong[0].status, VerificationStatus::Unsatisfied);
+
+        // The raw value is compared exactly: the bidi mark is part of it.
+        let mut bare = value_of("AXStaticText", "\u{200e}6");
+        bare.element.as_mut().unwrap().value_equals = Some("6".into());
+        let bare = evaluate_predicates(&[bare], &snapshot);
+        assert_eq!(bare[0].status, VerificationStatus::Unsatisfied);
+    }
+
+    #[test]
+    fn two_display_rows_matching_one_selector_are_a_multi_match() {
+        let snapshot = snapshot_of(&calculator_state());
+        let mut role_only = value_of("AXStaticText", "\u{200e}6");
+        role_only.element.as_mut().unwrap().selector.label_contains = None;
+        let outcomes = evaluate_predicates(&[role_only], &snapshot);
+        assert_eq!(outcomes[0].status, VerificationStatus::Unknown);
+        assert_eq!(outcomes[0].unknown_reason, Some(UnknownReason::MultiMatch));
+    }
+
+    #[test]
+    fn truncated_observations_keep_absence_unknown() {
+        let mut state = calculator_state();
+        state["elements_complete"] = json!(true);
+        assert!(observed_complete(&state));
+        state["observations_truncated"] = json!(true);
+        assert!(!observed_complete(&state));
+        let elements = observed_elements(&state).unwrap();
+        assert_eq!(elements.len(), 4);
+        assert!(elements[..2]
+            .iter()
+            .all(|e| e.get("display_only").is_none()));
+        assert!(elements[2..].iter().all(|e| e["display_only"] == true));
+        assert!(observed_elements(&json!({"observations": []})).is_none());
     }
 
     #[test]

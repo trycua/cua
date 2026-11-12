@@ -7,8 +7,46 @@
 //! resolvable. This module only projects the protocol response to the indexed
 //! rows rendered by the filtered Markdown tree.
 
-use serde_json::Value;
+use cua_driver_contract::WindowObservation;
+use serde_json::{json, Value};
 use std::collections::HashSet;
+
+/// Hard cap on `observations` rows in one response.
+pub const MAX_OBSERVATIONS: usize = 500;
+
+/// Publish a walk's display-only rows as `observations`.
+///
+/// A `query` read keeps the rows whose role, label or value contains the
+/// query (case-insensitive), the same rows its filtered Markdown shows. The
+/// list stops at [`MAX_OBSERVATIONS`] and then says so with
+/// `observations_truncated: true`.
+pub fn publish_observations(
+    structured: &mut Value,
+    rows: Vec<WindowObservation>,
+    query: Option<&str>,
+) {
+    let needle = query.map(str::to_lowercase);
+    let mut kept: Vec<WindowObservation> = rows
+        .into_iter()
+        .filter(|row| {
+            needle.as_deref().is_none_or(|needle| {
+                [
+                    Some(row.role.as_str()),
+                    row.label.as_deref(),
+                    row.value.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|text| text.to_lowercase().contains(needle))
+            })
+        })
+        .collect();
+    if kept.len() > MAX_OBSERVATIONS {
+        kept.truncate(MAX_OBSERVATIONS);
+        structured["observations_truncated"] = json!(true);
+    }
+    structured["observations"] = serde_json::to_value(kept).expect("WindowObservation serializes");
+}
 
 pub fn project_elements_for_query(
     mut elements: Vec<Value>,
@@ -53,6 +91,69 @@ mod tests {
             .map(|entry| entry["element_index"].as_u64().unwrap())
             .collect();
         assert_eq!(indices, vec![0, 1, 3]);
+    }
+
+    fn text(role: &str, value: &str) -> WindowObservation {
+        WindowObservation {
+            role: role.into(),
+            depth: 1,
+            label: Some(value.into()),
+            value: Some(value.into()),
+            frame: None,
+            parent_index: Some(0),
+            in_web_content: None,
+        }
+    }
+
+    #[test]
+    fn observations_carry_no_action_handle() {
+        let mut structured = json!({});
+        publish_observations(&mut structured, vec![text("AXStaticText", "6")], None);
+        let row = &structured["observations"][0];
+        assert_eq!(row["role"], "AXStaticText");
+        assert_eq!(row["value"], "6");
+        assert_eq!(row["parent_index"], 0);
+        assert!(row.get("element_index").is_none());
+        assert!(row.get("element_token").is_none());
+        assert!(structured.get("observations_truncated").is_none());
+    }
+
+    #[test]
+    fn a_query_keeps_matching_observations_only() {
+        let mut structured = json!({});
+        publish_observations(
+            &mut structured,
+            vec![
+                text("AXStaticText", "4+2"),
+                text("AXStaticText", "Result 6"),
+            ],
+            Some("result"),
+        );
+        let rows = structured["observations"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["value"], "Result 6");
+
+        let mut by_role = json!({});
+        publish_observations(
+            &mut by_role,
+            vec![text("AXStaticText", "6")],
+            Some("statictext"),
+        );
+        assert_eq!(by_role["observations"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn observations_stop_at_the_cap_and_say_so() {
+        let mut structured = json!({});
+        let rows = (0..MAX_OBSERVATIONS + 3)
+            .map(|n| text("AXStaticText", &n.to_string()))
+            .collect();
+        publish_observations(&mut structured, rows, None);
+        assert_eq!(
+            structured["observations"].as_array().unwrap().len(),
+            MAX_OBSERVATIONS
+        );
+        assert_eq!(structured["observations_truncated"], true);
     }
 
     #[test]

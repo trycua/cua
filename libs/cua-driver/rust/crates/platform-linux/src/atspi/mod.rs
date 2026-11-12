@@ -66,6 +66,9 @@ pub struct AtspiNode {
 pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
+    /// Display-only rows of a native walk, unfiltered by `query`. Empty for
+    /// the X11 property fallback, which observes none.
+    pub observations: Vec<cua_driver_contract::WindowObservation>,
     pub bounds: Vec<(usize, i32, i32, u32, u32)>,
     /// True only for a native AT-SPI walk. The X11 property fallback is a
     /// partial discovery aid and must not prove verification predicates.
@@ -117,6 +120,7 @@ impl AtspiTreeResult {
         AtspiTreeResult {
             tree_markdown: md,
             nodes: walked.nodes,
+            observations: walked.observations,
             bounds: walked.bounds,
             trusted: true,
             degraded_reason: None,
@@ -808,6 +812,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
             return AtspiTreeResult {
                 tree_markdown: String::new(),
                 nodes: vec![],
+                observations: vec![],
                 bounds: vec![],
                 trusted: false,
                 degraded_reason: None,
@@ -874,6 +879,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
     AtspiTreeResult {
         tree_markdown,
         nodes,
+        observations: vec![],
         bounds: vec![],
         trusted: false,
         // Built by reading this exact window's X11 properties, so it describes
@@ -1001,6 +1007,7 @@ mod budget_tests {
                 node(0, "frame", "Untitled", 0, vec![]),
                 node(1, "push button", "OK", 1, vec!["click".into()]),
             ],
+            observations: Vec::new(),
             bounds: vec![(1, 10, 10, 50, 20)],
             window_scoped: true,
             truncation,

@@ -38,8 +38,8 @@ use uuid::Uuid;
 use crate::session::register_scoped_fallible_session_end_hook;
 
 use super::binding::{
-    cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
-    CdpWindowCandidate,
+    cardinality_exact_candidate, correlate, correlate_with_native_windows, selected_tab_target_id,
+    BindingOutcome, CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool, SharedSocketRelease};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
@@ -1386,7 +1386,17 @@ impl BrowserEngine {
         };
         let candidates = self.window_candidates(&conn).await?;
 
-        let correlation = correlate(&native, &candidates, BOUNDS_TOLERANCE_PX);
+        let mut correlation = correlate(&native, &candidates, BOUNDS_TOLERANCE_PX);
+        if matches!(correlation, BindingOutcome::Ambiguous(_)) {
+            if let Some(windows) = self.platform.native_windows(pid).await? {
+                correlation = correlate_with_native_windows(
+                    &native,
+                    &candidates,
+                    &windows,
+                    BOUNDS_TOLERANCE_PX,
+                );
+            }
+        }
         let (candidate, quality) = match correlation {
             BindingOutcome::Bound {
                 candidate,

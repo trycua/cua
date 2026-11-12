@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.3...cua-spacesd-v0.15.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** request a keyframe while a viewer waits for one ([#7415](https://github.com/trycua/cua/issues/7415)) ([a8fa23c](https://github.com/trycua/cua/commit/a8fa23c124923a8889dd3cb3d35eb8aa0235ff0d))
+
 ## [0.15.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.15.2...cua-spacesd-v0.15.3) (2026-11-12)
 
 

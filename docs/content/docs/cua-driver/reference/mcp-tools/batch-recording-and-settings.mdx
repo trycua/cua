@@ -299,8 +299,6 @@ Update cua-driver-rs configuration. capture_mode / max_image_dimension take effe
 
 Pass each setting as its own field: `{"capture_mode": "som", "max_image_dimension": 0}`.
 
-The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today: see issue #1729).
-
 `cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` (`on`, `off`, or `default`) save the default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 
 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.
@@ -321,9 +319,6 @@ Write a setting into the persistent driver config. Values take effect immediatel
 Known keys:
 - `capture_mode` (string: `vision` | `ax` | `som`); DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.
 - `max_image_dimension` (integer)
-- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart: Windows backend stubbed today, see issue #1729)
-- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
-
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
 - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).

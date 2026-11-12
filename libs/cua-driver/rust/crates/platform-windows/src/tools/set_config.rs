@@ -43,7 +43,7 @@ impl Tool for SetConfigTool {
                 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\
                 - `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\
-                - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.marks` (action marks): `on`, `off` (default), or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once.\n\n\
+                - `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},

@@ -290,7 +290,7 @@ Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.mot
 
 Agent cursor badge: cursor.badges is minimal (default), verbose or off, saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
-Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.marks (action marks) is on, off (default) or default; cursor.rotate is heading (default), lean, off or default. All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
+Agent cursor extras: cursor.float (float at rest and while moving) and cursor.halo (soft glow) are on (default), off or default; cursor.rotate is heading (default), lean, off or default. The cursor never draws action marks (cursor.marks is retired and ignored). All are saved to ~/.cua-driver/config.json and applied to every cursor at once.
 
 **macOS parameters**
 
@@ -312,7 +312,7 @@ The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next
 
 `cursor.badges` (`minimal` default, `verbose`, or `off`) sets the agent cursor badge for every cursor at once.
 
-`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.marks` (action marks) is `on`, `off` (default) or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once.
+`cursor.float` (float at rest and while moving) and `cursor.halo` (soft glow) are `on` (default), `off` or `default`; `cursor.rotate` is `heading` (default), `lean`, `off` or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
 
 **Linux parameters**
 
@@ -335,7 +335,7 @@ Known keys:
 
 - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`): saved default cursor motion for sessions started afterwards. `cursor.motion: "default"` clears every saved cursor motion default.
 - `cursor.badges` (`minimal` default, `verbose`, or `off`): agent cursor badge; applies to every cursor at once.
-- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.marks` (action marks): `on`, `off` (default), or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once.
+- `cursor.float` (float at rest and while moving), `cursor.halo` (soft glow): `on` (default), `off`, or `default`. `cursor.rotate`: `heading` (default), `lean`, `off`, or `default`. All apply to every cursor at once. The cursor never draws action marks (`cursor.marks` is retired and ignored).
 
 Returns the full updated config in the same shape as `get_config`.
 
@@ -357,7 +357,7 @@ Returns the full updated config in the same shape as `get_config`.
 | <span id="set_config--cursor-badges"></span>`cursor.badges` | `"minimal" \| "verbose" \| "off" \| "default"` |  | Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor. |
 | <span id="set_config--cursor-float"></span>`cursor.float` | `"on" \| "off" \| "default"` |  | Agent cursor float: a slow four-second sway, bob and slight tilt, at rest and while moving, that eases to zero on every arrival and holds there for the click, drag, drop, scroll or typing, so they land exactly upright on the hotspot. on (default). off: the cursor never floats and a resting overlay stops redrawing. Applies immediately to every cursor. |
 | <span id="set_config--cursor-halo"></span>`cursor.halo` | `"on" \| "off" \| "default"` |  | Agent cursor halo: a soft glow in the cursor's colour behind the arrow, so it is easier to follow on any background. on (default). off: no halo. Applies immediately to every cursor. |
-| <span id="set_config--cursor-marks"></span>`cursor.marks` | `"on" \| "off" \| "default"` |  | Agent cursor action marks: the small cue next to the arrow for observe, click, type, keys, scroll, drag, apps, files, recording and system calls, plus the focus box around a clicked element on macOS. off (default): a plain arrow. Applies immediately to every cursor. |
+| <span id="set_config--cursor-marks"></span>`cursor.marks` | `"on" \| "off" \| "default"` |  | Retired and ignored: the agent cursor never draws action marks, so it is always a plain arrow whatever the agent does. Still accepted so existing configs and callers keep working. |
 | <span id="set_config--cursor-motion"></span>`cursor.motion` | `"default"` |  | Pass `default` to clear every saved cursor motion default. |
 | <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `"on" \| "off" \| "default"` |  | Saved default for the `glow` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `"on" \| "off" \| "default"` |  | Saved default for the `magnet` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |

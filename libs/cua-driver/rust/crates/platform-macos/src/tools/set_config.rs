@@ -51,9 +51,9 @@ fn def() -> &'static ToolDef {
             minimal (default), verbose or off, saved to ~/.cua-driver/config.json \
             and applied to every cursor at once.\n\nAgent cursor extras: \
             cursor.float (float at rest and while moving) and cursor.halo (soft \
-            glow) are on (default), off or default; cursor.marks (action marks) \
-            is on, off (default) or default; cursor.rotate is heading (default), \
-            lean, off or default. All are saved to \
+            glow) are on (default), off or default; cursor.rotate is heading \
+            (default), lean, off or default. The cursor never draws action marks \
+            (cursor.marks is retired and ignored). All are saved to \
             ~/.cua-driver/config.json and applied to every cursor at once."
             .into(),
         input_schema: with_cursor_motion_properties(serde_json::json!({

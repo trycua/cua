@@ -214,12 +214,16 @@ def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> Non
 def test_sdk_registries_publish_only_from_trycua_cua() -> None:
     wf = workflow("cd-cua-sdk.yml")
     assert wf["env"]["CANONICAL"] == "${{ github.repository == 'trycua/cua' }}"
-    pypi = step("cd-cua-sdk.yml", "publish", "Check the wheels")["run"]
     # PyPI uploads happen only in pypi-promote.yml; staging may use TestPyPI.
-    upload = pypi.index("twine upload --skip-existing")
-    assert pypi.rindex('if [ "$CANONICAL" != true ]', 0, upload) >= 0
-    assert "--repository-url https://test.pypi.org/legacy/" in pypi[upload:]
-    assert pypi.count("twine upload") == 1
+    assert "twine upload" not in step("cd-cua-sdk.yml", "publish", "Check the cua wheels")["run"]
+    testpypi = step("cd-cua-sdk.yml", "publish", "Upload to TestPyPI")
+    assert testpypi["if"] == "env.CANONICAL != 'true'"
+    assert "--repository-url https://test.pypi.org/legacy/" in testpypi["run"]
+    # PyPI's cua-cli is the thin wheel built from the release's CLI archives.
+    attach = step("cd-cua-sdk.yml", "publish", "Attach artifacts")["run"]
+    assert "cli/build_thin_wheel.py" in attach
+    assert attach.index("build_thin_wheel.py") < attach.index("cosign sign-blob")
+    assert "cua-cli $VERSION is on PyPI: keeping the release's CLI archives" in attach
     npm = step("cd-cua-sdk.yml", "publish", "Publish npm packages")["run"]
     assert "flags+=(--dry-run)" in npm
     assert "flags+=(--tag next)" in npm

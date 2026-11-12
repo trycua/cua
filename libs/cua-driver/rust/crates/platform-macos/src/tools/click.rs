@@ -2030,17 +2030,11 @@ fn perform_ax_click(
     let needs_webkit_delay =
         needs_web_focus_settle(ax_action, &role, || unsafe { ancestor_roles(element) });
 
-    // Offer the focus-rect highlight around the element (matches Swift
-    // showFocusRect); the overlay paints it only with `cursor.marks` on. Also
-    // move the cursor to the element center so the glide animation plays.
+    // Move the cursor to the element center so the glide animation plays.
     if let Some(rect) = unsafe { element_screen_rect(element) } {
         // Drive THIS session's cursor (threaded in via `cursor_key`), matching
         // the keyed glide already played in the invoke body above. The keyed
         // glide already played on the session's cursor in the invoke body.
-        crate::cursor::overlay::send_command(
-            cursor_key.to_owned(),
-            cursor_overlay::OverlayCommand::ShowFocusRect(Some(rect)),
-        );
         // Animate cursor to element center.
         let cx = rect[0] + rect[2] / 2.0;
         let cy = rect[1] + rect[3] / 2.0;

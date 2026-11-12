@@ -74,6 +74,8 @@ runtime-neutral agent boundary.
 
 ## Computer History macOS preview
 
+> **Deprecated.** Computer History is deprecated. It is off by default, agents are no longer told to call `history_status` or `history_query`, and both tools will be removed in the release after 26 Nov 2026. To remove stored data, run `cua-driver history delete --yes`.
+
 Nightly macOS builds can provide an opt-in, encrypted history of actions
 performed through Cua Driver. The preview stores a strict metadata allowlist,
 stays local, and exposes permission-gated `history_status` and `history_query`

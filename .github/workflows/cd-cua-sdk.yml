@@ -32,7 +32,10 @@ name: "CD: cua SDK"
 # publishes it before the rolling cua-install-latest feed moves. A hand-pushed
 # tag with no release gets a new draft here.
 #
-# Canonical vs staging: only trycua/cua publishes to PyPI and npm and fails
+# PyPI: the wheels are attached to the GitHub release; only pypi-promote.yml
+# uploads them to PyPI (weekly, or by hand: docs/pypi-publishing.md).
+#
+# Canonical vs staging: only trycua/cua publishes to npm and fails
 # closed on missing signing secrets. Any other repository (trycua/cua-staging)
 # runs the same pipeline end to end but PyPI gets `twine check` (and TestPyPI
 # when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, crates.io
@@ -54,13 +57,9 @@ on:
         description: "Version to build (without the cua-sdk-v prefix)"
         required: true
       publish:
-        description: "Publish to PyPI/npm and attach to the GitHub release"
+        description: "Publish to npm and crates.io and attach to the GitHub release (PyPI: pypi-promote.yml)"
         type: boolean
         default: false
-      pypi:
-        description: "Upload the wheels to PyPI (with publish; off publishes npm, crates and the GitHub release only)"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -634,31 +633,23 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      # trycua/cua publishes; any other repository checks the wheels (and
-      # uploads to TestPyPI when TEST_PYPI_TOKEN is set) without touching PyPI.
-      - name: Publish wheels to PyPI (trycua/cua) or check them (staging)
+      # PyPI gets these wheels only when pypi-promote.yml promotes this
+      # release (weekly, or by hand: docs/pypi-publishing.md); they are
+      # attached to the release below. Staging also uploads to TestPyPI when
+      # TEST_PYPI_TOKEN is set.
+      - name: Check the wheels (PyPI upload is pypi-promote.yml)
         env:
           TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
           TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
-          # Tag pushes have no inputs and always upload.
-          PYPI: ${{ github.event_name == 'workflow_dispatch' && inputs.pypi == false && 'false' || 'true' }}
         run: |
           python -m pip install --upgrade twine
           python -m twine check --strict dist/wheel-*/*.whl
-          # cua-cli first: `cua` depends on it at the same version, so `cua`
-          # never resolves before its CLI is on the index.
+          # cua-cli first: `cua` depends on it at the same version.
           wheels=(dist/wheel-*/cua_cli-*.whl dist/wheel-*/cua-[0-9]*.whl)
           all=(dist/wheel-*/*.whl); test "${#wheels[@]}" = "${#all[@]}"
-          if [ "$CANONICAL" = true ] && [ "$PYPI" = false ]; then
-            echo "::notice::pypi=false: wheels checked, not uploaded to PyPI"
-          elif [ "$CANONICAL" = true ]; then
-            python -m twine upload --skip-existing "${wheels[@]}"
-          elif [ -n "$TEST_PYPI_TOKEN" ]; then
+          if [ "$CANONICAL" != true ] && [ -n "$TEST_PYPI_TOKEN" ]; then
             TWINE_PASSWORD="$TEST_PYPI_TOKEN" python -m twine upload --skip-existing \
               --repository-url https://test.pypi.org/legacy/ "${wheels[@]}"
-          else
-            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
           fi
       - name: Publish npm packages, native first (trycua/cua) or dry-run them (staging)
         env:

@@ -1469,7 +1469,7 @@ pub fn build_registry_with_provider(
         _state: state.clone(),
     }; // touch struct so it stays in this crate for now
        // Cross-platform `page` tool definition lives in mcp-server; Windows plugs
-       // in its UIA TextPattern + FindAll backend (CDP for execute_javascript).
+       // in its UIA TextPattern + FindAll backend.
     r.register(Box::new(cua_driver_core::page::PageTool::new(
         std::sync::Arc::new(super::page::WindowsPageBackend::new()),
     )));

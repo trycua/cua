@@ -239,6 +239,32 @@ class Watch:
         return {"before": b, "after": after, "changed": sorted(moved), "lines": lines}
 
 
+def _has_web_area(el: Any, depth: int = 0, budget: list[int] | None = None) -> bool:
+    budget = budget if budget is not None else [400]
+    if el is None or depth > 12 or budget[0] <= 0:
+        return False
+    budget[0] -= 1
+    if _ax_get(el, "AXRole") == "AXWebArea":
+        return bool(_ax_get(el, "AXChildren"))
+    return any(_has_web_area(c, depth + 1, budget) for c in (_ax_get(el, "AXChildren") or [])[:50])
+
+
+def _enable_web_tree(app: Any) -> None:
+    """Chromium ships its web-content AX tree off until an assistive client asks (enablement.rs:4-11). Setting the
+    opt-in has no focus or screen-reader side effect (bindings.rs:835-838)."""
+    err = AX.AXUIElementSetAttributeValue(app, "AXManualAccessibility", True)
+    if err == AX.kAXErrorAttributeUnsupported:
+        err = AX.AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface", True)
+    if err != 0:
+        return  # not a Chromium app, or it refused: nothing to wait for
+    deadline = time.monotonic() + 2.0
+    windows = _ax_get(app, "AXWindows") or []
+    while windows and time.monotonic() < deadline:
+        if any(_has_web_area(w) for w in windows):
+            return
+        time.sleep(0.1)
+
+
 # ------------------------------------------------------------------ AX
 
 
@@ -250,7 +276,12 @@ class _AX:
     """AXUIElement calls. Elements are pyobjc AXUIElementRef handles; attribute values come back as Python values."""
 
     def app(self, pid: int) -> Any:
-        return AX.AXUIElementCreateApplication(int(pid))
+        """The app element. For a Chromium/Electron app this also asks it to build its web-content tree, as an
+        assistive client does (AXManualAccessibility, else AXEnhancedUserInterface; Cua Driver's
+        platform-macos/src/ax/enablement.rs), and waits up to 2 s for the tree to appear."""
+        el = AX.AXUIElementCreateApplication(int(pid))
+        _enable_web_tree(el)
+        return el
 
     def system(self) -> Any:
         return AX.AXUIElementCreateSystemWide()

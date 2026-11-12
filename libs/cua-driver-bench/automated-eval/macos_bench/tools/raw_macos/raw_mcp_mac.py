@@ -59,8 +59,10 @@ click, double_click, right_click, type_text, set_value, press_key, hotkey, scrol
 mouse_button_down, mouse_drag, mouse_button_up, set_window_frame, bring_to_front. Typical: \
 `s = raw.driver("get_window_state", {"pid": p, "window_id": w}); return s["tree_markdown"]`, then \
 `raw.driver("click", {"pid": p, "window_id": w, "element_token": "<token from the tree>"})` or \
-`raw.driver("type_text", {"pid": p, "window_id": w, "element_token": t, "text": "..."})`. `image=True` returns the \
-driver's screenshot to you. A failed driver call raises with the driver's message.
+`raw.driver("type_text", {"pid": p, "window_id": w, "element_token": t, "text": "..."})`. The driver acts only on \
+a window it has read in this task: call get_window_state on that window first (its tokens and pixel frame are what \
+click and type_text use; x, y are window-local points from that read). `image=True` returns the driver's \
+screenshot to you. A failed driver call raises with the driver's message.
 
 Which route: start with raw AX for an app labelled "full" below. For an app labelled "partial", use raw where its \
 tree has the control, and raw.driver where it does not or where a raw action had no effect. Read back either way.

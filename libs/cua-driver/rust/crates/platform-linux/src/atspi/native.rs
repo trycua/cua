@@ -2268,7 +2268,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                     ));
                 }
             }
-            let act_str = v.actions.join(",");
+            let attrs = indexed_row_attrs(v.enabled, &v.actions);
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
@@ -2284,7 +2284,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 .map(|note| format!(" ({note})"))
                 .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [actions=[{act_str}]]{collapsed_note}{unlabelled_shown}
+                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [{attrs}]{collapsed_note}{unlabelled_shown}
 ",
                 role = v.role,
                 desc = description_shown.as_deref().unwrap_or(""),
@@ -2328,11 +2328,10 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             idx += 1;
         } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"{marker}
+                "{indent}- {role} = \"{name}\"
 ",
                 role = v.role,
                 name = v.name,
-                marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
             ));
         }
     }
@@ -2340,31 +2339,14 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
     (md, nodes)
 }
 
-/// Why a visible, named control is listed without an index. A disabled
-/// button is rendered as `- push button = "Restore" (disabled)` so a caller
-/// learns it must enable it (select something) rather than assume the tree
-/// dropped it.
-fn passive_marker(
-    role: &str,
-    has_action: bool,
-    has_component: bool,
-    enabled: Option<bool>,
-) -> &'static str {
-    let control = has_action
-        || (has_component
-            && matches!(
-                role.trim().to_ascii_lowercase().as_str(),
-                "button"
-                    | "push button"
-                    | "toggle button"
-                    | "menu item"
-                    | "check box"
-                    | "radio button"
-            ));
-    if control && enabled == Some(false) {
-        " (disabled)"
+/// The bracketed attributes of an indexed row: `enabled=false` for a disabled
+/// control (as on macOS), then its actions.
+fn indexed_row_attrs(enabled: Option<bool>, actions: &[String]) -> String {
+    let actions = format!("actions=[{}]", actions.join(","));
+    if enabled == Some(false) {
+        format!("enabled=false {actions}")
     } else {
-        ""
+        actions
     }
 }
 
@@ -2440,9 +2422,14 @@ fn is_enabled_state(state: &StateSet) -> bool {
 /// no Action even though a coordinate click on their bounds is operable. Keep
 /// every such control in the shared index space so physical-input fallbacks can
 /// address it without inventing pixels in the caller. Some GTK4 buttons expose
-/// only Component plus their control role; include those only when the state set
-/// positively verifies that they are enabled. Passive component-backed labels
-/// and containers remain outside the index.
+/// only Component plus their control role; include those too. Passive
+/// component-backed labels and containers remain outside the index, and so does
+/// a node whose state set could not be read.
+///
+/// A disabled control is indexed and published with `enabled: false`, as on
+/// macOS: enablement is state the caller needs to read (a form's Save button),
+/// not a reason to hide the row. The token writers refuse it
+/// (`tools::impl_::refuse_if_disabled`).
 ///
 /// This predicate is the single source of truth for the element-index space and
 /// MUST be applied identically in `render` and in every `action_nodes` filter
@@ -2471,16 +2458,15 @@ fn is_indexable_capabilities(
     enabled: Option<bool>,
 ) -> bool {
     let normalized_role = role.trim().to_ascii_lowercase();
-    let pixel_addressable_control = has_component
-        && enabled == Some(true)
-        && matches!(normalized_role.as_str(), "button" | "push button");
+    let pixel_addressable_control =
+        has_component && matches!(normalized_role.as_str(), "button" | "push button");
     !is_passive_role(&normalized_role)
         && (has_action
             || has_editable
             || has_value
             || has_selectable_state
             || pixel_addressable_control)
-        && enabled == Some(true)
+        && enabled.is_some()
 }
 
 // ── Public (sync) entry points ───────────────────────────────────────────────
@@ -4184,6 +4170,25 @@ pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
     )
 }
 
+/// Whether a snapshot-cached element is enabled right now, read from its own
+/// state set ([`is_enabled_state`]). `Ok(None)` when the toolkit exposes no
+/// state set.
+pub fn element_enabled_ref(object_ref: &ObjectRef) -> Result<Option<bool>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(Some(is_enabled_state(&state))),
+                Some(Err(_)) => Ok(None),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_enabled (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -5529,6 +5534,7 @@ pub fn perform_action_at_point(
             for (i, v) in visited.iter().enumerate() {
                 if v.actions.is_empty()
                     || !v.has_component
+                    || v.enabled == Some(false)
                     || is_container_role(&v.role)
                     || is_web_document_role(&v.role)
                     || crate::at_point_policy::is_top_level_shell_role(&v.role)
@@ -5665,6 +5671,7 @@ pub fn perform_action_at_screen_point(
                 .into_iter()
                 .filter(|&(idx, ..)| {
                     !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                        && action_nodes[idx].enabled != Some(false)
                 })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
@@ -7787,8 +7794,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, bounded_blocking,
         combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_showing_state, is_web_process_bus, listing_state, passive_marker,
+        indexed_row_attrs, is_activation_action, is_enabled_state, is_indexable_capabilities,
+        is_passive_role, is_showing_state, is_web_process_bus, listing_state,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         wayland_window_origin, ApplicationSelection,
@@ -7956,7 +7963,7 @@ mod coord_tests {
             true,
             Some(true)
         ));
-        assert!(!is_indexable_capabilities(
+        assert!(is_indexable_capabilities(
             "button",
             true,
             false,
@@ -7980,7 +7987,7 @@ mod coord_tests {
     }
 
     #[test]
-    fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
+    fn hidden_controls_are_not_listed_and_offscreen_ones_are_marked() {
         // `Showing` is the on-screen state.
         assert!(!is_showing_state(&StateSet::new(
             State::Enabled | State::Visible
@@ -8026,17 +8033,17 @@ mod coord_tests {
             "menu item",
             &StateSet::new(State::Enabled)
         ));
-        // A visible but insensitive button keeps a marker in the markdown.
+    }
+
+    #[test]
+    fn a_disabled_control_row_says_so() {
+        let click = vec!["click".to_owned()];
         assert_eq!(
-            passive_marker("push button", true, true, Some(false)),
-            " (disabled)"
+            indexed_row_attrs(Some(false), &click),
+            "enabled=false actions=[click]"
         );
-        assert_eq!(
-            passive_marker("push button", false, true, Some(false)),
-            " (disabled)"
-        );
-        assert_eq!(passive_marker("push button", true, true, Some(true)), "");
-        assert_eq!(passive_marker("label", false, true, Some(false)), "");
+        assert_eq!(indexed_row_attrs(Some(true), &click), "actions=[click]");
+        assert_eq!(indexed_row_attrs(None, &[]), "actions=[]");
     }
 
     #[test]
@@ -8066,11 +8073,20 @@ mod coord_tests {
 
     #[test]
     fn component_role_fallback_rejects_unverified_or_passive_nodes() {
-        for enabled in [None, Some(false)] {
-            assert!(!is_indexable_capabilities(
-                "button", false, false, false, false, true, enabled
-            ));
-        }
+        assert!(!is_indexable_capabilities(
+            "button", false, false, false, false, true, None
+        ));
+        // A disabled component-only button is indexed so its `enabled: false`
+        // can be read.
+        assert!(is_indexable_capabilities(
+            "button",
+            false,
+            false,
+            false,
+            false,
+            true,
+            Some(false)
+        ));
         assert!(!is_indexable_capabilities(
             "button",
             false,

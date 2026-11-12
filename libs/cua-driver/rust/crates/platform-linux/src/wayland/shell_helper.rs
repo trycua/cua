@@ -1164,7 +1164,8 @@ mod tests {
         assert!(EXTENSION_SOURCE.contains("const GLOW_PADDING = 24;"));
         assert!(EXTENSION_SOURCE.contains("function drawCursorGlowShape"));
         assert!(EXTENSION_SOURCE.contains("function glowPath"));
-        assert!(EXTENSION_SOURCE.contains("strokePath(cr, width, alpha, fillColor)"));
+        // The helper draws no action marks.
+        assert!(!EXTENSION_SOURCE.contains("function drawActionCue"));
         assert!(EXTENSION_SOURCE.contains("width + 1.5"));
         assert!(EXTENSION_SOURCE.contains("width - 1"));
         assert!(EXTENSION_SOURCE.contains("createGlowSurface(this._fillColor)"));

@@ -32,9 +32,8 @@
 //!   `UpdateLayeredWindow` (BGRA DIB), `XPutImage` (BGRA ZPixmap).
 //! - Origin/coordinate translation (Windows uses virtual-screen offset;
 //!   macOS uses NSScreen coordinates; Linux uses display coordinates).
-//! - Platform-specific extras like macOS's `focus_rect` (post-arrival
-//!   element highlight — drawn inside [`render_frame`] when the caller
-//!   supplies one via the optional argument).
+//! - Retired extras: the cursor draws no action marks, so the optional
+//!   `focus_rect` argument of [`render_frame`] is ignored.
 
 use crate::cursor_pose::FloatOffset;
 use crate::trajectory::{plan_move, MoveRequest, Pt, Trajectory};
@@ -105,7 +104,7 @@ impl KeyChip {
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
 /// Each platform wraps this in its own struct that adds OS-specific fields
-/// (e.g. `virt_x/y/w/h` on Windows, `focus_rect` on macOS).
+/// (e.g. `virt_x/y/w/h` on Windows).
 pub struct RenderStateCore {
     /// Frozen copy of the launch-time CursorConfig.
     pub cfg: CursorConfig,
@@ -190,7 +189,7 @@ pub struct RenderStateCore {
     /// setting ([`crate::badge_mode::active`]).
     pub badge_mode_override: Option<BadgeMode>,
     /// Opt-in extras for this cursor; `None` follows the live
-    /// `cursor.marks` / `cursor.float` / `cursor.rotate` settings
+    /// `cursor.float` / `cursor.rotate` / `cursor.halo` settings
     /// ([`crate::cursor_options::active`]).
     pub options_override: Option<CursorOptions>,
     /// Another agent cursor is revealed on this overlay too, so the minimal
@@ -367,8 +366,7 @@ impl RenderStateCore {
     ///
     /// Two extras animate at rest: the resting float of the built-in theme
     /// (`cursor.float`, on by default), and a theme's multi-frame animation
-    /// for its current action (`cursor.marks`, or a custom theme whose idle
-    /// animation loops). With both off the cursor rests still, so the overlay
+    /// for its idle state (a custom theme whose idle animation loops). With both off the cursor rests still, so the overlay
     /// stops rendering once activity settles.
     ///
     /// Resting motion is bounded by idle hide: it runs while the idle-hide
@@ -499,14 +497,11 @@ impl RenderStateCore {
             .unwrap_or_else(crate::cursor_options::active)
     }
 
-    /// The action whose theme animation is painted: the current action with
-    /// `cursor.marks` on, the idle frame otherwise.
+    /// The action whose theme animation is painted. Always the idle frame: the
+    /// cursor draws no action marks, whatever the agent does, so it stays the
+    /// plain arrow for clicks, typing, keys, scrolling and every other action.
     pub fn painted_action(&self) -> CursorAction {
-        if self.options().marks {
-            self.visual.resolved_action
-        } else {
-            CursorAction::Idle
-        }
+        CursorAction::Idle
     }
 
     /// Whether the idle-hide fade (the 180 ms alpha ramp after
@@ -956,19 +951,6 @@ impl RenderStateCore {
                 self.trajectory = Some(trajectory);
                 self.motion_t = 0.0;
                 self.arrival_pending = true;
-                // The navigate mark a move plays by itself is an opt-in
-                // action mark (`cursor.marks`).
-                if self.options().marks
-                    && matches!(
-                        self.visual.resolved_action,
-                        CursorAction::Idle | CursorAction::Navigate
-                    )
-                {
-                    let delivery = self.visual.delivery;
-                    let target = self.visual.target;
-                    self.visual.begin(CursorAction::Navigate, delivery, target);
-                    self.semantic_cue = false;
-                }
                 self.placed = true;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -999,19 +981,6 @@ impl RenderStateCore {
                     self.float_from = amplitude;
                     self.float_hold_secs = 0.0;
                 }
-                // The navigate mark a move plays by itself is an opt-in
-                // action mark (`cursor.marks`).
-                if self.options().marks
-                    && matches!(
-                        self.visual.resolved_action,
-                        CursorAction::Idle | CursorAction::Navigate
-                    )
-                {
-                    let delivery = self.visual.delivery;
-                    let target = self.visual.target;
-                    self.visual.begin(CursorAction::Navigate, delivery, target);
-                    self.semantic_cue = false;
-                }
                 self.placed = true;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -1041,18 +1010,6 @@ impl RenderStateCore {
                 // The move here already settled the float to 0; keep it
                 // there through the click (and a double click's second).
                 self.settle_float();
-                // Likewise the click mark (`cursor.marks`).
-                if self.options().marks
-                    && matches!(
-                        self.visual.resolved_action,
-                        CursorAction::Idle | CursorAction::Navigate | CursorAction::Click
-                    )
-                {
-                    let delivery = self.visual.delivery;
-                    let target = self.visual.target;
-                    self.visual.begin(CursorAction::Click, delivery, target);
-                    self.semantic_cue = false;
-                }
                 self.placed = true;
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -1371,8 +1328,9 @@ fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Pat
 
 // ── tiny-skia rendering ──────────────────────────────────────────────────
 
-/// Optional focus-rect overlay drawn on top of the cursor (macOS only at
-/// the moment — the other platforms always pass `None`).
+/// Retired focus-rect highlight. The cursor draws no action marks, so a
+/// focus rect passed to the paint functions is ignored; the type and the
+/// parameter stay so every platform's call keeps compiling.
 #[derive(Clone, Copy)]
 pub struct FocusRect {
     /// Rectangle `[x, y, w, h]` in screen coordinates (top-left origin),
@@ -1441,6 +1399,28 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
+    paint_cursor_with_badge(
+        pm,
+        core,
+        origin_x,
+        origin_y,
+        focus_rect,
+        backing_scale,
+        true,
+    );
+}
+
+/// Paint cursor art across a display seam, keeping its badge on the anchor display.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_cursor_with_badge(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    _focus_rect: Option<FocusRect>,
+    backing_scale: f32,
+    show_badge: bool,
+) {
     if !core.is_revealed() || core.pinned_target_off_workspace {
         return;
     }
@@ -1462,59 +1442,6 @@ pub fn paint_cursor(
     let float = core.float_offset();
     let (tip_x, tip_y) = ((tip_x - origin_x) * s, (tip_y - origin_y) * s);
     let alpha_scale = core.idle_alpha as f32;
-
-    // --- Focus rect highlight (macOS only — others pass None) ---
-    // Cyan glow border + faint fill, matching Swift AgentCursor.showFocusRect.
-    // An opt-in action mark, like the theme's own (`cursor.marks`).
-    if let Some(fr) = focus_rect.filter(|_| options.marks) {
-        let [fx, fy, fw, fh] = fr.rect;
-        let t = fr.t as f32;
-        let fade = (1.0 - t) * (1.0 - t); // quadratic ease-out
-        let border_a = (230.0 * fade * alpha_scale) as u8;
-        let fill_a = (20.0 * fade * alpha_scale) as u8;
-        // Cyan: #5EC0E8
-        let (cr, cg, cb) = (0x5Eu8, 0xC0u8, 0xE8u8);
-
-        if let Some(rect) = tiny_skia::Rect::from_xywh(
-            ((fx - origin_x) * s) as f32,
-            ((fy - origin_y) * s) as f32,
-            (fw * s) as f32,
-            (fh * s) as f32,
-        ) {
-            // Faint fill
-            let fill_paint = tiny_skia::Paint {
-                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
-                    cr, cg, cb, fill_a,
-                )),
-                ..Default::default()
-            };
-            pm.fill_rect(rect, &fill_paint, tiny_skia::Transform::identity(), None);
-
-            // Border stroke (2px glow)
-            let border_paint = tiny_skia::Paint {
-                shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::from_rgba8(
-                    cr, cg, cb, border_a,
-                )),
-                anti_alias: true,
-                ..Default::default()
-            };
-            let stroke = tiny_skia::Stroke {
-                width: 2.5 * sf,
-                ..Default::default()
-            };
-            let mut pb = tiny_skia::PathBuilder::new();
-            pb.push_rect(rect);
-            if let Some(path) = pb.finish() {
-                pm.stroke_path(
-                    &path,
-                    &border_paint,
-                    &stroke,
-                    tiny_skia::Transform::identity(),
-                    None,
-                );
-            }
-        }
-    }
 
     let effects = core.effect_frame();
     let effect_rgb = effect_rgb(crate::session_fill_rgba(&core.cfg.cursor_id));
@@ -1539,7 +1466,7 @@ pub fn paint_cursor(
     // Click squish scales the artwork about its hotspot.
     let art_scale = backing_scale.max(1.0) * (1.0 - effects.squish as f32);
 
-    // Without `cursor.marks` every theme paints its idle frame.
+    // Every theme paints its idle frame: the cursor draws no action marks.
     let idle_visual;
     let visual = if core.painted_action() == core.visual.resolved_action {
         &core.visual
@@ -1584,6 +1511,9 @@ pub fn paint_cursor(
     }
     paint_effects_over(pm, &effects, effect_rgb, f64::from(alpha_scale), &to_px, sf);
 
+    if !show_badge {
+        return;
+    }
     if let Some(layout) = crate::session_badge_layout(core.session_badge_input(
         (px as f32, py as f32),
         backing_scale.max(1.0),
@@ -3384,7 +3314,6 @@ mod plain_cursor_tests {
         assert_eq!(
             CursorOptions::default(),
             CursorOptions {
-                marks: false,
                 float: true,
                 rotate: RotateMode::Heading,
                 halo: true,
@@ -3395,42 +3324,31 @@ mod plain_cursor_tests {
     }
 
     #[test]
-    fn moves_and_clicks_start_no_mark_without_marks() {
-        let mut plain = core(CursorOptions::NONE);
-        plain.apply_command_base(
-            OverlayCommand::MoveTo {
-                x: 160.0,
-                y: 140.0,
-                end_heading_radians: FRAC_PI_4,
-                target: None,
-            },
-            true,
-            true,
-        );
-        assert_eq!(plain.visual.resolved_action, CursorAction::Idle);
-        plain.apply_command_base(
-            OverlayCommand::ClickPulse { x: 160.0, y: 140.0 },
-            true,
-            true,
-        );
-        assert_eq!(plain.visual.resolved_action, CursorAction::Idle);
-
-        let mut marked = core(CursorOptions::ALL_ON);
-        marked.apply_command_base(
-            OverlayCommand::MoveTo {
-                x: 160.0,
-                y: 140.0,
-                end_heading_radians: FRAC_PI_4,
-                target: None,
-            },
-            true,
-            true,
-        );
-        assert_eq!(marked.visual.resolved_action, CursorAction::Navigate);
+    fn moves_and_clicks_start_no_mark() {
+        for options in [CursorOptions::NONE, CursorOptions::ALL_ON] {
+            let mut plain = core(options);
+            plain.apply_command_base(
+                OverlayCommand::MoveTo {
+                    x: 160.0,
+                    y: 140.0,
+                    end_heading_radians: FRAC_PI_4,
+                    target: None,
+                },
+                true,
+                true,
+            );
+            assert_eq!(plain.visual.resolved_action, CursorAction::Idle);
+            plain.apply_command_base(
+                OverlayCommand::ClickPulse { x: 160.0, y: 140.0 },
+                true,
+                true,
+            );
+            assert_eq!(plain.visual.resolved_action, CursorAction::Idle);
+        }
     }
 
     #[test]
-    fn semantic_actions_paint_the_idle_arrow_without_marks() {
+    fn every_action_paints_the_plain_arrow() {
         let idle = paint(&core(CursorOptions::NONE), None);
         for action in CursorAction::ALL {
             let mut plain = core(CursorOptions::NONE);
@@ -3443,30 +3361,17 @@ mod plain_cursor_tests {
                 false,
                 false,
             );
-            plain.visual.elapsed_secs = action.duration_secs() * 0.4;
-            assert_eq!(
-                paint(&plain, None),
-                idle,
-                "{} painted a mark",
-                action.as_str()
-            );
+            for fraction in [0.0, 0.4, 0.9] {
+                plain.visual.elapsed_secs = action.duration_secs() * fraction;
+                assert_eq!(
+                    paint(&plain, None),
+                    idle,
+                    "{} painted a mark at {fraction}",
+                    action.as_str()
+                );
+            }
+            assert_eq!(plain.painted_action(), CursorAction::Idle);
         }
-
-        let mut marked = core(CursorOptions {
-            marks: true,
-            ..CursorOptions::NONE
-        });
-        marked.apply_command_base(
-            OverlayCommand::BeginAction {
-                action: CursorAction::Observe,
-                delivery: None,
-                target: None,
-            },
-            false,
-            false,
-        );
-        marked.visual.elapsed_secs = 0.6;
-        assert_ne!(paint(&marked, None), idle, "marks opt back in");
     }
 
     #[test]
@@ -3822,17 +3727,14 @@ mod plain_cursor_tests {
     }
 
     #[test]
-    fn the_focus_rect_is_a_mark() {
+    fn the_focus_rect_is_never_painted() {
         let focus = Some(FocusRect {
             rect: [20.0, 20.0, 60.0, 30.0],
             t: 0.0,
         });
-        let plain = core(CursorOptions::NONE);
-        assert_eq!(paint(&plain, focus), paint(&plain, None));
-        let marked = core(CursorOptions {
-            marks: true,
-            ..CursorOptions::NONE
-        });
-        assert_ne!(paint(&marked, focus), paint(&marked, None));
+        for options in [CursorOptions::NONE, CursorOptions::ALL_ON] {
+            let cursor = core(options);
+            assert_eq!(paint(&cursor, focus), paint(&cursor, None));
+        }
     }
 }

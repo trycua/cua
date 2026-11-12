@@ -295,6 +295,8 @@ async fn dispatch(
                 kind,
                 runtime: runtime.clone(),
                 name,
+                cpus: a.cpus,
+                memory_mb: a.memory_mb,
                 timeout: a.timeout.map(Duration::from_secs),
                 wait: a.wait,
                 reuse: a.reuse.unwrap_or(false),

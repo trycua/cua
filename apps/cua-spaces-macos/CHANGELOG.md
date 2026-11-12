@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.34.1](https://github.com/trycua/cua/compare/cua-spaces-v0.34.0...cua-spaces-v0.34.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **spaces:** forward create_space CPU and memory limits ([#7428](https://github.com/trycua/cua/issues/7428)) ([f2201ac](https://github.com/trycua/cua/commit/f2201ac55ce19fb513c4b53569d04d2016bce4b8))
+
+## [0.34.0](https://github.com/trycua/cua/compare/cua-spaces-v0.33.7...cua-spaces-v0.34.0) (2026-11-12)
+
+
+### Features
+
+* **spaces:** setup shows each agent connection step live, connects Cua Driver and sets up This Mac (CUA-4067) ([#7389](https://github.com/trycua/cua/issues/7389)) ([d2c5abb](https://github.com/trycua/cua/commit/d2c5abbb3b4b4cbece4079ad59da74e99dc7b473))
+
+
+### Bug Fixes
+
+* **cua-vmm:** run the engine helper's chroot from PATH and build sandbox overlays on 24.04 ([#7409](https://github.com/trycua/cua/issues/7409)) ([10cd739](https://github.com/trycua/cua/commit/10cd739d46db34a0373245531c8219babf606c1f))
+* **spaces-macos:** bundle Cua Driver 0.47.13 in Cua Spaces ([#7395](https://github.com/trycua/cua/issues/7395)) ([3f3ccd4](https://github.com/trycua/cua/commit/3f3ccd48bd7db73d41132d7f45a92a96eca05100))
+* **spaces:** the Codex sign-in row says what to do (CUA-4089) ([#7406](https://github.com/trycua/cua/issues/7406)) ([5aba792](https://github.com/trycua/cua/commit/5aba792b2962a5fd547720c59c68220268fc48d5))
+
+## [0.33.7](https://github.com/trycua/cua/compare/cua-spaces-v0.33.6...cua-spaces-v0.33.7) (2026-11-11)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle Cua Driver 0.47.10 in Cua Spaces ([#7375](https://github.com/trycua/cua/issues/7375)) ([4544ad5](https://github.com/trycua/cua/commit/4544ad5070419a6577cc14eaf50c0b3a7856bd09))
+
 ## [0.33.6](https://github.com/trycua/cua/compare/cua-spaces-v0.33.5...cua-spaces-v0.33.6) (2026-11-11)
 
 

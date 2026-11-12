@@ -779,8 +779,8 @@ public final class PendingAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func connectionStatusJson(refresh: Bool) async -> String {
         await gate.wait().agentSetup?.connectionStatusJson(refresh: refresh) ?? #"{"agents":[],"checked_at_ms":0}"#
     }
-    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool) async throws -> String {
-        try await s().connectJson(agents: agents, signIn: signIn, skills: skills, mcp: mcp)
+    public func connectJson(agents: [String], signIn: Bool, skills: Bool, mcp: Bool, driver: DriverConnect?) async throws -> String {
+        try await s().connectJson(agents: agents, signIn: signIn, skills: skills, mcp: mcp, driver: driver)
     }
     public func disconnectJson(agents: [String], signIn: Bool) async throws -> String {
         try await s().disconnectJson(agents: agents, signIn: signIn)

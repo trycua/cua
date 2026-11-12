@@ -3635,64 +3635,194 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
 /// snapshot index is retained across mutations.
 pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
-    invoke_menu_path_in(pid, 0, path)
+    invoke_menu_path_in(pid, 0, path, MenuOpening::Allowed)
+}
+
+/// Whether [`invoke_menu_path_in`] may open intermediate menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuOpening {
+    /// Open each menu along the path when the final item cannot be reached
+    /// directly (the window was activated for a foreground delivery).
+    Allowed,
+    /// Background delivery: never open a menu. An open GTK, Qt or VCL menu
+    /// grabs the core keyboard and pointer, so the user's keystrokes land in
+    /// the menu instead of their own window for as long as it stays open
+    /// (trycua/cua#7371).
+    Forbidden,
+}
+
+/// The final menu item cannot be reached without opening a menu, and the
+/// delivery forbids opening one ([`MenuOpening::Forbidden`]). Nothing was
+/// actuated.
+#[derive(Debug)]
+pub struct MenuMustOpen {
+    pub detail: String,
+}
+
+impl std::fmt::Display for MenuMustOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the menu item is only reachable by opening a menu ({})",
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for MenuMustOpen {}
+
+/// The unique live node for `path` (all of it, or a prefix) in one walk;
+/// `Ok(None)` when no node matches it.
+fn resolve_menu_segment(
+    visited: &[Visited<'_>],
+    scoped_frame: Option<usize>,
+    path: &[String],
+) -> Result<Option<usize>> {
+    let depth = path.len() - 1;
+    let mut matches = exact_menu_path_matches(visited, path);
+    if matches.len() > 1 {
+        if let Some(scope) = scoped_frame {
+            let scoped: Vec<usize> = matches
+                .iter()
+                .copied()
+                .filter(|index| visited[*index].frame_ordinal == scope)
+                .collect();
+            if !scoped.is_empty() {
+                matches = scoped;
+            }
+        }
+    }
+    if matches.len() > 1 {
+        matches = dedupe_menu_matches(visited, matches);
+    }
+    match matches.as_slice() {
+        [index] => Ok(Some(*index)),
+        [] => Ok(None),
+        _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
+    }
+}
+
+/// A menu node that opens a submenu rather than running a command: GTK and
+/// Qt give it the `menu` role, a command item is `menu item` / `check menu
+/// item` / `radio menu item`.
+fn opens_submenu(role: &str) -> bool {
+    role.trim().eq_ignore_ascii_case("menu")
+}
+
+/// The decision for one resolved final item, before any action is fired.
+#[derive(Debug, PartialEq, Eq)]
+enum LeafPlan {
+    /// Fire the item's own action; no menu opens.
+    Direct,
+    /// The item is itself a submenu: firing it opens a menu.
+    OpensMenu,
+}
+
+fn leaf_plan(role: &str) -> LeafPlan {
+    if opens_submenu(role) {
+        LeafPlan::OpensMenu
+    } else {
+        LeafPlan::Direct
+    }
+}
+
+/// Fire the safe activation action of `target`. `Ok(false)` is the toolkit
+/// declining it (LibreOffice VCL answers that for an item of a closed menu).
+async fn fire_menu_node(target: &Visited<'_>, depth: usize) -> Result<bool> {
+    if target.enabled == Some(false) {
+        anyhow::bail!("menu path segment {depth} is disabled");
+    }
+    let chosen = activation_index(&target.role, &target.actions)
+        .ok_or_else(|| anyhow!("menu path segment {depth} has no safe activation action"))?;
+    let proxies = target
+        .acc
+        .proxies()
+        .await
+        .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
+    let action = proxies
+        .action()
+        .await
+        .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+    action
+        .do_action(chosen as i32)
+        .await
+        .map_err(|error| anyhow!("doAction failed: {error}"))
 }
 
 /// [`invoke_menu_path`] scoped to the caller's native window: when the same
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+///
+/// GTK 3 and Qt publish closed menus, so the final item is usually in the
+/// first walk: its action is fired directly and no menu ever opens (GTK runs
+/// the item's `activate` and leaves its menus unposted). Only when the item
+/// is missing or declines a closed-menu action does the path open each menu
+/// in turn, and only when `opening` allows it; otherwise [`MenuMustOpen`] is
+/// returned with nothing actuated.
+pub fn invoke_menu_path_in(
+    pid: u32,
+    xid: u64,
+    path: &[String],
+    opening: MenuOpening,
+) -> Result<()> {
     bounded(
         async {
             let conn = shared_connection().await?;
+            let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let last = path.len() - 1;
+            match resolve_menu_segment(&collected.visited, collected.scoped_frame, path)? {
+                Some(index) => {
+                    let target = &collected.visited[index];
+                    if opening == MenuOpening::Forbidden
+                        && leaf_plan(&target.role) == LeafPlan::OpensMenu
+                    {
+                        return Err(MenuMustOpen {
+                            detail: format!(
+                                "segment {last} is a submenu, and invoking it opens that menu"
+                            ),
+                        }
+                        .into());
+                    }
+                    if fire_menu_node(target, last).await? {
+                        return Ok(());
+                    }
+                    if last == 0 {
+                        anyhow::bail!("menu path segment {last} rejected its native action");
+                    }
+                    if opening == MenuOpening::Forbidden {
+                        // Declined with its menu closed; the hop walk would
+                        // open the menu. Nothing ran.
+                        return Err(MenuMustOpen {
+                            detail: "the app declines the item's action while its menu is closed"
+                                .into(),
+                        }
+                        .into());
+                    }
+                }
+                None if last == 0 => anyhow::bail!("menu path segment 0 was not found"),
+                None if opening == MenuOpening::Forbidden => {
+                    return Err(MenuMustOpen {
+                        detail: "the app does not publish the item until its menu opens".into(),
+                    }
+                    .into())
+                }
+                None => {}
+            }
+            drop(collected);
             for depth in 0..path.len() {
                 let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let visited = collected.visited;
-                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
-                if matches.len() > 1 {
-                    if let Some(scope) = collected.scoped_frame {
-                        let scoped: Vec<usize> = matches
-                            .iter()
-                            .copied()
-                            .filter(|index| visited[*index].frame_ordinal == scope)
-                            .collect();
-                        if !scoped.is_empty() {
-                            matches = scoped;
-                        }
-                    }
-                }
-                if matches.len() > 1 {
-                    matches = dedupe_menu_matches(&visited, matches);
-                }
-                let target_index = match matches.as_slice() {
-                    [index] => *index,
-                    [] => anyhow::bail!("menu path segment {depth} was not found"),
-                    _ => anyhow::bail!("menu path segment {depth} is ambiguous"),
-                };
-                let target = &visited[target_index];
-                if target.enabled == Some(false) {
-                    anyhow::bail!("menu path segment {depth} is disabled");
-                }
-                let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
-                    anyhow!("menu path segment {depth} has no safe activation action")
-                })?;
-                let proxies = target
-                    .acc
-                    .proxies()
-                    .await
-                    .map_err(|error| anyhow!("interface proxies unavailable: {error}"))?;
-                let action = proxies
-                    .action()
-                    .await
-                    .map_err(|error| anyhow!("Action unavailable: {error}"))?;
-                let accepted = action
-                    .do_action(chosen as i32)
-                    .await
-                    .map_err(|error| anyhow!("doAction failed: {error}"))?;
-                if !accepted {
+                let index = resolve_menu_segment(
+                    &collected.visited,
+                    collected.scoped_frame,
+                    &path[..=depth],
+                )?
+                .ok_or_else(|| anyhow!("menu path segment {depth} was not found"))?;
+                if !fire_menu_node(&collected.visited[index], depth).await? {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
                 if depth + 1 != path.len() {
@@ -3703,6 +3833,41 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+#[cfg(test)]
+mod menu_leaf_tests {
+    use super::*;
+
+    #[test]
+    fn a_command_item_fires_directly_and_a_submenu_would_open_a_menu() {
+        // trycua/cua#7371: background invoke_menu must never open a menu,
+        // because an open menu grabs the user's keyboard. Command items run
+        // through their own action; only a submenu node opens one.
+        for role in [
+            "menu item",
+            "check menu item",
+            "radio menu item",
+            "Menu Item",
+        ] {
+            assert_eq!(leaf_plan(role), LeafPlan::Direct, "{role}");
+        }
+        for role in ["menu", "Menu", " menu "] {
+            assert_eq!(leaf_plan(role), LeafPlan::OpensMenu, "{role}");
+        }
+    }
+
+    #[test]
+    fn menu_must_open_names_why_nothing_ran() {
+        let error: anyhow::Error = MenuMustOpen {
+            detail: "segment 1 is a submenu".into(),
+        }
+        .into();
+        assert!(error.downcast_ref::<MenuMustOpen>().is_some());
+        assert!(error
+            .to_string()
+            .contains("only reachable by opening a menu"));
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.
@@ -4113,11 +4278,15 @@ struct HitNode<'a> {
 /// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
 /// the toolkit stops returning a deeper child. O(depth) round-trips instead of
 /// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+///
+/// `stacking` says how far the toolkit's answer can be trusted where siblings
+/// overlap (see [`SiblingStacking`]).
 async fn descend_at_point<'a>(
     conn: &'a AccessibilityConnection,
     start: RawObjectRef,
     x: i32,
     y: i32,
+    stacking: SiblingStacking,
 ) -> Vec<HitNode<'a>> {
     let mut chain: Vec<HitNode<'a>> = Vec::new();
     let mut current = start;
@@ -4145,9 +4314,122 @@ async fn descend_at_point<'a>(
         if next.path.ends_with("/null") || next == current {
             break;
         }
+        let next = match stacking {
+            SiblingStacking::FirstMatch => later_sibling_on_top(conn, &current, &next, x, y)
+                .await
+                .unwrap_or(next),
+            SiblingStacking::Topmost => next,
+        };
         current = next;
     }
     chain
+}
+
+/// How a toolkit's `GetAccessibleAtPoint` picks among overlapping children.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SiblingStacking {
+    /// The answer is the child drawn on top.
+    Topmost,
+    /// ATK's container default (GTK 2 and 3): the *first* child, in child
+    /// order, whose extents contain the point. A `GtkOverlay` lists its main
+    /// child first and draws its overlays above it, so a banner shown over a
+    /// button answers with the button underneath.
+    FirstMatch,
+}
+
+impl SiblingStacking {
+    fn of_toolkit(name: &str, version: &str) -> Self {
+        let name = name.trim();
+        let gtk3_or_older = version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_some_and(|major| major < 4);
+        if name.eq_ignore_ascii_case("gail") || (name.eq_ignore_ascii_case("gtk") && gtk3_or_older)
+        {
+            Self::FirstMatch
+        } else {
+            Self::Topmost
+        }
+    }
+
+    async fn of_app(app: &AccessibleProxy<'_>) -> Self {
+        let inner = app.inner();
+        let Some(application) = async {
+            atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .destination(inner.destination().to_owned())
+                .ok()?
+                .build()
+                .await
+                .ok()
+        }
+        .await
+        else {
+            return Self::Topmost;
+        };
+        let name = call(application.toolkit_name()).await.and_then(Result::ok);
+        let version = call(application.version()).await.and_then(Result::ok);
+        match (name, version) {
+            (Some(name), Some(version)) => Self::of_toolkit(&name, &version),
+            _ => Self::Topmost,
+        }
+    }
+}
+
+/// Overlapping siblings of one parent the stacking check reads at most; a
+/// container with more children (a list, a sheet) is not a stack.
+const STACKED_SIBLINGS_CAP: i32 = 32;
+
+/// For a [`SiblingStacking::FirstMatch`] toolkit: the last showing child of
+/// `parent` after `hit` whose extents contain the point, which the toolkit
+/// draws over `hit`. `None` keeps the toolkit's answer.
+async fn later_sibling_on_top(
+    conn: &AccessibilityConnection,
+    parent: &RawObjectRef,
+    hit: &RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Option<RawObjectRef> {
+    let count = raw_child_count(conn.connection(), parent).await.ok()?;
+    if !(2..=STACKED_SIBLINGS_CAP).contains(&count) {
+        return None;
+    }
+    let index = call(accessible_for(conn, hit).await.ok()?.get_index_in_parent())
+        .await?
+        .ok()?;
+    if index < 0 {
+        return None;
+    }
+    let parent = accessible_for(conn, parent).await.ok()?;
+    for sibling in (index + 1..count).rev() {
+        let Some(Ok(child)) = call(parent.get_child_at_index(sibling)).await else {
+            continue;
+        };
+        let Some(raw) = RawObjectRef::from_atspi(&child) else {
+            continue;
+        };
+        let Ok(acc) = accessible_for(conn, &raw).await else {
+            continue;
+        };
+        let Some(Ok(proxies)) = call(acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(component)) = call(proxies.component()).await else {
+            continue;
+        };
+        if !matches!(
+            call(component.contains(x, y, CoordType::Window)).await,
+            Some(Ok(true))
+        ) {
+            continue;
+        }
+        if matches!(call(acc.get_state()).await, Some(Ok(state)) if is_showing_state(&state)) {
+            return Some(raw);
+        }
+    }
+    None
 }
 
 impl PartialEq for RawObjectRef {
@@ -4209,8 +4491,9 @@ pub fn perform_action_at_point_in(
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
+            let stacking = SiblingStacking::of_app(&app).await;
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y, stacking).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
@@ -4300,6 +4583,19 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn only_gtk3_and_older_answer_at_point_with_the_first_matching_child() {
+        use super::SiblingStacking::{FirstMatch, Topmost};
+        let of = super::SiblingStacking::of_toolkit;
+        assert_eq!(of("gtk", "3.24.49"), FirstMatch);
+        assert_eq!(of("GAIL", "2.24.33"), FirstMatch);
+        assert_eq!(of("GTK", "4.14.4"), Topmost);
+        assert_eq!(of("gtk", ""), Topmost);
+        assert_eq!(of("Qt", "5.15.13"), Topmost);
+        assert_eq!(of("Chromium", "126.0"), Topmost);
+        assert_eq!(of("VCL", "3.24"), Topmost);
+    }
 
     #[test]
     fn only_vcl_measures_from_the_wm_frame() {

@@ -111,8 +111,16 @@ class ProfileTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 verify.validate_profile(candidate)
         candidate = copy.deepcopy(self.profile)
-        candidate["hyprland"]["header_version"] = "0.57.0"
-        with self.assertRaisesRegex(ValueError, "unchanged source"):
+        candidate["hyprland"]["header_version"] = "0.58.0"
+        candidate["hyprland"]["package_version"] = "0.58.0-1"
+        with self.assertRaisesRegex(ValueError, "unsupported Hyprland headers"):
+            verify.validate_profile(candidate)
+        # Omarchy edge ships 0.57.2: its profile validates, and the recipe pins that exact version.
+        candidate = copy.deepcopy(self.profile)
+        candidate["hyprland"].update(header_version="0.57.2", package_version="0.57.2-1")
+        verify.validate_profile(candidate)
+        candidate["hyprland"]["package_version"] = "0.56.2-1"
+        with self.assertRaisesRegex(ValueError, "package version"):
             verify.validate_profile(candidate)
         with self.assertRaisesRegex(ValueError, "duplicate JSON"):
             verify.read_json('{"schema":1,"schema":1}')
@@ -554,9 +562,14 @@ class NativeProfileTest(unittest.TestCase):
         executable.write_text("pkgconf fixture")
         include_flags = f"-I{headers}"
         pc_directory = str(pc.parent)
+        glib_owner = ["glib2"]
+        glib_include = root / "usr/lib/glib-2.0/include"
+        glib_include.mkdir(parents=True)
 
         def fake_run(*args, **kwargs):
             if args[:2] == ("pacman", "-Qoq"):
+                if args[2].endswith("glibconfig.h"):
+                    return glib_owner[0]
                 return "pkgconf" if args[2] == str(executable) else "hyprland"
             self.assertEqual(kwargs.get("extra_env"), verify.PKGCONF_ENV)
             return {"--variable=pcfiledir": pc_directory, "--modversion": "0.56.2",
@@ -565,6 +578,7 @@ class NativeProfileTest(unittest.TestCase):
 
         with mock.patch.object(verify, "PKGCONF", executable), mock.patch.object(verify, "HYPRLAND_PC", pc), \
                 mock.patch.object(verify, "HEADER_ROOT", headers), mock.patch.object(verify, "SYSTEM_INCLUDE", system), \
+                mock.patch.object(verify, "PACKAGE_LIB_INCLUDES", {str(glib_include): "glib2"}), \
                 mock.patch.object(verify, "run", side_effect=fake_run):
             selected = verify.pkgconfig_selection(self.profile)
             self.assertEqual(selected["pc_sha256"], verify.digest(pc))
@@ -579,6 +593,14 @@ class NativeProfileTest(unittest.TestCase):
             include_flags = f"-I{system} -I{headers}/protocols -I{headers} -I{headers}/src"
             self.assertEqual(verify.pkgconfig_selection(self.profile)["include_dirs"],
                              [str(system), str(headers / "protocols"), str(headers), str(headers / "src")])
+            # Hyprland 0.57 adds glib's arch-specific include directory, admitted only while glib2 owns it.
+            include_flags = f"-I{system} -I{headers}/protocols -I{headers} -I{headers}/src -I{glib_include}"
+            self.assertEqual(verify.pkgconfig_selection(self.profile)["include_dirs"][-1], str(glib_include))
+            glib_owner[0] = "evil"
+            with self.assertRaisesRegex(ValueError, "noncanonical pkg-config include path"):
+                verify.pkgconfig_selection(self.profile)
+            glib_owner[0] = "glib2"
+            include_flags = f"-I{system} -I{headers}/protocols -I{headers} -I{headers}/src"
             (system / "src").mkdir()
             with self.assertRaisesRegex(ValueError, "unreviewed system src"):
                 verify.pkgconfig_selection(self.profile)

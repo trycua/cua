@@ -361,6 +361,27 @@ struct WebUIHostTests {
         #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
     }
 
+    /// Setup's checklist (CUA-4067): `agents.connect` answers one result per
+    /// part, and runs one part on its own for a row's Retry. `driver` adds the
+    /// Cua Driver this app carries; a build without one (this test's) writes
+    /// none and answers no driver part rather than a failure.
+    @Test func connectAnswersEachPartAndRunsOneAlone() async throws {
+        let setup = FixtureAgentSetup()
+        let (bridge, _) = bridge(agentSetup: setup)
+        let all = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": true]) as? [[String: Any]]
+        let parts = (all?.first?["parts"] as? [[String: Any]])?.compactMap { $0["part"] as? String }
+        #expect(parts == ["skills", "mcp", "sign_in"])
+        let mcpOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false, "mcp": true])
+            as? [[String: Any]]
+        let mcp = (mcpOnly?.first?["parts"] as? [[String: Any]]) ?? []
+        #expect(mcp.compactMap { $0["part"] as? String } == ["mcp"])
+        #expect(mcp.first?["where"] as? String == "~/.claude.json")
+        let driverOnly = try await bridge.handle("agents.connect", ["agents": ["claude-code"], "signIn": false, "skills": false,
+                                                                    "mcp": false, "driver": true]) as? [[String: Any]]
+        #expect((driverOnly?.first?["parts"] as? [[String: Any]])?.isEmpty == true)
+        #expect(setup.lastDriver == nil)
+    }
+
     /// The page opens one notification and marks just that one read; the
     /// list carries the Space each entry is about (its Open Space).
     @Test func oneNotificationIsMarkedReadAndCarriesItsSpace() async throws {

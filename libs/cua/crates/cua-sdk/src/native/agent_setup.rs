@@ -527,8 +527,13 @@ impl AgentSetup {
     /// Connect (and Reconnect) for `agents`: Cua's skills and MCP entry
     /// (`server`, default this channel's cua), and with `sign_in` the
     /// agent's sign-in copied into Keyvault on This Mac (Claude Code's is the
-    /// sign-in it already has, read from where Claude Code keeps it). JSON:
-    /// one result per agent.
+    /// sign-in it already has, read from where Claude Code keeps it). With
+    /// `driver`, the `cua-driver` entry the host app wants (the Cua Driver it
+    /// carries, by absolute path) is written too; `driver_permissions_granted`
+    /// says whether Screen Recording and Accessibility are on for it (None:
+    /// unknown). Each part asked for is reported on its own (`parts`), so
+    /// one can be retried by asking for it alone. JSON: one result per agent.
+    #[allow(clippy::too_many_arguments)]
     pub async fn connect_json(
         &self,
         agents: Vec<String>,
@@ -536,20 +541,34 @@ impl AgentSetup {
         skills: bool,
         mcp: bool,
         sign_in: bool,
+        driver: Option<AgentMcpServer>,
+        driver_permissions_granted: Option<bool>,
     ) -> Result<String> {
         let server = self.server(server);
+        let driver = driver.map(|d| cua_agent_setup::connection::DriverTarget {
+            server: cua_agent_setup::McpServer {
+                name: d.name,
+                command: d.command,
+                args: d.args,
+                env: d.env.into_iter().collect(),
+            },
+            permissions_granted: driver_permissions_granted,
+        });
         self.blocking(move |s| {
             let vault = sign_in_vault();
-            let r = s.connect(
+            let r = s.connect_full(
                 &agents,
                 &server,
+                driver.as_ref(),
                 cua_agent_setup::connection::ConnectParts {
                     skills,
                     mcp,
                     sign_in,
+                    driver: driver.is_some(),
                 },
                 vault.as_deref(),
                 cua_agent_setup::signin::CLAUDE_IMPORT_WAIT,
+                None,
             )?;
             note_refusals(&r);
             to_json(&r)

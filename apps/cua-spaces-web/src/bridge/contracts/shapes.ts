@@ -1054,6 +1054,16 @@ const ConnectResultsShape = list(
           line: nullable(str),
         }),
       ),
+      parts: opt(
+        list(
+          object({
+            part: oneOf("mcp", "skills", "driver", "sign_in"),
+            status: oneOf("done", "needs_permission", "skipped", "failed"),
+            where: nullable(str),
+            line: nullable(str),
+          }),
+        ),
+      ),
     }),
   ),
 );

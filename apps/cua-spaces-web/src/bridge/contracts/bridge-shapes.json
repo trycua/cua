@@ -1675,6 +1675,48 @@
             "refused",
             "line"
           ]
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "part": {
+                "enum": [
+                  "mcp",
+                  "skills",
+                  "driver",
+                  "sign_in"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "done",
+                  "needs_permission",
+                  "skipped",
+                  "failed"
+                ]
+              },
+              "where": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "part",
+              "status",
+              "where",
+              "line"
+            ]
+          }
         }
       },
       "required": [

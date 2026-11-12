@@ -4,9 +4,17 @@
 //! installer (`cua.ai/driver/install.sh`, which verifies each archive and,
 //! on macOS, the CuaDriver.app signature) when it is missing.
 //!
-//! cua-driver is not bundled with cua or the Spaces apps: on macOS it is
-//! its own app (`/Applications/CuaDriver.app`), which is what Accessibility
-//! and Screen Recording are granted to.
+//! These are for a cua-driver installed on its own (`cua agents setup
+//! --cua-driver`, the installers' `cua-driver` item): on macOS that is its
+//! own app (`/Applications/CuaDriver.app`), which is what Accessibility and
+//! Screen Recording are granted to.
+//!
+//! Cua Spaces for macOS (since 0.26.0) carries its own Cua Driver in
+//! `Contents/Helpers/cua-driver`, run by the app's login item, so the
+//! driver uses Cua Spaces' permissions. That app never locates, checks or
+//! installs one here: it passes its bundled binary and arguments to
+//! Connect as a [`crate::connection::DriverTarget`], and Connect writes
+//! exactly that entry ([`crate::AgentSetup::connect_driver`]).
 
 use crate::{HostEnv, Os, is_executable};
 use std::{

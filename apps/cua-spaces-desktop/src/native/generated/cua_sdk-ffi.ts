@@ -1015,7 +1015,7 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_agentsetup_connect_json": {
-      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8, FfiType.Int8],
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8, FfiType.Int8, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -6342,7 +6342,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_agentrun_stop(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_agentrun_wait(uniffiSelf: bigint, timeoutMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_configure_mcp(uniffiSelf: bigint, agents: Uint8Array, server: Uint8Array): bigint;
-    uniffi_cua_sdk_fn_method_agentsetup_connect_json(uniffiSelf: bigint, agents: Uint8Array, server: Uint8Array, skills: number, mcp: number, signIn: number): bigint;
+    uniffi_cua_sdk_fn_method_agentsetup_connect_json(uniffiSelf: bigint, agents: Uint8Array, server: Uint8Array, skills: number, mcp: number, signIn: number, driver: Uint8Array, driverPermissionsGranted: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_agentsetup_connection_status_json(uniffiSelf: bigint, expected: Uint8Array, refresh: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_detect(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_device_sign_in_start_json(uniffiSelf: bigint, agent: Uint8Array): bigint;
